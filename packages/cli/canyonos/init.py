@@ -18,6 +18,7 @@ import urllib.request
 from pyfiglet import figlet_format
 
 from canyonos import env, ui
+from canyonos.port_utils import is_port_conflict
 
 
 # Production is `env.PROD_CORE_IMAGE`; a developer can point this at the image
@@ -285,10 +286,7 @@ def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
             subprocess.run(["docker", "rm", "-f", container_id], capture_output=True)
             port += 1
             continue
-        if (
-            "port is already allocated" in result.stderr
-            or "address already in use" in result.stderr
-        ):
+        if is_port_conflict(result.stderr):
             port += 1
             continue
         raise RuntimeError(result.stderr)

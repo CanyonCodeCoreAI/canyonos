@@ -18,6 +18,7 @@ from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.cloud_provider_logic.shared_utils.llm_proxy_env import (
     llm_proxy_docker_env_args,
 )
+from canyonos_core.controller.utils.port_utils import is_port_conflict
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
 
         if result.returncode == 0:
             break
-        if "port is already allocated" in (result.stderr or ""):
+        if is_port_conflict(result.stderr):
             # `docker run` leaves a `Created`-but-never-started container behind
             # under this name when the port bind fails. Remove it before
             # retrying with a new port, or the retry hits a name conflict
