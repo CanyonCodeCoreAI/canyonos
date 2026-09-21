@@ -20,6 +20,7 @@
       "inputs": [
         "tests/**",
         "!tests/**/__pycache__/**",
+        ".claude/skills/porting-to-canyonos/**",
         "pyproject.toml",
         "uv.lock"
       ]
