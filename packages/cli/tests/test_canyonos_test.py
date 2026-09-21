@@ -176,6 +176,21 @@ def test_real_llm_flag_disables_the_stub(monkeypatch, deployable):
     assert seen["extra_env"] is None
 
 
+def test_the_dashboard_is_not_started_under_test(monkeypatch, deployable):
+    """A smoke test never reads the dashboard, so it must not pay to bring it up."""
+    seen = {}
+    monkeypatch.setattr(
+        test_cmd,
+        "run_deploy",
+        lambda *_a, **kwargs: (
+            seen.update(serve=kwargs.get("serve"))
+            or {"container_id": "abc", "port": 8000}
+        ),
+    )
+    assert test_cmd.run_test("hi") == 0
+    assert seen["serve"] is False
+
+
 def test_the_provider_is_restored_after_the_run(project, deployable):
     config = project / ".car" / "config" / "global_controller.yaml"
 

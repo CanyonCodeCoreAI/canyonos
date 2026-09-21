@@ -213,10 +213,12 @@ def _deploy_locally(run, config_path, api_port, llm_stub=DEFAULT_LLM_STUB):
         )
 
     # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI, we do our
-    # own HTTP readiness check below instead. serve=True still brings the
-    # dashboard's LLM proxy up, quietly, for code that calls it directly.
+    # own HTTP readiness check below instead. serve=False: the dashboard
+    # (db/api/web) is nothing a smoke test reads -- agents proxy their LLM
+    # calls in-container, not through it -- and starting it costs two image
+    # pulls, a long `compose up --wait`, and a rewrite of the project's .env.
     state = run_deploy(
-        config_path, serve=True, quiet=True, extra_env=extra_env, banner=False
+        config_path, serve=False, quiet=True, extra_env=extra_env, banner=False
     )
     run.deploy_started = True
 
