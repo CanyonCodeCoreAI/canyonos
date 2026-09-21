@@ -1,8 +1,10 @@
+import importlib.resources
 import json
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from canyonos import dashboard_stack
 
@@ -372,3 +374,29 @@ def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
 
     assert result.ok
     assert result.url == "http://127.0.0.1:8080"
+
+
+def _shipped_manifest() -> dict:
+    manifest = importlib.resources.files("canyonos").joinpath("dashboard.compose.yml")
+    return yaml.safe_load(manifest.read_text(encoding="utf-8"))
+
+
+def test_manifest_gives_the_api_its_self_hosted_environment():
+    """The published api image runs with NODE_ENV=production, which refuses to
+    boot unless AUTH_MODE and DEPLOY_WORKER are named; FILE_STORAGE accepts
+    only mock."""
+    environment = _shipped_manifest()["services"]["api"]["environment"]
+
+    assert environment["AUTH_MODE"] == "fixed_code"
+    assert environment["DEPLOY_WORKER"] == "none"
+    assert environment["FILE_STORAGE"] == "mock"
+    assert set(environment) == {
+        "DATABASE_URL",
+        "JWT_SECRET",
+        "AUTH_MODE",
+        "DEPLOY_WORKER",
+        "FILE_STORAGE",
+        "CANYONOS_REDIS_HOST",
+        "CANYONOS_REDIS_PORT",
+        "LOG_LEVEL",
+    }
