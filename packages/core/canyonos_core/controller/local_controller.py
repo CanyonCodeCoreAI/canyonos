@@ -84,6 +84,8 @@ class LocalController(object):
         redis_port = int(os.environ.get("CANYONOS_REDIS_PORT", 6379))
         self.redis = RedisClient(host=redis_host, port=redis_port)
         self._status_key = f"controller:{self.agent_host}:{self.public_port}:status"
+        self._status = "starting"
+        self._publish_ready = publish_ready
 
         # Every LLM call in this container is routed through the proxy, so it must be
         # up before we report ready. The status key has no TTL: pin it to "failed" or
@@ -91,12 +93,9 @@ class LocalController(object):
         try:
             self._proxy_process = self._start_llm_proxy(redis_host, redis_port)
         except Exception:
-            self.redis.set(self._status_key, "failed")
+            self.mark_failed()
             self.server.stop(0)
             raise
-
-        if publish_ready:
-            self.redis.set(self._status_key, "healthy")
 
         # Set once by InstanceManager when this replica was provisioned; read back
         # here so completed requests can be stamped with which replica ran them.
@@ -127,7 +126,7 @@ class LocalController(object):
         self._executor = ThreadPoolExecutor(max_workers=max_instances)
 
         logger.info(
-            "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
+            "Local controller initialized at %s (max_agent_instances=%d).",
             self._my_endpoint,
             max_instances,
         )
@@ -135,11 +134,19 @@ class LocalController(object):
         # Load the agent class dynamically
         self.agent = self._load_agent()
 
+        if self._publish_ready:
+            if self.agent_name and self.agent_file and self.agent is None:
+                self.mark_failed()
+            else:
+                self.mark_ready()
+
     def mark_ready(self):
-        self.redis.set(self._status_key, "healthy")
+        self._status = "healthy"
+        self.redis.set(self._status_key, self._status)
 
     def mark_failed(self):
-        self.redis.set(self._status_key, "failed")
+        self._status = "failed"
+        self.redis.set(self._status_key, self._status)
 
     def _start_llm_proxy(self, redis_host, redis_port):
         """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
@@ -227,7 +234,7 @@ class LocalController(object):
         loop falls behind on.
         """
         return {
-            "status": "healthy",
+            "status": self._status,
             "cpu_percent": str(psutil.cpu_percent(interval=None)),
             "gpu_percent": str(read_gpu_percent()),
             "disk_percent": str(psutil.disk_usage("/").percent),
@@ -243,7 +250,7 @@ class LocalController(object):
             try:
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
-                self.redis.set(self._status_key, "healthy")
+                self.redis.set(self._status_key, self._status)
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             self._metrics_stop_event.wait(self._metrics_interval)

@@ -89,6 +89,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
         controller = SimpleNamespace(
             _executor=ThreadPoolExecutor(max_workers=1),
             _metrics_interval=5,
+            _status="healthy",
         )
         with patch(
             "canyonos_core.controller.local_controller.read_gpu_percent",
@@ -126,6 +127,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             _status_key="controller:localhost:50051:status",
             _metrics_stop_event=stop_event,
             _metrics_interval=5,
+            _status="healthy",
             _collect_metrics=lambda: {
                 "status": "healthy",
                 "cpu_percent": "1.0",
