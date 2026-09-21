@@ -65,3 +65,5 @@ packages/api/data/*.db
 packages/api/data/*.db-*
 packages/api/data/blobs/
 test-results/
+packages/web/src/routeTree.gen.ts
+playwright-report/

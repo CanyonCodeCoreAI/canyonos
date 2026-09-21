@@ -1,0 +1,14 @@
+{
+  "extends": "@cc-forge/tsconfig/react-library.json",
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] },
+    "types": ["vite/client"],
+    // The dashboard's build target (Chrome 111+/Safari 16.4+/Firefox 128+) supports ES2023 array
+    // methods like toSorted(); widen the lib here (web only) so we can use immutable sorts.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
+  "include": ["src", "vite.config.ts", "env-loader.ts"]
+}
