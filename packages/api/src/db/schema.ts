@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   check,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -350,4 +351,53 @@ export const otelSpans = pgTable(
       table.start_time_unix_nano
     ),
   ]
+);
+
+// A sum's temporality decides how a reader may combine points: `sum_delta` points add up over a
+// window, `sum_cumulative` points must be differenced first. Mixing the two silently multiplies
+// totals, so the kind is stored per row rather than inferred at query time.
+export type MetricType = 'gauge' | 'sum_delta' | 'sum_cumulative';
+
+// Long/tall metric store: one row per OTLP numeric data point, with `metric_type` one of `gauge`,
+// `sum_delta` or `sum_cumulative`. A wide snapshot is a query concern -- pivot with
+// `max(value) FILTER (WHERE metric_name = ...)` grouped by `time_unix_nano` (machine) or
+// `service_name` (agent).
+export const otelMetrics = pgTable(
+  'otel_metrics',
+  {
+    id: bigint('id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    received_at: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    service_name: text('service_name'),
+    resource_attributes: jsonb('resource_attributes').notNull().default({}),
+    scope_name: text('scope_name'),
+    metric_name: text('metric_name').notNull(),
+    metric_unit: text('metric_unit'),
+    metric_type: text('metric_type').$type<MetricType>().notNull(),
+    time_unix_nano: bigint('time_unix_nano', { mode: 'bigint' }).notNull(),
+    value: doublePrecision('value').notNull(),
+    data_point_attributes: jsonb('data_point_attributes').notNull().default({}),
+  },
+  (table) => [index('idx_otel_metrics_name_time').on(table.metric_name, table.time_unix_nano)]
+);
+
+// One row per OTLP log record. `trace_id`/`span_id` are the hex ids the producing future carried,
+// so a log joins `otel_spans` on span_id; both are null for an agent-level log outside any future.
+export const otelLogs = pgTable(
+  'otel_logs',
+  {
+    id: bigint('id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    received_at: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    service_name: text('service_name'),
+    resource_attributes: jsonb('resource_attributes').notNull().default({}),
+    scope_name: text('scope_name'),
+    time_unix_nano: bigint('time_unix_nano', { mode: 'bigint' }).notNull(),
+    observed_time_unix_nano: bigint('observed_time_unix_nano', { mode: 'bigint' }).notNull(),
+    severity_number: integer('severity_number'),
+    severity_text: text('severity_text'),
+    body: text('body'),
+    trace_id: text('trace_id'),
+    span_id: text('span_id'),
+    attributes: jsonb('attributes').notNull().default({}),
+  },
+  (table) => [index('idx_otel_logs_time').on(table.time_unix_nano)]
 );
