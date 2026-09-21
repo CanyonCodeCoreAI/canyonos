@@ -60,8 +60,9 @@ jobs:
     with:
       tag: ${{ needs.bump.outputs.tag }}
 
+  # PyPI last: a version can never be re-uploaded, and the binaries can.
   publish-pypi:
-    needs: bump
+    needs: [bump, release]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
