@@ -47,7 +47,7 @@ function createPinoInstance(): pino.Logger {
   return pino(
     {
       level: stdoutLevel,
-      base: { service_name: Bun.env.SERVICE_NAME ?? 'cc-forge-api' },
+      base: { service_name: Bun.env.SERVICE_NAME ?? 'canyonos-api' },
       mixin: () => {
         const reqCtx = getRequestContext();
         return reqCtx ? { request_id: reqCtx.request_id, client_ip: reqCtx.client_ip } : {};

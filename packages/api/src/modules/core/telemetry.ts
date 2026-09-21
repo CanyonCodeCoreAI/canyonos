@@ -10,7 +10,7 @@ export interface TraceContext {
   service_name: string;
 }
 
-const serviceName = Bun.env.SERVICE_NAME ?? 'cc-forge-api';
+const serviceName = Bun.env.SERVICE_NAME ?? 'canyonos-api';
 const traceStorage = new AsyncLocalStorage<TraceContext>();
 
 function buildTraceContext(ctx?: Partial<TraceContext>): TraceContext {

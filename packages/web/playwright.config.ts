@@ -45,8 +45,8 @@ export default defineConfig({
   webServer: [
     {
       command: process.env.CI
-        ? 'cd ../.. && PORT=3000 API_URL=http://localhost:3000 WORKFLOW_GENERATION_STUB=true bun --filter @cc-forge/api start'
-        : 'cd ../.. && bun run docker:up && WORKFLOW_GENERATION_STUB=true bun --filter @cc-forge/api dev:server',
+        ? 'cd ../.. && PORT=3000 API_URL=http://localhost:3000 WORKFLOW_GENERATION_STUB=true bun --filter @canyonos/api start'
+        : 'cd ../.. && bun run docker:up && WORKFLOW_GENERATION_STUB=true bun --filter @canyonos/api dev:server',
       url: `${apiBaseUrl}/healthz`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,

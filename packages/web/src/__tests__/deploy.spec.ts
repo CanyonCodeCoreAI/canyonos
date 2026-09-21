@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Request } from '@playwright/test';
 
-import type { DeploymentInfo } from '@cc-forge/api/deploy';
+import type { DeploymentInfo } from '@canyonos/api/deploy';
 
 import { authenticate } from './helpers/auth';
 import {

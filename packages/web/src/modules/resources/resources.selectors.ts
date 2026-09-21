@@ -5,7 +5,7 @@ import type {
   ResourceOverview,
   ResourceProject,
   ResourceRequest,
-} from '@cc-forge/api/resources';
+} from '@canyonos/api/resources';
 
 import type { BarDatum } from '@repo/ui/components/charts/bar-chart';
 import type { DonutDatum } from '@repo/ui/components/charts/donut-chart';

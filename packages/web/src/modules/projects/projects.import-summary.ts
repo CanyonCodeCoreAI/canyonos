@@ -6,8 +6,8 @@ import {
   isEnvFile,
   MAX_TOTAL_BYTES,
   TEXT_EXTENSIONS,
-} from '@cc-forge/api/projects';
-import type { FileComponentKind } from '@cc-forge/api/projects';
+} from '@canyonos/api/projects';
+import type { FileComponentKind } from '@canyonos/api/projects';
 
 import type { ParsedFile, ParsedUpload } from '@/modules/projects/projects.upload';
 

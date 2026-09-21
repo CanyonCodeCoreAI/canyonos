@@ -139,7 +139,7 @@ async function wait_for_status(deploy_id: string, status: string): Promise<void>
 
 describe('project deploy', () => {
   test('returns project-scoped config and accepts an all-file deployment target', async () => {
-    const { token, setup, project_id } = await provision('deploy-project@cc-forge.test');
+    const { token, setup, project_id } = await provision('deploy-project@canyonos.test');
     const headers = bearer(token);
     const config_response = await api.projects[project_id]!.deploy.config.get({
       $headers: headers,
@@ -169,7 +169,7 @@ describe('project deploy', () => {
   });
 
   test('config flags has_previous_deploy once a deployment has succeeded', async () => {
-    const { token, project_id } = await provision('deploy-baseline@cc-forge.test');
+    const { token, project_id } = await provision('deploy-baseline@canyonos.test');
     const headers = bearer(token);
 
     const accepted = await api.projects[project_id]!.deploy.post({}, { headers });
@@ -182,8 +182,8 @@ describe('project deploy', () => {
   });
 
   test('allows config and submission from a teammate and from another company', async () => {
-    const owner = await provision('deploy-owner@cc-forge.test');
-    const member = await add_company_member(owner.token, 'deploy-member@cc-forge.test');
+    const owner = await provision('deploy-owner@canyonos.test');
+    const member = await add_company_member(owner.token, 'deploy-member@canyonos.test');
     expect(
       (
         await api.projects[owner.project_id]!.deploy.config.get({
@@ -197,7 +197,7 @@ describe('project deploy', () => {
     ).toBe('accepted');
 
     // The deploy setup comes from the project, so a caller whose own company has none still deploys.
-    const other_company = await authenticate('deploy-outsider@cc-forge.test');
+    const other_company = await authenticate('deploy-outsider@canyonos.test');
     expect(
       (
         await api.projects[owner.project_id]!.deploy.config.get({
@@ -206,7 +206,7 @@ describe('project deploy', () => {
       ).data?.project_id
     ).toBe(owner.project_id);
 
-    const second = await provision('deploy-owner-second@cc-forge.test');
+    const second = await provision('deploy-owner-second@canyonos.test');
     expect(
       (await api.projects[second.project_id]!.deploy.post({}, { headers: bearer(other_company) }))
         .data?.status
@@ -214,7 +214,7 @@ describe('project deploy', () => {
   });
 
   test('validates the project id, payload, setup, and authentication', async () => {
-    const { token, project_id } = await provision('deploy-validation@cc-forge.test');
+    const { token, project_id } = await provision('deploy-validation@canyonos.test');
     const headers = bearer(token);
     expect(
       (
@@ -232,7 +232,7 @@ describe('project deploy', () => {
     ).toBe(422);
     expect((await api.projects[project_id]!.deploy.config.get()).error?.status as number).toBe(401);
 
-    const without_setup = await authenticate('deploy-no-setup@cc-forge.test');
+    const without_setup = await authenticate('deploy-no-setup@canyonos.test');
     const project = await api.projects.post(
       { name: 'No Setup', files: [{ path: 'workflow.py', content: 'pass\n' }] },
       { headers: bearer(without_setup) }
@@ -247,7 +247,7 @@ describe('project deploy', () => {
   });
 
   test('does not expose legacy top-level deploy routes', async () => {
-    const { token, project_id } = await provision('deploy-old-route@cc-forge.test');
+    const { token, project_id } = await provision('deploy-old-route@canyonos.test');
     const path = '/deploy/00000000-0000-4000-8000-000000000000';
     expect((await fetch(`${config.app.apiUrl}${path}`, { headers: bearer(token) })).status).toBe(
       404
@@ -275,7 +275,7 @@ describe('project deploy', () => {
 
 describe('project deploy queue', () => {
   test('enqueue returns a deploy_id and creates the pending row', async () => {
-    const { token, project_id } = await provision('deploy-enqueue@cc-forge.test');
+    const { token, project_id } = await provision('deploy-enqueue@canyonos.test');
     const accepted = await enqueue(project_id, token);
     expect(accepted).toMatchObject({ project_id, status: 'accepted', file_count: 4 });
 
@@ -295,7 +295,7 @@ describe('project deploy queue', () => {
   });
 
   test('streams pending then every phase in order and finishes succeeded', async () => {
-    const { token, project_id } = await provision('deploy-happy@cc-forge.test');
+    const { token, project_id } = await provision('deploy-happy@canyonos.test');
     const accepted = await enqueue(project_id, token);
     const frames = await read_stream(project_id, accepted.deploy_id, token);
 
@@ -318,7 +318,7 @@ describe('project deploy queue', () => {
   });
 
   test('rejects an enqueue when the project has no files', async () => {
-    const token = await authenticate('deploy-empty@cc-forge.test');
+    const token = await authenticate('deploy-empty@canyonos.test');
     await create_deploy_setup(token);
     const project = await api.projects.post(
       { name: 'Empty', files: [{ path: 'workflow.py', content: 'pass\n' }] },
@@ -336,7 +336,7 @@ describe('project deploy queue', () => {
   });
 
   test('rejects a second enqueue while one is already running, then completes the first', async () => {
-    const { token, project_id } = await provision('deploy-conflict@cc-forge.test');
+    const { token, project_id } = await provision('deploy-conflict@canyonos.test');
     set_mock_deploy_script({ hold_at: 'processing_files' });
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'processing_files');
@@ -351,7 +351,7 @@ describe('project deploy queue', () => {
   });
 
   test('streams a failed terminal event when the worker fails a phase', async () => {
-    const { token, project_id } = await provision('deploy-failure@cc-forge.test');
+    const { token, project_id } = await provision('deploy-failure@canyonos.test');
     set_mock_deploy_script({ fail_at: 'provisioning_resources', fail_message: 'ventis exploded' });
     const accepted = await enqueue(project_id, token);
     const frames = await read_stream(project_id, accepted.deploy_id, token);
@@ -367,7 +367,7 @@ describe('project deploy queue', () => {
   });
 
   test('replays the full history of a completed deployment then closes', async () => {
-    const { token, project_id } = await provision('deploy-replay@cc-forge.test');
+    const { token, project_id } = await provision('deploy-replay@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -379,7 +379,7 @@ describe('project deploy queue', () => {
   });
 
   test('honors Last-Event-ID by replaying only newer events', async () => {
-    const { token, project_id } = await provision('deploy-resume@cc-forge.test');
+    const { token, project_id } = await provision('deploy-resume@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -400,7 +400,7 @@ describe('project deploy queue', () => {
   });
 
   test("does not apply another deployment's Last-Event-ID", async () => {
-    const { token, project_id } = await provision('deploy-resume-other@cc-forge.test');
+    const { token, project_id } = await provision('deploy-resume-other@canyonos.test');
     const first = await enqueue(project_id, token);
     await wait_for_status(first.deploy_id, 'success');
 
@@ -415,7 +415,7 @@ describe('project deploy queue', () => {
   });
 
   test('closes immediately when resuming at/after the terminal event', async () => {
-    const { token, project_id } = await provision('deploy-resume-end@cc-forge.test');
+    const { token, project_id } = await provision('deploy-resume-end@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -430,20 +430,20 @@ describe('project deploy queue', () => {
   });
 
   test('requires auth and opens the stream to any signed-in user', async () => {
-    const { token, project_id } = await provision('deploy-stream-auth@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stream-auth@canyonos.test');
     const accepted = await enqueue(project_id, token);
     const stream_url = `${config.app.apiUrl}/projects/${project_id}/deploy/${accepted.deploy_id}/stream`;
     const anonymous = await fetch(stream_url);
     expect(anonymous.status).toBe(401);
 
-    const other_company = await authenticate('deploy-stream-outsider@cc-forge.test');
+    const other_company = await authenticate('deploy-stream-outsider@canyonos.test');
     const allowed = await fetch(stream_url, { headers: bearer(other_company) });
     expect(allowed.status).toBe(200);
     await allowed.body?.cancel();
   });
 
   test('rejects a deployment id that belongs to another owned project', async () => {
-    const { token, project_id } = await provision('deploy-stream-relation@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stream-relation@canyonos.test');
     const accepted = await enqueue(project_id, token);
     const other = await api.projects.post(
       { name: 'Other Deploy Project', files: [{ path: 'workflow.py', content: 'pass\n' }] },
@@ -459,7 +459,7 @@ describe('project deploy queue', () => {
   });
 
   test('streams failed details larger than the PostgreSQL NOTIFY payload limit', async () => {
-    const { token, project_id } = await provision('deploy-large-detail@cc-forge.test');
+    const { token, project_id } = await provision('deploy-large-detail@canyonos.test');
     set_mock_deploy_script({ hold_at: 'processing_files' });
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'processing_files');
@@ -476,7 +476,7 @@ describe('project deploy queue', () => {
   });
 
   test('reclaims a deployment whose worker went silent past the lease', async () => {
-    const { token, project_id } = await provision('deploy-reclaim@cc-forge.test');
+    const { token, project_id } = await provision('deploy-reclaim@canyonos.test');
     set_mock_deploy_script({ hold_at: 'processing_files' });
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'processing_files');
@@ -533,7 +533,7 @@ describe('project deploy test proxy', () => {
 
   test('forwards the query as the agent payload and returns the unwrapped result', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-ok@cc-forge.test'
+      'deploy-test-ok@canyonos.test'
     );
     const query = 'Analyze 40% Apple, 35% Microsoft and 25% Nvidia over the last 6 months';
     const result = { response: { answer: 'reset it here' } };
@@ -555,7 +555,7 @@ describe('project deploy test proxy', () => {
   // stops at the schema — the dashboard keeps its Test button disabled for the same reason.
   test('rejects a body that is not a non-empty query with 422', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-invalid@cc-forge.test'
+      'deploy-test-invalid@canyonos.test'
     );
     const captured = stub_async_agent({ response: { answer: 'ok' } });
 
@@ -575,7 +575,7 @@ describe('project deploy test proxy', () => {
 
   test('trims the query before it reaches the agent', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-trim@cc-forge.test'
+      'deploy-test-trim@canyonos.test'
     );
     const captured = stub_async_agent({ response: { answer: 'ok' } });
 
@@ -589,7 +589,7 @@ describe('project deploy test proxy', () => {
 
   test('polls the status endpoint until the job reports done', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-poll@cc-forge.test'
+      'deploy-test-poll@canyonos.test'
     );
     const result = { response: { answer: 'done polling' } };
     let status_calls = 0;
@@ -617,7 +617,7 @@ describe('project deploy test proxy', () => {
 
   test('passes a non-2xx submit response through raw with ok:false', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-5xx@cc-forge.test'
+      'deploy-test-5xx@canyonos.test'
     );
     set_deploy_agent_caller(async () => ({ status: 503, text: 'service unavailable' }));
 
@@ -630,7 +630,7 @@ describe('project deploy test proxy', () => {
 
   test('passes a status 404 through raw with ok:false', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-status404@cc-forge.test'
+      'deploy-test-status404@canyonos.test'
     );
     set_deploy_agent_caller(async (url) =>
       url.includes('/status/')
@@ -647,7 +647,7 @@ describe('project deploy test proxy', () => {
 
   test('returns 502 when the job never finishes before the poll deadline', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-timeout@cc-forge.test'
+      'deploy-test-timeout@canyonos.test'
     );
     set_deploy_agent_caller(async (url) =>
       url.includes('/status/')
@@ -665,7 +665,7 @@ describe('project deploy test proxy', () => {
 
   test('returns 502 immediately when the deployed workflow reports status error', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-workflow-error@cc-forge.test'
+      'deploy-test-workflow-error@canyonos.test'
     );
     set_deploy_agent_caller(async (url) =>
       url.includes('/status/')
@@ -684,7 +684,7 @@ describe('project deploy test proxy', () => {
   });
 
   test('returns 404 for a deploy_id that does not exist', async () => {
-    const { token, project_id } = await provision('deploy-test-missing@cc-forge.test');
+    const { token, project_id } = await provision('deploy-test-missing@canyonos.test');
     const response = await api.projects[project_id]!.deploy[
       '00000000-0000-4000-8000-000000000000'
     ]!.test.post(PROBE, { headers: bearer(token) });
@@ -693,7 +693,7 @@ describe('project deploy test proxy', () => {
   });
 
   test('returns 404 for a deploy_id that belongs to another project', async () => {
-    const { token, deploy_id } = await deploy_to_success('deploy-test-scope@cc-forge.test');
+    const { token, deploy_id } = await deploy_to_success('deploy-test-scope@canyonos.test');
     const other = await api.projects.post(
       { name: 'Other', files: [{ path: 'workflow.py', content: 'pass\n' }] },
       { headers: bearer(token) }
@@ -708,7 +708,7 @@ describe('project deploy test proxy', () => {
   });
 
   test('returns 409 when the deployment has not yet produced a live endpoint', async () => {
-    const { token, project_id } = await provision('deploy-test-pending@cc-forge.test');
+    const { token, project_id } = await provision('deploy-test-pending@canyonos.test');
     set_mock_deploy_script({ hold_at: 'processing_files' });
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'processing_files');
@@ -722,7 +722,7 @@ describe('project deploy test proxy', () => {
 
   test('returns 502 when the deployed endpoint is unreachable', async () => {
     const { token, project_id, deploy_id } = await deploy_to_success(
-      'deploy-test-down@cc-forge.test'
+      'deploy-test-down@canyonos.test'
     );
     set_deploy_agent_caller(async () => {
       throw new Error('connect ETIMEDOUT');
@@ -736,13 +736,13 @@ describe('project deploy test proxy', () => {
   });
 
   test('requires auth and opens the endpoint to any signed-in user', async () => {
-    const { project_id, deploy_id } = await deploy_to_success('deploy-test-owner@cc-forge.test');
+    const { project_id, deploy_id } = await deploy_to_success('deploy-test-owner@canyonos.test');
     expect(
       (await api.projects[project_id]!.deploy[deploy_id]!.test.post(PROBE)).error?.status as number
     ).toBe(401);
 
     stub_async_agent({ response: { answer: 'ok' } });
-    const other_company = await authenticate('deploy-test-outsider@cc-forge.test');
+    const other_company = await authenticate('deploy-test-outsider@canyonos.test');
     const response = await api.projects[project_id]!.deploy[deploy_id]!.test.post(PROBE, {
       headers: bearer(other_company),
     });
@@ -753,7 +753,7 @@ describe('project deploy test proxy', () => {
 
 describe('project deploy info', () => {
   test('returns the deployment record for an owned deploy', async () => {
-    const { token, project_id } = await provision('deploy-info-ok@cc-forge.test');
+    const { token, project_id } = await provision('deploy-info-ok@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -774,7 +774,7 @@ describe('project deploy info', () => {
   });
 
   test('reflects an in-flight status up front, without a stream', async () => {
-    const { token, project_id } = await provision('deploy-info-live@cc-forge.test');
+    const { token, project_id } = await provision('deploy-info-live@canyonos.test');
     set_mock_deploy_script({ hold_at: 'processing_files' });
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'processing_files');
@@ -787,7 +787,7 @@ describe('project deploy info', () => {
   });
 
   test('returns 404 for a deploy_id that does not exist', async () => {
-    const { token, project_id } = await provision('deploy-info-missing@cc-forge.test');
+    const { token, project_id } = await provision('deploy-info-missing@canyonos.test');
     const response = await api.projects[project_id]!.deploy[
       '00000000-0000-4000-8000-000000000000'
     ]!.get({ $headers: bearer(token) });
@@ -796,7 +796,7 @@ describe('project deploy info', () => {
   });
 
   test('returns 404 for a deploy_id that belongs to another project', async () => {
-    const { token, project_id } = await provision('deploy-info-scope@cc-forge.test');
+    const { token, project_id } = await provision('deploy-info-scope@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
     const other = await api.projects.post(
@@ -813,7 +813,7 @@ describe('project deploy info', () => {
   });
 
   test('requires auth and shows the deploy to any signed-in user', async () => {
-    const { token, project_id } = await provision('deploy-info-owner@cc-forge.test');
+    const { token, project_id } = await provision('deploy-info-owner@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -821,7 +821,7 @@ describe('project deploy info', () => {
       (await api.projects[project_id]!.deploy[accepted.deploy_id]!.get()).error?.status as number
     ).toBe(401);
 
-    const other_company = await authenticate('deploy-info-outsider@cc-forge.test');
+    const other_company = await authenticate('deploy-info-outsider@canyonos.test');
     expect(
       (
         await api.projects[project_id]!.deploy[accepted.deploy_id]!.get({
@@ -862,7 +862,7 @@ describe('project deploy summary', () => {
   }
 
   test('returns both null when the project has never deployed', async () => {
-    const { token, project_id } = await provision('deploy-summary-none@cc-forge.test');
+    const { token, project_id } = await provision('deploy-summary-none@canyonos.test');
     const response = await api.projects[project_id]!.deploy.summary.get({
       $headers: bearer(token),
     });
@@ -872,7 +872,7 @@ describe('project deploy summary', () => {
   });
 
   test('returns the latest terminal deploy and the in-flight deploy', async () => {
-    const target = await provision('deploy-summary-both@cc-forge.test');
+    const target = await provision('deploy-summary-both@canyonos.test');
     await seed_deployment_at(target, {
       status: 'success',
       address: '203.0.113.10',
@@ -900,7 +900,7 @@ describe('project deploy summary', () => {
   });
 
   test('leaves active null when every deploy is terminal', async () => {
-    const target = await provision('deploy-summary-terminal@cc-forge.test');
+    const target = await provision('deploy-summary-terminal@canyonos.test');
     await seed_deployment_at(target, { status: 'failed', created_at: '2026-01-01T00:00:00.000Z' });
     const success_id = await seed_deployment_at(target, {
       status: 'success',
@@ -915,13 +915,13 @@ describe('project deploy summary', () => {
   });
 
   test('returns the summary to a user from another company', async () => {
-    const owner = await provision('deploy-summary-owner@cc-forge.test');
+    const owner = await provision('deploy-summary-owner@canyonos.test');
     const deploy_id = await seed_deployment_at(owner, {
       status: 'success',
       created_at: '2026-01-01T00:00:00.000Z',
     });
 
-    const other_company = await authenticate('deploy-summary-outsider@cc-forge.test');
+    const other_company = await authenticate('deploy-summary-outsider@canyonos.test');
     const response = await api.projects[owner.project_id]!.deploy.summary.get({
       $headers: bearer(other_company),
     });
@@ -930,7 +930,7 @@ describe('project deploy summary', () => {
   });
 
   test('requires authentication and validates the project id', async () => {
-    const { token, project_id } = await provision('deploy-summary-validation@cc-forge.test');
+    const { token, project_id } = await provision('deploy-summary-validation@canyonos.test');
     expect((await api.projects[project_id]!.deploy.summary.get()).error?.status as number).toBe(
       401
     );
@@ -972,7 +972,7 @@ describe('deployment overview', () => {
   }
 
   test('lists deployments joined to their projects, most-recent activity first', async () => {
-    const target = await provision('overview-happy@cc-forge.test');
+    const target = await provision('overview-happy@canyonos.test');
     const success_id = await seed_deployment(target, {
       status: 'success',
       address: '203.0.113.10',
@@ -1017,7 +1017,7 @@ describe('deployment overview', () => {
   });
 
   test('filters by state: active excludes terminal rows, success/failed match exactly, all returns everything', async () => {
-    const target = await provision('overview-filter@cc-forge.test');
+    const target = await provision('overview-filter@canyonos.test');
     const success_id = await seed_deployment(target, {
       status: 'success',
       updated_at: '2099-01-01T00:00:00.000Z',
@@ -1061,13 +1061,13 @@ describe('deployment overview', () => {
   });
 
   test('shows every deployment in the install to every signed-in user', async () => {
-    const owner = await provision('overview-owner@cc-forge.test');
+    const owner = await provision('overview-owner@canyonos.test');
     const owned_id = await seed_deployment(owner, {
       status: 'success',
       updated_at: '2099-04-01T00:00:00.000Z',
     });
 
-    const other_company = await provision('overview-outsider@cc-forge.test');
+    const other_company = await provision('overview-outsider@canyonos.test');
     const foreign_id = await seed_deployment(other_company, {
       status: 'success',
       updated_at: '2099-04-02T00:00:00.000Z',
@@ -1080,7 +1080,7 @@ describe('deployment overview', () => {
     expect(owner_view.data!.some(({ id }) => id === owned_id)).toBe(true);
     expect(owner_view.data!.some(({ id }) => id === foreign_id)).toBe(true);
 
-    const member = await add_company_member(owner.token, 'overview-member@cc-forge.test');
+    const member = await add_company_member(owner.token, 'overview-member@canyonos.test');
     const member_view = await api.projects.deployments.get({
       $query: { state: 'all', limit: 50 },
       $headers: bearer(member),
@@ -1090,7 +1090,7 @@ describe('deployment overview', () => {
   });
 
   test('respects the limit', async () => {
-    const target = await provision('overview-limit@cc-forge.test');
+    const target = await provision('overview-limit@canyonos.test');
     await seed_deployment(target, { status: 'success', updated_at: '2026-01-01T00:00:00.000Z' });
     await seed_deployment(target, { status: 'success', updated_at: '2026-02-01T00:00:00.000Z' });
     await seed_deployment(target, { status: 'success', updated_at: '2026-03-01T00:00:00.000Z' });
@@ -1103,13 +1103,13 @@ describe('deployment overview', () => {
   });
 
   test('lists the install deployments for a user without a company', async () => {
-    const target = await provision('overview-no-company-owner@cc-forge.test');
+    const target = await provision('overview-no-company-owner@canyonos.test');
     const seeded_id = await seed_deployment(target, {
       status: 'success',
       updated_at: '2099-05-01T00:00:00.000Z',
     });
 
-    const token = await authenticate('overview-no-company@cc-forge.test', false);
+    const token = await authenticate('overview-no-company@canyonos.test', false);
     const response = await api.projects.deployments.get({
       $query: { state: 'all', limit: 50 },
       $headers: bearer(token),
@@ -1124,7 +1124,7 @@ describe('deployment overview', () => {
   });
 
   test('rejects an invalid state or an out-of-range limit', async () => {
-    const token = await authenticate('overview-validation@cc-forge.test');
+    const token = await authenticate('overview-validation@canyonos.test');
     const headers = bearer(token);
     expect(
       (
@@ -1155,7 +1155,7 @@ describe('deployment overview', () => {
 
 describe('deployment teardown', () => {
   test('deployment info reports whether Stop is available', async () => {
-    const { token, project_id } = await provision('deploy-stop-capability@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-capability@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -1180,7 +1180,7 @@ describe('deployment teardown', () => {
   });
 
   test('stops a live deployment, streams the teardown, and frees the project to deploy again', async () => {
-    const { token, project_id } = await provision('deploy-stop@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -1217,7 +1217,7 @@ describe('deployment teardown', () => {
   });
 
   test('stops a live deployment even if the stored controller IP is missing', async () => {
-    const { token, project_id } = await provision('deploy-stop-without-ip@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-without-ip@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -1236,7 +1236,7 @@ describe('deployment teardown', () => {
   });
 
   test('refuses to stop a deployment that is not live', async () => {
-    const { token, project_id } = await provision('deploy-stop-inflight@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-inflight@canyonos.test');
     set_mock_deploy_script({ hold_at: 'processing_files' });
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'processing_files');
@@ -1252,7 +1252,7 @@ describe('deployment teardown', () => {
   });
 
   test('answers 404 for a deployment the project does not own', async () => {
-    const { token, project_id } = await provision('deploy-stop-404@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-404@canyonos.test');
     const stop = await api.projects[project_id]!.deploy[crypto.randomUUID()]!.stop.post(undefined, {
       headers: bearer(token),
     });
@@ -1260,7 +1260,7 @@ describe('deployment teardown', () => {
   });
 
   test('re-requesting an in-flight stop is idempotent', async () => {
-    const { token, project_id } = await provision('deploy-stop-twice@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-twice@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -1288,7 +1288,7 @@ describe('deployment teardown', () => {
   });
 
   test('a failed teardown leaves the deployment live and reports why', async () => {
-    const { token, project_id } = await provision('deploy-stop-failed@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-failed@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -1342,7 +1342,7 @@ describe('deployment teardown', () => {
   });
 
   test('a teardown that loses its worker is swept instead of hanging in stopping', async () => {
-    const { token, project_id } = await provision('deploy-stop-sweep@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-sweep@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 
@@ -1380,7 +1380,7 @@ describe('deployment teardown', () => {
   });
 
   test('refuses to stop a legacy successful deployment without controller handles', async () => {
-    const { token, project_id } = await provision('deploy-stop-legacy@cc-forge.test');
+    const { token, project_id } = await provision('deploy-stop-legacy@canyonos.test');
     const accepted = await enqueue(project_id, token);
     await wait_for_status(accepted.deploy_id, 'success');
 

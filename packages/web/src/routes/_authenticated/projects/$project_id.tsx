@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Outlet, useRouter } from '@tanstack/react-router';
 
-import type { ProjectSummary } from '@cc-forge/api/projects';
+import type { ProjectSummary } from '@canyonos/api/projects';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';

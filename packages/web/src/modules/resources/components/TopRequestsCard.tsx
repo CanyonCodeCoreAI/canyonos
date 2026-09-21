@@ -1,7 +1,7 @@
 import { ActivityIcon, CheckIcon, CircleXIcon, FolderIcon, LoaderCircleIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-import type { RequestStatus } from '@cc-forge/api/resources';
+import type { RequestStatus } from '@canyonos/api/resources';
 
 import { CardHeading } from '@repo/ui/components/card-heading';
 import { Card } from '@repo/ui/shadcn/card';

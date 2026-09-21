@@ -30,7 +30,7 @@ async function create_project(token: string): Promise<string> {
 
 describe('project access across the /projects tree', () => {
   test('the creator reaches its sub-resources', async () => {
-    const token = await authenticate('access-creator@cc-forge.test');
+    const token = await authenticate('access-creator@canyonos.test');
     const project_id = await create_project(token);
 
     const detail = await api.projects[project_id]!.get({ $headers: bearer(token) });
@@ -41,10 +41,10 @@ describe('project access across the /projects tree', () => {
   // The resolver is wired per plugin (projects / workflows / deploy / requests / metrics), so
   // reaching every sub-resource proves the new rule fires in each composed plugin.
   test('a user from another company reaches every project sub-resource', async () => {
-    const owner = await authenticate('access-owner2@cc-forge.test');
+    const owner = await authenticate('access-owner2@canyonos.test');
     const project_id = await create_project(owner);
 
-    const other = await authenticate('access-other@cc-forge.test');
+    const other = await authenticate('access-other@canyonos.test');
     const read = { $headers: bearer(other) };
 
     const responses = await Promise.all([
@@ -66,7 +66,7 @@ describe('project access across the /projects tree', () => {
   });
 
   test('a project id that does not exist is 404 projects.not_found for any caller', async () => {
-    const token = await authenticate('access-missing@cc-forge.test');
+    const token = await authenticate('access-missing@canyonos.test');
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.status.get({ $headers: bearer(token) });
@@ -76,7 +76,7 @@ describe('project access across the /projects tree', () => {
   });
 
   test('a caller with no token is rejected before the project is resolved', async () => {
-    const owner = await authenticate('access-anon-owner@cc-forge.test');
+    const owner = await authenticate('access-anon-owner@canyonos.test');
     const project_id = await create_project(owner);
 
     expect((await api.projects[project_id]!.get()).error?.status as number).toBe(401);

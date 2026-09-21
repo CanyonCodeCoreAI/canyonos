@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertTriangleIcon, Loader2Icon, PlayIcon } from 'lucide-react';
 import { useState } from 'react';
 
-import type { DeployConfig, DeployTestResult } from '@cc-forge/api/deploy';
+import type { DeployConfig, DeployTestResult } from '@canyonos/api/deploy';
 
 import { CopyButton } from '@repo/ui/components/copy-button';
 import { Alert, AlertDescription, AlertTitle } from '@repo/ui/shadcn/alert';

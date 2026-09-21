@@ -65,9 +65,9 @@ describe('install-wide access to projects, files, workflows, and deploy', () => 
       stats: mock_stats(input.source_path),
     }));
 
-    owner_token = await authenticate('access-owner@cc-forge.test');
-    mate_token = await add_company_member(owner_token, 'access-mate@cc-forge.test');
-    other_company_token = await authenticate('access-outsider@cc-forge.test');
+    owner_token = await authenticate('access-owner@canyonos.test');
+    mate_token = await add_company_member(owner_token, 'access-mate@canyonos.test');
+    other_company_token = await authenticate('access-outsider@canyonos.test');
 
     const created = await api.projects.post(UPLOAD, { headers: bearer(owner_token) });
     expect(created.error).toBeNull();

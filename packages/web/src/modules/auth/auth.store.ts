@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import type { User } from '@cc-forge/api/auth';
+import type { User } from '@canyonos/api/auth';
 
 import { isTokenExpired } from './token';
 

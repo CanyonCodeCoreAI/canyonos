@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import type { CSSProperties } from 'react';
 
-import type { FleetOverview } from '@cc-forge/api/resources';
+import type { FleetOverview } from '@canyonos/api/resources';
 
 import { ResourceIcon } from '@repo/ui/components/resource-icon';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';

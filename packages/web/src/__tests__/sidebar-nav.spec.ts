@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import type { FleetOverview } from '@cc-forge/api/resources';
+import type { FleetOverview } from '@canyonos/api/resources';
 
 import { SHOW_RESOURCE_NAVIGATION } from '../modules/core/components/app-sidebar/sidebar-sections';
 import { authenticate } from './helpers/auth';

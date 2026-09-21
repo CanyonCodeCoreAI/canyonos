@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { strToU8, zipSync } from 'fflate';
 
-import { MAX_FILE_BYTES, MAX_FILES, MAX_TOTAL_BYTES } from '@cc-forge/api/projects';
+import { MAX_FILE_BYTES, MAX_FILES, MAX_TOTAL_BYTES } from '@canyonos/api/projects';
 
 import { parseSingleFile, parseZip } from './projects.upload';
 

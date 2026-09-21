@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Controller } from 'react-hook-form';
 import type { UseFormReturn } from 'react-hook-form';
 
-import type { DeployConfig } from '@cc-forge/api/deploy';
+import type { DeployConfig } from '@canyonos/api/deploy';
 
 import { CardHeading } from '@repo/ui/components/card-heading';
 import { Button } from '@repo/ui/shadcn/button';

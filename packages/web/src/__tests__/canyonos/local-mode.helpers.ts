@@ -1,10 +1,10 @@
 import { expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
-import { UserStatusEnum } from '@cc-forge/api/auth';
-import type { User } from '@cc-forge/api/auth';
-import type { KpiWindow, MetricsWindow } from '@cc-forge/api/metrics';
-import type { ProjectSummary } from '@cc-forge/api/projects';
+import { UserStatusEnum } from '@canyonos/api/auth';
+import type { User } from '@canyonos/api/auth';
+import type { KpiWindow, MetricsWindow } from '@canyonos/api/metrics';
+import type { ProjectSummary } from '@canyonos/api/projects';
 
 import { validToken } from '../helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from '../helpers/projects';

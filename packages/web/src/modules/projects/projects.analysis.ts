@@ -1,4 +1,4 @@
-import type { MetricsBlock } from '@cc-forge/api/metrics';
+import type { MetricsBlock } from '@canyonos/api/metrics';
 
 import { parseMoney } from './projects.format';
 

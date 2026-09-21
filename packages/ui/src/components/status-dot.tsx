@@ -2,7 +2,7 @@ import { cva } from 'class-variance-authority';
 import type { VariantProps } from 'class-variance-authority';
 import type * as React from 'react';
 
-import type { RequestStatus } from '@cc-forge/api/core';
+import type { RequestStatus } from '@canyonos/api/core';
 
 import { cn } from '../lib/utils';
 

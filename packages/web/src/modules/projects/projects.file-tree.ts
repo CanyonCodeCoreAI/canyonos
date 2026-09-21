@@ -1,4 +1,4 @@
-import type { FileComponentKind, FileMeta } from '@cc-forge/api/projects';
+import type { FileComponentKind, FileMeta } from '@canyonos/api/projects';
 
 interface FileTreeNodeBase {
   readonly id: string;

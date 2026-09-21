@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { ChevronLeftIcon, ChevronRightIcon, CloudUploadIcon } from 'lucide-react';
 import { useState } from 'react';
 
-import type { DeployPreview } from '@cc-forge/api/deploy';
+import type { DeployPreview } from '@canyonos/api/deploy';
 
 import { FileDiff } from '@repo/ui/components/file-diff';
 import { Badge } from '@repo/ui/shadcn/badge';

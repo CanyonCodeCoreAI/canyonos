@@ -3,10 +3,10 @@ import { Link } from '@tanstack/react-router';
 import { PlusIcon } from 'lucide-react';
 import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { User } from '@cc-forge/api/auth';
-import type { DeploymentOverviewItem } from '@cc-forge/api/deploy';
-import type { ProjectSummary } from '@cc-forge/api/projects';
-import type { FleetOverview, FleetProject } from '@cc-forge/api/resources';
+import type { User } from '@canyonos/api/auth';
+import type { DeploymentOverviewItem } from '@canyonos/api/deploy';
+import type { ProjectSummary } from '@canyonos/api/projects';
+import type { FleetOverview, FleetProject } from '@canyonos/api/resources';
 
 import { SectionLabel } from '@repo/ui/components/section-label';
 import { Button } from '@repo/ui/shadcn/button';

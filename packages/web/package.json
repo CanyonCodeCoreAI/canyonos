@@ -26,7 +26,7 @@
     "format:check": "prettier --ignore-path ../../.gitignore --check ."
   },
   "dependencies": {
-    "@cc-forge/api": "*",
+    "@canyonos/api": "*",
     "@elysiajs/eden": "^1.4.9",
     "@hookform/resolvers": "^5.4.0",
     "@lottiefiles/dotlottie-web": "^0.76.0",
@@ -52,7 +52,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
-    "@cc-forge/tsconfig": "workspace:*",
+    "@canyonos/tsconfig": "workspace:*",
     "@playwright/test": "^1.57.0",
     "@tailwindcss/vite": "^4.1.10",
     "@tanstack/router-plugin": "^1.121.37",

@@ -3,7 +3,7 @@ import { shallowEqual, useSelector } from '@xstate/react';
 import { AlertTriangleIcon, CheckIcon, RotateCcwIcon, ScrollTextIcon, XIcon } from 'lucide-react';
 import { useMemo } from 'react';
 
-import type { DeployConfig } from '@cc-forge/api/deploy';
+import type { DeployConfig } from '@canyonos/api/deploy';
 
 import { Alert, AlertDescription, AlertTitle } from '@repo/ui/shadcn/alert';
 import { Badge } from '@repo/ui/shadcn/badge';

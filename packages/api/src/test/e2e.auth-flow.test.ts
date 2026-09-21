@@ -6,7 +6,7 @@ import { api, setupE2ETests } from './e2e.setup';
 
 setupE2ETests();
 
-const EMAIL = 'tester@cc-forge.test';
+const EMAIL = 'tester@canyonos.test';
 
 describe('auth flow', () => {
   test('challenge -> bypass verify -> profile (OTP dev bypass)', async () => {

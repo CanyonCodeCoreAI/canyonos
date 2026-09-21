@@ -1,4 +1,4 @@
-import type { MetricsBlock } from '@cc-forge/api/metrics';
+import type { MetricsBlock } from '@canyonos/api/metrics';
 
 import { DonutChart } from '@repo/ui/components/charts/donut-chart';
 import { cn } from '@repo/ui/utils';

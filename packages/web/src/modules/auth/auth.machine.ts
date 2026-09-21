@@ -2,8 +2,8 @@ import { assign, fromPromise, setup } from 'xstate';
 import { z } from 'zod';
 import type { ActorRefFrom } from 'xstate';
 
-import { UserStatusEnum } from '@cc-forge/api/auth';
-import type { AuthToken, User } from '@cc-forge/api/auth';
+import { UserStatusEnum } from '@canyonos/api/auth';
+import type { AuthToken, User } from '@canyonos/api/auth';
 
 import { apiCall, forgePublicApi } from '@/api';
 import { useAuthStore } from '@/modules/auth/auth.store';

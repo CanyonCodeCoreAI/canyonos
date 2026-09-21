@@ -1,4 +1,4 @@
-import type { DeploymentStatus } from '@cc-forge/api/deploy';
+import type { DeploymentStatus } from '@canyonos/api/deploy';
 
 import { authActions } from '@/modules/auth/auth.store';
 import { webEnv } from '@/modules/core/lib/env';

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import type { DistributionMetric, MetricsDistribution, MetricsWindow } from '@cc-forge/api/metrics';
+import type { DistributionMetric, MetricsDistribution, MetricsWindow } from '@canyonos/api/metrics';
 
 import { BarChart } from '@repo/ui/components/charts/bar-chart';
 import { TimeRangeToggle } from '@repo/ui/components/time-range-toggle';

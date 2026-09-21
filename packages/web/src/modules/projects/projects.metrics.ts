@@ -3,8 +3,8 @@ import type {
   DistributionMetric,
   DistributionStats,
   MetricsWindow,
-} from '@cc-forge/api/metrics';
-import type { RequestSort, RequestStatus, SortDirection } from '@cc-forge/api/requests';
+} from '@canyonos/api/metrics';
+import type { RequestSort, RequestStatus, SortDirection } from '@canyonos/api/requests';
 
 import type { CdfPoint } from '@repo/ui/components/charts/cdf-chart';
 import type { TimeRangeOption } from '@repo/ui/components/time-range-toggle';

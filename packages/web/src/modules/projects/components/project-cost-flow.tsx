@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import type { MetricsWindow } from '@cc-forge/api/metrics';
+import type { MetricsWindow } from '@canyonos/api/metrics';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@repo/ui/shadcn/tabs';
 import { ProjectAgentSpend } from '@/modules/projects/components/project-agent-spend';

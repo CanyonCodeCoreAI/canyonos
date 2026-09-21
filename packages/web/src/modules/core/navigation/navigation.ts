@@ -1,4 +1,4 @@
-import type { ResourceId } from '@cc-forge/api/resources';
+import type { ResourceId } from '@canyonos/api/resources';
 
 export interface ResourceItem {
   readonly id: string;

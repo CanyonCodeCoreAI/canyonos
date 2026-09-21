@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Response } from '@playwright/test';
 
-import type { ProjectDeployAccepted } from '@cc-forge/api/deploy';
-import type { CreateProjectResult } from '@cc-forge/api/projects';
+import type { ProjectDeployAccepted } from '@canyonos/api/deploy';
+import type { CreateProjectResult } from '@canyonos/api/projects';
 
 import { authenticate } from './helpers/auth';
 import { setScalingPlan } from './helpers/deploy';

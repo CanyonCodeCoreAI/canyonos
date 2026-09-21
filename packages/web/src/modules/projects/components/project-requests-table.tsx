@@ -14,13 +14,13 @@ import {
 import { Fragment, useId, useReducer, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 
-import type { MetricsWindow } from '@cc-forge/api/metrics';
+import type { MetricsWindow } from '@canyonos/api/metrics';
 import type {
   RequestList,
   RequestListItem,
   RequestSort,
   RequestStatus,
-} from '@cc-forge/api/requests';
+} from '@canyonos/api/requests';
 
 import { Button } from '@repo/ui/shadcn/button';
 import { Calendar } from '@repo/ui/shadcn/calendar';

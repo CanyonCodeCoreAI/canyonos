@@ -8,7 +8,7 @@ import type {
   FleetProject,
   FleetResource,
   ResourceId,
-} from '@cc-forge/api/resources';
+} from '@canyonos/api/resources';
 
 import type { DonutDatum } from '@repo/ui/components/charts/donut-chart';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';

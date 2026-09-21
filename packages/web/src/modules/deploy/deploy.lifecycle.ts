@@ -1,5 +1,5 @@
-import { DEPLOYMENT_STATUSES, is_terminal_deployment_status } from '@cc-forge/api/deploy';
-import type { DeploymentStatus } from '@cc-forge/api/deploy';
+import { DEPLOYMENT_STATUSES, is_terminal_deployment_status } from '@canyonos/api/deploy';
+import type { DeploymentStatus } from '@canyonos/api/deploy';
 
 export interface DeployStagePlan {
   readonly status: DeploymentStatus;

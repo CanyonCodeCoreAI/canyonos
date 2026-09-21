@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CloudUploadIcon } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 
-import type { DeployConfig } from '@cc-forge/api/deploy';
+import type { DeployConfig } from '@canyonos/api/deploy';
 
 import { Button } from '@repo/ui/shadcn/button';
 import { apiCall, forgeAuthApi } from '@/api';

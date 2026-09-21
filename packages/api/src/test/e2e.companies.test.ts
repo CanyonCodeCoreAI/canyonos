@@ -12,7 +12,7 @@ const authenticate = async (email: string) => {
 
 describe('companies CRUD', () => {
   test('create, get, and list a company', async () => {
-    const token = await authenticate('companies-crud@cc-forge.test');
+    const token = await authenticate('companies-crud@canyonos.test');
     const auth = { authorization: `Bearer ${token}` };
 
     const created = await api.companies.post({ name: 'Initech' }, { headers: auth });
@@ -34,7 +34,7 @@ describe('companies CRUD', () => {
   });
 
   test('creating a company with a blank name is rejected', async () => {
-    const token = await authenticate('companies-blank@cc-forge.test');
+    const token = await authenticate('companies-blank@canyonos.test');
     const result = await api.companies.post(
       { name: '' },
       { headers: { authorization: `Bearer ${token}` } }
@@ -43,7 +43,7 @@ describe('companies CRUD', () => {
   });
 
   test('fetching a company with a malformed id is rejected', async () => {
-    const token = await authenticate('companies-badid@cc-forge.test');
+    const token = await authenticate('companies-badid@canyonos.test');
     const result = await api.companies['not-a-uuid']!.get({
       $headers: { authorization: `Bearer ${token}` },
     });
@@ -51,7 +51,7 @@ describe('companies CRUD', () => {
   });
 
   test('fetching a missing company returns 404', async () => {
-    const token = await authenticate('companies-missing@cc-forge.test');
+    const token = await authenticate('companies-missing@canyonos.test');
     const result = await api.companies['00000000-0000-0000-0000-000000000000']!.get({
       $headers: { authorization: `Bearer ${token}` },
     });

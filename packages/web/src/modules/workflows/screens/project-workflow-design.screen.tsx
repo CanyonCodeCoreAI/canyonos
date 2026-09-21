@@ -3,13 +3,13 @@ import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { FileMeta } from '@cc-forge/api/projects';
+import type { FileMeta } from '@canyonos/api/projects';
 import type {
   ProjectWorkflowDesign,
   ProjectWorkflowDetail,
   ProjectWorkflowSummary,
   WorkflowStatus,
-} from '@cc-forge/api/workflows';
+} from '@canyonos/api/workflows';
 
 import { FlowCanvas } from '@repo/ui/components/flow';
 import { Legend } from '@repo/ui/components/legend';

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { MetricsWindow } from '@cc-forge/api/metrics';
+import type { MetricsWindow } from '@canyonos/api/metrics';
 
 import { TimeRangeToggle } from '@repo/ui/components/time-range-toggle';
 import { HeaderDockPortal } from '@/modules/core/navigation/header-dock';

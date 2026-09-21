@@ -49,7 +49,7 @@ const UPLOAD = {
 
 describe('project upload and files', () => {
   test('classifies any Python file with "workflow" in its name as a workflow', async () => {
-    const token = await authenticate('project-classification@cc-forge.test');
+    const token = await authenticate('project-classification@canyonos.test');
     const headers = bearer(token);
     const created = await api.projects.post(UPLOAD, { headers });
 
@@ -83,7 +83,7 @@ describe('project upload and files', () => {
   });
 
   test('admits env files and stores their contents', async () => {
-    const token = await authenticate('project-env-files@cc-forge.test');
+    const token = await authenticate('project-env-files@canyonos.test');
     const headers = bearer(token);
     const created = await api.projects.post(
       {
@@ -114,7 +114,7 @@ describe('project upload and files', () => {
   });
 
   test('detects workflow sources by name anywhere and case-insensitively', async () => {
-    const token = await authenticate('project-workflow-name@cc-forge.test');
+    const token = await authenticate('project-workflow-name@canyonos.test');
     const headers = bearer(token);
     const created = await api.projects.post(
       {
@@ -146,11 +146,11 @@ describe('project upload and files', () => {
   });
 
   test('lets a company member and a user from another company list, read, and edit a project', async () => {
-    const owner = await authenticate('project-owner@cc-forge.test');
+    const owner = await authenticate('project-owner@canyonos.test');
     const created = await api.projects.post(UPLOAD, { headers: bearer(owner) });
     const project_id = created.data!.project.id;
     const source_file_id = created.data!.workflows[0]!.source_file_id;
-    const member = await add_company_member(owner, 'project-member@cc-forge.test');
+    const member = await add_company_member(owner, 'project-member@canyonos.test');
 
     const list = await api.projects.get({ $headers: bearer(member) });
     expect(list.data?.some(({ id }) => id === project_id)).toBe(true);
@@ -171,7 +171,7 @@ describe('project upload and files', () => {
     );
     expect(patched.data?.content).toContain('shared');
 
-    const other_company = await authenticate('project-outsider@cc-forge.test');
+    const other_company = await authenticate('project-outsider@canyonos.test');
     expect(
       (await api.projects.get({ $headers: bearer(other_company) })).data?.some(
         ({ id }) => id === project_id
@@ -208,7 +208,7 @@ describe('project upload and files', () => {
   });
 
   test('file PATCH rejects rename, reclassification, and unknown fields', async () => {
-    const token = await authenticate('project-no-rename@cc-forge.test');
+    const token = await authenticate('project-no-rename@canyonos.test');
     const headers = bearer(token);
     const created = await api.projects.post(UPLOAD, { headers });
     const project_id = created.data!.project.id;
@@ -243,7 +243,7 @@ describe('project upload and files', () => {
   });
 
   test('rejects file content containing a NUL byte on create and patch', async () => {
-    const token = await authenticate('project-nul-content@cc-forge.test');
+    const token = await authenticate('project-nul-content@canyonos.test');
     const headers = bearer(token);
     const nul_content = `head${String.fromCharCode(0)}tail`;
 
@@ -269,7 +269,7 @@ describe('project upload and files', () => {
   });
 
   test('validates uploads and file identifiers', async () => {
-    const token = await authenticate('project-validation@cc-forge.test');
+    const token = await authenticate('project-validation@canyonos.test');
     const headers = bearer(token);
     expect((await api.projects.post({ name: 'Empty', files: [] }, { headers })).error?.status).toBe(
       422
@@ -313,7 +313,7 @@ describe('project upload and files', () => {
 
 describe('project deletion', () => {
   test('deletes a project and leaves its spans in place', async () => {
-    const token = await authenticate('project-delete-spans@cc-forge.test');
+    const token = await authenticate('project-delete-spans@canyonos.test');
     const headers = bearer(token);
     const created = await api.projects.post(UPLOAD, { headers });
     await workflows_queue.idle();
@@ -338,7 +338,7 @@ describe('project deletion', () => {
   });
 
   test('deletes a project, deployments, and deployment events', async () => {
-    const token = await authenticate('project-delete@cc-forge.test');
+    const token = await authenticate('project-delete@canyonos.test');
     const headers = bearer(token);
     const created = await api.projects.post(UPLOAD, { headers });
     await workflows_queue.idle();
@@ -391,7 +391,7 @@ describe('project deletion', () => {
   });
 
   test('returns 404 for an unknown project and leaves the known one intact', async () => {
-    const token = await authenticate('project-delete-owner@cc-forge.test');
+    const token = await authenticate('project-delete-owner@canyonos.test');
     const created = await api.projects.post(UPLOAD, { headers: bearer(token) });
     await workflows_queue.idle();
     const project_id = created.data!.project.id;
@@ -406,12 +406,12 @@ describe('project deletion', () => {
   });
 
   test('a user from another company deletes the project', async () => {
-    const token = await authenticate('project-delete-owner2@cc-forge.test');
+    const token = await authenticate('project-delete-owner2@canyonos.test');
     const created = await api.projects.post(UPLOAD, { headers: bearer(token) });
     await workflows_queue.idle();
     const project_id = created.data!.project.id;
 
-    const other_company = await authenticate('project-delete-outsider@cc-forge.test');
+    const other_company = await authenticate('project-delete-outsider@canyonos.test');
     expect(
       (await api.projects[project_id]!.delete({ $headers: bearer(other_company) })).error
     ).toBeNull();
@@ -422,7 +422,7 @@ describe('project deletion', () => {
   });
 
   test('rejects unauthenticated project deletion', async () => {
-    const token = await authenticate('project-delete-unauth@cc-forge.test');
+    const token = await authenticate('project-delete-unauth@canyonos.test');
     const created = await api.projects.post(UPLOAD, { headers: bearer(token) });
     await workflows_queue.idle();
     expect((await api.projects[created.data!.project.id]!.delete()).error?.status as number).toBe(

@@ -6,7 +6,7 @@ import type {
   MetricsKpis,
   MetricsTimeseries,
   MetricsWindow,
-} from '@cc-forge/api/metrics';
+} from '@canyonos/api/metrics';
 
 import { TimeseriesChart } from '@repo/ui/components/charts/timeseries-chart';
 import { Legend } from '@repo/ui/components/legend';

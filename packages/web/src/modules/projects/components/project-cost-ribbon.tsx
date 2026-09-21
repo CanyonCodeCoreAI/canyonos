@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { KpiWindow, MetricsKpis, MetricsWindow } from '@cc-forge/api/metrics';
+import type { KpiWindow, MetricsKpis, MetricsWindow } from '@canyonos/api/metrics';
 
 import { Badge } from '@repo/ui/shadcn/badge';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';

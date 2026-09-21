@@ -6,13 +6,13 @@ import type {
   FileMeta,
   ProjectStatus,
   ProjectSummary,
-} from '@cc-forge/api/projects';
+} from '@canyonos/api/projects';
 import type {
   ProjectWorkflowDesign,
   ProjectWorkflowDetail,
   ProjectWorkflowSummary,
   WorkflowStatus,
-} from '@cc-forge/api/workflows';
+} from '@canyonos/api/workflows';
 
 export const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';
 const apiOrigin = new URL(apiBaseUrl).origin;

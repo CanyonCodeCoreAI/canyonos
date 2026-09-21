@@ -1,4 +1,4 @@
-import type { DeploymentStatus } from '@cc-forge/api/deploy';
+import type { DeploymentStatus } from '@canyonos/api/deploy';
 
 import type { DeployStagePlan } from '@/modules/deploy/deploy.lifecycle';
 

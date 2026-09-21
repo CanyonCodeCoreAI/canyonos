@@ -19,7 +19,7 @@ export const expiredToken = makeToken(nowSeconds - 3600);
 export const setToken = (token: string) =>
   localStorage.setItem(
     'cc-auth-storage',
-    JSON.stringify({ state: { user: { id: '1', email: 'test@cc-forge.test' }, token }, version: 0 })
+    JSON.stringify({ state: { user: { id: '1', email: 'test@canyonos.test' }, token }, version: 0 })
   );
 
 const persistAuth = (session: { user: unknown; token: string }) =>
@@ -30,11 +30,11 @@ export interface AuthSession {
   readonly token: string;
 }
 
-// Authenticate through the real API using the `@cc-forge.test` OTP bypass (code `111111`),
+// Authenticate through the real API using the `@canyonos.test` OTP bypass (code `111111`),
 // then seed the returned token so the app boots already signed in. The token is genuinely
 // signed, so the authenticated layout's `/auth/profile` lookup succeeds on its own — no
 // route stubbing, and the session survives client-side navigation.
-export async function authenticate(page: Page, email = 'e2e@cc-forge.test'): Promise<AuthSession> {
+export async function authenticate(page: Page, email = 'e2e@canyonos.test'): Promise<AuthSession> {
   const response = await page.request.post(`${apiBaseUrl}/auth/verify`, {
     data: { email, code: '111111' },
   });

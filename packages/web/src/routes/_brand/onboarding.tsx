@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
 
-import { UserStatusEnum } from '@cc-forge/api/auth';
+import { UserStatusEnum } from '@canyonos/api/auth';
 
 import { authActions } from '@/modules/auth/auth.store';
 import { OnboardingScreen } from '@/modules/onboarding/screens/OnboardingScreen';

@@ -1,4 +1,4 @@
-import type { MetricsKpis } from '@cc-forge/api/metrics';
+import type { MetricsKpis } from '@canyonos/api/metrics';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';

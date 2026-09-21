@@ -1,7 +1,7 @@
 import { edenTreaty } from '@elysiajs/eden';
 import type { z } from 'zod';
 
-import type { ForgeApi as ForgeApiType } from '@cc-forge/api/client';
+import type { ForgeApi as ForgeApiType } from '@canyonos/api/client';
 
 import { authActions } from '@/modules/auth/auth.store';
 import { webEnv } from '@/modules/core/lib/env';

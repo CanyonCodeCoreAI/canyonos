@@ -18,8 +18,8 @@ import type { LinkProps } from '@tanstack/react-router';
 import type { LucideIcon } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 
-import type { FileMeta, ProjectSummary } from '@cc-forge/api/projects';
-import type { ProjectWorkflowSummary } from '@cc-forge/api/workflows';
+import type { FileMeta, ProjectSummary } from '@canyonos/api/projects';
+import type { ProjectWorkflowSummary } from '@canyonos/api/workflows';
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/shadcn/collapsible';
 import { useSidebar } from '@repo/ui/shadcn/sidebar';

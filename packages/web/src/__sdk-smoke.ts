@@ -1,14 +1,14 @@
 import { edenTreaty } from '@elysiajs/eden';
 
-import type { ForgeApi } from '@cc-forge/api/client';
+import type { ForgeApi } from '@canyonos/api/client';
 import type {
   MetricsAgentDetails,
   MetricsBlocks,
   MetricsFlow,
   MetricsKpis,
   MetricsTimeseries,
-} from '@cc-forge/api/metrics';
-import type { ListRequestsQuery, RequestList, RequestTrace } from '@cc-forge/api/requests';
+} from '@canyonos/api/metrics';
+import type { ListRequestsQuery, RequestList, RequestTrace } from '@canyonos/api/requests';
 
 const _client = edenTreaty<ForgeApi>('http://localhost:3000');
 

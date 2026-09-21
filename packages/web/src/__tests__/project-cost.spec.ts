@@ -10,8 +10,8 @@ import type {
   MetricsKpis,
   MetricsTimeseries,
   MetricsWindow,
-} from '@cc-forge/api/metrics';
-import type { RequestList, RequestTrace } from '@cc-forge/api/requests';
+} from '@canyonos/api/metrics';
+import type { RequestList, RequestTrace } from '@canyonos/api/requests';
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/projects';

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { MetricsBlocks, MetricsWindow } from '@cc-forge/api/metrics';
+import type { MetricsBlocks, MetricsWindow } from '@canyonos/api/metrics';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@repo/ui/shadcn/tabs';

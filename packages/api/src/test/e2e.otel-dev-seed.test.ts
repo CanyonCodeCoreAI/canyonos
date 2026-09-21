@@ -21,7 +21,7 @@ async function seeded_company(email: string) {
 
 describe('otel dev seed', () => {
   test('the seeded project reports its spans through the KPI endpoint', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-kpis@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-kpis@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
 
     const listed = await api.projects.get({ $headers: bearer(token) });
@@ -36,7 +36,7 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun duplicates neither the project nor the telemetry counts', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-rerun@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-rerun@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
 
     const first_projects = await api.projects.get({ $headers: bearer(token) });
@@ -55,7 +55,7 @@ describe('otel dev seed', () => {
   });
 
   test('the queries listing shows several seeded queries, one of them failed', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-list@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-list@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
 
     const listing = await api.projects[project_id]!.requests.get({
@@ -69,7 +69,7 @@ describe('otel dev seed', () => {
   });
 
   test('a seeded query carries its own input and output', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-trace@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-trace@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
     const listing = await api.projects[project_id]!.requests.get({
       $headers: bearer(token),
@@ -87,7 +87,7 @@ describe('otel dev seed', () => {
 
   test('the window reports an unpriced block rather than a free one', async () => {
     const { token, company_id, created_by } = await seeded_company(
-      'otel-seed-unpriced@cc-forge.test'
+      'otel-seed-unpriced@canyonos.test'
     );
     const project_id = await seedDevTelemetry(company_id, created_by);
 
@@ -99,7 +99,7 @@ describe('otel dev seed', () => {
   });
 
   test('the flow reports an agent that answered under more than one id', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-flow@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-flow@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
 
     const flow = await api.projects[project_id]!.metrics.flow.get({
@@ -112,9 +112,9 @@ describe('otel dev seed', () => {
   });
 
   test('another company reads the seeded project and its spans', async () => {
-    const seeded = await seeded_company('otel-seed-owner@cc-forge.test');
+    const seeded = await seeded_company('otel-seed-owner@canyonos.test');
     const project_id = await seedDevTelemetry(seeded.company_id, seeded.created_by);
-    const other = await seeded_company('otel-seed-outsider@cc-forge.test');
+    const other = await seeded_company('otel-seed-outsider@canyonos.test');
 
     const projects = await api.projects.get({ $headers: bearer(other.token) });
     expect(projects.data!.map((project) => project.id)).toContain(project_id);
@@ -134,7 +134,7 @@ describe('otel dev seed', () => {
 
   test('a rerun refreshes the seed spans and leaves every other span untouched', async () => {
     const { token, company_id, created_by } = await seeded_company(
-      'otel-seed-refresh@cc-forge.test'
+      'otel-seed-refresh@canyonos.test'
     );
     const project_id = await seedDevTelemetry(company_id, created_by);
 
@@ -171,7 +171,7 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun restores a seed span field, not only its timestamps', async () => {
-    const { company_id, created_by } = await seeded_company('otel-seed-stale@cc-forge.test');
+    const { company_id, created_by } = await seeded_company('otel-seed-stale@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
     const writer = eq(otelSpans.span_id, `seed-${project_id}-writer-a`);
     const [original] = await db.select().from(otelSpans).where(writer);
@@ -186,7 +186,7 @@ describe('otel dev seed', () => {
   });
 
   test('the seed owns a deterministic version 8 project id', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-id@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-id@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
     expect(await seedDevTelemetry(company_id, created_by)).toBe(project_id);
 
@@ -198,7 +198,7 @@ describe('otel dev seed', () => {
   });
 
   test('a project the user named after the demo stays separate from the seeded one', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-name@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-name@canyonos.test');
     const mine = await api.projects.post(
       {
         name: 'Canyon Code Demo Flow',
@@ -223,7 +223,7 @@ describe('otel dev seed', () => {
   });
 
   test('the fleet overview counts the seeded project', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-fleet@cc-forge.test');
+    const { token, company_id, created_by } = await seeded_company('otel-seed-fleet@canyonos.test');
     const project_id = await seedDevTelemetry(company_id, created_by);
 
     const overview = await api.resources.overview.get({

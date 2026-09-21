@@ -60,7 +60,7 @@ async function seed_foreign_project(label: string): Promise<string> {
   const [company] = await db.insert(companies).values({ name: label }).returning();
   const [user] = await db
     .insert(users)
-    .values({ email: `${label}@cc-forge.test`, name: label, companyId: company!.id })
+    .values({ email: `${label}@canyonos.test`, name: label, companyId: company!.id })
     .returning();
   const [project] = await db
     .insert(projects)

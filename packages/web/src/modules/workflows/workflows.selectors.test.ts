@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { FileMeta } from '@cc-forge/api/projects';
-import type { ProjectWorkflowDesign, ProjectWorkflowSummary } from '@cc-forge/api/workflows';
+import type { FileMeta } from '@canyonos/api/projects';
+import type { ProjectWorkflowDesign, ProjectWorkflowSummary } from '@canyonos/api/workflows';
 
 import { buildWorkflowViewModel, normalizeFileSelection } from './workflows.selectors';
 

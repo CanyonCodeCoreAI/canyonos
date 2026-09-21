@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 
-import type { ProjectWorkflowDetail } from '@cc-forge/api/workflows';
+import type { ProjectWorkflowDetail } from '@canyonos/api/workflows';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';

@@ -24,21 +24,21 @@ jobs:
     env:
       NODE_ENV: test
       CI: true
-      DATABASE_URL: postgres://cc_forge:cc_forge@localhost:5432/cc_forge
+      DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
       JWT_SECRET: test-jwt-secret-not-for-production
-      AUTH_EMAIL_FROM: noreply@cc-forge.test
+      AUTH_EMAIL_FROM: noreply@canyonos.test
 
     services:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: cc_forge
-          POSTGRES_PASSWORD: cc_forge
-          POSTGRES_DB: cc_forge
+          POSTGRES_USER: canyonos
+          POSTGRES_PASSWORD: canyonos
+          POSTGRES_DB: canyonos
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U cc_forge -d cc_forge"
+          --health-cmd "pg_isready -U canyonos -d canyonos"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10

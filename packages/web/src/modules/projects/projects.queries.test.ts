@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, test } from 'bun:test';
 
-import type { FileContent } from '@cc-forge/api/projects';
+import type { FileContent } from '@canyonos/api/projects';
 
 import { DEFAULT_REQUESTS_ORDER } from './projects.metrics';
 import {

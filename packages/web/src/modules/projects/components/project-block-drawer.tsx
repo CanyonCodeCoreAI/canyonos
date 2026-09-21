@@ -9,7 +9,7 @@ import type {
   MetricsAgentDetails,
   MetricsBlocks,
   MetricsWindow,
-} from '@cc-forge/api/metrics';
+} from '@canyonos/api/metrics';
 
 import { CdfChart } from '@repo/ui/components/charts/cdf-chart';
 import { SectionLabel } from '@repo/ui/components/section-label';

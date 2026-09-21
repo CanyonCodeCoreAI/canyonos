@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import type { ResourceOverview } from '@cc-forge/api/resources';
+import type { ResourceOverview } from '@canyonos/api/resources';
 
 import { EntityPill } from '@repo/ui/components/entity-pill';
 import { apiCall, forgeApi } from '@/api';

@@ -2,9 +2,9 @@ import { Link } from '@tanstack/react-router';
 import { ChevronRightIcon, FolderIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import type { DeploymentOverviewItem } from '@cc-forge/api/deploy';
-import type { ProjectSummary } from '@cc-forge/api/projects';
-import type { FleetProject } from '@cc-forge/api/resources';
+import type { DeploymentOverviewItem } from '@canyonos/api/deploy';
+import type { ProjectSummary } from '@canyonos/api/projects';
+import type { FleetProject } from '@canyonos/api/resources';
 
 import { CopyButton } from '@repo/ui/components/copy-button';
 import { isCanyonOsLocalMode } from '@/modules/core/canyonos/local-mode';

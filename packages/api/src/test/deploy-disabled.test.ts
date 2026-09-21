@@ -26,7 +26,7 @@ describe('DEPLOY_WORKER=none refuses to deploy', () => {
   });
 
   test('triggering a deploy answers 409 and writes no deployment row', async () => {
-    const { token, project_id } = await provision('deploy-disabled-trigger@cc-forge.test');
+    const { token, project_id } = await provision('deploy-disabled-trigger@canyonos.test');
 
     const response = await api.projects[project_id]!.deploy.post({}, { headers: bearer(token) });
 
@@ -38,7 +38,7 @@ describe('DEPLOY_WORKER=none refuses to deploy', () => {
   // A deployment that does not exist would normally answer 404, so a 409 here proves the guard runs
   // before the lookup — and therefore before `request_stop` can write.
   test('stopping answers 409 before it looks the deployment up', async () => {
-    const { token, project_id } = await provision('deploy-disabled-stop@cc-forge.test');
+    const { token, project_id } = await provision('deploy-disabled-stop@canyonos.test');
 
     const stop = await api.projects[project_id]!.deploy[crypto.randomUUID()]!.stop.post(undefined, {
       headers: bearer(token),
@@ -49,7 +49,7 @@ describe('DEPLOY_WORKER=none refuses to deploy', () => {
   });
 
   test('an unauthenticated deploy is still rejected as unauthorized', async () => {
-    const { project_id } = await provision('deploy-disabled-anon@cc-forge.test');
+    const { project_id } = await provision('deploy-disabled-anon@canyonos.test');
 
     const response = await api.projects[project_id]!.deploy.post({});
 

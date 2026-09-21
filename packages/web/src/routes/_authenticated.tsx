@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import { createFileRoute, Outlet } from '@tanstack/react-router';
 
-import type { User } from '@cc-forge/api/auth';
+import type { User } from '@canyonos/api/auth';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { authActions, useAuthStore } from '@/modules/auth/auth.store';

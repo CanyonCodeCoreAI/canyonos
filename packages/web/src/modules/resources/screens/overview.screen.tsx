@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { FleetOverview } from '@cc-forge/api/resources';
+import type { FleetOverview } from '@canyonos/api/resources';
 
 import { TimeRangeToggle } from '@repo/ui/components/time-range-toggle';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';

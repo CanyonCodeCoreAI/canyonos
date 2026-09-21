@@ -135,7 +135,7 @@ async function create_unbacked_workflow_source(email: string) {
 describe('project-owned workflows', () => {
   test('creates, queues, lists, and designs multiple workflows with real child identities', async () => {
     const generated_sources: string[] = [];
-    const token = await authenticate('workflow-multi@cc-forge.test');
+    const token = await authenticate('workflow-multi@canyonos.test');
     set_workflow_generation_mock(async (input) => {
       generated_sources.push(input.source_path);
       return successful_generation(input);
@@ -196,7 +196,7 @@ describe('project-owned workflows', () => {
   });
 
   test('generates a fresh design for every upload, including demo-named projects', async () => {
-    const token = await authenticate('workflow-demo-cache@cc-forge.test');
+    const token = await authenticate('workflow-demo-cache@canyonos.test');
     const headers = bearer(token);
 
     for (const demo_name of ['portfolio', 'text2sql']) {
@@ -248,7 +248,7 @@ describe('project-owned workflows', () => {
   });
 
   test('requires the correct project parent for workflow detail and design', async () => {
-    const first = await create_multi_project('workflow-parent-a@cc-forge.test');
+    const first = await create_multi_project('workflow-parent-a@canyonos.test');
     const second = await api.projects.post(
       { ...MULTI_UPLOAD, name: 'Same Company Sibling' },
       { headers: bearer(first.token) }
@@ -267,10 +267,10 @@ describe('project-owned workflows', () => {
   });
 
   test('opens workflow, status, and stats to a teammate and to another company', async () => {
-    const owner = await create_multi_project('workflow-company-owner@cc-forge.test');
+    const owner = await create_multi_project('workflow-company-owner@canyonos.test');
     const project_id = owner.result.project.id;
     const workflow_id = owner.result.workflows[0]!.id;
-    const member = await add_company_member(owner.token, 'workflow-company-member@cc-forge.test');
+    const member = await add_company_member(owner.token, 'workflow-company-member@canyonos.test');
 
     expect(
       (
@@ -296,7 +296,7 @@ describe('project-owned workflows', () => {
       (await api.projects[project_id]!.stats.get({ $headers: bearer(member) })).data?.project_id
     ).toBe(project_id);
 
-    const other_company = await authenticate('workflow-company-outsider@cc-forge.test');
+    const other_company = await authenticate('workflow-company-outsider@canyonos.test');
     expect(
       (
         await api.projects[project_id]!.workflows[workflow_id]!.get({
@@ -325,7 +325,7 @@ describe('project-owned workflows', () => {
   });
 
   test('applies zero, pending, stale, failed, and ready project-status precedence', async () => {
-    const token = await authenticate('workflow-status@cc-forge.test');
+    const token = await authenticate('workflow-status@canyonos.test');
     const headers = bearer(token);
     set_workflow_generation_mock(successful_generation);
     const empty = await api.projects.post(
@@ -388,7 +388,7 @@ describe('project-owned workflows', () => {
   });
 
   test('a failed generation with no design is never reported ready', async () => {
-    const token = await authenticate('workflow-missing-design@cc-forge.test');
+    const token = await authenticate('workflow-missing-design@canyonos.test');
     const headers = bearer(token);
     set_workflow_generation_mock(async () => ({
       status: 'failed',
@@ -427,7 +427,7 @@ describe('project-owned workflows', () => {
   });
 
   test('an unexpected initial generation throw finalizes the claimed revision as failed', async () => {
-    const token = await authenticate('workflow-initial-throw@cc-forge.test');
+    const token = await authenticate('workflow-initial-throw@canyonos.test');
     const headers = bearer(token);
     set_workflow_generation_mock(async () => {
       throw new Error('initial generator crash');
@@ -462,7 +462,7 @@ describe('project-owned workflows', () => {
   });
 
   test('an unexpected regeneration throw preserves the last-good design and fails the project', async () => {
-    const token = await authenticate('workflow-regeneration-throw@cc-forge.test');
+    const token = await authenticate('workflow-regeneration-throw@canyonos.test');
     const headers = bearer(token);
     set_workflow_generation_mock(successful_generation);
     const created = await api.projects.post(
@@ -511,7 +511,7 @@ describe('project-owned workflows', () => {
   });
 
   test('a concurrent regenerate never steals a healthy in-flight generation', async () => {
-    const { token, result } = await create_multi_project('workflow-inflight-noop@cc-forge.test');
+    const { token, result } = await create_multi_project('workflow-inflight-noop@canyonos.test');
     const headers = bearer(token);
     const project_id = result.project.id;
     const workflow = result.workflows[0]!;
@@ -564,7 +564,7 @@ describe('project-owned workflows', () => {
   });
 
   test('an in-flight generation that throws finalizes FAILED despite a concurrent regenerate', async () => {
-    const token = await authenticate('workflow-inflight-throw@cc-forge.test');
+    const token = await authenticate('workflow-inflight-throw@canyonos.test');
     const headers = bearer(token);
     set_workflow_generation_mock(successful_generation);
     const created = await api.projects.post(
@@ -618,7 +618,7 @@ describe('project-owned workflows', () => {
   });
 
   test('an older completion cannot consume a stale signal created after its claim', async () => {
-    const { token, result } = await create_multi_project('workflow-revision-stale@cc-forge.test');
+    const { token, result } = await create_multi_project('workflow-revision-stale@canyonos.test');
     const headers = bearer(token);
     const project_id = result.project.id;
     const workflow = result.workflows[0]!;
@@ -666,7 +666,7 @@ describe('project-owned workflows', () => {
   });
 
   test('fans shared edits out, preserves workflow identity, and removes a deleted source workflow', async () => {
-    const { token, result } = await create_multi_project('workflow-lifecycle@cc-forge.test');
+    const { token, result } = await create_multi_project('workflow-lifecycle@canyonos.test');
     const headers = bearer(token);
     const project_id = result.project.id;
     const original_ids = result.workflows.map(({ id }) => id).sort();
@@ -744,8 +744,8 @@ describe('project-owned workflows', () => {
   });
 
   test('enforces workflow source kind, same-project linkage, uniqueness, and reclassification in PostgreSQL', async () => {
-    const first = await create_multi_project('workflow-db-a@cc-forge.test');
-    const second = await create_multi_project('workflow-db-b@cc-forge.test');
+    const first = await create_multi_project('workflow-db-a@canyonos.test');
+    const second = await create_multi_project('workflow-db-b@canyonos.test');
     const first_project_id = first.result.project.id;
     const first_workflow = first.result.workflows[0]!;
     const first_files = await api.projects[first_project_id]!.files.get({
@@ -804,7 +804,7 @@ describe('project-owned workflows', () => {
 
   test('workflow insertion wins the source reclassification race', async () => {
     const { project_id, source_file_id } = await create_unbacked_workflow_source(
-      'workflow-race-insert-first@cc-forge.test'
+      'workflow-race-insert-first@canyonos.test'
     );
     const insert_client = postgres(config.database.url, { max: 1 });
     const update_client = postgres(config.database.url, { max: 1 });
@@ -850,7 +850,7 @@ describe('project-owned workflows', () => {
 
   test('source reclassification wins the workflow insertion race', async () => {
     const { project_id, source_file_id } = await create_unbacked_workflow_source(
-      'workflow-race-reclassify-first@cc-forge.test'
+      'workflow-race-reclassify-first@canyonos.test'
     );
     const update_client = postgres(config.database.url, { max: 1 });
     const insert_client = postgres(config.database.url, { max: 1 });
@@ -895,7 +895,7 @@ describe('project-owned workflows', () => {
   });
 
   test('does not expose top-level workflow status, stats, or design routes', async () => {
-    const token = await authenticate('workflow-old-routes@cc-forge.test');
+    const token = await authenticate('workflow-old-routes@canyonos.test');
     const headers = bearer(token);
     const old_paths = [
       '/workflows/00000000-0000-4000-8000-000000000000/status',
@@ -909,7 +909,7 @@ describe('project-owned workflows', () => {
   });
 
   test('validates nested project and workflow identifiers and authentication', async () => {
-    const { token, result } = await create_multi_project('workflow-validation@cc-forge.test');
+    const { token, result } = await create_multi_project('workflow-validation@canyonos.test');
     const headers = bearer(token);
     expect(
       (await api.projects['not-a-uuid']!.workflows.get({ $headers: headers })).error

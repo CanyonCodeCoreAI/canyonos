@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { FileMeta } from '@cc-forge/api/projects';
+import type { FileMeta } from '@canyonos/api/projects';
 
 import { buildFileTree } from './projects.file-tree';
 

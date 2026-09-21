@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import type { ProjectStats } from '@cc-forge/api/projects';
+import type { ProjectStats } from '@canyonos/api/projects';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { apiCall, forgeAuthApi } from '@/api';

@@ -3,9 +3,9 @@ import { Link } from '@tanstack/react-router';
 import { ArrowUpRightIcon, WorkflowIcon } from 'lucide-react';
 import { useReducer, useState } from 'react';
 
-import type { DistributionMetric, MetricsWindow } from '@cc-forge/api/metrics';
-import type { ProjectSummary } from '@cc-forge/api/projects';
-import type { ProjectWorkflowSummary } from '@cc-forge/api/workflows';
+import type { DistributionMetric, MetricsWindow } from '@canyonos/api/metrics';
+import type { ProjectSummary } from '@canyonos/api/projects';
+import type { ProjectWorkflowSummary } from '@canyonos/api/workflows';
 
 import { Badge } from '@repo/ui/shadcn/badge';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';

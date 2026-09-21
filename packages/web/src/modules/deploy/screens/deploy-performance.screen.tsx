@@ -7,7 +7,7 @@ import type {
   ProjectWorkflowDesign,
   ProjectWorkflowSummary,
   WorkflowStatus,
-} from '@cc-forge/api/workflows';
+} from '@canyonos/api/workflows';
 
 import { Button } from '@repo/ui/shadcn/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/shadcn/collapsible';

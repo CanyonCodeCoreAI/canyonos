@@ -1,4 +1,4 @@
-import type { AuthToken } from '@cc-forge/api/auth';
+import type { AuthToken } from '@canyonos/api/auth';
 
 import { apiCall, forgePublicApi } from '@/api';
 import { useAuthStore } from '@/modules/auth/auth.store';

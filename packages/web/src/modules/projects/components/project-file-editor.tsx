@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDebouncedCallback } from 'use-debounce';
 
-import type { FileContent } from '@cc-forge/api/projects';
+import type { FileContent } from '@canyonos/api/projects';
 
 import { CodeEditor } from '@repo/ui/components/editor';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';

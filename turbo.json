@@ -32,7 +32,7 @@
     },
     "lint": {},
     "typecheck": {},
-    "@cc-forge/api#typecheck": {
+    "@canyonos/api#typecheck": {
       "dependsOn": ["build"]
     },
     "web#build": {

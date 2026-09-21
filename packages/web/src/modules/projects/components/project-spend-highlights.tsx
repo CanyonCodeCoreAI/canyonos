@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 
-import type { MetricsBlock, MetricsBlocks, MetricsWindow } from '@cc-forge/api/metrics';
-import type { RequestList, RequestListItem } from '@cc-forge/api/requests';
+import type { MetricsBlock, MetricsBlocks, MetricsWindow } from '@canyonos/api/metrics';
+import type { RequestList, RequestListItem } from '@canyonos/api/requests';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { cn } from '@repo/ui/utils';

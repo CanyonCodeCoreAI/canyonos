@@ -1,4 +1,4 @@
-import type { DeployPreview, DeployStopAccepted, ProjectDeploySummary } from '@cc-forge/api/deploy';
+import type { DeployPreview, DeployStopAccepted, ProjectDeploySummary } from '@canyonos/api/deploy';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { projectQueryKeys } from '@/modules/projects/projects.query-cache';

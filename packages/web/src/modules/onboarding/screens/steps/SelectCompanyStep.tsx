@@ -3,8 +3,8 @@ import { useSelector } from '@xstate/react';
 import { Building2, Lock } from 'lucide-react';
 import { Controller, useForm } from 'react-hook-form';
 
-import { CompanySelectionSchema } from '@cc-forge/api/onboarding';
-import type { CompanySelectionInput } from '@cc-forge/api/onboarding';
+import { CompanySelectionSchema } from '@canyonos/api/onboarding';
+import type { CompanySelectionInput } from '@canyonos/api/onboarding';
 
 import { BackButton } from '@repo/ui/components/back-button';
 import { Button } from '@repo/ui/shadcn/button';

@@ -5,6 +5,6 @@ export default defineConfig({
   out: './src/db/migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'postgres://cc_forge:cc_forge@localhost:5432/cc_forge',
+    url: process.env.DATABASE_URL ?? 'postgres://canyonos:canyonos@localhost:5432/canyonos',
   },
 });

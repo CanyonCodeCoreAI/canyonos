@@ -98,7 +98,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('derives per-project cost, requests and tokens from project spans', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-owner@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-owner@canyonos.test');
 
     const alpha = await insert_project(company_id!, user_id, 'Alpha', 3 * DAY_MS);
     const bravo = await insert_project(company_id!, user_id, 'Bravo', 2 * DAY_MS);
@@ -161,7 +161,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('two spans in one trace count as one request', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-one-trace@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-one-trace@canyonos.test');
     const project = await insert_project(company_id!, user_id, 'OneTrace', DAY_MS);
 
     await insert_span(project, {
@@ -192,7 +192,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('a span with no canyon.project.id is invisible', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-orphan@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-orphan@canyonos.test');
     const project = await insert_project(company_id!, user_id, 'Owned', DAY_MS);
 
     await insert_span(project, {
@@ -223,7 +223,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('one trace id in two projects stays isolated', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-shared@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-shared@canyonos.test');
     const first = await insert_project(company_id!, user_id, 'First', 2 * DAY_MS);
     const second = await insert_project(company_id!, user_id, 'Second', DAY_MS);
 
@@ -256,8 +256,8 @@ describe('GET /resources/overview', () => {
   });
 
   test("another company's project appears with its own totals", async () => {
-    const mine = await authed_company('fleet-mine@cc-forge.test');
-    const theirs = await authed_company('fleet-theirs@cc-forge.test');
+    const mine = await authed_company('fleet-mine@canyonos.test');
+    const theirs = await authed_company('fleet-theirs@canyonos.test');
     const my_project = await insert_project(mine.company_id!, mine.user_id, 'Mine', DAY_MS);
     const their_project = await insert_project(
       theirs.company_id!,
@@ -290,7 +290,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('a narrow window excludes older spans', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-window@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-window@canyonos.test');
     const project = await insert_project(company_id!, user_id, 'Windowed', 40 * DAY_MS);
 
     await insert_span(project, {
@@ -322,7 +322,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('an ERROR status span drives the error rate', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-errors@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-errors@canyonos.test');
     const project = await insert_project(company_id!, user_id, 'Erroring', DAY_MS);
 
     await insert_span(project, {
@@ -357,7 +357,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('tokens sum input and output, and latency averages the span durations', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-derive@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-derive@canyonos.test');
     const project = await insert_project(company_id!, user_id, 'Derived', DAY_MS);
 
     await insert_span(project, {
@@ -387,7 +387,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('attributes of the wrong type and invalid counts are absent, not a failure', async () => {
-    const { token, company_id, user_id } = await authed_company('fleet-malformed@cc-forge.test');
+    const { token, company_id, user_id } = await authed_company('fleet-malformed@canyonos.test');
     const project = await insert_project(company_id!, user_id, 'Malformed', DAY_MS);
 
     const start = nanos_ago(2 * HOUR_MS);
@@ -426,7 +426,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('a user with no company sees the same fleet as everyone else', async () => {
-    const owner = await authed_company('fleet-shared-owner@cc-forge.test');
+    const owner = await authed_company('fleet-shared-owner@canyonos.test');
     const owned = await insert_project(owner.company_id!, owner.user_id, 'Shared Fleet', DAY_MS);
     await insert_span(owned, {
       span_id: 'shared-fleet-s',
@@ -437,7 +437,7 @@ describe('GET /resources/overview', () => {
       cost: 0.2,
     });
 
-    const { token, company_id } = await authed_company('fleet-no-company@cc-forge.test', false);
+    const { token, company_id } = await authed_company('fleet-no-company@canyonos.test', false);
     expect(company_id).toBeNull();
 
     const res = await overview(token, '30d');

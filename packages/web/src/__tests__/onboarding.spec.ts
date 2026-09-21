@@ -7,11 +7,11 @@ const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // The web E2E runs against the persistent dev database, so users and companies
 // survive across runs. Everything the specs touch is minted per-run: a fresh
-// `@cc-forge.test` email starts as an ONBOARDING user (a reused one would already
+// `@canyonos.test` email starts as an ONBOARDING user (a reused one would already
 // be ACTIVE and get redirected away from /onboarding), and each company name is
 // unique so it is unambiguous in the select.
 const unique = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-const uniqueEmail = (prefix: string) => `${prefix}-${unique()}@cc-forge.test`;
+const uniqueEmail = (prefix: string) => `${prefix}-${unique()}@canyonos.test`;
 const uniqueCompanyName = (prefix: string) => `${prefix} ${unique()}`;
 
 // Mint a genuine bearer token through the OTP bypass (code `111111`), then seed a

@@ -8,7 +8,7 @@ import {
   UserIcon,
 } from 'lucide-react';
 
-import type { Company } from '@cc-forge/api/companies';
+import type { Company } from '@canyonos/api/companies';
 
 import { Avatar, AvatarFallback } from '@repo/ui/shadcn/avatar';
 import {

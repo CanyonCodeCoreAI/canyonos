@@ -1,16 +1,16 @@
-name: cc-forge
+name: canyonos
 
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: cc-forge-postgres
+    container_name: canyonos-postgres
     restart: unless-stopped
     ports:
       - '${POSTGRES_HOST_PORT:-5432}:5432'
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-cc_forge}
-      POSTGRES_USER: ${POSTGRES_USER:-cc_forge}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cc_forge}
+      POSTGRES_DB: ${POSTGRES_DB:-canyonos}
+      POSTGRES_USER: ${POSTGRES_USER:-canyonos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canyonos}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +21,7 @@ services:
 
   mailpit:
     image: axllent/mailpit:latest
-    container_name: cc-forge-mailpit
+    container_name: canyonos-mailpit
     restart: unless-stopped
     ports:
       - '${MAILPIT_SMTP_PORT:-1025}:1025'
@@ -33,4 +33,4 @@ services:
 
 volumes:
   postgres-data:
-    name: ${POSTGRES_VOLUME:-cc-forge-postgres-data}
+    name: ${POSTGRES_VOLUME:-canyonos-postgres-data}

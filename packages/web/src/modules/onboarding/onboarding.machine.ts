@@ -1,9 +1,9 @@
 import { assign, fromPromise, setup } from 'xstate';
 import type { ActorRefFrom } from 'xstate';
 
-import { CompanyNameSchema, CompanySelectionSchema } from '@cc-forge/api/onboarding';
-import type { User } from '@cc-forge/api/auth';
-import type { Company } from '@cc-forge/api/companies';
+import { CompanyNameSchema, CompanySelectionSchema } from '@canyonos/api/onboarding';
+import type { User } from '@canyonos/api/auth';
+import type { Company } from '@canyonos/api/companies';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { authActions, useAuthStore } from '@/modules/auth/auth.store';

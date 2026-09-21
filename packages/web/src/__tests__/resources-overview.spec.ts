@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import type { FleetOverview } from '@cc-forge/api/resources';
+import type { FleetOverview } from '@canyonos/api/resources';
 
 import { setToken, validToken } from './helpers/auth';
 
@@ -125,7 +125,7 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ id: '1', email: 'test@cc-forge.test' }),
+      body: JSON.stringify({ id: '1', email: 'test@canyonos.test' }),
     })
   );
   await page.addInitScript(setToken, validToken);

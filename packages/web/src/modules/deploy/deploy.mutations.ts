@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 
-import type { ProjectDeployAccepted } from '@cc-forge/api/deploy';
+import type { ProjectDeployAccepted } from '@canyonos/api/deploy';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { projectQueryKeys } from '@/modules/projects/projects.query-cache';

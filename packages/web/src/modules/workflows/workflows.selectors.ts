@@ -1,9 +1,9 @@
-import type { FileMeta } from '@cc-forge/api/projects';
+import type { FileMeta } from '@canyonos/api/projects';
 import type {
   ProjectWorkflowDesign,
   ProjectWorkflowSummary,
   WorkflowStat,
-} from '@cc-forge/api/workflows';
+} from '@canyonos/api/workflows';
 
 import type { LegendItem } from '@repo/ui/components/legend';
 

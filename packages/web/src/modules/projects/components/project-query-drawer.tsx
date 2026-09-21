@@ -3,7 +3,7 @@ import { ChevronRightIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { RequestListItem, RequestTrace, RequestTraceBlock } from '@cc-forge/api/requests';
+import type { RequestListItem, RequestTrace, RequestTraceBlock } from '@canyonos/api/requests';
 
 import { CopyButton } from '@repo/ui/components/copy-button';
 import { SectionLabel } from '@repo/ui/components/section-label';

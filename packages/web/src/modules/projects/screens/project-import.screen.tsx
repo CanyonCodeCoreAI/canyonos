@@ -3,12 +3,12 @@ import { useNavigate } from '@tanstack/react-router';
 import { BotIcon, FolderUpIcon, PlusIcon, UploadCloudIcon, WorkflowIcon } from 'lucide-react';
 import { useRef, useState } from 'react';
 
-import { languageForPath } from '@cc-forge/api/projects';
+import { languageForPath } from '@canyonos/api/projects';
 import type {
   CreateProjectResult,
   FileComponentKind,
   ProjectSummary,
-} from '@cc-forge/api/projects';
+} from '@canyonos/api/projects';
 
 import { CodeEditor } from '@repo/ui/components/editor';
 import { Notice, NoticeCode } from '@repo/ui/components/notice';

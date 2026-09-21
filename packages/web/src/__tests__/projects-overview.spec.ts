@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import type { DeploymentOverviewItem } from '@cc-forge/api/deploy';
-import type { ProjectSummary } from '@cc-forge/api/projects';
-import type { FleetProject } from '@cc-forge/api/resources';
+import type { DeploymentOverviewItem } from '@canyonos/api/deploy';
+import type { ProjectSummary } from '@canyonos/api/projects';
+import type { FleetProject } from '@canyonos/api/resources';
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, fulfillJson } from './helpers/projects';

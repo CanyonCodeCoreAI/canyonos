@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowRightIcon, CloudUploadIcon } from 'lucide-react';
 
-import type { DeploymentOverviewItem } from '@cc-forge/api/deploy';
+import type { DeploymentOverviewItem } from '@canyonos/api/deploy';
 
 import { SectionLabel } from '@repo/ui/components/section-label';
 import { Badge } from '@repo/ui/shadcn/badge';

@@ -1,7 +1,7 @@
 import { shallowEqual, useSelector } from '@xstate/react';
 import { CheckIcon } from 'lucide-react';
 
-import type { DeployConfig } from '@cc-forge/api/deploy';
+import type { DeployConfig } from '@canyonos/api/deploy';
 
 import { SectionLabel } from '@repo/ui/components/section-label';
 import { Card } from '@repo/ui/shadcn/card';

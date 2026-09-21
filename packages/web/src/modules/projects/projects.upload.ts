@@ -7,7 +7,7 @@ import {
   MAX_FILES,
   MAX_TOTAL_BYTES,
   TEXT_EXTENSIONS,
-} from '@cc-forge/api/projects';
+} from '@canyonos/api/projects';
 
 export interface ParsedFile {
   readonly path: string;

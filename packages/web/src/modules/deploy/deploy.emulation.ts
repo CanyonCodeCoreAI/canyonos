@@ -1,4 +1,4 @@
-import type { ProjectWorkflowDesign, WorkflowFlowNode } from '@cc-forge/api/workflows';
+import type { ProjectWorkflowDesign, WorkflowFlowNode } from '@canyonos/api/workflows';
 
 // Relative, like the other sibling imports in this module: the `@/` alias resolves through the
 // tsconfig only, and this file has to load under `bun test` as well.

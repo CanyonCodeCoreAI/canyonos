@@ -1,13 +1,13 @@
 import { assign, fromCallback, fromPromise, setup } from 'xstate';
 import type { ActorRefFrom, SnapshotFrom } from 'xstate';
 
-import { DEPLOYMENT_STATUSES } from '@cc-forge/api/deploy';
+import { DEPLOYMENT_STATUSES } from '@canyonos/api/deploy';
 import type {
   DeployConfig,
   DeploymentInfo,
   DeploymentStatus,
   DeployStopCapability,
-} from '@cc-forge/api/deploy';
+} from '@canyonos/api/deploy';
 
 import { toast } from '@repo/ui/shadcn/sonner';
 import { apiCall, ApiResponseError, forgeAuthApi } from '@/api';

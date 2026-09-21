@@ -52,8 +52,8 @@ describe('AUTH_MODE=email_otp signs in over real SMTP', () => {
     expect(config.auth.mode).toBe('email_otp');
   });
 
-  test('the fixed code 111111 is rejected for an @cc-forge.test address', async () => {
-    const email = 'authon-reject@cc-forge.test';
+  test('the fixed code 111111 is rejected for an @canyonos.test address', async () => {
+    const email = 'authon-reject@canyonos.test';
     const challenge = await api.auth.challenge.post({ email });
     expect(challenge.error).toBeNull();
 
@@ -63,7 +63,7 @@ describe('AUTH_MODE=email_otp signs in over real SMTP', () => {
   });
 
   test('a real OTP delivered over SMTP signs in', async () => {
-    const email = `authon-real-otp-${RUN_ID}@cc-forge.test`;
+    const email = `authon-real-otp-${RUN_ID}@canyonos.test`;
     const challenge = await api.auth.challenge.post({ email });
     expect(challenge.error).toBeNull();
 
@@ -111,8 +111,8 @@ describe('AUTH_MODE=email_otp signs in over real SMTP', () => {
     const project_id = '66666666-6666-4666-8666-666666666666';
     expect(await ensure_canyonos_project(project_id)).toBe(true);
 
-    const first = await sign_in_with_mailed_code(`authon-reader-${RUN_ID}@cc-forge.test`);
-    const second = await sign_in_with_mailed_code(`authon-second-reader-${RUN_ID}@cc-forge.test`);
+    const first = await sign_in_with_mailed_code(`authon-reader-${RUN_ID}@canyonos.test`);
+    const second = await sign_in_with_mailed_code(`authon-second-reader-${RUN_ID}@canyonos.test`);
 
     for (const token of [first, second]) {
       const listed = await api.projects.get({ $headers: bearer(token) });

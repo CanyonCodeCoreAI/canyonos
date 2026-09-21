@@ -4,7 +4,7 @@ import { Navigate, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 
-import type { DeployConfig } from '@cc-forge/api/deploy';
+import type { DeployConfig } from '@canyonos/api/deploy';
 
 import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';

@@ -1,7 +1,7 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
-import type { DistributionMetric, MetricsWindow } from '@cc-forge/api/metrics';
-import type { FileContent } from '@cc-forge/api/projects';
+import type { DistributionMetric, MetricsWindow } from '@canyonos/api/metrics';
+import type { FileContent } from '@canyonos/api/projects';
 
 import type { RequestListFilters, RequestsPage } from './projects.metrics';
 

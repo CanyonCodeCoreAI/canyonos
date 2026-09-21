@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { ActivityIcon, CloudUploadIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import type { DeploymentInfo } from '@cc-forge/api/deploy';
+import type { DeploymentInfo } from '@canyonos/api/deploy';
 
 import { Button } from '@repo/ui/shadcn/button';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';

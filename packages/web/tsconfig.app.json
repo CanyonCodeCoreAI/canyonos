@@ -1,5 +1,5 @@
 {
-  "extends": "@cc-forge/tsconfig/react-library.json",
+  "extends": "@canyonos/tsconfig/react-library.json",
   "compilerOptions": {
     "paths": { "@/*": ["./src/*"] },
     "types": ["vite/client"],
