@@ -6,8 +6,19 @@
   },
   "tasks": {
     "build": {
-      "cache": true
+      "cache": true,
+      "outputs": ["dist/**"]
     },
+    "lint": {},
+    "typecheck": {},
+    "@canyonos/api#typecheck": {
+      "dependsOn": ["build"]
+    },
+    "format": {
+      "cache": false
+    },
+    "format:check": {},
+    "test": {},
     "canyonos#build:binary": {
       "cache": false,
       "command": [
