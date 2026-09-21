@@ -27,7 +27,9 @@ def project(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(dashboard_stack.shutil, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(dashboard_stack, "find_free_port", lambda start, max_attempts=50: start)
+    monkeypatch.setattr(
+        dashboard_stack, "find_free_port", lambda start, max_attempts=50: start
+    )
     return tmp_path
 
 
