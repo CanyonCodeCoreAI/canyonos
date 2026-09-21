@@ -119,12 +119,18 @@ describe('otlp log ingest', () => {
     expect(rows[0]?.observed_time_unix_nano).toBe(OBSERVED_UNIX_NANO);
   });
 
-  test('a record outside any span keeps null trace and span ids', async () => {
+  test('a record outside any span keeps null trace and span ids, zero-filled or absent', async () => {
     const response = await post_otlp(
       '/v1/logs',
       encode_logs_export(
         logs_export(UNCORRELATED_SERVICE, SCOPE, [
           { timeUnixNano: TIME_TEXT, body: { stringValue: 'agent level' } },
+          {
+            timeUnixNano: TIME_TEXT,
+            body: { stringValue: 'zero ids' },
+            traceId: new Uint8Array(16),
+            spanId: new Uint8Array(8),
+          },
         ])
       )
     );
@@ -132,14 +138,16 @@ describe('otlp log ingest', () => {
     expect(response.status).toBe(200);
 
     const rows = await stored_logs(UNCORRELATED_SERVICE);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      trace_id: null,
-      span_id: null,
-      severity_number: null,
-      severity_text: null,
-      attributes: {},
-    });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        trace_id: null,
+        span_id: null,
+        severity_number: null,
+        severity_text: null,
+        attributes: {},
+      });
+    }
   });
 
   test('an empty export is accepted with a zero-length protobuf body', async () => {

@@ -37,8 +37,10 @@ const PRODUCER_PROJECT_ID_ATTRIBUTE = 'project_id';
 const INPUT_ATTRIBUTE = 'langfuse.observation.input';
 const OUTPUT_ATTRIBUTE = 'langfuse.observation.output';
 
-// Some producers send eight zero bytes instead of an empty field for a root span's parent.
-const ABSENT_PARENT_SPAN_ID = '0'.repeat(16);
+// Some producers send all-zero bytes instead of an empty field: for a root span's parent, and
+// for a log record written outside any span.
+const ABSENT_SPAN_ID = '0'.repeat(16);
+const ABSENT_TRACE_ID = '0'.repeat(32);
 
 const hex = (bytes: Uint8Array | undefined): string =>
   bytes && bytes.length > 0 ? Buffer.from(bytes).toString('hex') : '';
@@ -104,8 +106,7 @@ export const map_span = (span: OtlpSpan): SpanRow | null => {
   return {
     span_id,
     trace_id,
-    parent_span_id:
-      parent_span_id && parent_span_id !== ABSENT_PARENT_SPAN_ID ? parent_span_id : null,
+    parent_span_id: parent_span_id && parent_span_id !== ABSENT_SPAN_ID ? parent_span_id : null,
     name: span.name ?? '',
     kind: SPAN_KIND_NAMES[span.kind ?? 0] ?? SPAN_KIND_NAMES[0],
     start_time_unix_nano: BigInt(span.startTimeUnixNano ?? '0'),
@@ -299,8 +300,8 @@ export const map_log_record = (record: OtlpLogRecord, context: ScopeContext): Lo
     severity_number: record.severityNumber ?? null,
     severity_text: record.severityText ?? null,
     body: log_body_text(record.body),
-    trace_id: trace_id || null,
-    span_id: span_id || null,
+    trace_id: trace_id && trace_id !== ABSENT_TRACE_ID ? trace_id : null,
+    span_id: span_id && span_id !== ABSENT_SPAN_ID ? span_id : null,
     attributes: flatten_attributes(record.attributes),
   };
 };
