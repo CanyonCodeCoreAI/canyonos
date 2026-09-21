@@ -58,3 +58,10 @@ docs/
 .harness/
 .playwright-mcp/
 
+
+# Committed example env files stay tracked despite the .env.* rule above.
+!.env.*.example
+packages/api/data/*.db
+packages/api/data/*.db-*
+packages/api/data/blobs/
+test-results/
