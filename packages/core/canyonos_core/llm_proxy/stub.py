@@ -85,8 +85,11 @@ _STUB_EMBEDDING_DIMS = 1536
 def _openai_embedding_stub(body):
     """A minimal embeddings response, one canned vector per requested input."""
     try:
-        count = len(json.loads(body or b"{}").get("input") or [None])
-    except (ValueError, TypeError):
+        raw_input = json.loads(body or b"{}").get("input")
+        if isinstance(raw_input, str):
+            raw_input = [raw_input]
+        count = len(raw_input or [None])
+    except (ValueError, TypeError, AttributeError):
         count = 1
     return _json_response(
         {

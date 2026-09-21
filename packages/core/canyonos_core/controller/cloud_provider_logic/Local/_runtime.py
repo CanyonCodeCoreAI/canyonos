@@ -98,6 +98,14 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 "automatically -- free it or change `api_port` in the workflow's config."
             )
 
+    if ctrl_type == "database" and _is_local_host(host):
+        db_port = int(spec.get("db_port", 5432))
+        if _port_bound(db_port):
+            raise RuntimeError(
+                f"db_port {db_port} is already in use and can't be reassigned "
+                "automatically -- free it or change `db_port` in the database's config."
+            )
+
     for attempt in range(MAX_PORT_ATTEMPTS):
         cmd = [
             "docker",

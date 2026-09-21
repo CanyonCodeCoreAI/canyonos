@@ -174,8 +174,13 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             redis_port=redis_port,
             agent_id=agent_id,
         )
+        health_port = (
+            spec.get("db_port", 5432)
+            if spec.get("type") == "database"
+            else CONTAINER_PORT
+        )
         _check_controller_health(
-            f"{host}:{CONTAINER_PORT}",
+            f"{host}:{health_port}",
             timeout=cfg.get("controller_health_timeout", 180),
         )
         instance = {
@@ -196,9 +201,10 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         if spec.get("type") == "workflow":
             instance["api_port"] = str(spec.get("api_port", 8080))
         elif spec.get("type") == "database":
+            db_port = str(spec.get("db_port", 5432))
             instance["container_port"] = "5432"
-            instance["host_port"] = "5432"
-            instance["endpoint"] = f"{host}:5432"
+            instance["host_port"] = db_port
+            instance["endpoint"] = f"{host}:{db_port}"
         return instance
     except Exception:
         terminate_instance(provisioned)
@@ -252,11 +258,12 @@ def _bootstrap_instance(
     image = f"canyonos-{agent_name.lower()}"
     container = container_name(agent_name, replica_index)
     key = _ssh_key_path(cfg)
-    port_args = ["-p", f"{CONTAINER_PORT}:{CONTAINER_PORT}"]
-    if spec.get("type") == "workflow":
-        port_args += ["-p", f"{spec.get('api_port', 8080)}:8080"]
-    elif spec.get("type") == "database":
-        port_args += ["-p", f"{spec.get('db_port', 5432)}:5432"]
+    if spec.get("type") == "database":
+        port_args = ["-p", f"{spec.get('db_port', 5432)}:5432"]
+    else:
+        port_args = ["-p", f"{CONTAINER_PORT}:{CONTAINER_PORT}"]
+        if spec.get("type") == "workflow":
+            port_args += ["-p", f"{spec.get('api_port', 8080)}:8080"]
 
     volume_args = []
     if spec.get("type") == "database":

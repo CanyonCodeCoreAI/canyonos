@@ -160,6 +160,57 @@ def check_manifest_structure(report, config, config_path, source_dir):
                     "A database service is pulled from a public image; it is never built from `.car/app`.",
                 )
                 valid = False
+
+            env = entry.get("env", {})
+            if not isinstance(env, dict):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "env"),
+                    f"agents[{index}] has type `database` but `env` is not a mapping",
+                    "The database's env vars are injected with `-e KEY=VALUE`, one per mapping entry.",
+                )
+                valid = False
+
+            db_port = entry.get("db_port", 5432)
+            if (
+                isinstance(db_port, bool)
+                or not isinstance(db_port, int)
+                or not (0 < db_port < 65536)
+            ):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "db_port"),
+                    f"agents[{index}] has type `database` but `db_port` is not a valid port number",
+                    "`db_port` is written directly into a `-p {db_port}:5432` Docker flag.",
+                )
+                valid = False
+
+            volume_path = entry.get("volume_path")
+            if volume_path is not None and (
+                not isinstance(volume_path, str) or not volume_path.strip()
+            ):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "volume_path"),
+                    f"agents[{index}] has type `database` but `volume_path` is not a non-empty string",
+                    "`volume_path` is written directly into a `-v` Docker flag.",
+                )
+                valid = False
+
+            if entry.get("replicas", 1) != 1:
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "replicas"),
+                    f"agents[{index}] has type `database` but `replicas` is not 1",
+                    "Each replica would be an independent, unsynchronized container "
+                    "published under the same routing-table entry, silently splitting "
+                    "writes across instances.",
+                )
+                valid = False
         else:
             path_key = "workflow_file" if service_type == "workflow" else "entrypoint"
             relative = entry.get(path_key)

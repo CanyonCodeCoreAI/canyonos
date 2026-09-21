@@ -346,7 +346,9 @@ def _run_build(config_path):
                 continue
             target_image = f"canyonos-{agent_name.lower()}"
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
-            subprocess.run(["docker", "pull", image], check=True)
+            subprocess.run(
+                ["docker", "pull", "--platform", _docker_platform(), image], check=True
+            )
             subprocess.run(["docker", "tag", image, target_image], check=True)
             continue
 
