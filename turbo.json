@@ -4,7 +4,28 @@
     "experimentalPythonWorkspaces": true,
     "experimentalTaskCommand": true
   },
+  "globalPassThroughEnv": [
+    "APP_ENV",
+    "API_URL",
+    "AUTH_EMAIL_FROM",
+    "AUTH_MODE",
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "NODE_ENV",
+    "PLAYWRIGHT_BASE_URL",
+    "PORT",
+    "VITE_API_URL",
+    "VITE_WEB_PORT",
+    "WEB_PUBLIC_URL",
+    "WORKFLOW_GENERATION_STUB"
+  ],
   "tasks": {
+    "dev": {
+      "dependsOn": ["^build"],
+      "persistent": true,
+      "cache": false,
+      "passThroughEnv": ["SEED_DEV_DATA"]
+    },
     "build": {
       "cache": true,
       "outputs": ["dist/**"]

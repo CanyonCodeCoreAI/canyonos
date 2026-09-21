@@ -14,6 +14,7 @@
     "check": "turbo run lint typecheck format:check",
     "format": "turbo run format",
     "test": "turbo run test",
+    "dev": "turbo run dev",
     "build": "turbo run build",
     "build:sdk": "bun run --filter @cc-forge/api build:sdk",
     "build:binary": "turbo run build:binary",
@@ -23,7 +24,8 @@
     "docker:logs": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml logs -f",
     "api:test:e2e": "bun run --filter @cc-forge/api test:e2e",
     "ui:test:e2e": "bun run --filter web test:e2e",
-    "canyonos:smoke": "bun run ./scripts/canyonos-smoke.ts"
+    "canyonos:smoke": "bun run ./scripts/canyonos-smoke.ts",
+    "dev:emails": "bun run --filter @cc-forge/api dev:emails"
   },
   "devDependencies": {
     "@ianvs/prettier-plugin-sort-imports": "^4.7.0",
