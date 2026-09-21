@@ -9,7 +9,7 @@ const apiBaseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
 // default project ignores them, and this project takes only them.
 const localModeBaseUrl = process.env.PLAYWRIGHT_CANYONOS_BASE_URL || 'http://localhost:5175';
 const localModePort = new URL(localModeBaseUrl).port;
-const CANYONOS_SPECS = '**/canyonos/**';
+const CANYONOS_SPECS = /[\\/]__tests__[\\/]canyonos[\\/].*\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './src/__tests__',
@@ -36,7 +36,7 @@ export default defineConfig({
     {
       name: 'canyonos-local',
       use: { ...devices['Desktop Chrome'], baseURL: localModeBaseUrl },
-      testMatch: `${CANYONOS_SPECS}/*.spec.ts`,
+      testMatch: CANYONOS_SPECS,
     },
   ],
   // Keep API and dashboard as separately supervised processes. A root Turbo dev process can stay
