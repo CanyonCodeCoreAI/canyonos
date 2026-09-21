@@ -1,5 +1,5 @@
 {
-  "extends": "@cc-forge/tsconfig/base.json",
+  "extends": "@canyonos/tsconfig/base.json",
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": ".",

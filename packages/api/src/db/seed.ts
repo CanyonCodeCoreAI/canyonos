@@ -12,7 +12,7 @@ import { SEED_ADVISORY_LOCK_KEY, seedDevTelemetry } from './seed-telemetry';
 const seedLogger = logger.child({ domain: LOG_DOMAINS.DB });
 
 const DEMO_COMPANY_NAME = 'Canyon Code Demo';
-const DEMO_USER_EMAIL = 'e2e@cc-forge.test';
+const DEMO_USER_EMAIL = 'e2e@canyonos.test';
 
 type SeedTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 

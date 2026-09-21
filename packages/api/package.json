@@ -1,5 +1,5 @@
 {
-  "name": "@cc-forge/api",
+  "name": "@canyonos/api",
   "type": "module",
   "private": true,
   "exports": {
@@ -101,7 +101,7 @@
     "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
-    "@cc-forge/tsconfig": "workspace:*",
+    "@canyonos/tsconfig": "workspace:*",
     "@elysiajs/eden": "^1.4.9",
     "@types/diff": "^7.0.0",
     "@types/nodemailer": "^8.0.1",

@@ -99,7 +99,7 @@ async function insert_file(
 
 describe('deploy preview', () => {
   test('reports every current file as added when there is no successful deployment', async () => {
-    const { headers, project_id } = await setup_project('preview-fresh@cc-forge.test');
+    const { headers, project_id } = await setup_project('preview-fresh@canyonos.test');
 
     const response = await api.projects[project_id]!.deploy.preview.get({ $headers: headers });
     expect(response.status).toBe(200);
@@ -121,7 +121,7 @@ describe('deploy preview', () => {
   });
 
   test('reports no changes right after a successful deployment with no edits', async () => {
-    const { headers, project_id } = await setup_project('preview-clean@cc-forge.test');
+    const { headers, project_id } = await setup_project('preview-clean@canyonos.test');
     const deploy_id = await deploy_to_success(project_id, headers);
 
     const response = await api.projects[project_id]!.deploy.preview.get({ $headers: headers });
@@ -137,7 +137,7 @@ describe('deploy preview', () => {
 
   test('classifies edited, added, and deleted files against the last successful deployment', async () => {
     const { headers, project_id, company_id, user_id } = await setup_project(
-      'preview-changes@cc-forge.test'
+      'preview-changes@canyonos.test'
     );
     const deploy_id = await deploy_to_success(project_id, headers);
 
@@ -181,8 +181,8 @@ describe('deploy preview', () => {
   });
 
   test('lets a user from another company preview the project', async () => {
-    const { project_id } = await setup_project('preview-owner@cc-forge.test');
-    const other_company = await authenticate('preview-intruder@cc-forge.test');
+    const { project_id } = await setup_project('preview-owner@canyonos.test');
+    const other_company = await authenticate('preview-intruder@canyonos.test');
 
     const response = await api.projects[project_id]!.deploy.preview.get({
       $headers: bearer(other_company),
@@ -192,7 +192,7 @@ describe('deploy preview', () => {
   });
 
   test('answers 404 for a project id that does not exist', async () => {
-    const token = await authenticate('preview-unknown@cc-forge.test');
+    const token = await authenticate('preview-unknown@canyonos.test');
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const response = await api.projects[unknown]!.deploy.preview.get({ $headers: bearer(token) });

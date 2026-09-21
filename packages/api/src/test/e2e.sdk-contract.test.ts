@@ -4,13 +4,13 @@ import type {
   DeployConfig,
   DeploymentOverviewItem,
   ProjectDeployAccepted,
-} from '@cc-forge/api/deploy';
-import type { CreateProjectResult, ProjectStats, ProjectStatus } from '@cc-forge/api/projects';
+} from '@canyonos/api/deploy';
+import type { CreateProjectResult, ProjectStats, ProjectStatus } from '@canyonos/api/projects';
 import type {
   ProjectWorkflowDesign,
   ProjectWorkflowDetail,
   ProjectWorkflowSummary,
-} from '@cc-forge/api/workflows';
+} from '@canyonos/api/workflows';
 
 import {
   clear_workflow_generation_mock,
@@ -39,7 +39,7 @@ describe('SDK contract', () => {
   });
 
   test('nested project workflow, status, stats, and deploy endpoints are typed at runtime', async () => {
-    const token = await authenticate('sdk-project-contract@cc-forge.test');
+    const token = await authenticate('sdk-project-contract@canyonos.test');
     await create_deploy_setup(token);
     const headers = bearer(token);
     set_workflow_generation_mock(async (input) => ({

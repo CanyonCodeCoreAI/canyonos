@@ -39,7 +39,7 @@ let fixture_number = 0;
 
 async function insert_pending_deployment() {
   fixture_number += 1;
-  const token = await authenticate(`deploy-worker-${fixture_number}@cc-forge.test`);
+  const token = await authenticate(`deploy-worker-${fixture_number}@canyonos.test`);
   const setup = await create_deploy_setup(token);
   const profile = await api.auth.profile.get({ $headers: bearer(token) });
   const project = await api.projects.post(

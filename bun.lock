@@ -18,7 +18,7 @@
       },
     },
     "packages/api": {
-      "name": "@cc-forge/api",
+      "name": "@canyonos/api",
       "dependencies": {
         "@elysiajs/cors": "1.4.2",
         "@elysiajs/openapi": "1.4.15",
@@ -40,7 +40,7 @@
         "zod-to-json-schema": "^3.24.1",
       },
       "devDependencies": {
-        "@cc-forge/tsconfig": "workspace:*",
+        "@canyonos/tsconfig": "workspace:*",
         "@elysiajs/eden": "^1.4.9",
         "@types/diff": "^7.0.0",
         "@types/nodemailer": "^8.0.1",
@@ -60,7 +60,7 @@
       },
     },
     "packages/tsconfig": {
-      "name": "@cc-forge/tsconfig",
+      "name": "@canyonos/tsconfig",
       "version": "0.0.1",
     },
   },
@@ -85,9 +85,9 @@
 
     "@borewit/text-codec": ["@borewit/text-codec@0.2.2", "", {}, "sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ=="],
 
-    "@cc-forge/api": ["@cc-forge/api@workspace:packages/api"],
+    "@canyonos/api": ["@canyonos/api@workspace:packages/api"],
 
-    "@cc-forge/tsconfig": ["@cc-forge/tsconfig@workspace:packages/tsconfig"],
+    "@canyonos/tsconfig": ["@canyonos/tsconfig@workspace:packages/tsconfig"],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 

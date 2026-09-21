@@ -51,7 +51,7 @@ async function create_project(email: string) {
 
 describe('content-addressed file storage', () => {
   test('stores identical content once and addresses every file by hash', async () => {
-    const { project_id } = await create_project('storage-dedup@cc-forge.test');
+    const { project_id } = await create_project('storage-dedup@canyonos.test');
 
     const rows = await db
       .select({ path: files.path, content_hash: files.content_hash })
@@ -72,7 +72,7 @@ describe('content-addressed file storage', () => {
   });
 
   test('serves the current project files with bytes to the runtime endpoint', async () => {
-    const { project_id } = await create_project('storage-runtime@cc-forge.test');
+    const { project_id } = await create_project('storage-runtime@canyonos.test');
 
     const response = await api.internal.projects[project_id]!.files.get();
     expect(response.status).toBe(200);
@@ -86,7 +86,7 @@ describe('content-addressed file storage', () => {
   });
 
   test('serves raw bytes by content hash and 404s an unknown hash', async () => {
-    await create_project('storage-blob@cc-forge.test');
+    await create_project('storage-blob@canyonos.test');
 
     const hash = hash_content(SHARED);
     const found = await api.internal.blobs[hash]!.get();
@@ -101,7 +101,7 @@ describe('content-addressed file storage', () => {
   });
 
   test('re-hashes and re-stores on edit, keeping content readable', async () => {
-    const { headers, project_id } = await create_project('storage-edit@cc-forge.test');
+    const { headers, project_id } = await create_project('storage-edit@canyonos.test');
 
     const listing = await api.projects[project_id]!.files.get({ $headers: headers });
     const workflow = listing.data?.find((file) => file.path === 'workflow.py');
@@ -125,7 +125,7 @@ describe('content-addressed file storage', () => {
   });
 
   test('records an immutable per-deploy manifest of path to content hash', async () => {
-    const { token, headers, project_id } = await create_project('storage-manifest@cc-forge.test');
+    const { token, headers, project_id } = await create_project('storage-manifest@canyonos.test');
     await create_deploy_setup(token);
 
     const accepted = await api.projects[project_id]!.deploy.post({}, { headers });

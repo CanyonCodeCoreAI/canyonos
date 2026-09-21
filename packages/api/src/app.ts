@@ -65,7 +65,7 @@ export const createApp = () =>
             path: '/docs',
             mapJsonSchema: { zod: zodToJsonSchema },
             documentation: {
-              info: { title: 'cc-forge API', version: '0.1.0' },
+              info: { title: 'CanyonOS API', version: '0.1.0' },
               tags: [
                 { name: 'Projects' },
                 { name: 'Workflows' },

@@ -150,7 +150,7 @@ const ids = (items: readonly RequestListItem[]): string[] => items.map((item) =>
 
 describe('request trace endpoint', () => {
   test('the owner gets 404 when an owned project has no matching request', async () => {
-    const token = await authenticate('req-owner@cc-forge.test');
+    const token = await authenticate('req-owner@canyonos.test');
     const project_id = await create_project(token);
 
     const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
@@ -162,7 +162,7 @@ describe('request trace endpoint', () => {
   });
 
   test('an unknown project id is 404 projects.not_found, not requests.not_found', async () => {
-    const token = await authenticate('req-owner2@cc-forge.test');
+    const token = await authenticate('req-owner2@canyonos.test');
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.requests[VALID_REQUEST_ID]!.get({
@@ -174,7 +174,7 @@ describe('request trace endpoint', () => {
   });
 
   test('a request without a token is rejected with 401', async () => {
-    const owner = await authenticate('req-owner3@cc-forge.test');
+    const owner = await authenticate('req-owner3@canyonos.test');
     const project_id = await create_project(owner);
 
     const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get();
@@ -182,7 +182,7 @@ describe('request trace endpoint', () => {
   });
 
   test('an oversized request id is rejected by validation (422)', async () => {
-    const token = await authenticate('req-badreq@cc-forge.test');
+    const token = await authenticate('req-badreq@canyonos.test');
     const project_id = await create_project(token);
 
     const res = await api.projects[project_id]!.requests['x'.repeat(256)]!.get({
@@ -192,7 +192,7 @@ describe('request trace endpoint', () => {
   });
 
   test('a non-uuid project id is rejected by validation (422)', async () => {
-    const token = await authenticate('req-baduuid@cc-forge.test');
+    const token = await authenticate('req-baduuid@canyonos.test');
     const res = await api.projects['not-a-uuid']!.requests[VALID_REQUEST_ID]!.get({
       $headers: bearer(token),
     });
@@ -202,7 +202,7 @@ describe('request trace endpoint', () => {
 
 describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   test('lists requests newest-first with status, duration, token, and cost rollups', async () => {
-    const token = await authenticate('req-list@cc-forge.test');
+    const token = await authenticate('req-list@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('list'));
 
@@ -237,7 +237,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('every request reports a finish time and a duration', async () => {
-    const token = await authenticate('req-finished@cc-forge.test');
+    const token = await authenticate('req-finished@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('fin'));
 
@@ -252,7 +252,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('paginates with a stable total', async () => {
-    const token = await authenticate('req-page@cc-forge.test');
+    const token = await authenticate('req-page@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('page'));
 
@@ -266,7 +266,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('filters by status and counts the same filtered set', async () => {
-    const token = await authenticate('req-status@cc-forge.test');
+    const token = await authenticate('req-status@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('st'));
 
@@ -280,7 +280,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('the running filter lists nothing, because a stored span has always finished', async () => {
-    const token = await authenticate('req-running@cc-forge.test');
+    const token = await authenticate('req-running@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('run'));
 
@@ -291,7 +291,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('an empty project lists zero requests', async () => {
-    const token = await authenticate('req-empty@cc-forge.test');
+    const token = await authenticate('req-empty@canyonos.test');
     const project_id = await create_project(token);
 
     const page = await list(token, project_id);
@@ -300,7 +300,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('a span without the project attribute is invisible to every project', async () => {
-    const token = await authenticate('req-orphan@cc-forge.test');
+    const token = await authenticate('req-orphan@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('orph'));
     await write_unattributed_span({
@@ -318,7 +318,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test("another project's spans stay invisible even under the same trace id", async () => {
-    const owner = await authenticate('req-shared-trace@cc-forge.test');
+    const owner = await authenticate('req-shared-trace@canyonos.test');
     const mine = await create_project(owner);
     const theirs = await create_project(owner);
     const start = ago(MINUTE_MS);
@@ -350,7 +350,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('an unselected window includes only requests with in-window spans', async () => {
-    const token = await authenticate('req-window@cc-forge.test');
+    const token = await authenticate('req-window@canyonos.test');
     const project_id = await create_project(token);
     const old_start = ago(3 * 24 * 60 * MINUTE_MS);
     await seed(project_id, [
@@ -374,11 +374,11 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test("another company reads the project's requests", async () => {
-    const owner = await authenticate('req-list-owner@cc-forge.test');
+    const owner = await authenticate('req-list-owner@canyonos.test');
     const project_id = await create_project(owner);
     await seed(project_id, listing_spans('guard'));
 
-    const other_company = await authenticate('req-list-intruder@cc-forge.test');
+    const other_company = await authenticate('req-list-intruder@canyonos.test');
     const res = await api.projects[project_id]!.requests.get({
       $query: { limit: 20, offset: 0 },
       $headers: bearer(other_company),
@@ -389,7 +389,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('a listing without a token is rejected with 401', async () => {
-    const owner = await authenticate('req-list-anon@cc-forge.test');
+    const owner = await authenticate('req-list-anon@canyonos.test');
     const project_id = await create_project(owner);
 
     const res = await api.projects[project_id]!.requests.get({ $query: { limit: 20, offset: 0 } });
@@ -397,7 +397,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('an out-of-range limit is rejected by validation (422)', async () => {
-    const token = await authenticate('req-limit@cc-forge.test');
+    const token = await authenticate('req-limit@canyonos.test');
     const project_id = await create_project(token);
 
     const res = await api.projects[project_id]!.requests.get({
@@ -416,7 +416,7 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
     ids((await list(token, project_id, { sort, order })).items);
 
   beforeEach(async () => {
-    token = await authenticate(`req-order-${Bun.randomUUIDv7()}@cc-forge.test`);
+    token = await authenticate(`req-order-${Bun.randomUUIDv7()}@canyonos.test`);
     project_id = await create_project(token);
     await seed(project_id, listing_spans(`ord-${project_id.slice(0, 8)}`));
   });
@@ -545,7 +545,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
 
   // Four requests whose costs and tokens rise in equal steps, so a range picks a known subset.
   beforeEach(async () => {
-    token = await authenticate(`req-range-${Bun.randomUUIDv7()}@cc-forge.test`);
+    token = await authenticate(`req-range-${Bun.randomUUIDv7()}@canyonos.test`);
     project_id = await create_project(token);
     prefix = `rng-${project_id.slice(0, 8)}`;
     const steps = [1, 2, 3, 4];
@@ -665,7 +665,7 @@ describe('GET /projects/:project_id/requests (creation-date filtering)', () => {
   let day_end: string;
 
   beforeEach(async () => {
-    token = await authenticate(`req-day-${Bun.randomUUIDv7()}@cc-forge.test`);
+    token = await authenticate(`req-day-${Bun.randomUUIDv7()}@canyonos.test`);
     project_id = await create_project(token);
     prefix = `day-${project_id.slice(0, 8)}`;
 
@@ -759,7 +759,7 @@ describe('GET /projects/:project_id/requests (creation-date filtering)', () => {
 
 describe('GET /projects/:project_id/requests/:request_id', () => {
   test('returns one request trace with ordered blocks and the project median', async () => {
-    const token = await authenticate('req-trace@cc-forge.test');
+    const token = await authenticate('req-trace@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('tr'));
 
@@ -806,7 +806,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a failed span makes the whole request failed', async () => {
-    const token = await authenticate('req-trace-failed@cc-forge.test');
+    const token = await authenticate('req-trace-failed@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('trf'));
 
@@ -819,7 +819,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a payload that is not JSON is preserved as the text it was', async () => {
-    const token = await authenticate('req-trace-text@cc-forge.test');
+    const token = await authenticate('req-trace-text@canyonos.test');
     const project_id = await create_project(token);
     await seed(project_id, listing_spans('trt'));
 
@@ -832,7 +832,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('the median reads only requests that billed inside the trailing 30 days', async () => {
-    const token = await authenticate('req-median@cc-forge.test');
+    const token = await authenticate('req-median@canyonos.test');
     const project_id = await create_project(token);
 
     // Billed: 0.001, 0.002, 0.003 -> median 0.002. Counting the two unbilled requests as $0 would
@@ -874,7 +874,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a project that billed nothing in the window reports no median', async () => {
-    const token = await authenticate('req-trace-nomedian@cc-forge.test');
+    const token = await authenticate('req-trace-nomedian@canyonos.test');
     const project_id = await create_project(token);
     const start = ago(MINUTE_MS);
     await write_project_span(project_id, {
@@ -892,7 +892,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a trace never includes another project sharing its trace id', async () => {
-    const owner = await authenticate('req-trace-shared@cc-forge.test');
+    const owner = await authenticate('req-trace-shared@canyonos.test');
     const mine = await create_project(owner);
     const theirs = await create_project(owner);
     const start = ago(MINUTE_MS);
@@ -923,7 +923,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a trace made only of spans without the project attribute is not found', async () => {
-    const token = await authenticate('req-trace-orphan@cc-forge.test');
+    const token = await authenticate('req-trace-orphan@canyonos.test');
     const project_id = await create_project(token);
     await write_unattributed_span({
       span_id: 'lonely-1',
@@ -941,7 +941,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a malformed numeric attribute is ignored instead of failing the request', async () => {
-    const token = await authenticate('req-trace-malformed@cc-forge.test');
+    const token = await authenticate('req-trace-malformed@canyonos.test');
     const project_id = await create_project(token);
     const start = ago(MINUTE_MS);
     await write_project_span(project_id, {

@@ -14,7 +14,7 @@ const authenticate = async (email: string) => {
 
 describe('onboarding flow', () => {
   test('create endpoint provisions a company, links the user, and activates them', async () => {
-    const token = await authenticate('onboard-create@cc-forge.test');
+    const token = await authenticate('onboard-create@canyonos.test');
     const auth = { authorization: `Bearer ${token}` };
 
     const result = await api.onboarding.create.post(
@@ -31,14 +31,14 @@ describe('onboarding flow', () => {
   });
 
   test('join endpoint links the user to an existing company', async () => {
-    const ownerToken = await authenticate('company-owner@cc-forge.test');
+    const ownerToken = await authenticate('company-owner@canyonos.test');
     const created = await api.companies.post(
       { name: 'Globex' },
       { headers: { authorization: `Bearer ${ownerToken}` } }
     );
     const companyId = created.data?.id as string;
 
-    const joinerToken = await authenticate('company-joiner@cc-forge.test');
+    const joinerToken = await authenticate('company-joiner@canyonos.test');
     const joinerAuth = { authorization: `Bearer ${joinerToken}` };
     const result = await api.onboarding.join.post(
       { company_id: companyId },
@@ -50,7 +50,7 @@ describe('onboarding flow', () => {
   });
 
   test('join endpoint with an unknown company is rejected', async () => {
-    const token = await authenticate('bad-join@cc-forge.test');
+    const token = await authenticate('bad-join@canyonos.test');
     const result = await api.onboarding.join.post(
       { company_id: '00000000-0000-0000-0000-000000000000' },
       { headers: { authorization: `Bearer ${token}` } }
@@ -64,7 +64,7 @@ describe('onboarding flow', () => {
   });
 
   test('create endpoint with a blank company name is rejected', async () => {
-    const token = await authenticate('blank-name@cc-forge.test');
+    const token = await authenticate('blank-name@canyonos.test');
     const result = await api.onboarding.create.post(
       { company_name: '' },
       { headers: { authorization: `Bearer ${token}` } }
@@ -73,7 +73,7 @@ describe('onboarding flow', () => {
   });
 
   test('join endpoint with a malformed company id is rejected', async () => {
-    const token = await authenticate('bad-join-id@cc-forge.test');
+    const token = await authenticate('bad-join-id@canyonos.test');
     const result = await api.onboarding.join.post(
       { company_id: 'not-a-uuid' },
       { headers: { authorization: `Bearer ${token}` } }
@@ -82,7 +82,7 @@ describe('onboarding flow', () => {
   });
 
   test('re-onboarding after activation is rejected', async () => {
-    const token = await authenticate('reonboard@cc-forge.test');
+    const token = await authenticate('reonboard@canyonos.test');
     const auth = { authorization: `Bearer ${token}` };
 
     const first = await api.onboarding.create.post({ company_name: 'First Co' }, { headers: auth });

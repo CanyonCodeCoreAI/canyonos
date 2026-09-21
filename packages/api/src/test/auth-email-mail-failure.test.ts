@@ -13,7 +13,7 @@ describe('AUTH_MODE=email_otp surfaces a mail delivery failure', () => {
   });
 
   test('POST /auth/challenge returns 502 when the verification email cannot be sent', async () => {
-    const challenge = await api.auth.challenge.post({ email: 'mail-failure@cc-forge.test' });
+    const challenge = await api.auth.challenge.post({ email: 'mail-failure@canyonos.test' });
 
     expect(challenge.error?.status as number).toBe(502);
   });

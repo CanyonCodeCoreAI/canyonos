@@ -122,7 +122,7 @@ export function resolveFileStorage(value: string | undefined): FileStorageProvid
 
 function resolveMockStorageDir(environment: string, value: string | undefined): string {
   if (value) return value;
-  return environment === 'test' ? join(tmpdir(), 'cc-forge-test-blobs') : './data/blobs';
+  return environment === 'test' ? join(tmpdir(), 'canyonos-test-blobs') : './data/blobs';
 }
 
 const DEFAULT_DEPLOY_LEASE_SECONDS = 60;
@@ -203,8 +203,8 @@ export const config = {
   auth: {
     mode: authMode,
     jwtSecret: requireEnv('JWT_SECRET'),
-    jwtIssuer: env.JWT_ISSUER ?? 'cc-forge-api',
-    jwtAudience: env.JWT_AUDIENCE ?? 'cc-forge-clients',
+    jwtIssuer: env.JWT_ISSUER ?? 'canyonos-api',
+    jwtAudience: env.JWT_AUDIENCE ?? 'canyonos-clients',
     jwtTtlSeconds: parseDuration(env.JWT_TTL, 60 * 60 * 24),
     challengeTtlSeconds: parseDuration(env.AUTH_CHALLENGE_TTL, 60 * 15),
     lockDurationSeconds: parseDuration(env.AUTH_LOCK_DURATION, 60 * 60),
