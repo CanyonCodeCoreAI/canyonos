@@ -1,0 +1,122 @@
+name: API E2E Tests
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['packages/api/**', '.github/workflows/api-e2e.yml']
+  pull_request:
+    paths: ['packages/api/**', '.github/workflows/api-e2e.yml']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cc_forge
+          POSTGRES_PASSWORD: cc_forge
+          POSTGRES_DB: cc_forge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cc_forge -d cc_forge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+          - 8025:8025
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Run E2E Tests
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
+        with:
+          timeout_minutes: 10
+          max_attempts: 2
+          retry_on: error
+          command: cd packages/api && bun test:e2e
+        env:
+          NODE_ENV: test
+          CI: true
+          DATABASE_URL: postgres://cc_forge:cc_forge@localhost:5432/cc_forge
+          JWT_SECRET: test-jwt-secret-not-for-production
+          AUTH_EMAIL_FROM: noreply@cc-forge.test
+
+      - name: Run API unit tests
+        run: cd packages/api && bun run test:unit
+        env:
+          NODE_ENV: test
+          CI: true
+          DATABASE_URL: postgres://cc_forge:cc_forge@localhost:5432/cc_forge
+          JWT_SECRET: test-jwt-secret-not-for-production
+          AUTH_EMAIL_FROM: noreply@cc-forge.test
+
+      - name: Run CanyonOS self-hosted (AUTH_MODE=fixed_code) tests
+        run: cd packages/api && bun run test:canyonos
+        env:
+          NODE_ENV: test
+          CI: true
+          DATABASE_URL: postgres://cc_forge:cc_forge@localhost:5432/cc_forge
+          JWT_SECRET: test-jwt-secret-not-for-production
+          AUTH_EMAIL_FROM: noreply@cc-forge.test
+
+      - name: Run DEPLOY_WORKER=none tests
+        run: cd packages/api && bun run test:deploy-disabled
+        env:
+          NODE_ENV: test
+          CI: true
+          DATABASE_URL: postgres://cc_forge:cc_forge@localhost:5432/cc_forge
+          JWT_SECRET: test-jwt-secret-not-for-production
+          AUTH_EMAIL_FROM: noreply@cc-forge.test
+
+      - name: Run AUTH_MODE=email_otp tests (real SMTP via Mailpit)
+        run: cd packages/api && bun run test:auth-email
+        env:
+          NODE_ENV: test
+          CI: true
+          DATABASE_URL: postgres://cc_forge:cc_forge@localhost:5432/cc_forge
+          JWT_SECRET: test-jwt-secret-not-for-production
+          AUTH_EMAIL_FROM: noreply@cc-forge.test
+
+      - name: Run AUTH_MODE=email_otp mail-failure test (SMTP unreachable)
+        run: cd packages/api && bun run test:auth-email-mail-failure
+        env:
+          NODE_ENV: test
+          CI: true
+          DATABASE_URL: postgres://cc_forge:cc_forge@localhost:5432/cc_forge
+          JWT_SECRET: test-jwt-secret-not-for-production
+          AUTH_EMAIL_FROM: noreply@cc-forge.test
+
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: api-e2e-results
+          path: packages/api/test-results/
+          retention-days: 7
