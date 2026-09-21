@@ -5,7 +5,6 @@ import os
 import sqlite3
 import sys
 import tempfile
-import types
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -13,9 +12,7 @@ from unittest.mock import MagicMock, patch
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # ``otel_exporter.py`` is also executed as a script from its own directory and
 # therefore imports ``convert`` and ``db`` as top-level modules.
-sys.path.insert(
-    0, os.path.join(ROOT, "packages", "core", "canyonos_core", "OTLP_Exporter")
-)
+sys.path.insert(0, os.path.join(ROOT, "canyonos_core", "OTLP_Exporter"))
 
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (  # noqa: E402
     ExportTraceServiceResponse,
@@ -25,19 +22,6 @@ from opentelemetry.sdk.trace.export import SpanExportResult  # noqa: E402
 import convert  # noqa: E402
 import db  # noqa: E402
 import otel_exporter  # noqa: E402
-
-
-# The generated local-controller protobuf modules are build artifacts and are
-# not present in a source checkout.  The static config helper does not use them,
-# so provide the tiny import-time surface needed to test it in isolation.
-if "local_controler_pb2" not in sys.modules:
-    local_pb2 = types.ModuleType("local_controler_pb2")
-    local_pb2.JsonResponse = object
-    sys.modules["local_controler_pb2"] = local_pb2
-if "local_controler_pb2_grpc" not in sys.modules:
-    local_pb2_grpc = types.ModuleType("local_controler_pb2_grpc")
-    local_pb2_grpc.LocalControllerStub = object
-    sys.modules["local_controler_pb2_grpc"] = local_pb2_grpc
 
 
 class OTelExporterFanoutTests(unittest.TestCase):

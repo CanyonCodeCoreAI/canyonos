@@ -38,3 +38,9 @@ canyonos_core = [
     "controller/proto/*.proto",
     "controller/utils/llm_token_costs.db",
 ]
+
+[dependency-groups]
+dev = [
+    "grpcio-tools",
+    "pytest>=9.1.1",
+]

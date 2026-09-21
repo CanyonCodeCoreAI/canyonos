@@ -23,7 +23,10 @@ from typing import Any
 
 import boto3
 
-from canyonos_core.controller.utils.container_names import container_name
+from canyonos_core.controller.utils.container_names import (
+    container_name,
+    redis_container_name,
+)
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.controller.utils.redis_client import RedisClient
@@ -225,7 +228,7 @@ def _bootstrap_instance(
     else:
         raise TimeoutError(f"SSH never became ready on {host}")
 
-    redis_container = f"canyonos-redis-{host.replace('.', '-')}"
+    redis_container = redis_container_name(host)
     result = _controller._run_cmd(
         [
             "docker",
