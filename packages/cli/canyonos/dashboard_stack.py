@@ -20,7 +20,7 @@ from typing import Callable
 
 from canyonos import env
 from canyonos.constants import DEFAULT_DASHBOARD_PORT
-from canyonos.port_utils import is_port_free
+from canyonos.port_utils import find_free_port
 
 COMPOSE_PROJECT = "canyonos-dashboard"
 API_VERSION = "0.1.0"
@@ -114,25 +114,6 @@ def _existing_dashboard_port() -> int | None:
     return None
 
 
-# Module-local alias so the real check is the shared one used by both the CLI and
-# canyonos_core, while staying an overridable seam for tests that patch it here.
-_port_is_free = is_port_free
-
-
-def _find_web_port(start: int = DEFAULT_DASHBOARD_PORT, max_attempts: int = 50) -> int:
-    """First free port at or after `start`, so an unrelated process or container
-    squatting on the preferred port (e.g. a deployed Workflow's own api_port)
-    doesn't hard-block serve.
-    """
-    for port in range(start, start + max_attempts):
-        if _port_is_free(port):
-            return port
-    raise PhaseFailure(
-        "validate",
-        f"no free port found for the dashboard after {max_attempts} attempts starting at {start}",
-    )
-
-
 def validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     """Checks docker is usable and the state dir is writable, then returns a DashboardStack with the port the dashboard should run on."""
     if shutil.which("docker") is None:
@@ -160,7 +141,11 @@ def validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     except OSError:
         raise PhaseFailure("validate", "dashboard state directory is not writable")
 
-    web_port = _existing_dashboard_port() or _find_web_port(preferred_port)
+    # Hop past a squatter (e.g. a deployed Workflow's api_port) rather than block serve.
+    try:
+        web_port = _existing_dashboard_port() or find_free_port(preferred_port)
+    except RuntimeError as e:
+        raise PhaseFailure("validate", str(e)) from e
 
     return DashboardStack(state_dir, project_root, web_port)
 

@@ -1,10 +1,11 @@
 """Standard port-selection and conflict-detection helpers.
 
 One rule for the whole codebase:
-  - Internal service ports (the Global Controller, its Redis, the dashboard's
-    web/API containers) preflight-and-hop to the next free port on a conflict.
-  - Only a user-declared `api_port` fails fast, because external clients read it
-    back statically and must not be silently moved.
+  - Internal service ports (the Global Controller, the dashboard's web/API
+    containers) preflight-and-hop to the next free port on a conflict.
+  - A user-declared port -- `api_port`, and `redis_port` from
+    global_controller.yaml -- fails fast, because it is read back statically
+    and must not be silently moved.
 
 A port conflict surfaces in one of two ways, depending on where the caller runs:
   - On the host (the CLI): probe with a real socket bind BEFORE launching
@@ -12,7 +13,8 @@ A port conflict surfaces in one of two ways, depending on where the caller runs:
   - Inside a container that publishes to the host (the GC launching Redis or
     agent replicas): a bind in the container's own network namespace cannot see
     a host-published conflict, so the only reliable signal is Docker's stderr --
-    use `is_port_conflict()` on the `docker run` output and hop.
+    use `is_port_conflict()` on the `docker run` output, then hop (agent
+    replicas) or exit (Redis).
 
 NOTE: this module is intentionally dependency-free (stdlib `socket` only) and is
 duplicated as a twin in the other build artifact:
@@ -41,7 +43,7 @@ def is_port_conflict(stderr: str | None) -> bool:
     return any(marker in text for marker in PORT_CONFLICT_MARKERS)
 
 
-def is_port_free(port: int, host: str = "127.0.0.1") -> bool:
+def is_port_free(port: int, host: str = "0.0.0.0") -> bool:
     """True if `port` can be bound on `host` right now.
 
     Host-side check only: a bind here cannot detect a port that Docker has
@@ -50,7 +52,8 @@ def is_port_free(port: int, host: str = "127.0.0.1") -> bool:
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         try:
-            probe.bind((host, port))
+            # Matches docker's 0.0.0.0 publish target; bind-and-close, nothing exposed.
+            probe.bind((host, port))  # lgtm[py/bind-socket-all-network-interfaces]
         except OSError:
             return False
     return True
@@ -59,10 +62,10 @@ def is_port_free(port: int, host: str = "127.0.0.1") -> bool:
 def find_free_port(
     start: int,
     max_attempts: int = DEFAULT_MAX_PORT_ATTEMPTS,
-    host: str = "127.0.0.1",
+    host: str = "0.0.0.0",
 ) -> int:
     """First bindable port at or after `start`, scanning up to `max_attempts`."""
-    for port in range(start, start + max_attempts):
+    for port in range(start, min(start + max_attempts, 65536)):
         if is_port_free(port, host):
             return port
     raise RuntimeError(

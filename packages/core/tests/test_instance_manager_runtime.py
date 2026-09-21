@@ -67,6 +67,7 @@ def _fake_controller():
         containers={},
         node_redis={},
         redis_containers={},
+        redis_ports={},
         config={"poll_interval": 5},
         # stdout="" (not running) so the orphan-check `docker inspect` probe that now
         # precedes `docker run` reads a real string instead of erroring on a missing attribute.

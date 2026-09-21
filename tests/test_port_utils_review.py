@@ -76,36 +76,8 @@ class IsPortFreeTests(unittest.TestCase):
         self.addCleanup(s.close)
         self.assertFalse(port_utils.is_port_free(port))
 
-    def test_time_wait_port_is_reported_taken(self):
-        """REGRESSION: the shared probe dropped SO_REUSEADDR that main's _port_bound set.
-
-        A connection left in TIME_WAIT makes a plain bind fail, while `docker -p`
-        (which sets SO_REUSEADDR) would have bound it fine.
-        """
-        srv, port = _bind("127.0.0.1")
-        cli = socket.create_connection(("127.0.0.1", port))
-        conn, _ = srv.accept()
-        cli.close()
-        conn.close()
-        srv.close()  # server socket gone; the closed conn lingers in TIME_WAIT
-        reusable = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        reusable.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            reusable.bind(("127.0.0.1", port))
-            docker_could_bind = True
-        except OSError:
-            docker_could_bind = False
-        finally:
-            reusable.close()
-        if not docker_could_bind:
-            self.skipTest("kernel did not leave the port in a REUSEADDR-bindable state")
-        self.assertTrue(
-            port_utils.is_port_free(port),
-            "probe says the port is taken but docker (SO_REUSEADDR) can bind it",
-        )
-
-    def test_non_loopback_listener_is_missed_by_the_loopback_probe(self):
-        """Documents the blind spot the 'probe on loopback, not 0.0.0.0' commit created."""
+    def test_non_loopback_listener_is_caught_by_the_wildcard_probe(self):
+        """Regression guard for the loopback-only probe's blind spot (reverted)."""
         addr = socket.gethostbyname(socket.gethostname())
         if addr.startswith("127."):
             self.skipTest("no non-loopback address on this host")
@@ -120,7 +92,7 @@ class IsPortFreeTests(unittest.TestCase):
             pass  # this is what `docker run -p` would hit
         self.assertFalse(
             port_utils.is_port_free(port),
-            "loopback probe called the port free, but a 0.0.0.0 publish would fail",
+            "probe called the port free, but a 0.0.0.0 publish would fail",
         )
 
     def test_string_port_raises_typeerror(self):
@@ -154,7 +126,15 @@ class FindFreePortTests(unittest.TestCase):
 
     def test_scan_does_not_run_past_the_last_valid_port(self):
         """start near 65535 walks into port 65536 -> OSError, not a clean RuntimeError."""
-        with self.assertRaises(RuntimeError):
+
+        def occupied(port, host="127.0.0.1"):
+            self.assertLessEqual(port, 65535)
+            return False
+
+        with (
+            patch.object(port_utils, "is_port_free", side_effect=occupied),
+            self.assertRaises(RuntimeError),
+        ):
             port_utils.find_free_port(65530, max_attempts=50)
 
 
@@ -200,8 +180,8 @@ class WorkflowApiPortTests(unittest.TestCase):
         )
 
 
-class RedisHopTests(unittest.TestCase):
-    """The PR made Redis hop instead of exiting. Check where the new port goes."""
+class RedisPortTests(unittest.TestCase):
+    """redis_port is user-declared: publish it as written, or exit."""
 
     def _controller(self, run_cmd):
         from canyonos_core.controller.global_controller import GlobalController
@@ -211,11 +191,11 @@ class RedisHopTests(unittest.TestCase):
             {"user": None, "redis_port": 6379, "replicas": 1, "host": "localhost"}
         ]
         gc.redis_containers = {}
+        gc.redis_ports = {}
         gc.node_redis = {}
         gc.redis = None
         gc._run_cmd = run_cmd
         gc._get_replica_placements = lambda ctrl: [("localhost", 5001)]
-        gc._redis_container_healthy = lambda *a, **k: False
         return gc
 
     def _run_cmd_factory(self, conflicts):
@@ -223,7 +203,13 @@ class RedisHopTests(unittest.TestCase):
 
         def run_cmd(cmd, host=None, user=None):
             res = MagicMock()
-            if cmd[:2] == ["docker", "run"]:
+            run_cmd.calls.append(list(cmd))
+            if cmd[:2] == ["docker", "inspect"]:
+                # No pre-existing container, so every case here takes the launch path.
+                res.returncode = 0
+                res.stdout = "false\n"
+                res.stderr = ""
+            elif cmd[:2] == ["docker", "run"]:
                 state["n"] += 1
                 if state["n"] <= conflicts:
                     res.returncode = 1
@@ -241,45 +227,54 @@ class RedisHopTests(unittest.TestCase):
             return res
 
         run_cmd.published = None
+        run_cmd.calls = []
         return run_cmd
 
-    def test_hops_to_the_next_port_on_conflict(self):
-        run_cmd = self._run_cmd_factory(conflicts=2)
+    def test_publishes_the_declared_port(self):
+        run_cmd = self._run_cmd_factory(conflicts=0)
         gc = self._controller(run_cmd)
         with (
             patch("canyonos_core.controller.global_controller.RedisClient"),
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
         ):
             gc._launch_redis_containers()
-        self.assertEqual(run_cmd.published, "6381:6379")
+        self.assertEqual(run_cmd.published, "6379:6379")
+        self.assertEqual(gc.redis_ports["localhost"], 6379)
 
-    def test_hopped_port_is_not_persisted_for_the_next_run(self):
-        """After hopping to 6381, teardown and the next run still look at 6379."""
-        run_cmd = self._run_cmd_factory(conflicts=2)
+    def test_port_conflict_exits_without_retrying(self):
+        run_cmd = self._run_cmd_factory(conflicts=999)
         gc = self._controller(run_cmd)
         with (
             patch("canyonos_core.controller.global_controller.RedisClient"),
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
+            self.assertRaises(SystemExit),
         ):
             gc._launch_redis_containers()
-        self.assertEqual(gc.controllers[0]["redis_port"], 6379)
-        self.assertEqual(
-            gc.controllers[0]["redis_port"],
-            int(run_cmd.published.split(":")[0]),
-            "the hopped host port is dropped on the floor -- the next launch/teardown "
-            "re-reads redis_port=6379 from config and will not find this container",
-        )
+        runs = [c for c in run_cmd.calls if c[:2] == ["docker", "run"]]
+        self.assertEqual(len(runs), 1, "a conflict must not be retried on another port")
 
-    def test_string_redis_port_crashes_while_hopping(self):
-        run_cmd = self._run_cmd_factory(conflicts=1)
+    def test_conflict_removes_the_created_container_before_exiting(self):
+        """Otherwise the next deploy fails on the container name, not the port."""
+        run_cmd = self._run_cmd_factory(conflicts=999)
+        gc = self._controller(run_cmd)
+        with (
+            patch("canyonos_core.controller.global_controller.RedisClient"),
+            patch("canyonos_core.controller.global_controller._wait_for_redis"),
+            self.assertRaises(SystemExit),
+        ):
+            gc._launch_redis_containers()
+        self.assertIn(["docker", "rm", "-f", "canyonos-redis-localhost"], run_cmd.calls)
+
+    def test_string_redis_port_is_coerced_not_crashed_on(self):
+        run_cmd = self._run_cmd_factory(conflicts=0)
         gc = self._controller(run_cmd)
         gc.controllers[0]["redis_port"] = "6379"
         with (
             patch("canyonos_core.controller.global_controller.RedisClient"),
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
-            self.assertRaises(TypeError),
         ):
             gc._launch_redis_containers()
+        self.assertEqual(run_cmd.published, "6379:6379")
 
     def test_container_name_conflict_still_hard_exits(self):
         def run_cmd(cmd, host=None, user=None):
@@ -303,20 +298,6 @@ class RedisHopTests(unittest.TestCase):
             self.assertRaises(SystemExit),
         ):
             gc._launch_redis_containers()
-
-    def test_exhausting_all_attempts_exits_rather_than_hanging(self):
-        run_cmd = self._run_cmd_factory(conflicts=999)
-        gc = self._controller(run_cmd)
-        with (
-            patch("canyonos_core.controller.global_controller.RedisClient"),
-            patch("canyonos_core.controller.global_controller._wait_for_redis"),
-            self.assertRaises(SystemExit),
-        ):
-            gc._launch_redis_containers()
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class WriteProjectEnvNewlineTests(unittest.TestCase):
@@ -360,3 +341,7 @@ class WriteProjectEnvNewlineTests(unittest.TestCase):
     def test_empty_file_still_writes_the_managed_keys(self):
         out = self._write("", {"CANYONOS_WEB_PORT": "8081"})
         self.assertEqual(out, "CANYONOS_WEB_PORT=8081\n")
+
+
+if __name__ == "__main__":
+    unittest.main()
