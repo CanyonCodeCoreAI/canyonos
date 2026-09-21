@@ -3,6 +3,8 @@ WORKDIR /app
 
 COPY package.json bun.lock ./
 COPY packages/api/package.json ./packages/api/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+COPY packages/web/package.json ./packages/web/package.json
 COPY packages/tsconfig/package.json ./packages/tsconfig/package.json
 # Bun omits packages/api/node_modules when it fully hoists deps to the root, which would break the
 # COPY in the runner stage.

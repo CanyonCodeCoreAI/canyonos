@@ -1,0 +1,416 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Tailwind ignores node_modules by default; @repo/ui is symlinked there, so its
+   component classes must be registered explicitly or they never get generated. */
+@source '../**/*.{ts,tsx}';
+
+@layer base {
+  :root {
+    --background: #ffffff;
+    --foreground: #1c1c17;
+    --card: #ffffff;
+    --card-foreground: #1c1c17;
+    --popover: #ffffff;
+    --popover-foreground: #1c1c17;
+    --primary: #2f9e5e;
+    --primary-foreground: #ffffff;
+    --primary-hover: #268a50;
+    --secondary: #f4f4ef;
+    --secondary-foreground: #44443b;
+    --muted: #fafaf7;
+    --muted-foreground: #8a8a80;
+    --accent: #e7f4ec;
+    --accent-foreground: #15663a;
+    --destructive: #c2410c;
+    /* Interactive text. Distinct from --primary (the brand green, which reads as a status here)
+       and from the chart series, so a link never borrows a meaning the charts have taken. */
+    --link: #4a86c5;
+    --destructive-foreground: #ffffff;
+    --border: #e2e2da;
+    --input: #e2e2da;
+    --ring: #2f9e5e;
+    --placeholder: #b3b3a8;
+    --brand-deep: #15663a;
+    --brand-mint: #9ee3ba;
+    --brand-bright: #4ade80;
+    --radius: 0.75rem;
+
+    --chart-1: #2f9e5e;
+    --chart-2: #4a93b8;
+    --chart-3: #c79a3e;
+    --chart-4: #c2683f;
+    --chart-5: #8a7fb5;
+    --chart-6: #5aa39a;
+
+    --heat-1: #e07b39;
+    --heat-2: #e9a43c;
+    --heat-3: #d9c24b;
+    --heat-4: #9cbf57;
+    --heat-5: #5fae68;
+    --heat-6: #2f9e5e;
+
+    --flow-workflow: #2f9e5e;
+    --flow-agent: #4a86c5;
+    --flow-tool: #c79a3e;
+    --flow-edge-route: #a9a99d;
+    --flow-edge-call: #cdcdc3;
+    --flow-edge-loop: #c08a2e;
+    --flow-edge-return: #2f9e5e;
+
+    --sidebar: #f7f7f7;
+    --sidebar-foreground: #44443b;
+    --sidebar-primary: #2f9e5e;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #e7f4ec;
+    --sidebar-accent-foreground: #15663a;
+    --sidebar-border: #e6e6df;
+    --sidebar-ring: #2f9e5e;
+
+    --editor-bg: #ffffff;
+    --editor-fg: #1c1c17;
+    --editor-gutter: #b8b8ae;
+    --editor-selection: color-mix(in srgb, #2f9e5e 18%, transparent);
+    --editor-active-line: color-mix(in srgb, #1c1c17 4%, transparent);
+    --editor-cursor: #2f9e5e;
+    --editor-keyword: #8a3ffc;
+    --editor-string: #2f7d4f;
+    --editor-comment: #9a9a90;
+    --editor-number: #b5651d;
+    --editor-function: #4a93b8;
+  }
+
+  .dark {
+    --background: #14130f;
+    --foreground: #f4f3ee;
+    --card: #1c1b16;
+    --card-foreground: #f4f3ee;
+    --popover: #1c1b16;
+    --popover-foreground: #f4f3ee;
+    --primary: #34b06a;
+    --primary-foreground: #08190f;
+    --primary-hover: #3cc176;
+    --secondary: #26241d;
+    --secondary-foreground: #e7e6df;
+    --muted: #26241d;
+    --muted-foreground: #a8a79c;
+    --accent: #14331f;
+    --accent-foreground: #9ee3ba;
+    --destructive: #e8623a;
+    --link: #7aa9dd;
+    --destructive-foreground: #ffffff;
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: #34b06a;
+    --placeholder: #6f6e64;
+    --brand-deep: #9ee3ba;
+    --brand-mint: #9ee3ba;
+    --brand-bright: #4ade80;
+
+    --chart-1: #3cc176;
+    --chart-2: #62a9cf;
+    --chart-3: #d9af52;
+    --chart-4: #d4805a;
+    --chart-5: #a399ca;
+    --chart-6: #6fbcb1;
+
+    --heat-1: #e8894a;
+    --heat-2: #efb457;
+    --heat-3: #e3cf63;
+    --heat-4: #aecd6e;
+    --heat-5: #74c07f;
+    --heat-6: #3cc176;
+
+    --flow-workflow: #34b06a;
+    --flow-agent: #62a9cf;
+    --flow-tool: #d9af52;
+    --flow-edge-route: #8a8a80;
+    --flow-edge-call: #6a6a60;
+    --flow-edge-loop: #d19a3e;
+    --flow-edge-return: #34b06a;
+
+    --sidebar: #1a1914;
+    --sidebar-foreground: #e7e6df;
+    --sidebar-primary: #34b06a;
+    --sidebar-primary-foreground: #08190f;
+    --sidebar-accent: #14331f;
+    --sidebar-accent-foreground: #9ee3ba;
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: #34b06a;
+
+    --editor-bg: #1c1b16;
+    --editor-fg: #f4f3ee;
+    --editor-gutter: #6f6e64;
+    --editor-selection: color-mix(in srgb, #34b06a 26%, transparent);
+    --editor-active-line: color-mix(in srgb, #ffffff 5%, transparent);
+    --editor-cursor: #34b06a;
+    --editor-keyword: #c3a0ff;
+    --editor-string: #74c07f;
+    --editor-comment: #8a8980;
+    --editor-number: #e0a35a;
+    --editor-function: #62a9cf;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-link: var(--link);
+  --color-placeholder: var(--placeholder);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-mint: var(--brand-mint);
+  --color-brand-bright: var(--brand-bright);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+
+  --color-heat-1: var(--heat-1);
+  --color-heat-2: var(--heat-2);
+  --color-heat-3: var(--heat-3);
+  --color-heat-4: var(--heat-4);
+  --color-heat-5: var(--heat-5);
+  --color-heat-6: var(--heat-6);
+
+  --color-flow-workflow: var(--flow-workflow);
+  --color-flow-agent: var(--flow-agent);
+  --color-flow-tool: var(--flow-tool);
+  --color-flow-edge-route: var(--flow-edge-route);
+  --color-flow-edge-call: var(--flow-edge-call);
+  --color-flow-edge-loop: var(--flow-edge-loop);
+  --color-flow-edge-return: var(--flow-edge-return);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: 'Inter Tight', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-xs: 0 1px 2px 0 rgb(28 28 23 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(28 28 23 / 0.08), 0 1px 2px -1px rgb(28 28 23 / 0.06);
+  --shadow-md: 0 4px 12px -2px rgb(28 28 23 / 0.1), 0 2px 6px -2px rgb(28 28 23 / 0.06);
+  --shadow-lg: 0 12px 32px -8px rgb(28 28 23 / 0.16);
+  --shadow-focus-ring: 0 0 0 3px rgb(47 158 94 / 0.15);
+
+  --ease-snappy: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-fluid: cubic-bezier(0.77, 0, 0.175, 1);
+
+  --animate-caret-blink: caret-blink 1.25s ease-out infinite;
+  --animate-collapsible-down: collapsible-down 0.2s var(--ease-snappy);
+  --animate-collapsible-up: collapsible-up 0.2s var(--ease-snappy);
+  --animate-notice-in: notice-in 200ms var(--ease-snappy) both;
+  --animate-sidebar-mode-projects: sidebar-mode-projects 160ms var(--ease-snappy) both;
+  --animate-sidebar-mode-resources: sidebar-mode-resources 160ms var(--ease-snappy) both;
+
+  @keyframes caret-blink {
+    0%,
+    70%,
+    100% {
+      opacity: 1;
+    }
+    20%,
+    50% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes collapsible-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+    }
+  }
+
+  @keyframes collapsible-up {
+    from {
+      height: var(--radix-collapsible-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+
+  @keyframes notice-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+
+  @keyframes sidebar-mode-projects {
+    from {
+      opacity: 0.82;
+      transform: translateY(2px);
+    }
+  }
+
+  @keyframes sidebar-mode-resources {
+    from {
+      opacity: 0.82;
+      transform: translateY(2px);
+    }
+  }
+}
+
+@layer components {
+  .app-sidebar-row {
+    @apply flex w-full items-center text-left transition-colors;
+    border-radius: 0.5625rem;
+  }
+
+  .app-sidebar-row:hover {
+    background-color: color-mix(in oklab, var(--color-foreground) 3.5%, transparent);
+  }
+
+  .app-sidebar-meta {
+    @apply text-muted-foreground shrink-0 font-mono text-[0.6875rem] tabular-nums;
+  }
+
+  .app-sidebar-section {
+    @apply flex flex-col gap-0.75;
+  }
+
+  .app-sidebar-active {
+    @apply bg-background;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--app-sidebar-color) 25%, transparent),
+      var(--shadow-xs);
+  }
+
+  .group[data-collapsible='icon'] .app-sidebar-collapse-to-icon {
+    width: 2rem !important;
+    height: 2rem !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    padding: 0 !important;
+  }
+
+  .group[data-collapsible='icon'] .app-sidebar-hide-when-collapsed {
+    display: none !important;
+  }
+
+  .group[data-collapsible='icon'] .app-sidebar-section {
+    align-items: center !important;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    /* The app shell is viewport-bounded and scrolls inside its content panel, so the
+       document itself never needs to scroll. Disabling overscroll stops the root
+       rubber-band bounce that otherwise drags the fixed header/sidebar at scroll extremes. */
+    overscroll-behavior: none;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-placeholder);
+  }
+  a,
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+  [role='menuitem']:not([data-disabled]) {
+    cursor: pointer !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@utility scroll-area {
+  /* Keep overscroll inside the panel so hitting its top/bottom never chains to the
+     document and bounces the fixed shell. */
+  overscroll-behavior: contain;
+  &::-webkit-scrollbar {
+    width: 0.5625rem;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border: 2px solid var(--color-background);
+    border-radius: 0.375rem;
+  }
+}
+
+/* React Flow ships its own control chrome; re-skin it as a translucent, token-driven panel so the
+   zoom controls read as part of the app in both light and dark. Scoped under `.react-flow` to
+   outrank the vendored `.react-flow__controls*` rules. */
+.react-flow .react-flow__controls {
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background-color: color-mix(in srgb, var(--card) 72%, transparent);
+  backdrop-filter: blur(8px) saturate(150%);
+  box-shadow: var(--shadow-sm);
+}
+
+.react-flow .react-flow__controls-button {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--foreground);
+  transition: background-color 0.15s ease;
+}
+
+.react-flow .react-flow__controls-button:hover {
+  background-color: var(--muted);
+}
+
+.react-flow .react-flow__controls-button svg {
+  fill: currentColor;
+  max-width: 0.75rem;
+  max-height: 0.75rem;
+}
