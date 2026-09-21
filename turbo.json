@@ -10,7 +10,8 @@
       "outputs": ["dist/**"]
     },
     "lint": {},
-    "typecheck": {
+    "typecheck": {},
+    "@cc-forge/api#typecheck": {
       "dependsOn": ["build"]
     },
     "format": {
