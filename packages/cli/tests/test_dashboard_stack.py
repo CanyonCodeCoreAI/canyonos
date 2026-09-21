@@ -382,9 +382,6 @@ def _shipped_manifest() -> dict:
 
 
 def test_manifest_gives_the_api_its_self_hosted_environment():
-    """The published api image runs with NODE_ENV=production, which refuses to
-    boot unless AUTH_MODE and DEPLOY_WORKER are named; FILE_STORAGE accepts
-    only mock."""
     environment = _shipped_manifest()["services"]["api"]["environment"]
 
     assert environment["AUTH_MODE"] == "fixed_code"
