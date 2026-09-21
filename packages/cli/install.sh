@@ -1,11 +1,25 @@
 #!/bin/sh
 # Installs the canyonos CLI from a prebuilt binary attached to the latest
-# "cli-v*" GitHub release. Usage: curl -fsSL <raw-url>/install.sh | sh
+# "cli-v*" GitHub release that is not marked pre-release.
+# Usage: curl -fsSL <raw-url>/install.sh | sh
 
 set -eu
 
 REPO="CanyonCodeCoreAI/canyonos"
 INSTALL_DIR="${CANYONOS_INSTALL_DIR:-$HOME/.local/bin}"
+
+# Reads the /releases JSON on stdin and prints the newest "cli-v*" tag that is not
+# a pre-release. The array is collapsed to one release per line so the tag and the
+# pre-release flag of the same release stay together; the API lists newest first.
+latest_cli_tag() {
+    tr -d ' \n' \
+        | sed 's/},{/}\
+{/g' \
+        | grep '"tag_name":"cli-v' \
+        | grep -v '"prerelease":true' \
+        | grep -o 'cli-v[0-9][^"]*' \
+        | head -n1
+}
 
 os="$(uname -s)"
 arch="$(uname -m)"
@@ -33,10 +47,7 @@ esac
 
 tag="${CANYONOS_VERSION:-}"
 if [ -z "$tag" ]; then
-    tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases" \
-        | grep '"tag_name"' \
-        | grep -o 'cli-v[0-9][^"]*' \
-        | head -n1)"
+    tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases" | latest_cli_tag)"
 fi
 
 if [ -z "$tag" ]; then
