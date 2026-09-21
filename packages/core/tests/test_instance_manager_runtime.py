@@ -121,6 +121,20 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
             ],
         )
 
+    def test_a_configured_redis_port_never_reaches_a_local_agent(self):
+        """`redis_port` is the host-side publish; on the docker network Redis is always on 6379."""
+        controller = _fake_controller()
+        manager = InstanceManager(controller, controller.redis)
+
+        instance = manager.ensure_instances(
+            [{"name": "Alpha", "provider": "local", "redis_port": 9002}]
+        )[0]
+
+        self.assertEqual(instance["redis_port"], "6379")
+        run_argv = controller._run_cmd.call_args_list[1].args[0]
+        self.assertIn("CANYONOS_REDIS_PORT=6379", run_argv)
+        self.assertNotIn("CANYONOS_REDIS_PORT=9002", run_argv)
+
     def test_local_instances_keep_default_host_and_increment_host_ports(self):
         controller = _fake_controller()
         manager = InstanceManager(controller, controller.redis)
