@@ -17,18 +17,13 @@ import subprocess
 import sys
 
 from canyonos_core.controller.utils.env_file import resolve_env_file
+from canyonos_core.schema import render_violation, validate_project
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("canyonos_core")
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 ARTIFACT_DIR_NAME = ".car"
 SOURCE_DIR_NAME = "app"
-EC2_REQUIRED_CONFIG_KEYS = (
-    "ami_id",
-    "subnet_id",
-    "security_group_ids",
-    "region",
-)
 
 
 # ------------------------------------------------------------------ #
@@ -62,20 +57,35 @@ def _artifact_prefix(root):
     )
 
 
+def _declarations_dir():
+    """Where this project's agent YAML declarations are kept."""
+    project_dir = os.path.abspath(os.getcwd())
+    prefix = _artifact_prefix(project_dir)
+    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
+    return os.path.join(artifact_root, "config" if prefix else "agents")
+
+
+def validate_or_exit(config_path, declarations_dir):
+    """Reject the config before anything is generated, one line per problem.
+
+    The host CLI reads the first `ERROR:` line out of this process's output as
+    the root cause, so each violation is logged whole on its own line.
+    """
+    violations = validate_project(config_path, declarations_dir)
+    if not violations:
+        return
+    for violation in violations:
+        logger.error("%s", render_violation(violation))
+    logger.error(
+        "Configuration rejected: %d problem(s) found; nothing was built.",
+        len(violations),
+    )
+    sys.exit(1)
+
+
 def _normalize_requirements(agent_cfg):
-    """Return an agent's `requirements` list, or [] if absent/null/malformed."""
-    requirements = agent_cfg.get("requirements") or []
-    if not isinstance(requirements, list) or not all(
-        isinstance(r, str) for r in requirements
-    ):
-        # The requirements list is bad, assuming file has no requirements and logging error
-        logger.warning(
-            "Agent '%s': `requirements` must be a list of strings, got %r; ignoring.",
-            agent_cfg.get("name"),
-            requirements,
-        )
-        return []
-    return requirements
+    """Return a service's `requirements` list; the schema already checked its shape."""
+    return list(agent_cfg.get("requirements") or [])
 
 
 def _docker_platform():
@@ -156,13 +166,8 @@ def _ensure_grpc_stubs_importable(project_dir):
 
 
 def _preflight_ec2_deploy(config, project_dir):
-    ec2_cfg = config.get("ec2", {})
-    missing = [key for key in EC2_REQUIRED_CONFIG_KEYS if not ec2_cfg.get(key)]
-    if missing:
-        raise RuntimeError(
-            f"EC2 deploy preflight failed: missing ec2 config keys: {', '.join(sorted(missing))}"
-        )
-
+    # The required `ec2:` keys are the manifest schema's job, checked before
+    # anything was built; what is left here is the local toolchain.
     _require_docker_for_ec2("deploy")
     _ensure_grpc_stubs_importable(project_dir)
 
@@ -236,19 +241,24 @@ def _run_build(config_path):
         sys.exit(1)
 
     config = _load_config(config_path)
-    agents = config.get("agents", [])
     project_dir = os.path.abspath(os.getcwd())
     prefix = _artifact_prefix(project_dir)
     artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
     source_root = (
         os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir
     )
+    declarations_dir = os.path.join(artifact_root, "config" if prefix else "agents")
+
+    # Nothing below this line runs against a config the schema rejects: no
+    # stubs, no protoc, no Docker context, no image.
+    validate_or_exit(config_path, declarations_dir)
+
+    agents = config.get("agents", [])
     package_dir = _get_package_dir()
 
     # -------------------------------------------------------------- #
     #  Step 1: Discover agent YAML files and generate Python stubs    #
     # -------------------------------------------------------------- #
-    declarations_dir = os.path.join(artifact_root, "config" if prefix else "agents")
     stubs_dir = os.path.join(artifact_root, "stubs")
     os.makedirs(stubs_dir, exist_ok=True)
 
@@ -478,6 +488,8 @@ def cmd_deploy(args):
     if not os.path.isfile(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
+
+    validate_or_exit(config_path, _declarations_dir())
 
     # Build first (stubs, protos, Docker contexts, images), then deploy them.
     # `canyonos build` was merged into `canyonos deploy`.
