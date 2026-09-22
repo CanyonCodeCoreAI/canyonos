@@ -329,6 +329,19 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-STUB-IMPORT"])
         self.assertIn("not the class it writes", findings[0].summary)
 
+    def test_a_dot_slash_entrypoint_resolves_to_the_same_stub_module(self):
+        """The schema accepts `./agents/x.py`; it is the module `agents.x`."""
+        self.assertEqual(
+            self.codes(
+                {
+                    "config/global_controller.yaml": CONFIG.replace(
+                        "entrypoint: agents/", "entrypoint: ./agents/"
+                    )
+                }
+            ),
+            [],
+        )
+
     def test_the_flat_import_of_a_stub_is_fine(self):
         """The stub is written at the context root under its basename too."""
         self.assertEqual(
