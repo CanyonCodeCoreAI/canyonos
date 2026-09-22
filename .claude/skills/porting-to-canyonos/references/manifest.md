@@ -37,7 +37,6 @@ column only, in one round, carrying these defaults.
 |---|---|---|
 | `name`, `entrypoint`, `workflow_file`, `type` | derived — selected service map | — |
 | `requirements` | derived — the entry's import graph | — |
-| `database` | neither; omit it always (see below) | absent |
 | `provider` | developer | `local` |
 | `ec2:` block, `instance_type` | developer — no default is safe | entry stays `local` |
 | `replicas` | developer, *unless* cross-request state forces `1` | `1` |
@@ -57,7 +56,9 @@ the config rather than asking about it:
 - **`replicas` stops being a choice once a service holds cross-request state.**
   When the survey finds such state, the service-boundary section in
   `source-survey.md` fixes `replicas: 1` as a correctness requirement. Report it as a constraint; do not offer to
-  raise it.
+  raise it. This constraint disappears if the state is moved into a declared
+  `type: database` entry instead (see Database services below) -- state then
+  lives outside the process, so replicas no longer share or lose anything.
 - **EC2 identifiers are wrong to invent.** ec2.md forbids copying them from an
   example environment, and a wrong AMI, subnet, or security group fails at
   deploy preflight or, worse, provisions something unreachable. Unanswered
@@ -108,9 +109,9 @@ Prefer running `canyonos config` when an interactive terminal is available;
 otherwise reproduce View/Change in conversation. Do not ask for derived values
 such as entrypoints or requirements.
 
-An unattended `canyonos integrate` run must not block on this interaction. Use
-and report the displayed defaults. Never invent EC2 infrastructure identifiers:
-without them, keep the entry `local`.
+An unattended `canyonos build -y` run must not block on this interaction or ask
+questions. Use and report the displayed defaults. Never invent EC2
+infrastructure identifiers: without them, keep the entry `local`.
 
 ## Agent declarations
 
@@ -123,13 +124,40 @@ Use one yaml per deployed service. Argument types are bare builtins only:
 required by the generated stub. `returns.type` is documentation; use `dict` or
 `list` to signal that workflow callers must `json.loads` the returned string.
 
+## Database services
+
+A `type: database` entry provisions a plain container from a public image
+instead of building one from `.car/app` -- it has no `entrypoint` and no
+declaration YAML. Use it when a source's state (a store, memory, or
+checkpointer) must survive across replicas instead of forcing `replicas: 1`
+(see `source-survey.md`). This is unrelated to the top-level `database:` key
+above, which stays omitted regardless.
+
+| Key | Meaning | Default |
+|---|---|---|
+| `image` | public image to pull and tag, e.g. `postgres:16-alpine` | required |
+| `db_port` | host port mapped to the image's own port | `5432` |
+| `volume_path` | in-container path to persist across restarts; omit to skip the volume | absent |
+| `env` | env vars the image itself needs, e.g. `POSTGRES_USER` | `{}` |
+
+Every other declared service already reaches it without extra wiring: its
+resolved `host:port` is published in the same routing table every agent uses,
+over the Redis connection every container already receives
+(`CANYONOS_REDIS_HOST`/`CANYONOS_REDIS_PORT`).
+
 ## Per-image requirements
 
 Each image installs the runtime's base list plus that entry's `requirements:`
 and nothing else. The source's own `requirements.txt` is never installed -- the
-generator writes its own -- and its `pyproject.toml` is installed only where the
-editable-install capability is available. Re-declare every runtime distribution
-by hand, per entry.
+generator writes its own, and no image runs an editable install, so the
+source's own `pyproject.toml` never contributes either. Re-declare every runtime
+distribution by hand, per entry.
+
+Declare the name PyPI installs, not the name Python imports; they differ often
+enough that the import graph cannot be copied verbatim. `import speech_recognition`
+installs as `SpeechRecognition`, `import yaml` as `PyYAML`, `import cv2` as
+`opencv-python`. An import name that does not exist on PyPI fails the image build,
+not the port, so the error arrives a stage later than the mistake.
 
 Build each entry's list from the imports its image *executes*, not from the code
 you wrote:
@@ -138,13 +166,28 @@ you wrote:
    the copy, transitively. A workflow that imports `benchmark.py`, which imports
    `agent.py`, needs `agent.py`'s distributions even though the workflow makes
    no model call.
-2. Include the `__init__.py` of every package on those paths -- it runs first.
+2. Stop the walk at another service's declared `entrypoint`, and nowhere else.
+   The build writes that agent's stub over exactly that path in every other
+   image, so nothing behind it is executed there. A module that merely wraps a
+   service is not an entrypoint: when the workflow imports
+   `src/retail_adapter.py` while the manifest declares
+   `entrypoint: src/retail_agent.py`, the adapter is real code in the workflow
+   image and every distribution it reaches is the workflow entry's to declare.
+3. Include the `__init__.py` of every package on those paths -- it runs first.
    In a peer image the entrypoint is a stub, but its package `__init__` and its
    siblings are real, so that image still installs what they import.
-3. Omit distributions reachable only from source files no image imports, such as
+4. Omit distributions reachable only from source files no image imports, such as
    a Gradio or Streamlit UI beside the agent. The source-integrity boundary
    forbids reclassifying a declared dependency, not declining to ship an
    unreachable one; name what you left out in the report.
+
+`requirements: []` on the workflow entry is the claim that its module reaches
+nothing past the base list. That is true only when the workflow imports each
+service from its declared `entrypoint` and names no third-party import of its
+own -- not because "the workflow only runs stubs". A comment in the manifest
+asserting the stub contract does not make it true, and the workflow container
+is the only one serving :8080: when it dies at import, the deployment has no
+HTTP entry point for its whole life.
 
 `validate.py` walks the same graph and reports what is missing as W006.
 
@@ -157,7 +200,10 @@ today:
   `langchain.agents.agent_toolkits` -- the untouched source's own import.
 - **The source pins nothing**: cap every fast-moving distribution below its next
   major (`langchain<1.0`, `openai<2`). Unpinned means "whatever existed when
-  this was written", which is not what pip installs today.
+  this was written", which is not what pip installs today. Pair each cap with a
+  floor: a bound like `crewai<2.0` alone also permits every release back to the
+  project's first, and pip is free to resolve one of those to satisfy some other
+  entry. `crewai>=0.60,<2.0` says which era the port was written against.
 - **The source predates a known SDK break**: pin contemporaneous with its last
   commit. A 2023 AutoGen script passing `request_timeout=` needs
   `pyautogen==0.1.14`, which depends on `openai<1`, not `autogen==0.7.5`, which
@@ -194,7 +240,7 @@ agents:
       - langchain-openai
 
   - name: Workflow
-    type: workflow              # the one entry that carries this key
+    type: workflow               # marks the workflow entry
     workflow_file: email_workflow.py   # relative to .car/app
     api_port: 8080              # where /main is served
     provider: local
@@ -202,6 +248,16 @@ agents:
     redis_port: 6379
     requirements:               # its own list; the agent's does not apply here
       - langgraph
+
+  - name: StateDB                # optional; see Database services above
+    type: database
+    image: postgres:16-alpine
+    db_port: 5432
+    volume_path: /var/lib/postgresql/data
+    env:
+      POSTGRES_USER: canyonos
+      POSTGRES_PASSWORD: canyonos
+      POSTGRES_DB: canyonos_state_db
 
 poll_interval: 5                # seconds between metrics polls; default 5
 
@@ -222,9 +278,3 @@ otel:
       endpoint: http://host.docker.internal:3000/v1/traces
       headers: {}
 ```
-
-Omit `database`. Without it every metrics poll logs `Could not parse SQLAlchemy
-URL from given URL string`, once per replica every `poll_interval` seconds --
-expected noise, not a failure, and not a reason to add the key. Adding it drops
-a sqlite file at the application root, outside `.car`, which the final source-
-integrity check then reports.
