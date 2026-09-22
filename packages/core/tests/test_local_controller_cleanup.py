@@ -127,7 +127,7 @@ class _FakeRedisStore:
             self.strings.pop(key, None)
             self.sets.pop(key, None)
 
-    def expire(self, key, seconds):
+    def expire(self, key, seconds, nx=False):
         # Real Redis: schedules removal after `seconds`, doesn't touch the
         # value now. This fake just records the call so tests can assert on
         # it without needing to fake time passing.
