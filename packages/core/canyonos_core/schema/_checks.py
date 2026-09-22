@@ -62,8 +62,12 @@ def _resolve(raw):
     return expand_env_value(raw)
 
 
-def _describe_unsupported(raw, value):
-    """How to name a value that is wrong, naming the reference it was written as."""
+def _describe_rejected(raw, value):
+    """How to name a rejected value, as the reference it was written as if it is one.
+
+    An expansion can hide what the author typed -- an unset or empty variable
+    reads back as `''` -- so the message quotes the reference instead.
+    """
     if isinstance(raw, str) and ENV_REF.search(raw):
         return f"{raw!r}{_ENV_REF_HINT}"
     return _describe(value)
@@ -116,10 +120,29 @@ def _integer(collector, node, key, prefix, default, minimum=None):
             node,
             key,
             _field(prefix, key),
-            f"expected an integer{bound}, got {_describe_unsupported(raw, value)}",
+            f"expected an integer{bound}, got {_describe_rejected(raw, value)}",
         )
         return default
     return value
+
+
+def _number(collector, node, key, prefix, default, minimum=None):
+    """A field that accepts a fraction, unlike the integer counts and ports."""
+    if key not in node:
+        return default
+    raw = node[key]
+    value = _resolve(raw)
+    bound = f" > {minimum}" if minimum is not None else ""
+    wrong_type = isinstance(value, bool) or not isinstance(value, (int, float))
+    if wrong_type or (minimum is not None and value <= minimum):
+        collector.add(
+            node,
+            key,
+            _field(prefix, key),
+            f"expected a number{bound}, got {_describe_rejected(raw, value)}",
+        )
+        return default
+    return float(value)
 
 
 def _string(collector, node, key, prefix, default=None, required=False):
@@ -127,13 +150,14 @@ def _string(collector, node, key, prefix, default=None, required=False):
         if required:
             collector.add(node, key, _field(prefix, key), "is required but missing")
         return default
-    value = _resolve(node[key])
+    raw = node[key]
+    value = _resolve(raw)
     if not isinstance(value, str) or not value.strip():
         collector.add(
             node,
             key,
             _field(prefix, key),
-            f"expected a non-empty string, got {_describe(value)}",
+            f"expected a non-empty string, got {_describe_rejected(raw, value)}",
         )
         return default
     return value
@@ -149,7 +173,7 @@ def _boolean(collector, node, key, prefix, default):
             node,
             key,
             _field(prefix, key),
-            f"expected a boolean, got {_describe_unsupported(raw, value)}",
+            f"expected a boolean, got {_describe_rejected(raw, value)}",
         )
         return default
     return value
@@ -170,12 +194,14 @@ def _string_list(collector, node, key, prefix, required=False):
         )
         return ()
     items = [_resolve(item) for item in value]
-    if not all(isinstance(item, str) and item.strip() for item in items):
+    for raw, item in zip(value, items):
+        if isinstance(item, str) and item.strip():
+            continue
         collector.add(
             node,
             key,
             _field(prefix, key),
-            f"expected a list of strings, got {_describe(value)}",
+            f"expected a list of strings, got {_describe_rejected(raw, item)}",
         )
         return ()
     return tuple(items)

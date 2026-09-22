@@ -20,6 +20,7 @@ from canyonos_core.schema._checks import (
     _field,
     _integer,
     _mapping,
+    _number,
     _resolve,
     _string,
     _string_list,
@@ -458,7 +459,7 @@ def _otel(collector, node):
             protocol = None
         timeout = None
         if entry.get("timeout") is not None:
-            timeout = _integer(collector, entry, "timeout", prefix, None, 1)
+            timeout = _number(collector, entry, "timeout", prefix, None, 0)
         if name and endpoint and protocol:
             destinations.append(
                 OtelDestination(

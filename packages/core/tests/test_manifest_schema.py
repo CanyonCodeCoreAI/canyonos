@@ -23,6 +23,7 @@ from canyonos_core.schema import (
     AgentService,
     DatabaseService,
     SchemaError,
+    SchemaViolation,
     WorkflowService,
     load_manifest,
     render_violation,
@@ -356,6 +357,40 @@ class OtelTests(_ManifestCase):
         self.assertEqual(violation.field, "otel.destinations[0].endpoint")
         self.assertEqual(violation.message, "is required but missing")
 
+    def test_a_timeout_may_be_fractional(self):
+        # The exporter takes a float; a timeout is a duration, not a count.
+        manifest = self.load(
+            self._otel(
+                {
+                    "name": "local",
+                    "protocol": "grpc",
+                    "endpoint": "http://x",
+                    "timeout": 2.5,
+                }
+            )
+        )
+
+        (destination,) = manifest.otel.destinations
+        self.assertEqual(destination.timeout, 2.5)
+
+    def test_a_timeout_that_is_not_a_number_is_rejected(self):
+        for timeout, quoted in (("2", "the string '2'"), (0, "the number 0")):
+            with self.subTest(timeout=timeout):
+                violation = self.one(
+                    self._otel(
+                        {
+                            "name": "local",
+                            "protocol": "grpc",
+                            "endpoint": "http://x",
+                            "timeout": timeout,
+                        }
+                    )
+                )
+                self.assertEqual(violation.field, "otel.destinations[0].timeout")
+                self.assertEqual(
+                    violation.message, f"expected a number > 0, got {quoted}"
+                )
+
     def test_a_complete_destination_parses(self):
         manifest = self.load(
             self._otel(
@@ -459,6 +494,29 @@ class EnvExpansionTests(_ManifestCase):
 
         self.assertEqual(manifest.ec2.security_group_ids, ("sg-abc",))
 
+    def test_a_ref_that_resolves_to_nothing_still_names_the_variable(self):
+        # The expansion is '', which on its own tells the reader nothing about
+        # which variable they have to go and set.
+        config = {"agents": [_agent()], "redis": {"host": "${CANYONOS_TEST_HOST}"}}
+
+        with patch.dict(os.environ, {"CANYONOS_TEST_HOST": ""}):
+            violation = self.one(config)
+
+        self.assertEqual(violation.field, "redis.host")
+        self.assertIn("'${CANYONOS_TEST_HOST}'", violation.message)
+
+    def test_a_ref_that_resolves_to_nothing_in_a_list_names_the_variable(self):
+        config = {
+            "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+            "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
+        }
+
+        with patch.dict(os.environ, {"CANYONOS_TEST_SG": "  "}):
+            violation = self.one(config)
+
+        self.assertEqual(violation.field, "ec2.security_group_ids")
+        self.assertIn("'${CANYONOS_TEST_SG}'", violation.message)
+
     def test_an_unset_ref_is_left_literal_just_as_the_controller_leaves_it(self):
         config = {
             "agents": [_agent(provider="EC2", instance_type="t3.micro")],
@@ -519,6 +577,18 @@ class UnparseableFileTests(unittest.TestCase):
 
 
 class RenderingTests(_ManifestCase):
+    def test_a_violation_with_no_path_does_not_render_a_stray_line_number(self):
+        self.assertEqual(
+            render_violation(SchemaViolation("", 5, "agents[0].name", "is wrong")),
+            "agents[0].name: is wrong",
+        )
+
+    def test_a_violation_with_no_field_leaves_the_field_out(self):
+        self.assertEqual(
+            render_violation(SchemaViolation("m.yaml", 5, "", "is empty")),
+            "m.yaml:5: is empty",
+        )
+
     def test_a_violation_renders_as_one_line_with_its_location(self):
         violation = self.one({"agents": [_agent()], "registry": {"url": "example"}})
 

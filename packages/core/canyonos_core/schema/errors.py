@@ -24,7 +24,7 @@ def render_violation(violation):
     problem is the file as a whole rather than one key in it.
     """
     location = violation.path
-    if violation.line:
+    if location and violation.line:
         location = f"{location}:{violation.line}"
     parts = [part for part in (location, violation.field) if part]
     parts.append(violation.message)
