@@ -893,8 +893,10 @@ class GlobalController(object):
         tracebacks included. `canyonos deploy` decides the deploy has died from
         exactly those words, so it keys on the sentinels to leave the quoted
         block alone -- they must stay in step with PhaseTracker in
-        packages/cli/canyonos/deploy.py. The block is therefore emitted whole,
-        whatever goes wrong inside it.
+        packages/cli/canyonos/deploy.py, which matches them only at the start
+        of a message. Every line inside is therefore indented, so quoted text
+        can never pose as a sentinel, and the block is emitted whole, whatever
+        goes wrong inside it.
         """
         name = instance["agent_name"]
         logger.warning(

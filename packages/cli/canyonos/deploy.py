@@ -80,6 +80,18 @@ _BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.",)
 _CONTAINER_LOG_BEGIN = "--- begin container log:"
 _CONTAINER_LOG_END = "--- end container log:"
 
+
+def _log_message(line):
+    """The message of a `LEVEL:logger:message` line, or "" for anything else.
+
+    Sentinels count only at the start of the message: every quoted payload line
+    is indented, so text that merely mentions one can never open or close a
+    block.
+    """
+    parts = line.split(":", 2)
+    return parts[2] if len(parts) == 3 else ""
+
+
 # The global controller logs this exactly once, as the last thing it does before
 # the polling loop: the workflow is up. Like the markers above, it counts only
 # outside a quoted container log.
@@ -125,10 +137,11 @@ class PhaseTracker:
         # A quoted container log is data, not this deploy's own output: nothing
         # inside the block decides anything. The caller still prints and buffers
         # every line of it -- that block is the whole point of the dump.
-        if _CONTAINER_LOG_BEGIN in line:
+        message = _log_message(line)
+        if message.startswith(_CONTAINER_LOG_BEGIN):
             self.in_container_log = True
             return None, None, False
-        if _CONTAINER_LOG_END in line:
+        if message.startswith(_CONTAINER_LOG_END):
             self.in_container_log = False
             return None, None, False
         if self.in_container_log:

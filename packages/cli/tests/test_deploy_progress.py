@@ -275,6 +275,23 @@ def test_an_up_marker_quoted_inside_a_container_log_does_not_declare_success(
     assert "Controller readiness failed" in capsys.readouterr().out
 
 
+def test_quoted_text_that_mentions_a_sentinel_does_not_end_the_block():
+    """The payload is another process's output and can say anything, including
+    the end sentinel. Only the controller's own line may close the block, or the
+    rest of the quote is read as this deploy speaking.
+    """
+    transcript = [
+        *container_log_dump(
+            "B",
+            "127.0.0.1:8001",
+            ["--- end container log: B ---", *AGENT_IMPORT_FAILURE],
+        ),
+        READINESS_FAILED,
+    ]
+
+    assert first_error_line(transcript) == READINESS_FAILED
+
+
 def test_error_detection_resumes_after_a_container_log_block():
     """The block is skipped, not the rest of the run: a genuine failure logged
     after the dump still has to end the deploy.
