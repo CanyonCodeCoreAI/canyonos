@@ -515,6 +515,54 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
         self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
         self.assertIsNone(controller.redis.get(status_key))
 
+    def test_a_stale_status_is_gone_before_the_container_that_owns_it_starts(self):
+        # The key has no TTL and the endpoint is derived from the container name,
+        # so a "healthy" left by a container that died -- this run or a crashed
+        # one -- would read as the new container's own health.
+        controller = _fake_controller()
+        status_key = "controller:canyonos-alpha-0:50051:status"
+        controller.redis.set(status_key, "healthy")
+        seen_at_launch = []
+        run_cmd = controller._run_cmd.side_effect
+
+        def record_status_at_launch(cmd, host, user=None):
+            if cmd[:2] == ["docker", "run"]:
+                seen_at_launch.append(controller.redis.get(status_key))
+            return run_cmd(cmd, host, user)
+
+        controller._run_cmd.side_effect = record_status_at_launch
+        manager = InstanceManager(controller, controller.redis)
+
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        self.assertEqual(seen_at_launch, [None])
+
+    def test_a_status_that_cannot_be_cleared_aborts_the_launch(self):
+        # Fail closed: launching over a stale status it could not remove would
+        # let that status stand in for the new container.
+        controller = _fake_controller()
+        delete = controller.redis.delete
+
+        def refuse_status_keys(*keys):
+            if any(key.endswith(":status") for key in keys):
+                raise ConnectionError("node redis is gone")
+            delete(*keys)
+
+        controller.redis.delete = refuse_status_keys
+        manager = InstanceManager(controller, controller.redis)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Cannot launch canyonos-alpha-0: could not clear the stale readiness "
+            "status at canyonos-alpha-0:50051 on localhost: node redis is gone",
+        ):
+            manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        self.assertNotIn(
+            ["docker", "run"],
+            [call.args[0][:2] for call in controller._run_cmd.call_args_list],
+        )
+
     def test_a_node_whose_redis_is_gone_does_not_break_the_teardown(self):
         controller = _fake_controller()
         manager = InstanceManager(controller, controller.redis)

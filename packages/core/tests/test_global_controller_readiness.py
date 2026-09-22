@@ -20,10 +20,6 @@ class _FakeRedis:
     def get(self, key):
         return self.statuses.get(key)
 
-    def delete(self, *keys):
-        for key in keys:
-            self.statuses.pop(key, None)
-
 
 class _FakeInstanceManager(InstanceManager):
     """The real provider dispatch, over a fixed list of instance records."""
@@ -336,32 +332,6 @@ class GlobalControllerReadinessTests(unittest.TestCase):
                 "Error: No such container: canyonos-researchagent-0"
             ],
         )
-
-    def test_a_stale_healthy_from_a_crashed_run_cannot_satisfy_readiness(self):
-        # The status key has no TTL and a redeploy reuses the same Redis and the
-        # same endpoints, so the wait could pass on a word a replica said in a
-        # run that has since died.
-        controller = _controller({"controller:localhost:8000:status": "healthy"})
-        controller.instance_manager.ensure_instances = lambda _specs: []
-        controller.controllers = []
-
-        with self.assertLogs("canyonos_core.controller.global_controller"):
-            controller.launch_docker_agents()
-
-        with self.assertLogs("canyonos_core.controller.global_controller") as logs:
-            with self.assertRaises(SystemExit):
-                controller._wait_for_healthy(timeout=0, interval=0)
-        self.assertEqual(
-            logs.records[-1].getMessage(),
-            "Controller readiness failed: ResearchAgent (localhost:8000)=unknown",
-        )
-
-        # ...and the same endpoint passes again as soon as this run's container
-        # publishes there.
-        controller.redis.statuses["controller:localhost:8000:status"] = "healthy"
-        with self.assertLogs("canyonos_core.controller.global_controller"):
-            controller._wait_for_healthy(timeout=0, interval=0)
-        self.assertEqual(controller._last_status[("localhost", "8000")], "healthy")
 
     def test_an_ec2_block_with_no_settings_under_it_is_not_a_crash(self):
         # A bare `ec2:` key in the YAML parses to None, not {}.

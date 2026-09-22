@@ -301,6 +301,7 @@ def _bootstrap_instance(
     if result.returncode != 0:
         raise RuntimeError(f"Failed to transfer image to {host}: {result.stderr}")
 
+    # No stale-status clear here, unlike Local: a fresh EC2 host runs its own empty Redis.
     cmd = [
         "docker",
         "run",

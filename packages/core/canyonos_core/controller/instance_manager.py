@@ -227,11 +227,11 @@ class InstanceManager:
     def _delete_controller_status(self, instance):
         """Drop the status key belonging to this instance.
 
-        The invariant: a status key never outlives the instance record it
-        belongs to. The key has no TTL, and endpoints are derived from the
-        container name, so one left behind is inherited by the next replica to
-        land there -- and read as that replica's own health. Best effort: a node
-        whose Redis is already gone must not stop the teardown.
+        Hygiene: a status key should not outlive the instance record it
+        belongs to. The guarantee that a stale one is never read lives at
+        launch, where the local runtime clears the key, fail-closed, right
+        before `docker run`. Best effort here: a node whose Redis is already
+        gone must not stop the teardown.
         """
         try:
             node_redis = self.controller.node_redis.get(instance["host"]) or self.redis

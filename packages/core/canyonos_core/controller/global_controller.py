@@ -1346,27 +1346,8 @@ class GlobalController(object):
             )
         return result
 
-    def _clear_stale_statuses(self):
-        """Forget every controller status a previous run left in Redis.
-
-        The key has no TTL, and a redeploy reuses both the Redis and the
-        endpoints, so a replica that died in an earlier run leaves its last word
-        sitting where the readiness wait will read it. A stale "healthy" there
-        is exactly the false positive that wait exists to catch. Cleared before
-        anything launches, so the only statuses it can ever see are this run's.
-        """
-        for instance in self.instance_manager.list_instances():
-            endpoint = self.instance_manager._routing_endpoint_for(instance)
-            try:
-                self._get_node_redis_for(instance["host"]).delete(
-                    f"controller:{endpoint}:status"
-                )
-            except Exception as e:
-                logger.warning("Could not clear the status of %s: %s", endpoint, e)
-
     def launch_docker_agents(self):
         """Launch all configured runtimes through InstanceManager."""
-        self._clear_stale_statuses()
         try:
             instances = self.instance_manager.ensure_instances(self.controllers)
         except FileNotFoundError:
