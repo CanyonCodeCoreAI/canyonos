@@ -88,6 +88,12 @@ class GlobalController(object):
             port=redis_cfg.get("port", 6379),
             db=redis_cfg.get("db", 0),
         )
+        # Kept in step with self.redis below, including the reassignment in
+        # _launch_redis_containers -- the otel_exporter subprocess is handed these.
+        self._redis_addr = (
+            redis_cfg.get("host", "localhost"),
+            redis_cfg.get("port", 6379),
+        )
 
         self.poll_interval = self.config.get("poll_interval", 5)
         self.cleanup_interval = self.config.get("cleanup_interval", 10)
@@ -144,7 +150,12 @@ class GlobalController(object):
         # Always start the exporter: with destinations it exports; without, it flushes the
         # queue each poll so waiting/metrics_waiting can't grow unbounded.
         self.process_supervisor.register(
-            "otel_exporter", [sys.executable, otel_exporter_script]
+            "otel_exporter",
+            [sys.executable, otel_exporter_script],
+            env={
+                "CANYONOS_OTEL_REDIS_HOST": str(self._redis_addr[0]),
+                "CANYONOS_OTEL_REDIS_PORT": str(self._redis_addr[1]),
+            },
         )
 
         # Initialize the waiting table synchronously before either the GC or
@@ -496,6 +507,8 @@ class GlobalController(object):
             redis_client = RedisClient(host=connect_host, port=redis_port)
             _wait_for_redis(redis_client, host, redis_port)
             self.node_redis[host] = redis_client
+            if host == "localhost":
+                self._redis_addr = (connect_host, redis_port)
 
         # Update the primary redis client to the local node's Redis
         if "localhost" in self.node_redis:

@@ -813,8 +813,20 @@ def main():
             exc_info=True,
         )
         raise
+    # No fallback: guessing the wrong Redis means reading no destinations and
+    # silently discarding every queued span and metric from then on.
+    redis_host = os.environ.get("CANYONOS_OTEL_REDIS_HOST")
+    redis_port = os.environ.get("CANYONOS_OTEL_REDIS_PORT")
+    if not redis_host or not redis_port:
+        logger.error(
+            "Fatal: CANYONOS_OTEL_REDIS_HOST and CANYONOS_OTEL_REDIS_PORT must be set "
+            "by the Global Controller that starts this process."
+        )
+        raise RuntimeError(
+            "CANYONOS_OTEL_REDIS_HOST and CANYONOS_OTEL_REDIS_PORT are required"
+        )
     try:
-        _redis = RedisClient(host="host.docker.internal")
+        _redis = RedisClient(host=redis_host, port=int(redis_port))
         _last_destinations_raw = _redis.get(DESTINATIONS_KEY)
     except Exception as e:
         logger.error(
