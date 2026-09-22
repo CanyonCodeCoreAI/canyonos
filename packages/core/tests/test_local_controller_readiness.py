@@ -141,6 +141,31 @@ class LocalControllerReadinessTests(unittest.TestCase):
                 _build_controller(redis, publish_ready=True, agent=None, server=server)
         server.stop.assert_called_once_with(0)
 
+    def test_half_a_declaration_is_a_failed_agent_not_an_agentless_one(self):
+        # Only both absent means agentless. With one set, the container was
+        # meant to serve an agent it can never load; read as agentless it
+        # published "healthy" with nothing behind it.
+        for env in (
+            {"CANYONOS_AGENT_NAME": "RagChatbotAgent", "CANYONOS_AGENT_FILE": ""},
+            {"CANYONOS_AGENT_NAME": "", "CANYONOS_AGENT_FILE": "chatbot.py"},
+        ):
+            with self.subTest(env=env):
+                redis = _FakeRedis()
+                with patch.dict(os.environ, env):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "Failed to load configured agent"
+                    ):
+                        _build_controller(redis, publish_ready=True, agent=None)
+                self.assertEqual(redis.strings[STATUS_KEY], "failed")
+
+    def test_a_launcher_that_owns_readiness_decides_it_alone(self):
+        # publish_ready=False: the generated workflow launcher marks the
+        # container itself, so nothing here is fatal or published.
+        redis = _FakeRedis()
+        with patch.dict(os.environ, DECLARED_AGENT):
+            _build_controller(redis, publish_ready=False, agent=None)
+        self.assertEqual(redis.strings, {})
+
     def test_a_declared_agent_that_loads_publishes_healthy(self):
         redis = _FakeRedis()
         with patch.dict(os.environ, DECLARED_AGENT):
