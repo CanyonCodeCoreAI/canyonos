@@ -83,6 +83,15 @@ def test_docker_validation_failures_do_not_pull(monkeypatch, project, prepare, m
     assert all(command[-1] != "pull" for command in calls)
 
 
+def test_images_are_pinned_to_their_own_published_versions():
+    assert dashboard_stack.API_IMAGE == (
+        f"ghcr.io/canyoncodecoreai/canyonos-api:{dashboard_stack.API_VERSION}"
+    )
+    assert dashboard_stack.WEB_IMAGE == (
+        f"ghcr.io/canyoncodecoreai/canyonos-web:{dashboard_stack.WEB_VERSION}"
+    )
+
+
 def test_user_jwt_secret_is_untouched_while_canyonos_secret_is_stable(project):
     source_line = "JWT_SECRET=user-value\n"
     Path.cwd().joinpath(".env").write_text(source_line)
