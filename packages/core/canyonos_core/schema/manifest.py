@@ -21,6 +21,7 @@ from canyonos_core.schema._checks import (
     _integer,
     _mapping,
     _number,
+    _port,
     _resolve,
     _string,
     _string_list,
@@ -74,14 +75,18 @@ _MANIFEST_KEYS = frozenset(
         "cleanup_interval",
         "project_id",
         "redis",
-        "database",
         "env_file",
+        "logs",
         "otel",
         "ec2",
     }
 )
 _REDIS_KEYS = frozenset({"host", "port", "db"})
-_DATABASE_BLOCK_KEYS = frozenset({"url"})
+# Keys that used to mean something and now do nothing, each with the message
+# that tells a user carrying one what to do instead.
+_RETIRED_KEYS = {
+    "database": "is no longer used; telemetry is configured under otel: -- remove it",
+}
 _OTEL_KEYS = frozenset({"destinations"})
 _OTEL_DESTINATION_KEYS = frozenset(
     {"name", "protocol", "endpoint", "headers", "insecure", "timeout"}
@@ -109,9 +114,9 @@ _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
 
 @dataclass(frozen=True)
 class Resources:
-    cpu: int = 1
-    memory: int = 512
-    gpu: int | None = None
+    cpu: float = 1
+    memory: float = 512
+    gpu: float | None = None
 
 
 @dataclass(frozen=True)
@@ -119,11 +124,6 @@ class RedisSpec:
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-
-
-@dataclass(frozen=True)
-class DatabaseSpec:
-    url: str
 
 
 @dataclass(frozen=True)
@@ -207,8 +207,10 @@ class Manifest:
     cleanup_interval: int = 10
     project_id: str | None = None
     redis: RedisSpec = field(default_factory=RedisSpec)
-    database: DatabaseSpec | None = None
     env_file: str | None = None
+    # Streams failure and log detail into each future; read as
+    # `config.get("logs", True)` by both runtimes, hence the default.
+    logs: bool = True
     otel: OtelSpec | None = None
     ec2: Ec2Spec | None = None
     path: str = ""
@@ -248,14 +250,13 @@ def _resources(collector, node, prefix):
     block = _mapping(collector, node, "resources", prefix, _RESOURCE_KEYS)
     if block is None:
         return Resources()
+    prefix = _field(prefix, "resources")
     gpu = None
     if "gpu" in block:
-        gpu = _integer(collector, block, "gpu", _field(prefix, "resources"), None, 0)
+        gpu = _number(collector, block, "gpu", prefix, None, 0)
     return Resources(
-        cpu=_integer(collector, block, "cpu", _field(prefix, "resources"), 1, 1),
-        memory=_integer(
-            collector, block, "memory", _field(prefix, "resources"), 512, 1
-        ),
+        cpu=_number(collector, block, "cpu", prefix, 1, 0),
+        memory=_number(collector, block, "memory", prefix, 512, 0),
         gpu=gpu,
     )
 
@@ -276,18 +277,24 @@ def _service_type(collector, node, prefix):
 
 
 def _provider(collector, node, prefix):
+    """The provider in any casing, normalized to the spelling the runtimes compare.
+
+    cli._load_config accepts `LOCAL` or `ec2` and rewrites them the same way, so
+    the gate in front of it has to as well.
+    """
     if "provider" not in node:
         return "local"
     value = _resolve(node["provider"])
-    if value not in PROVIDERS:
+    canonical = {p.casefold(): p for p in PROVIDERS}
+    if not isinstance(value, str) or value.casefold() not in canonical:
         collector.add(
             node,
             "provider",
             _field(prefix, "provider"),
-            f"expected one of {list(PROVIDERS)} (case-sensitive), got {_describe(value)}",
+            f"expected one of {list(PROVIDERS)}, got {_describe(value)}",
         )
         return "local"
-    return value
+    return canonical[value.casefold()]
 
 
 def _service(collector, node, index):
@@ -314,14 +321,14 @@ def _service(collector, node, index):
         "name": name,
         "provider": _provider(collector, node, prefix),
         "replicas": _integer(collector, node, "replicas", prefix, 1, 1),
-        "redis_port": _integer(collector, node, "redis_port", prefix, 6379, 1),
+        "redis_port": _port(collector, node, "redis_port", prefix, 6379),
         "resources": _resources(collector, node, prefix),
         "stateful": _boolean(collector, node, "stateful", prefix, False),
         "instance_type": _string(collector, node, "instance_type", prefix),
         "env": _string_mapping(collector, node, "env", prefix),
         "host": _string(collector, node, "host", prefix),
-        "port": _integer(collector, node, "port", prefix, None, 1),
-        "host_port": _integer(collector, node, "host_port", prefix, None, 1),
+        "port": _port(collector, node, "port", prefix, None),
+        "host_port": _port(collector, node, "host_port", prefix, None),
         "user": _string(collector, node, "user", prefix),
     }
 
@@ -334,14 +341,22 @@ def _service(collector, node, index):
         )
 
     if service_type == "workflow":
+        if common["provider"] == "local" and common["replicas"] > 1:
+            collector.add(
+                node,
+                "replicas",
+                _field(prefix, "replicas"),
+                "a local workflow runs as a single replica: every replica "
+                "would publish the same api_port",
+            )
         return WorkflowService(
             **common,
             workflow_file=_project_relative_py(
                 collector, node, "workflow_file", prefix, required=True
             ),
             requirements=_string_list(collector, node, "requirements", prefix),
-            api_port=_integer(collector, node, "api_port", prefix, 8080, 1),
-            dashboard_port=_integer(collector, node, "dashboard_port", prefix, 8081, 1),
+            api_port=_port(collector, node, "api_port", prefix, 8080),
+            dashboard_port=_port(collector, node, "dashboard_port", prefix, 8081),
         )
 
     if service_type == "database":
@@ -355,7 +370,7 @@ def _service(collector, node, index):
         return DatabaseService(
             **common,
             image=_string(collector, node, "image", prefix, "", required=True) or "",
-            db_port=_integer(collector, node, "db_port", prefix, 5432, 1),
+            db_port=_port(collector, node, "db_port", prefix, 5432),
             volume_path=_string(collector, node, "volume_path", prefix),
         )
 
@@ -519,15 +534,6 @@ def _ec2(collector, node, services):
     )
 
 
-def _database(collector, node):
-    block = _mapping(collector, node, "database", "", _DATABASE_BLOCK_KEYS)
-    if block is None:
-        # `database:` with nothing under it parses as None -- no database, not an error.
-        return None
-    url = _string(collector, block, "url", "database", required=True)
-    return DatabaseSpec(url=url) if url else None
-
-
 def load_manifest(path):
     """Parse and check `global_controller.yaml`, reporting every problem at once.
 
@@ -559,7 +565,10 @@ def load_manifest(path):
             ]
         )
 
-    _check_keys(collector, document, "", _MANIFEST_KEYS)
+    for key, message in _RETIRED_KEYS.items():
+        if key in document:
+            collector.add(document, key, key, message)
+    _check_keys(collector, document, "", _MANIFEST_KEYS | _RETIRED_KEYS.keys())
     services = _services(collector, document)
     manifest = Manifest(
         agents=services,
@@ -567,8 +576,8 @@ def load_manifest(path):
         cleanup_interval=_integer(collector, document, "cleanup_interval", "", 10, 1),
         project_id=_string(collector, document, "project_id", ""),
         redis=_redis(collector, document),
-        database=_database(collector, document),
         env_file=_string(collector, document, "env_file", ""),
+        logs=_boolean(collector, document, "logs", "", True),
         otel=_otel(collector, document),
         ec2=_ec2(collector, document, services),
         path=path,
@@ -584,6 +593,6 @@ def _redis(collector, node):
         return RedisSpec()
     return RedisSpec(
         host=_string(collector, block, "host", "redis", "localhost") or "localhost",
-        port=_integer(collector, block, "port", "redis", 6379, 1),
+        port=_port(collector, block, "port", "redis", 6379),
         db=_integer(collector, block, "db", "redis", 0, 0),
     )

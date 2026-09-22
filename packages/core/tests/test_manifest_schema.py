@@ -166,6 +166,84 @@ class ServiceIdentityTests(_ManifestCase):
         self.assertIn("image tag", violation.message)
 
 
+class LoadConfigParityTests(_ManifestCase):
+    """The gate rejects everything cli._load_config's own checks reject.
+
+    _run_build validates before it loads, so a manifest the schema passed but
+    _load_config then refused would escape as a RuntimeError traceback instead
+    of a one-line violation.
+    """
+
+    def _workflow(self, **overrides):
+        entry = {
+            "name": "Workflow",
+            "type": "workflow",
+            "workflow_file": "workflow/example_workflow.py",
+        }
+        entry.update(overrides)
+        return {"agents": [entry]}
+
+    def test_a_port_outside_the_tcp_range_is_rejected(self):
+        for field, value in (
+            ("api_port", 0),
+            ("redis_port", 65536),
+            ("host_port", 70000),
+            ("dashboard_port", 65536),
+        ):
+            with self.subTest(field=field, value=value):
+                violation = self.one(self._workflow(**{field: value}))
+                self.assertEqual(violation.field, f"agents[0].{field}")
+                self.assertIn("between 1 and 65535", violation.message)
+
+    def test_the_highest_port_is_accepted(self):
+        manifest = self.load(self._workflow(api_port=65535))
+
+        self.assertEqual(manifest.agents[0].api_port, 65535)
+
+    def test_a_local_workflow_cannot_be_replicated(self):
+        violation = self.one(self._workflow(replicas=2))
+
+        self.assertEqual(violation.field, "agents[0].replicas")
+        self.assertIn("same api_port", violation.message)
+
+    def test_an_ec2_workflow_can_be_replicated(self):
+        manifest = self.load(
+            {
+                **self._workflow(replicas=2, provider="EC2", instance_type="t3.micro"),
+                "ec2": _EC2_BLOCK,
+            }
+        )
+
+        self.assertEqual(manifest.agents[0].replicas, 2)
+
+    def test_resources_are_positive_numbers(self):
+        manifest = self.load({"agents": [_agent(resources={"cpu": 0.5})]})
+        self.assertEqual(manifest.agents[0].resources.cpu, 0.5)
+
+        for field, value in (("gpu", 0), ("cpu", -1), ("memory", "512"), ("cpu", True)):
+            with self.subTest(field=field, value=value):
+                violation = self.one({"agents": [_agent(resources={field: value})]})
+                self.assertEqual(violation.field, f"agents[0].resources.{field}")
+                self.assertIn("expected a number > 0", violation.message)
+
+
+class LogsFlagTests(_ManifestCase):
+    def test_logs_defaults_on_as_the_runtimes_read_it(self):
+        self.assertTrue(self.load({"agents": [_agent()]}).logs)
+
+    def test_logs_can_be_turned_off(self):
+        self.assertFalse(self.load({"agents": [_agent()], "logs": False}).logs)
+
+    def test_logs_must_be_a_real_boolean(self):
+        # The runtimes pass it through bool(), so the string "false" is on.
+        violation = self.one({"agents": [_agent()], "logs": "false"})
+
+        self.assertEqual(violation.field, "logs")
+        self.assertEqual(
+            violation.message, "expected a boolean, got the string 'false'"
+        )
+
+
 class EntrypointTests(_ManifestCase):
     def test_an_agent_without_an_entrypoint_is_rejected(self):
         violation = self.one({"agents": [{"name": "ExampleAgent"}]})
@@ -227,11 +305,40 @@ class DatabaseServiceTests(_ManifestCase):
 
 
 class ProviderTests(_ManifestCase):
-    def test_a_provider_is_matched_exactly(self):
-        for provider in ("Local", "ec2", "EC2 "):
+    def test_a_provider_in_any_casing_is_normalized(self):
+        # cli._load_config accepts these and rewrites them to the spelling the
+        # runtimes compare against; the gate in front of it does the same.
+        for provider, normalized in (("LOCAL", "local"), ("Local", "local")):
             with self.subTest(provider=provider):
-                violations = self.violations({"agents": [_agent(provider=provider)]})
-                self.assertIn("agents[0].provider", [v.field for v in violations])
+                manifest = self.load({"agents": [_agent(provider=provider)]})
+                self.assertEqual(manifest.agents[0].provider, normalized)
+
+        for provider in ("Ec2", "ec2"):
+            with self.subTest(provider=provider):
+                manifest = self.load(
+                    {
+                        "agents": [_agent(provider=provider, instance_type="t3.micro")],
+                        "ec2": _EC2_BLOCK,
+                    }
+                )
+                self.assertEqual(manifest.agents[0].provider, "EC2")
+
+    def test_a_lowercase_ec2_still_needs_the_ec2_block(self):
+        violation = self.one(
+            {"agents": [_agent(provider="ec2", instance_type="t3.micro")]}
+        )
+
+        self.assertEqual(violation.field, "ec2")
+
+    def test_a_misspelled_provider_is_rejected(self):
+        for provider in ("locale", "EC2 ", "aws"):
+            with self.subTest(provider=provider):
+                violation = self.one({"agents": [_agent(provider=provider)]})
+                self.assertEqual(violation.field, "agents[0].provider")
+                self.assertEqual(
+                    violation.message,
+                    f"expected one of ['local', 'EC2'], got the string {provider!r}",
+                )
 
     def test_an_ec2_service_needs_an_instance_type(self):
         self.assertIn(
@@ -315,7 +422,6 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(manifest.redis.host, "localhost")
         self.assertEqual(manifest.redis.port, 6379)
         self.assertEqual(manifest.redis.db, 0)
-        self.assertIsNone(manifest.database)
         self.assertIsNone(manifest.otel)
         self.assertIsNone(manifest.ec2)
 
@@ -409,28 +515,39 @@ class OtelTests(_ManifestCase):
         self.assertFalse(destination.insecure)
 
 
-class DatabaseBlockTests(_ManifestCase):
-    def test_an_empty_database_block_is_no_database(self):
-        # `database:` with nothing under it parses as None -- readers must not
-        # take that for a mapping, and the schema must not take it for an error.
+class RetiredKeyTests(unittest.TestCase):
+    """`database:` configured telemetry until #104 moved it under `otel:`.
+
+    Nothing reads it now, so a manifest still carrying one is told so, instead
+    of being left to believe its runs are being recorded there.
+    """
+
+    _MESSAGE = "is no longer used; telemetry is configured under otel: -- remove it"
+
+    def _violations(self, text):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "global_controller.yaml")
             Path(path).write_text(
                 "agents:\n"
                 "  - name: ExampleAgent\n"
-                "    entrypoint: agents/example_agent.py\n"
-                "database:\n"
+                "    entrypoint: agents/example_agent.py\n" + text
             )
-            manifest = load_manifest(path)
+            with self.assertRaises(SchemaError) as raised:
+                load_manifest(path)
+        return raised.exception.violations
 
-        self.assertIsNone(manifest.database)
-        self.assertEqual(len(manifest.agents), 1)
+    def test_a_database_block_is_rejected_as_retired(self):
+        (violation,) = self._violations("database:\n  url: sqlite:///runtime.db\n")
 
-    def test_a_database_block_without_a_url_is_rejected(self):
-        self.assertEqual(
-            self.fields({"agents": [_agent()], "database": {"urls": "sqlite://"}}),
-            ["database.urls", "database.url"],
-        )
+        self.assertEqual(violation.field, "database")
+        self.assertEqual(violation.line, 4)
+        self.assertEqual(violation.message, self._MESSAGE)
+
+    def test_an_empty_database_block_is_rejected_too(self):
+        (violation,) = self._violations("database:\n")
+
+        self.assertEqual(violation.field, "database")
+        self.assertEqual(violation.message, self._MESSAGE)
 
 
 class EnvExpansionTests(_ManifestCase):
@@ -459,7 +576,7 @@ class EnvExpansionTests(_ManifestCase):
         self.assertEqual(violation.field, "agents[0].api_port")
         self.assertEqual(
             violation.message,
-            "expected an integer >= 1, got '${CANYONOS_TEST_API_PORT}' "
+            "expected an integer between 1 and 65535, got '${CANYONOS_TEST_API_PORT}' "
             "(environment references are only supported in string fields)",
         )
 
@@ -564,6 +681,55 @@ class UnparseableFileTests(unittest.TestCase):
         self.assertGreater(violation.line, 0)
         # No field to name, so the location is followed by the message itself.
         self.assertNotIn(": : ", rendered)
+
+    def test_a_key_set_twice_in_a_service_is_rejected_at_the_second(self):
+        # PyYAML keeps the last value silently; the first `replicas` would
+        # simply vanish from the deploy.
+        (violation,) = self._load(
+            "agents:\n"
+            "  - name: ExampleAgent\n"
+            "    entrypoint: agents/example_agent.py\n"
+            "    replicas: 1\n"
+            "    replicas: 3\n"
+        )
+
+        self.assertEqual(violation.line, 5)
+        self.assertIn("found duplicate key 'replicas'", violation.message)
+        self.assertIn("first set on line 4", violation.message)
+        self.assertNotIn("\n", render_violation(violation))
+
+    def test_a_top_level_key_set_twice_is_rejected(self):
+        (violation,) = self._load(
+            "agents:\n"
+            "  - name: ExampleAgent\n"
+            "    entrypoint: agents/example_agent.py\n"
+            "agents:\n"
+            "  - name: OtherAgent\n"
+            "    entrypoint: agents/other_agent.py\n"
+        )
+
+        self.assertEqual(violation.line, 4)
+        self.assertIn("found duplicate key 'agents'", violation.message)
+
+    def test_keys_that_only_look_alike_are_not_duplicates(self):
+        # `1` is an int and `"1"` a string: two different keys to YAML.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "global_controller.yaml")
+            Path(path).write_text(
+                "agents:\n"
+                "  - name: ExampleAgent\n"
+                "    entrypoint: agents/example_agent.py\n"
+                "    env:\n"
+                "      1: a\n"
+                "      '1': b\n"
+            )
+            with self.assertRaises(SchemaError) as raised:
+                load_manifest(path)
+
+        # Rejected, but for the int key in a string mapping -- not as a duplicate.
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.field, "agents[0].env")
+        self.assertNotIn("duplicate", violation.message)
 
     def test_an_empty_file_is_reported(self):
         (violation,) = self._load("# nothing here\n")

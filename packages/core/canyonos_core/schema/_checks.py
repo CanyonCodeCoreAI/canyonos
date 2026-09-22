@@ -108,14 +108,23 @@ def _mapping(collector, node, key, prefix, allowed):
     return value
 
 
-def _integer(collector, node, key, prefix, default, minimum=None):
+def _integer(collector, node, key, prefix, default, minimum=None, maximum=None):
     if key not in node:
         return default
     raw = node[key]
     value = _resolve(raw)
-    bound = f" >= {minimum}" if minimum is not None else ""
+    if minimum is not None and maximum is not None:
+        bound = f" between {minimum} and {maximum}"
+    elif minimum is not None:
+        bound = f" >= {minimum}"
+    else:
+        bound = ""
     wrong_type = isinstance(value, bool) or not isinstance(value, int)
-    if wrong_type or (minimum is not None and value < minimum):
+    out_of_range = not wrong_type and (
+        (minimum is not None and value < minimum)
+        or (maximum is not None and value > maximum)
+    )
+    if wrong_type or out_of_range:
         collector.add(
             node,
             key,
@@ -124,6 +133,11 @@ def _integer(collector, node, key, prefix, default, minimum=None):
         )
         return default
     return value
+
+
+def _port(collector, node, key, prefix, default):
+    """A TCP port: an integer from 1 to 65535."""
+    return _integer(collector, node, key, prefix, default, 1, 65535)
 
 
 def _number(collector, node, key, prefix, default, minimum=None):

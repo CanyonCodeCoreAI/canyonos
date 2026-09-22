@@ -16,6 +16,7 @@ import os
 import shutil
 import yaml
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 from canyonos_core.schema import DependencyPinConflict, SchemaViolation
@@ -41,8 +42,9 @@ BASE_AGENT_REQUIREMENTS = [
     "requests==2.34.2",
 ]
 
-# Workflow will always require these
-BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["sqlalchemy", "psycopg[binary]"]
+# Workflow containers currently need nothing beyond the base agent requirements
+# (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
+BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
 
 # The interpreter every generated image is built on. The Dockerfile templates
 # below interpolate it, so a bump here cannot leave the templates behind.
@@ -59,14 +61,15 @@ _AGENT_FLAT_SOURCES = {
     "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),
     "redis_client.py": ("controller", "utils", "redis_client.py"),
     "grpc_options.py": ("controller", "utils", "grpc_options.py"),
+    "log_entry.py": ("controller", "utils", "log_entry.py"),
     "gpu_metrics.py": ("controller", "utils", "gpu_metrics.py"),
+    "log_handler.py": ("controller", "utils", "log_handler.py"),
 }
 
-# A workflow image serves HTTP and logs sessions, so it carries two more.
+# A workflow image also serves the HTTP API, so it carries deploy() too.
 _WORKFLOW_FLAT_SOURCES = {
     **_AGENT_FLAT_SOURCES,
     "deploy.py": ("controller", "deploy.py"),
-    "session_logging.py": ("controller", "utils", "session_logging.py"),
 }
 
 AGENT_FLAT_MODULES = frozenset(_AGENT_FLAT_SOURCES)
@@ -609,13 +612,15 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
             parsed = Requirement(requirement)
         except InvalidRequirement:
             continue
-        declared[parsed.name.lower()] = parsed
+        # PEP 503 names: `grpcio_tools`, `Grpcio-Tools` and `grpcio.tools`
+        # are all the package pinned as `grpcio-tools`.
+        declared[canonicalize_name(parsed.name)] = parsed
 
     overrides = []
     conflicts = []
     for pin in PLATFORM_PINS:
         name, pinned = pin.split("==")
-        asked = declared.get(name)
+        asked = declared.get(canonicalize_name(name))
         if asked is None or asked.specifier.contains(Version(pinned)):
             overrides.append(pin)
             continue
@@ -737,13 +742,8 @@ def generate_docker(
     _copy_files(output_dir, files_to_copy)
     _copy_llm_proxy(output_dir, script_dir)
 
-    # Copy the real agent entrypoint to the context root.
-    shutil.copy2(
-        os.path.abspath(agent_file),
-        os.path.join(output_dir, os.path.basename(agent_file)),
-    )
-
-    # Copy the real agent entrypoint to the context root.
+    # Copy the real agent entrypoint to the context root (after _copy_files so it
+    # wins over any swept copy of the same file from the project directory).
     shutil.copy2(
         os.path.abspath(agent_file),
         os.path.join(output_dir, os.path.basename(agent_file)),
@@ -856,12 +856,6 @@ def generate_workflow_docker(
 
     _copy_files(output_dir, files_to_copy)
     _copy_llm_proxy(output_dir, script_dir)
-
-    # Copy the real workflow entrypoint to the context root.
-    shutil.copy2(
-        os.path.abspath(workflow_file),
-        os.path.join(output_dir, workflow_basename),
-    )
 
     # Copy the real workflow entrypoint to the context root.
     shutil.copy2(
