@@ -550,6 +550,13 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
+def _only_newer_than(spec, pinned):
+    """True when `spec` rules `pinned` out only by demanding something newer."""
+    if spec.operator not in (">=", ">", "==", "~="):
+        return False
+    return Version(spec.version.rstrip(".*")) > pinned
+
+
 def _platform_overrides(requirements, *, service=None, manifest_path=None):
     """Take the higher of each platform pin and what the app asked for.
 
@@ -573,22 +580,34 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
         except InvalidRequirement:
             continue
         # PEP 503 names: `grpcio_tools`, `Grpcio-Tools` and `grpcio.tools`
-        # are all the package pinned as `grpcio-tools`.
-        declared[canonicalize_name(parsed.name)] = parsed
+        # are all the package pinned as `grpcio-tools`. A package asked for
+        # more than once is asked for once with every bound, since only the
+        # intersection can be installed -- keeping just the last line made the
+        # answer depend on the order they were written in.
+        key = canonicalize_name(parsed.name)
+        if key in declared:
+            first_name, specifier = declared[key]
+            declared[key] = (first_name, specifier & parsed.specifier)
+        else:
+            declared[key] = (parsed.name, parsed.specifier)
 
     overrides = []
     conflicts = []
     for pin in PLATFORM_PINS:
         name, pinned = pin.split("==")
+        pinned_version = Version(pinned)
         asked = declared.get(canonicalize_name(name))
-        if asked is None or asked.specifier.contains(Version(pinned)):
+        if asked is None or asked[1].contains(pinned_version):
             overrides.append(pin)
             continue
-        wanted = f"{asked.name}{asked.specifier}"
-        if any(
-            spec.operator in (">=", ">", "==", "~=")
-            and Version(spec.version.rstrip(".*")) > Version(pinned)
-            for spec in asked.specifier
+        asked_name, specifier = asked
+        wanted = f"{asked_name}{specifier}"
+        # Newer only if everything that rules the pin out is a lower bound
+        # above it; one upper bound below it and nothing newer can satisfy both.
+        if all(
+            _only_newer_than(spec, pinned_version)
+            for spec in specifier
+            if not spec.contains(pinned_version)
         ):
             overrides.append(wanted)
             print(f"  Note: '{wanted}' outranks the platform pin {pin}")

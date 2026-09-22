@@ -612,6 +612,50 @@ class PlatformPinTests(unittest.TestCase):
         self.assertIn("grpcio_tools>=2", overrides)
         self.assertNotIn("grpcio-tools==1.76.0", overrides)
 
+    def test_a_package_asked_for_twice_conflicts_whatever_the_order(self):
+        # Only the last line used to count, so `protobuf>=7` written second
+        # hid the `<5` bound and the build went ahead.
+        messages = []
+        for requirements in (
+            ["protobuf<5", "protobuf>=7"],
+            ["protobuf>=7", "protobuf<5"],
+        ):
+            with self.subTest(requirements=requirements):
+                with self.assertRaises(DependencyPinConflict) as raised:
+                    _platform_overrides(requirements, service=0)
+                (violation,) = raised.exception.violations
+                messages.append(violation.message)
+
+        self.assertEqual(messages[0], messages[1])
+        self.assertIn("'protobuf<5,>=7'", messages[0])
+
+    def test_two_newer_asks_for_one_package_still_win(self):
+        with redirect_stdout(io.StringIO()):
+            overrides = _platform_overrides(["protobuf>=7", "Protobuf>=7.1"])
+
+        self.assertIn("protobuf>=7,>=7.1", overrides)
+        self.assertNotIn("protobuf==6.33.5", overrides)
+
+    def test_a_repeated_package_is_still_written_line_for_line(self):
+        # Combining the bounds is only for the comparison; requirements.txt
+        # keeps exactly what the app asked for.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            yaml_path = project / "ExampleAgent.yaml"
+            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
+            agent_file = _write(project / "agent.py", "print('ok')\n")
+            output_dir = os.path.join(tmpdir, "out")
+            with redirect_stdout(io.StringIO()):
+                generate_docker(
+                    str(yaml_path),
+                    str(agent_file),
+                    output_dir=output_dir,
+                    requirements=["protobuf>=7", "Protobuf>=7.1"],
+                )
+            requirements = _read_requirements(output_dir)
+
+        self.assertEqual(requirements[-2:], ["protobuf>=7", "Protobuf>=7.1"])
+
     def test_the_workflow_context_fails_on_a_conflict_too(self):
         with self.assertRaises(DependencyPinConflict):
             self._context(["protobuf<5"], workflow=True)
