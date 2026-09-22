@@ -11,7 +11,8 @@ Use this order:
 1. Choose a safe entrypoint module for each service.
 2. Write a no-argument synchronous adapter around source-owned behavior.
 3. Bridge async or session state only when the source requires it.
-4. Write the workflow and preserve parallel dispatch.
+4. Write the workflow, preserve parallel dispatch, and resolve final outputs
+   with `.value()` before returning.
 
 Complete `manifest.md`, then validate only the authored contracts that CanyonOS
 does not already guarantee.
@@ -22,6 +23,7 @@ only when a container loads.
 ## Contents
 
 - Adapter and workflow shape
+- Resolving workflow outputs
 - Choosing the entrypoint
 - Bridging async
 - Multi-turn and session state
@@ -46,6 +48,26 @@ writes there holds the LLM proxy alone, under an `__init__` that exports
 nothing. `from canyonos_core import deploy` builds green and raises ImportError
 at container start. V021.
 
+## Resolving workflow outputs
+
+Every remote service call returns a Future, not its computed value. In
+`main(query: str)`, explicitly call `.value()` on each Future contributing to
+the final output before returning it, including values nested in dictionaries,
+lists, or tuples. Do not rely on `deploy`'s automatic resolution: the authored
+workflow must return concrete values even when called directly.
+
+```python
+def main(query: str) -> dict[str, str]:
+    answer = agent.work(query=query)
+    return {"answer": answer.value()}
+```
+
+For a single output, use `return answer.value()`. Never return the Future
+itself or convert it with `str(...)` or `json.dumps(...)` as a substitute for
+resolution. `.value()` returns text; use `json.loads(...)` only when the service
+returns JSON and the workflow needs the decoded structure. Leave already
+concrete values unchanged.
+
 For parallel remote calls, dispatch all work before resolving any result:
 
 ```python
@@ -54,6 +76,12 @@ results = [json.loads(future.value()) for future in futures]
 ```
 
 Combining dispatch and `.value()` in one comprehension serializes the work.
+
+Before completing the workflow, trace every `return` in `main`, including
+early returns and conditional branches. Verify that every remote result in
+the returned payload passes through `.value()` before parsing, formatting, or
+serialization, and that no nested Future escapes. Static validation passing
+does not replace this return-path review.
 
 ## Choosing the entrypoint
 
