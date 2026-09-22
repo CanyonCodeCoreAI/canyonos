@@ -202,8 +202,7 @@ those decorators and file references statically during the survey.
 ### Validation boundary
 
 The build phase of `canyonos deploy` owns packaging syntax and installation
-errors. `validate.py` checks only whether adapter imports appear to require a
-nested root that the runtime will not expose.
+errors.
 
 ## Refresh an existing source copy
 

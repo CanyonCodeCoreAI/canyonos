@@ -23,16 +23,23 @@ preconditions, not independent port rules. If a guarantee changes in CanyonOS,
 change the owning code rather than maintaining a parallel rule in prose and
 validation.
 
-## Run the gap validator
+## Run the checks
 
 From the application root, run:
 
 ```bash
-python3 <skill_dir>/validate.py .car
+canyonos validate
 ```
 
-Fix every `ERROR` and rerun until the command exits 0. Do not hide warnings:
-list each in the handoff and state whether it blocks this source.
+Fix every finding and rerun until the command exits 0. Then install what the
+port declares and import what the containers import:
+
+```bash
+canyonos test --rebuild
+```
+
+Do not hide warnings: list each in the handoff and state whether it blocks this
+source.
 
 Confirm with `git status` that nothing outside `.car` changed except the two
 files the port is allowed to write: `.gitignore`, which `prepare.py` adds the
@@ -42,12 +49,12 @@ not show up there.
 
 ## What a clean run does not prove
 
-`validate.py` reads the `.car` source copy. It never builds an image, installs
-a distribution, or serves a request, so a clean report is the absence of the
-gaps it checks -- not a working deployment. It cannot see what pip resolved
-into each image, anything reached only at runtime, or whether the first request
-returns an answer. A ModuleNotFoundError at container start and an
-AttributeError on the first call both survive an exit-0 run.
+`canyonos validate` reads the `.car` source copy. It never builds an image,
+installs a distribution, or serves a request, so a clean report is the absence
+of the gaps it checks -- not a working deployment. It cannot see what pip
+resolved into each image, anything reached only at runtime, or whether the
+first request returns an answer. A ModuleNotFoundError at container start and
+an AttributeError on the first call both survive an exit-0 run.
 
 Report it as what it is. "Gap validation exits 0" is accurate; "validation
 passed" claims a deployment nobody ran.
@@ -63,9 +70,9 @@ Report:
 In an attended porting session, stop and ask exactly one direct approval
 question:
 
-> Gap validation exits 0 -- static checks only; no image was built and no
-> request served. Run `canyonos deploy` now? This will build images and start
-> the deployment.
+> `canyonos validate` exits 0 and `canyonos test --rebuild` passes -- locally,
+> against one prompt. Run `canyonos deploy` now? This will build images and
+> start the deployment.
 
 For an unattended `canyonos build -y`, instead report the validation result and
 stop without asking this question. The build command only creates and validates

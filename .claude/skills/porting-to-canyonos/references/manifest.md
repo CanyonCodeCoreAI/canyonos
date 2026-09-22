@@ -190,8 +190,6 @@ asserting the stub contract does not make it true, and the workflow container
 is the only one serving :8080: when it dies at import, the deployment has no
 HTTP entry point for its whole life.
 
-`validate.py` walks the same graph and reports what is missing as W006.
-
 Version them the way the source resolved them, not the way PyPI resolves them
 today:
 
