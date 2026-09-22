@@ -46,6 +46,12 @@ class _RootParser(argparse.ArgumentParser):
 
 def main():
     parser = _RootParser(prog="canyonos")
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"canyonos {importlib.metadata.version('canyonos')}",
+    )
     # Subparsers keep the stock argparse help, so `canyonos <cmd> -h` still
     # describes that command instead of reprinting the top-level screen.
     subparsers = parser.add_subparsers(
@@ -129,10 +135,6 @@ def main():
         ),
     )
     add("doctor", lambda args: sys.exit(0 if run_doctor() else 1))
-    add(
-        "version",
-        lambda args: ui.say(f"canyonos {importlib.metadata.version('canyonos')}"),
-    )
     add("serve", lambda args: sys.exit(run_serve()))
     add("status", lambda args: run_status())
 

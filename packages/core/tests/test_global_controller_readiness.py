@@ -5,6 +5,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
@@ -298,6 +300,7 @@ class GlobalControllerReadinessTests(unittest.TestCase):
         controller.controllers = []
         controller.containers = {}
         controller.redis_containers = {}
+        controller._metrics_collectors = {}
         controller.process_supervisor = MagicMock()
 
         with self.assertLogs("canyonos_core.controller.global_controller"):
@@ -386,6 +389,40 @@ class GlobalControllerReadinessTests(unittest.TestCase):
         )
         self.assertIn("--- end container log: ResearchAgent ---", messages)
         self.assertEqual(logs.records[-1].levelno, logging.CRITICAL)
+
+
+class _Redis:
+    def get(self, _key):
+        return None
+
+
+def test_unhealthy_replicas_fail_startup_without_entering_the_run_loop():
+    # From main, where the wait raised RuntimeError; readiness failure is now
+    # the one CRITICAL summary and exit 1.
+    controller = GlobalController.__new__(GlobalController)
+    controller.instance_manager = SimpleNamespace(
+        list_instances=lambda: [
+            {
+                "agent_name": "BrokenAgent",
+                "host": "127.0.0.1",
+                "host_port": 50051,
+            }
+        ],
+        _routing_endpoint_for=lambda instance: (
+            f"{instance['host']}:{instance['host_port']}"
+        ),
+    )
+    controller.node_redis = {}
+    controller.redis = _Redis()
+    controller.config = {}
+    controller._last_status = {}
+    controller.stop = lambda: []
+    controller.run = lambda: pytest.fail("the run loop must not start")
+
+    with pytest.raises(SystemExit) as caught:
+        controller._wait_for_healthy(timeout=0, interval=0)
+
+    assert caught.value.code == 1
 
 
 if __name__ == "__main__":

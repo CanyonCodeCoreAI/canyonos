@@ -17,20 +17,15 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import yaml
-from canyonos_core.OTLP_Exporter import db as otel_db
+from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
+from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.instance_manager import InstanceManager
 from canyonos_core.controller.utils.agent_specs import write_agent_specs
 from canyonos_core.controller.utils.container_names import redis_container_name
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
+from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
-from canyonos_core.controller.utils.telemetry_logging import (
-    assign_project_id,
-    pull_runtime_information,
-    resolve_database_url,
-    send_runtime_information,
-    send_agent_information,
-)
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 
@@ -47,6 +42,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 LOCAL_NETWORK = "canyonos-local"
+# Set by the CLI to the image the GC itself runs. No default: guessing one means
+# silently running a stale image that need not hold the code this GC was built from.
+CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 
 # How long a controller may stay short of "healthy" before the deploy is called
 # dead. Overrunning this kills the deploy, so it has to cover the slowest honest
@@ -88,9 +86,7 @@ class GlobalController(object):
     ROUTING_STATEFUL_KEY = "routing_table:stateful"
     SERVICES_SET_KEY = "routing_table:services"
     POLICY_RULES_KEY = "policy:rules"
-    IDENTITY_KEY = (
-        "controller:identity"  # has controllers current project_id and database_url
-    )
+    IDENTITY_KEY = "controller:identity"  # has the controller's current project_id
     OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
 
     def __init__(self, config_path):
@@ -106,73 +102,106 @@ class GlobalController(object):
             port=redis_cfg.get("port", 6379),
             db=redis_cfg.get("db", 0),
         )
+        # Kept in step with self.redis below, including the reassignment in
+        # _launch_redis_containers -- the otel_exporter subprocess is handed these.
+        self._redis_addr = (
+            redis_cfg.get("host", "localhost"),
+            redis_cfg.get("port", 6379),
+        )
 
         self.poll_interval = self.config.get("poll_interval", 5)
         self.cleanup_interval = self.config.get("cleanup_interval", 10)
         self.controllers = self.config.get("agents", [])
         self.running = False
         self.containers = {}  # name -> [container_name, ...]
-        self.redis_containers = {}  # host -> container_name
+        self.redis_containers = {}  # host -> owned container_name
+        self.redis_ports = {}  # host -> published redis port
         self.node_redis = {}  # host -> RedisClient
+        self._metrics_collectors = {}  # host -> collector container name (one per host)
         self._last_status = {}  # (host, port) -> last known status
-        self._last_metrics_poll_time = {}  # (host, port) -> time.time() of last metrics read
         self._lc_stubs = {}  # endpoint -> gRPC stub
         self.instance_manager = InstanceManager(self)
-        assign_project_id(self.config.get("project_id"))
-        if self._database_url() is None:
-            logger.info(
-                "No database configured; telemetry writes are disabled. "
-                "Set database.url in %s to record runtime and agent information.",
-                config_path,
-            )
-
         # Clean up any stale containers from previous runs
         self._cleanup_stale_containers()
 
-        # Launch Redis on each unique node, then write routing table and policies
-        self._launch_redis_containers()
-        write_agent_specs(self.config_path, self.redis)
-        self._write_resource_specs()
-        self._load_and_write_policies()
-        self._write_identity()
-        self.instance_manager.publish_routing_snapshot(self.controllers)
-        logger.info(
-            "Global controller initialized with %d controller(s).",
-            len(self.controllers),
-        )
-
-        # Start background cleanup thread
-        self._cleanup_ready = threading.Event()
-        self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
-        self._cleanup_thread.start()
-
-        # Spawn the OTLP exporter as a separate process (see canyonos/OTLP_Exporter/DESIGN.md),
-        # supervised so it gets restarted if it ever exits unexpectedly.
-        otel_exporter_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "OTLP_Exporter",
-        )
-        otel_exporter_script = os.path.join(otel_exporter_dir, "otel_exporter.py")
         self.process_supervisor = ProcessSupervisor()
-
-        # Exporter polls self.OTEL_DESTINATIONS_KEY in Redis each cycle instead of
-        # reading env once, so reload_config() can update it without a restart.
-        destinations = self._otel_destinations(self.config.get("otel", {}))
-        if destinations is not None:
-            self._write_otel_destinations(destinations)
-            self.process_supervisor.register(
-                "otel_exporter", [sys.executable, otel_exporter_script]
-            )
-        else:
+        try:
+            # Launch Redis on each unique node, then write routing table and policies
+            self._launch_redis_containers()
+            # One machine-level metrics collector per host (best-effort, local hosts only).
+            self._launch_metrics_collectors()
+            write_agent_specs(self.config_path, self.redis, self.redis_ports)
+            self._write_resource_specs()
+            self._load_and_write_policies()
+            self._write_identity()
+            self.instance_manager.publish_routing_snapshot(self.controllers)
             logger.info(
-                "otel.destinations not configured -- no OTel metrics collection will happen."
+                "Global controller initialized with %d controller(s).",
+                len(self.controllers),
             )
 
-        # Initialize/migrate the waiting table synchronously before either the GC or
-        # exporter process can access it.
-        self._otel_db = otel_db
-        self._otel_db.init_db()
-        self.process_supervisor.start_all()
+            # Spawn the OTLP exporter as a separate process,
+            # supervised so it gets restarted if it ever exits unexpectedly.
+            otel_exporter_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "otlp_exporter",
+            )
+            otel_exporter_script = os.path.join(otel_exporter_dir, "otel_exporter.py")
+
+            # Exporter polls self.OTEL_DESTINATIONS_KEY in Redis each cycle instead of
+            # reading env once, so reload_config() can update it without a restart.
+            destinations = self._otel_destinations(self.config.get("otel", {}))
+            if destinations is not None:
+                self._write_otel_destinations(destinations)
+            else:
+                logger.info(
+                    "otel.destinations not configured -- the exporter will flush queued "
+                    "telemetry each poll instead of exporting it."
+                )
+            # Always start the exporter: with destinations it exports; without, it flushes the
+            # queue each poll so waiting/metrics_waiting can't grow unbounded.
+            self.process_supervisor.register(
+                "otel_exporter",
+                [sys.executable, otel_exporter_script],
+                env={
+                    "CANYONOS_OTEL_REDIS_HOST": str(self._redis_addr[0]),
+                    "CANYONOS_OTEL_REDIS_PORT": str(self._redis_addr[1]),
+                },
+            )
+
+            # Initialize the waiting table synchronously before either the GC or
+            # exporter process can access it. GC owns schema creation; because GC spawns the
+            # exporter, the tables always exist before the exporter reads them.
+            schema.init_db()
+            self.process_supervisor.start_all()
+
+            self._cleanup_ready = threading.Event()
+            self._cleanup_thread = threading.Thread(
+                target=self._cleanup_loop, daemon=True
+            )
+            self._cleanup_thread.start()
+        except Exception:
+            try:
+                self.process_supervisor.terminate_all()
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to stop supervised processes after initialization failure: %s",
+                    cleanup_error,
+                )
+            self._stop_metrics_collectors()
+            try:
+                redis_failures = self._stop_redis_containers()
+                if redis_failures:
+                    logger.warning(
+                        "Redis cleanup after initialization failure was incomplete: %s",
+                        "; ".join(redis_failures),
+                    )
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to clean up Redis after initialization failure: %s",
+                    cleanup_error,
+                )
+            raise
 
     # ------------------------------------------------------------------ #
     #  Stale container cleanup                                             #
@@ -194,6 +223,9 @@ class GlobalController(object):
                 if host not in host_containers:
                     host_containers[host] = (user, set())
                 host_containers[host][1].add(redis_container_name(host))
+                host_containers[host][1].add(
+                    f"canyonos-metrics-{host.replace('.', '-')}"
+                )
                 host_containers[host][1].add(
                     self.instance_manager.container_name(ctrl, i)
                 )
@@ -237,6 +269,8 @@ class GlobalController(object):
         GlobalController._load_dotenv(os.path.join(project_root, ".env"))
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
+        if not isinstance(config, dict):
+            raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
         if not config.get("project_id"):
             config["project_id"] = GlobalController._assign_new_project_id(config_path)
         config = GlobalController._expand_env_value(config)
@@ -327,7 +361,6 @@ class GlobalController(object):
         self.env_file_path = resolve_env_file(self.config)
         self.controllers = self.config.get("agents", [])
         self.poll_interval = self.config.get("poll_interval", 5)
-        assign_project_id(self.config.get("project_id"))
         self._write_identity()
         self.instance_manager.publish_routing_snapshot(self.controllers)
 
@@ -390,10 +423,9 @@ class GlobalController(object):
 
     # Only relevant for demo purposes
     def _write_identity(self):
-        """Publish the current project/database identity to every node's Redis."""
+        """Publish the current project identity to every node's Redis."""
         payload = {
             "project_id": str(self.config.get("project_id")),
-            "database_url": self.config.get("database", {}).get("url") or "",
         }
         targets = list(self.node_redis.values()) or [self.redis]
         for redis_client in targets:
@@ -417,17 +449,24 @@ class GlobalController(object):
     #  Redis container management                                         #
     # ------------------------------------------------------------------ #
 
-    def _redis_container_healthy(
-        self, container_name, host, user, connect_host, redis_port
-    ):
-        """Check whether an existing Redis container is already up and answering."""
+    def _redis_container_running(self, container_name, host, user):
+        """Whether a Redis container by this name exists and is running."""
         inspect = self._run_cmd(
             ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
             host,
             user,
         )
-        if inspect.returncode != 0 or inspect.stdout.strip() != "true":
-            return False
+        return inspect.returncode == 0 and inspect.stdout.strip() == "true"
+
+    def _redis_container_serves_port(self, container_name, host, user, redis_port):
+        """Whether the Redis container is serving this port."""
+        result = self._run_cmd(
+            ["docker", "port", container_name, f"{redis_port}/tcp"], host, user
+        )
+        return result.returncode == 0
+
+    def _redis_responds(self, host, connect_host, redis_port):
+        """Check whether a Redis on this node is already up and answering."""
         try:
             probe = RedisClient(host=connect_host, port=redis_port)
             _wait_for_redis(probe, host, redis_port, timeout=5, interval=1)
@@ -441,13 +480,29 @@ class GlobalController(object):
         nodes = {}
         for ctrl in self.controllers:
             user = ctrl.get("user")
-            redis_port = ctrl.get("redis_port", 6379)
+            redis_port = int(ctrl.get("redis_port", 6379))
             for host, _port in self._get_replica_placements(ctrl):
-                if host not in nodes:
-                    nodes[host] = {
+                claimed = nodes.setdefault(
+                    host,
+                    {
                         "user": user,
                         "redis_port": redis_port,
-                    }
+                        "agent": ctrl.get("name"),
+                    },
+                )
+                if claimed["redis_port"] != redis_port:
+                    logger.critical(
+                        "Agents %s and %s are both placed on %s but declare "
+                        "different redis_port values (%d and %d). One Redis runs "
+                        "per host -- give them the same `redis_port` in "
+                        "global_controller.yaml.",
+                        claimed["agent"],
+                        ctrl.get("name"),
+                        host,
+                        claimed["redis_port"],
+                        redis_port,
+                    )
+                    sys.exit(1)
 
         for host, node_cfg in nodes.items():
             redis_port = node_cfg["redis_port"]
@@ -459,13 +514,38 @@ class GlobalController(object):
             else:
                 connect_host = host
 
-            if self._redis_container_healthy(
-                container_name, host, user, connect_host, redis_port
+            running = self._redis_container_running(container_name, host, user)
+            # Without this the ping below could be answered by an unrelated Redis
+            # on that port, and the GC would adopt it as its own.
+            if running and not self._redis_container_serves_port(
+                container_name, host, user, redis_port
             ):
+                logger.critical(
+                    "Redis container %s on %s is not serving port %d. Remove it "
+                    "with `docker rm -f %s`, or change `redis_port` in "
+                    "global_controller.yaml.",
+                    container_name,
+                    host,
+                    redis_port,
+                    container_name,
+                )
+                sys.exit(1)
+
+            if running:
+                if not self._redis_responds(host, connect_host, redis_port):
+                    logger.critical(
+                        "Redis container %s on %s is running but not answering on "
+                        "port %d. Remove it with `docker rm -f %s` and redeploy.",
+                        container_name,
+                        host,
+                        redis_port,
+                        container_name,
+                    )
+                    sys.exit(1)
                 logger.info(
                     "Reusing existing Redis container %s on %s", container_name, host
                 )
-                self.redis_containers[host] = container_name
+                self.redis_ports[host] = redis_port
             else:
                 if _is_local_host(host):
                     self._run_cmd(
@@ -474,6 +554,10 @@ class GlobalController(object):
                 network_args = (
                     ["--network", LOCAL_NETWORK] if _is_local_host(host) else []
                 )
+
+                # Redis listens on the declared port inside the container too, so
+                # agents reaching it by container name over the local network use
+                # the same number the host does.
                 cmd = [
                     "docker",
                     "run",
@@ -482,19 +566,38 @@ class GlobalController(object):
                     container_name,
                     *network_args,
                     "-p",
-                    f"{redis_port}:6379",
+                    f"{redis_port}:{redis_port}",
                     "redis:alpine",
+                    "redis-server",
+                    "--port",
+                    str(redis_port),
                 ]
-
                 try:
                     result = self._run_cmd(cmd, host, user)
-                    if result.returncode == 0:
-                        self.redis_containers[host] = container_name
-                        logger.info(
-                            "Launched Redis container %s on %s:%d",
-                            container_name,
-                            host,
+                except FileNotFoundError:
+                    logger.critical(
+                        "Docker is not installed or not in PATH. Cannot launch Redis."
+                    )
+                    self._stop_redis_containers()
+                    sys.exit(1)
+                except Exception as e:
+                    logger.critical("Failed to launch Redis on %s: %s", host, e)
+                    self._stop_redis_containers()
+                    sys.exit(1)
+
+                if result.returncode != 0:
+                    if is_port_conflict(result.stderr):
+                        # A publish failure leaves the fixed-name container in
+                        # `Created` state -- remove it, or the next deploy fails
+                        # on the name instead of reporting the real problem.
+                        self._run_cmd(
+                            ["docker", "rm", "-f", container_name], host, user
+                        )
+                        logger.critical(
+                            "Redis port %d on %s is already in use. Free it or change "
+                            "`redis_port` in global_controller.yaml.",
                             redis_port,
+                            host,
                         )
                     else:
                         logger.critical(
@@ -502,29 +605,157 @@ class GlobalController(object):
                             host,
                             result.stderr.strip(),
                         )
-                        sys.exit(1)
-                except FileNotFoundError:
-                    logger.critical(
-                        "Docker is not installed or not in PATH. Cannot launch Redis."
-                    )
+                    self._stop_redis_containers()
                     sys.exit(1)
-                except Exception as e:
-                    logger.critical("Failed to launch Redis on %s: %s", host, e)
-                    sys.exit(1)
+
+                self.redis_containers[host] = container_name
+                self.redis_ports[host] = redis_port
+                logger.info(
+                    "Launched Redis container %s on %s:%d",
+                    container_name,
+                    host,
+                    redis_port,
+                )
 
             # Create a RedisClient for this node
             redis_client = RedisClient(host=connect_host, port=redis_port)
-            _wait_for_redis(redis_client, host, redis_port)
+            try:
+                _wait_for_redis(redis_client, host, redis_port)
+            except TimeoutError as e:
+                logger.critical("%s", e)
+                sys.exit(1)
             self.node_redis[host] = redis_client
+            if host == "localhost":
+                self._redis_addr = (connect_host, redis_port)
 
         # Update the primary redis client to the local node's Redis
         if "localhost" in self.node_redis:
             self.redis = self.node_redis["localhost"]
 
-        logger.info("Redis launched on %d node(s).", len(self.redis_containers))
+        logger.info(
+            "Redis ready on %d node(s); %d owned by this controller.",
+            len(self.node_redis),
+            len(self.redis_containers),
+        )
+
+    def _launch_metrics_collectors(self):
+        """Start one machine-level metrics collector per unique host, as a sibling
+        container -- launched the same way as Redis and the agents (`docker run` via
+        _run_cmd, i.e. the local docker socket or remote SSH).
+
+        Best-effort and idempotent, mirroring _launch_redis_containers: a collector
+        already running on a host is reused; a launch failure is logged, not fatal.
+        """
+        if not CONTROLLER_IMAGE:
+            logger.error(
+                "CANYONOS_CONTROLLER_IMAGE is unset, so no machine metrics collector "
+                "can be started; machine-level metrics will be missing."
+            )
+            return
+
+        # Unique-host dedup (like _launch_redis_containers), tracking per host whether any
+        # agent placed there requests a GPU -- so --gpus is only added where it's wanted
+        # (it fails `docker run` on hosts without the nvidia container runtime).
+        nodes = {}
+        for ctrl in self.controllers:
+            user = ctrl.get("user")
+            redis_port = ctrl.get("redis_port", 6379)
+            wants_gpu = bool(ctrl.get("resources", {}).get("gpu"))
+            for host, _port in self._get_replica_placements(ctrl):
+                node = nodes.setdefault(
+                    host, {"user": user, "redis_port": redis_port, "gpu": False}
+                )
+                node["gpu"] = node["gpu"] or wants_gpu
+
+        for host, node_cfg in nodes.items():
+            user = node_cfg["user"]
+            container_name = f"canyonos-metrics-{host.replace('.', '-')}"
+            try:
+                inspect = self._run_cmd(
+                    ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                    host,
+                    user,
+                )
+                if inspect.returncode == 0 and inspect.stdout.strip() == "true":
+                    logger.info(
+                        "Metrics collector already running on %s; reusing.", host
+                    )
+                    self._metrics_collectors[host] = container_name
+                    continue
+                # Clear any stale (stopped) container of the same name before recreating.
+                self._run_cmd(["docker", "rm", "-f", container_name], host, user)
+
+                cmd = [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--name",
+                    container_name,
+                    "--restart",
+                    "unless-stopped",
+                    "--pid=host",
+                    "--network=host",
+                    "-v",
+                    "/:/host:ro",
+                ]
+                if node_cfg["gpu"]:
+                    cmd += ["--gpus", "all"]
+                cmd += [
+                    # With --network=host the collector reaches the host's published Redis
+                    # port on loopback.
+                    "-e",
+                    "CANYONOS_REDIS_HOST=localhost",
+                    "-e",
+                    f"CANYONOS_REDIS_PORT={node_cfg['redis_port']}",
+                    "-e",
+                    f"CANYONOS_METRICS_KEY=machine:{host}:metrics",
+                    "-e",
+                    f"CANYONOS_POLL_INTERVAL={self.config.get('poll_interval', 5)}",
+                    # The controller image's entrypoint launches the GC; override it to run
+                    # the collector instead.
+                    "--entrypoint",
+                    "python",
+                    CONTROLLER_IMAGE,
+                    "-m",
+                    "canyonos_core.machine_metrics_poller",
+                ]
+                result = self._run_cmd(cmd, host, user)
+                if result.returncode == 0:
+                    self._metrics_collectors[host] = container_name
+                    logger.info(
+                        "Started machine metrics collector %s on %s (key=machine:%s:metrics).",
+                        container_name,
+                        host,
+                        host,
+                    )
+                else:
+                    logger.warning(
+                        "Failed to start metrics collector on %s: %s",
+                        host,
+                        (result.stderr or "").strip(),
+                    )
+            except Exception as e:
+                logger.warning("Failed to start metrics collector on %s: %s", host, e)
+
+    def _stop_metrics_collectors(self):
+        """Stop and remove the machine metrics collector container on each host."""
+        users = {}
+        for ctrl in self.controllers:
+            user = ctrl.get("user")
+            for host, _port in self._get_replica_placements(ctrl):
+                users.setdefault(host, user)
+        for host, container_name in self._metrics_collectors.items():
+            try:
+                self._run_cmd(
+                    ["docker", "rm", "-f", container_name], host, users.get(host)
+                )
+            except Exception as e:
+                logger.warning("Failed to stop metrics collector on %s: %s", host, e)
+        self._metrics_collectors.clear()
 
     def _stop_redis_containers(self):
-        """Stop and remove all launched Redis containers."""
+        """Stop and remove all Redis containers owned by this controller."""
+        failures = []
         nodes = {}
         for ctrl in self.controllers:
             if ctrl.get("provider", "local").upper() == "EC2":
@@ -533,17 +764,32 @@ class GlobalController(object):
             redis_port = ctrl.get("redis_port", 6379)
             for host, _port in self._get_replica_placements(ctrl):
                 nodes.setdefault(host, {"user": user, "redis_port": redis_port})
-        for host, container_name in self.redis_containers.items():
+        for host, container_name in list(self.redis_containers.items()):
             user = nodes.get(host, {}).get("user")
-            try:
-                self._run_cmd(["docker", "stop", container_name], host, user)
-                self._run_cmd(["docker", "rm", container_name], host, user)
+            errors = []
+            for action in ("stop", "rm"):
+                try:
+                    result = self._run_cmd(
+                        ["docker", action, container_name], host, user
+                    )
+                    if (
+                        result.returncode != 0
+                        and "no such container" not in (result.stderr or "").lower()
+                    ):
+                        errors.append(
+                            f"docker {action} exited with code {result.returncode}: {(result.stderr or '').strip()}"
+                        )
+                except Exception as e:
+                    errors.append(f"docker {action}: {e}")
+            if errors:
+                detail = f"Redis {container_name} on {host}: " + "; ".join(errors)
+                failures.append(detail)
+                logger.warning("Failed to fully stop %s", detail)
+            else:
+                self.redis_containers.pop(host, None)
+                self.node_redis.pop(host, None)
                 logger.info("Stopped Redis %s on %s", container_name, host)
-            except Exception as e:
-                logger.warning("Failed to stop Redis %s: %s", container_name, e)
-
-        self.redis_containers.clear()
-        self.node_redis.clear()
+        return failures
 
     # ------------------------------------------------------------------ #
     #  Startup health check                                               #
@@ -631,7 +877,11 @@ class GlobalController(object):
         # Full teardown, not just the containers: the supervised processes
         # outlive a bare `_stop_docker_agents()`, and the atexit `cleanup()`
         # returns early once `running` is False and nothing is left tracked.
-        self.stop()
+        # Guarded so the summary and the exit below always happen.
+        try:
+            self.stop()
+        except Exception as e:
+            logger.warning("Teardown after a readiness failure was incomplete: %s", e)
         logger.critical("Controller readiness failed: %s", ", ".join(not_ready))
         sys.exit(1)
 
@@ -720,6 +970,7 @@ class GlobalController(object):
 
     def run(self):
         """Start the daemon polling loop."""
+        pricing_refresh.refresh_llm_prices()
         self.running = True
         logger.info(
             "Global controller started, polling every %ds...", self.poll_interval
@@ -735,14 +986,6 @@ class GlobalController(object):
         except KeyboardInterrupt:
             self.stop()
 
-    def _database_url(self):
-        """The configured database URL, or None when there is no database to write to.
-
-        Read per call, not cached, so reload_config() can point us at a new database.
-        `database:` with nothing under it parses as None, hence the `or {}`.
-        """
-        return resolve_database_url((self.config.get("database") or {}).get("url"))
-
     def _poll_controllers(self):
         """
         Check the health of each registered controller replica via its node's Redis.
@@ -752,12 +995,64 @@ class GlobalController(object):
         if self.running:
             self.process_supervisor.check_and_respawn()
 
-        # Polled in parallel, one instance's slow Redis/Postgres round-trip no longer
-        # gates every other instance's poll -- see canyonos/OTLP_Exporter/DESIGN.md.
+        # Polled in parallel, one instance's slow Redis round-trip no longer
+        # gates every other instance's poll.
         instances = self.instance_manager.list_instances()
         if instances:
             with ThreadPoolExecutor(max_workers=len(instances)) as executor:
                 list(executor.map(self._poll_one_instance, instances))
+
+        # Machine-level metrics are per-host, so they're read once per host here rather
+        # than inside the per-instance loop above (N replicas on a box would otherwise
+        # re-read and re-write the same machine sample N times).
+        self._poll_machine_metrics()
+
+    def _poll_machine_metrics(self):
+        """Read each host's machine-level metrics hash (written by the per-machine
+        collector, see _launch_metrics_collectors) and persist one time-series row per
+        host into metrics_waiting. Best-effort: a host that hasn't reported yet or whose
+        Redis is unreachable is skipped, never fatal.
+        """
+        project_id = self.config.get("project_id")
+        hosts = {
+            host
+            for ctrl in self.controllers
+            for host, _port in self._get_replica_placements(ctrl)
+        }
+        if not hosts:
+            return
+
+        def _read_host_metrics(host):
+            try:
+                metrics = self._get_node_redis_for(host).hgetall(
+                    f"machine:{host}:metrics"
+                )
+                if metrics:
+                    return {
+                        "kind": "machine",
+                        "host": host,
+                        "project_id": project_id,
+                        "metrics": metrics,
+                    }
+            except Exception as e:
+                logger.warning(
+                    "Failed to read machine metrics for host %s (non-fatal): %s",
+                    host,
+                    e,
+                )
+            return None
+
+        # Read hosts in parallel, mirroring the per-instance poll above, so one host's
+        # slow Redis round-trip doesn't gate the others.
+        with ThreadPoolExecutor(max_workers=len(hosts)) as executor:
+            rows = [row for row in executor.map(_read_host_metrics, hosts) if row]
+        if rows:
+            try:
+                otel_writer.metric_write_rows(rows)
+            except Exception as e:
+                logger.warning(
+                    "Failed to write machine metrics rows (non-fatal): %s", e
+                )
 
     def _poll_one_instance(self, instance):
         """Poll and persist one instance's runtime/metrics/health data; never raises."""
@@ -770,19 +1065,8 @@ class GlobalController(object):
             logger.warning("Failed to poll instance %s: %s", instance, e)
             return
 
-        # Without a database the legacy telemetry writes have nowhere to go, so they
-        # are skipped instead of failing on every poll; OTel export is independent
-        # of that legacy database and always runs.
-        database_url = self._database_url()
-
         try:
-            future_rows = pull_runtime_information(node_redis)
-            self._otel_db.write_waiting_rows(
-                future_rows, node_redis, self.config.get("project_id")
-            )
-            if database_url:
-                # This is now legacy, keeping it for now, but will remove this later
-                send_runtime_information(future_rows, node_redis, database_url)
+            send_telemetry(node_redis, self.config.get("project_id"))
         except Exception as e:
             logger.warning(
                 "Failed to write runtime information for instance %s (%s:%s) "
@@ -801,46 +1085,34 @@ class GlobalController(object):
         try:
             metrics = node_redis.hgetall(metrics_key)
             if metrics:
-                now = time.time()
-                requests_served = int(float(metrics.get("requests_served") or 0))
-                elapsed = now - self._last_metrics_poll_time.get(
-                    (host, port), now - self.poll_interval
-                )
-                throughput = requests_served / elapsed if elapsed > 0 else 0.0
-                self._last_metrics_poll_time[(host, port)] = now
-
-                if database_url:
-                    try:
-                        send_agent_information(
-                            [
-                                {
-                                    **instance,
-                                    **metrics,
-                                    "requests_served": requests_served,
-                                    "throughput": throughput,
-                                }
-                            ],
-                            database_url,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to write agent information for instance %s (%s:%s) "
-                            "(non-fatal): %s",
-                            name,
-                            host,
-                            port,
-                            e,
-                        )
-                    else:
-                        # Only clear the accumulated counters once they've actually been persisted
-                        node_redis.hset_multiple(
-                            metrics_key,
+                # New OTel path: just poll the instance's hash and persist it verbatim --
+                # no per-metric logic here (counter interpretation, rates, etc. all live in
+                # the exporter's metric_convert). Counters are cumulative and never reset,
+                # so the exporter can emit them as monotonic Sums.
+                try:
+                    otel_writer.metric_write_rows(
+                        [
                             {
-                                "full_failures": 0,
-                                "error_count": 0,
-                                "requests_served": 0,
-                            },
-                        )
+                                "kind": "agent",
+                                "agent_id": instance.get("agent_id"),
+                                "agent_name": name,
+                                "host": host,
+                                "port": port,
+                                "project_id": self.config.get("project_id"),
+                                "metrics": metrics,
+                            }
+                        ]
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to write instance metrics row for %s (%s:%s) "
+                        "(non-fatal): %s",
+                        name,
+                        host,
+                        port,
+                        e,
+                    )
+
         except Exception as e:
             logger.warning(
                 "Failed to poll metrics for instance %s (%s:%s): %s",
@@ -1010,18 +1282,25 @@ class GlobalController(object):
             subprocess.CompletedProcess
         """
         is_local = _is_local_host(host)
-        if is_local:
-            return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        try:
+            if is_local:
+                return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
 
-        remote_cmd = " ".join(cmd)
-        if cmd and cmd[0] == "docker":
-            remote_cmd = f"sudo {remote_cmd}"
-        return subprocess.run(
-            self._ssh_args(host, user) + [remote_cmd],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+            remote_cmd = " ".join(cmd)
+            if cmd and cmd[0] == "docker":
+                remote_cmd = f"sudo {remote_cmd}"
+            return subprocess.run(
+                self._ssh_args(host, user) + [remote_cmd],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Command timed out after 180s on {host}: {' '.join(cmd)}"
+            ) from None
+        except OSError as e:
+            raise RuntimeError(f"Could not run command on {host}: {e}") from None
 
     def _push_file(self, local_path, remote_path, host, user=None):
         """
@@ -1042,15 +1321,22 @@ class GlobalController(object):
         """
         quoted = shlex.quote(remote_path)
         remote_cmd = f"umask 077; rm -f {quoted}; cat > {quoted}"
-        with open(local_path, "rb") as f:
-            result = subprocess.run(
-                self._ssh_args(host, user) + [remote_cmd],
-                stdin=f,
-                capture_output=True,
-                text=True,
-                timeout=180,
-                check=False,
-            )
+        try:
+            with open(local_path, "rb") as f:
+                result = subprocess.run(
+                    self._ssh_args(host, user) + [remote_cmd],
+                    stdin=f,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    check=False,
+                )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Copying {local_path} to {host} timed out after 180s"
+            ) from None
+        except OSError as e:
+            raise RuntimeError(f"Could not copy {local_path} to {host}: {e}") from None
         if result.returncode != 0:
             raise RuntimeError(
                 f"Failed to copy {local_path} to {host}:{remote_path}: "
@@ -1101,13 +1387,19 @@ class GlobalController(object):
 
     def _stop_docker_agents(self):
         """Stop and remove all launched runtimes."""
+        failures = []
         for instance in self.instance_manager.list_instances():
-            self.instance_manager.remove_instance(
-                self.instance_manager._instance_id_from_record(instance)
-            )
+            instance_id = self.instance_manager._instance_id_from_record(instance)
+            try:
+                self.instance_manager.remove_instance(instance_id)
+            except Exception as e:
+                failures.append(f"agent {instance_id}: {e}")
+                logger.warning("Failed to stop agent %s: %s", instance_id, e)
 
-        self.containers.clear()
-        logger.info("All Docker containers stopped.")
+        if not failures:
+            self.containers.clear()
+            logger.info("All Docker containers stopped.")
+        return failures
 
     # ------------------------------------------------------------------ #
     #  Shutdown                                                           #
@@ -1116,17 +1408,31 @@ class GlobalController(object):
     def cleanup(self):
         """Full cleanup — stop all containers and Redis, called on exit."""
         if not self.running and not self.containers and not self.redis_containers:
-            return  # Already cleaned up
+            return []  # Already cleaned up
         logger.info("Cleaning up all resources...")
-        self.stop()
+        return self.stop()
 
     def stop(self):
-        """Gracefully shut down the daemon and all agent processes."""
+        """Gracefully shut down the daemon and all agent processes.
+
+        Returns what it could not remove rather than raising: this runs from a
+        signal handler and again from atexit, where an exception would skip the
+        handler's own exit and then repeat on the way out.
+        """
         self.running = False
-        self._stop_docker_agents()
-        self._stop_redis_containers()
-        self.process_supervisor.terminate_all()
-        logger.info("Global controller shut down.")
+        failures = (self._stop_docker_agents() or []) + (
+            self._stop_redis_containers() or []
+        )
+        self._stop_metrics_collectors()
+        try:
+            self.process_supervisor.terminate_all()
+        except Exception as e:
+            failures.append(f"OTel exporter: {e}")
+        if failures:
+            logger.error("Cleanup incomplete:\n- %s", "\n- ".join(failures))
+        else:
+            logger.info("Global controller shut down.")
+        return failures
 
 
 if __name__ == "__main__":

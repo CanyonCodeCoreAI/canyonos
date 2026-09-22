@@ -237,8 +237,11 @@ def _bootstrap_instance(
             "--name",
             redis_container,
             "-p",
-            f"{redis_port}:6379",
+            f"{redis_port}:{redis_port}",
             "redis:alpine",
+            "redis-server",
+            "--port",
+            str(redis_port),
         ],
         host,
         user=ssh_user,
@@ -326,12 +329,11 @@ def _bootstrap_instance(
         # turn it on (docker: -e beats --env-file).
         "-e",
         "CANYONOS_LLM_STUB_TEXT=",
+        "-e",
+        f"CANYONOS_LOGS_ENABLED={str(bool(_controller.config.get('logs', True))).lower()}",
     ]
     if spec.get("type") == "workflow":
-        db_url = _controller.config.get("database", {}).get("url")
         project_id = _controller.config.get("project_id")
-        if db_url:
-            cmd.extend(["-e", f"CANYONOS_DATABASE_URL={db_url}"])
         if project_id:
             cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
     elif spec.get("type") == "database":

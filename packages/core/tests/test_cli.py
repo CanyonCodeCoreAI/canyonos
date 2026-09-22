@@ -353,7 +353,7 @@ class CliBuildTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaises(SystemExit):
+            with self.assertRaisesRegex(RuntimeError, "missing `entrypoint`"):
                 self._run_build(project_dir, [], buildx_available=True)
 
     def _write_requirements_config(self, project_dir):

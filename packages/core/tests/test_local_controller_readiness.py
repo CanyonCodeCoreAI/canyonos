@@ -45,8 +45,8 @@ class _FakeRedis:
     def get(self, key):
         return self.strings.get(key)
 
-    def hset_multiple(self, key, mapping):
-        self.hashes.setdefault(key, {}).update(mapping)
+    def hset_multiple(self, name, mapping):
+        self.hashes.setdefault(name, {}).update(mapping)
 
 
 def _build_controller(redis, publish_ready=False, agent=None, server=None):
@@ -121,9 +121,10 @@ class LocalControllerReadinessTests(unittest.TestCase):
         redis = _FakeRedis()
         server = MagicMock()
         with patch.dict(os.environ, DECLARED_AGENT):
-            with self.assertRaises(SystemExit) as caught:
+            with self.assertRaisesRegex(
+                RuntimeError, "Failed to load configured agent RagChatbotAgent"
+            ):
                 _build_controller(redis, publish_ready=True, agent=None, server=server)
-        self.assertEqual(caught.exception.code, 1)
         self.assertEqual(redis.strings[STATUS_KEY], "failed")
         server.stop.assert_called_once_with(0)
 
@@ -134,9 +135,10 @@ class LocalControllerReadinessTests(unittest.TestCase):
         redis.set = MagicMock(side_effect=ConnectionError("redis is gone"))
         server = MagicMock()
         with patch.dict(os.environ, DECLARED_AGENT):
-            with self.assertRaises(SystemExit) as caught:
+            with self.assertRaisesRegex(
+                RuntimeError, "Failed to load configured agent"
+            ):
                 _build_controller(redis, publish_ready=True, agent=None, server=server)
-        self.assertEqual(caught.exception.code, 1)
         server.stop.assert_called_once_with(0)
 
     def test_a_declared_agent_that_loads_publishes_healthy(self):
