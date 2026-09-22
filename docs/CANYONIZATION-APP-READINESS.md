@@ -80,18 +80,12 @@ dependencies on the Workflow entry in the same way. The application's own
 `requirements.txt`, `pyproject.toml`, or lockfile is not installed, so an entry's
 `requirements` must describe everything its runtime path needs.
 
-The base image currently requires these shared package versions:
-
-```text
-grpcio>=1.83.1
-grpcio-tools>=1.76.0
-protobuf>=6.33.5
-boto3>=1.43.91
-requests>=2.34.2
-```
-
-These versions may change with a new CanyonOS image. Always use the target image's
-published dependency versions as the compatibility baseline.
+For CanyonOS runtime dependency requirements, see the `project.dependencies` list in
+[`packages/core/pyproject.toml`](../packages/core/pyproject.toml).
+Use the declarations from the CanyonOS version you are deploying as the
+compatibility baseline. Each agent or Workflow container resolves and installs
+its CanyonOS base dependencies together with its YAML entry's `requirements` in
+the same Python environment, applying CanyonOS's platform overrides.
 
 Each entry's `requirements` must satisfy the runtime requirements of that entry:
 
@@ -100,13 +94,7 @@ Each entry's `requirements` must satisfy the runtime requirements of that entry:
 - keep the exact version the application was tested with for every distribution
   the serving path depends on, including transitive dependencies of the SDKs it
   imports;
-- stay compatible with the base package versions above.
-
-A package that is not imported directly can still decide whether the application
-works. If the application pins `openai==2.32.0` and the serving path imports only
-`openai-agents`, dropping the `openai` pin lets pip install any version allowed by
-`openai-agents` (`openai>=2.26.0,<3`). The image builds and imports cleanly, but
-every real model request can fail at runtime.
+- stay compatible with the CanyonOS runtime requirements linked above.
 
 ```yaml
 agents:
@@ -181,4 +169,3 @@ versions as the tested environment for every package the serving path uses.
 
 Run at least one representative request using a real model and the same data and
 tools expected in production. A successful import alone is not enough.
-
