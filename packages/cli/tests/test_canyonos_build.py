@@ -82,7 +82,7 @@ def test_the_production_ref_is_never_read_as_a_directory(monkeypatch, tmp_path):
 def buildable(monkeypatch):
     """Everything run_build drives before the agent succeeds."""
     monkeypatch.setattr(build_cmd, "install_skill", lambda *_a, **_k: True)
-    monkeypatch.setattr(build_cmd, "report_port", lambda _skill_dir: True)
+    monkeypatch.setattr(build_cmd, "report_port", lambda: True)
 
 
 @pytest.fixture
@@ -152,7 +152,7 @@ def test_a_failed_agent_never_consults_an_earlier_port(monkeypatch, buildable):
     monkeypatch.setattr(
         build_cmd,
         "report_port",
-        lambda _skill_dir: pytest.fail("a dead session is no evidence about .car"),
+        lambda: pytest.fail("a dead session is no evidence about .car"),
     )
 
     assert build_cmd.run_build(yes=True) is False
@@ -166,18 +166,30 @@ def test_a_missing_agent_cli_fails_the_build(monkeypatch, buildable):
 
 def test_a_port_with_no_car_fails(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    skill = tmp_path / "skill"
-    skill.mkdir()
-    (skill / build_cmd.VALIDATOR).write_text("")
+    monkeypatch.setattr(
+        build_cmd,
+        "run_validate",
+        lambda *_a, **_k: pytest.fail("nothing to validate without a .car"),
+    )
 
-    assert build_cmd.report_port(str(skill)) is False
+    assert build_cmd.report_port() is False
 
 
-def test_a_port_with_no_validator_fails(monkeypatch, tmp_path):
+def test_a_port_is_validated_where_it_was_produced(monkeypatch, tmp_path):
+    """The verdict comes from `canyonos validate` over `.car`, in this process.
+
+    No file is looked for in the skill directory: the skill ships no validator
+    to shell out to, and report_port is not told where the skill landed.
+    """
     monkeypatch.chdir(tmp_path)
     (tmp_path / build_cmd.CAR_DIR).mkdir()
+    validated = []
+    monkeypatch.setattr(
+        build_cmd, "run_validate", lambda root: validated.append(root) or 0
+    )
 
-    assert build_cmd.report_port(str(tmp_path / "skill")) is False
+    assert build_cmd.report_port() is True
+    assert validated == [build_cmd.CAR_DIR]
 
 
 @pytest.mark.parametrize(("status", "passed"), [(0, True), (1, False)])
@@ -186,8 +198,6 @@ def test_a_port_takes_its_verdict_from_the_validator(
 ):
     monkeypatch.chdir(tmp_path)
     (tmp_path / build_cmd.CAR_DIR).mkdir()
-    skill = tmp_path / "skill"
-    skill.mkdir()
-    (skill / build_cmd.VALIDATOR).write_text(f"raise SystemExit({status})")
+    monkeypatch.setattr(build_cmd, "run_validate", lambda _root: status)
 
-    assert build_cmd.report_port(str(skill)) is passed
+    assert build_cmd.report_port() is passed

@@ -5,8 +5,8 @@ then launch that agent with a prompt to apply it to the current project.
 --agent/--scope/-y replace the two menus, so the command also runs where there
 is no tty, and -y is the unattended form whether or not one is attached. The
 command's exit status is the port's: the agent can end its session having asked
-a question nobody answered, so what the port produced is checked here with the
-skill's own validator rather than taken on trust.
+a question nobody answered, so what the port produced is checked here with
+`canyonos validate` rather than taken on trust.
 """
 
 import os
@@ -18,6 +18,7 @@ import tempfile
 import urllib.request
 
 from canyonos import env, ui
+from canyonos.validate import run_validate
 from utils.tui import select_menu
 
 SKILL_OWNER = "CanyonCodeCoreAI"
@@ -60,14 +61,13 @@ UNATTENDED_NOTE = (
     " This build is unattended: there is no terminal and nobody can answer you. "
     "Do not ask questions or request approval. Use the skill's documented unattended "
     "defaults and report the choices you made. Complete the whole porting checklist: "
-    "the port is done only when validation of .car exits 0. Stop after reporting the "
+    "the port is done only when `canyonos validate` exits 0. Stop after reporting the "
     "validation result; canyonos build never deploys or asks whether to deploy. If a "
     "required decision has no safe documented default, report it as a blocker and stop "
     "without a question."
 )
 
 CAR_DIR = ".car"
-VALIDATOR = "validate.py"
 
 # The leaf name of every install path must match the skill's own `name:`
 # frontmatter or the agent won't resolve it.
@@ -276,34 +276,19 @@ def launch_agent(agent: str, prompt: str, unattended: bool) -> int | None:
     return subprocess.run(argv, check=False).returncode
 
 
-def report_port(skill_dir: str) -> bool:
+def report_port() -> bool:
     """Say whether the port landed, and answer True only when it did.
 
-    The verdict is the skill's own step 4 -- its validator exiting 0 over the
-    `.car` in this directory -- so a session that stopped early fails here
+    The verdict is the skill's own step 4 -- `canyonos validate` exiting 0 over
+    the `.car` in this directory -- so a session that stopped early fails here
     instead of passing for having exited cleanly. Unverifiable is a failure:
     build cannot call a port complete on evidence it never saw.
     """
-    validator = os.path.join(skill_dir, VALIDATOR)
     if not os.path.isdir(CAR_DIR):
         ui.fail(f"Port incomplete: no {CAR_DIR}/ was produced.")
         return False
-    if not os.path.isfile(validator):
-        ui.fail(f"Port unverified: no {VALIDATOR} in {skill_dir}.")
-        return False
 
-    check = subprocess.run(
-        [sys.executable, validator, CAR_DIR],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    output = "\n".join(
-        text.strip() for text in (check.stdout, check.stderr) if text.strip()
-    )
-    if output:
-        ui.say(output)
-    if check.returncode == 0:
+    if run_validate(CAR_DIR) == 0:
         ui.ok(f"Port complete: {CAR_DIR}/ passed validation.")
         return True
 
@@ -356,4 +341,4 @@ def run_build(
     if status != 0:
         ui.fail(f"Port incomplete: {spec['label']} exited with status {status}.")
         return False
-    return report_port(dest)
+    return report_port()
