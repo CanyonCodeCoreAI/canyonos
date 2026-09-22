@@ -28,9 +28,9 @@ class RedisClient(object):
         """Set key to value only if it does not already exist. Returns True if set, False otherwise."""
         return self.client.setnx(key, value)
 
-    def expire(self, key, seconds):
+    def expire(self, key, seconds, nx=False):
         """Set a TTL (in seconds) on a key. No-op if the key does not exist."""
-        return self.client.expire(key, seconds)
+        return self.client.expire(key, seconds, nx=nx)
 
     # --- Hash operations ---
 
