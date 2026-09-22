@@ -161,9 +161,7 @@ def docker(monkeypatch, no_core):
     return install
 
 
-def test_the_container_gets_the_project_read_only_and_the_artifact_by_name(
-    docker, tmp_path
-):
+def test_the_container_gets_the_artifact_read_only_as_its_workdir(docker, tmp_path):
     calls = docker(json.dumps({"errors": 0, "findings": []}))
     root = tmp_path / ".car"
     root.mkdir()
@@ -232,12 +230,25 @@ def test_a_reply_missing_a_finding_field_is_a_failure(docker, capsys):
     assert "returned no findings" in flat(capsys)
 
 
-def test_json_mode_reports_a_failure_as_json(docker, capsys):
-    docker("", returncode=125, stderr="Cannot connect to the Docker daemon")
+def test_a_finding_field_of_the_wrong_type_is_a_failure(docker, capsys):
+    reply = dict(finding(), mechanism=None)
+    docker(json.dumps({"findings": [reply]}))
 
-    assert validate_cmd.run_validate(".car", as_json=True) == 1
+    assert validate_cmd.run_validate(".car") == 1
+    assert "returned no findings" in flat(capsys)
+
+
+def test_json_mode_reports_a_failure_as_json(docker, capsys, tmp_path):
+    docker("", returncode=125, stderr="Cannot connect to the Docker daemon")
+    root = tmp_path / ".car"
+    root.mkdir()
+
+    assert validate_cmd.run_validate(str(root), as_json=True) == 1
     payload = json.loads(capsys.readouterr().out)
 
+    # The keys a successful run prints, so `errors` is null rather than absent.
+    assert payload["artifact_root"] == str(root)
+    assert payload["errors"] is None
     assert payload["findings"] == []
     assert "Cannot connect to the Docker daemon" in payload["error"]
 

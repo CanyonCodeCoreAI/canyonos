@@ -104,8 +104,13 @@ def _required_parameters(node):
 
 
 def _module_path(entrypoint):
-    """The dotted module name an entrypoint has inside the container."""
-    return os.path.splitext(entrypoint)[0].replace("\\", "/").replace("/", ".")
+    """The dotted module name an entrypoint has inside the container.
+
+    Normalized first: `./agents/x.py` is the same module as `agents/x.py`, and
+    the schema accepts both.
+    """
+    normalized = os.path.normpath(entrypoint.replace("\\", "/"))
+    return os.path.splitext(normalized)[0].replace(os.sep, "/").replace("/", ".")
 
 
 # ------------------------------------------------------------------ #
@@ -413,34 +418,48 @@ def _check_stub_imports(report, workflow_path, tree, stub_modules):
                 )
 
 
-def _check_entrypoints(report, manifest, source_dir, config_path):
-    """Every file the manifest points at is in the source copy.
+_MISSING_ROOT = (
+    f"Every `entrypoint` and `workflow_file` is resolved under `{SOURCE_DIR_NAME}/`, "
+    "and the build copies that directory into each image. Without it no service "
+    "has any source to run."
+)
+_MISSING_AGENT = (
+    "The build copies this file into the agent's image and the controller loads "
+    "the agent class out of it. Without it the agent has no image to build, and "
+    "nothing answers for it."
+)
+_MISSING_WORKFLOW = (
+    "The build copies this file into the workflow image and the launcher execs "
+    "it to start the HTTP server. Without it the workflow has no image to build, "
+    "and the deployment has nothing to serve."
+)
 
-    The build skips a service whose file it cannot find and goes on to build
-    and deploy the rest, so a mistyped path costs a whole agent and the run
-    still comes up green.
-    """
-    missing = (
-        "The in-container build logs `Agent file not found` and skips the "
-        "service, then builds and deploys every other one: the deploy comes up "
-        "green with this service missing entirely."
-    )
+
+def _check_entrypoints(report, manifest, source_dir, config_path):
+    """Every file the manifest points at is in the source copy."""
     if not os.path.isdir(source_dir):
         report.add(
             "CAR-ENTRYPOINT-MISSING",
             config_path,
             0,
-            f"no `{SOURCE_DIR_NAME}/` beside `config/`; every entrypoint and "
-            f"workflow_file is resolved against it",
-            missing,
+            f"no `{SOURCE_DIR_NAME}/` beside `config/`",
+            _MISSING_ROOT,
         )
         return
 
     for index, service in enumerate(manifest.agents):
         if isinstance(service, AgentService):
-            field, declared = "entrypoint", service.entrypoint
+            field, declared, mechanism = (
+                "entrypoint",
+                service.entrypoint,
+                _MISSING_AGENT,
+            )
         elif isinstance(service, WorkflowService):
-            field, declared = "workflow_file", service.workflow_file
+            field, declared, mechanism = (
+                "workflow_file",
+                service.workflow_file,
+                _MISSING_WORKFLOW,
+            )
         else:
             continue
         # An absent value is the schema's to report, not this check's.
@@ -452,7 +471,7 @@ def _check_entrypoints(report, manifest, source_dir, config_path):
             0,
             f"agents[{index}].{field}: "
             f"{os.path.join(SOURCE_DIR_NAME, declared)} does not exist",
-            missing,
+            mechanism,
         )
 
 

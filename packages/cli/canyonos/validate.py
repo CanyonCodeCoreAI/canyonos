@@ -27,7 +27,14 @@ CORE_MODULE = "canyonos_core.validate"
 WORKSPACE = "/workspace"
 # Wide enough for a mechanism paragraph, narrow enough to stay readable.
 WRAP_WIDTH = 78
-FINDING_FIELDS = ("code", "path", "line", "summary", "mechanism")
+# What the renderer reads out of a finding, and the type it reads it as.
+FINDING_FIELDS = {
+    "code": str,
+    "path": str,
+    "line": int,
+    "summary": str,
+    "mechanism": str,
+}
 
 
 def _relative_config(artifact_root, config):
@@ -95,16 +102,19 @@ def _docker_argv(artifact_root, config):
     return argv + ["--json"]
 
 
+def _is_finding(finding):
+    return isinstance(finding, dict) and all(
+        isinstance(finding.get(field), kind) for field, kind in FINDING_FIELDS.items()
+    )
+
+
 def _findings_from(stdout):
     """The findings in the container's reply, or None when it is not one."""
     try:
         findings = json.loads(stdout)["findings"]
     except (ValueError, KeyError, TypeError):
         return None
-    if not isinstance(findings, list) or any(
-        not isinstance(finding, dict) or any(f not in finding for f in FINDING_FIELDS)
-        for finding in findings
-    ):
+    if not isinstance(findings, list) or not all(map(_is_finding, findings)):
         return None
     return findings
 
@@ -175,7 +185,19 @@ def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False
             # Nothing was checked, so the reason goes where the findings would
             # have, rather than an empty run that reads as a pass.
             if as_json:
-                print(json.dumps({"error": str(e), "findings": []}, indent=2))
+                # The same keys as a run that happened, so a reader keying on
+                # `errors` gets an explicit null rather than a KeyError.
+                print(
+                    json.dumps(
+                        {
+                            "artifact_root": os.path.abspath(artifact_root),
+                            "errors": None,
+                            "error": str(e),
+                            "findings": [],
+                        },
+                        indent=2,
+                    )
+                )
             else:
                 ui.fail(str(e))
             return 1
