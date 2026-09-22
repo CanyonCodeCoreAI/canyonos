@@ -53,8 +53,7 @@ at container start. V021.
 Every remote service call returns a Future, not its computed value. In
 `main(query: str)`, explicitly call `.value()` on each Future contributing to
 the final output before returning it, including values nested in dictionaries,
-lists, or tuples. Do not rely on `deploy`'s automatic resolution: the authored
-workflow must return concrete values even when called directly.
+lists, or tuples. 
 
 ```python
 def main(query: str) -> dict[str, str]:
@@ -80,8 +79,7 @@ Combining dispatch and `.value()` in one comprehension serializes the work.
 Before completing the workflow, trace every `return` in `main`, including
 early returns and conditional branches. Verify that every remote result in
 the returned payload passes through `.value()` before parsing, formatting, or
-serialization, and that no nested Future escapes. Static validation passing
-does not replace this return-path review.
+serialization, and that no nested Future escapes. 
 
 ## Choosing the entrypoint
 
