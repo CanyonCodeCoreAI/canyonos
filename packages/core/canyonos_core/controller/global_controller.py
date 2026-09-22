@@ -575,15 +575,26 @@ class GlobalController(object):
             if pending:
                 time.sleep(interval)
 
-        if pending:
-            for instance in pending:
-                logger.warning(
-                    "Controller %s (%s:%s) not ready after %ds.",
-                    instance["agent_name"],
-                    instance["host"],
-                    instance["host_port"],
-                    timeout,
-                )
+        not_ready = []
+        for instance in pending:
+            name = instance["agent_name"]
+            host = instance["host"]
+            port = instance["host_port"]
+            node_redis = self._get_node_redis_for(host)
+            endpoint = self.instance_manager._routing_endpoint_for(instance)
+            status = node_redis.get(f"controller:{endpoint}:status")
+            if status == "healthy":
+                logger.info("Controller %s (%s:%s) is ready.", name, host, port)
+                self._last_status[(host, port)] = "healthy"
+            else:
+                not_ready.append(f"{name} ({host}:{port})={status or 'unknown'}")
+
+        if not_ready:
+            message = f"Controller readiness timed out after {timeout}s: " + ", ".join(
+                not_ready
+            )
+            logger.critical(message)
+            raise RuntimeError(message)
 
     # ------------------------------------------------------------------ #
     #  Polling loop                                                       #

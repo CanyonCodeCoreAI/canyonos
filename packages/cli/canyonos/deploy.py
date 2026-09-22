@@ -141,9 +141,7 @@ class PhaseTracker:
         return None, None, False
 
     def agents_ready_message(self):
-        """(message, all_ready). `_wait_for_healthy` gives up after its timeout and
-        lets the controller start anyway, so the workflow can come up short.
-        """
+        """Summarize observed readiness, including incomplete older runtimes."""
         ready = len(self.replicas_ready)
         if not self.replicas_total:
             return "Workflow ready", True
@@ -351,8 +349,12 @@ def _interrupted():
 
 def _tail_verbose(stream, state, api_port, config_path, serve):
     """Every log line, verbatim, until the workflow is up -- what `-v` restores."""
-    for line in stream:
+    tracker = PhaseTracker()
+    for line in _drain(_queued_lines(stream), state):
         print(line, end="")
+        _, _, is_error = tracker.feed(line)
+        if is_error:
+            return None
         # Logged exactly once, right after the workflow finishes coming up.
         if "Global controller started, polling every" in line:
             return _deploy_summary(state, api_port, config_path, serve)

@@ -120,9 +120,7 @@ def test_a_re_read_ready_line_does_not_double_count():
 
 
 def test_coming_up_short_of_the_announced_replicas_is_not_reported_as_success():
-    """`_wait_for_healthy` gives up after its timeout and the controller starts
-    anyway, so the up-marker can arrive with agents still unhealthy.
-    """
+    """Keep partial-readiness output safe for logs from older runtimes."""
     tracker, _, _, _ = drive(
         [
             "INFO:canyonos_core.controller.global_controller:Waiting for 3 replica(s) to become healthy (timeout=300s)...\n",
@@ -172,6 +170,20 @@ def test_fatal_lines_are_flagged(line):
 def test_benign_warnings_do_not_trip_the_error_path(line):
     _, _, _, errored = drive([line])
     assert not errored
+
+
+def test_verbose_tail_stops_on_a_fatal_line(monkeypatch, capsys):
+    lines = [
+        "INFO:canyonos_core:Deploying from config: config.yaml\n",
+        "CRITICAL:canyonos_core.controller.global_controller:Controller readiness timed out\n",
+    ]
+    monkeypatch.setattr(deploy_cmd, "_queued_lines", lambda stream: stream)
+    monkeypatch.setattr(deploy_cmd, "_drain", lambda stream, state: iter(stream))
+
+    result = deploy_cmd._tail_verbose(lines, {}, None, "config.yaml", serve=False)
+
+    assert result is None
+    assert "Controller readiness timed out" in capsys.readouterr().out
 
 
 def test_the_deploy_is_only_declared_dead_after_two_consecutive_checks(monkeypatch):
