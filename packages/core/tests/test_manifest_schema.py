@@ -402,6 +402,24 @@ class ProviderTests(_ManifestCase):
             ["ec2.ssh_user"],
         )
 
+    def test_an_empty_security_group_list_is_rejected(self):
+        # It used to pass the required check, after which the block was
+        # dropped without a violation: an EC2 service with Manifest.ec2 None.
+        violation = self.one(
+            {
+                "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+                "ec2": {**_EC2_BLOCK, "security_group_ids": []},
+            }
+        )
+
+        self.assertEqual(violation.field, "ec2.security_group_ids")
+        self.assertEqual(violation.message, "is required and must not be empty")
+
+    def test_an_empty_requirements_list_is_still_fine(self):
+        manifest = self.load({"agents": [_agent(requirements=[])]})
+
+        self.assertEqual(manifest.agents[0].requirements, ())
+
     def test_the_ec2_block_carries_its_own_defaults(self):
         manifest = self.load(
             {

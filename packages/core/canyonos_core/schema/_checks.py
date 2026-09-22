@@ -224,6 +224,13 @@ def _string_list(collector, node, key, prefix, required=False):
             f"expected a list of strings, got {_describe(value)}",
         )
         return ()
+    if required and not value:
+        # A required list is required to say something; `[]` is as missing as
+        # no key at all.
+        collector.add(
+            node, key, _field(prefix, key), "is required and must not be empty"
+        )
+        return ()
     items = [_resolve(item) for item in value]
     for raw, item in zip(value, items):
         if isinstance(item, str) and item.strip():
