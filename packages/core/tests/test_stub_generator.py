@@ -629,6 +629,25 @@ class PlatformPinTests(unittest.TestCase):
         self.assertEqual(messages[0], messages[1])
         self.assertIn("'protobuf<5,>=7'", messages[0])
 
+    def test_strictly_greater_than_the_pin_is_a_newer_ask(self):
+        # Every version `>6.33.5` allows is newer than the pin, but it used to
+        # be reported as a conflict because its bound was not past the pin.
+        overrides, notes = self._context(["protobuf>6.33.5"])
+
+        self.assertIn("protobuf>6.33.5", overrides)
+        self.assertNotIn("protobuf==6.33.5", overrides)
+        self.assertEqual(
+            notes,
+            ["Note: 'protobuf>6.33.5' outranks the platform pin protobuf==6.33.5"],
+        )
+
+    def test_at_or_equal_to_the_pin_keeps_the_pin_quietly(self):
+        for requirement in ("protobuf>=6.33.5", "protobuf==6.33.5"):
+            with self.subTest(requirement=requirement):
+                overrides, notes = self._context([requirement])
+                self.assertEqual(overrides, list(PLATFORM_PINS))
+                self.assertEqual(notes, [])
+
     def test_two_newer_asks_for_one_package_still_win(self):
         with redirect_stdout(io.StringIO()):
             overrides = _platform_overrides(["protobuf>=7", "Protobuf>=7.1"])

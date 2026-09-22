@@ -554,7 +554,10 @@ def _only_newer_than(spec, pinned):
     """True when `spec` rules `pinned` out only by demanding something newer."""
     if spec.operator not in (">=", ">", "==", "~="):
         return False
-    return Version(spec.version.rstrip(".*")) > pinned
+    bound = Version(spec.version.rstrip(".*"))
+    # `>PIN` excludes the pin itself and nothing older, so every version it
+    # allows is newer; the other operators need a version past the pin for that.
+    return bound >= pinned if spec.operator == ">" else bound > pinned
 
 
 def _platform_overrides(requirements, *, service=None, manifest_path=None):
