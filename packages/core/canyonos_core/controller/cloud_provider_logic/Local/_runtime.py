@@ -10,7 +10,10 @@ import logging
 import os
 import socket
 
-from canyonos_core.controller.utils.container_names import container_name
+from canyonos_core.controller.utils.container_names import (
+    container_name,
+    redis_container_name,
+)
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.cloud_provider_logic.shared_utils.llm_proxy_env import (
     llm_proxy_docker_env_args,
@@ -20,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "localhost"
 CONTAINER_PORT = 50051
+# Agents reach Redis by container name on NETWORK, where it always listens on 6379 --
+# the config's `redis_port` is only the host-side publish and does not apply here.
+REDIS_CONTAINER_PORT = 6379
 PROVIDER = "local"
 MAX_PORT_ATTEMPTS = 50
 NETWORK = "canyonos-local"
@@ -62,7 +68,7 @@ def provision_instance(spec, replica_index, next_host_port):
         "provider": PROVIDER,
         "host": host,
         "host_port": host_port,
-        "redis_host": f"canyonos-redis-{host.replace('.', '-')}",
+        "redis_host": redis_container_name(host),
         "runtime_id": container_name(agent_name, replica_index),
         "user": spec.get("user"),
     }
@@ -98,6 +104,14 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 "automatically -- free it or change `api_port` in the workflow's config."
             )
 
+    if ctrl_type == "database" and _is_local_host(host):
+        db_port = int(spec.get("db_port", 5432))
+        if _port_bound(db_port):
+            raise RuntimeError(
+                f"db_port {db_port} is already in use and can't be reassigned "
+                "automatically -- free it or change `db_port` in the database's config."
+            )
+
     for attempt in range(MAX_PORT_ATTEMPTS):
         cmd = [
             "docker",
@@ -107,6 +121,10 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             NETWORK,
             "--name",
             runtime_id,
+            # Docker Desktop resolves this automatically; native Linux Docker
+            # (e.g. an EC2 test box) does not unless told to.
+            "--add-host",
+            "host.docker.internal:host-gateway",
             "-p",
             f"{host_port}:{CONTAINER_PORT}",
             "-e",
@@ -116,7 +134,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             "-e",
             f"CANYONOS_REDIS_HOST={redis_host}",
             "-e",
-            f"CANYONOS_REDIS_PORT={spec.get('redis_port', 6379)}",
+            f"CANYONOS_REDIS_PORT={REDIS_CONTAINER_PORT}",
             "-e",
             f"CANYONOS_POLL_INTERVAL={_require_controller().config.get('poll_interval', 5)}",
             # Route the agent's LLM SDK calls through the in-container proxy for telemetry.
@@ -146,6 +164,13 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 cmd.extend(["-e", f"CANYONOS_DATABASE_URL={db_url}"])
             if project_id:
                 cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
+        elif ctrl_type == "database":
+            cmd.extend(["-p", f"{spec.get('db_port', 5432)}:5432"])
+            volume_path = spec.get("volume_path")
+            if volume_path:
+                cmd.extend(["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"])
+            for key, value in spec.get("env", {}).items():
+                cmd.extend(["-e", f"{key}={value}"])
         if resources.get("cpu"):
             cmd.extend(["--cpus", str(resources["cpu"])])
         if resources.get("memory"):
@@ -193,13 +218,15 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         "container_port": str(CONTAINER_PORT),
         "endpoint": f"{host}:{host_port}",
         "redis_host": redis_host,
-        "redis_port": str(spec.get("redis_port", 6379)),
+        "redis_port": str(REDIS_CONTAINER_PORT),
         "runtime_id": runtime_id,
     }
     if user:
         instance["user"] = user
     if ctrl_type == "workflow":
         instance["api_port"] = str(spec.get("api_port", 8080))
+    elif ctrl_type == "database":
+        instance["container_port"] = "5432"
     logger.info("Runtime ready: %s -> %s", runtime_id, instance["endpoint"])
     return instance
 
@@ -219,4 +246,4 @@ def terminate_instance(instance):
 
 
 def routing_endpoint_for(instance):
-    return f"{instance['runtime_id']}:{CONTAINER_PORT}"
+    return f"{instance['runtime_id']}:{instance.get('container_port', CONTAINER_PORT)}"

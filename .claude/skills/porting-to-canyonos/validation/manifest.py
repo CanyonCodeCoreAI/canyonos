@@ -102,13 +102,13 @@ def check_manifest_structure(report, config, config_path, source_dir):
                 valid = False
 
         service_type = entry.get("type", "agent")
-        if service_type not in ("agent", "workflow"):
+        if service_type not in ("agent", "workflow", "database"):
             report.error(
                 "V002",
                 config_path,
                 line_of(entry, "type"),
-                f"`type: {service_type}` is neither `agent` nor `workflow`",
-                "Only those two service shapes have a CanyonOS build contract.",
+                f"`type: {service_type}` is neither `agent`, `workflow`, nor `database`",
+                "Only those service shapes have a CanyonOS build contract.",
             )
             valid = False
 
@@ -149,26 +149,89 @@ def check_manifest_structure(report, config, config_path, source_dir):
             )
             valid = False
 
-        path_key = "workflow_file" if service_type == "workflow" else "entrypoint"
-        relative = entry.get(path_key)
-        if not _safe_relative_python_path(relative):
-            report.error(
-                "V002",
-                config_path,
-                line_of(entry, path_key),
-                f"`{path_key}` must be a relative .py path contained by `.car/app`",
-                "Absolute and parent-relative paths escape the self-contained CanyonOS artifact.",
-            )
-            valid = False
-        elif not os.path.isfile(os.path.join(source_dir, relative)):
-            report.error(
-                "V002",
-                config_path,
-                line_of(entry, path_key),
-                f"`{path_key}: {relative}` does not exist in `.car/app`",
-                "The deploy build cannot create this service without its Python entry file.",
-            )
-            valid = False
+        if service_type == "database":
+            image = entry.get("image")
+            if not isinstance(image, str) or not image.strip():
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "image"),
+                    f"agents[{index}] has type `database` but no non-empty `image`",
+                    "A database service is pulled from a public image; it is never built from `.car/app`.",
+                )
+                valid = False
+
+            env = entry.get("env", {})
+            if not isinstance(env, dict):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "env"),
+                    f"agents[{index}] has type `database` but `env` is not a mapping",
+                    "The database's env vars are injected with `-e KEY=VALUE`, one per mapping entry.",
+                )
+                valid = False
+
+            db_port = entry.get("db_port", 5432)
+            if (
+                isinstance(db_port, bool)
+                or not isinstance(db_port, int)
+                or not (0 < db_port < 65536)
+            ):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "db_port"),
+                    f"agents[{index}] has type `database` but `db_port` is not a valid port number",
+                    "`db_port` is written directly into a `-p {db_port}:5432` Docker flag.",
+                )
+                valid = False
+
+            volume_path = entry.get("volume_path")
+            if volume_path is not None and (
+                not isinstance(volume_path, str) or not volume_path.strip()
+            ):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "volume_path"),
+                    f"agents[{index}] has type `database` but `volume_path` is not a non-empty string",
+                    "`volume_path` is written directly into a `-v` Docker flag.",
+                )
+                valid = False
+
+            if entry.get("replicas", 1) != 1:
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, "replicas"),
+                    f"agents[{index}] has type `database` but `replicas` is not 1",
+                    "Each replica would be an independent, unsynchronized container "
+                    "published under the same routing-table entry, silently splitting "
+                    "writes across instances.",
+                )
+                valid = False
+        else:
+            path_key = "workflow_file" if service_type == "workflow" else "entrypoint"
+            relative = entry.get(path_key)
+            if not _safe_relative_python_path(relative):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, path_key),
+                    f"`{path_key}` must be a relative .py path contained by `.car/app`",
+                    "Absolute and parent-relative paths escape the self-contained CanyonOS artifact.",
+                )
+                valid = False
+            elif not os.path.isfile(os.path.join(source_dir, relative)):
+                report.error(
+                    "V002",
+                    config_path,
+                    line_of(entry, path_key),
+                    f"`{path_key}: {relative}` does not exist in `.car/app`",
+                    "The deploy build cannot create this service without its Python entry file.",
+                )
+                valid = False
 
     return entries if valid else None
 
@@ -230,7 +293,9 @@ def discover_agent_declarations(report, config_dir, config_path):
 def check_declaration_bindings(report, entries, declarations, config_path):
     """Require a one-to-one binding for every agent service."""
     configured = {
-        entry["name"] for entry in entries if entry.get("type", "agent") != "workflow"
+        entry["name"]
+        for entry in entries
+        if entry.get("type", "agent") not in ("workflow", "database")
     }
     for name in sorted(configured - declarations.keys()):
         report.error(
