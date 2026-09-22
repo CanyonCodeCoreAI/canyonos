@@ -1,0 +1,152 @@
+name: Core image
+
+# Builds the Global Controller image on every change, and publishes it when a
+# "core-v*" GitHub release is published.
+
+on:
+  # Paths are duplicated because Actions does not resolve YAML anchors.
+  pull_request:
+    paths:
+      - 'packages/core/**'
+      - '!packages/core/tests/**'
+      - '!packages/core/**.md'
+      - '.github/workflows/core-image.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/core/**'
+      - '!packages/core/tests/**'
+      - '!packages/core/**.md'
+      - '.github/workflows/core-image.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. core-v0.1.0)'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: canyonos-core
+
+jobs:
+  # PR and main builds only verify the image builds: no login, no package write.
+  build:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # arm64 builds under emulation; the Dockerfile installs packages in the target image.
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: packages/core
+          file: packages/core/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=canyonos-core
+          cache-to: type=gha,mode=max,scope=canyonos-core
+
+  # Other prefixes belong to other release workflows, so a non "core-v" tag skips
+  # this job and the publish behind it.
+  verify:
+    if: startsWith(inputs.tag || github.event.release.tag_name, 'core-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          persist-credentials: false
+
+      - id: tag
+        name: Check the tag against the manifest
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          tagged="${TAG#core-v}"
+          manifest=$(grep -m1 '^version = ' packages/core/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          if [ "$tagged" != "$manifest" ]; then
+            echo "$TAG does not match packages/core/pyproject.toml version $manifest" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$tagged" >> "$GITHUB_OUTPUT"
+
+  # The only job that pushes. A published "core-v*" release is the switch.
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+          persist-credentials: false
+
+      # ghcr requires a lowercase namespace; the org login is mixed case.
+      - id: registry
+        name: Resolve the registry namespace
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "path=ghcr.io/$owner" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ steps.registry.outputs.path }}/${{ env.IMAGE_NAME }}
+          # The version comes from the verified tag, not from github.ref, because
+          # the image tag carries no "core-v" prefix. `latest` is compiled into
+          # shipped CLI binaries; the sha tag is for pinning.
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.verify.outputs.version }}
+            type=raw,value=latest
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.title=canyonos-core
+            org.opencontainers.image.description=CanyonOS Global Controller -- the container the CanyonOS CLI launches to orchestrate agent workflows.
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: packages/core
+          file: packages/core/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=canyonos-core
+          cache-to: type=gha,mode=max,scope=canyonos-core

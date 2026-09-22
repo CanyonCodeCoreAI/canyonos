@@ -43,9 +43,8 @@ Record:
 - model providers, credential variable names, streaming calls, and `llm_proxy`
   routing -- required by default whenever the source calls an OpenAI,
   Anthropic, or Bedrock model API (see `llm-proxy.md`), not just when the
-  source or deployment already shows it; check the deployment's own
-  `env_file`/`.env` (outside `.car`) for an existing base-url override before
-  concluding proxy wiring is out of scope;
+  source or deployment already shows it. Read the source's `os.environ` and
+  `.env.example`, never `.env`;
 - non-Python files opened at runtime: prompts, framework YAML, PDFs, templates,
   schemas, certificates, and corpora.
 
@@ -53,18 +52,18 @@ Use the import-root and runtime-assets sections of `preparation.md` when imports
 do not resolve, packaging metadata matters, or runtime code reads non-Python
 files.
 
-## 4. Capability questions
+## 4. Runtime questions
 
-Record only capabilities that affect this source, such as editable installation,
-full-file sweeping, or environment-file injection. Inspect the installed runtime
-or its capability probe; do not run validation merely to reconfirm properties
-already guaranteed by `prepare.py`.
+The runtime has no optional behavior to probe for: every image sweeps the whole
+copy, none of them runs an editable install, and `env_file` is passed on every
+deployment. Record instead what this source needs from those fixed facts -- an
+import that only resolves from a nested root, an asset the sweep drops, a
+credential name.
 
 An existing syntax error on the selected import graph is a source defect;
 obtain approval before changing even the copied version. The final gap validator
-checks authored runtime code and cross-file bindings after the port is complete.
-If a required runtime capability is unavailable, report a blocker instead of
-assuming support.
+checks authored runtime code and cross-file bindings after the port is
+complete.
 
 ## 5. Choose service boundaries
 
@@ -95,3 +94,10 @@ memory, or checkpointer created in `__init__`—requires `replicas: 1` for
 correctness. The controller can route each call to a different replica, and
 those replicas cannot see one another's in-memory state. Record this as a
 constraint in the configuration review and handoff, not as a sizing preference.
+
+If that state is a store or checkpointer that can instead be backed by a real
+database (for example LangGraph's `AsyncPostgresStore`/`AsyncPostgresSaver`),
+prefer declaring a `type: database` entry (see `manifest.md`) and pointing the
+source's store/checkpointer at it instead of constructing an in-memory one.
+The state then lives outside the process, so the `replicas: 1` constraint
+above no longer applies.
