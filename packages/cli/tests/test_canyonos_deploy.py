@@ -90,6 +90,23 @@ def test_non_quiet_returns_none_when_streaming_fails(monkeypatch, deployable):
     assert deploy_cmd.run_deploy(CONFIG_PATH, serve=False, verbose=True) is None
 
 
+def test_a_deploy_that_never_came_up_exits_non_zero(monkeypatch, deployable):
+    """A readiness failure is only visible to a caller as the exit code, so the
+    `deploy` subcommand has to carry run_deploy's None all the way out.
+    """
+    import cli as cli_entry
+
+    monkeypatch.setattr(
+        deploy_cmd, "_stream_logs_and_autoserve", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr("sys.argv", ["canyonos", "deploy", "-c", CONFIG_PATH])
+
+    with pytest.raises(SystemExit) as caught:
+        cli_entry.main()
+
+    assert caught.value.code == 1
+
+
 def test_extra_env_and_banner_are_forwarded_to_run_init(monkeypatch, deployable):
     seen = {}
     monkeypatch.setattr(

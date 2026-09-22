@@ -141,8 +141,8 @@ class PhaseTracker:
         return None, None, False
 
     def agents_ready_message(self):
-        """(message, all_ready). `_wait_for_healthy` gives up after its timeout and
-        lets the controller start anyway, so the workflow can come up short.
+        """(message, all_ready). Kept partial-aware for older runtimes, whose
+        `_wait_for_healthy` gave up after its timeout and started anyway.
         """
         ready = len(self.replicas_ready)
         if not self.replicas_total:
@@ -350,9 +350,18 @@ def _interrupted():
 
 
 def _tail_verbose(stream, state, api_port, config_path, serve):
-    """Every log line, verbatim, until the workflow is up -- what `-v` restores."""
-    for line in stream:
+    """Every log line, verbatim, until the workflow is up -- what `-v` restores.
+
+    The lines are echoed rather than summarized, but the same tracker decides
+    what is fatal: without it `-v` printed a failed deploy's CRITICAL line and
+    then reported success, so the exit code depended on the verbosity flag.
+    """
+    tracker = PhaseTracker()
+    for line in _drain(_queued_lines(stream), state):
         print(line, end="")
+        _, _, is_error = tracker.feed(line)
+        if is_error:
+            return None
         # Logged exactly once, right after the workflow finishes coming up.
         if "Global controller started, polling every" in line:
             return _deploy_summary(state, api_port, config_path, serve)
@@ -367,9 +376,10 @@ def _tail_quiet(lines, state, api_port, config_path, serve):
     dropped rather than allow-listed. `-v` and `canyonos logs` still have it all.
     """
     tracker = PhaseTracker()
-    # 200 is enough to hold a buildx failure block plus a Python traceback;
-    # 40 (what `canyonos test` tails) truncates both.
-    recent = deque(maxlen=200)
+    # 400 is enough to hold a buildx failure block plus a Python traceback, plus
+    # the 40-line log dump the global controller now prints for each container
+    # that never came up; 40 (what `canyonos test` tails) truncates all of them.
+    recent = deque(maxlen=400)
     reached_up_marker = False
 
     # The spinner is exited before the summary panel or the dashboard's own

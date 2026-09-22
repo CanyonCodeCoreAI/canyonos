@@ -120,8 +120,8 @@ def test_a_re_read_ready_line_does_not_double_count():
 
 
 def test_coming_up_short_of_the_announced_replicas_is_not_reported_as_success():
-    """`_wait_for_healthy` gives up after its timeout and the controller starts
-    anyway, so the up-marker can arrive with agents still unhealthy.
+    """Older runtimes gave up after the readiness timeout and started anyway, so
+    the up-marker could arrive with agents still unhealthy.
     """
     tracker, _, _, _ = drive(
         [
@@ -132,6 +132,30 @@ def test_coming_up_short_of_the_announced_replicas_is_not_reported_as_success():
     message, all_ready = tracker.agents_ready_message()
     assert not all_ready
     assert message == "Workflow up, but only 1/3 agents reported healthy"
+
+
+def test_a_readiness_failure_is_not_read_as_a_workflow_that_came_up():
+    """The container-log dump and the summary after it are the whole account of
+    why an agent never loaded, and the run is a failure, not a short count.
+    """
+    gc = "canyonos_core.controller.global_controller"
+    lc = "canyonos_core.controller.local_controller"
+    tracker, _, done, errored = drive(
+        [
+            f"INFO:{gc}:Waiting for 2 replica(s) to become healthy (timeout=120s)...\n",
+            f"INFO:{gc}:Controller A (127.0.0.1:8000) is ready.\n",
+            f"WARNING:{gc}:--- B (127.0.0.1:8001) status=failed --- last 40 log line(s):\n",
+            f"WARNING:{gc}:   ERROR:{lc}:Failed to load agent B from /app/b.py: No module named 'llama_index'\n",
+            f"WARNING:{gc}:   ModuleNotFoundError: No module named 'llama_index'\n",
+            f"CRITICAL:{gc}:Controller readiness failed: B (127.0.0.1:8001)=failed\n",
+        ]
+    )
+    assert errored
+    assert not done
+    assert tracker.agents_ready_message() == (
+        "Workflow up, but only 1/2 agents reported healthy",
+        False,
+    )
 
 
 def test_a_run_that_never_announced_replicas_still_reports_ready():
@@ -242,6 +266,42 @@ def test_a_build_that_dies_silently_does_not_hang(monkeypatch, capsys):
 
     assert summary is None
     assert "Building 2 Docker image(s)" in capsys.readouterr().out
+
+
+def test_verbose_tail_stops_on_a_fatal_line(capsys):
+    """`-v` echoed the CRITICAL line and then reported success, so whether a
+    broken deploy exited 1 depended on the verbosity flag.
+    """
+    stream = iter(
+        [
+            "INFO:canyonos_core:Deploying from config: config.yaml\n",
+            "CRITICAL:canyonos_core.controller.global_controller:Controller readiness failed: B (127.0.0.1:8001)=failed\n",
+        ]
+    )
+
+    result = deploy_cmd._tail_verbose(stream, {"port": 1}, None, "config.yaml", False)
+
+    assert result is None
+    assert "Controller readiness failed" in capsys.readouterr().out
+
+
+def test_reveal_failure_keeps_the_dumped_container_log_above_the_cause(capsys):
+    """The dump is the only place the real error appears, so the replay has to
+    carry it -- the buffer used to be shorter than one container's log tail.
+    """
+    gc = "canyonos_core.controller.global_controller"
+    dump = [
+        f"WARNING:{gc}:--- B (127.0.0.1:8001) status=failed --- last 40 log line(s):\n",
+        f"WARNING:{gc}:   ModuleNotFoundError: No module named 'llama_index'\n",
+    ]
+    cause = f"CRITICAL:{gc}:Controller readiness failed: B (127.0.0.1:8001)=failed\n"
+    lines = deploy_cmd._queued_lines(iter([]))
+
+    deploy_cmd._reveal_failure(lines, dump + [cause], {"port": 1}, cause)
+
+    out = capsys.readouterr().out
+    assert "ModuleNotFoundError: No module named 'llama_index'" in out
+    assert out.rindex("Cause:") > out.rindex("ModuleNotFoundError")
 
 
 def test_reveal_failure_reprints_the_cause_after_unrelated_noise(capsys):
