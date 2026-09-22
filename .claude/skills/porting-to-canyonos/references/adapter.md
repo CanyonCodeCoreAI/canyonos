@@ -44,7 +44,7 @@ from pkg.price_agent import PriceAgent    # the service, from its declared entry
 `canyonos_core` is not an importable API in the image: the package the build
 writes there holds the LLM proxy alone, under an `__init__` that exports
 nothing. `from canyonos_core import deploy` builds green and raises ImportError
-at container start. V021.
+at container start.
 
 For parallel remote calls, dispatch all work before resolving any result:
 
@@ -76,17 +76,17 @@ another.
    so every peer image that touches that package re-runs a re-export the stub
    cannot satisfy and raises ImportError at startup. Point `entrypoint` at a
    module the `__init__` does not re-export from; add one if it re-exports from
-   all of them. V033.
+   all of them. CAR-PACKAGE-REEXPORT.
 3. **Is every segment of the path a Python identifier?** `travel-planner.py` and
    `steps/06_agent.py` load fine -- the controller loads by file path -- but the
    workflow's `from steps.06_agent import X` is a SyntaxError, which no import
    guard catches. Rename the file inside the copy, or add a normally-named
-   sibling that loads it by path and re-exposes the class. V034.
+   sibling that loads it by path and re-exposes the class.
 4. **Does the module use relative imports?** (`from . import data_service`) The
    controller loads the entrypoint with `spec_from_file_location`, which leaves
    `__package__` empty, so every relative import *in the entrypoint itself*
    fails at agent load. Make its top-level imports absolute; the modules it
-   imports keep theirs. V035.
+   imports keep theirs.
 5. **Does module-level code perform a real run?** A script ending in
    `result = crew.kickoff(...)` / `print(result)` fires that run whenever the
    module loads, before a request exists. Delete the

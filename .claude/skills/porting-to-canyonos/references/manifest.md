@@ -102,8 +102,8 @@ Use the interaction implemented by `canyonos config` before writing
    EC2 fields, unconstrained replicas, resources, ports, secret-file location,
    and access restrictions. Show each current/default value, apply answers, and
    show the result.
-4. Write the reviewed candidate. Defer gap validation until runtime code and
-   configuration are both complete.
+4. Write the reviewed candidate. Defer `canyonos validate` until runtime code
+   and configuration are both complete.
 
 Prefer running `canyonos config` when an interactive terminal is available;
 otherwise reproduce View/Change in conversation. Do not ask for derived values
@@ -188,8 +188,6 @@ own -- not because "the workflow only runs stubs". A comment in the manifest
 asserting the stub contract does not make it true, and the workflow container
 is the only one serving :8080: when it dies at import, the deployment has no
 HTTP entry point for its whole life.
-
-`validate.py` walks the same graph and reports what is missing as W006.
 
 Version them the way the source resolved them, not the way PyPI resolves them
 today:

@@ -6,7 +6,7 @@ description: Port existing Python agents—including LangChain, LangGraph, CrewA
 # Port an agent project to CanyonOS
 
 Requires Python, Docker, and the `canyonos` CLI. `prepare.py` uses the Python
-standard library; `validate.py` also requires `pyyaml`.
+standard library; every check below is a `canyonos` command.
 
 When invoked by an unattended `canyonos build -y`, never ask a question or wait
 for approval. Use and report the documented defaults. If an action requires
@@ -22,7 +22,8 @@ Port progress:
 - [ ] 1. Prepare `.car`
 - [ ] 2. Survey the copy and choose service boundaries
 - [ ] 3. Write adapters, workflow, declarations, and reviewed configuration
-- [ ] 4. Gap validation exits 0; report readiness and stop
+- [ ] 4. `canyonos validate` exits 0 and `canyonos test --rebuild` passes;
+       report readiness and stop
 ```
 
 ## 1. Prepare `.car`
@@ -58,7 +59,7 @@ Read these only when triggered:
   default for these, not opt-in.
 - [references/ec2.md](references/ec2.md) when any entry uses `provider: EC2`.
 
-## 4. Gap validation and stop
+## 4. Validate, test, and stop
 
 Read
 [references/validation-and-deploy.md](references/validation-and-deploy.md).

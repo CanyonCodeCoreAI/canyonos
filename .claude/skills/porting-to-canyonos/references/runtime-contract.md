@@ -12,7 +12,7 @@ The product is CanyonOS Core and its user-facing CLI is `canyonos`. The
 internal Python package, runtime variables, and Docker resources are
 `canyonos_core`, `CANYONOS_*`, and `canyonos-*`.
 Nothing below varies by environment: the runtime has no optional behavior to
-probe for, and `validate.py` checks every rule on every run.
+probe for.
 
 ## Contents
 
@@ -91,9 +91,9 @@ still runs around it. In a peer image:
 
 - the entrypoint's package `__init__.py` is real and runs before the stub is
   reached, so a re-export from the stubbed module (`from .graph import graph`)
-  raises ImportError at container startup -- V033;
+  raises ImportError at container startup -- CAR-PACKAGE-REEXPORT;
 - the entrypoint's sibling modules are real, so that image installs *their*
-  dependencies even though its own code never names them -- W006;
+  dependencies even though its own code never names them;
 - the stub defines the declared class and nothing else: no module-level
   constants, no helper functions, no other class the source module exported.
 
@@ -119,7 +119,7 @@ Consequences:
   separators and all -- so an entrypoint at `pkg/agent.py` loads as the module
   `pkg/agent`, which has no parent package. Relative imports in the entrypoint
   raise `attempted relative import with no known parent package`; modules it
-  imports absolutely are unaffected. V035.
+  imports absolutely are unaffected.
 - Declared methods accept yaml argument names as keyword arguments.
 - Methods are synchronous; this path does not await a coroutine.
 - Dicts and lists are JSON-encoded before entering Redis; other results become

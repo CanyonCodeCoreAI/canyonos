@@ -38,10 +38,10 @@ read [llm-proxy.md](llm-proxy.md) or [ec2.md](ec2.md).
 | Calls to one agent reach another | Two config entries share an `entrypoint`, so one stub was written over the other |
 | Runtime-named module disappears | Shared runtime copy overwrote a module at the root of the source copy with the same name |
 | An application file is missing from the image | The sweep carries every file, but never a hidden path, a symlink, private key material, or a name the build context owns (`Dockerfile`, `requirements.txt`, `workflow_launcher.py`); the build prints one note per exclusion |
-| Peer container raises `ImportError` for a name in another agent's module | That agent's package `__init__.py` re-exports from its entrypoint, which is a stub in this image; V033 |
-| `attempted relative import with no known parent package` | The entrypoint's own imports are relative, and it is loaded by path with no parent package; V035 |
+| Peer container raises `ImportError` for a name in another agent's module | That agent's package `__init__.py` re-exports from its entrypoint, which is a stub in this image; CAR-PACKAGE-REEXPORT |
+| `attempted relative import with no known parent package` | The entrypoint's own imports are relative, and it is loaded by path with no parent package |
 | `ModuleNotFoundError` for a distribution this image's own code never imports | The entrypoint's package `__init__` or a sibling imports it; add it to this entry's `requirements:` |
-| `SyntaxError` on the workflow's agent import | An `entrypoint` path segment is not a Python identifier; V034 |
+| `SyntaxError` on the workflow's agent import | An `entrypoint` path segment is not a Python identifier |
 | A model call fires at container start, before any request | Module-level code in the entrypoint performs a real run |
 | `ModuleNotFoundError` for a submodule that used to exist | An unpinned requirement resolved to a newer major; pin it to what the source resolved |
 | `unexpected keyword argument` inside an SDK call | The pinned distribution is newer than the source; pin contemporaneous with the source's commit date |
