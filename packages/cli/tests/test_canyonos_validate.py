@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import pathlib
 import sys
 
@@ -9,13 +10,12 @@ from canyonos import env, ui
 from canyonos import validate as validate_cmd
 
 
-def finding(code="CAR-ADAPTER-ASYNC", level="error"):
+def finding(code="CAR-ADAPTER-ASYNC"):
     return {
         "code": code,
-        "level": level,
         "path": "app/agents/echo_agent.py",
         "line": 12,
-        "summary": f"`EchoAgent.echo` is `{level}`",
+        "summary": "`EchoAgent.echo` is `async def`",
         "mechanism": "The executor calls method(**args) with no await.",
     }
 
@@ -40,8 +40,8 @@ def in_process(monkeypatch):
     def install(findings):
         seen = {}
 
-        def validate_car(artifact_root, config=None):
-            seen.update(artifact_root=artifact_root, config=config)
+        def validate_car(artifact_root, config_path=None):
+            seen.update(artifact_root=artifact_root, config_path=config_path)
             return [_Finding(f) for f in findings]
 
         monkeypatch.setattr(validate_cmd, "_import_validate_car", lambda: validate_car)
@@ -82,7 +82,7 @@ def test_the_artifact_and_config_reach_the_validator(in_process):
 
     validate_cmd.run_validate("port/.car", config="config/other.yaml")
 
-    assert seen == {"artifact_root": "port/.car", "config": "config/other.yaml"}
+    assert seen == {"artifact_root": "port/.car", "config_path": "config/other.yaml"}
 
 
 def test_an_error_is_rendered_as_a_block_and_fails(in_process, capsys):
@@ -92,35 +92,39 @@ def test_an_error_is_rendered_as_a_block_and_fails(in_process, capsys):
     out = flat(capsys)
     assert "CAR-ADAPTER-ASYNC" in out
     assert "app/agents/echo_agent.py:12" in out
-    assert "`EchoAgent.echo` is `error`" in out
+    assert "`EchoAgent.echo` is `async def`" in out
     assert "no await" in out
-    assert "1 error(s), 0 warning(s)." in out
-
-
-def test_a_warning_alone_passes(in_process, capsys):
-    in_process([finding(code="CAR-FLAT-COLLISION", level="warning")])
-
-    assert validate_cmd.run_validate(".car") == 0
-    assert "0 error(s), 1 warning(s)." in flat(capsys)
-
-
-def test_strict_fails_on_a_warning_alone(in_process):
-    in_process([finding(code="CAR-FLAT-COLLISION", level="warning")])
-
-    assert validate_cmd.run_validate(".car", strict=True) == 1
+    assert "1 error(s)." in out
 
 
 def test_json_mode_prints_one_object_and_nothing_else(in_process, capsys):
-    in_process([finding(), finding(code="CAR-FLAT-COLLISION", level="warning")])
+    in_process([finding(), finding(code="CAR-FLAT-COLLISION")])
 
     assert validate_cmd.run_validate(".car", as_json=True) == 1
     payload = json.loads(capsys.readouterr().out)
 
-    assert (payload["errors"], payload["warnings"]) == (1, 1)
+    assert payload["errors"] == 2
     assert [f["code"] for f in payload["findings"]] == [
         "CAR-ADAPTER-ASYNC",
         "CAR-FLAT-COLLISION",
     ]
+
+
+def test_a_config_outside_the_artifact_is_refused(in_process, capsys):
+    in_process([])
+
+    assert validate_cmd.run_validate(".car", config="../config/other.yaml") == 1
+    assert "outside .car" in flat(capsys)
+
+
+def test_a_config_written_as_a_path_into_the_artifact_is_accepted(in_process, tmp_path):
+    seen = in_process([])
+    root = tmp_path / ".car"
+    root.mkdir()
+
+    validate_cmd.run_validate(str(root), config=str(root / "config" / "other.yaml"))
+
+    assert seen["config_path"] == os.path.join("config", "other.yaml")
 
 
 # ------------------------------------------------------------------ #
@@ -135,7 +139,7 @@ def docker(monkeypatch, no_core):
 
     monkeypatch.setattr(validate_cmd.shutil, "which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(
-        validate_cmd, "_active_docker_socket", lambda: "/var/run/docker.sock"
+        validate_cmd, "active_docker_socket", lambda: "/var/run/docker.sock"
     )
 
     def install(stdout, returncode=0, stderr=""):
@@ -160,7 +164,7 @@ def docker(monkeypatch, no_core):
 def test_the_container_gets_the_project_read_only_and_the_artifact_by_name(
     docker, tmp_path
 ):
-    calls = docker(json.dumps({"errors": 0, "warnings": 0, "findings": []}))
+    calls = docker(json.dumps({"errors": 0, "findings": []}))
     root = tmp_path / ".car"
     root.mkdir()
 
@@ -170,20 +174,20 @@ def test_the_container_gets_the_project_read_only_and_the_artifact_by_name(
         "run",
         "--rm",
         "-v",
-        f"{tmp_path}:/workspace:ro",
+        f"{root}:/workspace:ro",
         "-w",
         "/workspace",
         env.core_image,
         "python",
         "-m",
         "canyonos_core.validate",
-        ".car",
+        ".",
         "--json",
     ]
 
 
 def test_a_config_is_passed_through_to_the_container(docker, tmp_path):
-    calls = docker(json.dumps({"errors": 0, "warnings": 0, "findings": []}))
+    calls = docker(json.dumps({"errors": 0, "findings": []}))
     root = tmp_path / ".car"
     root.mkdir()
 
@@ -193,7 +197,7 @@ def test_a_config_is_passed_through_to_the_container(docker, tmp_path):
 
 
 def test_findings_from_the_container_are_rendered(docker, capsys):
-    docker(json.dumps({"errors": 1, "warnings": 0, "findings": [finding()]}))
+    docker(json.dumps({"errors": 1, "findings": [finding()]}))
 
     assert validate_cmd.run_validate(".car") == 1
     assert "CAR-ADAPTER-ASYNC" in flat(capsys)
@@ -206,12 +210,12 @@ def test_a_container_that_says_nothing_is_a_failure(docker, capsys):
     assert "Unable to find image" in flat(capsys)
 
 
-def test_a_remote_docker_context_says_so(monkeypatch, docker, capsys):
+def test_a_docker_that_is_not_on_a_local_socket_says_so(monkeypatch, docker, capsys):
     docker("")
-    monkeypatch.setattr(validate_cmd, "_active_docker_socket", lambda: None)
+    monkeypatch.setattr(validate_cmd, "active_docker_socket", lambda: None)
 
     assert validate_cmd.run_validate(".car") == 1
-    assert "This Docker context is remote" in flat(capsys)
+    assert "not reachable over a local socket" in flat(capsys)
 
 
 def test_neither_core_nor_docker_is_one_line(monkeypatch, no_core, capsys):
@@ -219,6 +223,23 @@ def test_neither_core_nor_docker_is_one_line(monkeypatch, no_core, capsys):
 
     assert validate_cmd.run_validate(".car") == 1
     assert "neither is available" in flat(capsys)
+
+
+def test_a_reply_missing_a_finding_field_is_a_failure(docker, capsys):
+    docker(json.dumps({"findings": [{"code": "CAR-SCHEMA", "path": "x"}]}))
+
+    assert validate_cmd.run_validate(".car") == 1
+    assert "returned no findings" in flat(capsys)
+
+
+def test_json_mode_reports_a_failure_as_json(docker, capsys):
+    docker("", returncode=125, stderr="Cannot connect to the Docker daemon")
+
+    assert validate_cmd.run_validate(".car", as_json=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["findings"] == []
+    assert "Cannot connect to the Docker daemon" in payload["error"]
 
 
 # ------------------------------------------------------------------ #
@@ -251,19 +272,14 @@ def test_the_cli_dispatches_to_run_validate(monkeypatch):
     monkeypatch.setattr(
         cli,
         "run_validate",
-        lambda root, config, as_json, strict: (
-            seen.update(root=root, config=config, as_json=as_json, strict=strict) or 0
+        lambda root, config, as_json: (
+            seen.update(root=root, config=config, as_json=as_json) or 0
         ),
     )
-    monkeypatch.setattr(sys, "argv", ["canyonos", "validate", "port/.car", "--strict"])
+    monkeypatch.setattr(sys, "argv", ["canyonos", "validate", "port/.car", "--json"])
 
     with pytest.raises(SystemExit) as exit_info:
         cli.main()
 
     assert exit_info.value.code == 0
-    assert seen == {
-        "root": "port/.car",
-        "config": None,
-        "as_json": False,
-        "strict": True,
-    }
+    assert seen == {"root": "port/.car", "config": None, "as_json": True}

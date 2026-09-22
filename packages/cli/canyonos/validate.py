@@ -8,24 +8,44 @@ runs them and renders what comes back. Two ways in, in this order:
 - imported here, when `canyonos_core` is installed alongside the CLI (a dev
   checkout, or the CLI running inside the Global Controller image)
 - otherwise the same module inside the core image, over a read-only bind mount
-  of the project directory
+  of the `.car` itself
 
-Exit 0 clean, 1 on errors, 1 on warnings alone with `--strict`.
+Exit 0 when nothing is found, 1 otherwise.
 """
 
 import json
 import os
 import shutil
 import subprocess
+import textwrap
 
 from canyonos import env, ui
-from canyonos.init import _active_docker_socket
+from canyonos.init import active_docker_socket
 
 DEFAULT_ARTIFACT_ROOT = ".car"
 CORE_MODULE = "canyonos_core.validate"
 WORKSPACE = "/workspace"
 # Wide enough for a mechanism paragraph, narrow enough to stay readable.
 WRAP_WIDTH = 78
+FINDING_FIELDS = ("code", "path", "line", "summary", "mechanism")
+
+
+def _relative_config(artifact_root, config):
+    """`config` as a path inside the artifact, whichever way it was written.
+
+    The image sees the `.car` and nothing above it, so a manifest outside it
+    could not be read there and must not be read here either.
+    """
+    if config is None:
+        return None
+    root = os.path.abspath(artifact_root)
+    relative = os.path.relpath(os.path.abspath(os.path.join(root, config)), root)
+    if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+        raise RuntimeError(
+            f"--config {config} is outside {artifact_root}; the manifest has to "
+            "live in the .car that is being checked."
+        )
+    return relative
 
 
 def _import_validate_car():
@@ -52,27 +72,41 @@ def _in_process(artifact_root, config):
 def _docker_argv(artifact_root, config):
     """The `docker run` that validates `artifact_root` inside the core image.
 
-    The project directory is mounted read-only and the artifact is named
-    relative to it, so the findings come back with the paths the user sees.
+    The `.car` is the mount, so the container sees no more of the host than the
+    artifact being checked, and every path in the findings is already relative
+    to it.
     """
-    root = os.path.abspath(artifact_root)
     argv = [
         "docker",
         "run",
         "--rm",
         "-v",
-        f"{os.path.dirname(root)}:{WORKSPACE}:ro",
+        f"{os.path.abspath(artifact_root)}:{WORKSPACE}:ro",
         "-w",
         WORKSPACE,
         env.core_image,
         "python",
         "-m",
         CORE_MODULE,
-        os.path.basename(root),
+        ".",
     ]
     if config:
         argv += ["--config", config]
     return argv + ["--json"]
+
+
+def _findings_from(stdout):
+    """The findings in the container's reply, or None when it is not one."""
+    try:
+        findings = json.loads(stdout)["findings"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(findings, list) or any(
+        not isinstance(finding, dict) or any(f not in finding for f in FINDING_FIELDS)
+        for finding in findings
+    ):
+        return None
+    return findings
 
 
 def _in_image(artifact_root, config):
@@ -82,24 +116,24 @@ def _in_image(artifact_root, config):
             "`canyonos validate` needs either canyonos-core installed here or "
             "Docker to run it in the core image; neither is available."
         )
-    if _active_docker_socket() is None:
+    if active_docker_socket() is None:
         raise RuntimeError(
-            "This Docker context is remote, so the project cannot be bind-mounted "
-            "into the core image. Run `canyonos validate` against a local Docker "
-            "context for now."
+            "Docker is not reachable over a local socket (remote context, or the "
+            "daemon is not running), so the .car cannot be bind-mounted into the "
+            "core image."
         )
 
     result = subprocess.run(
         _docker_argv(artifact_root, config), capture_output=True, text=True
     )
-    try:
-        return json.loads(result.stdout)["findings"]
-    except (ValueError, KeyError, TypeError):
+    findings = _findings_from(result.stdout)
+    if findings is None:
         detail = (result.stderr or result.stdout).strip().splitlines()
         raise RuntimeError(
             f"The validator in {env.core_image} returned no findings: "
             f"{detail[-1] if detail else f'exit {result.returncode}'}"
-        ) from None
+        )
+    return findings
 
 
 # ------------------------------------------------------------------ #
@@ -107,19 +141,9 @@ def _in_image(artifact_root, config):
 # ------------------------------------------------------------------ #
 
 
-def _wrap(text, indent):
-    lines = []
-    current = ""
-    for word in text.split():
-        candidate = f"{current} {word}".strip()
-        if len(candidate) + len(indent) > WRAP_WIDTH and current:
-            lines.append(indent + current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(indent + current)
-    return lines
+def _say_wrapped(text, indent):
+    for line in textwrap.wrap(text, width=WRAP_WIDTH - len(indent)):
+        ui.say(indent + line)
 
 
 def _print_findings(findings, artifact_root):
@@ -127,53 +151,41 @@ def _print_findings(findings, artifact_root):
         where = finding["path"]
         if where and finding["line"]:
             where = f"{where}:{finding['line']}"
-        header = f"{finding['code']}  {finding['level']:<7}"
-        ui.say(f"{header}  {where}" if where else header)
-        for line in _wrap(finding["summary"], "    "):
-            ui.say(line)
-        for line in _wrap(finding["mechanism"], "      "):
-            ui.say(line)
+        ui.say(f"{finding['code']}  {where}".rstrip())
+        _say_wrapped(finding["summary"], "    ")
+        _say_wrapped(finding["mechanism"], "      ")
         ui.blank()
 
-    errors, warnings = _counts(findings)
-    if not findings:
-        ui.ok(f"{artifact_root}: clean.")
-    elif errors:
-        ui.fail(f"{errors} error(s), {warnings} warning(s).")
+    if findings:
+        ui.fail(f"{len(findings)} error(s).")
     else:
-        ui.warn(f"{errors} error(s), {warnings} warning(s).")
+        ui.ok(f"{artifact_root}: clean.")
 
 
-def _counts(findings):
-    errors = sum(1 for finding in findings if finding["level"] == "error")
-    return errors, len(findings) - errors
-
-
-def run_validate(
-    artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False, strict=False
-):
+def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False):
     """Report every contract the `.car` breaks. Returns the exit status."""
     ui.set_quiet(as_json)
     try:
         try:
+            config = _relative_config(artifact_root, config)
             findings = _in_process(artifact_root, config)
             if findings is None:
                 findings = _in_image(artifact_root, config)
         except RuntimeError as e:
-            # Nothing was checked, so `--json` gets the reason rather than an
-            # empty run that reads as a pass.
-            ui.set_quiet(False)
-            ui.fail(e)
+            # Nothing was checked, so the reason goes where the findings would
+            # have, rather than an empty run that reads as a pass.
+            if as_json:
+                print(json.dumps({"error": str(e), "findings": []}, indent=2))
+            else:
+                ui.fail(str(e))
             return 1
 
-        errors, warnings = _counts(findings)
         if as_json:
             print(
                 json.dumps(
                     {
                         "artifact_root": os.path.abspath(artifact_root),
-                        "errors": errors,
-                        "warnings": warnings,
+                        "errors": len(findings),
                         "findings": findings,
                     },
                     indent=2,
@@ -181,6 +193,6 @@ def run_validate(
             )
         else:
             _print_findings(findings, artifact_root)
-        return 1 if errors or (strict and warnings) else 0
+        return 1 if findings else 0
     finally:
         ui.set_quiet(False)

@@ -190,16 +190,11 @@ def main():
         help="Always deploy fresh instead of querying a deploy that is already up.",
     )
 
-    # Validate has args: artifact_root, -c/--config, --json, --strict.
+    # Validate has args: artifact_root, -c/--config, --json.
     validate = add(
         "validate",
         lambda args: sys.exit(
-            run_validate(
-                args.artifact_root,
-                config=args.config,
-                as_json=args.json,
-                strict=args.strict,
-            )
+            run_validate(args.artifact_root, config=args.config, as_json=args.json)
         ),
     )
     validate.add_argument(
@@ -217,11 +212,6 @@ def main():
         "--json",
         action="store_true",
         help="Print a single JSON result object and nothing else (for CI)",
-    )
-    validate.add_argument(
-        "--strict",
-        action="store_true",
-        help="Fail on warnings as well as errors",
     )
 
     args = parser.parse_args()

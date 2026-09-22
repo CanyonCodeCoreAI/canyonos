@@ -40,9 +40,6 @@ from canyonos_core.stub_generator import (
 SOURCE_DIR_NAME = "app"
 DEFAULT_CONFIG_PATH = os.path.join("config", "global_controller.yaml")
 
-ERROR = "error"
-WARNING = "warning"
-
 # Modules the build writes at the context root itself. A project module of the
 # same name there is either overwritten by the runtime's copy or dropped before
 # the copy runs.
@@ -52,14 +49,11 @@ _FLAT_MODULES = frozenset(
     if name.endswith(".py")
 )
 
-_LEVEL_ORDER = {ERROR: 0, WARNING: 1}
-
 
 class Finding(NamedTuple):
     """One rejected contract: where it is written, and what breaks if it ships."""
 
     code: str
-    level: str
     path: str
     line: int
     summary: str
@@ -123,7 +117,7 @@ def _check_adapter(report, entrypoint_path, service, declaration):
     """The class the controller loads, and the methods it calls on it."""
     tree, error = _parse(entrypoint_path)
     if tree is None:
-        report.error(
+        report.add(
             "CAR-ADAPTER-CLASS",
             entrypoint_path,
             0,
@@ -144,7 +138,7 @@ def _check_adapter(report, entrypoint_path, service, declaration):
     if class_node is None:
         defined = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
         found = ", ".join(defined) if defined else "no classes at all"
-        report.error(
+        report.add(
             "CAR-ADAPTER-CLASS",
             entrypoint_path,
             1,
@@ -174,7 +168,7 @@ def _check_constructor(report, entrypoint_path, name, methods):
     required = _required_parameters(init)
     if not required:
         return
-    report.error(
+    report.add(
         "CAR-ADAPTER-INIT",
         entrypoint_path,
         init.lineno,
@@ -189,7 +183,7 @@ def _check_method(report, entrypoint_path, class_name, function, methods):
     """One declared function against the method it is generated from."""
     method = methods.get(function.name)
     if method is None:
-        report.error(
+        report.add(
             "CAR-ADAPTER-SIGNATURE",
             entrypoint_path,
             0,
@@ -200,7 +194,7 @@ def _check_method(report, entrypoint_path, class_name, function, methods):
         return
 
     if isinstance(method, ast.AsyncFunctionDef):
-        report.error(
+        report.add(
             "CAR-ADAPTER-ASYNC",
             entrypoint_path,
             method.lineno,
@@ -214,7 +208,7 @@ def _check_method(report, entrypoint_path, class_name, function, methods):
     actual = _parameter_names(method)
     missing = [name for name in declared if name not in actual]
     if missing:
-        report.error(
+        report.add(
             "CAR-ADAPTER-SIGNATURE",
             entrypoint_path,
             method.lineno,
@@ -228,7 +222,7 @@ def _check_method(report, entrypoint_path, class_name, function, methods):
 
     unfilled = [name for name in _required_parameters(method) if name not in declared]
     if unfilled:
-        report.error(
+        report.add(
             "CAR-ADAPTER-SIGNATURE",
             entrypoint_path,
             method.lineno,
@@ -244,7 +238,7 @@ def _check_workflow(report, workflow_path, stub_modules):
     """The module the platform posts to, and how it reaches an agent."""
     tree, error = _parse(workflow_path)
     if tree is None:
-        report.error(
+        report.add(
             "CAR-WORKFLOW-SHAPE",
             workflow_path,
             0,
@@ -270,7 +264,7 @@ def _check_workflow(report, workflow_path, stub_modules):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         ]
         found = ", ".join(defined) if defined else "no top-level functions"
-        report.error(
+        report.add(
             "CAR-WORKFLOW-SHAPE",
             workflow_path,
             1,
@@ -288,7 +282,7 @@ def _check_workflow(report, workflow_path, stub_modules):
         and node.func.id == "deploy"
         for node in ast.walk(tree)
     ):
-        report.error(
+        report.add(
             "CAR-WORKFLOW-SHAPE",
             workflow_path,
             1,
@@ -304,7 +298,7 @@ def _check_workflow(report, workflow_path, stub_modules):
 def _check_main_signature(report, workflow_path, main):
     """The platform sends exactly {"query": ...}."""
     if isinstance(main, ast.AsyncFunctionDef):
-        report.error(
+        report.add(
             "CAR-WORKFLOW-SHAPE",
             workflow_path,
             main.lineno,
@@ -315,7 +309,7 @@ def _check_main_signature(report, workflow_path, main):
 
     params = _parameter_names(main)
     if not params:
-        report.error(
+        report.add(
             "CAR-WORKFLOW-SHAPE",
             workflow_path,
             main.lineno,
@@ -326,7 +320,7 @@ def _check_main_signature(report, workflow_path, main):
         return
 
     if params[0] != "query":
-        report.error(
+        report.add(
             "CAR-WORKFLOW-SHAPE",
             workflow_path,
             main.lineno,
@@ -338,7 +332,7 @@ def _check_main_signature(report, workflow_path, main):
 
     extra = [name for name in _required_parameters(main) if name != "query"]
     if extra:
-        report.error(
+        report.add(
             "CAR-WORKFLOW-SHAPE",
             workflow_path,
             main.lineno,
@@ -362,7 +356,7 @@ def _check_main_guard(report, workflow_path, tree):
                 for other in test.comparators
             )
         ):
-            report.error(
+            report.add(
                 "CAR-WORKFLOW-SHAPE",
                 workflow_path,
                 node.lineno,
@@ -394,7 +388,7 @@ def _check_stub_imports(report, workflow_path, tree, stub_modules):
                 continue
             flat = expected.rsplit(".", 1)[-1]
             if name.endswith("Stub"):
-                report.error(
+                report.add(
                     "CAR-WORKFLOW-STUB-IMPORT",
                     workflow_path,
                     node.lineno,
@@ -405,7 +399,7 @@ def _check_stub_imports(report, workflow_path, tree, stub_modules):
                     f"class is `{base}`.",
                 )
             elif node.module not in (expected, flat):
-                report.error(
+                report.add(
                     "CAR-WORKFLOW-STUB-IMPORT",
                     workflow_path,
                     node.lineno,
@@ -419,6 +413,49 @@ def _check_stub_imports(report, workflow_path, tree, stub_modules):
                 )
 
 
+def _check_entrypoints(report, manifest, source_dir, config_path):
+    """Every file the manifest points at is in the source copy.
+
+    The build skips a service whose file it cannot find and goes on to build
+    and deploy the rest, so a mistyped path costs a whole agent and the run
+    still comes up green.
+    """
+    missing = (
+        "The in-container build logs `Agent file not found` and skips the "
+        "service, then builds and deploys every other one: the deploy comes up "
+        "green with this service missing entirely."
+    )
+    if not os.path.isdir(source_dir):
+        report.add(
+            "CAR-ENTRYPOINT-MISSING",
+            config_path,
+            0,
+            f"no `{SOURCE_DIR_NAME}/` beside `config/`; every entrypoint and "
+            f"workflow_file is resolved against it",
+            missing,
+        )
+        return
+
+    for index, service in enumerate(manifest.agents):
+        if isinstance(service, AgentService):
+            field, declared = "entrypoint", service.entrypoint
+        elif isinstance(service, WorkflowService):
+            field, declared = "workflow_file", service.workflow_file
+        else:
+            continue
+        # An absent value is the schema's to report, not this check's.
+        if not declared or os.path.isfile(os.path.join(source_dir, declared)):
+            continue
+        report.add(
+            "CAR-ENTRYPOINT-MISSING",
+            config_path,
+            0,
+            f"agents[{index}].{field}: "
+            f"{os.path.join(SOURCE_DIR_NAME, declared)} does not exist",
+            missing,
+        )
+
+
 def _check_flat_collisions(report, source_dir):
     """A project module at the source root the runtime's own copy lands on."""
     for entry in sorted(os.listdir(source_dir)):
@@ -427,7 +464,7 @@ def _check_flat_collisions(report, source_dir):
         path = os.path.join(source_dir, entry)
         if not os.path.isfile(path):
             continue
-        report.error(
+        report.add(
             "CAR-FLAT-COLLISION",
             path,
             1,
@@ -470,7 +507,7 @@ def _check_package_reexport(report, source_dir, service):
             hit = target in (module, f"{package}.{module}")
         if not hit:
             continue
-        report.error(
+        report.add(
             "CAR-PACKAGE-REEXPORT",
             init_path,
             node.lineno,
@@ -498,16 +535,10 @@ class _Report:
         self.artifact_root = artifact_root
         self.findings = []
 
-    def add(self, code, level, path, line, summary, mechanism):
+    def add(self, code, path, line, summary, mechanism):
         self.findings.append(
-            Finding(code, level, self.relative(path), line or 0, summary, mechanism)
+            Finding(code, self.relative(path), line or 0, summary, mechanism)
         )
-
-    def error(self, code, path, line, summary, mechanism):
-        self.add(code, ERROR, path, line, summary, mechanism)
-
-    def warn(self, code, path, line, summary, mechanism):
-        self.add(code, WARNING, path, line, summary, mechanism)
 
     def relative(self, path):
         if not path:
@@ -553,7 +584,7 @@ def validate_car(artifact_root, config_path=None):
 
     report = _Report(artifact_root)
     for violation in validate_project(config_path, config_dir):
-        report.error(
+        report.add(
             "CAR-SCHEMA",
             violation.path,
             violation.line,
@@ -570,9 +601,9 @@ def validate_car(artifact_root, config_path=None):
         return _sorted(report.findings)
 
     declarations = _declarations(config_dir)
+    _check_entrypoints(report, manifest, source_dir, config_path)
     if not os.path.isdir(source_dir):
-        # Deploy preflight reports a missing source copy; without it there is
-        # no Python to check.
+        # Already reported, and there is no Python to check without it.
         return _sorted(report.findings)
 
     stub_modules = {}
@@ -581,7 +612,7 @@ def validate_car(artifact_root, config_path=None):
             continue
         entrypoint_path = os.path.join(source_dir, service.entrypoint)
         if not os.path.isfile(entrypoint_path):
-            continue
+            continue  # reported by _check_entrypoints
         if service.name in declarations:
             stub_modules[service.name] = _module_path(service.entrypoint)
         _check_adapter(report, entrypoint_path, service, declarations.get(service.name))
@@ -599,22 +630,10 @@ def validate_car(artifact_root, config_path=None):
 
 
 def _sorted(findings):
-    """Errors before warnings, then grouped by code and by where they are."""
+    """Grouped by code, then by where they are."""
     return sorted(
-        findings,
-        key=lambda finding: (
-            _LEVEL_ORDER[finding.level],
-            finding.code,
-            finding.path,
-            finding.line,
-        ),
+        findings, key=lambda finding: (finding.code, finding.path, finding.line)
     )
-
-
-def counts(findings):
-    """`(errors, warnings)` in a run's findings."""
-    errors = sum(1 for finding in findings if finding.level == ERROR)
-    return errors, len(findings) - errors
 
 
 # ------------------------------------------------------------------ #
@@ -624,11 +643,9 @@ def counts(findings):
 
 def payload(artifact_root, findings):
     """The JSON object `--json` prints, and the CLI renders from."""
-    errors, warnings = counts(findings)
     return {
         "artifact_root": artifact_root,
-        "errors": errors,
-        "warnings": warnings,
+        "errors": len(findings),
         "findings": [finding._asdict() for finding in findings],
     }
 
@@ -638,13 +655,12 @@ def _print_text(findings):
         where = finding.path
         if where and finding.line:
             where = f"{where}:{finding.line}"
-        print(f"{finding.code}  {finding.level:<7}  {where}".rstrip())
+        print(f"{finding.code}  {where}".rstrip())
         print(f"    {finding.summary}")
         if finding.mechanism:
             print(f"      {finding.mechanism}")
         print()
-    errors, warnings = counts(findings)
-    print(f"{errors} error(s), {warnings} warning(s)." if findings else "clean.")
+    print(f"{len(findings)} error(s)." if findings else "clean.")
 
 
 def main(argv=None):
@@ -672,7 +688,7 @@ def main(argv=None):
         print(json.dumps(payload(os.path.abspath(args.artifact_root), findings)))
     else:
         _print_text(findings)
-    return 1 if counts(findings)[0] else 0
+    return 1 if findings else 0
 
 
 if __name__ == "__main__":
