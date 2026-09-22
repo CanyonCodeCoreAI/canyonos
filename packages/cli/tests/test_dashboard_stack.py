@@ -1,8 +1,10 @@
+import importlib.resources
 import json
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from canyonos import dashboard_stack
 
@@ -25,7 +27,9 @@ def project(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(dashboard_stack.shutil, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(dashboard_stack, "_port_is_free", lambda _port: True)
+    monkeypatch.setattr(
+        dashboard_stack, "find_free_port", lambda start, max_attempts=50: start
+    )
     return tmp_path
 
 
@@ -113,11 +117,10 @@ def test_state_directory_and_port_validation_failures_do_not_pull(
     monkeypatch.setattr(dashboard_stack, "_state_dir", lambda: tmp_path / "state")
     monkeypatch.setattr(
         dashboard_stack,
-        "_find_web_port",
+        "find_free_port",
         lambda start=8080, max_attempts=50: (_ for _ in ()).throw(
-            dashboard_stack.PhaseFailure(
-                "validate",
-                "no free port found for the dashboard after 50 attempts starting at 8080",
+            RuntimeError(
+                "no free port found for the dashboard after 50 attempts starting at 8080"
             )
         ),
     )
@@ -303,8 +306,8 @@ def test_stop_and_teardown_are_a_noop_without_an_env_file(monkeypatch, project):
     calls = []
     install_docker(monkeypatch, calls)
 
-    assert dashboard_stack.stop_dashboard() is False
-    assert dashboard_stack.teardown_dashboard() is False
+    assert dashboard_stack.stop_dashboard() is True
+    assert dashboard_stack.teardown_dashboard() is True
     assert calls == []
 
 
@@ -355,7 +358,7 @@ def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
     install_docker(monkeypatch, calls, response)
     monkeypatch.setattr(
         dashboard_stack,
-        "_find_web_port",
+        "find_free_port",
         lambda *a, **k: pytest.fail(
             "the existing dashboard owns port 8080, should not search for a new one"
         ),
@@ -372,3 +375,26 @@ def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
 
     assert result.ok
     assert result.url == "http://127.0.0.1:8080"
+
+
+def _shipped_manifest() -> dict:
+    manifest = importlib.resources.files("canyonos").joinpath("dashboard.compose.yml")
+    return yaml.safe_load(manifest.read_text(encoding="utf-8"))
+
+
+def test_manifest_gives_the_api_its_self_hosted_environment():
+    environment = _shipped_manifest()["services"]["api"]["environment"]
+
+    assert environment["AUTH_MODE"] == "fixed_code"
+    assert environment["DEPLOY_WORKER"] == "none"
+    assert environment["FILE_STORAGE"] == "mock"
+    assert set(environment) == {
+        "DATABASE_URL",
+        "JWT_SECRET",
+        "AUTH_MODE",
+        "DEPLOY_WORKER",
+        "FILE_STORAGE",
+        "CANYONOS_REDIS_HOST",
+        "CANYONOS_REDIS_PORT",
+        "LOG_LEVEL",
+    }

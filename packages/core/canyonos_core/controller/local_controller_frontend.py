@@ -62,7 +62,7 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
             future_id = data.get("future_id")
             result = data.get("result")
             failed = int(bool(data.get("failed", 0)))
-            error_message = str(data.get("error") or "")
+            error_message = data.get("error") or data.get("error_message") or ""
 
             logger.info(
                 f"WriteResult: received result for future {future_id}: {result}"
@@ -109,7 +109,12 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                 # Process the cleanup batch asynchronously so the RPC returns immediately.
                 def _cleanup_batch():
                     for request_id in request_ids:
-                        self._cleanup_request(request_id)
+                        try:
+                            self._cleanup_request(request_id)
+                        except Exception as e:
+                            logger.error(
+                                "Cleanup failed for request %s: %s", request_id, e
+                            )
 
                 Thread(target=_cleanup_batch, daemon=True).start()
             else:

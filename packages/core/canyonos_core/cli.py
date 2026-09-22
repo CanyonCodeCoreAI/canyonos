@@ -51,7 +51,80 @@ def _load_config(config_path):
     import yaml
 
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    # Everything below here till "return config" is basically just checks to make sure the folder is correct
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
+    agents = config.get("agents", [])
+    if not isinstance(agents, list) or not all(
+        isinstance(agent, dict) for agent in agents
+    ):
+        raise RuntimeError(f"Config `agents` must be a list of mappings: {config_path}")
+    names = [agent.get("name") for agent in agents]
+    if any(not isinstance(name, str) or not name.strip() for name in names):
+        raise RuntimeError(
+            f"Every configured agent must have a non-empty name: {config_path}"
+        )
+    names_by_key = {}
+    for name in names:
+        names_by_key.setdefault(name.casefold(), []).append(name)
+    duplicates = sorted(
+        "/".join(group) for group in names_by_key.values() if len(group) > 1
+    )
+    if duplicates:
+        raise RuntimeError(
+            f"Duplicate agent names in {config_path}: {', '.join(duplicates)}"
+        )
+
+    for agent in agents:
+        name = agent["name"]
+        provider = agent.get("provider", "local")
+        if not isinstance(provider, str) or provider.casefold() not in {"local", "ec2"}:
+            raise RuntimeError(
+                f"Agent {name} has unsupported provider {provider!r}; use `local` or `EC2`."
+            )
+        agent["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
+
+        replicas = agent.get("replicas", 1)
+        if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
+            raise RuntimeError(
+                f"Agent {name} must have a positive integer `replicas` value."
+            )
+        if (
+            agent["provider"] == "local"
+            and agent.get("type", "agent") == "workflow"
+            and replicas > 1
+        ):
+            raise RuntimeError(
+                f"Local workflow {name} cannot use replicas > 1 because every replica "
+                "would publish the same `api_port`."
+            )
+
+        for field in ("host_port", "port", "redis_port", "api_port", "dashboard_port"):
+            value = agent.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 1 <= value <= 65535
+            ):
+                raise RuntimeError(
+                    f"Agent {name} must have an integer `{field}` between 1 and 65535."
+                )
+
+        resources = agent.get("resources", {})
+        if not isinstance(resources, dict):
+            raise RuntimeError(f"Agent {name} `resources` must be a mapping.")
+        for field in ("cpu", "memory", "gpu"):
+            value = resources.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise RuntimeError(
+                    f"Agent {name} resource `{field}` must be a positive number."
+                )
+    return config
 
 
 def _artifact_prefix(root):
@@ -245,6 +318,23 @@ def _run_build(config_path):
     )
     package_dir = _get_package_dir()
 
+    missing_sources = []
+    for agent in agents:
+        source_field = (
+            "workflow_file"
+            if agent.get("type", "agent") == "workflow"
+            else "entrypoint"
+        )
+        source_path = agent.get(source_field)
+        if not isinstance(source_path, str) or not source_path:
+            missing_sources.append(f"{agent['name']}: missing `{source_field}`")
+        elif not os.path.isfile(os.path.join(source_root, source_path)):
+            missing_sources.append(f"{agent['name']}: {source_path} not found")
+    if missing_sources:
+        raise RuntimeError(
+            "Cannot build configured sources: " + "; ".join(missing_sources)
+        )
+
     # -------------------------------------------------------------- #
     #  Step 1: Discover agent YAML files and generate Python stubs    #
     # -------------------------------------------------------------- #
@@ -278,7 +368,7 @@ def _run_build(config_path):
     missing_stubs = [
         a["name"]
         for a in agents
-        if a.get("type", "agent") != "workflow"
+        if a.get("type", "agent") not in ("workflow", "database")
         and (a["name"] not in yaml_by_name or not a.get("entrypoint"))
     ]
     if missing_stubs:
@@ -335,6 +425,22 @@ def _run_build(config_path):
     for agent_cfg in agents:
         agent_name = agent_cfg["name"]
         agent_type = agent_cfg.get("type", "agent")
+
+        if agent_type == "database":
+            # No build: pull the declared image and tag it like any other
+            # agent image so the rest of the deploy pipeline treats it the
+            # same way (EC2 image transfer, etc.) without further changes.
+            image = agent_cfg.get("image")
+            if not image:
+                logger.warning("Skipping database '%s': no image specified", agent_name)
+                continue
+            target_image = f"canyonos-{agent_name.lower()}"
+            logger.info("Pulling database image '%s' as '%s'", image, target_image)
+            subprocess.run(
+                ["docker", "pull", "--platform", _docker_platform(), image], check=True
+            )
+            subprocess.run(["docker", "tag", image, target_image], check=True)
+            continue
 
         if agent_type == "workflow":
             # Workflow container

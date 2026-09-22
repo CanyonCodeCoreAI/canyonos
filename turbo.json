@@ -4,10 +4,63 @@
     "experimentalPythonWorkspaces": true,
     "experimentalTaskCommand": true
   },
+  "globalPassThroughEnv": [
+    "APP_ENV",
+    "API_URL",
+    "AUTH_EMAIL_FROM",
+    "AUTH_MODE",
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "NODE_ENV",
+    "PLAYWRIGHT_BASE_URL",
+    "PORT",
+    "VITE_API_URL",
+    "VITE_WEB_PORT",
+    "WEB_PUBLIC_URL",
+    "WORKFLOW_GENERATION_STUB"
+  ],
   "tasks": {
-    "build": {
-      "cache": true
+    "dev": {
+      "dependsOn": ["^build"],
+      "persistent": true,
+      "cache": false,
+      "passThroughEnv": ["SEED_DEV_DATA"]
     },
+    "build": {
+      "cache": true,
+      "outputs": ["dist/**"]
+    },
+    "lint": {},
+    "typecheck": {},
+    "@canyonos/api#typecheck": {
+      "dependsOn": ["build"]
+    },
+    "web#build": {
+      "dependsOn": ["^build"]
+    },
+    "web#typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "web#lint": {
+      "dependsOn": ["^build"]
+    },
+    "web#test": {
+      "dependsOn": ["^build"]
+    },
+    "@repo/ui#lint": {
+      "dependsOn": ["^build"]
+    },
+    "@repo/ui#typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "@repo/ui#test": {
+      "dependsOn": ["^build"]
+    },
+    "format": {
+      "cache": false
+    },
+    "format:check": {},
+    "test": {},
     "canyonos#build:binary": {
       "cache": false,
       "command": [
