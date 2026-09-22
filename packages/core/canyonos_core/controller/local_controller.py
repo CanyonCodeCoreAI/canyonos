@@ -99,7 +99,7 @@ class LocalController(object):
             self._wait_until_reachable()
             self.redis.set(self._status_key, "healthy")
 
-        # Set once by InstanceManager when this replica was provisioned; read back
+        # Set once by the Provisioner when this replica was provisioned; read back
         # here so completed requests can be stamped with which replica ran them.
         self.agent_id = self.redis.get(
             f"controller:{self.agent_host}:{self.public_port}:agent_id"
@@ -145,15 +145,16 @@ class LocalController(object):
     def _wait_until_reachable(self, timeout=30, attempt_timeout=0.5):
         """Block until this controller can be dialed at its own published endpoint, not just bound locally.
 
-        Only applies to the local-provider hairpin (host.docker.internal) --
-        see LOCAL_PROVIDER_STARTUP_RACE.md for why a bare TCP-open check on
-        that path isn't enough and this dials the real endpoint instead.
+        Only the local-provider hairpin (host.docker.internal) needs it; a bare
+        TCP-open check passes there before the endpoint actually answers.
         """
         if self.agent_host != "host.docker.internal":
             return
         deadline = time.time() + timeout
         while time.time() < deadline:
-            channel = grpc.insecure_channel(self._my_endpoint, options=GRPC_CHANNEL_OPTIONS)
+            channel = grpc.insecure_channel(
+                self._my_endpoint, options=GRPC_CHANNEL_OPTIONS
+            )
             try:
                 grpc.channel_ready_future(channel).result(timeout=attempt_timeout)
                 return
@@ -811,7 +812,7 @@ class LocalController(object):
         """Call a remote stub RPC, retrying transient UNAVAILABLE briefly before raising.
 
         A freshly started remote can still be momentarily unreachable even after
-        reporting healthy -- see LOCAL_PROVIDER_STARTUP_RACE.md.
+        reporting healthy.
         """
         max_attempts = 8
         backoff = 0.5
@@ -823,7 +824,10 @@ class LocalController(object):
                     raise
                 logger.warning(
                     "Transient UNAVAILABLE calling %s (attempt %d/%d), retrying in %.1fs",
-                    endpoint, attempt, max_attempts, backoff,
+                    endpoint,
+                    attempt,
+                    max_attempts,
+                    backoff,
                 )
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 8)

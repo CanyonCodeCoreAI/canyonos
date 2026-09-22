@@ -18,16 +18,7 @@ import yaml
 
 import canyonos_core.controller.utils.telemetry_logging as sqlmod
 from canyonos_core.controller.global_controller import GlobalController
-
-
-class _FakeInstanceManager:
-    def publish_routing_snapshot(self, controllers):
-        pass
-
-
-class _FakeRedis:
-    def hset_multiple(self, name, mapping):
-        pass
+from fakes import _FakeRedis
 
 
 def _write_config(project_id):
@@ -43,7 +34,6 @@ def _bare_controller(config_path):
     reload_config() also calls _write_identity() (Bug E)."""
     controller = GlobalController.__new__(GlobalController)
     controller.config_path = config_path
-    controller.instance_manager = _FakeInstanceManager()
     controller.node_redis = {}
     controller.redis = _FakeRedis()
     return controller

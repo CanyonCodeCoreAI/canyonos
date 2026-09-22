@@ -6,58 +6,11 @@ from unittest.mock import ANY, MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.controller.cloud_provider_logic.Local import (
+from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.controller.instance_manager import InstanceManager
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.strings = {}
-        self.hashes = {}
-        self.sets = {}
-
-    def set(self, key, value):
-        self.strings[key] = value
-
-    def get(self, key):
-        return self.strings.get(key)
-
-    def delete(self, *keys):
-        for key in keys:
-            self.strings.pop(key, None)
-            self.hashes.pop(key, None)
-            self.sets.pop(key, None)
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = value
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hget(self, name, field):
-        return self.hashes.get(name, {}).get(field)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def hdel(self, name, field):
-        self.hashes.setdefault(name, {}).pop(field, None)
-
-    def sadd(self, name, *values):
-        self.sets.setdefault(name, set()).update(values)
-
-    def srem(self, name, *values):
-        self.sets.setdefault(name, set()).difference_update(values)
-
-    def smembers(self, name):
-        return set(self.sets.get(name, set()))
-
-    def scan_keys(self, pattern):
-        prefix = pattern.rstrip("*")
-        keys = set(self.strings) | set(self.hashes) | set(self.sets)
-        return [key for key in sorted(keys) if key.startswith(prefix)]
+from canyonos_core.reconciler.provisioner import Provisioner
+from fakes import _FakeRedis
 
 
 def _fake_controller():
@@ -90,7 +43,7 @@ def _fake_runtime(**kwargs):
     return runtime
 
 
-class InstanceManagerRuntimeTests(unittest.TestCase):
+class ProvisionerRuntimeTests(unittest.TestCase):
     def test_bootstrap_instance_removes_an_orphaned_running_container_before_recreating(
         self,
     ):
@@ -108,7 +61,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout="")
 
         controller._run_cmd = fake_run_cmd
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
@@ -123,7 +76,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_local_instances_keep_default_host_and_increment_host_ports(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         alpha = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
         beta = manager.ensure_instances([{"name": "Beta", "provider": "local"}])[0]
@@ -202,7 +155,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_bootstrap_instance_passes_poll_interval_env_var(self):
         controller = _fake_controller()
         controller.config = {"poll_interval": 7}
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
@@ -211,7 +164,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_llm_stub_env_is_forwarded_to_the_agent_when_set(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.dict(os.environ, {"CANYONOS_LLM_STUB_TEXT": "test"}):
             manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
@@ -222,7 +175,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_llm_stub_is_explicitly_disabled_by_default(self):
         """Without `canyonos test`, the stub is pinned empty (off) and immune to --env-file."""
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         os.environ.pop("CANYONOS_LLM_STUB_TEXT", None)
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
@@ -235,7 +188,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_local_workflow_and_resource_flags_stay_the_same(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.object(local_runtime, "_port_bound", return_value=False):
             manager.ensure_instances(
@@ -308,7 +261,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_workflow_bootstrap_fails_fast_on_an_occupied_api_port(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.object(local_runtime, "_port_bound", return_value=True):
             with self.assertRaises(RuntimeError) as ctx:
@@ -328,7 +281,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_plain_agent_bootstrap_ignores_api_port_conflicts(self):
         """Only `type: workflow` publishes api_port -- a plain agent has nothing to conflict on."""
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.object(local_runtime, "_port_bound", return_value=True):
             manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
@@ -337,7 +290,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_agent_id_is_stable_across_repeated_ensure_instances_calls(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         first = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
         second = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
@@ -346,7 +299,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_agent_id_is_published_under_the_controller_endpoint_key(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         alpha = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
 
@@ -357,7 +310,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_local_remove_instance_still_removes_the_same_container(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
         controller._run_cmd.reset_mock()
@@ -372,7 +325,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_manager_keeps_ec2_runtime_boundary_behavior(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         provisioned = {
             "host": "10.0.0.30",
@@ -450,7 +403,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_manager_uses_same_runtime_contract_for_local_and_ec2(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         local_instance = {
             "agent_name": "Local",
@@ -525,7 +478,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_local_provider_runtime_does_not_require_ec2_import(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         runtime = manager._provider_runtime("local")
 

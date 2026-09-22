@@ -12,11 +12,11 @@ from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
 _SLEEP_ARGV = [sys.executable, "-c", "import time; time.sleep(30)"]
 _EXIT_ARGV = [sys.executable, "-c", ""]
 
-# Dumps the env the child actually received to the file named by VENTIS_TEST_OUT.
+# Dumps the env the child actually received to the file named by CANYONOS_TEST_OUT.
 _DUMP_ENV_SRC = (
     "import json, os\n"
-    "with open(os.environ['VENTIS_TEST_OUT'], 'w') as f:\n"
-    "    json.dump({k: os.environ.get(k) for k in ('PATH', 'VENTIS_TEST_MARKER')}, f)\n"
+    "with open(os.environ['CANYONOS_TEST_OUT'], 'w') as f:\n"
+    "    json.dump({k: os.environ.get(k) for k in ('PATH', 'CANYONOS_TEST_MARKER')}, f)\n"
 )
 
 
@@ -76,7 +76,7 @@ class ProcessSupervisorTests(unittest.TestCase):
         self.supervisor.register(
             "env",
             [sys.executable, "-c", _DUMP_ENV_SRC],
-            env={"VENTIS_TEST_MARKER": "set", "VENTIS_TEST_OUT": out_path},
+            env={"CANYONOS_TEST_MARKER": "set", "CANYONOS_TEST_OUT": out_path},
         )
 
         self.supervisor.start_all()
@@ -84,9 +84,9 @@ class ProcessSupervisorTests(unittest.TestCase):
 
         with open(out_path) as f:
             child_env = json.load(f)
-        self.assertEqual(child_env["VENTIS_TEST_MARKER"], "set")
+        self.assertEqual(child_env["CANYONOS_TEST_MARKER"], "set")
         self.assertEqual(child_env["PATH"], os.environ["PATH"])
-        self.assertNotIn("VENTIS_TEST_MARKER", os.environ)
+        self.assertNotIn("CANYONOS_TEST_MARKER", os.environ)
 
 
 if __name__ == "__main__":

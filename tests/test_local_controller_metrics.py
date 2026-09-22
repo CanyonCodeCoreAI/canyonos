@@ -19,14 +19,15 @@ sys.path.insert(
 )
 
 from canyonos_core.controller.local_controller import LocalController
+from fakes import _FakeRedis
 
 
 def _bind_failure_marker(controller):
     controller._mark_future_failed = lambda future_id, error, origin=None: (
         LocalController._mark_future_failed(controller, future_id, error, origin)
     )
-    controller._call_with_retry = lambda fn, endpoint: (
-        LocalController._call_with_retry(controller, fn, endpoint)
+    controller._call_with_retry = lambda fn, endpoint: LocalController._call_with_retry(
+        controller, fn, endpoint
     )
     controller._send_result_callback = (
         lambda origin, future_id, result="", failed=0, error_message="": (
@@ -43,48 +44,6 @@ def _bind_failure_marker(controller):
         )
     )
     return controller
-
-
-class _FakeRedisClient:
-    def __init__(self):
-        self.counters = {}
-
-    def incr(self, key):
-        self.counters[key] = self.counters.get(key, 0) + 1
-        return self.counters[key]
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-        self.strings = {}
-        self.client = _FakeRedisClient()
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = value
-
-    def hincrby(self, name, field, amount=1):
-        bucket = self.hashes.setdefault(name, {})
-        bucket[field] = int(bucket.get(field, 0)) + amount
-        return bucket[field]
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hget(self, name, field):
-        return self.hashes.get(name, {}).get(field)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def set(self, key, value):
-        self.strings[key] = value
-
-    def get(self, key):
-        return self.strings.get(key)
-
-    def smembers(self, key):
-        return set()
 
 
 class LocalControllerMetricsTests(unittest.TestCase):

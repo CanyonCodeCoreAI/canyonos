@@ -27,7 +27,7 @@ from canyonos_core.controller.utils.container_names import container_name
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.controller.utils.redis_client import RedisClient
-from canyonos_core.controller.cloud_provider_logic.shared_utils.llm_proxy_env import (
+from canyonos_core.reconciler.providers.shared_utils.llm_proxy_env import (
     llm_proxy_docker_env_args,
 )
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 CONTAINER_PORT = 50051
 PROVIDER = "ec2"
-DEFAULT_SSH_KEY_PATH = os.path.expanduser("~/.ssh/ventis_ec2")
+DEFAULT_SSH_KEY_PATH = os.path.expanduser("~/.ssh/canyonos_ec2")
 _controller: Any = None
 
 
@@ -355,8 +355,3 @@ def terminate_instance(instance):
 
     _, client = _aws_clients()
     client.terminate_instances(InstanceIds=[runtime_id.rsplit("--", 1)[1]])
-
-
-def routing_endpoint_for(instance):
-    """Return the gRPC endpoint string used for routing to this instance."""
-    return instance["endpoint"]

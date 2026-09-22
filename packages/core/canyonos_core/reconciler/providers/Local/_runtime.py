@@ -3,7 +3,7 @@ Local runtime helpers for CanyonOS.
 
 This module is the local-provider backend for `provider: local` agents.
 It keeps the existing Docker launch/teardown behavior while letting
-InstanceManager stay focused on orchestration and persistence.
+the Provisioner stay focused on orchestration and persistence.
 """
 
 import logging
@@ -12,7 +12,7 @@ import socket
 
 from canyonos_core.controller.utils.container_names import container_name
 from canyonos_core.controller.utils.env_file import env_file_args
-from canyonos_core.controller.cloud_provider_logic.shared_utils.llm_proxy_env import (
+from canyonos_core.reconciler.providers.shared_utils.llm_proxy_env import (
     llm_proxy_docker_env_args,
 )
 
@@ -216,7 +216,3 @@ def terminate_instance(instance):
     )
     if result.returncode != 0:
         logger.warning("Failed to remove runtime %s", runtime_id)
-
-
-def routing_endpoint_for(instance):
-    return f"{instance['runtime_id']}:{CONTAINER_PORT}"

@@ -60,25 +60,27 @@ class PollTelemetryTests(EnvIsolatedTestCase):
         controller._on_controller_healthy = MagicMock()
         controller._on_controller_unhealthy = MagicMock()
         controller._otel_db = MagicMock()
-        controller.instance_manager = MagicMock()
+        self.list_instances = self.enterContext(
+            patch("canyonos_core.controller.global_controller.list_instances")
+        )
         instance = {
             "agent_name": "AgentA",
             "agent_id": "local:AgentA:0",
             "host": "localhost",
             "host_port": 8000,
+            "container_port": "50051",
+            "runtime_id": "canyonos-alpha-0",
         }
-        controller.instance_manager.list_instances.return_value = [instance]
-        controller.instance_manager._routing_endpoint_for = MagicMock(
-            return_value="local:AgentA:0"
-        )
+        self.list_instances.return_value = [instance]
+        _unused_endpoint_stub = MagicMock(return_value="local:AgentA:0")
         self.node_redis = MagicMock()
         self.node_redis.hgetall.return_value = {"requests_served": "3"}
         self.node_redis.get.return_value = "healthy"
-        controller._get_node_redis_for = MagicMock(return_value=self.node_redis)
+        controller.node_redis_for_instance = MagicMock(return_value=self.node_redis)
         return controller
 
     def _poll(self, controller):
-        instance = controller.instance_manager.list_instances()[0]
+        instance = self.list_instances.return_value[0]
         with (
             patch(
                 "canyonos_core.controller.global_controller.send_runtime_information"

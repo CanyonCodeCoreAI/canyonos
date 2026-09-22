@@ -15,27 +15,7 @@ sys.path.insert(
 
 import canyonos_core.controller.future as future_module
 import canyonos_core.controller.canyonos_context as canyonos_context
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-        self.sets = {}
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = value
-
-    def hget(self, name, field):
-        return self.hashes.get(name, {}).get(field)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def sadd(self, name, *values):
-        self.sets.setdefault(name, set()).update(values)
+from fakes import _FakeRedis
 
 
 class FutureParentIdTests(unittest.TestCase):

@@ -1,10 +1,6 @@
 # Reconciler
-# Separate process that converges running instances onto the desired replica
-# counts in Redis, and replaces instances that stop answering.
-#
-# Level-triggered: every pass recomputes what should exist from the desired state
-# and what does exist from the instance records, so a lost wake signal or a crash
-# mid-pass costs latency, never correctness.
+# Separate process that converges running instances onto the desired replica counts
+# in Redis. Level-triggered, so a lost wake signal costs latency, never correctness.
 
 import argparse
 import logging
@@ -15,8 +11,9 @@ import sys
 import time
 
 from canyonos_core.controller.controller_context import ControllerContext
-from canyonos_core.controller.instance_manager import InstanceManager
+from canyonos_core.instances.records import instance_id_from_record
 from canyonos_core.reconciler import state
+from canyonos_core.reconciler.provisioner import Provisioner
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,15 +37,13 @@ class Reconciler(object):
     def __init__(self, config_path, sweep_interval=None):
         self.context = ControllerContext(config_path)
         self.context.attach_local_node_redis()
-        self.instance_manager = InstanceManager(self.context)
+        self.provisioner = Provisioner(self.context)
         self.sweep_interval = sweep_interval or self.context.poll_interval
 
-        # A replica reports in on the same cadence GlobalController polls with, so
-        # allow a couple of missed reports before calling it dead.
+        # A replica reports on GlobalController's poll cadence; allow a couple of misses.
         self.stale_after = 3 * self.context.poll_interval
 
-        # An instance that has never reported yet is still starting, not unhealthy;
-        # without this the reaper would destroy and recreate it forever.
+        # An instance that has never reported yet is still starting, not unhealthy.
         self.startup_grace = max(30, 3 * self.context.poll_interval)
 
         self._seen_healthy = set()  # instance_id, once it has answered at least once
@@ -118,12 +113,41 @@ class Reconciler(object):
     #  Reconcile                                                         #
     # ------------------------------------------------------------------ #
 
-    def reconcile(self, agent_name):
-        """Make the instances of one agent match its desired replica count."""
-        if self._reap(agent_name):
-            self._fill()
+    def reconcile(self, agent_name=None):
+        """Converge one agent, or every configured agent when agent_name is None."""
+        if self.context.refresh_controllers_from_redis():
+            logger.info(
+                "Adopted %d published agent spec(s).", len(self.context.controllers)
+            )
+        draining = state.is_draining(self.context.redis)
 
-    def _reap(self, agent_name):
+        names = (
+            [agent_name] if agent_name is not None else list(self.context.agent_specs)
+        )
+        reaped = False
+        for name in names:
+            try:
+                reaped |= self._reap(name, draining)
+            except Exception as e:
+                logger.warning("Failed to reap agent %s: %s", name, e)
+
+        # desired_agent_specs falls back to the configured count, so filling here would undo the drain.
+        if draining:
+            return
+        # A named agent that could not be reaped (unknown, or a non-count replicas)
+        # has nothing to fill into; a full pass fills regardless.
+        if agent_name is not None and not reaped:
+            return
+        try:
+            # ensure_instances takes the whole spec list because it republishes the
+            # routing snapshot from what it is handed.
+            self.provisioner.ensure_instances(
+                state.desired_agent_specs(self.context.redis, self.context.controllers)
+            )
+        except Exception as e:
+            logger.warning("Failed to provision missing instances: %s", e)
+
+    def _reap(self, agent_name, draining=False):
         """Remove an agent's surplus, unhealthy and replaced instances."""
         spec = self.context.agent_specs.get(agent_name)
         if spec is None:
@@ -134,28 +158,30 @@ class Reconciler(object):
             )
             return False
 
-        configured = spec.get("replicas", 1)
-        if not isinstance(configured, int):
+        redis_client = self.context.redis
+        configured = state.replica_count(spec)
+        if draining:
+            desired = 0
+        elif configured is None:
             logger.warning(
                 "Agent %s declares a non-integer replicas value (%r); "
                 "reconciliation needs a count.",
                 agent_name,
-                configured,
+                spec.get("replicas"),
             )
             return False
-
-        redis_client = self.context.redis
-        desired = state.get_desired(redis_client, agent_name, configured)
+        else:
+            desired = state.get_desired(redis_client, agent_name, configured)
         reap_requested = state.take_reap_requests(redis_client, agent_name)
 
-        instances = self.instance_manager.list_instances(agent_name)
+        instances = self.provisioner.list_instances(agent_name)
         for instance in instances:
             # Routing republishes fan out to node_redis, so every node holding an
             # instance needs a client before one is removed.
             self.context.node_redis_for_instance(instance)
 
         for instance in instances:
-            instance_id = self.instance_manager._instance_id_from_record(instance)
+            instance_id = instance_id_from_record(instance)
             reason = self._removal_reason(
                 instance, instance_id, desired, reap_requested
             )
@@ -163,20 +189,8 @@ class Reconciler(object):
                 continue
             logger.info("Removing instance %s (%s)", instance_id, reason)
             self._seen_healthy.discard(instance_id)
-            self.instance_manager.remove_instance(instance_id)
+            self.provisioner.remove_instance(instance_id)
         return True
-
-    def _fill(self):
-        """
-        Provision whatever is missing across every agent at once.
-
-        ensure_instances is create-only and per-slot idempotent, and it takes the
-        whole spec list because it republishes the routing snapshot from what it is
-        handed -- so this runs once per pass rather than once per agent.
-        """
-        self.instance_manager.ensure_instances(
-            state.desired_agent_specs(self.context.redis, self.context.controllers)
-        )
 
     def _removal_reason(self, instance, instance_id, desired, reap_requested):
         """Why this instance should go, or None to keep it."""
@@ -188,18 +202,6 @@ class Reconciler(object):
             return "unhealthy"
         return None
 
-    def reconcile_all(self):
-        """Reconcile every agent in the config."""
-        for agent_name in self.context.agent_specs:
-            try:
-                self._reap(agent_name)
-            except Exception as e:
-                logger.warning("Failed to reap agent %s: %s", agent_name, e)
-        try:
-            self._fill()
-        except Exception as e:
-            logger.warning("Failed to provision missing instances: %s", e)
-
     # ------------------------------------------------------------------ #
     #  Loop                                                              #
     # ------------------------------------------------------------------ #
@@ -210,7 +212,7 @@ class Reconciler(object):
             len(self.context.agent_specs),
             self.sweep_interval,
         )
-        self.reconcile_all()
+        self.reconcile()
         last_sweep = time.time()
 
         while _running:
@@ -222,7 +224,7 @@ class Reconciler(object):
                 continue
 
             if state.WAKE_ALL in signals:
-                self.reconcile_all()
+                self.reconcile()
                 last_sweep = time.time()
                 signals.discard(state.WAKE_ALL)
 
@@ -233,7 +235,7 @@ class Reconciler(object):
                     logger.warning("Failed to reconcile agent %s: %s", agent_name, e)
 
             if time.time() - last_sweep >= self.sweep_interval:
-                self.reconcile_all()
+                self.reconcile()
                 last_sweep = time.time()
 
         logger.info("Reconciler exiting.")
@@ -243,7 +245,7 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 
-    parser = argparse.ArgumentParser(description="Ventis reconciliation loop.")
+    parser = argparse.ArgumentParser(description="CanyonOS reconciliation loop.")
     parser.add_argument(
         "-c", "--config", required=True, help="Path to the YAML config file."
     )

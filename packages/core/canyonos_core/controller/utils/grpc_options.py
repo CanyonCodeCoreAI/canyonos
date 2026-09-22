@@ -1,4 +1,4 @@
-# Keepalive options for gRPC channels/servers so idle connections get detected instead of stalling, see GRPC_STALLING_FIX.md
+# Keepalive options for gRPC channels/servers so idle connections get detected instead of stalling
 
 """
 grpc.keepalive_time_ms (int) - time period sender pings the server.

@@ -1,25 +1,25 @@
 # Controller Context
 # Config, Redis clients and command execution: the controller surface that
-# InstanceManager and the cloud provider runtimes depend on.
+# the Provisioner and the cloud provider runtimes depend on.
 # GlobalController subclasses this; the reconciler process builds one directly.
 
 import logging
 import os
+import re
 import subprocess
 
 import yaml
 
+from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
+_RESERVED_ENV_KEYS = frozenset({"CANYONOS_LLM_STUB_TEXT"})
+
 
 def _is_local_host(host):
     return host in {"localhost", "127.0.0.1"}
-
-
-def _container_routing_host(host):
-    return "host.docker.internal" if _is_local_host(host) else host
 
 
 def _redis_connect_host(host):
@@ -28,13 +28,9 @@ def _redis_connect_host(host):
 
 
 class ControllerContext(object):
-    """
-    Everything InstanceManager and the provider runtimes read off `controller`,
-    with no cluster bootstrap and no gRPC dependency.
+    """Everything the provisioner and provider runtimes read off `controller`.
 
-    Bootstrap (stale container cleanup, launching Redis, publishing the routing
-    snapshot) belongs to GlobalController alone -- a second process building this
-    context must be able to provision instances without repeating any of it.
+    No cluster bootstrap and no gRPC dependency; those belong to GlobalController alone.
     """
 
     def __init__(self, config_path):
@@ -60,14 +56,81 @@ class ControllerContext(object):
 
     @staticmethod
     def _load_config(config_path):
-        """Load the YAML config file."""
+        """Load the YAML config, importing root .env values and expanding ${VAR} refs.
+
+        Both processes load through here so they cannot disagree about the config.
+        """
+        project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
+        # Under the .car layout, config lives at <project>/.car/config, so the
+        # naive parent-of-parent lands on .car itself -- go up one more level
+        # to reach the actual project root where .env lives.
+        if os.path.basename(project_root) == ".car":
+            project_root = os.path.dirname(project_root)
+        ControllerContext._load_dotenv(os.path.join(project_root, ".env"))
         with open(config_path, "r") as f:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
+        return ControllerContext._expand_env_value(config)
+
+    @staticmethod
+    def _load_dotenv(path):
+        """Load simple KEY=VALUE entries without overriding existing environment values."""
+        if not os.path.isfile(path):
+            return
+        with open(path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1]
+                if key in _RESERVED_ENV_KEYS:
+                    # Reserved internal control -- never honor it from user .env.
+                    continue
+                if key and key not in os.environ:
+                    os.environ[key] = value
+
+    @staticmethod
+    def _expand_env_value(value):
+        if isinstance(value, str):
+            return re.sub(
+                r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
+                lambda m: os.environ.get(m.group(1), m.group(0)),
+                value,
+            )
+        if isinstance(value, dict):
+            return {
+                key: ControllerContext._expand_env_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [ControllerContext._expand_env_value(item) for item in value]
+        return value
 
     def _set_controllers(self, agents):
         """Set the agent spec list and its by-name index together so they can't drift."""
         self.controllers = agents
         self.agent_specs = {spec["name"]: spec for spec in agents}
+
+    def refresh_controllers_from_redis(self):
+        """Adopt the published agent specs. True when they replaced what we had.
+
+        Keeps the current specs when nothing is published, so an unseeded Redis
+        is not read as "no agents configured".
+        """
+        try:
+            specs = read_config_specs(self.redis)
+        except Exception as e:
+            logger.warning("Failed to read published agent specs: %s", e)
+            return False
+        if specs is None:
+            return False
+        if specs == self.controllers:
+            return False
+        self._set_controllers(specs)
+        return True
 
     @staticmethod
     def _get_replica_placements(ctrl):
@@ -89,10 +152,6 @@ class ControllerContext(object):
     #  Redis clients                                                      #
     # ------------------------------------------------------------------ #
 
-    def _get_node_redis_for(self, host):
-        """Get the Redis client for a given host, falling back to self.redis."""
-        return self.node_redis.get(host, self.redis)
-
     def _localhost_redis_port(self):
         """The Redis port the local node's container was published on, if any."""
         for ctrl in self.controllers:
@@ -102,12 +161,10 @@ class ControllerContext(object):
         return None
 
     def attach_local_node_redis(self):
-        """
-        Point self.redis at the local node's Redis without launching anything.
+        """Point self.redis at the local node's Redis without launching anything.
 
-        GlobalController repoints its primary client at node_redis["localhost"]
-        after launching that container; a process that only attaches to a running
-        cluster has to reach the same client or it reads a different Redis.
+        A process that only attaches to a running cluster must reach the same
+        client GlobalController repoints to, or it reads a different Redis.
         """
         port = self._localhost_redis_port()
         if port is None:
@@ -117,12 +174,10 @@ class ControllerContext(object):
         self.redis = client
 
     def node_redis_for_instance(self, instance):
-        """
-        Redis client for the node an instance runs on, connecting on demand.
+        """Redis client for the node an instance runs on, connecting on demand.
 
-        An instance provisioned by another process registered its node's Redis in
-        that process's node_redis only, so this connects from the instance's own
-        record rather than assuming this process launched it.
+        Connects from the instance's own record rather than assuming this process
+        launched it.
         """
         host = instance.get("host")
         if not host:
@@ -137,7 +192,7 @@ class ControllerContext(object):
 
     def _agent_host_key(self, host):
         """Return the host string as seen by Docker containers (for status key matching)."""
-        return _container_routing_host(host)
+        return "host.docker.internal" if _is_local_host(host) else host
 
     # ------------------------------------------------------------------ #
     #  Command execution                                                  #
@@ -159,34 +214,36 @@ class ControllerContext(object):
         if is_local:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         else:
-            ssh_key_path = os.path.expanduser(
-                self.config.get("ec2", {}).get(
-                    "ssh_private_key_path", "~/.ssh/ventis_ec2"
-                )
-            )
-            ssh_target = f"{user}@{host}" if user else host
             remote_cmd = " ".join(cmd)
             if cmd and cmd[0] == "docker":
                 remote_cmd = f"sudo {remote_cmd}"
             return subprocess.run(
-                [
-                    "ssh",
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "IdentitiesOnly=yes",
-                    "-o",
-                    "ConnectTimeout=10",
-                    "-o",
-                    "ServerAliveInterval=10",
-                    "-o",
-                    "ServerAliveCountMax=3",
-                    "-i",
-                    ssh_key_path,
-                    ssh_target,
-                    remote_cmd,
-                ],
+                self._ssh_args(host, user) + [remote_cmd],
                 capture_output=True,
                 text=True,
                 timeout=180,
             )
+
+    def _ssh_args(self, host, user=None):
+        """Return the `ssh ... target` prefix used to reach a remote host."""
+        ssh_key_path = os.path.expanduser(
+            self.config.get("ec2", {}).get(
+                "ssh_private_key_path", "~/.ssh/canyonos_ec2"
+            )
+        )
+        return [
+            "ssh",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=10",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-i",
+            ssh_key_path,
+            f"{user}@{host}" if user else host,
+        ]

@@ -8,34 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import canyonos_core.controller.deploy as deploy_module
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.store = {}
-        self.ttls = {}
-        self.hashes = {}
-
-    def set(self, key, value):
-        self.store[key] = value
-
-    def get(self, key):
-        return self.store.get(key)
-
-    def sadd(self, name, *values):
-        self.store.setdefault(name, set()).update(values)
-
-    def expire(self, key, seconds):
-        """Record the TTL only for keys that exist, matching Redis's no-op on
-        missing keys -- the tests assert on which keys actually got one."""
-        if key in self.store:
-            self.ttls[key] = seconds
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
+from fakes import _FakeRedis
 
 
 class _SyncThread:

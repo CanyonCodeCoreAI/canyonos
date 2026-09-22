@@ -52,7 +52,6 @@ class CliDeployTests(unittest.TestCase):
 
         preflight.assert_not_called()
         ensure_grpc.assert_called_once_with(os.getcwd())
-        controller.launch_docker_agents.assert_called_once_with()
         controller._wait_for_healthy.assert_called_once_with()
         controller.run.assert_called_once_with()
 

@@ -1,4 +1,3 @@
-import fnmatch
 import os
 import sys
 import tempfile
@@ -10,38 +9,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from sqlalchemy import create_engine, text
 
 import canyonos_core.controller.utils.telemetry_logging as sqlmod
+from fakes import _FakeRedis
 
 
 def _parse_shifted(stored):
     """Turn a stored TIMESTAMPTZ back into the Unix epoch seconds it holds."""
     return datetime.fromisoformat(str(stored)).replace(tzinfo=timezone.utc).timestamp()
-
-
-class _FakeRedis:
-    def __init__(self, hashes, sets=None):
-        self.hashes = hashes
-        self.sets = sets or {}
-
-    def scan_keys(self, pattern):
-        return [k for k in self.hashes if fnmatch.fnmatch(k, pattern)]
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = str(value)
-
-    def get(self, name):
-        return self.hashes.get(name)
-
-    def sadd(self, name, *values):
-        self.sets.setdefault(name, set()).update(values)
-
-    def srem(self, name, *values):
-        self.sets.get(name, set()).difference_update(values)
-
-    def smembers(self, name):
-        return set(self.sets.get(name, set()))
 
 
 _RUNTIME_CREATE_TABLE = text(
@@ -118,7 +91,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_pull_and_upsert(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:abc": {
                     "id": "abc",
                     "request_id": "req1",
@@ -169,7 +142,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_parent_id_defaults_to_none_when_absent(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:solo": {
                     "id": "solo",
                     "request_id": "req9",
@@ -191,7 +164,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_observed_cpu_and_gpu_are_recorded(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:xyz": {
                     "id": "xyz",
                     "request_id": "req2",
@@ -221,7 +194,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_llm_token_and_error_fields_are_recorded(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:llm1": {
                     "id": "llm1",
                     "request_id": "req4",
@@ -257,7 +230,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_llm_token_and_error_fields_default_when_absent(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:nollm": {
                     "id": "nollm",
                     "request_id": "req5",
@@ -288,7 +261,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_cpu_and_gpu_default_to_zero_when_not_observed(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:noop": {
                     "id": "noop",
                     "request_id": "req3",
@@ -311,7 +284,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_total_cost_computed_from_model_token_pricing(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:cost1": {
                     "id": "cost1",
                     "request_id": "req6",
@@ -342,7 +315,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_total_cost_defaults_to_zero_for_unknown_model(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:cost2": {
                     "id": "cost2",
                     "request_id": "req7",
@@ -368,7 +341,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_total_cost_includes_server_cost_from_agent_instance_type(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:cost3": {
                     "id": "cost3",
                     "request_id": "req8",
@@ -395,7 +368,7 @@ class RuntimeSqlalchemyTests(unittest.TestCase):
 
     def test_demo_cost_multipliers_scale_costs_independently_and_warn(self):
         redis = _FakeRedis(
-            {
+            hashes={
                 "future:cost4": {
                     "id": "cost4",
                     "request_id": "req9",

@@ -6,7 +6,6 @@ import atexit
 import json
 import logging
 import os
-import re
 import shlex
 import signal
 import subprocess
@@ -18,9 +17,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 from canyonos_core.OTLP_Exporter import db as otel_db
-from canyonos_core.controller.instance_manager import InstanceManager
+from canyonos_core.controller.controller_context import (
+    ControllerContext,
+    _is_local_host,
+)
+from canyonos_core.controller.utils.container_names import (
+    container_name as agent_container_name,
+)
+from canyonos_core.instances.endpoints import routing_endpoint_for
+from canyonos_core.instances.records import instance_id, list_instances
 from canyonos_core.reconciler import state
-from canyonos_core.controller.utils.agent_specs import write_agent_specs
+from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
@@ -46,21 +53,14 @@ import grpc
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Teardown waits this long for the reconciler to remove every instance before
+# falling back to stopping them directly.
+DRAIN_TIMEOUT_SECONDS = 30
+
 LOCAL_NETWORK = "canyonos-local"
 
-# Internal runtime controls that must never be settable from a user's `.env`.
-# The .env is for the user's own secrets (API keys, etc.); these keys steer
-# framework behavior, so honoring them from user data would be a control-plane
-# injection. CANYONOS_LLM_STUB_TEXT (the `canyonos test` LLM stub) is reachable
-# only via `canyonos test`, never a deploy's env_file.
-_RESERVED_ENV_KEYS = frozenset({"CANYONOS_LLM_STUB_TEXT"})
 
-
-def _is_local_host(host):
-    return host in {"localhost", "127.0.0.1"}
-
-
-class GlobalController(object):
+class GlobalController(ControllerContext):
     """
     Daemon that manages a routing table across multiple local controller instances.
 
@@ -81,31 +81,17 @@ class GlobalController(object):
     OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
 
     def __init__(self, config_path):
-        self.config_path = config_path
-        self.config = self._load_config(config_path)
+        super().__init__(config_path)
         # Validate before launching anything: an agent that boots without its
         # API keys fails deep inside a container, where it is expensive to debug.
         self.env_file_path = resolve_env_file(self.config)
 
-        redis_cfg = self.config.get("redis", {})
-        self.redis = RedisClient(
-            host=redis_cfg.get("host", "localhost"),
-            port=redis_cfg.get("port", 6379),
-            db=redis_cfg.get("db", 0),
-        )
-
-        self.poll_interval = self.config.get("poll_interval", 5)
         self.cleanup_interval = self.config.get("cleanup_interval", 10)
-        self.controllers = self.config.get("agents", [])
-        self.agent_specs = {spec["name"]: spec for spec in self.controllers}
         self.running = False
-        self.containers = {}  # name -> [container_name, ...]
-        self.redis_containers = {}  # host -> container_name
-        self.node_redis = {}  # host -> RedisClient
+        self._stopping = False
         self._last_status = {}  # (host, port) -> last known status
         self._last_metrics_poll_time = {}  # (host, port) -> time.time() of last metrics read
         self._lc_stubs = {}  # endpoint -> gRPC stub
-        self.instance_manager = InstanceManager(self)
         assign_project_id(self.config.get("project_id"))
         if self._database_url() is None:
             logger.info(
@@ -119,12 +105,12 @@ class GlobalController(object):
 
         # Launch Redis on each unique node, then write routing table and policies
         self._launch_redis_containers()
-        write_agent_specs(self.config_path, self.redis)
+        write_config_specs(self.controllers, self.redis)
+        # A teardown killed mid-drain leaves the flag set; clear it or the fleet stays at zero.
+        state.clear_draining(self.redis)
         state.seed_desired(self.redis, self.controllers)
-        self._write_resource_specs()
         self._load_and_write_policies()
         self._write_identity()
-        self.instance_manager.publish_routing_snapshot(self.controllers)
         logger.info(
             "Global controller initialized with %d controller(s).",
             len(self.controllers),
@@ -135,8 +121,8 @@ class GlobalController(object):
         self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
         self._cleanup_thread.start()
 
-        # Spawn the OTLP exporter as a separate process (see canyonos/OTLP_Exporter/DESIGN.md),
-        # supervised so it gets restarted if it ever exits unexpectedly.
+        # Spawn the OTLP exporter as a separate process, supervised so it gets
+        # restarted if it ever exits unexpectedly.
         otel_exporter_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "OTLP_Exporter",
@@ -161,12 +147,6 @@ class GlobalController(object):
         # exporter process can access it.
         self._otel_db = otel_db
         self._otel_db.init_db()
-        self.process_supervisor.start_all()
-
-        # Reconciliation runs in its own process, registered here but started in
-        # run() rather than now: callers provision the configured instances and
-        # wait for them before run(), and a reconciler racing that would provision
-        # the same replica slot twice.
         self.process_supervisor.register(
             "reconciler",
             [
@@ -177,6 +157,7 @@ class GlobalController(object):
                 os.path.abspath(self.config_path),
             ],
         )
+        self.process_supervisor.start_all()
 
     # ------------------------------------------------------------------ #
     #  Stale container cleanup                                             #
@@ -198,9 +179,7 @@ class GlobalController(object):
                 if host not in host_containers:
                     host_containers[host] = (user, set())
                 host_containers[host][1].add(f"canyonos-redis-{host.replace('.', '-')}")
-                host_containers[host][1].add(
-                    self.instance_manager.container_name(ctrl, i)
-                )
+                host_containers[host][1].add(agent_container_name(ctrl["name"], i))
 
         # Try to remove each one on its respective host
         for host, (user, container_names) in host_containers.items():
@@ -231,19 +210,14 @@ class GlobalController(object):
 
     @staticmethod
     def _load_config(config_path):
-        """Load the YAML config file after importing root .env values."""
-        project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
-        # Under the .car layout, config lives at <project>/.car/config, so the
-        # naive parent-of-parent lands on .car itself -- go up one more level
-        # to reach the actual project root where .env lives.
-        if os.path.basename(project_root) == ".car":
-            project_root = os.path.dirname(project_root)
-        GlobalController._load_dotenv(os.path.join(project_root, ".env"))
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+        """The shared config load, plus minting a project_id when the file omits one.
+
+        Minting stays here rather than on ControllerContext: it appends to the
+        config file, and only the controller owns that file.
+        """
+        config = ControllerContext._load_config(config_path)
         if not config.get("project_id"):
             config["project_id"] = GlobalController._assign_new_project_id(config_path)
-        config = GlobalController._expand_env_value(config)
         return config
 
     @staticmethod
@@ -255,49 +229,11 @@ class GlobalController(object):
         return project_id
 
     @staticmethod
-    def _load_dotenv(path):
-        """Load simple KEY=VALUE entries without overriding existing environment values."""
-        if not os.path.isfile(path):
-            return
-        with open(path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-                    value = value[1:-1]
-                if key in _RESERVED_ENV_KEYS:
-                    # Reserved internal control -- never honor it from user .env.
-                    continue
-                if key and key not in os.environ:
-                    os.environ[key] = value
-
-    @staticmethod
-    def _expand_env_value(value):
-        if isinstance(value, str):
-            return re.sub(
-                r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
-                lambda m: os.environ.get(m.group(1), m.group(0)),
-                value,
-            )
-        if isinstance(value, dict):
-            return {
-                key: GlobalController._expand_env_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [GlobalController._expand_env_value(item) for item in value]
-        return value
-
-    @staticmethod
     def _otel_destinations(otel_cfg):
         """Resolve otel.destinations (${ENV_VAR} refs expanded), or None if absent."""
         if "destinations" not in otel_cfg:
             return None
-        return GlobalController._expand_env_value(otel_cfg["destinations"])
+        return ControllerContext._expand_env_value(otel_cfg["destinations"])
 
     def _write_otel_destinations(self, destinations):
         try:
@@ -308,33 +244,24 @@ class GlobalController(object):
             ) from exc
         self.redis.set(self.OTEL_DESTINATIONS_KEY, payload)
 
-    @staticmethod
-    def _get_replica_placements(ctrl):
-        """Normalize replicas into a list of (host, port) placements."""
-        replicas = ctrl.get("replicas", 1)
-        default_host = ctrl.get("host", "localhost")
-        base_port = ctrl.get("port", 50051)
-
-        if isinstance(replicas, int):
-            return [(default_host, base_port + i) for i in range(replicas)]
-        if isinstance(replicas, list):
-            return [
-                (r.get("host", default_host), r.get("port", base_port))
-                for r in replicas
-            ]
-        return [(default_host, base_port)]
-
     def reload_config(self):
-        """Reload the config file and rebuild the routing table."""
+        """Re-read the config, republish the spec, and let the reconciler converge.
+
+        The reconciler adopts the published spec on its next pass, so an agent
+        added, removed or resized here needs no reload signal of its own.
+        """
         logger.info("Reloading config from %s", self.config_path)
         self.config = self._load_config(self.config_path)
         self.env_file_path = resolve_env_file(self.config)
-        self.controllers = self.config.get("agents", [])
-        self.agent_specs = {spec["name"]: spec for spec in self.controllers}
+        self._set_controllers(self.config.get("agents", []))
         self.poll_interval = self.config.get("poll_interval", 5)
         assign_project_id(self.config.get("project_id"))
+        write_config_specs(self.controllers, self.redis)
+        # Write-if-absent, so this only ever seeds an agent the reload added; a
+        # count scaled at runtime is left alone.
+        state.seed_desired(self.redis, self.controllers)
         self._write_identity()
-        self.instance_manager.publish_routing_snapshot(self.controllers)
+        self._request_reconcile(state.WAKE_ALL)
 
         # Only meaningful if the exporter was already running -- otel isn't
         # spawned mid-run just because it got added to the config here.
@@ -343,20 +270,6 @@ class GlobalController(object):
             "otel_exporter"
         ):
             self._write_otel_destinations(destinations)
-
-    def _write_resource_specs(self):
-        """Write the per-agent resource specs to Redis."""
-        for ctrl in self.controllers:
-            name = ctrl["name"]
-            resources = ctrl.get("resources", {})
-            self.redis.hset_multiple(
-                f"agent:{name}:resources",
-                {
-                    "cpu": str(resources.get("cpu", 1)),
-                    "memory": str(resources.get("memory", 512)),
-                    "replicas": str(int(ctrl.get("replicas", 1))),
-                },
-            )
 
     def _load_policy_rules(self):
         """Load policy rules from config/policy.yaml."""
@@ -410,7 +323,7 @@ class GlobalController(object):
             len(targets),
         )
 
-    # Routing reads are direct Redis calls now that InstanceManager owns publication:
+    # The reconciler publishes the routing table; these keys are read-only here:
     # - self.redis.hgetall(self.ROUTING_ENDPOINTS_KEY)
     # - self.redis.hget(self.ROUTING_ENDPOINTS_KEY, service_name)
 
@@ -554,10 +467,6 @@ class GlobalController(object):
     #  Startup health check                                               #
     # ------------------------------------------------------------------ #
 
-    def _get_node_redis_for(self, host):
-        """Get the Redis client for a given host, falling back to self.redis."""
-        return self.node_redis.get(host, self.redis)
-
     def _wait_for_healthy(self, timeout=30, interval=2):
         """
         Block until all controllers report healthy in Redis, or until timeout.
@@ -566,32 +475,64 @@ class GlobalController(object):
             timeout:  Maximum seconds to wait.
             interval: Seconds between checks.
         """
+        expected = sum(
+            state.get_desired(self.redis, spec["name"], configured)
+            for spec in self.controllers
+            if (configured := state.replica_count(spec)) is not None
+        )
+        if not expected and self.controllers:
+            logger.critical(
+                "No agent declares an integer replica count; nothing will be "
+                "provisioned. Check `replicas` in %s.",
+                self.config_path,
+            )
+            return
+
         deadline = time.time() + timeout
-        pending = self.instance_manager.list_instances()
+        ready = set()
+        any_instances_appeared = False
+        pending = []
 
         logger.info(
             "Waiting for %d replica(s) to become healthy (timeout=%ds)...",
-            len(pending),
+            expected,
             timeout,
         )
 
-        while pending and time.time() < deadline:
-            still_pending = []
-            for instance in pending:
+        while True:
+            instances = list_instances(self.redis)
+            any_instances_appeared = any_instances_appeared or bool(instances)
+            pending = []
+            ready_count = 0
+            for instance in instances:
                 name = instance["agent_name"]
                 host = instance["host"]
                 port = instance["host_port"]
-                node_redis = self._get_node_redis_for(host)
-                endpoint = self.instance_manager._routing_endpoint_for(instance)
+                node_redis = self.node_redis_for_instance(instance)
+                endpoint = routing_endpoint_for(instance)
                 status = node_redis.get(f"controller:{endpoint}:status")
                 if status == "healthy":
-                    logger.info("Controller %s (%s:%s) is ready.", name, host, port)
-                    self._last_status[(host, port)] = "healthy"
+                    ready_count += 1
+                    instance_key = (name, host, port)
+                    if instance_key not in ready:
+                        logger.info("Controller %s (%s:%s) is ready.", name, host, port)
+                        self._last_status[(host, port)] = "healthy"
+                        ready.add(instance_key)
                 else:
-                    still_pending.append(instance)
-            pending = still_pending
-            if pending:
-                time.sleep(interval)
+                    pending.append(instance)
+
+            if ready_count >= expected:
+                return
+            if time.time() >= deadline:
+                break
+            time.sleep(interval)
+
+        if not any_instances_appeared:
+            logger.critical(
+                "No controller instances appeared within %ds; the reconciler may "
+                "have failed to provision them.",
+                timeout,
+            )
 
         if pending:
             for instance in pending:
@@ -610,9 +551,6 @@ class GlobalController(object):
     def run(self):
         """Start the daemon polling loop."""
         self.running = True
-        # Start the reconciler now (not in __init__): the configured instances have
-        # been provisioned and waited on by this point, so it won't double-provision.
-        self.process_supervisor.start("reconciler")
         logger.info(
             "Global controller started, polling every %ds...", self.poll_interval
         )
@@ -644,9 +582,9 @@ class GlobalController(object):
         if self.running:
             self.process_supervisor.check_and_respawn()
 
-        # Polled in parallel, one instance's slow Redis/Postgres round-trip no longer
-        # gates every other instance's poll -- see canyonos/OTLP_Exporter/DESIGN.md.
-        instances = self.instance_manager.list_instances()
+        # Polled in parallel so one instance's slow Redis/Postgres round-trip does not
+        # gate every other instance's poll.
+        instances = list_instances(self.redis)
         if instances:
             with ThreadPoolExecutor(max_workers=len(instances)) as executor:
                 list(executor.map(self._poll_one_instance, instances))
@@ -657,7 +595,7 @@ class GlobalController(object):
             name = instance["agent_name"]
             host = instance["host"]
             port = instance["host_port"]
-            node_redis = self._get_node_redis_for(host)
+            node_redis = self.node_redis_for_instance(instance)
         except Exception as e:
             logger.warning("Failed to poll instance %s: %s", instance, e)
             return
@@ -684,7 +622,7 @@ class GlobalController(object):
                 port,
                 e,
             )
-        endpoint = self.instance_manager._routing_endpoint_for(instance)
+        endpoint = routing_endpoint_for(instance)
         status_key = f"controller:{endpoint}:status"
         metrics_key = f"controller:{endpoint}:metrics"
 
@@ -761,7 +699,6 @@ class GlobalController(object):
                         prev or "(none)",
                         status,
                     )
-                    self._request_reconcile(name)
                     self._on_controller_unhealthy(name, host, port)
                 self._last_status[(host, port)] = status
             else:
@@ -783,6 +720,20 @@ class GlobalController(object):
     #  Scaling                                                            #
     # ------------------------------------------------------------------ #
 
+    def replace_instance(self, agent_name, replica_index):
+        """Destroy one replica and let the reconciler rebuild it.
+
+        The desired count is unchanged, so the slot is refilled rather than lost.
+        """
+        if agent_name not in self.agent_specs:
+            logger.warning("Cannot replace an instance of unknown agent %s", agent_name)
+            return None
+        provider = self.agent_specs[agent_name].get("provider", "local")
+        target = instance_id(provider, agent_name, int(replica_index))
+        state.request_replace(self.redis, target)
+        self._request_reconcile(agent_name)
+        return target
+
     def _request_reconcile(self, agent_name):
         """Wake the reconciler, without letting a Redis failure break the caller."""
         try:
@@ -794,45 +745,6 @@ class GlobalController(object):
                 agent_name,
                 e,
             )
-
-    def scale_up(self, agent_name, count=1):
-        """
-        Add replicas to the named service.
-
-        Records the new desired count and returns; the reconciler process is what
-        actually provisions, so a caller never waits on Docker or EC2.
-        """
-        return self._scale(agent_name, count)
-
-    def scale_down(self, agent_name, count=1):
-        """Remove replicas from the named service, never going below zero."""
-        return self._scale(agent_name, -count)
-
-    def _scale(self, agent_name, delta):
-        if agent_name not in self.agent_specs:
-            logger.warning("Cannot scale unknown agent %s", agent_name)
-            return None
-        desired = state.scale(self.redis, agent_name, delta)
-        logger.info("Agent %s desired replicas is now %d", agent_name, desired)
-        self._request_reconcile(agent_name)
-        return desired
-
-    def replace_instance(self, agent_name, replica_index):
-        """
-        Destroy one replica and let the reconciler rebuild it.
-
-        The desired count is unchanged, so the slot is refilled rather than lost.
-        """
-        if agent_name not in self.agent_specs:
-            logger.warning("Cannot replace an instance of unknown agent %s", agent_name)
-            return None
-        provider = self.agent_specs[agent_name].get("provider", "local")
-        instance_id = self.instance_manager._instance_id(
-            provider, agent_name, int(replica_index)
-        )
-        state.request_replace(self.redis, instance_id)
-        self._request_reconcile(agent_name)
-        return instance_id
 
     # ------------------------------------------------------------------ #
     #  Extensibility hooks — override in subclasses                       #
@@ -905,7 +817,7 @@ class GlobalController(object):
             except Exception as e:
                 logger.warning("Failed to trigger cleanup on %s: %s", endpoint, e)
 
-        instances = self.instance_manager.list_instances()
+        instances = list_instances(self.redis)
         if instances:
             with ThreadPoolExecutor(max_workers=len(instances)) as executor:
                 list(executor.map(_send, instances))
@@ -922,54 +834,6 @@ class GlobalController(object):
     # ------------------------------------------------------------------ #
     #  Runtime launching                                                  #
     # ------------------------------------------------------------------ #
-
-    def _ssh_args(self, host, user=None):
-        """Return the `ssh ... target` prefix used to reach a remote host."""
-        ssh_key_path = os.path.expanduser(
-            self.config.get("ec2", {}).get("ssh_private_key_path", "~/.ssh/ventis_ec2")
-        )
-        return [
-            "ssh",
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "IdentitiesOnly=yes",
-            "-o",
-            "ConnectTimeout=10",
-            "-o",
-            "ServerAliveInterval=10",
-            "-o",
-            "ServerAliveCountMax=3",
-            "-i",
-            ssh_key_path,
-            f"{user}@{host}" if user else host,
-        ]
-
-    def _run_cmd(self, cmd, host, user=None):
-        """
-        Run a command locally or on a remote host via SSH.
-
-        Args:
-            cmd:  Command list to run.
-            host: Target host.
-            user: SSH user for remote hosts (None for localhost).
-
-        Returns:
-            subprocess.CompletedProcess
-        """
-        is_local = _is_local_host(host)
-        if is_local:
-            return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-
-        remote_cmd = " ".join(cmd)
-        if cmd and cmd[0] == "docker":
-            remote_cmd = f"sudo {remote_cmd}"
-        return subprocess.run(
-            self._ssh_args(host, user) + [remote_cmd],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
 
     def _push_file(self, local_path, remote_path, host, user=None):
         """
@@ -1006,59 +870,56 @@ class GlobalController(object):
             )
         return result
 
-    def launch_docker_agents(self):
-        """Launch all configured runtimes through InstanceManager."""
-        try:
-            instances = self.instance_manager.ensure_instances(
-                state.desired_agent_specs(self.redis, self.controllers)
-            )
-        except FileNotFoundError:
-            logger.critical(
-                "Docker is not installed or not in PATH. Cannot launch agents."
-            )
-            self._stop_redis_containers()
-            sys.exit(1)
-        except Exception as e:
-            logger.critical("Failed to launch configured runtimes: %s", e)
-            self._stop_docker_agents()
-            self._stop_redis_containers()
-            sys.exit(1)
-
-        logger.info(
-            "Launched %d Docker container(s) across %d service(s).",
-            len(instances),
-            len({instance["agent_name"] for instance in instances}),
-        )
-
-    def _stop_docker_agents(self):
-        """Stop and remove all launched runtimes."""
-        for instance in self.instance_manager.list_instances():
-            self.instance_manager.remove_instance(
-                self.instance_manager._instance_id_from_record(instance)
-            )
-
-        self.containers.clear()
-        logger.info("All Docker containers stopped.")
-
     # ------------------------------------------------------------------ #
     #  Shutdown                                                           #
     # ------------------------------------------------------------------ #
 
     def cleanup(self):
         """Full cleanup — stop all containers and Redis, called on exit."""
-        if not self.running and not self.containers and not self.redis_containers:
+        if not self.running and not self.redis_containers:
             return  # Already cleaned up
         logger.info("Cleaning up all resources...")
         self.stop()
 
+    def _drain_instances(self, timeout=DRAIN_TIMEOUT_SECONDS, interval=1):
+        """Have the reconciler remove every instance. True once none are left."""
+        state.set_draining(self.redis)
+        state.request_reconcile(self.redis)
+        deadline = time.time() + timeout
+
+        while True:
+            try:
+                remaining = list_instances(self.redis)
+            except Exception as e:
+                logger.warning("Failed to read instance records while draining: %s", e)
+                return False
+            if not remaining:
+                logger.info("All agent instances drained.")
+                return True
+            if time.time() >= deadline:
+                logger.warning(
+                    "%d instance(s) still running after %ds; the next startup's "
+                    "reconcile will reap whichever are no longer healthy.",
+                    len(remaining),
+                    timeout,
+                )
+                return False
+            time.sleep(interval)
+            state.set_draining(self.redis)
+
     def stop(self):
         """Gracefully shut down the daemon and all agent processes."""
+        # A second signal arriving mid-drain must not start a second teardown.
+        if self._stopping:
+            return
+        self._stopping = True
         self.running = False
-        # Terminate supervised processes (incl. the reconciler) before tearing down
-        # agents, or the reconciler provisions replacements for the instances being
-        # stopped.
+
+        self._drain_instances()
+        # The reconciler does the removing, so it has to outlive the drain; clearing
+        # the flag before it dies would have it refill everything just removed.
         self.process_supervisor.terminate_all()
-        self._stop_docker_agents()
+        state.clear_draining(self.redis)
         self._stop_redis_containers()
         logger.info("Global controller shut down.")
 
@@ -1099,6 +960,5 @@ if __name__ == "__main__":
     signal.signal(signal.SIGHUP, _reload_handler)
     atexit.register(controller.cleanup)
 
-    controller.launch_docker_agents()
     controller._wait_for_healthy()
     controller.run()

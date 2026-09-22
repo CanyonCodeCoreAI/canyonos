@@ -12,7 +12,7 @@ For global controller
   - CanyonOS folder
   - pip requirements installed in env
     - pip install -e packages/core --break-system-packages
-  - Private key labeled as ventis_ec2 inside ~/.ssh
+  - Private key labeled as canyonos_ec2 inside ~/.ssh
     - Private key complementing local public key
 
 
@@ -41,7 +41,7 @@ For cleanup, use canyonos clean to clean stubs/containers
 
 If encountering permission errors with the keys, run this to give key more permissions if blocked
 chmod 700 ~/.ssh
-chmod 600 ~/.ssh/ventis_ec2
+chmod 600 ~/.ssh/canyonos_ec2
 
 
 

@@ -14,7 +14,7 @@ Every artifact variable takes the same three forms:
 
 Overrides are a development affordance: in `production` anything but
 unset/`prod` raises rather than quietly shipping a dev artifact to a user.
-Developers opt in through `packages/cli/.env` (see packages/cli/DEVELOPMENT.md);
+Developers opt in through `packages/cli/.env`;
 shell variables win over that file, and no `.env` at all means production.
 """
 

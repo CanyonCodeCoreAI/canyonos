@@ -1,10 +1,6 @@
 """Registry for OS processes GlobalController spawns and supervises.
 
-register() + start_all() spawn processes; check_and_respawn() (call from GC's existing
-poll tick) restarts any that exit unexpectedly; terminate_all() (call from GC's shutdown
-path) stops them all cleanly. Deliberately GC-agnostic -- callers are responsible for not
-calling check_and_respawn() during their own shutdown (see canyonos/OTLP_Exporter/DESIGN.md's
-shutdown-race note).
+Deliberately GC-agnostic: callers must not call check_and_respawn() during their own shutdown.
 """
 
 import logging
@@ -32,14 +28,6 @@ class ProcessSupervisor:
     def start_all(self):
         for name, (argv, env) in self._specs.items():
             self._start(name, argv, env)
-
-    def start(self, name):
-        """Start a single already-registered process, unless it is already running."""
-        existing = self._procs.get(name)
-        if existing is not None and existing.poll() is None:
-            return
-        argv, env = self._specs[name]
-        self._start(name, argv, env)
 
     def _start(self, name, argv, env=None):
         merged_env = {**os.environ, **env} if env else None

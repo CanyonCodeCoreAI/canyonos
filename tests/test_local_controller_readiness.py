@@ -32,17 +32,7 @@ if "local_controler_pb2_grpc" not in sys.modules:
     sys.modules["local_controler_pb2_grpc"] = local_pb2_grpc
 
 from canyonos_core.controller.local_controller import LocalController
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.strings = {}
-
-    def set(self, key, value):
-        self.strings[key] = value
-
-    def get(self, key):
-        return self.strings.get(key)
+from fakes import _FakeRedis
 
 
 def _build_controller(redis, publish_ready=False):

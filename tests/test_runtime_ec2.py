@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.controller.cloud_provider_logic.EC2 import _runtime as ec2_runtime
+from canyonos_core.reconciler.providers.EC2 import _runtime as ec2_runtime
 
 
 class _FakeWaiter:

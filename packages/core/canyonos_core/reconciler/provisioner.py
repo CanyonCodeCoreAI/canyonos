@@ -1,54 +1,54 @@
 """
-Coordinate agent runtime instances for the controller.
+Create and destroy agent runtime instances.
 
-This file decides whether each agent replica should run locally or on EC2,
-starts missing instances, records their runtime metadata in Redis, and
-publishes the routing data other parts of CanyonOS use to reach those agents.
+The write half of instance management: the controller reads records and publishes
+routing through canyonos_core/instances/, and imports nothing from here, so it
+cannot touch a container.
 """
 
-import json
 import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from canyonos_core.controller.cloud_provider_logic.Local import (
+from canyonos_core.instances.endpoints import routing_endpoint_for
+from canyonos_core.instances.records import (
+    instance_id as _instance_id,
+    instance_key as _instance_key,
+    list_instances,
+)
+from canyonos_core.instances.routing import publish_routing_snapshot
+from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.controller.utils import container_names
 
 DEFAULT_HOST_PORT_START = 8000
 
 
-def list_instances(redis_client, agent_name=None):
-    """Instance records straight from Redis; no InstanceManager needed to read them."""
-    if agent_name:
-        instance_ids = sorted(redis_client.smembers(f"agent:{agent_name}:instances"))
-        return [
-            instance
-            for instance_id in instance_ids
-            if (instance := redis_client.hgetall(f"agent_instance:{instance_id}"))
-        ]
+class Provisioner(object):
+    """Makes the running instances match the specs it is handed."""
 
-    return [
-        instance
-        for key in sorted(redis_client.scan_keys("agent_instance:*"))
-        if (instance := redis_client.hgetall(key))
-    ]
-
-
-class InstanceManager:
-    ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
-    ROUTING_STATEFUL_KEY = "routing_table:stateful"
-    SERVICES_SET_KEY = "routing_table:services"
-
-    def __init__(self, controller, redis_client=None):
+    def __init__(self, controller):
         self.controller = controller
-        self._redis = redis_client
+        self._agent_specs = None
 
     @property
     def redis(self):
-        return self._redis or self.controller.redis
+        return self.controller.redis
+
+    def list_instances(self, agent_name=None):
+        return list_instances(self.redis, agent_name)
+
+    def _provider_runtime(self, provider):
+        """The provider's runtime module, bound to this process's controller."""
+        if provider.upper() == "EC2":
+            from canyonos_core.reconciler.providers.EC2 import (
+                _runtime as runtime,
+            )
+        else:
+            runtime = local_runtime
+        runtime._controller = self.controller
+        return runtime
 
     def ensure_instances(self, agent_specs):
         self._agent_specs = list(agent_specs)
@@ -67,8 +67,8 @@ class InstanceManager:
                 validate()
 
             for replica_index in range(int(agent_spec.get("replicas", 1))):
-                instance_id = self._instance_id(provider, agent_name, replica_index)
-                key = self._instance_key(provider, agent_name, replica_index)
+                instance_id = _instance_id(provider, agent_name, replica_index)
+                key = _instance_key(provider, agent_name, replica_index)
                 instance = self.redis.hgetall(key)
 
                 if instance and instance.get("runtime_id"):
@@ -112,7 +112,7 @@ class InstanceManager:
             self._track_runtime(agent_name, instance["runtime_id"])
             instances.append(instance)
 
-        self.publish_routing_snapshot(self._agent_specs)
+        self._publish_routing(self._agent_specs)
         return instances
 
     def _provision_one(self, job):
@@ -136,7 +136,7 @@ class InstanceManager:
         return instance
 
     def _write_instance(self, instance):
-        key = self._instance_key(
+        key = _instance_key(
             instance["provider"], instance["agent_name"], int(instance["replica_index"])
         )
         mapping = {
@@ -164,7 +164,7 @@ class InstanceManager:
 
         node_redis = self.controller.node_redis.get(instance["host"]) or self.redis
 
-        endpoint = self._routing_endpoint_for(instance)
+        endpoint = routing_endpoint_for(instance)
         node_redis.set(f"controller:{endpoint}:agent_id", instance["agent_id"])
 
         # Direct agent_id -> instance_type lookup so cost computation can look up
@@ -191,12 +191,11 @@ class InstanceManager:
             for runtime_id in self.controller.containers.get(instance["agent_name"], [])
             if runtime_id != instance["runtime_id"]
         ]
-        self.publish_routing_snapshot(
-            getattr(self, "_agent_specs", getattr(self.controller, "controllers", []))
+        self._publish_routing(
+            self.controller.controllers
+            if self._agent_specs is None
+            else self._agent_specs
         )
-
-    def list_instances(self, agent_name=None):
-        return list_instances(self.redis, agent_name)
 
     def _destroy_runtime(self, instance):
         runtime = self._provider_runtime(instance.get("provider", "local"))
@@ -229,70 +228,5 @@ class InstanceManager:
         )
         return port
 
-    @staticmethod
-    def _instance_id(provider, agent_name, replica_index):
-        return f"{provider}:{agent_name}:{replica_index}"
-
-    @classmethod
-    def _instance_key(cls, provider, agent_name, replica_index):
-        return f"agent_instance:{cls._instance_id(provider, agent_name, replica_index)}"
-
-    def _instance_id_from_record(self, instance):
-        return self._instance_id(
-            instance["provider"], instance["agent_name"], int(instance["replica_index"])
-        )
-
-    def container_name(self, agent_spec, replica_index):
-        return container_names.container_name(agent_spec["name"], replica_index)
-
-    def _provider_runtime(self, provider):
-        if provider.upper() == "EC2":
-            from canyonos_core.controller.cloud_provider_logic.EC2 import (
-                _runtime as runtime,
-            )
-        else:
-            runtime = local_runtime
-        runtime._controller = self.controller
-        return runtime
-
-    def publish_routing_snapshot(self, agent_specs):
-        services = {agent_spec["name"] for agent_spec in agent_specs}
-        stateful = {
-            agent_spec["name"]
-            for agent_spec in agent_specs
-            if agent_spec.get("stateful", False)
-        }
-        targets = list(getattr(self.controller, "node_redis", {}).values()) or [
-            self.redis
-        ]
-
-        for redis_client in targets:
-            hdel = getattr(redis_client, "hdel", None) or redis_client.client.hdel
-            existing_services = redis_client.smembers(self.SERVICES_SET_KEY)
-            for stale in existing_services - services:
-                redis_client.srem(self.SERVICES_SET_KEY, stale)
-                hdel(self.ROUTING_STATEFUL_KEY, stale)
-                hdel(self.ROUTING_ENDPOINTS_KEY, stale)
-            for service in services:
-                redis_client.sadd(self.SERVICES_SET_KEY, service)
-                if service in stateful:
-                    redis_client.hset(self.ROUTING_STATEFUL_KEY, service, "true")
-                else:
-                    hdel(self.ROUTING_STATEFUL_KEY, service)
-                endpoints = [
-                    self._routing_endpoint_for(item)
-                    for item in sorted(
-                        self.list_instances(service),
-                        key=lambda item: int(item["replica_index"]),
-                    )
-                ]
-                if endpoints:
-                    redis_client.hset(
-                        self.ROUTING_ENDPOINTS_KEY, service, json.dumps(endpoints)
-                    )
-                else:
-                    hdel(self.ROUTING_ENDPOINTS_KEY, service)
-
-    def _routing_endpoint_for(self, instance):
-        runtime = self._provider_runtime(instance.get("provider", "local"))
-        return runtime.routing_endpoint_for(instance)
+    def _publish_routing(self, agent_specs):
+        publish_routing_snapshot(agent_specs, self.redis, self.controller.node_redis)

@@ -11,6 +11,7 @@ sys.path.insert(
 )
 
 from canyonos_core.controller.local_controller_frontend import LocalControllerServicer
+from fakes import _FakeRedis
 import local_controler_pb2
 
 
@@ -75,28 +76,6 @@ class CleanupDispatchTests(unittest.TestCase):
         self.assertEqual(cleaned, [])
 
 
-class _FakeRedisStore:
-    """Enough of RedisClient's surface for _cleanup_request: strings, sets, setnx."""
-
-    def __init__(self, strings=None, sets=None):
-        self.strings = strings or {}
-        self.sets = sets or {}
-
-    def setnx(self, key, value):
-        if key in self.strings:
-            return False
-        self.strings[key] = value
-        return True
-
-    def smembers(self, name):
-        return set(self.sets.get(name, set()))
-
-    def delete(self, *keys):
-        for key in keys:
-            self.strings.pop(key, None)
-            self.sets.pop(key, None)
-
-
 def _bare_servicer(redis):
     servicer = LocalControllerServicer.__new__(LocalControllerServicer)
     servicer.redis = redis
@@ -106,7 +85,7 @@ def _bare_servicer(redis):
 
 class CleanupRequestTests(unittest.TestCase):
     def test_cleanup_deletes_consolidated_future_hashes_and_bookkeeping(self):
-        redis = _FakeRedisStore(
+        redis = _FakeRedis(
             sets={"request:req1:futures": {"fut1", "fut2"}},
             strings={
                 "future:fut1": "x",
@@ -127,7 +106,7 @@ class CleanupRequestTests(unittest.TestCase):
         self.assertNotIn("future:fut1:consumers", redis.strings)
 
     def test_cleanup_still_deletes_affinity_bindings(self):
-        redis = _FakeRedisStore(
+        redis = _FakeRedis(
             sets={"request:req1:futures": {"fut1"}},
             strings={"future:fut1": "x", "affinity:req1": "some-host"},
         )
@@ -139,7 +118,7 @@ class CleanupRequestTests(unittest.TestCase):
         self.assertNotIn("future:fut1", redis.strings)
 
     def test_cleanup_releases_its_lock_even_with_no_futures(self):
-        redis = _FakeRedisStore(sets={"request:req1:futures": set()})
+        redis = _FakeRedis(sets={"request:req1:futures": set()})
         servicer = _bare_servicer(redis)
 
         servicer._cleanup_request("req1")

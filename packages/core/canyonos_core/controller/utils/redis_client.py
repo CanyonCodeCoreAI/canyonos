@@ -66,6 +66,10 @@ class RedisClient(object):
         """Set multiple fields in a hash at once."""
         self.client.hset(name, mapping=mapping)
 
+    def hdel(self, name, *fields):
+        """Remove one or more fields from a hash."""
+        self.client.hdel(name, *fields)
+
     def hincrby(self, name, field, amount=1):
         """Atomically increment a hash field by the given amount."""
         return self.client.hincrby(name, field, amount)

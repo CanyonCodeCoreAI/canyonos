@@ -9,22 +9,11 @@ test_global_controller_reload.py for the assign_project_id() half of the same bu
 import os
 import sys
 import unittest
-from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
+from fakes import _FakeRedis
 
 
 def _bare_controller(config, node_redis=None):
@@ -130,9 +119,6 @@ class ReloadConfigWritesIdentityTests(unittest.TestCase):
             node_redis={"localhost": node},
         )
         controller.config_path = None
-        controller.instance_manager = SimpleNamespace(
-            publish_routing_snapshot=lambda *_: None
-        )
         controller._load_config = lambda path: {
             "project_id": "22222222-2222-2222-2222-222222222222",
             "agents": [],
