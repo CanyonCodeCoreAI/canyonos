@@ -23,11 +23,13 @@ from canyonos import env
 from canyonos.constants import DEFAULT_DASHBOARD_PORT
 
 COMPOSE_PROJECT = "canyonos-dashboard"
-STACK_VERSION = "v0.1.0-rc.2"
-# The stack's own published images, unless a developer points the CLI at ones
-# built from a `canyon-os` checkout (see cli/DEVELOPMENT.md).
-API_IMAGE = env.api_image(f"ghcr.io/canyoncodecoreai/canyonos-api:{STACK_VERSION}")
-WEB_IMAGE = env.web_image(f"ghcr.io/canyoncodecoreai/canyonos-web:{STACK_VERSION}")
+API_VERSION = "0.1.0"
+WEB_VERSION = "0.1.0"
+# The images this repo publishes from its `api-v*` and `web-v*` releases, unless a
+# developer points the CLI at locally built ones (see cli/DEVELOPMENT.md). The two
+# versions move independently.
+API_IMAGE = env.api_image(f"ghcr.io/canyoncodecoreai/canyonos-api:{API_VERSION}")
+WEB_IMAGE = env.web_image(f"ghcr.io/canyoncodecoreai/canyonos-web:{WEB_VERSION}")
 HOST_GATEWAY = "host.docker.internal"
 REDIS_HOST = HOST_GATEWAY
 REDIS_PORT = "6379"
@@ -248,8 +250,9 @@ def prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
         (stack.state_dir / "stack.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
-                    "stack_version": STACK_VERSION,
+                    "schema_version": 2,
+                    "api_version": API_VERSION,
+                    "web_version": WEB_VERSION,
                     "compose_project": COMPOSE_PROJECT,
                 }
             )
