@@ -15,6 +15,7 @@ from opentelemetry._logs import LogRecord
 from opentelemetry._logs.severity import SeverityNumber
 from opentelemetry.sdk._logs import ReadableLogRecord
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.trace import NonRecordingSpan, SpanContext, set_span_in_context
 
 from utils.otlp_utils import _SAMPLED, to_epoch_nanos
 
@@ -77,9 +78,16 @@ def log_row_to_log_records(row):
     log_record = LogRecord(
         timestamp=to_epoch_nanos(row.get("observed_at")),
         observed_timestamp=to_epoch_nanos(row.get("observed_at")),
-        trace_id=trace_id,
-        span_id=span_id,
-        trace_flags=_SAMPLED,
+        context=set_span_in_context(
+            NonRecordingSpan(
+                SpanContext(
+                    trace_id=trace_id or 0,
+                    span_id=span_id or 0,
+                    is_remote=False,
+                    trace_flags=_SAMPLED,
+                )
+            )
+        ),
         severity_text=severity_text,
         severity_number=severity_number,
         body=row.get("body"),
