@@ -1,0 +1,51 @@
+# EC2 deployment
+
+**When:** at least one config entry uses `provider: EC2`.
+
+**Output:** developer-supplied EC2 settings, reachable service addresses, and a
+safe remote cleanup plan.
+
+## Configuration
+
+Use `provider: EC2` and declare `instance_type` on every EC2 service entry. The
+top-level `ec2` block supplies the runtime's required infrastructure and SSH
+settings.
+
+These identifiers come from the developer during the configuration review;
+they are the one part of the manifest with no safe default. If the round produces no
+answer, leave the entry `provider: local` and report that EC2 was requested but
+not configured. Never fill the block from an example, a previous port, or
+another entry in the same manifest.
+
+Typical required categories are:
+
+- AMI and instance type
+- region and subnet
+- security groups
+- SSH user and credentials accepted by the runtime
+
+`canyonos deploy` owns basic EC2 config validation. A preflight pass is not proof
+that provisioning, SSH, image transfer, or remote container startup works.
+
+## Networking
+
+A remote container's `host.docker.internal` names its own EC2 Docker host. It
+does not name the local controller machine. Databases, `otel` destinations, and
+other services must use addresses reachable from every selected host. The
+`llm_proxy` is not one of them: every container runs its own on
+`127.0.0.1:8081` (see [llm-proxy](llm-proxy.md)).
+
+The EC2 runtime copies the environment file to the remote host for the
+duration of `docker run`, the same way the local runtime passes it. Explicit
+`-e` wiring still wins over anything in the file.
+
+## Deployment and cleanup
+
+After an explicitly approved `canyonos deploy`, verify the remote
+container logs; controller health can be green even when agent loading failed.
+
+Ctrl+C stops CLI log monitoring, not necessarily the deployment. Use
+`canyonos stop` so the controller can terminate recorded EC2 instances.
+If provisioning or startup fails before an instance is recorded, inspect the
+cloud provider directly and remove exact leaked resources. Never use a broad
+cleanup command against unrelated instances.

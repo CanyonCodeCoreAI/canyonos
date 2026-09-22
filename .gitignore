@@ -52,7 +52,6 @@ AWSCLIV2.pkg
 .python-version
 
 Agent Artifacts
-docs/
 # testing-porting-to-canyonos working tree: clones, artifacts, results db
 .canyonos-tests/
 .harness/
