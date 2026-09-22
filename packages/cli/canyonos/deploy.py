@@ -70,6 +70,14 @@ _ERROR_MARKERS = (
 # recovers on its own once the dashboard comes up.
 _BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.",)
 
+# The global controller brackets each failed container's log with these
+# (`_dump_container_log`). What sits between them is another process's output
+# quoted verbatim -- its own ERROR lines and tracebacks -- so `_ERROR_MARKERS`
+# must not be applied to it: the deploy's verdict belongs to the CRITICAL
+# summary that follows the block, not to a line the block is quoting.
+_CONTAINER_LOG_BEGIN = "--- begin container log:"
+_CONTAINER_LOG_END = "--- end container log:"
+
 # (substring, spinner message, completed message). A None spinner message keeps
 # whatever the spinner already shows; a None completed message prints nothing.
 # Matched by substring against the raw line, so a phase that never runs is simply
@@ -99,6 +107,7 @@ class PhaseTracker:
         self.spinner = None
         self.replicas_total = 0
         self.replicas_ready = set()
+        self.in_container_log = False
 
     def _agent_progress(self):
         if self.replicas_total:
@@ -106,6 +115,18 @@ class PhaseTracker:
         return "Starting agents..."
 
     def feed(self, line):
+        # A quoted container log is data, not this deploy's own output: nothing
+        # inside the block decides anything. The caller still prints and buffers
+        # every line of it -- that block is the whole point of the dump.
+        if _CONTAINER_LOG_BEGIN in line:
+            self.in_container_log = True
+            return None, None, False
+        if _CONTAINER_LOG_END in line:
+            self.in_container_log = False
+            return None, None, False
+        if self.in_container_log:
+            return None, None, False
+
         if any(prefix in line for prefix in _BENIGN_ERROR_PREFIXES):
             return None, None, False
         if any(marker in line for marker in _ERROR_MARKERS):
@@ -141,8 +162,8 @@ class PhaseTracker:
         return None, None, False
 
     def agents_ready_message(self):
-        """(message, all_ready). Kept partial-aware for older runtimes, whose
-        `_wait_for_healthy` gave up after its timeout and started anyway.
+        """(message, all_ready). Stays partial-aware because the up-marker can
+        arrive with agents still unhealthy on runtimes that only warn about it.
         """
         ready = len(self.replicas_ready)
         if not self.replicas_total:
@@ -352,9 +373,10 @@ def _interrupted():
 def _tail_verbose(stream, state, api_port, config_path, serve):
     """Every log line, verbatim, until the workflow is up -- what `-v` restores.
 
-    The lines are echoed rather than summarized, but the same tracker decides
-    what is fatal: without it `-v` printed a failed deploy's CRITICAL line and
-    then reported success, so the exit code depended on the verbosity flag.
+    Verbatim but not quite everything: `_drain` drops the container's log of the
+    CLI's own /status polls, which would otherwise feed the stream reading them.
+    Lines are echoed rather than summarized, but the same tracker decides what
+    is fatal, so whether a broken deploy exits 1 cannot depend on `-v`.
     """
     tracker = PhaseTracker()
     for line in _drain(_queued_lines(stream), state):
@@ -376,9 +398,10 @@ def _tail_quiet(lines, state, api_port, config_path, serve):
     dropped rather than allow-listed. `-v` and `canyonos logs` still have it all.
     """
     tracker = PhaseTracker()
-    # 400 is enough to hold a buildx failure block plus a Python traceback, plus
-    # the 40-line log dump the global controller now prints for each container
-    # that never came up; 40 (what `canyonos test` tails) truncates all of them.
+    # Has to hold everything between the failure and the line that revealed it:
+    # a buildx failure block, a Python traceback, or the 40-line log the global
+    # controller dumps for *each* replica that never came up -- several failing
+    # replicas is the case that needs the room.
     recent = deque(maxlen=400)
     reached_up_marker = False
 

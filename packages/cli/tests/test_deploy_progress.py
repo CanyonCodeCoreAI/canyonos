@@ -4,6 +4,34 @@ from canyonos import deploy as deploy_cmd
 from canyonos.deploy import PhaseTracker
 
 
+GC = "canyonos_core.controller.global_controller"
+LC = "canyonos_core.controller.local_controller"
+
+# What a container that could not import its adapter leaves in its own log, as
+# the global controller quotes it back: the deploy's error markers all appear
+# inside it, and none of them is this deploy speaking.
+AGENT_IMPORT_FAILURE = [
+    f"ERROR:{LC}:Failed to load agent B from /app/b.py: No module named 'llama_index'",
+    "Traceback (most recent call last):",
+    '  File "/app/local_controller.py", line 336, in _load_agent',
+    "    loader.exec_module(module)",
+    "ModuleNotFoundError: No module named 'llama_index'",
+]
+
+READINESS_FAILED = (
+    f"CRITICAL:{GC}:Controller readiness failed: B (127.0.0.1:8001)=failed\n"
+)
+
+
+def container_log_dump(agent, endpoint, body):
+    """The block the global controller logs for one container that never came up."""
+    return [
+        f"WARNING:{GC}:--- begin container log: {agent} ({endpoint}) status=failed ---\n",
+        *(f"WARNING:{GC}:  {line}\n" for line in body),
+        f"WARNING:{GC}:--- end container log: {agent} ---\n",
+    ]
+
+
 def drive(lines):
     """Feed lines to a tracker, returning (spinners, completions, errored)."""
     tracker = PhaseTracker()
@@ -18,6 +46,15 @@ def drive(lines):
         if completed:
             done.append(completed)
     return tracker, spinners, done, errored
+
+
+def first_error_line(lines):
+    """The first line a fresh tracker calls fatal, or None."""
+    tracker = PhaseTracker()
+    for line in lines:
+        if tracker.feed(line)[2]:
+            return line
+    return None
 
 
 def test_a_full_run_reports_each_phase_once():
@@ -134,28 +171,39 @@ def test_coming_up_short_of_the_announced_replicas_is_not_reported_as_success():
     assert message == "Workflow up, but only 1/3 agents reported healthy"
 
 
-def test_a_readiness_failure_is_not_read_as_a_workflow_that_came_up():
-    """The container-log dump and the summary after it are the whole account of
-    why an agent never loaded, and the run is a failure, not a short count.
+def test_a_quoted_container_log_does_not_end_the_transcript_before_the_summary():
+    """A dumped log carries the agent's own ERROR lines and traceback. Reading
+    those as this deploy's failure stops the transcript inside the block, so the
+    rest of the evidence and the summary naming the dead replica never print.
     """
-    gc = "canyonos_core.controller.global_controller"
-    lc = "canyonos_core.controller.local_controller"
-    tracker, _, done, errored = drive(
-        [
-            f"INFO:{gc}:Waiting for 2 replica(s) to become healthy (timeout=120s)...\n",
-            f"INFO:{gc}:Controller A (127.0.0.1:8000) is ready.\n",
-            f"WARNING:{gc}:--- B (127.0.0.1:8001) status=failed --- last 40 log line(s):\n",
-            f"WARNING:{gc}:   ERROR:{lc}:Failed to load agent B from /app/b.py: No module named 'llama_index'\n",
-            f"WARNING:{gc}:   ModuleNotFoundError: No module named 'llama_index'\n",
-            f"CRITICAL:{gc}:Controller readiness failed: B (127.0.0.1:8001)=failed\n",
-        ]
-    )
+    transcript = [
+        f"INFO:{GC}:Waiting for 2 replica(s) to become healthy (timeout=120s)...\n",
+        f"INFO:{GC}:Controller A (127.0.0.1:8000) is ready.\n",
+        *container_log_dump("B", "127.0.0.1:8001", AGENT_IMPORT_FAILURE),
+        READINESS_FAILED,
+    ]
+
+    assert first_error_line(transcript) == READINESS_FAILED
+
+    tracker, _, done, errored = drive(transcript)
     assert errored
     assert not done
     assert tracker.agents_ready_message() == (
         "Workflow up, but only 1/2 agents reported healthy",
         False,
     )
+
+
+def test_error_detection_resumes_after_a_container_log_block():
+    """The block is skipped, not the rest of the run: a genuine failure logged
+    after the dump still has to end the deploy.
+    """
+    transcript = [
+        *container_log_dump("B", "127.0.0.1:8001", ["all quiet in here"]),
+        "ERROR:canyonos_core:Config file not found: missing.yaml\n",
+    ]
+
+    assert first_error_line(transcript) == transcript[-1]
 
 
 def test_a_run_that_never_announced_replicas_still_reports_ready():
@@ -268,14 +316,16 @@ def test_a_build_that_dies_silently_does_not_hang(monkeypatch, capsys):
     assert "Building 2 Docker image(s)" in capsys.readouterr().out
 
 
-def test_verbose_tail_stops_on_a_fatal_line(capsys):
-    """`-v` echoed the CRITICAL line and then reported success, so whether a
-    broken deploy exited 1 depended on the verbosity flag.
+def test_verbose_tail_stops_on_a_fatal_line(monkeypatch, capsys):
+    """`-v` echoed the CRITICAL line, ran on to the up-marker and reported the
+    deploy up, so whether a broken deploy exited 1 depended on the verbosity flag.
     """
+    monkeypatch.setattr(deploy_cmd, "_deploy_summary", lambda *_a: ("url", []))
     stream = iter(
         [
             "INFO:canyonos_core:Deploying from config: config.yaml\n",
-            "CRITICAL:canyonos_core.controller.global_controller:Controller readiness failed: B (127.0.0.1:8001)=failed\n",
+            READINESS_FAILED,
+            f"INFO:{GC}:Global controller started, polling every 5s...\n",
         ]
     )
 
@@ -285,23 +335,43 @@ def test_verbose_tail_stops_on_a_fatal_line(capsys):
     assert "Controller readiness failed" in capsys.readouterr().out
 
 
-def test_reveal_failure_keeps_the_dumped_container_log_above_the_cause(capsys):
-    """The dump is the only place the real error appears, so the replay has to
-    carry it -- the buffer used to be shorter than one container's log tail.
+def test_every_failed_replicas_log_survives_to_the_replay(monkeypatch, capsys):
+    """Five replicas dumping 40 lines each outrun a 200-line buffer, and a long
+    build sits in front of them. The verdict is worth nothing without the logs
+    that explain it, so the replay has to reach back past all of it.
     """
-    gc = "canyonos_core.controller.global_controller"
-    dump = [
-        f"WARNING:{gc}:--- B (127.0.0.1:8001) status=failed --- last 40 log line(s):\n",
-        f"WARNING:{gc}:   ModuleNotFoundError: No module named 'llama_index'\n",
-    ]
-    cause = f"CRITICAL:{gc}:Controller readiness failed: B (127.0.0.1:8001)=failed\n"
-    lines = deploy_cmd._queued_lines(iter([]))
+    monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0.1)
+    monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": False})
 
-    deploy_cmd._reveal_failure(lines, dump + [cause], {"port": 1}, cause)
+    transcript = [
+        f"#5 [{step}/250] RUN pip install -r reqs.txt\n" for step in range(250)
+    ]
+    transcript.append(
+        f"INFO:{GC}:Waiting for 5 replica(s) to become healthy (timeout=120s)...\n"
+    )
+    for index in range(5):
+        transcript += container_log_dump(
+            f"Agent{index}",
+            f"127.0.0.1:800{index}",
+            [f"agent{index} log line {n}" for n in range(35)] + AGENT_IMPORT_FAILURE,
+        )
+    transcript.append(READINESS_FAILED)
+
+    lines = deploy_cmd._queued_lines(iter(transcript))
+    summary = deploy_cmd._tail_quiet(
+        lines, {"port": 1}, 8080, "config/global_controller.yaml", serve=False
+    )
 
     out = capsys.readouterr().out
+    assert summary is None
+    # The earliest dumped line, ~210 lines above the cause that revealed it.
+    assert "agent0 log line 0" in out
     assert "ModuleNotFoundError: No module named 'llama_index'" in out
-    assert out.rindex("Cause:") > out.rindex("ModuleNotFoundError")
+    assert out.rindex("Cause:") > out.rindex("agent0 log line 0")
+    # And the cause pinned at the end is the verdict, not a line one of the
+    # dumps was quoting. Matched on one word: rich wraps the reprint.
+    assert "readiness" in out.rsplit("Cause:", 1)[1]
 
 
 def test_reveal_failure_reprints_the_cause_after_unrelated_noise(capsys):
