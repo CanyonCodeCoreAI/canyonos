@@ -34,13 +34,13 @@ agents:
 
 poll_interval: 5
 
+# Stream failure/log detail into each future's `logs` field; off by default to avoid clogging bandwidth (see FUTURE_SCHEMA.md).
+logs: false
+
 redis:
   host: localhost
   port: 6379
   db: 0
-
-database: 
-  url: sqlite:///canyonos_runtime.db
 
 # EC2 defaults for `provider: EC2` replicas.
 # Keep them here so `config/global_controller.yaml` stays the only source of truth.

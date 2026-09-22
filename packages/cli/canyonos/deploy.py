@@ -41,6 +41,7 @@ from canyonos.constants import (
 from canyonos.gc import GCError, deploy_status, post_deploy, workflow_endpoints
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import GC_CONTAINER_NAME, docker_env, load_state, run_init
+from canyonos.quit import run_quit
 from canyonos.serve import serve_dashboard
 from canyonos.sync import run_sync
 
@@ -48,6 +49,7 @@ from canyonos.sync import run_sync
 # wait out the real poll/grace windows.
 _STATUS_POLL_SECONDS = 2.0
 _REVEAL_GRACE_SECONDS = 30.0
+_STARTUP_TIMEOUT_SECONDS = 30 * 60
 
 # Substrings that mean the in-container deploy hit something fatal. `WARNING:` is
 # deliberately absent: the OTel-not-configured notice and stub_generator's
@@ -177,45 +179,60 @@ def run_deploy(
 
     run_init(banner=banner, extra_env=extra_env)
 
-    # Copy the current project into the container before building/deploying.
-    if not run_sync():
-        raise RuntimeError("Could not sync the project into the container.")
-
-    state = load_state()
-
-    # Read for display only -- canyonos resolves the path it actually deploys.
-    api_port = workflow_api_port(config_path or default_config_path())
-
-    # Checked here, after run_init() has already torn down any previous deploy,
-    # so a still-live prior run doesn't read as an unrelated conflict.
-    if api_port is not None and port_in_use(api_port):
-        raise RuntimeError(
-            f"Port {api_port} is already in use, and the workflow needs it. Free it "
-            f"or change `api_port` in {config_path or default_config_path()}."
-        )
-
+    # Non-empty once the workflow has reported ready; see the handler below.
+    ready = []
     try:
-        post_deploy(state["port"], config_path)
-    except GCError as e:
-        raise RuntimeError(str(e)) from None
+        # Copy the current project into the container before building/deploying.
+        if not run_sync():
+            raise RuntimeError("Could not sync the project into the container.")
 
-    if quiet:
-        # Still bring the dashboard up so anything reachable only through its
-        # LLM proxy (e.g. a guardrail calling the OpenAI SDK directly) works
-        # under `canyonos test` too -- just skip the log-tail/summary UI.
-        if serve:
-            _start_dashboard()
+        state = load_state()
+
+        # Read for display only -- canyonos resolves the path it actually deploys.
+        api_port = workflow_api_port(config_path or default_config_path())
+
+        # Checked here, after run_init() has already torn down any previous deploy,
+        # so a still-live prior run doesn't read as an unrelated conflict.
+        if api_port is not None and port_in_use(api_port):
+            raise RuntimeError(
+                f"Port {api_port} is already in use, and the workflow needs it. Free it "
+                f"or change `api_port` in {config_path or default_config_path()}."
+            )
+
+        try:
+            post_deploy(state["port"], config_path)
+        except GCError as e:
+            raise RuntimeError(str(e)) from None
+
+        if quiet:
+            # Still bring the dashboard up so anything reachable only through its
+            # LLM proxy (e.g. a guardrail calling the OpenAI SDK directly) works
+            # under `canyonos test` too -- just skip the log-tail/summary UI.
+            if serve:
+                _start_dashboard()
+            return state
+
+        _stream_logs_and_autoserve(
+            state,
+            api_port,
+            config_path or default_config_path(),
+            serve=serve,
+            verbose=verbose,
+            on_ready=ready.append,
+        )
         return state
-
-    if not _stream_logs_and_autoserve(
-        state,
-        api_port,
-        config_path or default_config_path(),
-        serve=serve,
-        verbose=verbose,
-    ):
-        return None
-    return state
+    except (Exception, KeyboardInterrupt):
+        # Only a deploy that never came up is torn down. Past that point the
+        # workflow is live and serving, and anything that fails afterwards is
+        # a reporting problem, not a reason to take the stack down.
+        if not ready:
+            try:
+                run_quit()
+            except Exception as teardown_error:
+                # Otherwise an unexpected teardown failure would replace the
+                # real deploy error below instead of just supplementing it.
+                ui.fail(f"Teardown after failed deploy also failed: {teardown_error}")
+        raise
 
 
 def _display_host(host):
@@ -330,7 +347,8 @@ def _start_dashboard():
         return None
 
 
-def _deploy_summary(state, api_port, config_path, serve):
+def _deploy_summary(state, api_port, config_path, serve, on_ready):
+    on_ready(True)
     summary = (
         _start_dashboard() if serve else None,
         workflow_targets(state["port"], api_port),
@@ -349,17 +367,23 @@ def _interrupted():
     ui.hint("To resubscribe to log stream run `canyonos logs`.")
 
 
-def _tail_verbose(stream, state, api_port, config_path, serve):
+def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
     """Every log line, verbatim, until the workflow is up -- what `-v` restores."""
-    for line in stream:
+    deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
+    for line in _drain(lines, state, deadline=deadline, hide_status_requests=False):
         print(line, end="")
         # Logged exactly once, right after the workflow finishes coming up.
         if "Global controller started, polling every" in line:
-            return _deploy_summary(state, api_port, config_path, serve)
-    return None
+            return _deploy_summary(state, api_port, config_path, serve, on_ready)
+
+    raise RuntimeError(
+        "Deploy stopped or timed out before the workflow became ready. "
+        "Automatic cleanup will be attempted; rerun with `canyonos deploy -v` "
+        "for full logs."
+    )
 
 
-def _tail_quiet(lines, state, api_port, config_path, serve):
+def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
     """Only the phase transitions, until the workflow is up or something fails.
 
     Nothing is echoed raw: the buildx transcript, canyonos' bare prints and grpc's
@@ -377,7 +401,8 @@ def _tail_quiet(lines, state, api_port, config_path, serve):
     # A nested spinner wouldn't raise, it would silently render nothing.
     trigger_line = None
     with ui.status("Starting build...") as spinner:
-        for line in _drain(lines, state):
+        deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
+        for line in _drain(lines, state, deadline=deadline):
             recent.append(line)
             message, done, is_error = tracker.feed(line)
             if is_error:
@@ -391,14 +416,28 @@ def _tail_quiet(lines, state, api_port, config_path, serve):
             if "Global controller started, polling every" in line:
                 summary_line, all_ready = tracker.agents_ready_message()
                 (ui.ok if all_ready else ui.warn)(summary_line)
+                if not all_ready:
+                    ui.fail("Deploy failed.")
+                    ui.blank()
+                    for buffered in recent:
+                        print(buffered, end="")
+                    ui.blank()
+                    raise RuntimeError(
+                        f"Deploy is incomplete: {summary_line.lower()}. "
+                        "The failed deployment will be cleaned up."
+                    )
                 reached_up_marker = True
                 break
 
     if reached_up_marker:
-        return _deploy_summary(state, api_port, config_path, serve)
+        return _deploy_summary(state, api_port, config_path, serve, on_ready)
 
     _reveal_failure(lines, recent, state, trigger_line)
-    return None
+    raise RuntimeError(
+        "Deploy stopped or timed out before the workflow became ready. "
+        "Automatic cleanup will be attempted; rerun with `canyonos deploy -v` "
+        "for full logs."
+    )
 
 
 def _queued_lines(stream):
@@ -411,15 +450,19 @@ def _queued_lines(stream):
     lines = queue.Queue()
 
     def read():
-        for line in stream:
-            lines.put(line)
-        lines.put(None)
+        try:
+            for line in stream:
+                lines.put(line)
+        except OSError as e:
+            lines.put(e)
+        finally:
+            lines.put(None)
 
     threading.Thread(target=read, daemon=True).start()
     return lines
 
 
-def _drain(lines, state, deadline=None):
+def _drain(lines, state, deadline=None, hide_status_requests=True):
     """Yield log lines until the stream ends, the deploy dies, or `deadline` passes.
 
     The container's /status is polled on the read timeout rather than per line,
@@ -439,9 +482,13 @@ def _drain(lines, state, deadline=None):
             continue
         if line is None:
             return
+        if isinstance(line, OSError):
+            raise RuntimeError(
+                f"Could not read Global Controller logs: {line}"
+            ) from None
         misses = 0
         # Otherwise the container logs its own polling into the stream being read.
-        if "GET /status HTTP/1.1" not in line:
+        if not hide_status_requests or "GET /status HTTP/1.1" not in line:
             yield line
 
 
@@ -485,10 +532,10 @@ def _reveal_failure(lines, recent, state, trigger_line=None):
     ui.hint("Run `canyonos deploy -v` or `canyonos logs` for the full container log.")
 
 
-def _stream_logs_and_autoserve(state, api_port, config_path, serve=True, verbose=False):
+def _stream_logs_and_autoserve(state, api_port, config_path, serve, verbose, on_ready):
     """Tail the GC container's logs until the workflow is up, then start the
     dashboard (unless disabled via `serve=False`), print where everything
-    lives, and stop tailing. Returns whether the deploy actually succeeded.
+    lives, and stop tailing.
     """
     process = subprocess.Popen(
         # By name, not the id in `state`: a concurrent redeploy/quit can replace
@@ -501,23 +548,14 @@ def _stream_logs_and_autoserve(state, api_port, config_path, serve=True, verbose
         text=True,
         bufsize=1,
     )
-    # An interrupt is the user stopping the tail, not a deploy failure -- the
-    # container may still be coming up fine, so it doesn't count against success.
-    succeeded = True
     try:
+        lines = _queued_lines(process.stdout)
         if verbose:
-            succeeded = (
-                _tail_verbose(process.stdout, state, api_port, config_path, serve)
-                is not None
-            )
+            _tail_verbose(lines, state, api_port, config_path, serve, on_ready)
         else:
-            lines = _queued_lines(process.stdout)
-            succeeded = (
-                _tail_quiet(lines, state, api_port, config_path, serve) is not None
-            )
+            _tail_quiet(lines, state, api_port, config_path, serve, on_ready)
     except KeyboardInterrupt:
         _interrupted()
     finally:
         if process.poll() is None:
             process.terminate()
-    return succeeded

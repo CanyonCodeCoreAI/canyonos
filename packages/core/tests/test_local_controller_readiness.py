@@ -37,12 +37,16 @@ from canyonos_core.controller.local_controller import LocalController
 class _FakeRedis:
     def __init__(self):
         self.strings = {}
+        self.hashes = {}
 
     def set(self, key, value):
         self.strings[key] = value
 
     def get(self, key):
         return self.strings.get(key)
+
+    def hset_multiple(self, name, mapping):
+        self.hashes.setdefault(name, {}).update(mapping)
 
 
 def _build_controller(redis, publish_ready=False):

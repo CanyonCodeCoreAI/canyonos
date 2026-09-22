@@ -387,8 +387,13 @@ class CliBuildTests(unittest.TestCase):
                 )
             )
 
-            with self.assertRaises(SystemExit):
-                self._run_build(project_dir, [], buildx_available=True)
+            # The schema gate reports it before the build starts, as one line.
+            with self.assertLogs("canyonos_core", level="ERROR") as log:
+                with self.assertRaises(SystemExit) as raised:
+                    self._run_build(project_dir, [], buildx_available=True)
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("agents[0].entrypoint: is required but missing", log.output[0])
 
     def _write_requirements_config(self, project_dir):
         """Scaffold one plain agent, one agent with `requirements`, one workflow with `requirements`."""

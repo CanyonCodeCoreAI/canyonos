@@ -63,8 +63,9 @@ docker build -f packages/core/Dockerfile -t canyonos-core:dev packages/core
 
 `canyonos deploy` uses a local or literal image if the daemon has it and only
 pulls as a fallback; it never builds one for you. The production image is always
-pulled, exactly as a released CLI does. The dashboard images are built in the
-separate `canyon-os` repo.
+pulled, exactly as a released CLI does. The dashboard images are built from this
+repo and published from its `api-v*` and `web-v*` releases; the CLI pins each one
+through `API_VERSION` and `WEB_VERSION` in `canyonos/dashboard_stack.py`.
 
 ## Tests
 

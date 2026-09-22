@@ -62,7 +62,80 @@ def _load_config(config_path):
 
     load_root_dotenv(config_path)
     with open(config_path, "r") as f:
-        return expand_env_value(yaml.safe_load(f))
+        config = expand_env_value(yaml.safe_load(f))
+    # Everything below here till "return config" is basically just checks to make sure the folder is correct
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
+    agents = config.get("agents", [])
+    if not isinstance(agents, list) or not all(
+        isinstance(agent, dict) for agent in agents
+    ):
+        raise RuntimeError(f"Config `agents` must be a list of mappings: {config_path}")
+    names = [agent.get("name") for agent in agents]
+    if any(not isinstance(name, str) or not name.strip() for name in names):
+        raise RuntimeError(
+            f"Every configured agent must have a non-empty name: {config_path}"
+        )
+    names_by_key = {}
+    for name in names:
+        names_by_key.setdefault(name.casefold(), []).append(name)
+    duplicates = sorted(
+        "/".join(group) for group in names_by_key.values() if len(group) > 1
+    )
+    if duplicates:
+        raise RuntimeError(
+            f"Duplicate agent names in {config_path}: {', '.join(duplicates)}"
+        )
+
+    for agent in agents:
+        name = agent["name"]
+        provider = agent.get("provider", "local")
+        if not isinstance(provider, str) or provider.casefold() not in {"local", "ec2"}:
+            raise RuntimeError(
+                f"Agent {name} has unsupported provider {provider!r}; use `local` or `EC2`."
+            )
+        agent["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
+
+        replicas = agent.get("replicas", 1)
+        if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
+            raise RuntimeError(
+                f"Agent {name} must have a positive integer `replicas` value."
+            )
+        if (
+            agent["provider"] == "local"
+            and agent.get("type", "agent") == "workflow"
+            and replicas > 1
+        ):
+            raise RuntimeError(
+                f"Local workflow {name} cannot use replicas > 1 because every replica "
+                "would publish the same `api_port`."
+            )
+
+        for field in ("host_port", "port", "redis_port", "api_port", "dashboard_port"):
+            value = agent.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 1 <= value <= 65535
+            ):
+                raise RuntimeError(
+                    f"Agent {name} must have an integer `{field}` between 1 and 65535."
+                )
+
+        resources = agent.get("resources", {})
+        if not isinstance(resources, dict):
+            raise RuntimeError(f"Agent {name} `resources` must be a mapping.")
+        for field in ("cpu", "memory", "gpu"):
+            value = resources.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise RuntimeError(
+                    f"Agent {name} resource `{field}` must be a positive number."
+                )
+    return config
 
 
 def _artifact_prefix(root):

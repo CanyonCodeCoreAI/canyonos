@@ -166,6 +166,84 @@ class ServiceIdentityTests(_ManifestCase):
         self.assertIn("image tag", violation.message)
 
 
+class LoadConfigParityTests(_ManifestCase):
+    """The gate rejects everything cli._load_config's own checks reject.
+
+    _run_build validates before it loads, so a manifest the schema passed but
+    _load_config then refused would escape as a RuntimeError traceback instead
+    of a one-line violation.
+    """
+
+    def _workflow(self, **overrides):
+        entry = {
+            "name": "Workflow",
+            "type": "workflow",
+            "workflow_file": "workflow/example_workflow.py",
+        }
+        entry.update(overrides)
+        return {"agents": [entry]}
+
+    def test_a_port_outside_the_tcp_range_is_rejected(self):
+        for field, value in (
+            ("api_port", 0),
+            ("redis_port", 65536),
+            ("host_port", 70000),
+            ("dashboard_port", 65536),
+        ):
+            with self.subTest(field=field, value=value):
+                violation = self.one(self._workflow(**{field: value}))
+                self.assertEqual(violation.field, f"agents[0].{field}")
+                self.assertIn("between 1 and 65535", violation.message)
+
+    def test_the_highest_port_is_accepted(self):
+        manifest = self.load(self._workflow(api_port=65535))
+
+        self.assertEqual(manifest.agents[0].api_port, 65535)
+
+    def test_a_local_workflow_cannot_be_replicated(self):
+        violation = self.one(self._workflow(replicas=2))
+
+        self.assertEqual(violation.field, "agents[0].replicas")
+        self.assertIn("same api_port", violation.message)
+
+    def test_an_ec2_workflow_can_be_replicated(self):
+        manifest = self.load(
+            {
+                **self._workflow(replicas=2, provider="EC2", instance_type="t3.micro"),
+                "ec2": _EC2_BLOCK,
+            }
+        )
+
+        self.assertEqual(manifest.agents[0].replicas, 2)
+
+    def test_resources_are_positive_numbers(self):
+        manifest = self.load({"agents": [_agent(resources={"cpu": 0.5})]})
+        self.assertEqual(manifest.agents[0].resources.cpu, 0.5)
+
+        for field, value in (("gpu", 0), ("cpu", -1), ("memory", "512"), ("cpu", True)):
+            with self.subTest(field=field, value=value):
+                violation = self.one({"agents": [_agent(resources={field: value})]})
+                self.assertEqual(violation.field, f"agents[0].resources.{field}")
+                self.assertIn("expected a number > 0", violation.message)
+
+
+class LogsFlagTests(_ManifestCase):
+    def test_logs_defaults_on_as_the_runtimes_read_it(self):
+        self.assertTrue(self.load({"agents": [_agent()]}).logs)
+
+    def test_logs_can_be_turned_off(self):
+        self.assertFalse(self.load({"agents": [_agent()], "logs": False}).logs)
+
+    def test_logs_must_be_a_real_boolean(self):
+        # The runtimes pass it through bool(), so the string "false" is on.
+        violation = self.one({"agents": [_agent()], "logs": "false"})
+
+        self.assertEqual(violation.field, "logs")
+        self.assertEqual(
+            violation.message, "expected a boolean, got the string 'false'"
+        )
+
+
 class EntrypointTests(_ManifestCase):
     def test_an_agent_without_an_entrypoint_is_rejected(self):
         violation = self.one({"agents": [{"name": "ExampleAgent"}]})
@@ -459,7 +537,7 @@ class EnvExpansionTests(_ManifestCase):
         self.assertEqual(violation.field, "agents[0].api_port")
         self.assertEqual(
             violation.message,
-            "expected an integer >= 1, got '${CANYONOS_TEST_API_PORT}' "
+            "expected an integer between 1 and 65535, got '${CANYONOS_TEST_API_PORT}' "
             "(environment references are only supported in string fields)",
         )
 
