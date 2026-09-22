@@ -207,6 +207,8 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
                     "-e",
                     "ANTHROPIC_API_BASE=http://127.0.0.1:8081/anthropic",
                     "-e",
+                    "CANYONOS_LOGS_ENABLED=true",
+                    "-e",
                     "CANYONOS_LLM_STUB_TEXT=",
                     "canyonos-alpha",
                 ],
@@ -224,6 +226,42 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
         cmd = controller._run_cmd.call_args.args[0]
         self.assertIn("CANYONOS_POLL_INTERVAL=7", cmd)
+
+    def test_local_bootstrap_passes_logs_enabled_env_var_with_its_flag(self):
+        """CANYONOS_LOGS_ENABLED must be preceded by its own '-e' -- a bare
+        'KEY=value' string with no flag is treated by `docker run` as the IMAGE
+        positional argument, breaking the launch entirely."""
+        controller = _fake_controller()
+        controller.config = {"logs": True}
+        manager = InstanceManager(controller, controller.redis)
+
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        cmd = controller._run_cmd.call_args.args[0]
+        index = cmd.index("CANYONOS_LOGS_ENABLED=true")
+        self.assertEqual(cmd[index - 1], "-e")
+
+    def test_local_bootstrap_defaults_logs_enabled_to_true(self):
+        controller = _fake_controller()
+        controller.config = {}
+        manager = InstanceManager(controller, controller.redis)
+
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        cmd = controller._run_cmd.call_args.args[0]
+        index = cmd.index("CANYONOS_LOGS_ENABLED=true")
+        self.assertEqual(cmd[index - 1], "-e")
+
+    def test_local_bootstrap_honors_explicit_logs_false(self):
+        controller = _fake_controller()
+        controller.config = {"logs": False}
+        manager = InstanceManager(controller, controller.redis)
+
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        cmd = controller._run_cmd.call_args.args[0]
+        index = cmd.index("CANYONOS_LOGS_ENABLED=false")
+        self.assertEqual(cmd[index - 1], "-e")
 
     def test_llm_stub_env_is_forwarded_to_the_agent_when_set(self):
         controller = _fake_controller()
@@ -307,6 +345,8 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
                     "ANTHROPIC_API_URL=http://127.0.0.1:8081/anthropic",
                     "-e",
                     "ANTHROPIC_API_BASE=http://127.0.0.1:8081/anthropic",
+                    "-e",
+                    "CANYONOS_LOGS_ENABLED=true",
                     "-e",
                     "CANYONOS_LLM_STUB_TEXT=",
                     "-p",

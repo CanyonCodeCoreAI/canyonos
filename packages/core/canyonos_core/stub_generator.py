@@ -674,8 +674,16 @@ def generate_docker(
             "grpc_options.py",
         ),
         (
+            os.path.join(script_dir, "controller", "utils", "log_entry.py"),
+            "log_entry.py",
+        ),
+        (
             os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
             "gpu_metrics.py",
+        ),
+        (
+            os.path.join(script_dir, "controller", "utils", "log_handler.py"),
+            "log_handler.py",
         ),
     ]
 
@@ -699,13 +707,8 @@ def generate_docker(
     _copy_files(output_dir, files_to_copy)
     _copy_llm_proxy(output_dir, script_dir)
 
-    # Copy the real agent entrypoint to the context root.
-    shutil.copy2(
-        os.path.abspath(agent_file),
-        os.path.join(output_dir, os.path.basename(agent_file)),
-    )
-
-    # Copy the real agent entrypoint to the context root.
+    # Copy the real agent entrypoint to the context root (after _copy_files so it
+    # wins over any swept copy of the same file from the project directory).
     shutil.copy2(
         os.path.abspath(agent_file),
         os.path.join(output_dir, os.path.basename(agent_file)),
@@ -825,6 +828,14 @@ def generate_workflow_docker(
             os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
             "gpu_metrics.py",
         ),
+        (
+            os.path.join(script_dir, "controller", "utils", "log_handler.py"),
+            "log_handler.py",
+        ),
+        (
+            os.path.join(script_dir, "controller", "utils", "log_entry.py"),
+            "log_entry.py",
+        ),
     ]
 
     # Copy stub files both flat (for `from price_agent import ...` style imports
@@ -845,12 +856,6 @@ def generate_workflow_docker(
 
     _copy_files(output_dir, files_to_copy)
     _copy_llm_proxy(output_dir, script_dir)
-
-    # Copy the real workflow entrypoint to the context root.
-    shutil.copy2(
-        os.path.abspath(workflow_file),
-        os.path.join(output_dir, workflow_basename),
-    )
 
     # Copy the real workflow entrypoint to the context root.
     shutil.copy2(

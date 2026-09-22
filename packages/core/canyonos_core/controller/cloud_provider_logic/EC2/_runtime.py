@@ -326,6 +326,8 @@ def _bootstrap_instance(
         # turn it on (docker: -e beats --env-file).
         "-e",
         "CANYONOS_LLM_STUB_TEXT=",
+        "-e",
+        f"CANYONOS_LOGS_ENABLED={str(bool(_controller.config.get('logs', True))).lower()}",
     ]
     if spec.get("type") == "workflow":
         project_id = _controller.config.get("project_id")

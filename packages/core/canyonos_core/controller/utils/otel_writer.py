@@ -293,6 +293,77 @@ def metric_write_rows(rows, db_path=DB_PATH):
         conn.close()
 
 
+# `sent` is excluded from the update set for the same reason as the other tables: re-upserting
+# a log row (a GC re-poll of the same future) must not reset an already-exported row back
+# to unsent.
+_LOGS_UPSERT = """
+    INSERT INTO logs_waiting (
+        log_id, future_id, session_id, project_id, agent_id,
+        observed_at, severity_number, severity_text, body, attributes
+    ) VALUES (
+        :log_id, :future_id, :session_id, :project_id, :agent_id,
+        :observed_at, :severity_number, :severity_text, :body, :attributes
+    )
+    ON CONFLICT(log_id) DO UPDATE SET
+        future_id=excluded.future_id,
+        session_id=excluded.session_id,
+        project_id=excluded.project_id,
+        agent_id=excluded.agent_id,
+        observed_at=excluded.observed_at,
+        severity_number=excluded.severity_number,
+        severity_text=excluded.severity_text,
+        body=excluded.body,
+        attributes=excluded.attributes
+"""
+
+
+def log_write_rows(rows, project_id=None, db_path=DB_PATH):
+    """Upsert future rows' `logs` JSON arrays into the logs_waiting table, one row per log
+    record. `log_id = {future_id}:{index}` so a GC re-poll of the same future upserts
+    instead of duplicating, the same rationale as metrics_waiting.sample_id."""
+    if not rows:
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        for raw in rows:
+            fid = raw.get("future_id")
+            logs_json = raw.get("logs")
+            if not fid or not logs_json:
+                continue
+            try:
+                entries = json.loads(logs_json)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Dropping unparseable logs field for future %s", fid)
+                continue
+            if not entries:
+                continue
+            session_id = raw.get("request_id")
+            agent_id = raw.get("agent")
+            for index, entry in enumerate(entries):
+                if not isinstance(entry, dict):
+                    continue
+                attrs = entry.get("Attributes") or {}
+                conn.execute(
+                    _LOGS_UPSERT,
+                    {
+                        "log_id": f"{fid}:{index}",
+                        "future_id": fid,
+                        "session_id": session_id,
+                        "project_id": project_id,
+                        "agent_id": agent_id,
+                        "observed_at": entry.get("ObservedTimestamp")
+                        or entry.get("Timestamp"),
+                        "severity_number": entry.get("SeverityNumber"),
+                        "severity_text": entry.get("SeverityText"),
+                        "body": entry.get("Body"),
+                        "attributes": json.dumps(attrs),
+                    },
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def pull_telemetry(redis_client):
     """Scan a node's Redis for per-execution future rows; each future's identity and
     execution metrics both live at future:{future_id}.
@@ -310,6 +381,9 @@ def pull_telemetry(redis_client):
 
 def send_telemetry(redis_client, project_id=None, db_path=DB_PATH):
     """Pull per-execution future rows from Redis and queue them into the ``traces_waiting``
-    table for OTLP export. GC's ``_poll_one_instance`` calls this once per poll.
+    and ``logs_waiting`` tables for OTLP export. GC's ``_poll_one_instance`` calls this once
+    per poll.
     """
-    trace_write_rows(pull_telemetry(redis_client), redis_client, project_id, db_path)
+    rows = pull_telemetry(redis_client)
+    trace_write_rows(rows, redis_client, project_id, db_path)
+    log_write_rows(rows, project_id, db_path)

@@ -139,6 +139,8 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             f"CANYONOS_POLL_INTERVAL={_require_controller().config.get('poll_interval', 5)}",
             # Route the agent's LLM SDK calls through the in-container proxy for telemetry.
             *llm_proxy_docker_env_args(),
+            "-e",
+            f"CANYONOS_LOGS_ENABLED={str(bool(_require_controller().config.get('logs', True))).lower()}",
         ]
 
         # LLM stub is a `canyonos test`-only control. `canyonos test` injects
