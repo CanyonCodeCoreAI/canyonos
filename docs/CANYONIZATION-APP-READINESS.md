@@ -3,9 +3,7 @@
 This guide explains what an agent application should provide before it can be
 successfully ported to CanyonOS.
 
-CanyonOS can package and run an existing agent, but it will not change the
-application's business logic, invent missing configuration, or create external
-services on the developer's behalf.
+Application developers own the application's source code, dependencies, data, credentials, external services, and business correctness. CanyonOS owns runtime orchestration, container communication, and supported model routing.
 
 ## 1. Provide a service-ready application interface
 
@@ -162,8 +160,3 @@ python3 -c "from your_package.entrypoint import YourAgent"
 Run at least one representative request using a real model and the same data and
 tools expected in production. A successful import alone is not enough.
 
-## Responsibility boundary
-
-Application developers own the application's source code, dependencies, data,
-credentials, external services, and business correctness. CanyonOS owns runtime
-orchestration, container communication, and supported model routing.
