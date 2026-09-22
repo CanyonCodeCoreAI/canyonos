@@ -61,11 +61,12 @@ def main(query: str) -> dict[str, str]:
     return {"answer": answer.value()}
 ```
 
-For a single output, use `return answer.value()`. Never return the Future
-itself or convert it with `str(...)` or `json.dumps(...)` as a substitute for
-resolution. `.value()` returns the computed result; use `json.loads(...)` only when the service
-returns JSON and the workflow needs the decoded structure. Leave already
-concrete values unchanged.
+Before returning from `main`, resolve any Future included in the final output
+with `.value()`. For example, if `answer` is a Future, use
+`return answer.value()`. Calling `str(...)` or `json.dumps(...)` does not resolve
+a Future. Decode the resolved value with `json.loads(...)` only when it is JSON
+text and the workflow needs the decoded structure. Return already concrete
+values unchanged.
 
 For parallel remote calls, dispatch all work before resolving any result:
 
