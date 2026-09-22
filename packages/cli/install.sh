@@ -8,16 +8,17 @@ set -eu
 REPO="CanyonCodeCoreAI/canyonos"
 INSTALL_DIR="${CANYONOS_INSTALL_DIR:-$HOME/.local/bin}"
 
-# Reads the /releases JSON on stdin and prints the newest "cli-v*" tag that is not
-# a pre-release. The array is collapsed to one release per line so the tag and the
-# pre-release flag of the same release stay together; the API lists newest first.
+# Reads the /releases JSON on stdin and prints the newest stable "cli-vX.Y.Z" tag
+# that is not a pre-release. The array is collapsed to one release per line so the
+# tag and the pre-release flag of the same release stay together; the API lists
+# newest first. A suffixed tag such as cli-v1.2.3-rc.1 is skipped whatever its flag.
 latest_cli_tag() {
     tr -d ' \n' \
         | sed 's/},{/}\
 {/g' \
-        | grep '"tag_name":"cli-v' \
         | grep -v '"prerelease":true' \
-        | grep -o 'cli-v[0-9][^"]*' \
+        | grep -oE '"tag_name":"cli-v[0-9]+\.[0-9]+\.[0-9]+"' \
+        | sed 's/^"tag_name":"//; s/"$//' \
         | head -n1
 }
 
