@@ -28,7 +28,6 @@ from canyonos_core.schema.errors import (
 from canyonos_core.schema.manifest import (
     AgentService,
     DatabaseService,
-    DatabaseSpec,
     Ec2Spec,
     Manifest,
     OtelDestination,
@@ -45,7 +44,6 @@ __all__ = [
     "ArgumentDecl",
     "BUILTIN_TYPE_NAMES",
     "DatabaseService",
-    "DatabaseSpec",
     "DependencyPinConflict",
     "Ec2Spec",
     "FunctionDecl",

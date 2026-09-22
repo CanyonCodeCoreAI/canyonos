@@ -305,11 +305,40 @@ class DatabaseServiceTests(_ManifestCase):
 
 
 class ProviderTests(_ManifestCase):
-    def test_a_provider_is_matched_exactly(self):
-        for provider in ("Local", "ec2", "EC2 "):
+    def test_a_provider_in_any_casing_is_normalized(self):
+        # cli._load_config accepts these and rewrites them to the spelling the
+        # runtimes compare against; the gate in front of it does the same.
+        for provider, normalized in (("LOCAL", "local"), ("Local", "local")):
             with self.subTest(provider=provider):
-                violations = self.violations({"agents": [_agent(provider=provider)]})
-                self.assertIn("agents[0].provider", [v.field for v in violations])
+                manifest = self.load({"agents": [_agent(provider=provider)]})
+                self.assertEqual(manifest.agents[0].provider, normalized)
+
+        for provider in ("Ec2", "ec2"):
+            with self.subTest(provider=provider):
+                manifest = self.load(
+                    {
+                        "agents": [_agent(provider=provider, instance_type="t3.micro")],
+                        "ec2": _EC2_BLOCK,
+                    }
+                )
+                self.assertEqual(manifest.agents[0].provider, "EC2")
+
+    def test_a_lowercase_ec2_still_needs_the_ec2_block(self):
+        violation = self.one(
+            {"agents": [_agent(provider="ec2", instance_type="t3.micro")]}
+        )
+
+        self.assertEqual(violation.field, "ec2")
+
+    def test_a_misspelled_provider_is_rejected(self):
+        for provider in ("locale", "EC2 ", "aws"):
+            with self.subTest(provider=provider):
+                violation = self.one({"agents": [_agent(provider=provider)]})
+                self.assertEqual(violation.field, "agents[0].provider")
+                self.assertEqual(
+                    violation.message,
+                    f"expected one of ['local', 'EC2'], got the string {provider!r}",
+                )
 
     def test_an_ec2_service_needs_an_instance_type(self):
         self.assertIn(
@@ -393,7 +422,6 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(manifest.redis.host, "localhost")
         self.assertEqual(manifest.redis.port, 6379)
         self.assertEqual(manifest.redis.db, 0)
-        self.assertIsNone(manifest.database)
         self.assertIsNone(manifest.otel)
         self.assertIsNone(manifest.ec2)
 
@@ -487,28 +515,39 @@ class OtelTests(_ManifestCase):
         self.assertFalse(destination.insecure)
 
 
-class DatabaseBlockTests(_ManifestCase):
-    def test_an_empty_database_block_is_no_database(self):
-        # `database:` with nothing under it parses as None -- readers must not
-        # take that for a mapping, and the schema must not take it for an error.
+class RetiredKeyTests(unittest.TestCase):
+    """`database:` configured telemetry until #104 moved it under `otel:`.
+
+    Nothing reads it now, so a manifest still carrying one is told so, instead
+    of being left to believe its runs are being recorded there.
+    """
+
+    _MESSAGE = "is no longer used; telemetry is configured under otel: -- remove it"
+
+    def _violations(self, text):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "global_controller.yaml")
             Path(path).write_text(
                 "agents:\n"
                 "  - name: ExampleAgent\n"
-                "    entrypoint: agents/example_agent.py\n"
-                "database:\n"
+                "    entrypoint: agents/example_agent.py\n" + text
             )
-            manifest = load_manifest(path)
+            with self.assertRaises(SchemaError) as raised:
+                load_manifest(path)
+        return raised.exception.violations
 
-        self.assertIsNone(manifest.database)
-        self.assertEqual(len(manifest.agents), 1)
+    def test_a_database_block_is_rejected_as_retired(self):
+        (violation,) = self._violations("database:\n  url: sqlite:///runtime.db\n")
 
-    def test_a_database_block_without_a_url_is_rejected(self):
-        self.assertEqual(
-            self.fields({"agents": [_agent()], "database": {"urls": "sqlite://"}}),
-            ["database.urls", "database.url"],
-        )
+        self.assertEqual(violation.field, "database")
+        self.assertEqual(violation.line, 4)
+        self.assertEqual(violation.message, self._MESSAGE)
+
+    def test_an_empty_database_block_is_rejected_too(self):
+        (violation,) = self._violations("database:\n")
+
+        self.assertEqual(violation.field, "database")
+        self.assertEqual(violation.message, self._MESSAGE)
 
 
 class EnvExpansionTests(_ManifestCase):

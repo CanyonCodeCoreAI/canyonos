@@ -75,7 +75,6 @@ _MANIFEST_KEYS = frozenset(
         "cleanup_interval",
         "project_id",
         "redis",
-        "database",
         "env_file",
         "logs",
         "otel",
@@ -83,7 +82,11 @@ _MANIFEST_KEYS = frozenset(
     }
 )
 _REDIS_KEYS = frozenset({"host", "port", "db"})
-_DATABASE_BLOCK_KEYS = frozenset({"url"})
+# Keys that used to mean something and now do nothing, each with the message
+# that tells a user carrying one what to do instead.
+_RETIRED_KEYS = {
+    "database": "is no longer used; telemetry is configured under otel: -- remove it",
+}
 _OTEL_KEYS = frozenset({"destinations"})
 _OTEL_DESTINATION_KEYS = frozenset(
     {"name", "protocol", "endpoint", "headers", "insecure", "timeout"}
@@ -121,11 +124,6 @@ class RedisSpec:
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-
-
-@dataclass(frozen=True)
-class DatabaseSpec:
-    url: str
 
 
 @dataclass(frozen=True)
@@ -209,7 +207,6 @@ class Manifest:
     cleanup_interval: int = 10
     project_id: str | None = None
     redis: RedisSpec = field(default_factory=RedisSpec)
-    database: DatabaseSpec | None = None
     env_file: str | None = None
     # Streams failure and log detail into each future; read as
     # `config.get("logs", True)` by both runtimes, hence the default.
@@ -280,18 +277,24 @@ def _service_type(collector, node, prefix):
 
 
 def _provider(collector, node, prefix):
+    """The provider in any casing, normalized to the spelling the runtimes compare.
+
+    cli._load_config accepts `LOCAL` or `ec2` and rewrites them the same way, so
+    the gate in front of it has to as well.
+    """
     if "provider" not in node:
         return "local"
     value = _resolve(node["provider"])
-    if value not in PROVIDERS:
+    canonical = {p.casefold(): p for p in PROVIDERS}
+    if not isinstance(value, str) or value.casefold() not in canonical:
         collector.add(
             node,
             "provider",
             _field(prefix, "provider"),
-            f"expected one of {list(PROVIDERS)} (case-sensitive), got {_describe(value)}",
+            f"expected one of {list(PROVIDERS)}, got {_describe(value)}",
         )
         return "local"
-    return value
+    return canonical[value.casefold()]
 
 
 def _service(collector, node, index):
@@ -531,15 +534,6 @@ def _ec2(collector, node, services):
     )
 
 
-def _database(collector, node):
-    block = _mapping(collector, node, "database", "", _DATABASE_BLOCK_KEYS)
-    if block is None:
-        # `database:` with nothing under it parses as None -- no database, not an error.
-        return None
-    url = _string(collector, block, "url", "database", required=True)
-    return DatabaseSpec(url=url) if url else None
-
-
 def load_manifest(path):
     """Parse and check `global_controller.yaml`, reporting every problem at once.
 
@@ -571,7 +565,10 @@ def load_manifest(path):
             ]
         )
 
-    _check_keys(collector, document, "", _MANIFEST_KEYS)
+    for key, message in _RETIRED_KEYS.items():
+        if key in document:
+            collector.add(document, key, key, message)
+    _check_keys(collector, document, "", _MANIFEST_KEYS | _RETIRED_KEYS.keys())
     services = _services(collector, document)
     manifest = Manifest(
         agents=services,
@@ -579,7 +576,6 @@ def load_manifest(path):
         cleanup_interval=_integer(collector, document, "cleanup_interval", "", 10, 1),
         project_id=_string(collector, document, "project_id", ""),
         redis=_redis(collector, document),
-        database=_database(collector, document),
         env_file=_string(collector, document, "env_file", ""),
         logs=_boolean(collector, document, "logs", "", True),
         otel=_otel(collector, document),
