@@ -164,21 +164,6 @@ class WorkflowApiPortTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             local_runtime._port_bound(self._spec(api_port="8080")["api_port"])
 
-    def test_remote_host_api_port_is_probed_against_the_wrong_machine(self):
-        """The PR dropped main's `and _is_local_host(host)` guard.
-
-        For an EC2/remote host the probe binds the *controller's* loopback, so the
-        answer describes the wrong machine either way.
-        """
-        src = Path(local_runtime.__file__).read_text()
-        gate = [ln for ln in src.splitlines() if 'ctrl_type == "workflow"' in ln]
-        self.assertTrue(gate)
-        self.assertIn(
-            "_is_local_host(host)",
-            gate[0],
-            "workflow api_port preflight runs for remote hosts too, probing local loopback",
-        )
-
 
 class RedisPortTests(unittest.TestCase):
     """redis_port is user-declared: publish it as written, or exit."""

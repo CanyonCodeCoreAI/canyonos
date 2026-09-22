@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 import importlib.util
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import grpc
 
@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
 POLICY_RULES_KEY = "policy:rules"
+EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5
 
 
 class LocalController(object):
@@ -86,7 +87,8 @@ class LocalController(object):
         # soon as it arrives via WriteResult (see _fan_out_to_consumers).
         self.servicer.on_result = self._fan_out_to_consumers
 
-        # Connect to Redis and report healthy status
+        # Connect to Redis. Readiness is published only after a configured
+        # agent has loaded successfully.
         redis_host = os.environ.get("CANYONOS_REDIS_HOST", "localhost")
         redis_port = int(os.environ.get("CANYONOS_REDIS_PORT", 6379))
         self.redis = RedisClient(host=redis_host, port=redis_port)
@@ -101,9 +103,6 @@ class LocalController(object):
             self.redis.set(self._status_key, "failed")
             self.server.stop(0)
             raise
-
-        if publish_ready:
-            self.redis.set(self._status_key, "healthy")
 
         # Set once by InstanceManager when this replica was provisioned; read back
         # here so completed requests can be stamped with which replica ran them.
@@ -137,7 +136,6 @@ class LocalController(object):
         )
         self._metrics_stop_event = threading.Event()
         self._metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
-        self._metrics_thread.start()
 
         # Cache for gRPC stubs to remote controllers
         self._remote_channels = {}  # endpoint -> grpc.Channel
@@ -151,6 +149,8 @@ class LocalController(object):
         # that need to be routed through the same controller's request queue.
         max_instances = int(os.environ.get("CANYONOS_MAX_AGENT_INSTANCES", 8))
         self._executor = ThreadPoolExecutor(max_workers=max_instances)
+        self._executor_futures = {}
+        self._executor_futures_lock = threading.Lock()
 
         # Machine-level metrics (cpu/gpu/disk/memory/uptime) are sampled by a separate
         # one-per-machine process launched by GlobalController (see
@@ -159,14 +159,27 @@ class LocalController(object):
         # in-process metrics a sibling process can't observe (queue length, counters,
         # health heartbeat).
 
+        # After the proxy, because an agent constructor may build an LLM client
+        # against it. Workflow containers intentionally run a routing-only local
+        # controller without these variables; agent containers set both, and
+        # must not advertise readiness if constructing the agent failed.
+        self.agent = self._load_agent()
+        if (self.agent_name or self.agent_file) and self.agent is None:
+            self.redis.set(self._status_key, "failed")
+            self.server.stop(0)
+            raise RuntimeError(
+                f"Failed to load configured agent {self.agent_name or self.agent_file}."
+            )
+
+        if publish_ready:
+            self.redis.set(self._status_key, "healthy")
+        self._metrics_thread.start()
+
         logger.info(
             "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
             self._my_endpoint,
             max_instances,
         )
-
-        # Load the agent class dynamically
-        self.agent = self._load_agent()
 
     def mark_ready(self):
         self.redis.set(self._status_key, "healthy")
@@ -572,7 +585,7 @@ class LocalController(object):
 
         if endpoint == self._my_endpoint:
             submitted_at = time.time()
-            self._executor.submit(
+            executor_future = self._executor.submit(
                 self._execute_locally,
                 service,
                 function,
@@ -584,6 +597,9 @@ class LocalController(object):
                 parent,
                 created_at,
             )
+            with self._executor_futures_lock:
+                self._executor_futures[executor_future] = future_id
+            executor_future.add_done_callback(self._forget_executor_future)
         else:
             # Register the target as a consumer for any Future args
             # so results get pushed to its Redis via WriteResult.
@@ -931,12 +947,26 @@ class LocalController(object):
     #  Shutdown                                                            #
     # ------------------------------------------------------------------ #
 
+    def _forget_executor_future(self, executor_future):
+        with self._executor_futures_lock:
+            self._executor_futures.pop(executor_future, None)
+
     def stop(self):
         """Gracefully shut down the server."""
         logger.info("Shutting down local controller...")
         self._metrics_stop_event.set()
         self._metrics_thread.join(timeout=2)
-        self._executor.shutdown(wait=True)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        with self._executor_futures_lock:
+            outstanding = dict(self._executor_futures)
+        if outstanding:
+            _, unfinished = wait(outstanding, timeout=EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS)
+            if unfinished:
+                future_ids = sorted(str(outstanding[future]) for future in unfinished)
+                logger.warning(
+                    "Executor shutdown timed out with requests still running: %s",
+                    ", ".join(future_ids),
+                )
         self.redis.set(self._status_key, "stopped")
         if self._log_handler is not None:
             logging.getLogger().removeHandler(self._log_handler)

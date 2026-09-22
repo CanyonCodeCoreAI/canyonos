@@ -89,6 +89,37 @@ class _FakeRedis:
 
 
 class LocalControllerMetricsTests(unittest.TestCase):
+    def test_configured_agent_load_failure_never_reports_healthy(self):
+        redis = _FakeRedis()
+        server = MagicMock()
+        servicer = SimpleNamespace(request_queue=None, on_result=None)
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "CANYONOS_AGENT_NAME": "MissingAgent",
+                    "CANYONOS_AGENT_FILE": "/definitely/missing-agent.py",
+                },
+            ),
+            patch(
+                "canyonos_core.controller.local_controller.start_server",
+                return_value=(server, servicer),
+            ),
+            patch(
+                "canyonos_core.controller.local_controller.RedisClient",
+                return_value=redis,
+            ),
+            patch.object(LocalController, "_start_llm_proxy", return_value=None),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "Failed to load configured agent"
+            ):
+                LocalController()
+
+        self.assertEqual(redis.get("controller:localhost:50051:status"), "failed")
+        server.stop.assert_called_once_with(0)
+
     def test_collect_metrics_returns_expected_keys(self):
         # Machine-level metrics (cpu/gpu/disk/memory/uptime) moved to the per-machine
         # collector container; _collect_metrics now reports only in-process instance
