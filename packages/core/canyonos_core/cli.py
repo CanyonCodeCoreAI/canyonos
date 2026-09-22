@@ -16,6 +16,10 @@ import shutil
 import subprocess
 import sys
 
+from canyonos_core.controller.utils.config_env import (
+    expand_env_value,
+    load_root_dotenv,
+)
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
     DependencyPinConflict,
@@ -47,11 +51,91 @@ def _get_package_dir():
 
 
 def _load_config(config_path):
-    """Load a YAML config file."""
+    """Load the config as the schema checked it and the controller will read it.
+
+    The root `.env` is imported and `${VAR}` refs are expanded through the
+    same helper both of those use. Reading the raw YAML here instead let a
+    reference the schema had validated in its expanded form reach the build
+    as the literal `${VAR}`.
+    """
     import yaml
 
+    load_root_dotenv(config_path)
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = expand_env_value(yaml.safe_load(f))
+    # Everything below here till "return config" is basically just checks to make sure the folder is correct
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
+    agents = config.get("agents", [])
+    if not isinstance(agents, list) or not all(
+        isinstance(agent, dict) for agent in agents
+    ):
+        raise RuntimeError(f"Config `agents` must be a list of mappings: {config_path}")
+    names = [agent.get("name") for agent in agents]
+    if any(not isinstance(name, str) or not name.strip() for name in names):
+        raise RuntimeError(
+            f"Every configured agent must have a non-empty name: {config_path}"
+        )
+    names_by_key = {}
+    for name in names:
+        names_by_key.setdefault(name.casefold(), []).append(name)
+    duplicates = sorted(
+        "/".join(group) for group in names_by_key.values() if len(group) > 1
+    )
+    if duplicates:
+        raise RuntimeError(
+            f"Duplicate agent names in {config_path}: {', '.join(duplicates)}"
+        )
+
+    for agent in agents:
+        name = agent["name"]
+        provider = agent.get("provider", "local")
+        if not isinstance(provider, str) or provider.casefold() not in {"local", "ec2"}:
+            raise RuntimeError(
+                f"Agent {name} has unsupported provider {provider!r}; use `local` or `EC2`."
+            )
+        agent["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
+
+        replicas = agent.get("replicas", 1)
+        if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
+            raise RuntimeError(
+                f"Agent {name} must have a positive integer `replicas` value."
+            )
+        if (
+            agent["provider"] == "local"
+            and agent.get("type", "agent") == "workflow"
+            and replicas > 1
+        ):
+            raise RuntimeError(
+                f"Local workflow {name} cannot use replicas > 1 because every replica "
+                "would publish the same `api_port`."
+            )
+
+        for field in ("host_port", "port", "redis_port", "api_port", "dashboard_port"):
+            value = agent.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 1 <= value <= 65535
+            ):
+                raise RuntimeError(
+                    f"Agent {name} must have an integer `{field}` between 1 and 65535."
+                )
+
+        resources = agent.get("resources", {})
+        if not isinstance(resources, dict):
+            raise RuntimeError(f"Agent {name} `resources` must be a mapping.")
+        for field in ("cpu", "memory", "gpu"):
+            value = resources.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise RuntimeError(
+                    f"Agent {name} resource `{field}` must be a positive number."
+                )
+    return config
 
 
 def _artifact_prefix(root):
@@ -62,12 +146,20 @@ def _artifact_prefix(root):
     )
 
 
-def _declarations_dir():
-    """Where this project's agent YAML declarations are kept."""
+def _project_layout():
+    """(artifact_root, source_root, declarations_dir) for the project in cwd.
+
+    The .car layout keeps the app's own code under `.car/app` and everything
+    generated beside it; a plain checkout keeps both at the project root.
+    """
     project_dir = os.path.abspath(os.getcwd())
     prefix = _artifact_prefix(project_dir)
     artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
-    return os.path.join(artifact_root, "config" if prefix else "agents")
+    return (
+        artifact_root,
+        os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir,
+        os.path.join(artifact_root, "config" if prefix else "agents"),
+    )
 
 
 def _reject(violations, summary):
@@ -82,9 +174,9 @@ def _reject(violations, summary):
     sys.exit(1)
 
 
-def validate_or_exit(config_path, declarations_dir):
+def validate_or_exit(config_path, declarations_dir, source_dir=None):
     """Reject the config before anything is generated; return the parsed manifest."""
-    violations = validate_project(config_path, declarations_dir)
+    violations = validate_project(config_path, declarations_dir, source_dir)
     if violations:
         _reject(
             violations,
@@ -276,22 +368,18 @@ def _run_build(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
 
-    declarations_dir = _declarations_dir()
+    artifact_root, source_root, declarations_dir = _project_layout()
 
     # Nothing below this line runs against a config the schema rejects: no
     # stubs, no protoc, no Docker context, no image. It comes before the load
-    # so a file that is not YAML at all is rendered as a violation too.
-    manifest = validate_or_exit(config_path, declarations_dir)
+    # so a file that is not YAML at all is rendered as a violation too, and it
+    # is handed source_root so a service whose code is missing fails here
+    # rather than being skipped out of a deploy that then reports success.
+    manifest = validate_or_exit(config_path, declarations_dir, source_root)
     _check_dependency_pins(manifest)
 
     config = _load_config(config_path)
     agents = config.get("agents", [])
-    project_dir = os.path.abspath(os.getcwd())
-    prefix = _artifact_prefix(project_dir)
-    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
-    source_root = (
-        os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir
-    )
     package_dir = _get_package_dir()
 
     # -------------------------------------------------------------- #
@@ -388,10 +476,7 @@ def _run_build(config_path):
             # No build: pull the declared image and tag it like any other
             # agent image so the rest of the deploy pipeline treats it the
             # same way (EC2 image transfer, etc.) without further changes.
-            image = agent_cfg.get("image")
-            if not image:
-                logger.warning("Skipping database '%s': no image specified", agent_name)
-                continue
+            image = agent_cfg["image"]
             target_image = f"canyonos-{agent_name.lower()}"
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
             subprocess.run(
@@ -400,20 +485,12 @@ def _run_build(config_path):
             subprocess.run(["docker", "tag", image, target_image], check=True)
             continue
 
+        # Every key read below is one the schema requires and has checked,
+        # down to the file being on disk -- a service that cannot be built
+        # fails the deploy rather than dropping quietly out of it.
         if agent_type == "workflow":
             # Workflow container
-            workflow_file = agent_cfg.get("workflow_file")
-            if not workflow_file:
-                logger.warning(
-                    "Skipping workflow '%s': no workflow_file specified", agent_name
-                )
-                continue
-
-            workflow_path = os.path.join(source_root, workflow_file)
-            if not os.path.isfile(workflow_path):
-                logger.error("Workflow file not found: %s", workflow_path)
-                continue
-
+            workflow_path = os.path.join(source_root, agent_cfg["workflow_file"])
             docker_context = os.path.join(artifact_root, "docker_container", "Workflow")
             logger.info("Generating workflow Docker context for '%s'", agent_name)
             generate_workflow_docker(
@@ -431,17 +508,7 @@ def _run_build(config_path):
 
         else:
             # Agent container
-            entrypoint = agent_cfg.get("entrypoint")
-            if not entrypoint:
-                logger.warning(
-                    "Skipping agent '%s': no entrypoint specified", agent_name
-                )
-                continue
-
-            agent_file = os.path.join(source_root, entrypoint)
-            if not os.path.isfile(agent_file):
-                logger.error("Agent file not found: %s", agent_file)
-                continue
+            agent_file = os.path.join(source_root, agent_cfg["entrypoint"])
 
             # Find matching YAML by agent name
             matching_yaml = yaml_by_name.get(agent_name)

@@ -30,7 +30,6 @@ UTIL_COMMANDS = (
     ("stop", "Stop the running deploy, keeping the container and files"),
     ("test", "Deploy locally and run one prompt end to end"),
     ("validate", "Check a ported .car against the CanyonOS contract"),
-    ("version", "Print canyonos version"),
 )
 
 DESCRIPTIONS = dict(CORE_COMMANDS + UTIL_COMMANDS)

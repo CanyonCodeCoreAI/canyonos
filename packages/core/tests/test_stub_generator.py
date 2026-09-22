@@ -112,6 +112,23 @@ class GenerateWorkflowDockerRequirementsTests(unittest.TestCase):
 
         self.assertEqual(requirements, BASE_WORKFLOW_REQUIREMENTS + ["yfinance"])
 
+    def test_log_entry_is_copied_into_the_workflow_context(self):
+        """local_controller.py unconditionally imports log_entry -- if the
+        generator's source path for it is wrong, the file is silently skipped
+        (a warning, not an error) and the Workflow container fails at import
+        time on every deploy, not just when logs_enabled is set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workflow_file = self._write_workflow_file(tmpdir)
+            output_dir = os.path.join(tmpdir, "out")
+
+            generate_workflow_docker(workflow_file, [], output_dir=output_dir)
+
+            self.assertTrue(
+                os.path.isfile(os.path.join(output_dir, "log_entry.py")),
+                "log_entry.py was not copied into the workflow's Docker context",
+            )
+            self.assertTrue(os.path.isfile(os.path.join(output_dir, "log_handler.py")))
+
 
 class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
     def test_launcher_reports_ready_only_after_the_workflow_port_accepts_connections(
@@ -578,6 +595,22 @@ class PlatformPinTests(unittest.TestCase):
         self.assertTrue(rendered.startswith("config/global_controller.yaml: "))
         self.assertIn("agents[2].requirements", rendered)
         self.assertNotIn("\n", rendered)
+
+    def test_a_conflict_is_caught_however_the_package_name_is_spelled(self):
+        # pip treats these as one package; matching on .lower() alone missed
+        # the underscore and forced the pin over the app's bound instead.
+        for requirement in ("grpcio_tools<1", "Grpcio-Tools<1", "grpcio.tools<1"):
+            with self.subTest(requirement=requirement):
+                with self.assertRaises(DependencyPinConflict) as raised:
+                    _platform_overrides([requirement], service=0)
+                (violation,) = raised.exception.violations
+                self.assertIn("grpcio-tools==1.76.0", violation.message)
+
+    def test_a_newer_ask_wins_however_the_package_name_is_spelled(self):
+        overrides = _platform_overrides(["grpcio_tools>=2"])
+
+        self.assertIn("grpcio_tools>=2", overrides)
+        self.assertNotIn("grpcio-tools==1.76.0", overrides)
 
     def test_the_workflow_context_fails_on_a_conflict_too(self):
         with self.assertRaises(DependencyPinConflict):

@@ -6,6 +6,7 @@ mapping constructor is replaced with one that keeps them.
 """
 
 import yaml
+import yaml.constructor
 import yaml.resolver
 
 
@@ -22,7 +23,30 @@ class LineLoader(yaml.SafeLoader):
     pass
 
 
+def _reject_duplicate_keys(node):
+    """Refuse a mapping that sets the same key twice.
+
+    PyYAML keeps the last value without a word, so `replicas:` written twice
+    in one service deploys whichever came second. Only scalar keys are
+    compared, by tag and text, so `1` and `"1"` stay distinct.
+    """
+    seen = {}
+    for key, _ in node.value:
+        if not isinstance(key, yaml.ScalarNode):
+            continue
+        identity = (key.tag, key.value)
+        if identity in seen:
+            raise yaml.constructor.ConstructorError(
+                None,
+                None,
+                f"found duplicate key {key.value!r} (first set on line {seen[identity]})",
+                key.start_mark,
+            )
+        seen[identity] = key.start_mark.line + 1
+
+
 def _construct_mapping(loader, node):
+    _reject_duplicate_keys(node)
     data = LineDict()
     yield data
     data.update(loader.construct_mapping(node, deep=False))

@@ -71,6 +71,20 @@ class DeclarationShapeTests(_DeclarationCase):
         self.assertEqual(violation.field, "agent.name")
         self.assertEqual(violation.message, "is required but missing")
 
+    def test_a_key_set_twice_is_rejected_at_the_second(self):
+        # Two `name:` keys would otherwise generate a stub for whichever came
+        # last, with no word about the other.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "example_agent.yaml")
+            Path(path).write_text("agent:\n  name: ExampleAgent\n  name: OtherAgent\n")
+            with self.assertRaises(SchemaError) as raised:
+                load_agent_declaration(path)
+
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.line, 3)
+        self.assertIn("found duplicate key 'name'", violation.message)
+        self.assertNotIn("\n", render_violation(violation))
+
     def test_a_declaration_with_no_functions_is_fine(self):
         declaration = self.load({"agent": {"name": "ExampleAgent"}})
 
@@ -260,6 +274,59 @@ class ValidateProjectTests(unittest.TestCase):
                 yaml.safe_dump({"rules": [{"service": "ExampleAgent"}]})
             )
             self.assertEqual(validate_project(manifest, declarations), ())
+
+    def test_source_dir_is_optional_and_off_by_default(self):
+        # 2c calls validate_project without one; nothing on disk is checked.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            self.assertEqual(validate_project(manifest, declarations), ())
+
+    def test_a_declared_entrypoint_must_exist_under_the_source_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            violations = validate_project(manifest, declarations, tmpdir)
+
+        (violation,) = violations
+        self.assertEqual(violation.field, "agents[0].entrypoint")
+        self.assertEqual(
+            violation.message,
+            f"{os.path.join(tmpdir, 'agents', 'example_agent.py')} does not exist",
+        )
+
+    def test_the_missing_file_is_named_the_way_the_manifest_writes_it(self):
+        # The build runs from the project root, so that is the form the reader
+        # is looking at; an absolute /tmp/... path makes them translate.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                violations = validate_project(manifest, declarations, ".")
+            finally:
+                os.chdir(cwd)
+
+        (violation,) = violations
+        self.assertEqual(
+            violation.message,
+            f"{os.path.join('agents', 'example_agent.py')} does not exist",
+        )
+
+    def test_an_entrypoint_that_is_there_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            Path(tmpdir, "agents", "example_agent.py").write_text("print('ok')\n")
+            self.assertEqual(validate_project(manifest, declarations, tmpdir), ())
+
+    def test_a_missing_source_dir_is_one_violation_naming_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            source_dir = os.path.join(tmpdir, "app")
+            violations = validate_project(manifest, declarations, source_dir)
+
+        (violation,) = violations
+        self.assertEqual(violation.field, "agents")
+        self.assertIn(source_dir, violation.message)
+        self.assertIn("does not exist", violation.message)
 
     def test_every_example_project_validates(self):
         for manifest in sorted(
