@@ -85,6 +85,20 @@ def _declared_name(path):
     return name if isinstance(name, str) else ""
 
 
+def _as_typed(path):
+    """A path as the reader would write it: relative to where the build runs.
+
+    The build runs from the project root, so that is the form the manifest and
+    the rest of these violations are written in. A path outside it has no
+    shorter honest form and is left absolute.
+    """
+    try:
+        relative = os.path.relpath(path)
+    except ValueError:  # a different drive on Windows
+        return path
+    return path if relative.startswith(os.pardir) else relative
+
+
 def _missing_sources(manifest, manifest_path, source_dir):
     """Violations for the code a manifest points at but the project does not hold.
 
@@ -97,8 +111,8 @@ def _missing_sources(manifest, manifest_path, source_dir):
                 manifest_path,
                 0,
                 "agents",
-                f"the project source directory {source_dir} does not exist, "
-                "so no service's code can be found",
+                f"the project source directory {_as_typed(source_dir)} does not "
+                "exist, so no service's code can be found",
             )
         ]
 
@@ -107,14 +121,14 @@ def _missing_sources(manifest, manifest_path, source_dir):
         key = {"agent": "entrypoint", "workflow": "workflow_file"}.get(service.type)
         if key is None:
             continue
-        declared = getattr(service, key)
-        if not os.path.isfile(os.path.join(source_dir, declared)):
+        source = os.path.join(source_dir, getattr(service, key))
+        if not os.path.isfile(source):
             violations.append(
                 SchemaViolation(
                     manifest_path,
                     0,
                     f"agents[{index}].{key}",
-                    f"{os.path.join(source_dir, declared)} does not exist",
+                    f"{_as_typed(source)} does not exist",
                 )
             )
     return violations

@@ -392,10 +392,7 @@ def _run_build(config_path):
             # No build: pull the declared image and tag it like any other
             # agent image so the rest of the deploy pipeline treats it the
             # same way (EC2 image transfer, etc.) without further changes.
-            image = agent_cfg.get("image")
-            if not image:
-                logger.warning("Skipping database '%s': no image specified", agent_name)
-                continue
+            image = agent_cfg["image"]
             target_image = f"canyonos-{agent_name.lower()}"
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
             subprocess.run(
@@ -404,19 +401,12 @@ def _run_build(config_path):
             subprocess.run(["docker", "tag", image, target_image], check=True)
             continue
 
+        # Every key read below is one the schema requires and has checked,
+        # down to the file being on disk -- a service that cannot be built
+        # fails the deploy rather than dropping quietly out of it.
         if agent_type == "workflow":
             # Workflow container
-            workflow_file = agent_cfg.get("workflow_file")
-            if not workflow_file:
-                logger.warning(
-                    "Skipping workflow '%s': no workflow_file specified", agent_name
-                )
-                continue
-
-            # The schema checked this file exists, so there is no skip here:
-            # a workflow that cannot be built fails the deploy, it does not
-            # quietly drop out of it.
-            workflow_path = os.path.join(source_root, workflow_file)
+            workflow_path = os.path.join(source_root, agent_cfg["workflow_file"])
             docker_context = os.path.join(artifact_root, "docker_container", "Workflow")
             logger.info("Generating workflow Docker context for '%s'", agent_name)
             generate_workflow_docker(
@@ -434,14 +424,7 @@ def _run_build(config_path):
 
         else:
             # Agent container
-            entrypoint = agent_cfg.get("entrypoint")
-            if not entrypoint:
-                logger.warning(
-                    "Skipping agent '%s': no entrypoint specified", agent_name
-                )
-                continue
-
-            agent_file = os.path.join(source_root, entrypoint)
+            agent_file = os.path.join(source_root, agent_cfg["entrypoint"])
 
             # Find matching YAML by agent name
             matching_yaml = yaml_by_name.get(agent_name)

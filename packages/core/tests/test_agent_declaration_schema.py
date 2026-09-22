@@ -279,6 +279,24 @@ class ValidateProjectTests(unittest.TestCase):
             f"{os.path.join(tmpdir, 'agents', 'example_agent.py')} does not exist",
         )
 
+    def test_the_missing_file_is_named_the_way_the_manifest_writes_it(self):
+        # The build runs from the project root, so that is the form the reader
+        # is looking at; an absolute /tmp/... path makes them translate.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                violations = validate_project(manifest, declarations, ".")
+            finally:
+                os.chdir(cwd)
+
+        (violation,) = violations
+        self.assertEqual(
+            violation.message,
+            f"{os.path.join('agents', 'example_agent.py')} does not exist",
+        )
+
     def test_an_entrypoint_that_is_there_passes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest, declarations = self._project(tmpdir)
