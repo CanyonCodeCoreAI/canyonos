@@ -35,9 +35,6 @@ host-side proxy to reach.
 
 - `127.0.0.1:8081` inside a container is that container's own proxy. It is the
   address to use, and the only one that works.
-- `host.docker.internal` does not resolve inside these containers, and on the
-  host 8081 is the CanyonOS dashboard. Pointing the port at either address
-  sends every model call to the wrong place or to nothing. Never advise it.
 - Bedrock is already routed: every runtime passes
   `-e AWS_ENDPOINT_URL_BEDROCK_RUNTIME=http://127.0.0.1:8081/bedrock`, which
   beats `--env-file`. OpenAI and Anthropic get no such injection -- their base
