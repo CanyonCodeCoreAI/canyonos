@@ -9,15 +9,15 @@ from dataclasses import dataclass
 
 import yaml
 
-from canyonos_core.schema.errors import SchemaError, SchemaViolation
-from canyonos_core.schema.manifest import (
-    _Collector,
+from canyonos_core.schema._checks import (
     _check_keys,
+    _Collector,
+    _describe,
     _field,
     _string,
-    _describe,
 )
-from canyonos_core.schema.yaml_lines import line_of, load_yaml_lines
+from canyonos_core.schema.errors import SchemaError, SchemaViolation
+from canyonos_core.schema.yaml_lines import line_of, load_yaml_lines, parse_failure
 
 # Names the generated stub can annotate with, given it imports nothing.
 BUILTIN_TYPE_NAMES = frozenset(
@@ -38,8 +38,8 @@ BUILTIN_TYPE_NAMES = frozenset(
     }
 )
 
-_DECLARATION_KEYS = frozenset({"agent"})
-_AGENT_KEYS = frozenset({"name", "functions"})
+_DOCUMENT_KEYS = frozenset({"agent"})
+_DECLARATION_KEYS = frozenset({"name", "functions"})
 _FUNCTION_KEYS = frozenset({"name", "description", "arguments", "returns"})
 _ARGUMENT_KEYS = frozenset({"name", "type"})
 _RETURNS_KEYS = frozenset({"type"})
@@ -191,8 +191,9 @@ def load_agent_declaration(path):
             [SchemaViolation(path, 0, "", f"cannot be read: {exc}")]
         ) from exc
     except yaml.YAMLError as exc:
+        line, detail = parse_failure(exc)
         raise SchemaError(
-            [SchemaViolation(path, 0, "", f"is not valid YAML: {exc}")]
+            [SchemaViolation(path, line, "", f"is not valid YAML: {detail}")]
         ) from exc
 
     if not isinstance(document, dict):
@@ -204,7 +205,7 @@ def load_agent_declaration(path):
             ]
         )
 
-    _check_keys(collector, document, "", _DECLARATION_KEYS)
+    _check_keys(collector, document, "", _DOCUMENT_KEYS)
     block = document.get("agent")
     if not isinstance(block, dict):
         collector.violations.append(
@@ -217,7 +218,7 @@ def load_agent_declaration(path):
         )
         raise SchemaError(collector.violations)
 
-    _check_keys(collector, block, "agent", _AGENT_KEYS)
+    _check_keys(collector, block, "agent", _DECLARATION_KEYS)
     name = _string(collector, block, "name", "agent", required=True)
     functions = _functions(collector, block)
     if collector.violations:

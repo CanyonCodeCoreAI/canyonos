@@ -38,7 +38,6 @@ from canyonos_core.schema.manifest import (
     WorkflowService,
     load_manifest,
 )
-from canyonos_core.schema.yaml_lines import LineLoader, line_of, load_yaml_lines
 
 __all__ = [
     "AgentDeclaration",
@@ -50,7 +49,6 @@ __all__ = [
     "DependencyPinConflict",
     "Ec2Spec",
     "FunctionDecl",
-    "LineLoader",
     "Manifest",
     "OtelDestination",
     "OtelSpec",
@@ -60,10 +58,8 @@ __all__ = [
     "SchemaError",
     "SchemaViolation",
     "WorkflowService",
-    "line_of",
     "load_agent_declaration",
     "load_manifest",
-    "load_yaml_lines",
     "render_violation",
     "validate_project",
 ]
@@ -92,16 +88,18 @@ def _declared_name(path):
 def validate_project(manifest_path, declarations_dir):
     """Every violation in a project's manifest and agent declarations.
 
-    Never raises: the caller decides how to report. An unusable manifest is
-    reported alone, since the declarations it points at cannot be identified
-    until it parses.
+    Never raises: the caller decides how to report. The manifest and the
+    declarations are checked independently so one broken file does not hide
+    the others; only the last step, binding each agent to the declaration that
+    names it, needs a manifest that parsed.
     """
+    manifest = None
+    violations = []
     try:
         manifest = load_manifest(manifest_path)
     except SchemaError as error:
-        return error.violations
+        violations.extend(error.violations)
 
-    violations = []
     declared = set()
     for path in sorted(glob.glob(os.path.join(declarations_dir, "*.yaml"))):
         name = _declared_name(path)
@@ -116,6 +114,9 @@ def validate_project(manifest_path, declarations_dir):
             violations.extend(error.violations)
             continue
         declared.add(declaration.name)
+
+    if manifest is None:
+        return tuple(violations)
 
     for index, service in enumerate(manifest.agents):
         if service.type != "agent" or service.name in declared:

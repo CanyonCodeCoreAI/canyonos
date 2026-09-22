@@ -389,7 +389,7 @@ class DatabaseBlockTests(_ManifestCase):
             manifest = load_manifest(path)
 
         self.assertIsNone(manifest.database)
-        self.assertNotIn("database", manifest.to_dict())
+        self.assertEqual(len(manifest.agents), 1)
 
     def test_a_database_block_without_a_url_is_rejected(self):
         self.assertEqual(
@@ -399,7 +399,14 @@ class DatabaseBlockTests(_ManifestCase):
 
 
 class EnvExpansionTests(_ManifestCase):
-    def test_a_port_written_as_an_env_ref_is_checked_after_expansion(self):
+    """`${VAR}` is supported in string fields only.
+
+    Expansion is textual on both sides, so a reference in a numeric field
+    reaches the Global Controller as a string -- `replicas` of "3" starts one
+    replica, not three. Rejecting it here is the only way that stays true.
+    """
+
+    def test_an_env_ref_in_a_numeric_field_is_rejected_even_when_it_is_set(self):
         config = {
             "agents": [
                 {
@@ -412,10 +419,45 @@ class EnvExpansionTests(_ManifestCase):
         }
 
         with patch.dict(os.environ, {"CANYONOS_TEST_API_PORT": "9000"}):
+            violation = self.one(config)
+
+        self.assertEqual(violation.field, "agents[0].api_port")
+        self.assertEqual(
+            violation.message,
+            "expected an integer >= 1, got '${CANYONOS_TEST_API_PORT}' "
+            "(environment references are only supported in string fields)",
+        )
+
+    def test_an_env_ref_in_a_boolean_field_is_rejected(self):
+        config = {"agents": [_agent(stateful="${CANYONOS_TEST_STATEFUL}")]}
+
+        with patch.dict(os.environ, {"CANYONOS_TEST_STATEFUL": "true"}):
+            violation = self.one(config)
+
+        self.assertEqual(violation.field, "agents[0].stateful")
+        self.assertIn("only supported in string fields", violation.message)
+
+    def test_a_string_field_takes_the_variable_s_text(self):
+        config = {
+            "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+            "ec2": {**_EC2_BLOCK, "region": "${CANYONOS_TEST_REGION}"},
+        }
+
+        with patch.dict(os.environ, {"CANYONOS_TEST_REGION": "eu-west-2"}):
             manifest = self.load(config)
 
-        (workflow,) = manifest.agents
-        self.assertEqual(workflow.api_port, 9000)
+        self.assertEqual(manifest.ec2.region, "eu-west-2")
+
+    def test_a_string_list_takes_the_variable_s_text(self):
+        config = {
+            "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+            "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
+        }
+
+        with patch.dict(os.environ, {"CANYONOS_TEST_SG": "sg-abc"}):
+            manifest = self.load(config)
+
+        self.assertEqual(manifest.ec2.security_group_ids, ("sg-abc",))
 
     def test_an_unset_ref_is_left_literal_just_as_the_controller_leaves_it(self):
         config = {
@@ -429,7 +471,7 @@ class EnvExpansionTests(_ManifestCase):
 
         self.assertEqual(manifest.ec2.region, "${CANYONOS_TEST_REGION}")
 
-    def test_an_unset_ref_in_a_numeric_field_is_reported(self):
+    def test_an_unset_ref_in_a_numeric_field_is_reported_the_same_way(self):
         config = {"agents": [_agent(replicas="${CANYONOS_TEST_REPLICAS}")]}
 
         environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_REPLICAS"}
@@ -437,7 +479,11 @@ class EnvExpansionTests(_ManifestCase):
             violation = self.one(config)
 
         self.assertEqual(violation.field, "agents[0].replicas")
-        self.assertIn("'${CANYONOS_TEST_REPLICAS}'", violation.message)
+        self.assertEqual(
+            violation.message,
+            "expected an integer >= 1, got '${CANYONOS_TEST_REPLICAS}' "
+            "(environment references are only supported in string fields)",
+        )
 
 
 class RenderingTests(_ManifestCase):
@@ -461,32 +507,6 @@ class RenderingTests(_ManifestCase):
         self.assertEqual(
             fields, ["agents[0].replicas", "agents[1].entrypoint", "poll_interval"]
         )
-
-
-class ToDictTests(unittest.TestCase):
-    """to_dict() has to feed the same dict readers the controller uses today."""
-
-    def test_every_example_round_trips_into_the_controller_shape(self):
-        for path in sorted(
-            glob.glob(str(REPO_ROOT / "examples/*/config/global_controller.yaml"))
-        ):
-            with self.subTest(manifest=os.path.relpath(path, REPO_ROOT)):
-                manifest = load_manifest(path)
-                spec = manifest.to_dict()
-
-                with open(path) as f:
-                    raw = yaml.safe_load(f)
-
-                self.assertTrue(set(raw).issubset(set(spec)), set(raw) - set(spec))
-                self.assertEqual(
-                    [entry["name"] for entry in spec["agents"]],
-                    [entry["name"] for entry in raw["agents"]],
-                )
-                for entry, service in zip(spec["agents"], manifest.agents):
-                    self.assertEqual(entry["type"], service.type)
-                    self.assertEqual(entry["provider"], service.provider)
-                    self.assertEqual(entry["replicas"], service.replicas)
-                    self.assertEqual(entry["resources"], service.resources.to_dict())
 
 
 if __name__ == "__main__":

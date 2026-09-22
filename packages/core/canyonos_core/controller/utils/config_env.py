@@ -1,8 +1,11 @@
 """The `.env` import and `${VAR}` expansion the config goes through before it is read.
 
 Shared so the manifest schema checks exactly the values the Global Controller
-will act on: a port written `${API_PORT}` is an integer by the time either of
-them looks at it.
+will act on. Expansion is textual: `${API_PORT}` becomes the variable's text
+and stays a string, whatever it holds. That is why the schema supports
+references in string-typed fields only -- a reference in a numeric one would
+pass here and be misread at runtime, where `replicas` of `"3"` starts a single
+replica rather than three.
 """
 
 import os

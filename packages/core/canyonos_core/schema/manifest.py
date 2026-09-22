@@ -5,21 +5,29 @@ number instead of being silently ignored, and a wrong type fails here rather
 than deep inside the instance manager once containers are already up.
 """
 
-import difflib
 import posixpath
-import re
 from dataclasses import dataclass, field
 from typing import ClassVar
 
 import yaml
 
-from canyonos_core.controller.utils.config_env import (
-    ENV_REF,
-    expand_env_value,
-    load_root_dotenv,
+from canyonos_core.controller.utils.config_env import load_root_dotenv
+from canyonos_core.schema._checks import (
+    _boolean,
+    _check_keys,
+    _Collector,
+    _describe,
+    _field,
+    _integer,
+    _mapping,
+    _resolve,
+    _string,
+    _string_list,
+    _string_mapping,
+    _unknown_key_message,
 )
 from canyonos_core.schema.errors import SchemaError, SchemaViolation
-from canyonos_core.schema.yaml_lines import line_of, load_yaml_lines
+from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
 
 SERVICE_TYPES = ("agent", "workflow", "database")
 PROVIDERS = ("local", "EC2")
@@ -92,11 +100,6 @@ _EC2_KEYS = frozenset(
 _EC2_REQUIRED_KEYS = ("region", "ami_id", "subnet_id", "security_group_ids", "ssh_user")
 _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
 
-# A value written as nothing but one `${VAR}` gets the type it would have had if
-# the variable's text had been typed into the YAML directly, so `api_port:
-# ${API_PORT}` with API_PORT=9000 is the integer 9000 and not the string "9000".
-_WHOLE_ENV_REF = re.compile(f"^{ENV_REF.pattern}$")
-
 
 # ------------------------------------------------------------------ #
 #  Parsed shapes                                                       #
@@ -109,12 +112,6 @@ class Resources:
     memory: int = 512
     gpu: int | None = None
 
-    def to_dict(self):
-        spec = {"cpu": self.cpu, "memory": self.memory}
-        if self.gpu is not None:
-            spec["gpu"] = self.gpu
-        return spec
-
 
 @dataclass(frozen=True)
 class RedisSpec:
@@ -122,16 +119,10 @@ class RedisSpec:
     port: int = 6379
     db: int = 0
 
-    def to_dict(self):
-        return {"host": self.host, "port": self.port, "db": self.db}
-
 
 @dataclass(frozen=True)
 class DatabaseSpec:
     url: str
-
-    def to_dict(self):
-        return {"url": self.url}
 
 
 @dataclass(frozen=True)
@@ -143,25 +134,10 @@ class OtelDestination:
     insecure: bool = False
     timeout: float | None = None
 
-    def to_dict(self):
-        spec = {
-            "name": self.name,
-            "protocol": self.protocol,
-            "endpoint": self.endpoint,
-            "headers": dict(self.headers),
-            "insecure": self.insecure,
-        }
-        if self.timeout is not None:
-            spec["timeout"] = self.timeout
-        return spec
-
 
 @dataclass(frozen=True)
 class OtelSpec:
     destinations: tuple = ()
-
-    def to_dict(self):
-        return {"destinations": [d.to_dict() for d in self.destinations]}
 
 
 @dataclass(frozen=True)
@@ -174,18 +150,6 @@ class Ec2Spec:
     ssh_private_key_path: str = "~/.ssh/ventis_ec2"
     public_ip_timeout: int = 120
     controller_health_timeout: int = 180
-
-    def to_dict(self):
-        return {
-            "region": self.region,
-            "ami_id": self.ami_id,
-            "subnet_id": self.subnet_id,
-            "security_group_ids": list(self.security_group_ids),
-            "ssh_user": self.ssh_user,
-            "ssh_private_key_path": self.ssh_private_key_path,
-            "public_ip_timeout": self.public_ip_timeout,
-            "controller_health_timeout": self.controller_health_timeout,
-        }
 
 
 @dataclass(frozen=True)
@@ -207,24 +171,6 @@ class _Service:
 
     type: ClassVar[str] = "agent"
 
-    def _common_dict(self):
-        spec = {
-            "name": self.name,
-            "type": self.type,
-            "provider": self.provider,
-            "replicas": self.replicas,
-            "redis_port": self.redis_port,
-            "resources": self.resources.to_dict(),
-            "stateful": self.stateful,
-            "env": dict(self.env),
-            "instance_type": self.instance_type,
-            "host": self.host,
-            "port": self.port,
-            "host_port": self.host_port,
-            "user": self.user,
-        }
-        return {key: value for key, value in spec.items() if value is not None}
-
 
 @dataclass(frozen=True)
 class AgentService(_Service):
@@ -232,13 +178,6 @@ class AgentService(_Service):
     requirements: tuple = ()
 
     type: ClassVar[str] = "agent"
-
-    def to_dict(self):
-        return {
-            **self._common_dict(),
-            "entrypoint": self.entrypoint,
-            "requirements": list(self.requirements),
-        }
 
 
 @dataclass(frozen=True)
@@ -250,15 +189,6 @@ class WorkflowService(_Service):
 
     type: ClassVar[str] = "workflow"
 
-    def to_dict(self):
-        return {
-            **self._common_dict(),
-            "workflow_file": self.workflow_file,
-            "requirements": list(self.requirements),
-            "api_port": self.api_port,
-            "dashboard_port": self.dashboard_port,
-        }
-
 
 @dataclass(frozen=True)
 class DatabaseService(_Service):
@@ -267,12 +197,6 @@ class DatabaseService(_Service):
     volume_path: str | None = None
 
     type: ClassVar[str] = "database"
-
-    def to_dict(self):
-        spec = {**self._common_dict(), "image": self.image, "db_port": self.db_port}
-        if self.volume_path is not None:
-            spec["volume_path"] = self.volume_path
-        return spec
 
 
 @dataclass(frozen=True)
@@ -288,222 +212,10 @@ class Manifest:
     ec2: Ec2Spec | None = None
     path: str = ""
 
-    def to_dict(self):
-        """The manifest as the controller's dict readers expect it, defaults filled in."""
-        spec = {
-            "agents": [service.to_dict() for service in self.agents],
-            "poll_interval": self.poll_interval,
-            "cleanup_interval": self.cleanup_interval,
-            "redis": self.redis.to_dict(),
-        }
-        if self.project_id is not None:
-            spec["project_id"] = self.project_id
-        if self.database is not None:
-            spec["database"] = self.database.to_dict()
-        if self.env_file is not None:
-            spec["env_file"] = self.env_file
-        if self.otel is not None:
-            spec["otel"] = self.otel.to_dict()
-        if self.ec2 is not None:
-            spec["ec2"] = self.ec2.to_dict()
-        return spec
-
 
 # ------------------------------------------------------------------ #
 #  Reading and checking                                                #
 # ------------------------------------------------------------------ #
-
-
-def _describe(value):
-    """Quote a value and name its kind, so the message shows what was written."""
-    if value is None:
-        return "nothing"
-    if isinstance(value, bool):
-        return f"the boolean {str(value).lower()}"
-    if isinstance(value, (int, float)):
-        return f"the number {value!r}"
-    if isinstance(value, str):
-        return f"the string {value!r}"
-    if isinstance(value, list):
-        return f"the list {value!r}"
-    if isinstance(value, dict):
-        return "a mapping"
-    return f"{value!r}"
-
-
-def _resolve(raw):
-    """Expand `${VAR}` refs in a scalar, re-typing a value that is only a ref."""
-    if not isinstance(raw, str):
-        return raw
-    expanded = expand_env_value(raw)
-    if not ENV_REF.search(raw) or ENV_REF.search(expanded):
-        # Nothing to expand, or the variable is unset -- the controller leaves
-        # the literal `${VAR}` in place, so the schema checks that same text.
-        return expanded
-    if _WHOLE_ENV_REF.match(raw):
-        return yaml.safe_load(expanded)
-    return expanded
-
-
-class _Collector:
-    """Accumulates every violation in one file instead of stopping at the first."""
-
-    def __init__(self, path):
-        self.path = path
-        self.violations = []
-
-    def add(self, node, key, field_name, message):
-        self.violations.append(
-            SchemaViolation(self.path, line_of(node, key), field_name, message)
-        )
-
-
-def _unknown_key_message(key, allowed):
-    message = f"unknown key {key!r}"
-    close = difflib.get_close_matches(str(key), sorted(allowed), n=1)
-    if close:
-        message += f" (did you mean {close[0]!r}?)"
-    return message
-
-
-def _check_keys(collector, node, prefix, allowed):
-    """Report every key in `node` the schema does not declare."""
-    for key in node:
-        if key in allowed:
-            continue
-        collector.add(
-            node, key, _field(prefix, key), _unknown_key_message(key, allowed)
-        )
-
-
-def _field(prefix, key):
-    return f"{prefix}.{key}" if prefix else str(key)
-
-
-def _mapping(collector, node, key, prefix, allowed):
-    """Return the mapping at `key`, or None when it is absent or not a mapping."""
-    if key not in node or node[key] is None:
-        return None
-    value = node[key]
-    if not isinstance(value, dict):
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected a mapping, got {_describe(value)}",
-        )
-        return None
-    _check_keys(collector, value, _field(prefix, key), allowed)
-    return value
-
-
-def _integer(collector, node, key, prefix, default, minimum=None):
-    if key not in node:
-        return default
-    value = _resolve(node[key])
-    bound = f" >= {minimum}" if minimum is not None else ""
-    if isinstance(value, bool) or not isinstance(value, int):
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected an integer{bound}, got {_describe(value)}",
-        )
-        return default
-    if minimum is not None and value < minimum:
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected an integer{bound}, got {_describe(value)}",
-        )
-        return default
-    return value
-
-
-def _string(collector, node, key, prefix, default=None, required=False):
-    if key not in node or node[key] is None:
-        if required:
-            collector.add(node, key, _field(prefix, key), "is required but missing")
-        return default
-    value = _resolve(node[key])
-    if not isinstance(value, str) or not value.strip():
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected a non-empty string, got {_describe(value)}",
-        )
-        return default
-    return value
-
-
-def _boolean(collector, node, key, prefix, default):
-    if key not in node:
-        return default
-    value = _resolve(node[key])
-    if not isinstance(value, bool):
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected a boolean, got {_describe(value)}",
-        )
-        return default
-    return value
-
-
-def _string_list(collector, node, key, prefix, required=False):
-    if key not in node or node[key] is None:
-        if required:
-            collector.add(node, key, _field(prefix, key), "is required but missing")
-        return ()
-    value = node[key]
-    if not isinstance(value, list):
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected a list of strings, got {_describe(value)}",
-        )
-        return ()
-    items = [_resolve(item) for item in value]
-    if not all(isinstance(item, str) and item.strip() for item in items):
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected a list of strings, got {_describe(value)}",
-        )
-        return ()
-    return tuple(items)
-
-
-def _string_mapping(collector, node, key, prefix):
-    if key not in node or node[key] is None:
-        return {}
-    value = node[key]
-    if not isinstance(value, dict):
-        collector.add(
-            node,
-            key,
-            _field(prefix, key),
-            f"expected a mapping, got {_describe(value)}",
-        )
-        return {}
-    resolved = {}
-    for name, item in value.items():
-        item = _resolve(item)
-        if not isinstance(name, str) or not isinstance(item, (str, int, float)):
-            collector.add(
-                node,
-                key,
-                _field(prefix, key),
-                f"expected a mapping of strings to strings, got {_describe(value)}",
-            )
-            return {}
-        resolved[name] = str(item)
-    return resolved
 
 
 def _project_relative_py(collector, node, key, prefix, required):
@@ -830,8 +542,9 @@ def load_manifest(path):
             [SchemaViolation(path, 0, "", f"cannot be read: {exc}")]
         ) from exc
     except yaml.YAMLError as exc:
+        line, detail = parse_failure(exc)
         raise SchemaError(
-            [SchemaViolation(path, 0, "", f"is not valid YAML: {exc}")]
+            [SchemaViolation(path, line, "", f"is not valid YAML: {detail}")]
         ) from exc
 
     if document is None:

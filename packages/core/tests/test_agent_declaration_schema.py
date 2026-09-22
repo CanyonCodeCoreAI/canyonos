@@ -196,13 +196,37 @@ class ValidateProjectTests(unittest.TestCase):
         self.assertEqual(violation.field, "agents[0].name")
         self.assertIn("agent.name: ExampleAgent", violation.message)
 
-    def test_a_broken_manifest_is_reported_alone(self):
+    def test_a_broken_manifest_does_not_hide_a_broken_declaration(self):
+        # Both files are checked independently, so one run finds both problems
+        # instead of costing the user a second deploy to see the next one.
         with tempfile.TemporaryDirectory() as tmpdir:
-            manifest, declarations = self._project(tmpdir, declaration_name="Typo")
+            manifest, declarations = self._project(tmpdir)
             Path(manifest).write_text(yaml.safe_dump({"agents": [{"name": "X"}]}))
+            Path(declarations, "example_agent.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "agent": {
+                            "name": "ExampleAgent",
+                            "functions": [
+                                {
+                                    "name": "hello",
+                                    "arguments": [{"name": "v", "type": "MyModel"}],
+                                }
+                            ],
+                        }
+                    }
+                )
+            )
             violations = validate_project(manifest, declarations)
 
-        self.assertEqual([v.field for v in violations], ["agents[0].entrypoint"])
+        self.assertEqual(
+            [v.field for v in violations],
+            ["agents[0].entrypoint", "agent.functions[0].arguments[0].type"],
+        )
+        self.assertEqual(
+            {os.path.basename(v.path) for v in violations},
+            {"global_controller.yaml", "example_agent.yaml"},
+        )
 
     def test_a_declaration_violation_is_reported_with_the_manifest_intact(self):
         with tempfile.TemporaryDirectory() as tmpdir:

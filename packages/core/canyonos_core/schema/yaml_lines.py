@@ -52,3 +52,13 @@ def load_yaml_lines(path):
     """Parse `path` into line-aware mappings."""
     with open(path, "r", encoding="utf-8") as f:
         return yaml.load(f, Loader=LineLoader)
+
+
+def parse_failure(exc):
+    """A YAMLError as `(line, message)`, collapsed onto one line.
+
+    PyYAML writes its errors over four lines; a violation has to stay on one
+    for the host CLI to report it whole.
+    """
+    mark = getattr(exc, "problem_mark", None)
+    return (mark.line + 1 if mark else 0), " ".join(str(exc).split())
