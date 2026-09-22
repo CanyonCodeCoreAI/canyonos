@@ -18,6 +18,8 @@ import yaml
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import Version
 
+from canyonos_core.schema import DependencyPinConflict, SchemaViolation
+
 # Packages every agent container needs regardless of its specific business logic.
 #
 # protobuf and grpcio-tools move together: grpcio-tools carries the only upper
@@ -546,11 +548,17 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
-def _platform_overrides(requirements):
+def _platform_overrides(requirements, *, service_name=None, manifest_path=None):
     """Take the higher of each platform pin and what the app asked for.
 
     uv replaces a requirement rather than intersecting it, so the comparison
     cannot be left to the resolver.
+
+    Raises:
+        DependencyPinConflict: the app pinned a package *below* the version the
+            image's own code is built against. Forcing the platform pin over it
+            produced an image that installed cleanly and then failed at import,
+            so the build stops here instead.
     """
     declared = {}
     for requirement in requirements:
@@ -561,6 +569,7 @@ def _platform_overrides(requirements):
         declared[parsed.name.lower()] = parsed
 
     overrides = []
+    conflicts = []
     for pin in PLATFORM_PINS:
         name, pinned = pin.split("==")
         asked = declared.get(name)
@@ -577,7 +586,18 @@ def _platform_overrides(requirements):
             print(f"  Note: '{wanted}' outranks the platform pin {pin}")
         else:
             overrides.append(pin)
-            print(f"  Warning: the platform pin {pin} breaks '{wanted}'")
+            conflicts.append(
+                SchemaViolation(
+                    manifest_path or "",
+                    0,
+                    f"agents[{service_name}].requirements",
+                    f"'{wanted}' conflicts with the platform pin {pin}, which the "
+                    f"agent image is built against: relax the bound or pin "
+                    f"{name} at or above {pinned}",
+                )
+            )
+    if conflicts:
+        raise DependencyPinConflict(conflicts)
     return overrides
 
 
@@ -602,6 +622,7 @@ def generate_docker(
     project_dir=None,
     stub_entrypoints=None,
     requirements=None,
+    manifest_path=None,
 ):
     """
     Generate a minimal Docker build context for an agent.
@@ -636,7 +657,9 @@ def generate_docker(
 
     # ---- requirements.txt ------------------------------------------------
     # Base packages the shared framework files need, plus this agent's own.
-    overrides = _platform_overrides(requirements or [])
+    overrides = _platform_overrides(
+        requirements or [], service_name=agent_name, manifest_path=manifest_path
+    )
     requirements_txt = (
         "\n".join(BASE_AGENT_REQUIREMENTS + list(requirements or [])) + "\n"
     )
@@ -752,6 +775,8 @@ def generate_workflow_docker(
     project_dir=None,
     stub_entrypoints=None,
     requirements=None,
+    service_name=None,
+    manifest_path=None,
 ):
     """
     Generate a Docker build context for a workflow.
@@ -782,7 +807,11 @@ def generate_workflow_docker(
 
     # ---- requirements.txt ------------------------------------------------
     # Base packages the shared framework files need, plus this workflow's own.
-    overrides = _platform_overrides(requirements or [])
+    overrides = _platform_overrides(
+        requirements or [],
+        service_name=service_name or "Workflow",
+        manifest_path=manifest_path,
+    )
     requirements_txt = (
         "\n".join(BASE_WORKFLOW_REQUIREMENTS + list(requirements or [])) + "\n"
     )

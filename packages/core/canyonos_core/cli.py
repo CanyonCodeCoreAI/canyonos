@@ -17,7 +17,11 @@ import subprocess
 import sys
 
 from canyonos_core.controller.utils.env_file import resolve_env_file
-from canyonos_core.schema import render_violation, validate_project
+from canyonos_core.schema import (
+    DependencyPinConflict,
+    render_violation,
+    validate_project,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("canyonos_core")
@@ -86,6 +90,36 @@ def validate_or_exit(config_path, declarations_dir):
 def _normalize_requirements(agent_cfg):
     """Return a service's `requirements` list; the schema already checked its shape."""
     return list(agent_cfg.get("requirements") or [])
+
+
+def _check_dependency_pins(agents, config_path):
+    """Fail the build when an app pin cannot share a version with a platform pin.
+
+    Every service is checked before the first one is built, so a project with
+    two bad pins is told about both instead of one per run.
+    """
+    from canyonos_core.stub_generator import _platform_overrides
+
+    violations = []
+    for agent_cfg in agents:
+        try:
+            _platform_overrides(
+                _normalize_requirements(agent_cfg),
+                service_name=agent_cfg.get("name"),
+                manifest_path=config_path,
+            )
+        except DependencyPinConflict as conflict:
+            violations.extend(conflict.violations)
+
+    if not violations:
+        return
+    for violation in violations:
+        logger.error("%s", render_violation(violation))
+    logger.error(
+        "Dependency pins rejected: %d conflict(s) found; nothing was built.",
+        len(violations),
+    )
+    sys.exit(1)
 
 
 def _docker_platform():
@@ -254,6 +288,7 @@ def _run_build(config_path):
     validate_or_exit(config_path, declarations_dir)
 
     agents = config.get("agents", [])
+    _check_dependency_pins(agents, config_path)
     package_dir = _get_package_dir()
 
     # -------------------------------------------------------------- #
@@ -389,6 +424,8 @@ def _run_build(config_path):
                 # Stubs are placed both flat and at their entrypoint-mirrored path,
                 # so both flat and nested import styles resolve to the stub.
                 stub_entrypoints=stub_entrypoints,
+                service_name=agent_name,
+                manifest_path=config_path,
             )
 
         else:
@@ -427,6 +464,7 @@ def _run_build(config_path):
                 # Same reasoning as the workflow call above: stubs are placed both
                 # flat and at their entrypoint-mirrored path.
                 stub_entrypoints=stub_entrypoints,
+                manifest_path=config_path,
             )
 
         bake_targets.append(

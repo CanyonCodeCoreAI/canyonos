@@ -487,6 +487,50 @@ class CliBuildTests(unittest.TestCase):
         self.assertIn("agents[0].requirements", log.output[0])
         self.assertIn("expected a list of strings", log.output[0])
 
+    def test_build_rejects_a_dependency_pin_the_platform_cannot_meet(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            (project_dir / "config").mkdir()
+            (project_dir / "agents").mkdir()
+            (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
+            (project_dir / "agents" / "other_agent.py").write_text("print('ok')\n")
+            example_yaml = project_dir / "agents" / "example_agent.yaml"
+            example_yaml.write_text("agent:\n  name: ExampleAgent\n")
+            other_yaml = project_dir / "agents" / "other_agent.yaml"
+            other_yaml.write_text("agent:\n  name: OtherAgent\n")
+            config_path = project_dir / "config" / "global_controller.yaml"
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "agents": [
+                            {
+                                "name": "ExampleAgent",
+                                "entrypoint": "agents/example_agent.py",
+                                "requirements": ["protobuf<5"],
+                            },
+                            {
+                                "name": "OtherAgent",
+                                "entrypoint": "agents/other_agent.py",
+                                "requirements": ["grpcio<1.0"],
+                            },
+                        ]
+                    }
+                )
+            )
+
+            with self.assertLogs("canyonos_core", level="ERROR") as log:
+                with self.assertRaises(SystemExit):
+                    self._run_build(
+                        project_dir,
+                        [str(example_yaml), str(other_yaml)],
+                        buildx_available=True,
+                    )
+
+        # Both services are reported, so two bad pins take one run to find.
+        self.assertIn("agents[ExampleAgent].requirements", log.output[0])
+        self.assertIn("protobuf<5", log.output[0])
+        self.assertIn("agents[OtherAgent].requirements", log.output[1])
+
 
 class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
     """A rejected config must cost nothing: no stub, no protoc, no Docker."""

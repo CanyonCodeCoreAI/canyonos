@@ -12,10 +12,12 @@ from packaging.version import Version
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core import stub_generator
+from canyonos_core.schema import DependencyPinConflict, render_violation
 from canyonos_core.stub_generator import (
     BASE_AGENT_REQUIREMENTS,
     BASE_WORKFLOW_REQUIREMENTS,
     PLATFORM_PINS,
+    _platform_overrides,
     _stub_destination,
     _sweep_project_files,
     generate_docker,
@@ -551,12 +553,35 @@ class PlatformPinTests(unittest.TestCase):
             notes, ["Note: 'protobuf>=7' outranks the platform pin protobuf==6.33.5"]
         )
 
-    def test_an_app_asking_for_older_loses_and_is_told(self):
-        overrides, notes = self._context(["protobuf<5"])
-        self.assertIn("protobuf==6.33.5", overrides)
-        self.assertEqual(
-            notes, ["Warning: the platform pin protobuf==6.33.5 breaks 'protobuf<5'"]
-        )
+    def test_an_app_asking_for_older_fails_the_build(self):
+        # Forcing the platform pin over the app's bound used to produce an image
+        # that installed cleanly and then failed at import, so it is fatal now.
+        with self.assertRaises(DependencyPinConflict) as raised:
+            self._context(["protobuf<5"])
+
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.field, "agents[ExampleAgent].requirements")
+        self.assertIn("protobuf<5", violation.message)
+        self.assertIn("protobuf==6.33.5", violation.message)
+        self.assertIn("at or above 6.33.5", violation.message)
+
+    def test_the_conflict_names_the_manifest_it_came_from(self):
+        with self.assertRaises(DependencyPinConflict) as raised:
+            _platform_overrides(
+                ["boto3<1"],
+                service_name="PriceAgent",
+                manifest_path="config/global_controller.yaml",
+            )
+
+        (violation,) = raised.exception.violations
+        rendered = render_violation(violation)
+        self.assertTrue(rendered.startswith("config/global_controller.yaml: "))
+        self.assertIn("agents[PriceAgent].requirements", rendered)
+        self.assertNotIn("\n", rendered)
+
+    def test_the_workflow_context_fails_on_a_conflict_too(self):
+        with self.assertRaises(DependencyPinConflict):
+            self._context(["protobuf<5"], workflow=True)
 
     def test_the_workflow_context_decides_the_same_way(self):
         overrides, notes = self._context(["protobuf>=7"], workflow=True)
