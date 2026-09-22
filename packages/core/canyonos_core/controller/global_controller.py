@@ -833,28 +833,27 @@ class GlobalController(object):
                 return False
 
         instances = self.instance_manager.list_instances()
-        if instances:
-            with ThreadPoolExecutor(max_workers=len(instances)) as executor:
-                all_sent = all(executor.map(_send, instances))
-        else:
-            # Nothing to broadcast to -- don't drop the batch as if it were handled.
-            all_sent = False
-
-        if not all_sent:
+        if not instances:
             logger.warning(
-                "Cleanup broadcast failed for at least one instance; leaving %d "
-                "request(s) queued for retry on the next cycle.",
+                "No instances to broadcast cleanup to; leaving %d request(s) queued.",
                 len(all_completed),
             )
             return
+
+        with ThreadPoolExecutor(max_workers=len(instances)) as executor:
+            if not all(executor.map(_send, instances)):
+                logger.warning(
+                    "Cleanup broadcast failed for at least one instance; leaving %d "
+                    "request(s) queued for retry on the next cycle.",
+                    len(all_completed),
+                )
+                return
 
         logger.info(
             "Triggered cleanup for %d completed request(s) across %d node(s)",
             len(all_completed),
             len(completed_by_client),
         )
-        # Drain each node's own set from the same client it was read from,
-        # now that every instance has confirmed receipt of the batch.
         for client, completed in completed_by_client.items():
             client.srem("request:completed", *completed)
 
