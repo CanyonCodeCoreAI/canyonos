@@ -44,6 +44,43 @@ BASE_AGENT_REQUIREMENTS = [
 # Workflow will always require these
 BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["sqlalchemy", "psycopg[binary]"]
 
+# The interpreter every generated image is built on. The Dockerfile templates
+# below interpolate it, so a bump here cannot leave the templates behind.
+IMAGE_PYTHON = "3.11"
+
+# The shared runtime copied flat into the context root, as destination module
+# name -> its path inside this package. The copy lists below are built from
+# these, so a module the image ships is a module `canyonos validate` knows can
+# be collided with.
+_AGENT_FLAT_SOURCES = {
+    "future.py": ("controller", "future.py"),
+    "canyonos_context.py": ("controller", "canyonos_context.py"),
+    "local_controller.py": ("controller", "local_controller.py"),
+    "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),
+    "redis_client.py": ("controller", "utils", "redis_client.py"),
+    "grpc_options.py": ("controller", "utils", "grpc_options.py"),
+    "gpu_metrics.py": ("controller", "utils", "gpu_metrics.py"),
+}
+
+# A workflow image serves HTTP and logs sessions, so it carries two more.
+_WORKFLOW_FLAT_SOURCES = {
+    **_AGENT_FLAT_SOURCES,
+    "deploy.py": ("controller", "deploy.py"),
+    "session_logging.py": ("controller", "utils", "session_logging.py"),
+}
+
+AGENT_FLAT_MODULES = frozenset(_AGENT_FLAT_SOURCES)
+WORKFLOW_FLAT_MODULES = frozenset(_WORKFLOW_FLAT_SOURCES)
+
+
+def _flat_runtime_files(script_dir, sources):
+    """(source, destination) for each runtime module copied to the context root."""
+    return [
+        (os.path.join(script_dir, *parts), destination)
+        for destination, parts in sources.items()
+    ]
+
+
 # Packages the image's own code is built against, so an app cannot be left to
 # pick them alone.
 _FORCED_FROM_BASE = ("protobuf", "grpcio", "grpcio-tools", "requests", "boto3")
@@ -310,11 +347,13 @@ _SKIPPED_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
 
 # The generator writes these into the context itself, requirements.txt before
 # the copy runs -- a project file of the same name at the root would win.
-_RESERVED_CONTEXT_NAMES = {
-    "Dockerfile",
-    "requirements.txt",
-    "workflow_launcher.py",
-}
+RESERVED_CONTEXT_NAMES = frozenset(
+    {
+        "Dockerfile",
+        "requirements.txt",
+        "workflow_launcher.py",
+    }
+)
 
 _SKIPPED_SUFFIXES = (".pyc", ".pyo", ".pyd")
 
@@ -448,7 +487,7 @@ def _sweep_project_files(project_dir, exclude_dir=None):
             if _looks_like_private_key(abs_src, fname):
                 private_keys.append(rel_dst)
                 continue
-            if at_root and fname in _RESERVED_CONTEXT_NAMES:
+            if at_root and fname in RESERVED_CONTEXT_NAMES:
                 reserved.append(rel_dst)
                 continue
             swept.append((abs_src, rel_dst))
@@ -676,34 +715,7 @@ def generate_docker(
         files_to_copy += _sweep_project_files(project_dir, exclude_dir=output_dir)
 
     # Copy general agent files
-    files_to_copy += [
-        # (source_path, destination_filename)
-        (os.path.join(script_dir, "controller", "future.py"), "future.py"),
-        (
-            os.path.join(script_dir, "controller", "canyonos_context.py"),
-            "canyonos_context.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller.py"),
-            "local_controller.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller_frontend.py"),
-            "local_controller_frontend.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "redis_client.py"),
-            "redis_client.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "grpc_options.py"),
-            "grpc_options.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
-            "gpu_metrics.py",
-        ),
-    ]
+    files_to_copy += _flat_runtime_files(script_dir, _AGENT_FLAT_SOURCES)
 
     # Copy provided agent stubs both flat (for `from price_agent import ...` style
     # peer imports) and at their entrypoint-mirrored path (overwriting the swept
@@ -746,7 +758,7 @@ def generate_docker(
     # ---- Dockerfile ------------------------------------------------------
     agent_basename = os.path.basename(agent_file)
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
@@ -824,34 +836,7 @@ def generate_workflow_docker(
         _sweep_project_files(project_dir, exclude_dir=output_dir) if project_dir else []
     )
 
-    files_to_copy += [
-        (os.path.join(script_dir, "controller", "future.py"), "future.py"),
-        (
-            os.path.join(script_dir, "controller", "canyonos_context.py"),
-            "canyonos_context.py",
-        ),
-        (os.path.join(script_dir, "controller", "deploy.py"), "deploy.py"),
-        (
-            os.path.join(script_dir, "controller", "local_controller.py"),
-            "local_controller.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller_frontend.py"),
-            "local_controller_frontend.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "redis_client.py"),
-            "redis_client.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "grpc_options.py"),
-            "grpc_options.py",
-        ),
-        *[
-            (os.path.join(script_dir, "controller", "utils", name), name)
-            for name in ("gpu_metrics.py", "session_logging.py")
-        ],
-    ]
+    files_to_copy += _flat_runtime_files(script_dir, _WORKFLOW_FLAT_SOURCES)
 
     # Copy stub files both flat (for `from price_agent import ...` style imports
     # in the workflow) and at their entrypoint-mirrored path (overwriting the
@@ -927,7 +912,7 @@ except Exception:
 
     # ---- Dockerfile ------------------------------------------------------
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
