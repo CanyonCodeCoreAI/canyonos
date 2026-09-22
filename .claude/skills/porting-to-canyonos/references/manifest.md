@@ -103,8 +103,8 @@ Use the interaction implemented by `canyonos config` before writing
    EC2 fields, unconstrained replicas, resources, ports, secret-file location,
    and access restrictions. Show each current/default value, apply answers, and
    show the result.
-4. Write the reviewed candidate. Defer gap validation until runtime code and
-   configuration are both complete.
+4. Write the reviewed candidate. Defer `canyonos validate` until runtime code
+   and configuration are both complete.
 
 Prefer running `canyonos config` when an interactive terminal is available;
 otherwise reproduce View/Change in conversation. Do not ask for derived values

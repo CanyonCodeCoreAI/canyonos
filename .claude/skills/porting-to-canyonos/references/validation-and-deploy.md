@@ -31,15 +31,13 @@ From the application root, run:
 canyonos validate
 ```
 
-Fix every finding and rerun until the command exits 0. Then install what the
-port declares and import what the containers import:
+Every finding blocks and none of them is a warning to carry forward: fix each
+and rerun until the command exits 0. Then install what the port declares and
+import what the containers import:
 
 ```bash
 canyonos test --rebuild
 ```
-
-Do not hide warnings: list each in the handoff and state whether it blocks this
-source.
 
 Confirm with `git status` that nothing outside `.car` changed except the two
 files the port is allowed to write: `.gitignore`, which `prepare.py` adds the
@@ -53,17 +51,17 @@ not show up there.
 installs a distribution, or serves a request, so a clean report is the absence
 of the gaps it checks -- not a working deployment. It cannot see what pip
 resolved into each image, anything reached only at runtime, or whether the
-first request returns an answer. A ModuleNotFoundError at container start and
-an AttributeError on the first call both survive an exit-0 run.
+first request returns an answer. `canyonos test --rebuild` reaches those three,
+but only on this machine and only for the one prompt it sends.
 
-Report it as what it is. "Gap validation exits 0" is accurate; "validation
-passed" claims a deployment nobody ran.
+Report exactly that much: `canyonos validate` exited 0, and `canyonos test
+--rebuild` passed locally against one prompt. "Validation passed" claims a
+deployment nobody ran.
 
 Report:
 
 - that the `.car` port validated;
 - files created;
-- validator warnings;
 - unresolved runtime blockers;
 - intentionally omitted unreachable dependencies or source surfaces.
 

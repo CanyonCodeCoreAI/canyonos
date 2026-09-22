@@ -104,7 +104,7 @@ postconditions that `prepare.py` already guarantees.
 
 ### Source-integrity boundary
 
-The gap validator owns authored runtime contracts that CanyonOS tooling does
+`canyonos validate` owns authored runtime contracts that CanyonOS tooling does
 not strongly guarantee. The porter owns constraints static analysis cannot
 prove:
 
@@ -197,12 +197,9 @@ source-owned data and behavior.
 Do not treat successful construction as evidence that configuration loaded.
 Frameworks such as CrewAI may warn about a missing yaml and create an empty
 configuration, then fail only when the first agent or task is accessed. Inspect
-those decorators and file references statically during the survey.
-
-### Validation boundary
-
-The build phase of `canyonos deploy` owns packaging syntax and installation
-errors.
+those decorators and file references statically during the survey. The build
+phase of `canyonos deploy` owns packaging syntax and installation errors, so
+none of this belongs in a preparation-time check.
 
 ## Refresh an existing source copy
 
@@ -237,5 +234,6 @@ with a clean source copy while retaining `.car/config`. Use it only when every
 adapter and workflow edit in `.car/app` is intentionally disposable.
 
 After refresh, survey changed imports, dependencies, runtime assets, and service
-boundaries again. Run gap validation for affected authored contracts, but do not
-revalidate merge mechanics already guaranteed by the successful atomic refresh.
+boundaries again. Run `canyonos validate` for the affected authored contracts,
+but do not revalidate merge mechanics already guaranteed by the successful
+atomic refresh.

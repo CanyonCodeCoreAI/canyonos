@@ -59,7 +59,7 @@ Read these only when triggered:
   default for these, not opt-in.
 - [references/ec2.md](references/ec2.md) when any entry uses `provider: EC2`.
 
-## 4. Gap validation and stop
+## 4. Validate, test, and stop
 
 Read
 [references/validation-and-deploy.md](references/validation-and-deploy.md).

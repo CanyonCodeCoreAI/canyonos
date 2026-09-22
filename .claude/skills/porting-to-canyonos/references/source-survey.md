@@ -61,9 +61,9 @@ import that only resolves from a nested root, an asset the sweep drops, a
 credential name.
 
 An existing syntax error on the selected import graph is a source defect;
-obtain approval before changing even the copied version. The final gap validator
-checks authored runtime code and cross-file bindings after the port is
-complete.
+obtain approval before changing even the copied version. The final
+`canyonos validate` run checks authored runtime code and cross-file bindings
+after the port is complete.
 
 ## 5. Choose service boundaries
 
