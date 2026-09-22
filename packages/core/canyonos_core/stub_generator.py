@@ -878,6 +878,9 @@ def mark_ready_when_serving():
                 return
         except OSError:
             time.sleep(0.1)
+    # Never ready, never failed left the container in limbo: `deploy` waited out
+    # its whole timeout against a status nobody had written.
+    controller.mark_failed()
 
 
 controller = LocalController(port=50051, publish_ready=False)

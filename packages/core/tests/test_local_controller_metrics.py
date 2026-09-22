@@ -89,6 +89,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
         controller = SimpleNamespace(
             _executor=ThreadPoolExecutor(max_workers=1),
             _metrics_interval=5,
+            _status="healthy",
         )
         with patch(
             "canyonos_core.controller.local_controller.read_gpu_percent",
@@ -120,14 +121,17 @@ class LocalControllerMetricsTests(unittest.TestCase):
     def test_metrics_loop_writes_hash_and_refreshes_status(self):
         redis = _FakeRedis()
         stop_event = threading.Event()
+        # The loop used to republish a literal "healthy" on every beat, which
+        # overwrote a failed container's status within one interval.
         controller = SimpleNamespace(
             redis=redis,
             _metrics_key="controller:localhost:50051:metrics",
             _status_key="controller:localhost:50051:status",
             _metrics_stop_event=stop_event,
             _metrics_interval=5,
+            _status="failed",
             _collect_metrics=lambda: {
-                "status": "healthy",
+                "status": "failed",
                 "cpu_percent": "1.0",
                 "gpu_percent": "0.0",
                 "uptime_seconds": "10.0",
@@ -145,7 +149,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
         self.assertEqual(
             redis.hgetall("controller:localhost:50051:metrics")["cpu_percent"], "1.0"
         )
-        self.assertEqual(redis.get("controller:localhost:50051:status"), "healthy")
+        self.assertEqual(redis.get("controller:localhost:50051:status"), "failed")
 
     def test_execute_locally_writes_gpu_resource_to_future_hash(self):
         redis = _FakeRedis()

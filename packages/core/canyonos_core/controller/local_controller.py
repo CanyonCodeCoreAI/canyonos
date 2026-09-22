@@ -85,18 +85,22 @@ class LocalController(object):
         self.redis = RedisClient(host=redis_host, port=redis_port)
         self._status_key = f"controller:{self.agent_host}:{self.public_port}:status"
 
+        # What the heartbeat republishes. It starts as "starting" because the
+        # metrics loop below begins beating before the agent has loaded: a
+        # literal "healthy" there announced every container ready the moment it
+        # booted, and overwrote mark_failed() on the very next beat.
+        self._status = "starting"
+        self._publish_ready = publish_ready
+
         # Every LLM call in this container is routed through the proxy, so it must be
         # up before we report ready. The status key has no TTL: pin it to "failed" or
         # a stale "healthy" keeps GlobalController seeing a container that has died.
         try:
             self._proxy_process = self._start_llm_proxy(redis_host, redis_port)
         except Exception:
-            self.redis.set(self._status_key, "failed")
+            self.mark_failed()
             self.server.stop(0)
             raise
-
-        if publish_ready:
-            self.redis.set(self._status_key, "healthy")
 
         # Set once by InstanceManager when this replica was provisioned; read back
         # here so completed requests can be stamped with which replica ran them.
@@ -127,7 +131,7 @@ class LocalController(object):
         self._executor = ThreadPoolExecutor(max_workers=max_instances)
 
         logger.info(
-            "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
+            "Local controller initialized at %s (max_agent_instances=%d), status starting.",
             self._my_endpoint,
             max_instances,
         )
@@ -135,11 +139,60 @@ class LocalController(object):
         # Load the agent class dynamically
         self.agent = self._load_agent()
 
+        # Publish health only once that load is known. Announcing it earlier said
+        # "healthy" for a container whose agent then failed to import: the status
+        # never changed, GlobalController reported the controller ready, `deploy`
+        # printed "N agent(s) ready", and the port was only discovered broken at
+        # `test`, with the real error buried in the container log.
+        #
+        # publish_ready=False means a launcher owns readiness (the generated
+        # workflow launcher marks ready once its API port opens), so nothing is
+        # decided here.
+        if self._publish_ready:
+            if self._agent_declared() and self.agent is None:
+                self._die_unloadable()  # does not return
+            else:
+                self.mark_ready()
+
+    def _agent_declared(self):
+        """Whether this container was given an agent to load at all.
+
+        `_load_agent` returns None both for "nothing declared" -- a workflow
+        container, which is legitimately agentless -- and for a declared agent
+        that failed to import. Only the second is a failure.
+        """
+        return bool(self.agent_name and self.agent_file)
+
+    def _die_unloadable(self):
+        """Mark failed and exit: a declared agent that did not load is fatal.
+
+        Staying alive served every request with "No agent loaded" long after the
+        real cause (already logged above, with its traceback) had scrolled by.
+        """
+        self.mark_failed()
+        logger.critical(
+            "Agent %s declared but not loaded; this container cannot serve requests.",
+            self.agent_name,
+        )
+        self._metrics_stop_event.set()
+        try:
+            self.server.stop(0)
+        except Exception:
+            pass
+        if self._proxy_process is not None:
+            try:
+                self._proxy_process.kill()
+            except Exception:
+                pass
+        sys.exit(1)
+
     def mark_ready(self):
-        self.redis.set(self._status_key, "healthy")
+        self._status = "healthy"
+        self.redis.set(self._status_key, self._status)
 
     def mark_failed(self):
-        self.redis.set(self._status_key, "failed")
+        self._status = "failed"
+        self.redis.set(self._status_key, self._status)
 
     def _start_llm_proxy(self, redis_host, redis_port):
         """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
@@ -227,7 +280,7 @@ class LocalController(object):
         loop falls behind on.
         """
         return {
-            "status": "healthy",
+            "status": self._status,
             "cpu_percent": str(psutil.cpu_percent(interval=None)),
             "gpu_percent": str(read_gpu_percent()),
             "disk_percent": str(psutil.disk_usage("/").percent),
@@ -243,7 +296,7 @@ class LocalController(object):
             try:
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
-                self.redis.set(self._status_key, "healthy")
+                self.redis.set(self._status_key, self._status)
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             self._metrics_stop_event.wait(self._metrics_interval)
@@ -292,7 +345,10 @@ class LocalController(object):
             )
             return agent_instance
         except Exception as e:
-            logger.error(
+            # logger.exception, not logger.error: the first line still names the
+            # agent and the exception, and the traceback under it is what tells
+            # you which import actually failed.
+            logger.exception(
                 f"Failed to load agent {self.agent_name} from {agent_path}: {e}"
             )
             return None
