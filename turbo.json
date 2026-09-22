@@ -78,6 +78,12 @@
         "cli.py"
       ]
     },
+    "canyonos#test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.claude/skills/porting-to-canyonos/**"
+      ]
+    },
     "canyonos-python#test": {
       "command": [
         "uv",

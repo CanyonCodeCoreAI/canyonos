@@ -30,7 +30,8 @@ extend-exclude = ["*.md"]
 # Preserve the documented Ruff default baseline; broader rules need an
 # intentional adoption pass rather than becoming CI requirements on upgrade.
 select = ["E4", "E7", "E9", "F"]
-# The runtime and porting validator add generated modules to sys.path before import.
+# The controller modules and the tests that load them put generated grpc
+# stubs on sys.path before importing them.
 ignore = ["E402"]
 
 [tool.ty.environment]
