@@ -74,12 +74,13 @@ Do not hardcode an API key, an account-specific resource ID, or a model that can
 
 ## 4. Keep dependencies compatible with CanyonOS
 
-Application dependencies must be compatible with the CanyonOS base image. If an
-agent image needs additional packages, declare them in that agent's `requirements`
-section in `global_controller.yaml`. Declare Workflow dependencies on the Workflow
-entry in the same way.
+Each agent image installs only the CanyonOS base packages plus the `requirements`
+section of that agent's entry in `global_controller.yaml`. Declare Workflow
+dependencies on the Workflow entry in the same way. The application's own
+`requirements.txt`, `pyproject.toml`, or lockfile is not installed, so an entry's
+`requirements` must describe everything its runtime path needs.
 
-That image currently requires these shared package versions:
+The base image currently requires these shared package versions:
 
 ```text
 grpcio>=1.83.1
@@ -92,24 +93,41 @@ requests>=2.34.2
 These versions may change with a new CanyonOS image. Always use the target image's
 published dependency versions as the compatibility baseline.
 
+Each entry's `requirements` must satisfy the runtime requirements of that entry:
+
+- include every distribution imported by the serving path, including required
+  optional extras;
+- keep the exact version the application was tested with for every distribution
+  the serving path depends on, including transitive dependencies of the SDKs it
+  imports;
+- stay compatible with the base package versions above.
+
+A package that is not imported directly can still decide whether the application
+works. If the application pins `openai==2.32.0` and the serving path imports only
+`openai-agents`, dropping the `openai` pin lets pip install any version allowed by
+`openai-agents` (`openai>=2.26.0,<3`). The image builds and imports cleanly, but
+every real model request can fail at runtime.
+
 ```yaml
 agents:
   - name: ResearchAgent
     entrypoint: research_agent.py
     requirements:
-      - openai-agents>=0.14,<1.0
-      - pydantic>=2.10,<3.0
+      - openai==2.32.0          # transitive, but pinned by the application
+      - openai-agents==0.14.5
+      - pydantic==2.13.3
 
   - name: Workflow
     type: workflow
     workflow_file: workflow.py
     requirements:
-      - httpx>=0.27,<1.0
+      - httpx==0.28.1
 ```
 
-Include every package imported by the serving path, including required optional
-extras. Use compatible version ranges where possible, and test that the complete
-dependency set resolves against the CanyonOS base image.
+If the application has a lockfile or a pinned `requirements.txt`, copy those exact
+versions. If it pins nothing, bound each fast-moving package with a floor and a cap
+below its next major version, for example `langchain>=0.3,<1.0`. Test that each
+entry's complete dependency set resolves against the CanyonOS base image.
 
 Keep the default installation suitable for a CPU container. Avoid pulling large
 CUDA, GPU, or local-model packages when the application only calls a remote model.
@@ -156,6 +174,10 @@ python3 -m pip install -r requirements.txt
 python3 -m compileall -q .
 python3 -c "from your_package.entrypoint import YourAgent"
 ```
+
+Then install only the packages declared for each `global_controller.yaml` entry
+into a fresh environment, and confirm that `python3 -m pip freeze` reports the same
+versions as the tested environment for every package the serving path uses.
 
 Run at least one representative request using a real model and the same data and
 tools expected in production. A successful import alone is not enough.
