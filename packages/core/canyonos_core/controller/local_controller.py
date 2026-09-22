@@ -85,10 +85,11 @@ class LocalController(object):
         self.redis = RedisClient(host=redis_host, port=redis_port)
         self._status_key = f"controller:{self.agent_host}:{self.public_port}:status"
 
-        # What the heartbeat republishes. It starts as "starting" because the
-        # metrics loop below begins beating before the agent has loaded: a
-        # literal "healthy" there announced every container ready the moment it
-        # booted, and overwrote mark_failed() on the very next beat.
+        # The single source of truth for this container's status: the heartbeat
+        # republishes whatever is here, so only mark_ready/mark_failed/
+        # mark_stopped may move it. It starts as "starting" because the metrics
+        # loop below begins beating before the agent has loaded, and a container
+        # is ready only once something has said so.
         self._status = "starting"
         self._publish_ready = publish_ready
 
@@ -139,15 +140,10 @@ class LocalController(object):
         # Load the agent class dynamically
         self.agent = self._load_agent()
 
-        # Publish health only once that load is known. Announcing it earlier said
-        # "healthy" for a container whose agent then failed to import: the status
-        # never changed, GlobalController reported the controller ready, `deploy`
-        # printed "N agent(s) ready", and the port was only discovered broken at
-        # `test`, with the real error buried in the container log.
-        #
-        # publish_ready=False means a launcher owns readiness (the generated
-        # workflow launcher marks ready once its API port opens), so nothing is
-        # decided here.
+        # Readiness is published only once the load outcome is known, and only
+        # when this container owns it: publish_ready=False hands that to a
+        # launcher (the generated workflow launcher marks ready when its API
+        # port opens), which must be left to decide on its own schedule.
         if self._publish_ready:
             if self._agent_declared() and self.agent is None:
                 self._die_unloadable()  # does not return
@@ -166,14 +162,20 @@ class LocalController(object):
     def _die_unloadable(self):
         """Mark failed and exit: a declared agent that did not load is fatal.
 
-        Staying alive served every request with "No agent loaded" long after the
-        real cause (already logged above, with its traceback) had scrolled by.
+        A container that stays up here answers every request with "No agent
+        loaded", long after the cause (logged just above, with its traceback)
+        has scrolled by. The teardown runs whatever Redis does, so an
+        unreachable status key cannot leave a half-dead container listening.
         """
-        self.mark_failed()
         logger.critical(
             "Agent %s declared but not loaded; this container cannot serve requests.",
             self.agent_name,
         )
+        try:
+            self.mark_failed()
+        except Exception as e:
+            logger.warning("Could not publish the failed status: %s", e)
+
         self._metrics_stop_event.set()
         try:
             self.server.stop(0)
@@ -186,13 +188,18 @@ class LocalController(object):
                 pass
         sys.exit(1)
 
-    def mark_ready(self):
-        self._status = "healthy"
+    def _publish_status(self, status):
+        self._status = status
         self.redis.set(self._status_key, self._status)
 
+    def mark_ready(self):
+        self._publish_status("healthy")
+
     def mark_failed(self):
-        self._status = "failed"
-        self.redis.set(self._status_key, self._status)
+        self._publish_status("failed")
+
+    def mark_stopped(self):
+        self._publish_status("stopped")
 
     def _start_llm_proxy(self, redis_host, redis_port):
         """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
@@ -929,7 +936,7 @@ class LocalController(object):
         self._metrics_stop_event.set()
         self._metrics_thread.join(timeout=2)
         self._executor.shutdown(wait=True)
-        self.redis.set(self._status_key, "stopped")
+        self.mark_stopped()
         self.server.stop(0)
 
 

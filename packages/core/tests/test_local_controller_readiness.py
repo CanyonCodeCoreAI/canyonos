@@ -103,6 +103,16 @@ class LocalControllerReadinessTests(unittest.TestCase):
         controller.mark_failed()
         self.assertEqual(redis.strings, {"controller:localhost:50051:status": "failed"})
 
+    def test_mark_stopped_moves_the_held_status_too(self):
+        # stop() wrote the key directly, so a heartbeat racing the shutdown
+        # could republish the status the controller still held in memory.
+        redis = _FakeRedis()
+        controller = _build_controller(redis, publish_ready=False)
+        controller.mark_stopped()
+        self.assertEqual(controller._status, "stopped")
+        _beat_once(controller)
+        self.assertEqual(redis.strings[STATUS_KEY], "stopped")
+
     def test_a_declared_agent_that_fails_to_load_is_fatal(self):
         # The status used to be written before the load was attempted, and the
         # process stayed up afterwards: the container reported healthy,
@@ -115,6 +125,18 @@ class LocalControllerReadinessTests(unittest.TestCase):
                 _build_controller(redis, publish_ready=True, agent=None, server=server)
         self.assertEqual(caught.exception.code, 1)
         self.assertEqual(redis.strings[STATUS_KEY], "failed")
+        server.stop.assert_called_once_with(0)
+
+    def test_an_unreachable_redis_does_not_keep_an_unloadable_container_alive(self):
+        # Publishing "failed" is best effort; the container has to come down
+        # either way, or it stays listening and answers "No agent loaded".
+        redis = _FakeRedis()
+        redis.set = MagicMock(side_effect=ConnectionError("redis is gone"))
+        server = MagicMock()
+        with patch.dict(os.environ, DECLARED_AGENT):
+            with self.assertRaises(SystemExit) as caught:
+                _build_controller(redis, publish_ready=True, agent=None, server=server)
+        self.assertEqual(caught.exception.code, 1)
         server.stop.assert_called_once_with(0)
 
     def test_a_declared_agent_that_loads_publishes_healthy(self):
