@@ -17,7 +17,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import yaml
-from canyonos_core.controller.utils import otel_writer, schema
+from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.instance_manager import InstanceManager
 from canyonos_core.controller.utils.agent_specs import write_agent_specs
@@ -845,6 +845,7 @@ class GlobalController(object):
 
     def run(self):
         """Start the daemon polling loop."""
+        pricing_refresh.refresh_llm_prices()
         self.running = True
         logger.info(
             "Global controller started, polling every %ds...", self.poll_interval
