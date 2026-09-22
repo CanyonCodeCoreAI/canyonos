@@ -23,6 +23,7 @@ def _bare_controller(redis_port):
         {"name": "IntentAgent", "replicas": 1, "redis_port": redis_port}
     ]
     controller.redis_containers = {}
+    controller.redis_ports = {}
     controller.node_redis = {}
     controller.redis = None
     # What __init__ seeds from the config block before _launch_redis_containers runs.
