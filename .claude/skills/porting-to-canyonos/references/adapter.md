@@ -63,7 +63,7 @@ def main(query: str) -> dict[str, str]:
 
 For a single output, use `return answer.value()`. Never return the Future
 itself or convert it with `str(...)` or `json.dumps(...)` as a substitute for
-resolution. `.value()` returns text; use `json.loads(...)` only when the service
+resolution. `.value()` returns the computed result; use `json.loads(...)` only when the service
 returns JSON and the workflow needs the decoded structure. Leave already
 concrete values unchanged.
 
