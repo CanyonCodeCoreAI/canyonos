@@ -458,6 +458,63 @@ class CliBuildTests(unittest.TestCase):
             ["sqlalchemy-utils"],
         )
 
+    def test_build_uses_the_expanded_values_the_schema_validated(self):
+        # The schema checks `${AGENT_FILE}` in its expanded form; the build used
+        # to re-read the raw YAML and hand the literal to the generators, which
+        # then failed on a file called `${AGENT_FILE}`.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            (project_dir / "config").mkdir()
+            (project_dir / "agents").mkdir()
+            (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
+            example_yaml = project_dir / "agents" / "example_agent.yaml"
+            example_yaml.write_text("agent:\n  name: ExampleAgent\n")
+            (project_dir / "config" / "global_controller.yaml").write_text(
+                "agents:\n"
+                "  - name: ExampleAgent\n"
+                "    entrypoint: ${CANYONOS_TEST_AGENT_FILE}\n"
+                "    requirements: ['${CANYONOS_TEST_EXTRA}']\n"
+            )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "CANYONOS_TEST_AGENT_FILE": "agents/example_agent.py",
+                        "CANYONOS_TEST_EXTRA": "yfinance",
+                    },
+                ),
+                patch(
+                    "canyonos_core.cli._get_package_dir",
+                    return_value=str(project_dir / "package"),
+                ),
+                patch("canyonos_core.stub_generator.generate_stub") as generate_stub,
+                patch(
+                    "canyonos_core.stub_generator.generate_docker"
+                ) as generate_docker,
+                patch("canyonos_core.cli.subprocess.run"),
+                patch("canyonos_core.cli._docker_available", return_value=False),
+            ):
+                cwd = os.getcwd()
+                os.chdir(project_dir)
+                try:
+                    cli._run_build(
+                        str(project_dir / "config" / "global_controller.yaml")
+                    )
+                finally:
+                    os.chdir(cwd)
+
+        (stub_call,) = generate_stub.call_args_list
+        self.assertTrue(
+            stub_call.args[1].endswith(os.path.join("agents", "example_agent.py"))
+        )
+        docker_call = generate_docker.call_args
+        self.assertEqual(
+            os.path.realpath(docker_call.args[1]),
+            os.path.realpath(project_dir / "agents" / "example_agent.py"),
+        )
+        self.assertEqual(docker_call.kwargs["requirements"], ["yfinance"])
+
     def test_build_rejects_non_list_requirements(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)

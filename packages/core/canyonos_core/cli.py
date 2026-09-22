@@ -16,6 +16,10 @@ import shutil
 import subprocess
 import sys
 
+from canyonos_core.controller.utils.config_env import (
+    expand_env_value,
+    load_root_dotenv,
+)
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
     DependencyPinConflict,
@@ -47,11 +51,18 @@ def _get_package_dir():
 
 
 def _load_config(config_path):
-    """Load a YAML config file."""
+    """Load the config as the schema checked it and the controller will read it.
+
+    The root `.env` is imported and `${VAR}` refs are expanded through the
+    same helper both of those use. Reading the raw YAML here instead let a
+    reference the schema had validated in its expanded form reach the build
+    as the literal `${VAR}`.
+    """
     import yaml
 
+    load_root_dotenv(config_path)
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        return expand_env_value(yaml.safe_load(f))
 
 
 def _artifact_prefix(root):
