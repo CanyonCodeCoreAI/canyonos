@@ -48,6 +48,16 @@ logger = logging.getLogger(__name__)
 
 LOCAL_NETWORK = "canyonos-local"
 
+# How long a controller may stay short of "healthy" before the deploy is called
+# dead. 30s was tuned back when the timeout was survivable -- it merely logged a
+# warning -- and is tight for a cold start whose agent imports a heavy adapter.
+# Now that it aborts the deploy, it has room.
+CONTROLLER_READY_TIMEOUT_SECONDS = 120
+
+# How much of a failed container's own log to show: enough for the traceback
+# that names the failed import, short enough not to bury the summary under it.
+_FAILURE_LOG_TAIL_LINES = 40
+
 # Internal runtime controls that must never be settable from a user's `.env`.
 # The .env is for the user's own secrets (API keys, etc.); these keys steer
 # framework behavior, so honoring them from user data would be a control-plane
@@ -540,9 +550,13 @@ class GlobalController(object):
         """Get the Redis client for a given host, falling back to self.redis."""
         return self.node_redis.get(host, self.redis)
 
-    def _wait_for_healthy(self, timeout=30, interval=2):
+    def _wait_for_healthy(self, timeout=CONTROLLER_READY_TIMEOUT_SECONDS, interval=2):
         """
-        Block until all controllers report healthy in Redis, or until timeout.
+        Block until all controllers report healthy in Redis, or abort the deploy.
+
+        Anything other than "healthy" here is fatal. This used to log a warning
+        and return, so a deploy went on to announce itself up over containers
+        that had already died.
 
         Args:
             timeout:  Maximum seconds to wait.
@@ -559,6 +573,7 @@ class GlobalController(object):
 
         while pending and time.time() < deadline:
             still_pending = []
+            saw_failed = False
             for instance in pending:
                 name = instance["agent_name"]
                 host = instance["host"]
@@ -571,19 +586,88 @@ class GlobalController(object):
                     self._last_status[(host, port)] = "healthy"
                 else:
                     still_pending.append(instance)
+                    saw_failed = saw_failed or status == "failed"
             pending = still_pending
+            # A container that published "failed" has already given up (it exits
+            # on an unloadable agent), so sitting out the rest of the timeout
+            # only delays the report.
+            if saw_failed:
+                break
             if pending:
                 time.sleep(interval)
 
         if pending:
-            for instance in pending:
-                logger.warning(
-                    "Controller %s (%s:%s) not ready after %ds.",
-                    instance["agent_name"],
-                    instance["host"],
-                    instance["host_port"],
-                    timeout,
-                )
+            self._fail_unhealthy(pending)
+
+    def _fail_unhealthy(self, pending):
+        """Show why each controller never came up, then abort the deploy.
+
+        The cause only ever exists inside the container -- an adapter's
+        ModuleNotFoundError, say -- and deploy never showed it: it reported a
+        count of healthy replicas and went on. The logs are read before any
+        teardown, since `cleanup()` runs `docker rm -f` on the way out.
+        """
+        not_ready = []
+        for instance in pending:
+            name = instance["agent_name"]
+            host = instance["host"]
+            port = instance["host_port"]
+            node_redis = self._get_node_redis_for(host)
+            endpoint = self.instance_manager._routing_endpoint_for(instance)
+            status = node_redis.get(f"controller:{endpoint}:status")
+            if status == "healthy":
+                # It landed between the last poll and now.
+                logger.info("Controller %s (%s:%s) is ready.", name, host, port)
+                self._last_status[(host, port)] = "healthy"
+                continue
+            not_ready.append(f"{name} ({host}:{port})={status or 'unknown'}")
+            self._dump_container_log(instance, status)
+
+        if not not_ready:
+            return
+
+        self._stop_docker_agents()
+        self._stop_redis_containers()
+        logger.critical("Controller readiness failed: %s", ", ".join(not_ready))
+        sys.exit(1)
+
+    def _dump_container_log(self, instance, status):
+        """Log the tail of one container that never reported healthy.
+
+        Logged at WARNING even though this is a failure: these lines are a
+        quotation of the container's own log, and `canyonos deploy` stops its
+        transcript at the first `ERROR:`/`CRITICAL:` line it sees, so emitting
+        the dump at those levels would cut it off at its own first line --
+        before the traceback it exists to show. The one CRITICAL is the summary
+        that follows.
+        """
+        name = instance["agent_name"]
+        host = instance["host"]
+        port = instance["host_port"]
+        runtime_id = instance.get("runtime_id")
+        header = f"--- {name} ({host}:{port}) status={status or 'unknown'} ---"
+
+        if not runtime_id:
+            logger.warning("%s no container to read logs from", header)
+            return
+
+        logger.warning("%s last %d log line(s):", header, _FAILURE_LOG_TAIL_LINES)
+        try:
+            result = self._run_cmd(
+                ["docker", "logs", "--tail", str(_FAILURE_LOG_TAIL_LINES), runtime_id],
+                host,
+                instance.get("user"),
+            )
+        except Exception as e:
+            logger.warning("Could not read the log of %s: %s", name, e)
+            return
+
+        streams = [part for part in (result.stdout, result.stderr) if part]
+        for stream in streams:
+            for line in stream.splitlines():
+                logger.warning("  %s", line)
+        if not streams:
+            logger.warning("  (the container produced no output)")
 
     # ------------------------------------------------------------------ #
     #  Polling loop                                                       #
