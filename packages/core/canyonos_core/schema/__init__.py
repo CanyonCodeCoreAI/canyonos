@@ -85,13 +85,52 @@ def _declared_name(path):
     return name if isinstance(name, str) else ""
 
 
-def validate_project(manifest_path, declarations_dir):
+def _missing_sources(manifest, manifest_path, source_dir):
+    """Violations for the code a manifest points at but the project does not hold.
+
+    The build used to log a line and carry on, leaving a deploy that exited 0
+    with the service quietly absent from it.
+    """
+    if not os.path.isdir(source_dir):
+        return [
+            SchemaViolation(
+                manifest_path,
+                0,
+                "agents",
+                f"the project source directory {source_dir} does not exist, "
+                "so no service's code can be found",
+            )
+        ]
+
+    violations = []
+    for index, service in enumerate(manifest.agents):
+        key = {"agent": "entrypoint", "workflow": "workflow_file"}.get(service.type)
+        if key is None:
+            continue
+        declared = getattr(service, key)
+        if not os.path.isfile(os.path.join(source_dir, declared)):
+            violations.append(
+                SchemaViolation(
+                    manifest_path,
+                    0,
+                    f"agents[{index}].{key}",
+                    f"{os.path.join(source_dir, declared)} does not exist",
+                )
+            )
+    return violations
+
+
+def validate_project(manifest_path, declarations_dir, source_dir=None):
     """Every violation in a project's manifest and agent declarations.
 
     Never raises: the caller decides how to report. The manifest and the
     declarations are checked independently so one broken file does not hide
     the others; only the last step, binding each agent to the declaration that
     names it, needs a manifest that parsed.
+
+    `source_dir` is the project root the manifest's paths are relative to.
+    Given one, the entrypoint and workflow file each service declares must
+    exist under it; left out, nothing on disk is checked.
     """
     manifest = None
     violations = []
@@ -130,4 +169,7 @@ def validate_project(manifest_path, declarations_dir):
                 f"agent.name: {service.name}; the stub cannot be generated",
             )
         )
+
+    if source_dir is not None:
+        violations.extend(_missing_sources(manifest, manifest_path, source_dir))
     return tuple(violations)

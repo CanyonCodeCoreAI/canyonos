@@ -261,6 +261,41 @@ class ValidateProjectTests(unittest.TestCase):
             )
             self.assertEqual(validate_project(manifest, declarations), ())
 
+    def test_source_dir_is_optional_and_off_by_default(self):
+        # 2c calls validate_project without one; nothing on disk is checked.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            self.assertEqual(validate_project(manifest, declarations), ())
+
+    def test_a_declared_entrypoint_must_exist_under_the_source_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            violations = validate_project(manifest, declarations, tmpdir)
+
+        (violation,) = violations
+        self.assertEqual(violation.field, "agents[0].entrypoint")
+        self.assertEqual(
+            violation.message,
+            f"{os.path.join(tmpdir, 'agents', 'example_agent.py')} does not exist",
+        )
+
+    def test_an_entrypoint_that_is_there_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            Path(tmpdir, "agents", "example_agent.py").write_text("print('ok')\n")
+            self.assertEqual(validate_project(manifest, declarations, tmpdir), ())
+
+    def test_a_missing_source_dir_is_one_violation_naming_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            source_dir = os.path.join(tmpdir, "app")
+            violations = validate_project(manifest, declarations, source_dir)
+
+        (violation,) = violations
+        self.assertEqual(violation.field, "agents")
+        self.assertIn(source_dir, violation.message)
+        self.assertIn("does not exist", violation.message)
+
     def test_every_example_project_validates(self):
         for manifest in sorted(
             glob.glob(str(REPO_ROOT / "examples/*/config/global_controller.yaml"))

@@ -62,12 +62,20 @@ def _artifact_prefix(root):
     )
 
 
-def _declarations_dir():
-    """Where this project's agent YAML declarations are kept."""
+def _project_layout():
+    """(artifact_root, source_root, declarations_dir) for the project in cwd.
+
+    The .car layout keeps the app's own code under `.car/app` and everything
+    generated beside it; a plain checkout keeps both at the project root.
+    """
     project_dir = os.path.abspath(os.getcwd())
     prefix = _artifact_prefix(project_dir)
     artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
-    return os.path.join(artifact_root, "config" if prefix else "agents")
+    return (
+        artifact_root,
+        os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir,
+        os.path.join(artifact_root, "config" if prefix else "agents"),
+    )
 
 
 def _reject(violations, summary):
@@ -82,9 +90,9 @@ def _reject(violations, summary):
     sys.exit(1)
 
 
-def validate_or_exit(config_path, declarations_dir):
+def validate_or_exit(config_path, declarations_dir, source_dir=None):
     """Reject the config before anything is generated; return the parsed manifest."""
-    violations = validate_project(config_path, declarations_dir)
+    violations = validate_project(config_path, declarations_dir, source_dir)
     if violations:
         _reject(
             violations,
@@ -276,22 +284,18 @@ def _run_build(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
 
-    declarations_dir = _declarations_dir()
+    artifact_root, source_root, declarations_dir = _project_layout()
 
     # Nothing below this line runs against a config the schema rejects: no
     # stubs, no protoc, no Docker context, no image. It comes before the load
-    # so a file that is not YAML at all is rendered as a violation too.
-    manifest = validate_or_exit(config_path, declarations_dir)
+    # so a file that is not YAML at all is rendered as a violation too, and it
+    # is handed source_root so a service whose code is missing fails here
+    # rather than being skipped out of a deploy that then reports success.
+    manifest = validate_or_exit(config_path, declarations_dir, source_root)
     _check_dependency_pins(manifest)
 
     config = _load_config(config_path)
     agents = config.get("agents", [])
-    project_dir = os.path.abspath(os.getcwd())
-    prefix = _artifact_prefix(project_dir)
-    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
-    source_root = (
-        os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir
-    )
     package_dir = _get_package_dir()
 
     # -------------------------------------------------------------- #
@@ -409,11 +413,10 @@ def _run_build(config_path):
                 )
                 continue
 
+            # The schema checked this file exists, so there is no skip here:
+            # a workflow that cannot be built fails the deploy, it does not
+            # quietly drop out of it.
             workflow_path = os.path.join(source_root, workflow_file)
-            if not os.path.isfile(workflow_path):
-                logger.error("Workflow file not found: %s", workflow_path)
-                continue
-
             docker_context = os.path.join(artifact_root, "docker_container", "Workflow")
             logger.info("Generating workflow Docker context for '%s'", agent_name)
             generate_workflow_docker(
@@ -439,9 +442,6 @@ def _run_build(config_path):
                 continue
 
             agent_file = os.path.join(source_root, entrypoint)
-            if not os.path.isfile(agent_file):
-                logger.error("Agent file not found: %s", agent_file)
-                continue
 
             # Find matching YAML by agent name
             matching_yaml = yaml_by_name.get(agent_name)

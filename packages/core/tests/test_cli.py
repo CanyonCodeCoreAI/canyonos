@@ -539,10 +539,11 @@ class CliBuildTests(unittest.TestCase):
 class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
     """A rejected config must cost nothing: no stub, no protoc, no Docker."""
 
-    def _scaffold(self, project_dir, manifest, declaration):
+    def _scaffold(self, project_dir, manifest, declaration, write_source=True):
         (project_dir / "config").mkdir()
         (project_dir / "agents").mkdir()
-        (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
+        if write_source:
+            (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
         (project_dir / "agents" / "example_agent.yaml").write_text(
             yaml.safe_dump(declaration)
         )
@@ -551,10 +552,12 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
         )
         return project_dir / "config" / "global_controller.yaml"
 
-    def _build(self, manifest, declaration):
+    def _build(self, manifest, declaration, write_source=True):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            config_path = self._scaffold(project_dir, manifest, declaration)
+            config_path = self._scaffold(
+                project_dir, manifest, declaration, write_source
+            )
 
             with (
                 patch("canyonos_core.stub_generator.generate_stub") as generate_stub,
@@ -563,8 +566,9 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
                 cwd = os.getcwd()
                 os.chdir(project_dir)
                 try:
-                    with self.assertRaises(SystemExit) as raised:
-                        cli._run_build(str(config_path))
+                    with self.assertLogs("canyonos_core", level="ERROR") as self.log:
+                        with self.assertRaises(SystemExit) as raised:
+                            cli._run_build(str(config_path))
                 finally:
                     os.chdir(cwd)
 
@@ -608,6 +612,91 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
         self.assertEqual(exit_error.code, 1)
         generate_stub.assert_not_called()
         subprocess_run.assert_not_called()
+
+    def test_an_entrypoint_with_no_file_behind_it_stops_the_build(self):
+        # This used to log "Agent file not found", skip the service and let the
+        # deploy exit 0 without it.
+        exit_error, generate_stub, subprocess_run = self._build(
+            {
+                "agents": [
+                    {"name": "ExampleAgent", "entrypoint": "agents/example_agent.py"}
+                ]
+            },
+            {"agent": {"name": "ExampleAgent"}},
+            write_source=False,
+        )
+
+        self.assertEqual(exit_error.code, 1)
+        generate_stub.assert_not_called()
+        subprocess_run.assert_not_called()
+        self.assertIn("agents[0].entrypoint", self.log.output[0])
+        self.assertIn("example_agent.py does not exist", self.log.output[0])
+        self.assertNotIn("\n", self.log.output[0])
+
+    def test_a_workflow_file_with_nothing_behind_it_stops_the_build(self):
+        exit_error, generate_stub, subprocess_run = self._build(
+            {
+                "agents": [
+                    {
+                        "name": "Workflow",
+                        "type": "workflow",
+                        "workflow_file": "workflows/example_workflow.py",
+                    }
+                ]
+            },
+            {"agent": {"name": "ExampleAgent"}},
+        )
+
+        self.assertEqual(exit_error.code, 1)
+        generate_stub.assert_not_called()
+        subprocess_run.assert_not_called()
+        self.assertIn("agents[0].workflow_file", self.log.output[0])
+        self.assertIn("example_workflow.py does not exist", self.log.output[0])
+
+    def test_a_missing_source_root_stops_the_build_once(self):
+        # Under the .car layout the app's code lives in .car/app; without it
+        # the build found nothing to do and said "No Docker images to build."
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            artifact_root = project_dir / ".car"
+            (artifact_root / "config").mkdir(parents=True)
+            (artifact_root / "config" / "example_agent.yaml").write_text(
+                yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
+            )
+            config_path = artifact_root / "config" / "global_controller.yaml"
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "agents": [
+                            {
+                                "name": "ExampleAgent",
+                                "entrypoint": "agents/example_agent.py",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            with (
+                patch("canyonos_core.stub_generator.generate_stub") as generate_stub,
+                patch("canyonos_core.cli.subprocess.run") as subprocess_run,
+            ):
+                cwd = os.getcwd()
+                os.chdir(project_dir)
+                try:
+                    with self.assertLogs("canyonos_core", level="ERROR") as log:
+                        with self.assertRaises(SystemExit) as raised:
+                            cli._run_build(str(config_path))
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(raised.exception.code, 1)
+        generate_stub.assert_not_called()
+        subprocess_run.assert_not_called()
+        # One violation naming the directory, not one per service.
+        self.assertEqual(len(log.output), 2)
+        self.assertIn("agents: the project source directory", log.output[0])
+        self.assertIn(os.path.join(".car", "app"), log.output[0])
 
 
 class CliCleanTests(unittest.TestCase):
