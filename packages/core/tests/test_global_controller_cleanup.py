@@ -297,7 +297,7 @@ class StaleContainerNameTests(unittest.TestCase):
         agent_containers = {
             name
             for name in controller.removed
-            if not name.startswith("canyonos-redis-")
+            if not name.startswith(("canyonos-redis-", "canyonos-metrics-"))
         }
         self.assertEqual(agent_containers, expected)
 

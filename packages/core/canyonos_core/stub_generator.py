@@ -39,8 +39,9 @@ BASE_AGENT_REQUIREMENTS = [
     "requests==2.34.2",
 ]
 
-# Workflow will always require these
-BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["sqlalchemy", "psycopg[binary]"]
+# Workflow containers currently need nothing beyond the base agent requirements
+# (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
+BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
 
 # Packages the image's own code is built against, so an app cannot be left to
 # pick them alone.
@@ -820,10 +821,10 @@ def generate_workflow_docker(
             os.path.join(script_dir, "controller", "utils", "grpc_options.py"),
             "grpc_options.py",
         ),
-        *[
-            (os.path.join(script_dir, "controller", "utils", name), name)
-            for name in ("gpu_metrics.py", "session_logging.py")
-        ],
+        (
+            os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
+            "gpu_metrics.py",
+        ),
     ]
 
     # Copy stub files both flat (for `from price_agent import ...` style imports
