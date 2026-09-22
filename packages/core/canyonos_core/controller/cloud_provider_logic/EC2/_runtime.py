@@ -30,6 +30,9 @@ from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.cloud_provider_logic.shared_utils.llm_proxy_env import (
     llm_proxy_docker_env_args,
 )
+from canyonos_core.controller.cloud_provider_logic.shared_utils.resource_limits import (
+    resource_limit_args,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +226,7 @@ def _bootstrap_instance(
             "-d",
             "--name",
             redis_container,
+            *resource_limit_args(),
             "-p",
             f"{redis_port}:6379",
             "redis:alpine",
@@ -286,6 +290,7 @@ def _bootstrap_instance(
         "--name",
         container,
         *port_args,
+        *resource_limit_args(spec.get("resources")),
         "-e",
         f"CANYONOS_REDIS_HOST={redis_host}",
         "-e",

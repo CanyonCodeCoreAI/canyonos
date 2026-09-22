@@ -15,6 +15,9 @@ from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.cloud_provider_logic.shared_utils.llm_proxy_env import (
     llm_proxy_docker_env_args,
 )
+from canyonos_core.controller.cloud_provider_logic.shared_utils.resource_limits import (
+    resource_limit_args,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +73,6 @@ def provision_instance(spec, replica_index, next_host_port):
 
 def bootstrap_instance(provisioned, spec, replica_index, agent_id):
     agent_name = spec["name"]
-    resources = spec.get("resources", {})
     ctrl_type = spec.get("type", "agent")
     image = f"canyonos-{agent_name.lower()}"
     host = provisioned["host"]
@@ -146,12 +148,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 cmd.extend(["-e", f"CANYONOS_DATABASE_URL={db_url}"])
             if project_id:
                 cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
-        if resources.get("cpu"):
-            cmd.extend(["--cpus", str(resources["cpu"])])
-        if resources.get("memory"):
-            cmd.extend(["--memory", f"{resources['memory']}m"])
-        if resources.get("gpu"):
-            cmd.extend(["--gpus", str(resources["gpu"])])
+        cmd.extend(resource_limit_args(spec.get("resources")))
 
         # User secrets from `env_file`. Explicit -e flags above still win, so a
         # stray CANYONOS_* line in someone's .env cannot break agent wiring.

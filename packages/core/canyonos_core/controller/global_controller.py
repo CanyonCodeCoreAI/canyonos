@@ -30,6 +30,9 @@ from canyonos_core.controller.utils.telemetry_logging import (
     send_runtime_information,
     send_agent_information,
 )
+from canyonos_core.controller.cloud_provider_logic.shared_utils.resource_limits import (
+    resource_limit_args,
+)
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 
@@ -467,6 +470,7 @@ class GlobalController(object):
                     "--name",
                     container_name,
                     *network_args,
+                    *resource_limit_args(),
                     "-p",
                     f"{redis_port}:6379",
                     "redis:alpine",
