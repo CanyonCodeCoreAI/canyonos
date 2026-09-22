@@ -579,6 +579,22 @@ class PlatformPinTests(unittest.TestCase):
         self.assertIn("agents[2].requirements", rendered)
         self.assertNotIn("\n", rendered)
 
+    def test_a_conflict_is_caught_however_the_package_name_is_spelled(self):
+        # pip treats these as one package; matching on .lower() alone missed
+        # the underscore and forced the pin over the app's bound instead.
+        for requirement in ("grpcio_tools<1", "Grpcio-Tools<1", "grpcio.tools<1"):
+            with self.subTest(requirement=requirement):
+                with self.assertRaises(DependencyPinConflict) as raised:
+                    _platform_overrides([requirement], service=0)
+                (violation,) = raised.exception.violations
+                self.assertIn("grpcio-tools==1.76.0", violation.message)
+
+    def test_a_newer_ask_wins_however_the_package_name_is_spelled(self):
+        overrides = _platform_overrides(["grpcio_tools>=2"])
+
+        self.assertIn("grpcio_tools>=2", overrides)
+        self.assertNotIn("grpcio-tools==1.76.0", overrides)
+
     def test_the_workflow_context_fails_on_a_conflict_too(self):
         with self.assertRaises(DependencyPinConflict):
             self._context(["protobuf<5"], workflow=True)

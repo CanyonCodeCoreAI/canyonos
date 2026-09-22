@@ -16,6 +16,7 @@ import os
 import shutil
 import yaml
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 from canyonos_core.schema import DependencyPinConflict, SchemaViolation
@@ -570,13 +571,15 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
             parsed = Requirement(requirement)
         except InvalidRequirement:
             continue
-        declared[parsed.name.lower()] = parsed
+        # PEP 503 names: `grpcio_tools`, `Grpcio-Tools` and `grpcio.tools`
+        # are all the package pinned as `grpcio-tools`.
+        declared[canonicalize_name(parsed.name)] = parsed
 
     overrides = []
     conflicts = []
     for pin in PLATFORM_PINS:
         name, pinned = pin.split("==")
-        asked = declared.get(name)
+        asked = declared.get(canonicalize_name(name))
         if asked is None or asked.specifier.contains(Version(pinned)):
             overrides.append(pin)
             continue
