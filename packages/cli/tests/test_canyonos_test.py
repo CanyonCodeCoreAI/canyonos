@@ -237,6 +237,24 @@ def test_queries_the_existing_deploy_instead_of_standing_up_its_own(
     assert [(p["name"], p["ok"]) for p in payload["phases"]] == [("query", True)]
 
 
+def test_rebuild_deploys_fresh_even_when_a_deploy_is_already_up(
+    monkeypatch, deployable, capsys
+):
+    """`--rebuild` is the install-and-import evidence: it must build what it queries."""
+    monkeypatch.setattr(test_cmd, "deploy_status", lambda *_a: {"running": True})
+
+    assert test_cmd.run_test("hi", as_json=True, rebuild=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert deployable["run_deploy"] == 1
+    assert payload["against_existing_deploy"] is False
+    assert [(p["name"], p["ok"]) for p in payload["phases"]] == [
+        ("deploy", True),
+        ("verify_runtime", True),
+        ("query", True),
+    ]
+
+
 def test_json_mode_prints_one_object_and_nothing_else(deployable, capsys):
     assert test_cmd.run_test("a prompt", as_json=True) == 0
     payload = json.loads(capsys.readouterr().out)
