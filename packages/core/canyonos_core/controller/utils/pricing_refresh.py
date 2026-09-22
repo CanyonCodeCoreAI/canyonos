@@ -9,9 +9,7 @@ from canyonos_core.controller.utils import pricing
 
 logger = logging.getLogger(__name__)
 
-LITELLM_PRICING_URL = (
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-)
+LITELLM_PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 REQUEST_TIMEOUT_SECONDS = 5
 
 _YAML_HEADER = (
@@ -22,7 +20,9 @@ _YAML_HEADER = (
 )
 
 
-def refresh_llm_prices(prices_path=pricing.DEFAULT_PRICES_PATH, source_url=LITELLM_PRICING_URL):
+def refresh_llm_prices(
+    prices_path=pricing.DEFAULT_PRICES_PATH, source_url=LITELLM_PRICING_URL
+):
     """Refresh the `models:` entries in prices_path from source_url's per-token costs.
 
     Only updates model ids already present in the file -- never adds or removes keys,
@@ -55,8 +55,11 @@ def refresh_llm_prices(prices_path=pricing.DEFAULT_PRICES_PATH, source_url=LITEL
             updated.append(model_id)
 
         if not updated:
-            logger.info("LLM price refresh: no matching models found in %s; leaving %s as-is.",
-                        source_url, prices_path)
+            logger.info(
+                "LLM price refresh: no matching models found in %s; leaving %s as-is.",
+                source_url,
+                prices_path,
+            )
             return False
 
         with open(prices_path, "w") as f:
@@ -65,12 +68,17 @@ def refresh_llm_prices(prices_path=pricing.DEFAULT_PRICES_PATH, source_url=LITEL
 
         logger.info(
             "LLM price refresh: updated %d/%d model(s) in %s from %s.",
-            len(updated), len(models), prices_path, source_url,
+            len(updated),
+            len(models),
+            prices_path,
+            source_url,
         )
         return True
     except Exception:
         logger.warning(
             "LLM price refresh from %s failed; keeping existing %s.",
-            source_url, prices_path, exc_info=True,
+            source_url,
+            prices_path,
+            exc_info=True,
         )
         return False

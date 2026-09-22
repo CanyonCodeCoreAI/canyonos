@@ -29,9 +29,9 @@ def load_pricing_data(prices_path=DEFAULT_PRICES_PATH):
 
 def _load_cache():
     global _token_cost_by_model_id, _hourly_cost_by_instance_type
-    if _token_cost_by_model_id is not None:
-        return
-    _token_cost_by_model_id, _hourly_cost_by_instance_type = load_pricing_data()
+    if _token_cost_by_model_id is None or _hourly_cost_by_instance_type is None:
+        _token_cost_by_model_id, _hourly_cost_by_instance_type = load_pricing_data()
+    return _token_cost_by_model_id, _hourly_cost_by_instance_type
 
 
 def _candidate_model_ids(model_id):
@@ -53,10 +53,10 @@ def compute_token_cost(model_id, input_token_count, output_token_count):
     """Return the USD cost of an LLM call, or 0.0 if the model_id is unknown."""
     if not model_id:
         return 0.0
-    _load_cache()
+    token_costs, _ = _load_cache()
     costs = None
     for candidate in _candidate_model_ids(model_id):
-        costs = _token_cost_by_model_id.get(candidate)
+        costs = token_costs.get(candidate)
         if costs is not None:
             break
     if costs is None:
@@ -73,8 +73,8 @@ def compute_server_cost(instance_type, execution_time_seconds):
     or 0.0 if the instance_type is unknown."""
     if not instance_type:
         return 0.0
-    _load_cache()
-    hourly_cost = _hourly_cost_by_instance_type.get(instance_type)
+    _, instance_costs = _load_cache()
+    hourly_cost = instance_costs.get(instance_type)
     if hourly_cost is None:
         return 0.0
     return float(hourly_cost) * execution_time_seconds / 3600

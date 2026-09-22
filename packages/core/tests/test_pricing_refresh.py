@@ -40,7 +40,9 @@ def _mock_response(json_body, status_ok=True):
     if status_ok:
         response.raise_for_status.return_value = None
     else:
-        response.raise_for_status.side_effect = requests.exceptions.HTTPError("bad status")
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "bad status"
+        )
     return response
 
 
@@ -82,13 +84,18 @@ class PricingRefreshTests(unittest.TestCase):
             data["models"]["gpt-4o-mini"]["output_cost_per_million_tokens"], 800.0
         )
         self.assertAlmostEqual(
-            data["models"]["anthropic.claude-haiku-4-5-v1:0"]["input_cost_per_million_tokens"],
+            data["models"]["anthropic.claude-haiku-4-5-v1:0"][
+                "input_cost_per_million_tokens"
+            ],
             2.0,
         )
         # Not present upstream -- left exactly as it was.
         self.assertEqual(
             data["models"]["untracked-upstream-model"],
-            {"input_cost_per_million_tokens": 2.0, "output_cost_per_million_tokens": 4.0},
+            {
+                "input_cost_per_million_tokens": 2.0,
+                "output_cost_per_million_tokens": 4.0,
+            },
         )
         # instances untouched
         self.assertEqual(data["instances"], {"m5.large": 0.096})
@@ -114,7 +121,9 @@ class PricingRefreshTests(unittest.TestCase):
         self.assertEqual(self.prices_path.read_text(), before)
 
     @patch.object(pricing_refresh.requests, "get")
-    def test_missing_cost_fields_skips_that_model_but_others_still_refresh(self, mock_get):
+    def test_missing_cost_fields_skips_that_model_but_others_still_refresh(
+        self, mock_get
+    ):
         mock_get.return_value = _mock_response(
             {
                 "gpt-4o-mini": {"input_cost_per_token": 0.0002},  # missing output cost
@@ -132,16 +141,23 @@ class PricingRefreshTests(unittest.TestCase):
         # gpt-4o-mini left at its original values since the remote entry was incomplete.
         self.assertEqual(
             data["models"]["gpt-4o-mini"],
-            {"input_cost_per_million_tokens": 0.15, "output_cost_per_million_tokens": 0.6},
+            {
+                "input_cost_per_million_tokens": 0.15,
+                "output_cost_per_million_tokens": 0.6,
+            },
         )
         self.assertAlmostEqual(
-            data["models"]["anthropic.claude-haiku-4-5-v1:0"]["input_cost_per_million_tokens"],
+            data["models"]["anthropic.claude-haiku-4-5-v1:0"][
+                "input_cost_per_million_tokens"
+            ],
             2.0,
         )
 
     @patch.object(pricing_refresh.requests, "get")
     def test_no_matches_leaves_file_untouched(self, mock_get):
-        mock_get.return_value = _mock_response({"some-other-model": {"input_cost_per_token": 1}})
+        mock_get.return_value = _mock_response(
+            {"some-other-model": {"input_cost_per_token": 1}}
+        )
         before = self.prices_path.read_text()
 
         result = pricing_refresh.refresh_llm_prices(prices_path=str(self.prices_path))
