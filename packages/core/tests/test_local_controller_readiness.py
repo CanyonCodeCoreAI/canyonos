@@ -115,6 +115,15 @@ class LocalControllerReadinessTests(unittest.TestCase):
             _build_controller(redis, publish_ready=True, agent=object())
         self.assertEqual(redis.strings[STATUS_KEY], "healthy")
 
+    def test_partial_agent_configuration_publishes_failed(self):
+        redis = _FakeRedis()
+        with patch.dict(
+            os.environ,
+            {"CANYONOS_AGENT_NAME": "RagChatbotAgent", "CANYONOS_AGENT_FILE": ""},
+        ):
+            _build_controller(redis, publish_ready=True, agent=None)
+        self.assertEqual(redis.strings[STATUS_KEY], "failed")
+
     def test_agentless_controller_publishes_healthy(self):
         redis = _FakeRedis()
         with patch.dict(

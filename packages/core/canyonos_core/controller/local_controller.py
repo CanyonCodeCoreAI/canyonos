@@ -135,7 +135,7 @@ class LocalController(object):
         self.agent = self._load_agent()
 
         if self._publish_ready:
-            if self.agent_name and self.agent_file and self.agent is None:
+            if (self.agent_name or self.agent_file) and self.agent is None:
                 self.mark_failed()
             else:
                 self.mark_ready()
