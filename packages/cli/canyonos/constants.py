@@ -13,6 +13,7 @@ from ruamel.yaml import YAML
 from canyonos.port_utils import is_port_free
 
 DEFAULT_API_PORT = 8080
+DEFAULT_REDIS_PORT = 6379
 DEFAULT_DASHBOARD_PORT = 8081
 
 _EC2_TOKEN_URL = "http://169.254.169.254/latest/api/token"
@@ -79,6 +80,20 @@ def workflow_api_port(config_path):
         if agent.get("type") == "workflow":
             return agent.get("api_port", DEFAULT_API_PORT)
     return None
+
+
+def local_redis_port(config_path):
+    """Host port the local node's Redis is published on, or the default."""
+    try:
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return DEFAULT_REDIS_PORT
+
+    for agent in config.get("agents") or []:
+        if agent.get("host", "localhost") in ("localhost", "127.0.0.1"):
+            return agent.get("redis_port", DEFAULT_REDIS_PORT)
+    return (config.get("redis") or {}).get("port", DEFAULT_REDIS_PORT)
 
 
 def _source_root(config_path):

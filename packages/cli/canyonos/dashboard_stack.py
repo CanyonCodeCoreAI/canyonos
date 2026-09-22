@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Callable
 
 from canyonos import env
-from canyonos.constants import DEFAULT_DASHBOARD_PORT
+from canyonos.constants import (
+    DEFAULT_DASHBOARD_PORT,
+    default_config_path,
+    local_redis_port,
+)
 from canyonos.port_utils import find_free_port
 
 COMPOSE_PROJECT = "canyonos-dashboard"
@@ -32,7 +36,6 @@ API_IMAGE = env.api_image(f"ghcr.io/canyoncodecoreai/canyonos-api:{API_VERSION}"
 WEB_IMAGE = env.web_image(f"ghcr.io/canyoncodecoreai/canyonos-web:{WEB_VERSION}")
 HOST_GATEWAY = "host.docker.internal"
 REDIS_HOST = HOST_GATEWAY
-REDIS_PORT = "6379"
 
 
 @dataclass(frozen=True)
@@ -225,7 +228,7 @@ def prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
             "CANYONOS_JWT_SECRET": _read_existing_secret(stack.env_path)
             or secrets.token_urlsafe(32),
             "CANYONOS_REDIS_HOST": REDIS_HOST,
-            "CANYONOS_REDIS_PORT": REDIS_PORT,
+            "CANYONOS_REDIS_PORT": str(local_redis_port(default_config_path())),
             "CANYONOS_API_IMAGE": API_IMAGE,
             "CANYONOS_WEB_IMAGE": WEB_IMAGE,
             "CANYONOS_WEB_PORT": str(stack.web_port),

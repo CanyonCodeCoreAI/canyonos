@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "localhost"
 CONTAINER_PORT = 50051
-# Agents reach Redis by container name on NETWORK, where it always listens on 6379 --
-# the config's `redis_port` is only the host-side publish and does not apply here.
-REDIS_CONTAINER_PORT = 6379
 PROVIDER = "local"
 MAX_PORT_ATTEMPTS = 50
 NETWORK = "canyonos-local"
@@ -113,6 +110,10 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 "automatically -- free it or change `db_port` in the database's config."
             )
 
+    redis_port = _require_controller().redis_ports.get(
+        host, spec.get("redis_port", 6379)
+    )
+
     for attempt in range(MAX_PORT_ATTEMPTS):
         cmd = [
             "docker",
@@ -135,7 +136,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             "-e",
             f"CANYONOS_REDIS_HOST={redis_host}",
             "-e",
-            f"CANYONOS_REDIS_PORT={REDIS_CONTAINER_PORT}",
+            f"CANYONOS_REDIS_PORT={redis_port}",
             "-e",
             f"CANYONOS_POLL_INTERVAL={_require_controller().config.get('poll_interval', 5)}",
             # Route the agent's LLM SDK calls through the in-container proxy for telemetry.
@@ -218,7 +219,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         "container_port": str(CONTAINER_PORT),
         "endpoint": f"{host}:{host_port}",
         "redis_host": redis_host,
-        "redis_port": str(REDIS_CONTAINER_PORT),
+        "redis_port": str(redis_port),
         "runtime_id": runtime_id,
     }
     if user:
