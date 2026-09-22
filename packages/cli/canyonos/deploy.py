@@ -78,6 +78,11 @@ _BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.",)
 _CONTAINER_LOG_BEGIN = "--- begin container log:"
 _CONTAINER_LOG_END = "--- end container log:"
 
+# The global controller logs this exactly once, as the last thing it does before
+# the polling loop: the workflow is up. Like the markers above, it counts only
+# outside a quoted container log.
+_UP_MARKER = "Global controller started, polling every"
+
 # (substring, spinner message, completed message). A None spinner message keeps
 # whatever the spinner already shows; a None completed message prints nothing.
 # Matched by substring against the raw line, so a phase that never runs is simply
@@ -384,8 +389,10 @@ def _tail_verbose(stream, state, api_port, config_path, serve):
         _, _, is_error = tracker.feed(line)
         if is_error:
             return None
-        # Logged exactly once, right after the workflow finishes coming up.
-        if "Global controller started, polling every" in line:
+        # Logged exactly once, right after the workflow finishes coming up --
+        # and only when this deploy is the one saying it. Inside a quoted
+        # container log the same words belong to the agent, not to us.
+        if _UP_MARKER in line and not tracker.in_container_log:
             return _deploy_summary(state, api_port, config_path, serve)
     return None
 
@@ -420,8 +427,10 @@ def _tail_quiet(lines, state, api_port, config_path, serve):
                 ui.ok(done)
             if message:
                 spinner.update(message)
-            # Logged exactly once, right after the workflow finishes coming up.
-            if "Global controller started, polling every" in line:
+            # Logged exactly once, right after the workflow finishes coming up --
+            # and only when this deploy is the one saying it. Inside a quoted
+            # container log the same words belong to the agent, not to us.
+            if _UP_MARKER in line and not tracker.in_container_log:
                 summary_line, all_ready = tracker.agents_ready_message()
                 (ui.ok if all_ready else ui.warn)(summary_line)
                 reached_up_marker = True

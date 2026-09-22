@@ -194,6 +194,34 @@ def test_a_quoted_container_log_does_not_end_the_transcript_before_the_summary()
     )
 
 
+def test_an_up_marker_quoted_inside_a_container_log_does_not_declare_success(
+    monkeypatch, capsys
+):
+    """A dumped log is whatever the agent printed, including this deploy's own
+    phrases if the agent happened to log them. Only the real one counts.
+    """
+    monkeypatch.setattr(deploy_cmd, "_deploy_summary", lambda *_a: ("url", []))
+    stream = iter(
+        [
+            f"INFO:{GC}:Waiting for 1 replica(s) to become healthy (timeout=120s)...\n",
+            *container_log_dump(
+                "B",
+                "127.0.0.1:8001",
+                [
+                    f"INFO:{GC}:Global controller started, polling every 5s...",
+                    *AGENT_IMPORT_FAILURE,
+                ],
+            ),
+            READINESS_FAILED,
+        ]
+    )
+
+    result = deploy_cmd._tail_verbose(stream, {"port": 1}, None, "config.yaml", False)
+
+    assert result is None
+    assert "Controller readiness failed" in capsys.readouterr().out
+
+
 def test_error_detection_resumes_after_a_container_log_block():
     """The block is skipped, not the rest of the run: a genuine failure logged
     after the dump still has to end the deploy.
