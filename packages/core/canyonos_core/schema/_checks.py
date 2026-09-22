@@ -12,6 +12,7 @@ rejected here instead.
 """
 
 import difflib
+import math
 
 from canyonos_core.controller.utils.config_env import ENV_REF, expand_env_value
 from canyonos_core.schema.errors import SchemaViolation
@@ -140,6 +141,22 @@ def _port(collector, node, key, prefix, default):
     return _integer(collector, node, key, prefix, default, 1, 65535)
 
 
+def _as_finite_float(value):
+    """`value` as a finite float, or None.
+
+    YAML spells infinity and NaN as `.inf` and `.nan`, and an integer too large
+    for a float raises OverflowError on conversion; none of them is a number
+    any field here can use.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _number(collector, node, key, prefix, default, minimum=None):
     """A field that accepts a fraction, unlike the integer counts and ports."""
     if key not in node:
@@ -147,16 +164,16 @@ def _number(collector, node, key, prefix, default, minimum=None):
     raw = node[key]
     value = _resolve(raw)
     bound = f" > {minimum}" if minimum is not None else ""
-    wrong_type = isinstance(value, bool) or not isinstance(value, (int, float))
-    if wrong_type or (minimum is not None and value <= minimum):
+    number = _as_finite_float(value)
+    if number is None or (minimum is not None and number <= minimum):
         collector.add(
             node,
             key,
             _field(prefix, key),
-            f"expected a number{bound}, got {_describe_rejected(raw, value)}",
+            f"expected a finite number{bound}, got {_describe_rejected(raw, value)}",
         )
         return default
-    return float(value)
+    return number
 
 
 def _string(collector, node, key, prefix, default=None, required=False):

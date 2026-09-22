@@ -224,7 +224,7 @@ class LoadConfigParityTests(_ManifestCase):
             with self.subTest(field=field, value=value):
                 violation = self.one({"agents": [_agent(resources={field: value})]})
                 self.assertEqual(violation.field, f"agents[0].resources.{field}")
-                self.assertIn("expected a number > 0", violation.message)
+                self.assertIn("expected a finite number > 0", violation.message)
 
 
 class LogsFlagTests(_ManifestCase):
@@ -494,7 +494,7 @@ class OtelTests(_ManifestCase):
                 )
                 self.assertEqual(violation.field, "otel.destinations[0].timeout")
                 self.assertEqual(
-                    violation.message, f"expected a number > 0, got {quoted}"
+                    violation.message, f"expected a finite number > 0, got {quoted}"
                 )
 
     def test_a_complete_destination_parses(self):
@@ -659,6 +659,57 @@ class EnvExpansionTests(_ManifestCase):
             "expected an integer >= 1, got '${CANYONOS_TEST_REPLICAS}' "
             "(environment references are only supported in string fields)",
         )
+
+
+class NonFiniteNumberTests(unittest.TestCase):
+    """YAML's `.inf` and `.nan` are floats, and a long enough integer overflows
+    one: all three used to pass a numeric field, the last as a traceback."""
+
+    def _violations(self, field_text):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "global_controller.yaml")
+            Path(path).write_text(
+                "agents:\n"
+                "  - name: ExampleAgent\n"
+                "    entrypoint: agents/example_agent.py\n" + field_text
+            )
+            with self.assertRaises(SchemaError) as raised:
+                load_manifest(path)
+        return raised.exception.violations
+
+    def test_a_non_finite_resource_is_rejected(self):
+        for literal in (".nan", ".inf", "-.inf"):
+            with self.subTest(literal=literal):
+                (violation,) = self._violations(
+                    f"    resources:\n      cpu: {literal}\n"
+                )
+                self.assertEqual(violation.field, "agents[0].resources.cpu")
+                self.assertIn("expected a finite number > 0", violation.message)
+
+    def test_a_non_finite_otel_timeout_is_rejected(self):
+        (violation,) = self._violations(
+            "otel:\n"
+            "  destinations:\n"
+            "    - name: local\n"
+            "      protocol: grpc\n"
+            "      endpoint: http://x\n"
+            "      timeout: .inf\n"
+        )
+
+        self.assertEqual(violation.field, "otel.destinations[0].timeout")
+
+    def test_an_integer_too_large_for_a_float_is_a_violation_not_a_traceback(self):
+        (violation,) = self._violations(f"    resources:\n      memory: {'9' * 400}\n")
+
+        self.assertEqual(violation.field, "agents[0].resources.memory")
+        self.assertIn("expected a finite number > 0", violation.message)
+
+    def test_a_non_finite_value_in_an_integer_field_is_rejected(self):
+        for literal in (".nan", ".inf", "-.inf"):
+            with self.subTest(literal=literal):
+                (violation,) = self._violations(f"    replicas: {literal}\n")
+                self.assertEqual(violation.field, "agents[0].replicas")
+                self.assertIn("expected an integer >= 1", violation.message)
 
 
 class UnparseableFileTests(unittest.TestCase):
