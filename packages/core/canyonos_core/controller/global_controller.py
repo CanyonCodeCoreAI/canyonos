@@ -6,7 +6,6 @@ import atexit
 import json
 import logging
 import os
-import re
 import shlex
 import signal
 import subprocess
@@ -19,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 import yaml
 from canyonos_core.OTLP_Exporter import db as otel_db
 from canyonos_core.controller.instance_manager import InstanceManager
+from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.agent_specs import write_agent_specs
 from canyonos_core.controller.utils.container_names import redis_container_name
 from canyonos_core.controller.utils.env_file import resolve_env_file
@@ -53,7 +53,7 @@ LOCAL_NETWORK = "canyonos-local"
 # framework behavior, so honoring them from user data would be a control-plane
 # injection. CANYONOS_LLM_STUB_TEXT (the `canyonos test` LLM stub) is reachable
 # only via `canyonos test`, never a deploy's env_file.
-_RESERVED_ENV_KEYS = frozenset({"CANYONOS_LLM_STUB_TEXT"})
+_RESERVED_ENV_KEYS = config_env.RESERVED_ENV_KEYS
 
 
 def _is_local_host(host):
@@ -215,13 +215,7 @@ class GlobalController(object):
     @staticmethod
     def _load_config(config_path):
         """Load the YAML config file after importing root .env values."""
-        project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
-        # Under the .car layout, config lives at <project>/.car/config, so the
-        # naive parent-of-parent lands on .car itself -- go up one more level
-        # to reach the actual project root where .env lives.
-        if os.path.basename(project_root) == ".car":
-            project_root = os.path.dirname(project_root)
-        GlobalController._load_dotenv(os.path.join(project_root, ".env"))
+        config_env.load_root_dotenv(config_path)
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
         if not config.get("project_id"):
@@ -237,43 +231,10 @@ class GlobalController(object):
             f.write(f'project_id: "{project_id}"\n')
         return project_id
 
-    @staticmethod
-    def _load_dotenv(path):
-        """Load simple KEY=VALUE entries without overriding existing environment values."""
-        if not os.path.isfile(path):
-            return
-        with open(path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-                    value = value[1:-1]
-                if key in _RESERVED_ENV_KEYS:
-                    # Reserved internal control -- never honor it from user .env.
-                    continue
-                if key and key not in os.environ:
-                    os.environ[key] = value
-
-    @staticmethod
-    def _expand_env_value(value):
-        if isinstance(value, str):
-            return re.sub(
-                r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
-                lambda m: os.environ.get(m.group(1), m.group(0)),
-                value,
-            )
-        if isinstance(value, dict):
-            return {
-                key: GlobalController._expand_env_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [GlobalController._expand_env_value(item) for item in value]
-        return value
+    # Both of these are shared with the manifest schema, so a value is checked
+    # before the build in exactly the form the controller will act on.
+    _load_dotenv = staticmethod(config_env.load_dotenv)
+    _expand_env_value = staticmethod(config_env.expand_env_value)
 
     @staticmethod
     def _otel_destinations(otel_cfg):
@@ -380,7 +341,8 @@ class GlobalController(object):
         """Publish the current project/database identity to every node's Redis."""
         payload = {
             "project_id": str(self.config.get("project_id")),
-            "database_url": self.config.get("database", {}).get("url") or "",
+            # `database:` with nothing under it parses as None, hence the `or {}`.
+            "database_url": (self.config.get("database") or {}).get("url") or "",
         }
         targets = list(self.node_redis.values()) or [self.redis]
         for redis_client in targets:
