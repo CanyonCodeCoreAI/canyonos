@@ -53,6 +53,39 @@ PROTOBUF_FLOOR = Requirement(
 IMAGE_PYTHON_VERSION = "3.11"
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 
+# The shared runtime copied flat into the context root, as destination module
+# name -> its path inside this package. The copy lists below are built from
+# these, so a module the image ships is a module `canyonos validate` knows can
+# be collided with.
+_AGENT_FLAT_SOURCES = {
+    "future.py": ("controller", "future.py"),
+    "canyonos_context.py": ("controller", "canyonos_context.py"),
+    "local_controller.py": ("controller", "local_controller.py"),
+    "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),
+    "redis_client.py": ("controller", "utils", "redis_client.py"),
+    "grpc_options.py": ("controller", "utils", "grpc_options.py"),
+    "log_entry.py": ("controller", "utils", "log_entry.py"),
+    "gpu_metrics.py": ("controller", "utils", "gpu_metrics.py"),
+    "log_handler.py": ("controller", "utils", "log_handler.py"),
+}
+
+# A workflow image serves HTTP, so it carries one more.
+_WORKFLOW_FLAT_SOURCES = {
+    **_AGENT_FLAT_SOURCES,
+    "deploy.py": ("controller", "deploy.py"),
+}
+
+AGENT_FLAT_MODULES = frozenset(_AGENT_FLAT_SOURCES)
+WORKFLOW_FLAT_MODULES = frozenset(_WORKFLOW_FLAT_SOURCES)
+
+
+def _flat_runtime_files(script_dir, sources):
+    """(source, destination) for each runtime module copied to the context root."""
+    return [
+        (os.path.join(script_dir, *parts), destination)
+        for destination, parts in sources.items()
+    ]
+
 
 def _build_import_nodes():
     """Build import statements for the generated stub module."""
@@ -310,11 +343,13 @@ _SKIPPED_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
 
 # The generator writes these into the context itself, requirements.txt before
 # the copy runs -- a project file of the same name at the root would win.
-_RESERVED_CONTEXT_NAMES = {
-    "Dockerfile",
-    "requirements.txt",
-    "workflow_launcher.py",
-}
+RESERVED_CONTEXT_NAMES = frozenset(
+    {
+        "Dockerfile",
+        "requirements.txt",
+        "workflow_launcher.py",
+    }
+)
 
 _SKIPPED_SUFFIXES = (".pyc", ".pyo", ".pyd")
 
@@ -448,7 +483,7 @@ def _sweep_project_files(project_dir, exclude_dir=None):
             if _looks_like_private_key(abs_src, fname):
                 private_keys.append(rel_dst)
                 continue
-            if at_root and fname in _RESERVED_CONTEXT_NAMES:
+            if at_root and fname in RESERVED_CONTEXT_NAMES:
                 reserved.append(rel_dst)
                 continue
             swept.append((abs_src, rel_dst))
@@ -722,42 +757,7 @@ def generate_docker(
         files_to_copy += _sweep_project_files(project_dir, exclude_dir=output_dir)
 
     # Copy general agent files
-    files_to_copy += [
-        # (source_path, destination_filename)
-        (os.path.join(script_dir, "controller", "future.py"), "future.py"),
-        (
-            os.path.join(script_dir, "controller", "canyonos_context.py"),
-            "canyonos_context.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller.py"),
-            "local_controller.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller_frontend.py"),
-            "local_controller_frontend.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "redis_client.py"),
-            "redis_client.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "grpc_options.py"),
-            "grpc_options.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_entry.py"),
-            "log_entry.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
-            "gpu_metrics.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_handler.py"),
-            "log_handler.py",
-        ),
-    ]
+    files_to_copy += _flat_runtime_files(script_dir, _AGENT_FLAT_SOURCES)
 
     # Copy provided agent stubs both flat (for `from price_agent import ...` style
     # peer imports) and at their entrypoint-mirrored path (overwriting the swept
@@ -873,42 +873,7 @@ def generate_workflow_docker(
         _sweep_project_files(project_dir, exclude_dir=output_dir) if project_dir else []
     )
 
-    files_to_copy += [
-        (os.path.join(script_dir, "controller", "future.py"), "future.py"),
-        (
-            os.path.join(script_dir, "controller", "canyonos_context.py"),
-            "canyonos_context.py",
-        ),
-        (os.path.join(script_dir, "controller", "deploy.py"), "deploy.py"),
-        (
-            os.path.join(script_dir, "controller", "local_controller.py"),
-            "local_controller.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller_frontend.py"),
-            "local_controller_frontend.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "redis_client.py"),
-            "redis_client.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "grpc_options.py"),
-            "grpc_options.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
-            "gpu_metrics.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_handler.py"),
-            "log_handler.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_entry.py"),
-            "log_entry.py",
-        ),
-    ]
+    files_to_copy += _flat_runtime_files(script_dir, _WORKFLOW_FLAT_SOURCES)
 
     # Copy stub files both flat (for `from price_agent import ...` style imports
     # in the workflow) and at their entrypoint-mirrored path (overwriting the
