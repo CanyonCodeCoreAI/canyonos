@@ -26,6 +26,7 @@ from canyonos.serve import run_serve
 from canyonos.status import run_status
 from canyonos.stop import run_stop
 from canyonos.test import DEFAULT_LLM_STUB, DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
+from canyonos.validate import DEFAULT_ARTIFACT_ROOT, run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
 
 
@@ -185,6 +186,40 @@ def main():
         "--rebuild",
         action="store_true",
         help="Always deploy fresh instead of querying a deploy that is already up.",
+    )
+
+    # Validate has args: artifact_root, -c/--config, --json, --strict.
+    validate = add(
+        "validate",
+        lambda args: sys.exit(
+            run_validate(
+                args.artifact_root,
+                config=args.config,
+                as_json=args.json,
+                strict=args.strict,
+            )
+        ),
+    )
+    validate.add_argument(
+        "artifact_root",
+        nargs="?",
+        default=DEFAULT_ARTIFACT_ROOT,
+        help=f"The .car directory to check (default: {DEFAULT_ARTIFACT_ROOT})",
+    )
+    validate.add_argument(
+        "-c",
+        "--config",
+        help="Path to the manifest, relative to the .car (default: config/global_controller.yaml)",
+    )
+    validate.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a single JSON result object and nothing else (for CI)",
+    )
+    validate.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail on warnings as well as errors",
     )
 
     args = parser.parse_args()
