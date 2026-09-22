@@ -8,7 +8,6 @@ import os
 import re
 import secrets
 import shutil
-import socket
 import subprocess
 import time
 import urllib.error
@@ -20,7 +19,12 @@ from pathlib import Path
 from typing import Callable
 
 from canyonos import env
-from canyonos.constants import DEFAULT_DASHBOARD_PORT
+from canyonos.constants import (
+    DEFAULT_DASHBOARD_PORT,
+    default_config_path,
+    local_redis_port,
+)
+from canyonos.port_utils import find_free_port
 
 COMPOSE_PROJECT = "canyonos-dashboard"
 API_VERSION = "0.1.0"
@@ -32,7 +36,6 @@ API_IMAGE = env.api_image(f"ghcr.io/canyoncodecoreai/canyonos-api:{API_VERSION}"
 WEB_IMAGE = env.web_image(f"ghcr.io/canyoncodecoreai/canyonos-web:{WEB_VERSION}")
 HOST_GATEWAY = "host.docker.internal"
 REDIS_HOST = HOST_GATEWAY
-REDIS_PORT = "6379"
 
 
 @dataclass(frozen=True)
@@ -114,29 +117,6 @@ def _existing_dashboard_port() -> int | None:
     return None
 
 
-def _port_is_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        try:
-            probe.bind(("127.0.0.1", port))
-        except OSError:
-            return False
-    return True
-
-
-def _find_web_port(start: int = DEFAULT_DASHBOARD_PORT, max_attempts: int = 50) -> int:
-    """First free port at or after `start`, so an unrelated process or container
-    squatting on the preferred port (e.g. a deployed Workflow's own api_port)
-    doesn't hard-block serve.
-    """
-    for port in range(start, start + max_attempts):
-        if _port_is_free(port):
-            return port
-    raise PhaseFailure(
-        "validate",
-        f"no free port found for the dashboard after {max_attempts} attempts starting at {start}",
-    )
-
-
 def validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     """Checks docker is usable and the state dir is writable, then returns a DashboardStack with the port the dashboard should run on."""
     if shutil.which("docker") is None:
@@ -164,7 +144,11 @@ def validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     except OSError:
         raise PhaseFailure("validate", "dashboard state directory is not writable")
 
-    web_port = _existing_dashboard_port() or _find_web_port(preferred_port)
+    # Hop past a squatter (e.g. a deployed Workflow's api_port) rather than block serve.
+    try:
+        web_port = _existing_dashboard_port() or find_free_port(preferred_port)
+    except RuntimeError as e:
+        raise PhaseFailure("validate", str(e)) from e
 
     return DashboardStack(state_dir, project_root, web_port)
 
@@ -225,6 +209,9 @@ def _write_project_env(env_path: Path, managed_env: dict[str, str]) -> None:
             continue
         updated_lines.append(line)
 
+    if updated_lines and not updated_lines[-1].endswith("\n"):
+        updated_lines[-1] += "\n"
+
     updated_lines.extend(
         _env_line(key, value)
         for key, value in managed_env.items()
@@ -241,7 +228,7 @@ def prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
             "CANYONOS_JWT_SECRET": _read_existing_secret(stack.env_path)
             or secrets.token_urlsafe(32),
             "CANYONOS_REDIS_HOST": REDIS_HOST,
-            "CANYONOS_REDIS_PORT": REDIS_PORT,
+            "CANYONOS_REDIS_PORT": str(local_redis_port(default_config_path())),
             "CANYONOS_API_IMAGE": API_IMAGE,
             "CANYONOS_WEB_IMAGE": WEB_IMAGE,
             "CANYONOS_WEB_PORT": str(stack.web_port),

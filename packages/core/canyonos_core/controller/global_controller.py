@@ -24,6 +24,7 @@ from canyonos_core.controller.utils.agent_specs import write_agent_specs
 from canyonos_core.controller.utils.container_names import redis_container_name
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
+from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
@@ -101,6 +102,7 @@ class GlobalController(object):
         self.running = False
         self.containers = {}  # name -> [container_name, ...]
         self.redis_containers = {}  # host -> container_name
+        self.redis_ports = {}  # host -> published redis port
         self.node_redis = {}  # host -> RedisClient
         self._metrics_collectors = {}  # host -> collector container name (one per host)
         self._last_status = {}  # (host, port) -> last known status
@@ -113,7 +115,7 @@ class GlobalController(object):
         self._launch_redis_containers()
         # One machine-level metrics collector per host (best-effort, local hosts only).
         self._launch_metrics_collectors()
-        write_agent_specs(self.config_path, self.redis)
+        write_agent_specs(self.config_path, self.redis, self.redis_ports)
         self._write_resource_specs()
         self._load_and_write_policies()
         self._write_identity()
@@ -408,17 +410,24 @@ class GlobalController(object):
     #  Redis container management                                         #
     # ------------------------------------------------------------------ #
 
-    def _redis_container_healthy(
-        self, container_name, host, user, connect_host, redis_port
-    ):
-        """Check whether an existing Redis container is already up and answering."""
+    def _redis_container_running(self, container_name, host, user):
+        """Whether a Redis container by this name exists and is running."""
         inspect = self._run_cmd(
             ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
             host,
             user,
         )
-        if inspect.returncode != 0 or inspect.stdout.strip() != "true":
-            return False
+        return inspect.returncode == 0 and inspect.stdout.strip() == "true"
+
+    def _redis_container_serves_port(self, container_name, host, user, redis_port):
+        """Whether the Redis container is serving this port."""
+        result = self._run_cmd(
+            ["docker", "port", container_name, f"{redis_port}/tcp"], host, user
+        )
+        return result.returncode == 0
+
+    def _redis_responds(self, host, connect_host, redis_port):
+        """Check whether a Redis on this node is already up and answering."""
         try:
             probe = RedisClient(host=connect_host, port=redis_port)
             _wait_for_redis(probe, host, redis_port, timeout=5, interval=1)
@@ -432,13 +441,29 @@ class GlobalController(object):
         nodes = {}
         for ctrl in self.controllers:
             user = ctrl.get("user")
-            redis_port = ctrl.get("redis_port", 6379)
+            redis_port = int(ctrl.get("redis_port", 6379))
             for host, _port in self._get_replica_placements(ctrl):
-                if host not in nodes:
-                    nodes[host] = {
+                claimed = nodes.setdefault(
+                    host,
+                    {
                         "user": user,
                         "redis_port": redis_port,
-                    }
+                        "agent": ctrl.get("name"),
+                    },
+                )
+                if claimed["redis_port"] != redis_port:
+                    logger.critical(
+                        "Agents %s and %s are both placed on %s but declare "
+                        "different redis_port values (%d and %d). One Redis runs "
+                        "per host -- give them the same `redis_port` in "
+                        "global_controller.yaml.",
+                        claimed["agent"],
+                        ctrl.get("name"),
+                        host,
+                        claimed["redis_port"],
+                        redis_port,
+                    )
+                    sys.exit(1)
 
         for host, node_cfg in nodes.items():
             redis_port = node_cfg["redis_port"]
@@ -450,13 +475,39 @@ class GlobalController(object):
             else:
                 connect_host = host
 
-            if self._redis_container_healthy(
-                container_name, host, user, connect_host, redis_port
+            running = self._redis_container_running(container_name, host, user)
+            # Without this the ping below could be answered by an unrelated Redis
+            # on that port, and the GC would adopt it as its own.
+            if running and not self._redis_container_serves_port(
+                container_name, host, user, redis_port
             ):
+                logger.critical(
+                    "Redis container %s on %s is not serving port %d. Remove it "
+                    "with `docker rm -f %s`, or change `redis_port` in "
+                    "global_controller.yaml.",
+                    container_name,
+                    host,
+                    redis_port,
+                    container_name,
+                )
+                sys.exit(1)
+
+            if running:
+                if not self._redis_responds(host, connect_host, redis_port):
+                    logger.critical(
+                        "Redis container %s on %s is running but not answering on "
+                        "port %d. Remove it with `docker rm -f %s` and redeploy.",
+                        container_name,
+                        host,
+                        redis_port,
+                        container_name,
+                    )
+                    sys.exit(1)
                 logger.info(
                     "Reusing existing Redis container %s on %s", container_name, host
                 )
                 self.redis_containers[host] = container_name
+                self.redis_ports[host] = redis_port
             else:
                 if _is_local_host(host):
                     self._run_cmd(
@@ -465,6 +516,10 @@ class GlobalController(object):
                 network_args = (
                     ["--network", LOCAL_NETWORK] if _is_local_host(host) else []
                 )
+
+                # Redis listens on the declared port inside the container too, so
+                # agents reaching it by container name over the local network use
+                # the same number the host does.
                 cmd = [
                     "docker",
                     "run",
@@ -473,27 +528,14 @@ class GlobalController(object):
                     container_name,
                     *network_args,
                     "-p",
-                    f"{redis_port}:6379",
+                    f"{redis_port}:{redis_port}",
                     "redis:alpine",
+                    "redis-server",
+                    "--port",
+                    str(redis_port),
                 ]
-
                 try:
                     result = self._run_cmd(cmd, host, user)
-                    if result.returncode == 0:
-                        self.redis_containers[host] = container_name
-                        logger.info(
-                            "Launched Redis container %s on %s:%d",
-                            container_name,
-                            host,
-                            redis_port,
-                        )
-                    else:
-                        logger.critical(
-                            "Failed to launch Redis on %s: %s",
-                            host,
-                            result.stderr.strip(),
-                        )
-                        sys.exit(1)
                 except FileNotFoundError:
                     logger.critical(
                         "Docker is not installed or not in PATH. Cannot launch Redis."
@@ -503,9 +545,44 @@ class GlobalController(object):
                     logger.critical("Failed to launch Redis on %s: %s", host, e)
                     sys.exit(1)
 
+                if result.returncode != 0:
+                    if is_port_conflict(result.stderr):
+                        # A publish failure leaves the fixed-name container in
+                        # `Created` state -- remove it, or the next deploy fails
+                        # on the name instead of reporting the real problem.
+                        self._run_cmd(
+                            ["docker", "rm", "-f", container_name], host, user
+                        )
+                        logger.critical(
+                            "Redis port %d on %s is already in use. Free it or change "
+                            "`redis_port` in global_controller.yaml.",
+                            redis_port,
+                            host,
+                        )
+                    else:
+                        logger.critical(
+                            "Failed to launch Redis on %s: %s",
+                            host,
+                            result.stderr.strip(),
+                        )
+                    sys.exit(1)
+
+                self.redis_containers[host] = container_name
+                self.redis_ports[host] = redis_port
+                logger.info(
+                    "Launched Redis container %s on %s:%d",
+                    container_name,
+                    host,
+                    redis_port,
+                )
+
             # Create a RedisClient for this node
             redis_client = RedisClient(host=connect_host, port=redis_port)
-            _wait_for_redis(redis_client, host, redis_port)
+            try:
+                _wait_for_redis(redis_client, host, redis_port)
+            except TimeoutError as e:
+                logger.critical("%s", e)
+                sys.exit(1)
             self.node_redis[host] = redis_client
             if host == "localhost":
                 self._redis_addr = (connect_host, redis_port)

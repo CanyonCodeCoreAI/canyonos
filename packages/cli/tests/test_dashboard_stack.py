@@ -27,7 +27,9 @@ def project(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(dashboard_stack.shutil, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(dashboard_stack, "_port_is_free", lambda _port: True)
+    monkeypatch.setattr(
+        dashboard_stack, "find_free_port", lambda start, max_attempts=50: start
+    )
     return tmp_path
 
 
@@ -115,11 +117,10 @@ def test_state_directory_and_port_validation_failures_do_not_pull(
     monkeypatch.setattr(dashboard_stack, "_state_dir", lambda: tmp_path / "state")
     monkeypatch.setattr(
         dashboard_stack,
-        "_find_web_port",
+        "find_free_port",
         lambda start=8080, max_attempts=50: (_ for _ in ()).throw(
-            dashboard_stack.PhaseFailure(
-                "validate",
-                "no free port found for the dashboard after 50 attempts starting at 8080",
+            RuntimeError(
+                "no free port found for the dashboard after 50 attempts starting at 8080"
             )
         ),
     )
@@ -357,7 +358,7 @@ def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
     install_docker(monkeypatch, calls, response)
     monkeypatch.setattr(
         dashboard_stack,
-        "_find_web_port",
+        "find_free_port",
         lambda *a, **k: pytest.fail(
             "the existing dashboard owns port 8080, should not search for a new one"
         ),
