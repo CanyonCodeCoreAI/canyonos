@@ -265,6 +265,10 @@ def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
             # a bare `docker` invocation inside the container would default to.
             "-e",
             f"DOCKER_HOST=unix://{GC_DOCKER_SOCKET}",
+            # The GC launches sibling containers (the machine metrics collector) from
+            # its own image; it cannot read that from inside, so pass it in.
+            "-e",
+            f"CANYONOS_CONTROLLER_IMAGE={image}",
         ]
         # Extra env for the GC container. The local runtime forwards select keys
         # (e.g. CANYONOS_LLM_STUB_TEXT) from here into each agent container.

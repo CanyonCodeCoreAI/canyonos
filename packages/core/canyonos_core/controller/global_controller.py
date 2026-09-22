@@ -41,9 +41,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 LOCAL_NETWORK = "canyonos-local"
-CONTROLLER_IMAGE = os.environ.get(
-    "CANYONOS_CONTROLLER_IMAGE", "saakeths/canyonos:latest"
-)
+# Set by the CLI to the image the GC itself runs. No default: guessing one means
+# silently running a stale image that need not hold the code this GC was built from.
+CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 
 # Internal runtime controls that must never be settable from a user's `.env`.
 # The .env is for the user's own secrets (API keys, etc.); these keys steer
@@ -511,6 +511,13 @@ class GlobalController(object):
         Best-effort and idempotent, mirroring _launch_redis_containers: a collector
         already running on a host is reused; a launch failure is logged, not fatal.
         """
+        if not CONTROLLER_IMAGE:
+            logger.error(
+                "CANYONOS_CONTROLLER_IMAGE is unset, so no machine metrics collector "
+                "can be started; machine-level metrics will be missing."
+            )
+            return
+
         # Unique-host dedup (like _launch_redis_containers), tracking per host whether any
         # agent placed there requests a GPU -- so --gpus is only added where it's wanted
         # (it fails `docker run` on hosts without the nvidia container runtime).
