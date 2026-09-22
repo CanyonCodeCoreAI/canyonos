@@ -145,6 +145,7 @@ def main():
                 as_json=args.json,
                 llm_stub=(None if args.real_llm else args.stub_text),
                 timeout=args.timeout,
+                rebuild=args.rebuild,
             )
         ),
     )
@@ -179,6 +180,11 @@ def main():
         default=REQUEST_TIMEOUT,
         metavar="SECONDS",
         help=f"Seconds to wait for the workflow to finish (default: {REQUEST_TIMEOUT}).",
+    )
+    test.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Always deploy fresh instead of querying a deploy that is already up.",
     )
 
     args = parser.parse_args()
