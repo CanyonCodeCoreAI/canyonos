@@ -70,6 +70,13 @@ class _FakeInstanceManager:
     def list_instances(self):
         return self._instances
 
+    def _routing_endpoint_for(self, instance):
+        # Real InstanceManager resolves the container-reachable address
+        # (runtime_id:CONTAINER_PORT); these fixtures use "endpoint" as
+        # that already-resolved stand-in, since these tests are about
+        # batching/draining semantics, not address resolution itself.
+        return instance["endpoint"]
+
 
 def _bare_controller(redis, instances, node_redis=None):
     """Build a GlobalController without running its heavy __init__.
@@ -115,7 +122,12 @@ class TriggerCleanupTests(unittest.TestCase):
         # Drained after broadcasting, same as before.
         self.assertEqual(redis.smembers("request:completed"), set())
 
-    def test_one_instance_failing_does_not_block_others_or_stop_draining(self):
+    def test_one_instance_failing_leaves_the_batch_queued_for_retry(self):
+        # CAN-391: a batch is only ever removed from "request:completed" once
+        # every instance has confirmed receipt. If even one Cleanup RPC fails
+        # (e.g. an unreachable endpoint), the whole batch must stay queued --
+        # dropping it here is how cleanup entries went missing and Redis grew
+        # unbounded.
         completed = {"reqA", "reqB"}
         expected = set(completed)  # snapshot -- see note in the test above
         redis = _FakeRedis({"request:completed": completed})
@@ -128,9 +140,11 @@ class TriggerCleanupTests(unittest.TestCase):
 
         controller._trigger_cleanup()  # must not raise
 
+        # The reachable instance still gets the batch...
         self.assertEqual(len(good_stub.calls), 1)
         self.assertEqual(set(good_stub.calls[0]["request_ids"]), expected)
-        self.assertEqual(redis.smembers("request:completed"), set())
+        # ...but nothing is drained until every instance has confirmed.
+        self.assertEqual(redis.smembers("request:completed"), expected)
 
     def test_noop_when_nothing_completed(self):
         redis = _FakeRedis()
@@ -144,12 +158,13 @@ class TriggerCleanupTests(unittest.TestCase):
         self.assertEqual(stub.calls, [])
 
     def test_noop_when_no_instances_registered(self):
+        # CAN-391: with nothing to broadcast to, nothing has confirmed the
+        # batch -- it must stay queued rather than being silently dropped.
         redis = _FakeRedis({"request:completed": {"req1"}})
         controller = _bare_controller(redis, [])
 
-        # Should still drain the completed set even with nothing to broadcast to.
         controller._trigger_cleanup()
-        self.assertEqual(redis.smembers("request:completed"), set())
+        self.assertEqual(redis.smembers("request:completed"), {"req1"})
 
 
 class MultiNodeTriggerCleanupTests(unittest.TestCase):

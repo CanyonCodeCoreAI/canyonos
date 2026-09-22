@@ -815,7 +815,10 @@ class GlobalController(object):
         payload = json.dumps({"request_ids": list(all_completed)})
 
         def _send(instance):
-            endpoint = instance["endpoint"]
+            # Container-reachable address (runtime_id:CONTAINER_PORT), not
+            # instance["endpoint"] -- that's the host-published port
+            # (e.g. localhost:8001), which the GC container can't reach.
+            endpoint = self.instance_manager._routing_endpoint_for(instance)
             try:
                 stub = self._get_lc_stub(endpoint)
                 stub.Cleanup(local_controler_pb2.JsonResponse(resonse=payload))
@@ -824,20 +827,34 @@ class GlobalController(object):
                     len(all_completed),
                     endpoint,
                 )
+                return True
             except Exception as e:
                 logger.warning("Failed to trigger cleanup on %s: %s", endpoint, e)
+                return False
 
         instances = self.instance_manager.list_instances()
         if instances:
             with ThreadPoolExecutor(max_workers=len(instances)) as executor:
-                list(executor.map(_send, instances))
+                all_sent = all(executor.map(_send, instances))
+        else:
+            # Nothing to broadcast to -- don't drop the batch as if it were handled.
+            all_sent = False
+
+        if not all_sent:
+            logger.warning(
+                "Cleanup broadcast failed for at least one instance; leaving %d "
+                "request(s) queued for retry on the next cycle.",
+                len(all_completed),
+            )
+            return
 
         logger.info(
             "Triggered cleanup for %d completed request(s) across %d node(s)",
             len(all_completed),
             len(completed_by_client),
         )
-        # Drain each node's own set from the same client it was read from.
+        # Drain each node's own set from the same client it was read from,
+        # now that every instance has confirmed receipt of the batch.
         for client, completed in completed_by_client.items():
             client.srem("request:completed", *completed)
 

@@ -21,6 +21,18 @@ import local_controler_pb2_grpc
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Grace period before a completed request's future keys actually disappear.
+# GlobalController's poll loop (default every 5s) reads future:{id} to turn it
+# into an OTel span -- see pull_runtime_information() in telemetry_logging.py.
+# Deleting these keys the instant Cleanup runs races that read: whichever
+# request's future gets deleted first loses its span forever, with no error
+# anywhere. This used to never matter because the Cleanup RPC never actually
+# reached here (CAN-391); now that it does, the race is real under load.
+# Expiring instead of deleting keeps memory bounded (CAN-391's actual
+# requirement) while giving the poll loop several chances to read the data
+# first -- same pattern as deploy.py's COMPLETED_TTL_SECONDS.
+FUTURE_CLEANUP_GRACE_SECONDS = 30
+
 
 class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
     """gRPC servicer that accepts requests and pushes them into a queue."""
@@ -127,18 +139,22 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                 logger.info("No futures found for request %s on this node.", request_id)
                 return
 
-            keys_to_delete = [futures_key]
+            keys_to_expire = [futures_key]
             for fid in future_ids:
-                keys_to_delete.extend(
+                keys_to_expire.extend(
                     [
                         f"future:{fid}",
                         f"future:{fid}:children",
                         f"future:{fid}:consumers",
                     ]
                 )
-            self.redis.delete(*keys_to_delete)
+            for key in keys_to_expire:
+                self.redis.expire(key, FUTURE_CLEANUP_GRACE_SECONDS)
             logger.info(
-                "Cleaned up %d future(s) for request %s", len(future_ids), request_id
+                "Scheduled %d future(s) for request %s to expire in %ds",
+                len(future_ids),
+                request_id,
+                FUTURE_CLEANUP_GRACE_SECONDS,
             )
 
             # Clean up affinity bindings for this request
