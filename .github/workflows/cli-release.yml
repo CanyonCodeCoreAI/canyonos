@@ -128,6 +128,64 @@ jobs:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: uv publish --check-url https://pypi.org/simple/ 'dist/canyonos-*'
 
+  # main is protected, so the formula bump lands as a PR rather than a direct push.
+  update-brew-formula:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+
+      - name: Download release binaries
+        run: gh release download "$RELEASE_TAG" --repo "${{ github.repository }}" --dir bin --pattern 'canyonos-*'
+
+      - name: Update version and sha256 in Formula/canyonos.rb
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import pathlib
+          import re
+
+          version = os.environ["RELEASE_TAG"].removeprefix("cli-v")
+          formula = pathlib.Path("Formula/canyonos.rb")
+          text = re.sub(r'version ".*"', f'version "{version}"', formula.read_text(), count=1)
+          for asset in ("canyonos-macos-arm64", "canyonos-macos-x86_64", "canyonos-linux-arm64", "canyonos-linux-x86_64"):
+              sha256 = hashlib.sha256(pathlib.Path(f"bin/{asset}").read_bytes()).hexdigest()
+              text, count = re.subn(
+                  rf'(url "[^"]*/{re.escape(asset)}"\n\s*sha256 ")[a-f0-9]+(")',
+                  rf"\g<1>{sha256}\g<2>",
+                  text,
+              )
+              if count != 1:
+                  raise SystemExit(f"{asset} not found in {formula}")
+          formula.write_text(text)
+          PY
+
+      - name: Open formula PR
+        run: |
+          if git diff --quiet Formula/canyonos.rb; then
+            echo "Formula already at $RELEASE_TAG"
+            exit 0
+          fi
+          branch="brew/$RELEASE_TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "brew: update canyonos formula to $RELEASE_TAG"
+          git push --force origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "Update homebrew formula to $RELEASE_TAG" \
+            --body "Bumps Formula/canyonos.rb version and sha256s to the $RELEASE_TAG release binaries."
+
 # Triggered by publishing a GitHub release on a "cli-v*" tag, or by workflow_dispatch with
 # that tag to rebuild and re-attach the binaries. No workflow creates tags or bumps versions.
 # packages/cli/install.sh downloads the matching asset for the latest "cli-v*" release.
