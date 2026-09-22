@@ -1,0 +1,169 @@
+# Preparing an Agent App for CanyonOS
+
+This guide explains what an agent application should provide before it can be
+successfully ported to CanyonOS.
+
+CanyonOS can package and run an existing agent, but it will not change the
+application's business logic, invent missing configuration, or create external
+services on the developer's behalf.
+
+## 1. Provide a service-ready application interface
+
+Provide a clear, importable function or class that accepts a request and returns a
+result. The application must be able to run without a graphical interface or human
+input.
+
+```python
+class SupportAgent:
+    async def ask(self, query: str) -> str:
+        return await answer_query(query)
+```
+
+The serving path should not depend on:
+
+- `input()` or terminal prompts;
+- a microphone, speaker, browser, or desktop UI;
+- a person approving an action while the request is running;
+- an interactive CLI loop;
+- starting another web server instead of exposing the application logic.
+
+If an action needs confirmation, make that confirmation part of the request or the
+application's workflow state.
+
+## 2. Do not require Docker inside the application
+
+Do not start Docker from inside the agent application. CanyonOS agent containers do
+not provide a Docker daemon or access to the host Docker socket.
+
+If the application uses Docker for code execution or isolation, move that work to a
+separate sandbox service or provide a mode that does not require Docker.
+
+The application should also avoid assumptions about the host machine. Do not depend
+on local absolute paths, a GPU, or a display.
+
+## 3. Use a supported model provider
+
+The CanyonOS-managed LLM path currently supports:
+
+- OpenAI;
+- Anthropic;
+- AWS Bedrock.
+
+Applications that require another model provider must migrate to a supported
+provider before they can use the managed LLM path.
+
+Secrets must come from environment variables or a secret store. Model names and
+service URLs may have sensible defaults, but they must be overridable at runtime.
+
+```python
+client = OpenAI(
+    api_key=os.environ["OPENAI_API_KEY"],
+    base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+)
+model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+```
+
+For example, an OpenAI application running in CanyonOS uses the in-container proxy:
+
+```dotenv
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=http://127.0.0.1:8081/openai/v1
+OPENAI_API_BASE=http://127.0.0.1:8081/openai/v1
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+Do not hardcode an API key, an account-specific resource ID, or a model that cannot be changed. Confirm that the configured model is still available. 
+
+## 4. Keep dependencies compatible with CanyonOS
+
+Application dependencies must be compatible with the CanyonOS base image. If an
+agent image needs additional packages, declare them in that agent's `requirements`
+section in `global_controller.yaml`. Declare Workflow dependencies on the Workflow
+entry in the same way.
+
+That image currently requires these shared package versions:
+
+```text
+grpcio>=1.83.1
+grpcio-tools>=1.76.0
+protobuf>=6.33.5
+boto3>=1.43.91
+requests>=2.34.2
+```
+
+These versions may change with a new CanyonOS image. Always use the target image's
+published dependency versions as the compatibility baseline.
+
+```yaml
+agents:
+  - name: ResearchAgent
+    entrypoint: research_agent.py
+    requirements:
+      - openai-agents>=0.14,<1.0
+      - pydantic>=2.10,<3.0
+
+  - name: Workflow
+    type: workflow
+    workflow_file: workflow.py
+    requirements:
+      - httpx>=0.27,<1.0
+```
+
+Include every package imported by the serving path, including required optional
+extras. Use compatible version ranges where possible, and test that the complete
+dependency set resolves against the CanyonOS base image.
+
+Keep the default installation suitable for a CPU container. Avoid pulling large
+CUDA, GPU, or local-model packages when the application only calls a remote model.
+Large dependency trees can exhaust build disk space before the application starts.
+
+The application must also fit within its declared memory and time limits. Bound
+agent loops, retries, model calls, and index building. If the application needs more
+resources, declare that requirement instead of relying on retries after an OOM or
+timeout.
+
+## 5. Provide required services, credentials, and data
+
+CanyonOS does not automatically create or configure services such as Pinecone,
+Shopify, Google Calendar, Serper, or Tavily.
+
+Set `env_file` in `global_controller.yaml` to the file that contains the runtime
+configuration. By default, use `.env` in the repository root:
+
+```yaml
+env_file: .env
+```
+
+If the file is stored elsewhere, set `env_file` to its path relative to the
+repository root. Do not commit real credentials to the repository.
+
+If the application needs an external service:
+
+- document the required environment variables;
+- provide the credentials in the deployment environment;
+- return a clear error when required configuration is missing.
+
+RAG and file-processing applications must also make their data available. Include a small test dataset or document how the production data is mounted. 
+
+## 6. Verify the original application first
+
+Canyonization does not repair bugs in the original application. Before submitting
+an application, verify that it can be installed, imported, and called in a clean
+environment.
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 -m compileall -q .
+python3 -c "from your_package.entrypoint import YourAgent"
+```
+
+Run at least one representative request using a real model and the same data and
+tools expected in production. A successful import alone is not enough.
+
+## Responsibility boundary
+
+Application developers own the application's source code, dependencies, data,
+credentials, external services, and business correctness. CanyonOS owns runtime
+orchestration, container communication, and supported model routing.
