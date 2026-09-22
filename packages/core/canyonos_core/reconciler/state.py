@@ -1,6 +1,4 @@
-# Reconciler State
-# The durable reconciliation schema in Redis, and the fire-and-forget API that
-# writes to it. Plain functions over a RedisClient so any process can call them.
+# The durable reconciliation schema in Redis: plain functions over a RedisClient.
 
 import logging
 
@@ -11,8 +9,7 @@ REAP_SET_KEY = "reconciler:reap"
 DRAINING_KEY = "reconciler:draining"
 WAKE_ALL = "*"
 
-# Expires so a hard-killed controller's orphaned reconciler resumes refilling rather
-# than holding the fleet at zero forever.
+# Expires so a hard-killed controller cannot hold the fleet at zero forever.
 DRAINING_TTL_SECONDS = 60
 
 # One drain must not spin forever on a queue being written to concurrently.
@@ -21,11 +18,6 @@ _DRAIN_LIMIT = 1000
 
 def desired_key(agent_name):
     return f"agent:{agent_name}:desired_replicas"
-
-
-# ---------------------------------------------------------------------- #
-#  Desired state                                                         #
-# ---------------------------------------------------------------------- #
 
 
 def get_desired(redis_client, agent_name, default=0):
@@ -56,10 +48,7 @@ def replica_count(spec):
 
 
 def seed_desired(redis_client, agent_specs):
-    """Record each agent's configured replica count, leaving any existing value alone.
-
-    Redis is authoritative once written, so a runtime scale survives a controller restart.
-    """
+    """Record each agent's configured count, leaving any existing value alone."""
     for spec in agent_specs:
         name = spec["name"]
         replicas = replica_count(spec)
@@ -75,19 +64,8 @@ def seed_desired(redis_client, agent_specs):
             set_desired(redis_client, name, replicas)
 
 
-def scale(redis_client, agent_name, delta):
-    """Move an agent's desired replica count by delta. Returns the new count."""
-    new_count = redis_client.incrby(desired_key(agent_name), int(delta))
-    if new_count < 0:
-        return set_desired(redis_client, agent_name, 0)
-    return new_count
-
-
 def desired_agent_specs(redis_client, agent_specs):
-    """The full agent spec list with each spec's replicas replaced by its desired count.
-
-    Always the whole list: ensure_instances drops every service missing from what it is handed.
-    """
+    """The full spec list with each spec's replicas replaced by its desired count."""
     specs = []
     for spec in agent_specs:
         configured = replica_count(spec)
@@ -98,11 +76,6 @@ def desired_agent_specs(redis_client, agent_specs):
             {**spec, "replicas": get_desired(redis_client, spec["name"], configured)}
         )
     return specs
-
-
-# ---------------------------------------------------------------------- #
-#  Teardown                                                              #
-# ---------------------------------------------------------------------- #
 
 
 def set_draining(redis_client):
@@ -120,23 +93,13 @@ def is_draining(redis_client):
     return redis_client.get(DRAINING_KEY) is not None
 
 
-# ---------------------------------------------------------------------- #
-#  Wake queue                                                            #
-# ---------------------------------------------------------------------- #
-
-
 def request_reconcile(redis_client, agent_name=WAKE_ALL):
     """Ask the reconciler to converge an agent (or everything) as soon as it can."""
     redis_client.lpush(WAKE_QUEUE_KEY, agent_name)
 
 
 def drain(redis_client, timeout=1):
-    """
-    Wait for wake signals and collect every one currently queued.
-
-    Blocks up to timeout seconds for the first signal, then takes the rest without
-    blocking, so a burst of identical signals collapses into a single pass.
-    """
+    """Block for the first wake signal, then take the rest so a burst collapses into one pass."""
     first = redis_client.brpop(WAKE_QUEUE_KEY, timeout=timeout)
     if first is None:
         return set()
@@ -150,21 +113,13 @@ def drain(redis_client, timeout=1):
     return signals
 
 
-# ---------------------------------------------------------------------- #
-#  Targeted replacement                                                  #
-# ---------------------------------------------------------------------- #
-
-
 def request_replace(redis_client, instance_id):
     """Mark one instance to be destroyed; the loop refills its slot afterwards."""
     redis_client.sadd(REAP_SET_KEY, instance_id)
 
 
 def take_reap_requests(redis_client, agent_name):
-    """Claim the pending reap requests belonging to an agent.
-
-    Ids are removed up front, so a crash mid-pass loses the request rather than replaying it forever.
-    """
+    """Claim an agent's pending reap requests, removing them up front."""
     prefix = f":{agent_name}:"
     claimed = {
         instance_id

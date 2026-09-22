@@ -21,8 +21,7 @@ def _fake_controller():
         node_redis={},
         redis_containers={},
         config={"poll_interval": 5},
-        # stdout="" (not running) so the orphan-check `docker inspect` probe that now
-        # precedes `docker run` reads a real string instead of erroring on a missing attribute.
+        # stdout="" so the orphan-check `docker inspect` probe reads a real string.
         _run_cmd=MagicMock(return_value=SimpleNamespace(returncode=0, stdout="")),
     )
 
@@ -181,8 +180,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
         cmd = controller._run_cmd.call_args_list[1].args[0]
-        # Always present, explicitly empty -> stub off, and a user's .env value
-        # for this key is overridden (docker: -e beats --env-file).
+        # Explicitly empty means stub off; -e beats --env-file, so a user's .env loses.
         self.assertIn("CANYONOS_LLM_STUB_TEXT=", cmd)
         self.assertNotIn("CANYONOS_LLM_STUB_TEXT=test", cmd)
 
@@ -380,8 +378,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                 0,
             ),
         )
-        # EC2 jobs never get a pre-reserved port; the callback stands in for
-        # one but should always resolve to None for this provider.
+        # EC2 jobs never get a pre-reserved port, so this must resolve to None.
         self.assertIsNone(provision_args[2]("10.0.0.30"))
         runtime.bootstrap_instance.assert_called_once_with(
             provisioned,

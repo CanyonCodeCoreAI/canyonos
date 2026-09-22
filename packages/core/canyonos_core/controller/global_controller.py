@@ -210,11 +210,7 @@ class GlobalController(ControllerContext):
 
     @staticmethod
     def _load_config(config_path):
-        """The shared config load, plus minting a project_id when the file omits one.
-
-        Minting stays here rather than on ControllerContext: it appends to the
-        config file, and only the controller owns that file.
-        """
+        """The shared config load, plus minting a project_id when the file omits one."""
         config = ControllerContext._load_config(config_path)
         if not config.get("project_id"):
             config["project_id"] = GlobalController._assign_new_project_id(config_path)
@@ -245,11 +241,7 @@ class GlobalController(ControllerContext):
         self.redis.set(self.OTEL_DESTINATIONS_KEY, payload)
 
     def reload_config(self):
-        """Re-read the config, republish the spec, and let the reconciler converge.
-
-        The reconciler adopts the published spec on its next pass, so an agent
-        added, removed or resized here needs no reload signal of its own.
-        """
+        """Re-read the config, republish the spec, and let the reconciler converge."""
         logger.info("Reloading config from %s", self.config_path)
         self.config = self._load_config(self.config_path)
         self.env_file_path = resolve_env_file(self.config)
@@ -257,14 +249,12 @@ class GlobalController(ControllerContext):
         self.poll_interval = self.config.get("poll_interval", 5)
         assign_project_id(self.config.get("project_id"))
         write_config_specs(self.controllers, self.redis)
-        # Write-if-absent, so this only ever seeds an agent the reload added; a
-        # count scaled at runtime is left alone.
+        # Write-if-absent: seeds an agent the reload added, leaves a runtime scale alone.
         state.seed_desired(self.redis, self.controllers)
         self._write_identity()
         self._request_reconcile(state.WAKE_ALL)
 
-        # Only meaningful if the exporter was already running -- otel isn't
-        # spawned mid-run just because it got added to the config here.
+        # Only meaningful if the exporter was already running.
         destinations = self._otel_destinations(self.config.get("otel", {}))
         if destinations is not None and self.process_supervisor.is_registered(
             "otel_exporter"
@@ -716,15 +706,17 @@ class GlobalController(ControllerContext):
                 e,
             )
 
-    # ------------------------------------------------------------------ #
-    #  Scaling                                                            #
-    # ------------------------------------------------------------------ #
+    def set_replicas(self, agent_name, count):
+        """Set an agent's desired replica count; the reconciler adds or reaps to match."""
+        if agent_name not in self.agent_specs:
+            logger.warning("Cannot scale unknown agent %s", agent_name)
+            return None
+        desired = state.set_desired(self.redis, agent_name, count)
+        self._request_reconcile(agent_name)
+        return desired
 
     def replace_instance(self, agent_name, replica_index):
-        """Destroy one replica and let the reconciler rebuild it.
-
-        The desired count is unchanged, so the slot is refilled rather than lost.
-        """
+        """Destroy one replica; the desired count is unchanged, so the slot is refilled."""
         if agent_name not in self.agent_specs:
             logger.warning("Cannot replace an instance of unknown agent %s", agent_name)
             return None

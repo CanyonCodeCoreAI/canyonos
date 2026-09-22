@@ -1,12 +1,9 @@
-"""Both processes must resolve the config identically.
-
-The reconciler is the only process that provisions, so an unexpanded ${EC2_AMI_ID}
-in its copy of the config reaches the AWS API verbatim. ControllerContext used to
-bare-yaml.safe_load while GlobalController expanded, which is exactly that bug.
-"""
+"""Both processes must resolve the config identically, or an unexpanded ${VAR} reaches AWS."""
 
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -33,10 +30,9 @@ project_id: "fixed"
 
 class ConfigExpansionParityTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "_ctx_config"
-        )
-        os.makedirs(os.path.join(self.tmp, "config"), exist_ok=True)
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        os.makedirs(os.path.join(self.tmp, "config"))
         self.config_path = os.path.join(self.tmp, "config", "global_controller.yaml")
         with open(self.config_path, "w") as f:
             f.write(_CONFIG)
@@ -47,26 +43,15 @@ class ConfigExpansionParityTests(unittest.TestCase):
             "TEST_EC2_TYPE": "t3.small",
         }
 
-    def tearDown(self):
-        import shutil
-
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_controller_context_expands_env_refs(self):
+    def test_both_processes_expand_env_refs_identically(self):
         with patch.dict(os.environ, self.env):
             config = ControllerContext._load_config(self.config_path)
+            self.assertEqual(config, GlobalController._load_config(self.config_path))
 
         self.assertEqual(config["ec2"]["ami_id"], "ami-0abc123")
         self.assertEqual(config["ec2"]["region"], "us-east-2")
         self.assertEqual(config["ec2"]["security_group_ids"], ["sg-0def456"])
         self.assertEqual(config["agents"][0]["instance_type"], "t3.small")
-
-    def test_both_processes_resolve_the_same_config(self):
-        with patch.dict(os.environ, self.env):
-            self.assertEqual(
-                ControllerContext._load_config(self.config_path),
-                GlobalController._load_config(self.config_path),
-            )
 
     def test_an_unset_ref_is_left_alone_rather_than_emptied(self):
         """A visible ${VAR} in a failure message beats a silently empty value."""

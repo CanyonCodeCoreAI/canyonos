@@ -1,4 +1,9 @@
 import fnmatch
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 class _FakeRedis:
@@ -12,7 +17,6 @@ class _FakeRedis:
         self.hashes = hashes if hashes is not None else {}
         self.lists = {}
         self.ttls = {}
-        self.counters = {}
         self.client = self
 
     def set(self, key, value):
@@ -42,15 +46,6 @@ class _FakeRedis:
             return False
         self.ttls[key] = seconds
         return True
-
-    def incr(self, key):
-        return self.incrby(key)
-
-    def incrby(self, key, amount=1):
-        new_value = int(self.strings.get(key, 0)) + int(amount)
-        self.strings[key] = str(new_value)
-        self.counters[key] = new_value
-        return new_value
 
     def lpush(self, key, *values):
         self.lists.setdefault(key, [])[:0] = [str(value) for value in values]
@@ -105,3 +100,55 @@ class _FakeRedis:
             key in collection
             for collection in (self.strings, self.hashes, self.sets, self.lists)
         )
+
+
+def _instance(agent_name, replica_index, created_at=None, host_port=None):
+    """An agent_instance:* record as the Provisioner writes it."""
+    return {
+        "agent_name": agent_name,
+        "provider": "local",
+        "runtime_id": f"canyonos-{agent_name.lower()}-{replica_index}",
+        "container_port": "50051",
+        "replica_index": str(replica_index),
+        "host": "localhost",
+        "host_port": str(host_port or 8000 + replica_index),
+        "created_at": str(created_at if created_at is not None else time.time()),
+    }
+
+
+class _FakeProvisioner:
+    """Records what the reconciler asked for without touching Docker."""
+
+    def __init__(self, instances=None, raise_for=None):
+        self.instances = instances or {}
+        self.raise_for = raise_for
+        self.removed = []
+        self.ensure_calls = []
+
+    def list_instances(self, agent_name=None):
+        if self.raise_for and agent_name == self.raise_for:
+            raise RuntimeError("boom")
+        return list(self.instances.get(agent_name, []))
+
+    def remove_instance(self, instance_id):
+        self.removed.append(instance_id)
+
+    def ensure_instances(self, agent_specs):
+        self.ensure_calls.append(agent_specs)
+        return []
+
+
+def _bare_reconciler(context, provisioner, **overrides):
+    """Build a Reconciler without running its __init__ (no config, no Docker, no Redis)."""
+    from canyonos_core.reconciler.reconciler import Reconciler
+
+    reconciler = Reconciler.__new__(Reconciler)
+    reconciler.context = context
+    reconciler.provisioner = provisioner
+    reconciler.sweep_interval = 5
+    reconciler.stale_after = 15
+    reconciler.startup_grace = 30
+    reconciler._seen_healthy = set()
+    for key, value in overrides.items():
+        setattr(reconciler, key, value)
+    return reconciler

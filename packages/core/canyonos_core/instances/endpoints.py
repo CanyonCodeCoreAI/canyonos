@@ -1,9 +1,4 @@
-"""
-The address other services reach an instance on.
-
-NOT the record's `endpoint` field: for the local provider that one is the
-host-side `host:host_port`, while routing goes over the container network.
-"""
+"""The address other services reach an instance on, not the record's `endpoint` field."""
 
 EC2_PROVIDER = "EC2"
 

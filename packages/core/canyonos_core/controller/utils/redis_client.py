@@ -32,10 +32,6 @@ class RedisClient(object):
         """Set a TTL (in seconds) on a key. No-op if the key does not exist."""
         return self.client.expire(key, seconds)
 
-    def incrby(self, key, amount=1):
-        """Atomically add amount to a key's integer value. Returns the new value."""
-        return self.client.incrby(key, amount)
-
     # --- List operations ---
 
     def lpush(self, key, *values):

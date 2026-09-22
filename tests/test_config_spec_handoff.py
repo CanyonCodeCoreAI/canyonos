@@ -1,13 +1,9 @@
-"""The agent spec is handed off through Redis, not re-parsed from YAML twice.
-
-Before this, ControllerContext parsed the YAML itself, so an agent added by a
-SIGHUP reload was known to the controller and invisible to the reconciler: _reap
-bailed on "unknown agent" and the fill step iterated a stale list.
-"""
+"""The agent spec is handed off through Redis, not re-parsed from YAML twice."""
 
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -18,8 +14,8 @@ from canyonos_core.controller.utils.config_specs import (
     spec_key,
     write_config_specs,
 )
-
-from test_reconciler import _FakeRedis
+from canyonos_core.reconciler.reconciler import Reconciler
+from fakes import _bare_reconciler, _FakeProvisioner, _FakeRedis
 
 ALPHA = {"name": "Alpha", "provider": "local", "replicas": 2, "image": "alpha:latest"}
 BETA = {"name": "Beta", "provider": "local", "replicas": 1}
@@ -32,25 +28,12 @@ class WriteAndReadTests(unittest.TestCase):
 
         self.assertEqual(read_config_specs(redis), [ALPHA, BETA])
 
-    def test_nested_and_non_string_fields_survive_the_round_trip(self):
-        redis = _FakeRedis()
-        spec = {
-            "name": "Alpha",
-            "replicas": [{"host": "10.0.0.1", "port": 9000}],
-            "resources": {"cpu": 2, "memory": 1024},
-            "stateful": True,
-        }
-        write_config_specs([spec], redis)
-
-        self.assertEqual(read_config_specs(redis), [spec])
-
     def test_nothing_published_reads_as_none_not_empty(self):
         """None and [] must not be conflated: [] would mean "no agents configured"."""
         self.assertIsNone(read_config_specs(_FakeRedis()))
 
     def test_the_agent_list_is_written_after_the_specs(self):
-        """Torn-read guard: a reader takes the list first, so a spec still being
-        written is simply not listed yet."""
+        """Torn-read guard: a reader takes the list first, so a half-written spec is unlisted."""
         redis = _FakeRedis()
         order = []
         real_set, real_sadd = redis.set, redis.sadd
@@ -114,32 +97,15 @@ class RefreshTests(unittest.TestCase):
             self.assertFalse(context.refresh_controllers_from_redis())
         self.assertEqual(context.controllers, [ALPHA])
 
-    def test_a_removed_agent_disappears_from_the_refreshed_specs(self):
-        redis = _FakeRedis()
-        write_config_specs([ALPHA, BETA], redis)
-        context = self._context(redis, [ALPHA, BETA])
-
-        write_config_specs([ALPHA], redis)
-
-        self.assertTrue(context.refresh_controllers_from_redis())
-        self.assertEqual(context.agent_specs, {"Alpha": ALPHA})
-
 
 class ReloadPropagationTests(unittest.TestCase):
-    """End to end: a reload adds an agent and the reconciler picks it up with no
-    reload signal of its own. This is the gap that made _reap's unknown-agent
-    branch reachable."""
+    """A reload adds an agent and the reconciler picks it up with no reload signal."""
 
-    def _reconciler(self, redis, agents, manager):
-        from unittest.mock import patch
-
-        from canyonos_core.reconciler.reconciler import Reconciler
-
+    def _reconciler(self, redis, agents, provisioner):
         context = ControllerContext.__new__(ControllerContext)
         context.redis = redis
         context.config_path = "/tmp/canyonos.yaml"
         context.node_redis_for_instance = lambda instance: redis
-        context._agent_host_key = lambda host: host
         context._set_controllers(agents)
 
         self.enterContext(
@@ -148,40 +114,22 @@ class ReloadPropagationTests(unittest.TestCase):
         self.enterContext(
             patch.object(Reconciler, "_reports_are_fresh", return_value=True)
         )
-        reconciler = Reconciler.__new__(Reconciler)
-        reconciler.context = context
-        reconciler.provisioner = manager
-        reconciler.sweep_interval = 5
-        reconciler.stale_after = 15
-        reconciler.startup_grace = 30
-        reconciler._seen_healthy = set()
-        return reconciler
+        return _bare_reconciler(context, provisioner)
 
     def test_an_agent_added_by_a_reload_is_provisioned_without_a_reload_signal(self):
-        from test_reconciler import _FakeProvisioner
-
         redis = _FakeRedis()
         write_config_specs([ALPHA], redis)
-        manager = _FakeProvisioner()
-        reconciler = self._reconciler(redis, [ALPHA], manager)
-
-        write_config_specs([ALPHA, BETA], redis)
-        reconciler.reconcile()
-
-        self.assertEqual(
-            [spec["name"] for spec in manager.ensure_calls[-1]], ["Alpha", "Beta"]
-        )
-
-    def test_a_wake_for_a_newly_added_agent_is_no_longer_unknown(self):
-        from test_reconciler import _FakeProvisioner
-
-        redis = _FakeRedis()
-        write_config_specs([ALPHA], redis)
-        reconciler = self._reconciler(redis, [ALPHA], _FakeProvisioner())
+        provisioner = _FakeProvisioner()
+        reconciler = self._reconciler(redis, [ALPHA], provisioner)
 
         write_config_specs([ALPHA, BETA], redis)
         with self.assertNoLogs("canyonos_core.reconciler.reconciler", "WARNING"):
             reconciler.reconcile("Beta")
+            reconciler.reconcile()
+
+        self.assertEqual(
+            [spec["name"] for spec in provisioner.ensure_calls[-1]], ["Alpha", "Beta"]
+        )
 
 
 if __name__ == "__main__":

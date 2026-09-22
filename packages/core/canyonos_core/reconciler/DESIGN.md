@@ -19,17 +19,7 @@ dropped message would permanently skew. The queue decouples callers from provisi
 latency and serializes reconciles into one worker, so two cannot race on a slot.
 
 **Redis wins over the YAML once written.** `seed_desired` writes the configured `replicas`
-only if the key is absent, so a runtime scale survives a restart. Each pass is reap-then-fill:
-
-```
-_reap(agent):   desired = 0 if draining else get_desired(agent)
-                claimed = take_reap_requests(agent)
-                for instance in list_instances(agent):
-                    if id in claimed:                       -> remove ("replacement requested")
-                    elif int(replica_index) >= desired:     -> remove ("surplus to desired count")
-                    elif not _is_healthy(instance):         -> remove ("unhealthy")
-then:           ensure_instances(desired_agent_specs(all configured agents))
-```
+only if the key is absent, so a runtime scale survives a restart. Each pass reaps, then fills.
 
 The reap predicate is on the **index**, not "remove the last N": that makes scale-down
 deterministic and idempotent (5→2 always removes 2, 3, 4) and reaps orphans a count-based
@@ -41,7 +31,7 @@ reaping index 1 leaves a hole the same pass's fill step provisions into.
 
 | Key | Type | Written by | Read by |
 | --- | --- | --- | --- |
-| `agent:{name}:desired_replicas` | int (string) | GlobalController — `seed_desired`, `state.scale` | Reconciler (`get_desired`, `desired_agent_specs`) |
+| `agent:{name}:desired_replicas` | int (string) | GlobalController — `seed_desired`, `set_replicas` | Reconciler (`get_desired`, `desired_agent_specs`) |
 | `reconciler:wake` | list | GlobalController — `_request_reconcile` | Reconciler (`drain`: `BRPOP` then non-blocking `RPOP`s) |
 | `reconciler:reap` | set | GlobalController — `replace_instance` | Reconciler (`take_reap_requests`) |
 | `reconciler:draining` | string (TTL) | GlobalController — `set_draining` / `clear_draining` | Reconciler (`is_draining`, once per pass) |
@@ -76,18 +66,8 @@ GlobalController subclasses and the reconciler constructs directly; cluster boot
 
 The write side lives under `reconciler/`, the readers in a neutral `instances/` package, so
 **the controller cannot create or destroy a container because it does not import the code
-that can**:
-
-| Where | What | Imported by |
-| --- | --- | --- |
-| `instances/records.py`, `instances/endpoints.py` | record reads, `routing_endpoint_for` | both processes |
-| `instances/routing.py` | `publish_routing_snapshot` | the reconciler only |
-| `reconciler/provisioner.py` | `Provisioner` | the reconciler only |
-| `reconciler/providers/` | `Local/`, `EC2/`, `shared_utils/` | `Provisioner` only |
-
-`routing_endpoint_for` is derived from the record, not the provider module, or the
-controller would import provisioning code to format an endpoint. It is **not** the record's
-`endpoint` field: locally that is `host:host_port`, while routing uses `runtime_id:container_port`.
+that can**. `routing_endpoint_for` is derived from the record rather than the provider
+module, or the controller would import provisioning code to format an endpoint.
 
 ## Traps
 
@@ -117,14 +97,7 @@ reconciler sees zero instances, provisions a duplicate fleet, never converges.
 `LocalController` writes `"healthy"` at init and every metrics interval, and `"stopped"`
 only on a graceful shutdown that by definition does not run when a container is killed,
 OOMs or hangs. No TTL, so a dead replica reads `healthy` forever — hence direct probes.
-`_is_healthy` needs two independent positives:
-
-1. `_accepts_connections` — TCP connect to the record's `host` + `host_port`, 2s timeout.
-   A dead container has no listener, so this is the one signal it cannot fake.
-2. `_reports_are_fresh` — the metrics hash exists and `updated_at` is within `stale_after`
-   (`3 * poll_interval`), the host mapped through `_agent_host_key` because a container
-   writes its key under the host string *it* sees.
-
+`_is_healthy` needs two independent positives, a TCP connect and a fresh metrics hash.
 Neither suffices alone: a gRPC server can accept connections while the agent behind it is
 wedged, and a stale hash cannot tell "wedged" from "never there".
 
@@ -150,12 +123,9 @@ scale to zero. **Why the TTL:** a SIGKILLed controller orphans its child, and a 
 flag would have it hold the fleet at zero forever. `__init__` clears the flag before
 seeding, so one stranded by a mid-drain kill cannot poison the next run.
 
-Ordering in `stop()`, all four steps load-bearing:
-
-1. `_drain_instances()` — set the flag, wake the reconciler, poll until empty or 30s.
-2. `terminate_all()` — **after** the drain; the reconciler is what removes the instances.
-3. `clear_draining()` — **after** that, or the still-live reconciler refills the fleet.
-4. `_stop_redis_containers()` — last; the reconciler needs Redis to reap.
+`stop()` orders four load-bearing steps: drain, then `terminate_all()` (the reconciler is
+what removes instances), then `clear_draining()` (or the live reconciler refills), then
+`_stop_redis_containers()` last, since the reconciler needs Redis to reap.
 
 Nothing sweeps at startup, deliberately: the first full `reconcile()` reaps a leftover
 record whose container is gone (probe fails, `created_at` is old so no grace) and refills
@@ -181,17 +151,15 @@ read from the YAML by both processes at construction.
 
 ## Known gaps
 
-- **No respawn backoff or crash-loop cap in `ProcessSupervisor`.** The worst one: the
-  reconciler owns initial provisioning *and* routing publication, so one that dies on
-  startup means nothing is created and no routing written, respawned every tick forever.
-  `_wait_for_healthy`'s CRITICAL fires once, then the controller serves nothing.
-- **A list-form `replicas` is unsupported, just not silently.** `ensure_instances` raises
-  `TypeError`, caught and logged by the pass. `desired_agent_specs` passes such a
-  spec through untouched, since dropping it would also delete the agent from routing.
-- **Deleting an agent from the config leaves its instances running** — unpublished and
-  unreachable, but nothing removes its `desired_replicas` and both reap and fill
-  iterate only published agents.
-- **Smaller, known:** `scale`'s clamp-after-`INCRBY` is not atomic (fine with one writer);
-  instance identity is a slot index, not a UUID, so nothing distinguishes a replica from its
-  third replacement; `take_reap_requests` matches by substring, so an agent name containing a
-  colon would mis-claim; a vanished node is reaped one slot at a time as "unhealthy".
+- **No respawn backoff or crash-loop cap in `ProcessSupervisor`.** The reconciler owns
+  initial provisioning *and* routing publication, so one that dies on startup leaves the
+  controller serving nothing, respawned every tick forever.
+- **A list-form `replicas` is unsupported, just not silently** — `ensure_instances` raises
+  `TypeError`, and `desired_agent_specs` passes the spec through rather than drop the agent
+  from routing.
+- **Deleting an agent from the config leaves its instances running**, unpublished and
+  unreachable: nothing removes its `desired_replicas`, and reap and fill iterate only
+  published agents.
+- **Smaller, known:** instance identity is a slot index, not a UUID; `take_reap_requests`
+  matches by substring, so an agent name containing a colon mis-claims; a vanished node is
+  reaped one slot at a time as "unhealthy".

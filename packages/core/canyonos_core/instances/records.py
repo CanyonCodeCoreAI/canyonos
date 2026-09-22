@@ -1,9 +1,4 @@
-"""
-Read agent runtime instance records out of Redis.
-
-Shared by both processes, and reads only -- creating and destroying instances
-lives on canyonos_core/reconciler/provisioner.py.
-"""
+"""Read agent runtime instance records out of Redis; reads only, shared by both processes."""
 
 
 def instance_id(provider, agent_name, replica_index):

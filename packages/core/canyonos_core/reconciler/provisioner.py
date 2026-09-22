@@ -1,10 +1,4 @@
-"""
-Create and destroy agent runtime instances.
-
-The write half of instance management: the controller reads records and publishes
-routing through canyonos_core/instances/, and imports nothing from here, so it
-cannot touch a container.
-"""
+"""Create and destroy agent runtime instances; the controller imports nothing from here."""
 
 import os
 import time
@@ -151,8 +145,7 @@ class Provisioner(object):
             "redis_host": instance["redis_host"],
             "redis_port": str(instance["redis_port"]),
             "runtime_id": instance["runtime_id"],
-            # Lets a reconciler tell a replica that is still starting up from one
-            # that has stopped answering.
+            # Lets the reconciler tell a starting replica from one that stopped answering.
             "created_at": str(time.time()),
         }
         # public_host: set by providers whose `host` isn't reachable from outside

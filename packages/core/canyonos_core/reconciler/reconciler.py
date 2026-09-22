@@ -1,6 +1,4 @@
-# Reconciler
-# Separate process that converges running instances onto the desired replica counts
-# in Redis. Level-triggered, so a lost wake signal costs latency, never correctness.
+# Level-triggered process converging running instances onto desired replica counts in Redis.
 
 import argparse
 import logging
@@ -11,6 +9,7 @@ import sys
 import time
 
 from canyonos_core.controller.controller_context import ControllerContext
+from canyonos_core.instances.endpoints import routing_endpoint_for
 from canyonos_core.instances.records import instance_id_from_record
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.provisioner import Provisioner
@@ -48,12 +47,7 @@ class Reconciler(object):
 
         self._seen_healthy = set()  # instance_id, once it has answered at least once
 
-    # ------------------------------------------------------------------ #
-    #  Health                                                            #
-    # ------------------------------------------------------------------ #
-
     def _accepts_connections(self, instance):
-        """Whether the instance's gRPC endpoint is reachable from this host."""
         host = instance.get("host")
         port = instance.get("host_port")
         if not host or not port:
@@ -67,15 +61,10 @@ class Reconciler(object):
             return False
 
     def _reports_are_fresh(self, instance):
-        """
-        Whether the instance's metrics heartbeat is recent.
-
-        Catches a replica whose gRPC server still accepts connections while its
-        agent has stopped making progress, which a connection probe cannot see.
-        """
+        """Whether the instance's metrics heartbeat is recent."""
         node_redis = self.context.node_redis_for_instance(instance)
-        agent_host = self.context._agent_host_key(instance["host"])
-        key = f"controller:{agent_host}:{instance['host_port']}:metrics"
+        # The agent writes this key from its own env, under its routing endpoint.
+        key = f"controller:{routing_endpoint_for(instance)}:metrics"
         try:
             metrics = node_redis.hgetall(key)
         except Exception as e:
@@ -109,10 +98,6 @@ class Reconciler(object):
         except (TypeError, ValueError):
             return False
 
-    # ------------------------------------------------------------------ #
-    #  Reconcile                                                         #
-    # ------------------------------------------------------------------ #
-
     def reconcile(self, agent_name=None):
         """Converge one agent, or every configured agent when agent_name is None."""
         if self.context.refresh_controllers_from_redis():
@@ -131,16 +116,14 @@ class Reconciler(object):
             except Exception as e:
                 logger.warning("Failed to reap agent %s: %s", name, e)
 
-        # desired_agent_specs falls back to the configured count, so filling here would undo the drain.
+        # desired_agent_specs falls back to the configured count, so a fill would undo the drain.
         if draining:
             return
-        # A named agent that could not be reaped (unknown, or a non-count replicas)
-        # has nothing to fill into; a full pass fills regardless.
+        # A named agent that could not be reaped has nothing to fill into.
         if agent_name is not None and not reaped:
             return
         try:
-            # ensure_instances takes the whole spec list because it republishes the
-            # routing snapshot from what it is handed.
+            # The whole spec list: ensure_instances republishes routing from what it is handed.
             self.provisioner.ensure_instances(
                 state.desired_agent_specs(self.context.redis, self.context.controllers)
             )
@@ -164,10 +147,7 @@ class Reconciler(object):
             desired = 0
         elif configured is None:
             logger.warning(
-                "Agent %s declares a non-integer replicas value (%r); "
-                "reconciliation needs a count.",
-                agent_name,
-                spec.get("replicas"),
+                "Agent %s has a non-integer replicas value; skipping.", agent_name
             )
             return False
         else:
@@ -176,8 +156,7 @@ class Reconciler(object):
 
         instances = self.provisioner.list_instances(agent_name)
         for instance in instances:
-            # Routing republishes fan out to node_redis, so every node holding an
-            # instance needs a client before one is removed.
+            # Routing republishes fan out to node_redis, so every node needs a client first.
             self.context.node_redis_for_instance(instance)
 
         for instance in instances:
@@ -193,7 +172,6 @@ class Reconciler(object):
         return True
 
     def _removal_reason(self, instance, instance_id, desired, reap_requested):
-        """Why this instance should go, or None to keep it."""
         if instance_id in reap_requested:
             return "replacement requested"
         if int(instance["replica_index"]) >= desired:

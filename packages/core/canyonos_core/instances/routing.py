@@ -1,9 +1,4 @@
-"""
-Publish the routing table other parts of CanyonOS use to reach agents.
-
-The spec list given is the complete world: every service absent from it is
-removed, so callers must pass specs for every configured agent.
-"""
+"""Publish the routing table; the spec list given is the complete world."""
 
 import json
 

@@ -1,9 +1,4 @@
-"""The routing table is how one agent finds another's gRPC address.
-
-LocalController reads routing_table:endpoints to resolve a service name and
-routing_table:stateful to decide whether to pin a request to one replica
-(local_controller.py:391). It is published only by the reconciler.
-"""
+"""The routing table: how one agent finds another's gRPC address, published by the reconciler."""
 
 import json
 import os
@@ -21,7 +16,7 @@ from canyonos_core.instances.routing import (
     publish_routing_snapshot,
 )
 
-from test_reconciler import _FakeRedis
+from fakes import _FakeRedis
 
 ALPHA = {"name": "Alpha", "provider": "local"}
 BETA = {"name": "Beta", "provider": "local", "stateful": True}
@@ -75,8 +70,7 @@ class PublishTests(unittest.TestCase):
         )
 
     def test_a_service_missing_from_the_specs_is_removed_everywhere(self):
-        """The spec list is the complete world. This is why the fill step must pass
-        specs for every configured agent -- one agent's spec would delete the rest."""
+        """The spec list is the complete world, so the fill step must pass every agent's."""
         redis = _FakeRedis()
         _seed(redis, "Alpha", 0)
         _seed(redis, "Beta", 0)
@@ -89,8 +83,7 @@ class PublishTests(unittest.TestCase):
         self.assertIsNone(redis.hget(ROUTING_STATEFUL_KEY, "Beta"))
 
     def test_a_service_with_no_instances_is_listed_but_has_no_endpoints(self):
-        """Configured-but-nothing-running. LocalController treats a missing entry
-        as "no route", which is the correct answer here."""
+        """Configured but nothing running; a missing entry correctly means "no route"."""
         redis = _FakeRedis()
 
         publish_routing_snapshot([ALPHA], redis)
@@ -108,8 +101,7 @@ class PublishTests(unittest.TestCase):
         self.assertIsNone(redis.hget(ROUTING_STATEFUL_KEY, "Beta"))
 
     def test_every_node_gets_a_copy_while_records_come_from_the_primary(self):
-        """Agents read their own node's Redis, but instance records live on the
-        primary -- so a node client that has no records still gets the table."""
+        """Records live on the primary, so a node client with no records still gets the table."""
         primary = _FakeRedis()
         node_a, node_b = _FakeRedis(), _FakeRedis()
         _seed(primary, "Alpha", 0)
@@ -135,8 +127,7 @@ class PublishTests(unittest.TestCase):
 
 class OwnershipTests(unittest.TestCase):
     def test_the_controller_does_not_publish_the_routing_table(self):
-        """Routing is derived from what exists, so it belongs to the process that
-        creates and destroys instances."""
+        """Routing is derived from what exists, so it belongs to the provisioning process."""
         self.assertFalse(hasattr(global_controller_module, "publish_routing_snapshot"))
         self.assertFalse(hasattr(GlobalController, "_publish_routing"))
 

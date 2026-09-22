@@ -1,11 +1,7 @@
-"""GlobalController teardown: draining through the reconciler, then shutting down.
-
-Exercises GlobalController.stop() and _drain_instances, not the reconciler itself.
-"""
+"""GlobalController.stop() and _drain_instances, not the reconciler itself."""
 
 import os
 import sys
-import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -13,20 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from canyonos_core.controller.global_controller import GlobalController
 from canyonos_core.reconciler import state
-from fakes import _FakeRedis
-
-
-def _instance(agent_name, replica_index, created_at=None, host_port=None):
-    return {
-        "agent_name": agent_name,
-        "provider": "local",
-        "runtime_id": f"canyonos-{agent_name.lower()}-{replica_index}",
-        "container_port": "50051",
-        "replica_index": str(replica_index),
-        "host": "localhost",
-        "host_port": str(host_port or 8000 + replica_index),
-        "created_at": str(created_at if created_at is not None else time.time()),
-    }
+from fakes import _FakeRedis, _instance
 
 
 class TeardownTests(unittest.TestCase):
@@ -46,20 +29,13 @@ class TeardownTests(unittest.TestCase):
         controller._stop_redis_containers = MagicMock()
         return controller
 
-    def test_drain_returns_true_once_the_reconciler_has_removed_everything(self):
+    def test_drain_wakes_the_reconciler_and_returns_true_once_everything_is_gone(self):
         controller = self._controller([[_instance("Alpha", 0)], []])
 
         with patch("time.sleep"):
             self.assertTrue(controller._drain_instances(timeout=5))
 
         self.assertTrue(state.is_draining(controller.redis))
-
-    def test_drain_asks_the_reconciler_to_converge_before_waiting(self):
-        controller = self._controller([[]])
-
-        with patch("time.sleep"):
-            controller._drain_instances(timeout=5)
-
         self.assertEqual(controller.redis.lists[state.WAKE_QUEUE_KEY], [state.WAKE_ALL])
 
     def test_drain_gives_up_after_the_timeout(self):
@@ -72,8 +48,7 @@ class TeardownTests(unittest.TestCase):
                 self.assertFalse(controller._drain_instances(timeout=0))
 
     def test_stop_drains_before_killing_the_reconciler(self):
-        """The reconciler is what removes the instances, so it has to outlive the
-        drain -- the reverse of the order the otel exporter wants."""
+        """The reconciler removes the instances, so it has to outlive the drain."""
         controller = self._controller([[_instance("Alpha", 0)], []])
         calls = []
         self.list_instances.side_effect = lambda *a, **k: (
@@ -98,9 +73,7 @@ class TeardownTests(unittest.TestCase):
         controller._stop_redis_containers.assert_called_once()
 
     def test_a_timed_out_drain_still_finishes_shutting_down(self):
-        """The controller has no container-removal verb any more. Instances left by a
-        timed-out drain are the next startup's reconcile to deal with: it reaps the
-        ones that are no longer healthy and reuses the ones that are."""
+        """Instances left by a timed-out drain are the next startup's reconcile to deal with."""
         controller = self._controller([[_instance("Alpha", 0)]])
         controller._drain_instances = lambda *a, **k: False
 
@@ -110,8 +83,7 @@ class TeardownTests(unittest.TestCase):
         controller._stop_redis_containers.assert_called_once()
 
     def test_a_second_stop_is_a_noop(self):
-        """cleanup() runs from a signal handler and again from atexit; a re-entrant
-        stop would start a second drain mid-teardown."""
+        """cleanup() runs from a signal handler and again from atexit."""
         controller = self._controller([[], []])
 
         with patch("time.sleep"):

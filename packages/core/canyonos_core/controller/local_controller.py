@@ -99,8 +99,7 @@ class LocalController(object):
             self._wait_until_reachable()
             self.redis.set(self._status_key, "healthy")
 
-        # Set once by the Provisioner when this replica was provisioned; read back
-        # here so completed requests can be stamped with which replica ran them.
+        # Written by the Provisioner; stamps completed requests with the replica that ran them.
         self.agent_id = self.redis.get(
             f"controller:{self.agent_host}:{self.public_port}:agent_id"
         )
@@ -143,11 +142,7 @@ class LocalController(object):
         self.redis.set(self._status_key, "failed")
 
     def _wait_until_reachable(self, timeout=30, attempt_timeout=0.5):
-        """Block until this controller can be dialed at its own published endpoint, not just bound locally.
-
-        Only the local-provider hairpin (host.docker.internal) needs it; a bare
-        TCP-open check passes there before the endpoint actually answers.
-        """
+        """Block until this controller answers on its published endpoint, not just its local bind."""
         if self.agent_host != "host.docker.internal":
             return
         deadline = time.time() + timeout
@@ -809,11 +804,7 @@ class LocalController(object):
         return self._remote_stubs[endpoint]
 
     def _call_with_retry(self, fn, endpoint):
-        """Call a remote stub RPC, retrying transient UNAVAILABLE briefly before raising.
-
-        A freshly started remote can still be momentarily unreachable even after
-        reporting healthy.
-        """
+        """Call a remote stub RPC, retrying transient UNAVAILABLE before raising."""
         max_attempts = 8
         backoff = 0.5
         for attempt in range(1, max_attempts + 1):

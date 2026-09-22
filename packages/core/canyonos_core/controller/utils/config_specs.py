@@ -8,10 +8,7 @@ def spec_key(agent_name):
 
 
 def write_config_specs(agents, redis_client):
-    """Publish each agent's spec and resource limits to Redis.
-
-    The agent list is written last, so a reader taking it first never sees a spec mid-write.
-    """
+    """Publish each agent's spec to Redis, writing the agent list last."""
     for agent in agents:
         name = agent["name"]
         resources = agent.get("resources", {})
@@ -37,8 +34,7 @@ def write_config_specs(agents, redis_client):
                 "replicas": json.dumps(replicas),
             },
         )
-        # The whole spec, already env-expanded, so the reconciler never has to
-        # re-parse the YAML and cannot disagree with the controller about it.
+        # Already env-expanded, so the reconciler never re-parses the YAML.
         redis_client.set(spec_key(name), json.dumps(agent))
 
     names = [agent["name"] for agent in agents]
@@ -51,10 +47,7 @@ def write_config_specs(agents, redis_client):
 
 
 def read_config_specs(redis_client):
-    """Every published agent spec, or None when nothing has published them yet.
-
-    Reads the agent list first, so a concurrent add is missed rather than read half-written.
-    """
+    """Every published agent spec, or None when nothing has published them yet."""
     names = redis_client.smembers(ACTIVE_AGENTS_KEY)
     if not names:
         return None

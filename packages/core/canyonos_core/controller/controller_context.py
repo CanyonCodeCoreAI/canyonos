@@ -1,7 +1,4 @@
-# Controller Context
-# Config, Redis clients and command execution: the controller surface that
-# the Provisioner and the cloud provider runtimes depend on.
-# GlobalController subclasses this; the reconciler process builds one directly.
+# Config, Redis clients and command execution shared by GlobalController and the reconciler.
 
 import logging
 import os
@@ -28,10 +25,7 @@ def _redis_connect_host(host):
 
 
 class ControllerContext(object):
-    """Everything the provisioner and provider runtimes read off `controller`.
-
-    No cluster bootstrap and no gRPC dependency; those belong to GlobalController alone.
-    """
+    """Everything the provisioner and provider runtimes read off `controller`."""
 
     def __init__(self, config_path):
         self.config_path = config_path
@@ -50,20 +44,11 @@ class ControllerContext(object):
         self.redis_containers = {}  # host -> container_name
         self.node_redis = {}  # host -> RedisClient
 
-    # ------------------------------------------------------------------ #
-    #  Config                                                             #
-    # ------------------------------------------------------------------ #
-
     @staticmethod
     def _load_config(config_path):
-        """Load the YAML config, importing root .env values and expanding ${VAR} refs.
-
-        Both processes load through here so they cannot disagree about the config.
-        """
+        """Load the YAML config, importing root .env values and expanding ${VAR} refs."""
         project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
-        # Under the .car layout, config lives at <project>/.car/config, so the
-        # naive parent-of-parent lands on .car itself -- go up one more level
-        # to reach the actual project root where .env lives.
+        # Under the .car layout the parent-of-parent lands on .car itself, not the root.
         if os.path.basename(project_root) == ".car":
             project_root = os.path.dirname(project_root)
         ControllerContext._load_dotenv(os.path.join(project_root, ".env"))
@@ -87,7 +72,6 @@ class ControllerContext(object):
                 if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
                     value = value[1:-1]
                 if key in _RESERVED_ENV_KEYS:
-                    # Reserved internal control -- never honor it from user .env.
                     continue
                 if key and key not in os.environ:
                     os.environ[key] = value
@@ -115,11 +99,7 @@ class ControllerContext(object):
         self.agent_specs = {spec["name"]: spec for spec in agents}
 
     def refresh_controllers_from_redis(self):
-        """Adopt the published agent specs. True when they replaced what we had.
-
-        Keeps the current specs when nothing is published, so an unseeded Redis
-        is not read as "no agents configured".
-        """
+        """Adopt the published agent specs; True when they replaced what we had."""
         try:
             specs = read_config_specs(self.redis)
         except Exception as e:
@@ -148,10 +128,6 @@ class ControllerContext(object):
             ]
         return [(default_host, base_port)]
 
-    # ------------------------------------------------------------------ #
-    #  Redis clients                                                      #
-    # ------------------------------------------------------------------ #
-
     def _localhost_redis_port(self):
         """The Redis port the local node's container was published on, if any."""
         for ctrl in self.controllers:
@@ -161,11 +137,7 @@ class ControllerContext(object):
         return None
 
     def attach_local_node_redis(self):
-        """Point self.redis at the local node's Redis without launching anything.
-
-        A process that only attaches to a running cluster must reach the same
-        client GlobalController repoints to, or it reads a different Redis.
-        """
+        """Point self.redis at the local node's Redis without launching anything."""
         port = self._localhost_redis_port()
         if port is None:
             return
@@ -174,11 +146,7 @@ class ControllerContext(object):
         self.redis = client
 
     def node_redis_for_instance(self, instance):
-        """Redis client for the node an instance runs on, connecting on demand.
-
-        Connects from the instance's own record rather than assuming this process
-        launched it.
-        """
+        """Redis client for the node an instance runs on, connecting on demand."""
         host = instance.get("host")
         if not host:
             return self.redis
@@ -190,26 +158,8 @@ class ControllerContext(object):
         self.node_redis[host] = client
         return client
 
-    def _agent_host_key(self, host):
-        """Return the host string as seen by Docker containers (for status key matching)."""
-        return "host.docker.internal" if _is_local_host(host) else host
-
-    # ------------------------------------------------------------------ #
-    #  Command execution                                                  #
-    # ------------------------------------------------------------------ #
-
     def _run_cmd(self, cmd, host, user=None):
-        """
-        Run a command locally or on a remote host via SSH.
-
-        Args:
-            cmd:  Command list to run.
-            host: Target host.
-            user: SSH user for remote hosts (None for localhost).
-
-        Returns:
-            subprocess.CompletedProcess
-        """
+        """Run a command locally, or on a remote host over SSH."""
         is_local = _is_local_host(host)
         if is_local:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
