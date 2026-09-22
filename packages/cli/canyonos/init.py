@@ -113,7 +113,7 @@ def ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
 GC_DOCKER_SOCKET = "/var/run/docker.sock"
 
 
-def _active_docker_socket():
+def active_docker_socket():
     """Real path of the unix socket plain `docker` calls resolve to right now,
     or None if that's a remote/TCP endpoint (nothing to compare against a
     bind-mounted host socket for).
@@ -233,7 +233,7 @@ def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
     # /var/run/docker.sock alias -- some other app can hold that alias and
     # point it at a different engine than the one every other `docker`
     # command here is actually using.
-    host_socket = _active_docker_socket() or GC_DOCKER_SOCKET
+    host_socket = active_docker_socket() or GC_DOCKER_SOCKET
     # Idempotent: succeeds silently if the network already exists (created by
     # this or a prior GC/Redis launch).
     subprocess.run(["docker", "network", "create", LOCAL_NETWORK], capture_output=True)

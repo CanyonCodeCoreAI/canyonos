@@ -378,6 +378,45 @@ class ValidateCarTests(unittest.TestCase):
         )
 
     # -------------------------------------------------------------- #
+    #  Files the manifest points at                                   #
+    # -------------------------------------------------------------- #
+
+    def test_a_missing_entrypoint_is_reported(self):
+        root = self.car()
+        os.remove(os.path.join(root, "app", "agents", "echo_agent.py"))
+
+        findings = validate_car(root)
+
+        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-MISSING"])
+        self.assertEqual(
+            findings[0].summary,
+            f"agents[0].entrypoint: {os.path.join('app', 'agents', 'echo_agent.py')} "
+            "does not exist",
+        )
+        self.assertEqual(
+            findings[0].path, os.path.join("config", "global_controller.yaml")
+        )
+        self.assertEqual(findings[0].line, 0)
+
+    def test_a_missing_workflow_file_is_reported(self):
+        root = self.car()
+        os.remove(os.path.join(root, "app", "workflow", "echo_workflow.py"))
+
+        findings = validate_car(root)
+
+        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-MISSING"])
+        self.assertIn("agents[1].workflow_file:", findings[0].summary)
+
+    def test_a_missing_source_root_is_reported_once(self):
+        root = self.car()
+        shutil.rmtree(os.path.join(root, "app"))
+
+        findings = validate_car(root)
+
+        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-MISSING"])
+        self.assertIn("no `app/` beside `config/`", findings[0].summary)
+
+    # -------------------------------------------------------------- #
     #  The schema, reported as findings of its own                    #
     # -------------------------------------------------------------- #
 
@@ -428,10 +467,10 @@ class ValidateCarTests(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(status, 1)
         self.assertEqual(payload["artifact_root"], root)
-        self.assertEqual((payload["errors"], payload["warnings"]), (1, 0))
+        self.assertEqual(payload["errors"], 1)
         self.assertEqual(
             sorted(payload["findings"][0]),
-            ["code", "level", "line", "mechanism", "path", "summary"],
+            ["code", "line", "mechanism", "path", "summary"],
         )
         self.assertEqual(payload["findings"][0]["code"], "CAR-ADAPTER-ASYNC")
 
