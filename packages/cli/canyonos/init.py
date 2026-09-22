@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -18,6 +19,13 @@ import urllib.request
 from pyfiglet import figlet_format
 
 from canyonos import env, ui
+from canyonos.docker_cmd import (
+    DOCKER_PULL_TIMEOUT,
+    DOCKER_QUICK_TIMEOUT,
+    DOCKER_RUN_TIMEOUT,
+    cleanup_docker,
+    run_docker,
+)
 from canyonos.port_utils import is_port_conflict
 
 
@@ -59,18 +67,27 @@ DOCKER_START_TIMEOUT = 60
 
 def docker_running():
     try:
-        return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-    except OSError:
+        return (
+            run_docker(
+                ["docker", "info"],
+                timeout=DOCKER_QUICK_TIMEOUT,
+                action="docker info",
+            ).returncode
+            == 0
+        )
+    except RuntimeError:
         return False
 
 
 def docker_start_command():
     """The command that starts the daemon for the active context, or None."""
     try:
-        result = subprocess.run(
-            ["docker", "context", "show"], capture_output=True, text=True
+        result = run_docker(
+            ["docker", "context", "show"],
+            timeout=DOCKER_QUICK_TIMEOUT,
+            action="docker context show",
         )
-    except OSError:
+    except RuntimeError:
         return None
 
     context = result.stdout.strip() if result.returncode == 0 else "default"
@@ -96,7 +113,12 @@ def ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
         )
 
     ui.say(f"Docker isn't running -- starting it with `{' '.join(command)}`...")
-    subprocess.run(command, capture_output=True)
+    run_docker(
+        command,
+        timeout=DOCKER_START_TIMEOUT,
+        action="Starting the Docker runtime",
+        check=True,
+    )
 
     deadline = time.time() + timeout
     with ui.status("Waiting for the Docker daemon..."):
@@ -162,7 +184,11 @@ def pull_image(image=GC_IMAGE):
     # whatever the daemon already holds before trying to pull it.
     if image != env.PROD_CORE_IMAGE and _image_present(image):
         return
-    result = subprocess.run(["docker", "pull", image], capture_output=True, text=True)
+    result = run_docker(
+        ["docker", "pull", image],
+        timeout=DOCKER_PULL_TIMEOUT,
+        action=f"docker pull {image}",
+    )
     if result.returncode != 0:
         if image == env.LOCAL_CORE_IMAGE:
             raise RuntimeError(
@@ -192,11 +218,14 @@ def _port_reachable(port, attempts=10, delay=0.5):
 
 def _named_container(name=GC_CONTAINER_NAME):
     """(id, running) for the container holding exactly this name, or (None, False)."""
-    result = subprocess.run(
-        ["docker", "inspect", "--format", "{{.Id}} {{.State.Running}}", name],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = run_docker(
+            ["docker", "inspect", "--format", "{{.Id}} {{.State.Running}}", name],
+            timeout=DOCKER_QUICK_TIMEOUT,
+            action=f"Inspecting Docker container {name}",
+        )
+    except RuntimeError:
+        return None, False
     if result.returncode != 0:
         return None, False
     fields = result.stdout.split()
@@ -225,7 +254,13 @@ def _free_container_name():
             f"Controller ({container_id[:12]}). Run `canyonos quit` to tear it down "
             "first."
         )
-    subprocess.run(["docker", "rm", "-f", container_id], capture_output=True)
+    failure = cleanup_docker(
+        ["docker", "rm", "-f", container_id],
+        action=f"Removing stale Docker container {container_id[:12]}",
+        missing_text="No such container",
+    )
+    if failure:
+        raise RuntimeError(failure)
 
 
 def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
@@ -237,7 +272,19 @@ def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
     host_socket = _active_docker_socket() or GC_DOCKER_SOCKET
     # Idempotent: succeeds silently if the network already exists (created by
     # this or a prior GC/Redis launch).
-    subprocess.run(["docker", "network", "create", LOCAL_NETWORK], capture_output=True)
+    network = run_docker(
+        ["docker", "network", "create", LOCAL_NETWORK],
+        timeout=DOCKER_QUICK_TIMEOUT,
+        action=f"Creating Docker network {LOCAL_NETWORK}",
+    )
+    if (
+        network.returncode != 0
+        and "already exists" not in (network.stderr or "").lower()
+    ):
+        raise RuntimeError(
+            f"Could not create Docker network {LOCAL_NETWORK}: "
+            f"{network.stderr.strip() or network.stdout.strip()}"
+        )
     for _ in range(max_attempts):
         _free_container_name()
         cmd = [
@@ -276,14 +323,28 @@ def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
         for _k, _v in (extra_env or {}).items():
             cmd.extend(["-e", f"{_k}={_v}"])
         cmd.append(image)  # image must come after all flags
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = run_docker(
+            cmd,
+            timeout=DOCKER_RUN_TIMEOUT,
+            action="Starting the Global Controller container",
+        )
         if result.returncode == 0:
             container_id = result.stdout.strip()
+            if not container_id:
+                raise RuntimeError(
+                    "Docker started the Global Controller but returned no container ID."
+                )
             if _port_reachable(port):
                 return container_id, port, host_socket
             # Port bound fine but never actually became reachable -- treat
             # like a conflict, since that's effectively what it is.
-            subprocess.run(["docker", "rm", "-f", container_id], capture_output=True)
+            failure = cleanup_docker(
+                ["docker", "rm", "-f", container_id],
+                action=f"Removing unreachable Global Controller {container_id[:12]}",
+                missing_text="No such container",
+            )
+            if failure:
+                raise RuntimeError(failure)
             port += 1
             continue
         if is_port_conflict(result.stderr):
@@ -296,23 +357,59 @@ def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
 
 
 def save_state(container_id, port, docker_socket=None):
-    """Writes GC container info to ~/.canyonos/state.json"""
+    """Atomically write GC state so interruption cannot truncate the old record."""
     os.makedirs(STATE_DIR, exist_ok=True)
-    with open(STATE_PATH, "w") as f:
-        json.dump(
-            {
-                "container_id": container_id,
-                "port": port,
-                "docker_socket": docker_socket,
-            },
-            f,
-        )
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=STATE_DIR, prefix="state.", suffix=".tmp", delete=False
+        ) as f:
+            temporary_path = f.name
+            json.dump(
+                {
+                    "container_id": container_id,
+                    "port": port,
+                    "docker_socket": docker_socket,
+                },
+                f,
+            )
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, STATE_PATH)
+    except Exception:
+        if temporary_path is not None:
+            try:
+                os.remove(temporary_path)
+            except FileNotFoundError:
+                pass
+        raise
 
 
 def load_state():
     """Reads GC container info from ~/.canyonos/state.json"""
-    with open(STATE_PATH) as f:
-        return json.load(f)
+    try:
+        with open(STATE_PATH) as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        raise
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(
+            f"Could not read CanyonOS state at {STATE_PATH}: {e}. "
+            "Move or remove that file, then run `canyonos deploy` again."
+        ) from None
+
+    if (
+        not isinstance(state, dict)
+        or not isinstance(state.get("container_id"), str)
+        or not state["container_id"]
+        or not isinstance(state.get("port"), int)
+        or not 1 <= state["port"] <= 65535
+    ):
+        raise RuntimeError(
+            f"CanyonOS state at {STATE_PATH} is invalid. "
+            "Move or remove that file, then run `canyonos deploy` again."
+        )
+    return state
 
 
 def quit_existing():
@@ -324,8 +421,10 @@ def quit_existing():
     # Deferred: quit.py imports from this module, so a top-level import cycles.
     from canyonos.quit import run_quit
 
-    if os.path.isfile(STATE_PATH):
-        run_quit()
+    if os.path.isfile(STATE_PATH) and run_quit():
+        ui.warn(
+            "Starting a new Global Controller anyway; the leftovers above need cleaning up by hand."
+        )
 
 
 def run_init(banner=True, extra_env=None, image=GC_IMAGE):
@@ -342,5 +441,21 @@ def run_init(banner=True, extra_env=None, image=GC_IMAGE):
         container_id, port, docker_socket = run_container(
             image=image, extra_env=extra_env
         )
-    save_state(container_id, port, docker_socket)
+    try:
+        save_state(container_id, port, docker_socket)
+    except OSError as e:
+        cleanup_failure = cleanup_docker(
+            ["docker", "rm", "-f", container_id],
+            action=f"Removing Global Controller {container_id[:12]}",
+            missing_text="No such container",
+        )
+        detail = (
+            f" Automatic cleanup also failed: {cleanup_failure}"
+            if cleanup_failure
+            else ""
+        )
+        raise RuntimeError(
+            f"Could not save Global Controller state at {STATE_PATH}: {e}. "
+            f"Removed container {container_id[:12]}.{detail}"
+        ) from None
     ui.ok(f"Global Controller running in container {container_id[:12]} on port {port}")
