@@ -42,42 +42,40 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
+          bun-version: 1.3.14
+
+      - name: Install Turborepo
+        run: bun install --frozen-lockfile
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.15"
           enable-cache: true
 
-      - name: Install project and Nuitka
-        working-directory: cli
-        run: |
-          uv venv
-          uv pip install -e .
-          uv pip install nuitka
+      # nuitka is in the non-default "release" group, so a plain uv sync skips it.
+      - name: Install the CLI and Nuitka
+        run: uv sync --locked --package canyonos --group release
 
+      # The task runs from packages/cli; arguments after "--" append to its command.
       - name: Build standalone binary
-        working-directory: cli
-        run: |
-          uv run python -m nuitka \
-            --mode=onefile \
-            --output-filename=${{ matrix.asset }} \
-            --output-dir=dist \
-            --include-data-file=canyonos/dashboard.compose.yml=canyonos/dashboard.compose.yml \
-            --include-distribution-metadata=canyonos \
-            --assume-yes-for-downloads \
-            cli.py
+        run: bun run build:binary --filter=canyonos -- --output-filename=${{ matrix.asset }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: cli/dist/${{ matrix.asset }}
+          path: packages/cli/dist/${{ matrix.asset }}
 
       - name: Attach to GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
-          files: cli/dist/${{ matrix.asset }}
+          files: packages/cli/dist/${{ matrix.asset }}
 
 # Triggered by: pushing a "cli-v*" tag directly, running manually, or cli-release-tag.yml calling
-# this workflow after it auto-tags a cli/pyproject.toml version bump on main.
-# cli/install.sh downloads the matching asset for the latest "cli-v*" release.
+# this workflow after it auto-tags a packages/cli/pyproject.toml version bump on main.
+# packages/cli/install.sh downloads the matching asset for the latest "cli-v*" release.

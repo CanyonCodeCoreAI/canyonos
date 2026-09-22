@@ -1,0 +1,43 @@
+{
+  "name": "canyonos",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "bun": ">=1.3.1"
+  },
+  "packageManager": "bun@1.3.14",
+  "scripts": {
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "check": "turbo run lint typecheck format:check",
+    "format": "turbo run format",
+    "test": "turbo run test",
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "build:sdk": "bun run --filter @canyonos/api build:sdk",
+    "build:binary": "turbo run build:binary",
+    "docker:up": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml up -d --wait",
+    "docker:down": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml down",
+    "docker:rm": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml down --volumes",
+    "docker:logs": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml logs -f",
+    "api:test:e2e": "bun run --filter @canyonos/api test:e2e",
+    "ui:test:e2e": "bun run --filter web test:e2e",
+    "canyonos:smoke": "bun run ./scripts/canyonos-smoke.ts",
+    "dev:emails": "bun run --filter @canyonos/api dev:emails"
+  },
+  "devDependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^4.7.0",
+    "@types/bun": "^1.3.1",
+    "@types/node": "^22.10.5",
+    "bun-types": "^1.3.2",
+    "dotenv": "^17.2.3",
+    "oxlint": "1.25.0",
+    "oxlint-tsgolint": "0.4.0",
+    "prettier": "3.6.2",
+    "prettier-plugin-tailwindcss": "^0.7.1",
+    "turbo": "2.10.13",
+    "typescript": "5.9.3"
+  }
+}

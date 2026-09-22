@@ -9,6 +9,10 @@ build/
 *.egg-info/
 *.egg
 
+# Node / Turborepo
+node_modules/
+.turbo/
+
 # Virtual environments
 venv/
 .venv/
@@ -42,9 +46,10 @@ docker_container/
 .env
 .env.*
 !.env.example
+# The CLI's development-only environment file; see packages/cli/DEVELOPMENT.md.
+packages/cli/.env
 AWSCLIV2.pkg
 .python-version
-uv.lock
 
 Agent Artifacts
 docs/
@@ -53,3 +58,12 @@ docs/
 .harness/
 .playwright-mcp/
 
+
+# Committed example env files stay tracked despite the .env.* rule above.
+!.env.*.example
+packages/api/data/*.db
+packages/api/data/*.db-*
+packages/api/data/blobs/
+test-results/
+packages/web/src/routeTree.gen.ts
+playwright-report/

@@ -1,0 +1,57 @@
+# Test-only stack for the CanyonOS image smoke. Not the published manifest.
+#
+# The API is published on loopback here so the host script can reach it. A real `canyonos serve`
+# stack keeps the API inside the Compose network and publishes only the web service. The web
+# service deliberately sets no CANYONOS_API_UPSTREAM, so the smoke proves the `api:3000` default.
+name: canyonos-smoke
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: canyonos
+      POSTGRES_USER: canyonos
+      POSTGRES_PASSWORD: canyonos
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U canyonos -d canyonos']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: ${CANYONOS_API_IMAGE:-canyonos-api:smoke}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://canyonos:canyonos@postgres:5432/canyonos
+      AUTH_MODE: fixed_code
+      # The image always sets NODE_ENV=production, where DEPLOY_WORKER refuses to boot unless it is
+      # named here. FILE_STORAGE accepts only mock.
+      FILE_STORAGE: mock
+      DEPLOY_WORKER: none
+      CANYONOS_REDIS_HOST: redis
+      CANYONOS_REDIS_PORT: '6379'
+      # AUTH_MODE=fixed_code signs real tokens too. A real stack gets a random per-stack value from the CLI.
+      JWT_SECRET: canyonos-smoke-secret
+      LOG_LEVEL: info
+    ports:
+      - '127.0.0.1:${SMOKE_API_PORT:-53000}:3000'
+
+  web:
+    image: ${CANYONOS_WEB_IMAGE:-canyonos-web:smoke}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${SMOKE_WEB_PORT:-58080}:8080'
