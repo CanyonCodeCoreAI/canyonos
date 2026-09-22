@@ -144,8 +144,7 @@ class CliDeployTests(unittest.TestCase):
         require_docker.assert_called_once_with("deploy")
         ensure_grpc.assert_called_once_with(os.getcwd())
 
-    @patch("canyonos_core.cli._run_build")
-    def test_deploy_rejects_a_bad_config_before_it_builds(self, run_build):
+    def test_deploy_rejects_a_bad_config_before_it_builds(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             (project_dir / "config").mkdir()
@@ -157,17 +156,22 @@ class CliDeployTests(unittest.TestCase):
                 )
             )
 
-            cwd = os.getcwd()
-            os.chdir(project_dir)
-            try:
-                with self.assertLogs("canyonos_core", level="ERROR") as log:
-                    with self.assertRaises(SystemExit) as raised:
-                        cli.cmd_deploy(SimpleNamespace(config=str(config_path)))
-            finally:
-                os.chdir(cwd)
+            with (
+                patch("canyonos_core.stub_generator.generate_stub") as generate_stub,
+                patch("canyonos_core.cli.subprocess.run") as subprocess_run,
+            ):
+                cwd = os.getcwd()
+                os.chdir(project_dir)
+                try:
+                    with self.assertLogs("canyonos_core", level="ERROR") as log:
+                        with self.assertRaises(SystemExit) as raised:
+                            cli.cmd_deploy(SimpleNamespace(config=str(config_path)))
+                finally:
+                    os.chdir(cwd)
 
         self.assertEqual(raised.exception.code, 1)
-        run_build.assert_not_called()
+        generate_stub.assert_not_called()
+        subprocess_run.assert_not_called()
         self.assertIn("agents[0].entrypoint", log.output[0])
         self.assertNotIn("\n", log.output[0])
 
@@ -527,9 +531,9 @@ class CliBuildTests(unittest.TestCase):
                     )
 
         # Both services are reported, so two bad pins take one run to find.
-        self.assertIn("agents[ExampleAgent].requirements", log.output[0])
+        self.assertIn("agents[0].requirements", log.output[0])
         self.assertIn("protobuf<5", log.output[0])
-        self.assertIn("agents[OtherAgent].requirements", log.output[1])
+        self.assertIn("agents[1].requirements", log.output[1])
 
 
 class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):

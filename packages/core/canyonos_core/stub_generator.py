@@ -548,11 +548,15 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
-def _platform_overrides(requirements, *, service_name=None, manifest_path=None):
+def _platform_overrides(requirements, *, service=None, manifest_path=None):
     """Take the higher of each platform pin and what the app asked for.
 
     uv replaces a requirement rather than intersecting it, so the comparison
     cannot be left to the resolver.
+
+    `service` is the manifest index of the service these requirements belong
+    to, and with `manifest_path` it is only there to point a conflict at the
+    line the user has to edit.
 
     Raises:
         DependencyPinConflict: the app pinned a package *below* the version the
@@ -586,11 +590,14 @@ def _platform_overrides(requirements, *, service_name=None, manifest_path=None):
             print(f"  Note: '{wanted}' outranks the platform pin {pin}")
         else:
             overrides.append(pin)
+            field = (
+                "requirements" if service is None else f"agents[{service}].requirements"
+            )
             conflicts.append(
                 SchemaViolation(
                     manifest_path or "",
                     0,
-                    f"agents[{service_name}].requirements",
+                    field,
                     f"'{wanted}' conflicts with the platform pin {pin}, which the "
                     f"agent image is built against: relax the bound or pin "
                     f"{name} at or above {pinned}",
@@ -622,7 +629,6 @@ def generate_docker(
     project_dir=None,
     stub_entrypoints=None,
     requirements=None,
-    manifest_path=None,
 ):
     """
     Generate a minimal Docker build context for an agent.
@@ -657,9 +663,7 @@ def generate_docker(
 
     # ---- requirements.txt ------------------------------------------------
     # Base packages the shared framework files need, plus this agent's own.
-    overrides = _platform_overrides(
-        requirements or [], service_name=agent_name, manifest_path=manifest_path
-    )
+    overrides = _platform_overrides(requirements or [])
     requirements_txt = (
         "\n".join(BASE_AGENT_REQUIREMENTS + list(requirements or [])) + "\n"
     )
@@ -775,8 +779,6 @@ def generate_workflow_docker(
     project_dir=None,
     stub_entrypoints=None,
     requirements=None,
-    service_name=None,
-    manifest_path=None,
 ):
     """
     Generate a Docker build context for a workflow.
@@ -807,11 +809,7 @@ def generate_workflow_docker(
 
     # ---- requirements.txt ------------------------------------------------
     # Base packages the shared framework files need, plus this workflow's own.
-    overrides = _platform_overrides(
-        requirements or [],
-        service_name=service_name or "Workflow",
-        manifest_path=manifest_path,
-    )
+    overrides = _platform_overrides(requirements or [])
     requirements_txt = (
         "\n".join(BASE_WORKFLOW_REQUIREMENTS + list(requirements or [])) + "\n"
     )

@@ -18,13 +18,17 @@ class SchemaViolation(NamedTuple):
 
 
 def render_violation(violation):
-    """Render a violation as `path:line: field: message`, on one line."""
+    """Render a violation as `path:line: field: message`, on one line.
+
+    The line is left out when it is not known, and so is the field when the
+    problem is the file as a whole rather than one key in it.
+    """
     location = violation.path
     if violation.line:
         location = f"{location}:{violation.line}"
-    if not location:
-        return f"{violation.field}: {violation.message}"
-    return f"{location}: {violation.field}: {violation.message}"
+    parts = [part for part in (location, violation.field) if part]
+    parts.append(violation.message)
+    return ": ".join(parts)
 
 
 class SchemaError(Exception):

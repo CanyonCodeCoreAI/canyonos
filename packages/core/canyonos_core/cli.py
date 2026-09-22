@@ -19,6 +19,7 @@ import sys
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
     DependencyPinConflict,
+    load_manifest,
     render_violation,
     validate_project,
 )
@@ -69,22 +70,27 @@ def _declarations_dir():
     return os.path.join(artifact_root, "config" if prefix else "agents")
 
 
-def validate_or_exit(config_path, declarations_dir):
-    """Reject the config before anything is generated, one line per problem.
+def _reject(violations, summary):
+    """Log each violation on its own line, then exit.
 
     The host CLI reads the first `ERROR:` line out of this process's output as
-    the root cause, so each violation is logged whole on its own line.
+    the root cause, so a violation is never split across lines.
     """
-    violations = validate_project(config_path, declarations_dir)
-    if not violations:
-        return
     for violation in violations:
         logger.error("%s", render_violation(violation))
-    logger.error(
-        "Configuration rejected: %d problem(s) found; nothing was built.",
-        len(violations),
-    )
+    logger.error(summary, len(violations))
     sys.exit(1)
+
+
+def validate_or_exit(config_path, declarations_dir):
+    """Reject the config before anything is generated; return the parsed manifest."""
+    violations = validate_project(config_path, declarations_dir)
+    if violations:
+        _reject(
+            violations,
+            "Configuration rejected: %d problem(s) found; nothing was built.",
+        )
+    return load_manifest(config_path)
 
 
 def _normalize_requirements(agent_cfg):
@@ -92,7 +98,7 @@ def _normalize_requirements(agent_cfg):
     return list(agent_cfg.get("requirements") or [])
 
 
-def _check_dependency_pins(agents, config_path):
+def _check_dependency_pins(manifest):
     """Fail the build when an app pin cannot share a version with a platform pin.
 
     Every service is checked before the first one is built, so a project with
@@ -101,25 +107,21 @@ def _check_dependency_pins(agents, config_path):
     from canyonos_core.stub_generator import _platform_overrides
 
     violations = []
-    for agent_cfg in agents:
+    for index, service in enumerate(manifest.agents):
         try:
             _platform_overrides(
-                _normalize_requirements(agent_cfg),
-                service_name=agent_cfg.get("name"),
-                manifest_path=config_path,
+                getattr(service, "requirements", ()),
+                service=index,
+                manifest_path=manifest.path,
             )
         except DependencyPinConflict as conflict:
             violations.extend(conflict.violations)
 
-    if not violations:
-        return
-    for violation in violations:
-        logger.error("%s", render_violation(violation))
-    logger.error(
-        "Dependency pins rejected: %d conflict(s) found; nothing was built.",
-        len(violations),
-    )
-    sys.exit(1)
+    if violations:
+        _reject(
+            violations,
+            "Dependency pins rejected: %d conflict(s) found; nothing was built.",
+        )
 
 
 def _docker_platform():
@@ -274,21 +276,22 @@ def _run_build(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
 
+    declarations_dir = _declarations_dir()
+
+    # Nothing below this line runs against a config the schema rejects: no
+    # stubs, no protoc, no Docker context, no image. It comes before the load
+    # so a file that is not YAML at all is rendered as a violation too.
+    manifest = validate_or_exit(config_path, declarations_dir)
+    _check_dependency_pins(manifest)
+
     config = _load_config(config_path)
+    agents = config.get("agents", [])
     project_dir = os.path.abspath(os.getcwd())
     prefix = _artifact_prefix(project_dir)
     artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
     source_root = (
         os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir
     )
-    declarations_dir = os.path.join(artifact_root, "config" if prefix else "agents")
-
-    # Nothing below this line runs against a config the schema rejects: no
-    # stubs, no protoc, no Docker context, no image.
-    validate_or_exit(config_path, declarations_dir)
-
-    agents = config.get("agents", [])
-    _check_dependency_pins(agents, config_path)
     package_dir = _get_package_dir()
 
     # -------------------------------------------------------------- #
@@ -424,8 +427,6 @@ def _run_build(config_path):
                 # Stubs are placed both flat and at their entrypoint-mirrored path,
                 # so both flat and nested import styles resolve to the stub.
                 stub_entrypoints=stub_entrypoints,
-                service_name=agent_name,
-                manifest_path=config_path,
             )
 
         else:
@@ -464,7 +465,6 @@ def _run_build(config_path):
                 # Same reasoning as the workflow call above: stubs are placed both
                 # flat and at their entrypoint-mirrored path.
                 stub_entrypoints=stub_entrypoints,
-                manifest_path=config_path,
             )
 
         bake_targets.append(
@@ -526,8 +526,6 @@ def cmd_deploy(args):
     if not os.path.isfile(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
-
-    validate_or_exit(config_path, _declarations_dir())
 
     # Build first (stubs, protos, Docker contexts, images), then deploy them.
     # `canyonos build` was merged into `canyonos deploy`.

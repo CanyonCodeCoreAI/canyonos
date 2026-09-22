@@ -486,6 +486,38 @@ class EnvExpansionTests(_ManifestCase):
         )
 
 
+class UnparseableFileTests(unittest.TestCase):
+    """The gate runs before the plain load, so a broken file is a violation too."""
+
+    def _load(self, text):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "global_controller.yaml")
+            Path(path).write_text(text)
+            with self.assertRaises(SchemaError) as raised:
+                load_manifest(path)
+        return raised.exception.violations
+
+    def test_a_file_that_is_not_yaml_is_reported_on_one_line(self):
+        (violation,) = self._load("agents: [one,\n  two: three\n")
+
+        rendered = render_violation(violation)
+        self.assertNotIn("\n", rendered)
+        self.assertIn("is not valid YAML", rendered)
+        self.assertGreater(violation.line, 0)
+        # No field to name, so the location is followed by the message itself.
+        self.assertNotIn(": : ", rendered)
+
+    def test_an_empty_file_is_reported(self):
+        (violation,) = self._load("# nothing here\n")
+
+        self.assertEqual(violation.message, "is empty")
+
+    def test_a_file_that_is_not_a_mapping_is_reported(self):
+        (violation,) = self._load("- one\n- two\n")
+
+        self.assertIn("expected a mapping", violation.message)
+
+
 class RenderingTests(_ManifestCase):
     def test_a_violation_renders_as_one_line_with_its_location(self):
         violation = self.one({"agents": [_agent()], "registry": {"url": "example"}})

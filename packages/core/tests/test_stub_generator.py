@@ -560,23 +560,23 @@ class PlatformPinTests(unittest.TestCase):
             self._context(["protobuf<5"])
 
         (violation,) = raised.exception.violations
-        self.assertEqual(violation.field, "agents[ExampleAgent].requirements")
+        self.assertEqual(violation.field, "requirements")
         self.assertIn("protobuf<5", violation.message)
         self.assertIn("protobuf==6.33.5", violation.message)
         self.assertIn("at or above 6.33.5", violation.message)
 
-    def test_the_conflict_names_the_manifest_it_came_from(self):
+    def test_the_conflict_points_at_the_manifest_entry_to_edit(self):
         with self.assertRaises(DependencyPinConflict) as raised:
             _platform_overrides(
                 ["boto3<1"],
-                service_name="PriceAgent",
+                service=2,
                 manifest_path="config/global_controller.yaml",
             )
 
         (violation,) = raised.exception.violations
         rendered = render_violation(violation)
         self.assertTrue(rendered.startswith("config/global_controller.yaml: "))
-        self.assertIn("agents[PriceAgent].requirements", rendered)
+        self.assertIn("agents[2].requirements", rendered)
         self.assertNotIn("\n", rendered)
 
     def test_the_workflow_context_fails_on_a_conflict_too(self):
