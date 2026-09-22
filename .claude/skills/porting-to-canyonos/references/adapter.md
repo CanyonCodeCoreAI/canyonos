@@ -34,6 +34,18 @@ Import source-owned behavior instead of duplicating it. The workflow exposes
 calls `deploy(main, port=...)` at module scope. Do not add a main guard: the
 workflow executes as `__main__` in production.
 
+Its imports of the platform itself are exactly these two:
+
+```python
+from deploy import deploy                 # runtime module, copied flat into the image
+from pkg.price_agent import PriceAgent    # the service, from its declared entrypoint
+```
+
+`canyonos_core` is not an importable API in the image: the package the build
+writes there holds the LLM proxy alone, under an `__init__` that exports
+nothing. `from canyonos_core import deploy` builds green and raises ImportError
+at container start. V021.
+
 For parallel remote calls, dispatch all work before resolving any result:
 
 ```python
@@ -105,3 +117,12 @@ memory keyed by session -- carries that id *inside* `query`: accept either a
 bare string or a JSON object in that one field and pass the id through to the
 source unchanged. Do not add a second workflow parameter for it; the platform
 never sends one.
+
+That id identifies a conversation; it does not by itself make the framework's
+own store/checkpointer durable across replicas. If `source-survey.md` found
+one and a `type: database` entry was declared for it, construct that
+store/checkpointer against the declared entry's resolved address instead of an
+in-process one -- read `routing_table:endpoints` from Redis
+(`CANYONOS_REDIS_HOST`/`CANYONOS_REDIS_PORT`, already in every container's env)
+for the database entry's name, the same way any other declared agent's address
+is resolved.
