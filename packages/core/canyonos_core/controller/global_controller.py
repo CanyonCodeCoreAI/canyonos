@@ -49,14 +49,17 @@ logger = logging.getLogger(__name__)
 LOCAL_NETWORK = "canyonos-local"
 
 # How long a controller may stay short of "healthy" before the deploy is called
-# dead. 30s was tuned back when the timeout was survivable -- it merely logged a
-# warning -- and is tight for a cold start whose agent imports a heavy adapter.
-# Now that it aborts the deploy, it has room.
+# dead. Overrunning this kills the deploy, so it has to cover the slowest honest
+# cold start -- a container whose agent imports a heavy adapter.
 CONTROLLER_READY_TIMEOUT_SECONDS = 120
 
 # How much of a failed container's own log to show: enough for the traceback
 # that names the failed import, short enough not to bury the summary under it.
 _FAILURE_LOG_TAIL_LINES = 40
+
+# Statuses a container publishes on its way out. Nothing republishes over them,
+# so waiting on one can only ever time out.
+_TERMINAL_STATUSES = frozenset({"failed", "stopped"})
 
 # Internal runtime controls that must never be settable from a user's `.env`.
 # The .env is for the user's own secrets (API keys, etc.); these keys steer
@@ -554,9 +557,9 @@ class GlobalController(object):
         """
         Block until all controllers report healthy in Redis, or abort the deploy.
 
-        Anything other than "healthy" here is fatal. This used to log a warning
-        and return, so a deploy went on to announce itself up over containers
-        that had already died.
+        Anything other than "healthy" is fatal: the deploy must not outlive a
+        replica that cannot serve, since everything downstream reads a started
+        global controller as a working one.
 
         Args:
             timeout:  Maximum seconds to wait.
@@ -573,7 +576,7 @@ class GlobalController(object):
 
         while pending and time.time() < deadline:
             still_pending = []
-            saw_failed = False
+            gave_up = False
             for instance in pending:
                 name = instance["agent_name"]
                 host = instance["host"]
@@ -586,12 +589,12 @@ class GlobalController(object):
                     self._last_status[(host, port)] = "healthy"
                 else:
                     still_pending.append(instance)
-                    saw_failed = saw_failed or status == "failed"
+                    gave_up = gave_up or status in _TERMINAL_STATUSES
             pending = still_pending
-            # A container that published "failed" has already given up (it exits
-            # on an unloadable agent), so sitting out the rest of the timeout
-            # only delays the report.
-            if saw_failed:
+            # A terminal status is a container that will not change its mind:
+            # nothing republishes over it, so the rest of the timeout is dead
+            # time before a verdict that is already decided.
+            if gave_up:
                 break
             if pending:
                 time.sleep(interval)
@@ -602,10 +605,9 @@ class GlobalController(object):
     def _fail_unhealthy(self, pending):
         """Show why each controller never came up, then abort the deploy.
 
-        The cause only ever exists inside the container -- an adapter's
-        ModuleNotFoundError, say -- and deploy never showed it: it reported a
-        count of healthy replicas and went on. The logs are read before any
-        teardown, since `cleanup()` runs `docker rm -f` on the way out.
+        The cause exists only inside the container -- an adapter's
+        ModuleNotFoundError, say -- so every log has to be read before the
+        teardown below, which removes the containers holding them.
         """
         not_ready = []
         for instance in pending:
@@ -626,48 +628,90 @@ class GlobalController(object):
         if not not_ready:
             return
 
-        self._stop_docker_agents()
-        self._stop_redis_containers()
+        # Full teardown, not just the containers: the supervised processes
+        # outlive a bare `_stop_docker_agents()`, and the atexit `cleanup()`
+        # returns early once `running` is False and nothing is left tracked.
+        self.stop()
         logger.critical("Controller readiness failed: %s", ", ".join(not_ready))
         sys.exit(1)
 
     def _dump_container_log(self, instance, status):
-        """Log the tail of one container that never reported healthy.
+        """Log one failed container's own log, bracketed by sentinel lines.
 
-        Logged at WARNING even though this is a failure: these lines are a
-        quotation of the container's own log, and `canyonos deploy` stops its
-        transcript at the first `ERROR:`/`CRITICAL:` line it sees, so emitting
-        the dump at those levels would cut it off at its own first line --
-        before the traceback it exists to show. The one CRITICAL is the summary
-        that follows.
+        Everything between `--- begin container log:` and `--- end container
+        log:` is another process's output quoted verbatim, ERROR lines and
+        tracebacks included. `canyonos deploy` decides the deploy has died from
+        exactly those words, so it keys on the sentinels to leave the quoted
+        block alone -- they must stay in step with PhaseTracker in
+        packages/cli/canyonos/deploy.py. The block is therefore emitted whole,
+        whatever goes wrong inside it.
         """
         name = instance["agent_name"]
-        host = instance["host"]
-        port = instance["host_port"]
-        runtime_id = instance.get("runtime_id")
-        header = f"--- {name} ({host}:{port}) status={status or 'unknown'} ---"
-
-        if not runtime_id:
-            logger.warning("%s no container to read logs from", header)
-            return
-
-        logger.warning("%s last %d log line(s):", header, _FAILURE_LOG_TAIL_LINES)
+        logger.warning(
+            "--- begin container log: %s (%s:%s) status=%s ---",
+            name,
+            instance["host"],
+            instance["host_port"],
+            status or "unknown",
+        )
         try:
-            result = self._run_cmd(
-                ["docker", "logs", "--tail", str(_FAILURE_LOG_TAIL_LINES), runtime_id],
-                host,
-                instance.get("user"),
-            )
+            self._log_container_output(instance)
         except Exception as e:
-            logger.warning("Could not read the log of %s: %s", name, e)
+            # Never fatal: the summary below is what the deploy is here to say.
+            logger.warning("  could not read the log of %s: %s", name, e)
+        finally:
+            logger.warning("--- end container log: %s ---", name)
+
+    def _log_container_output(self, instance):
+        """Emit one container's log tail, or the one line saying why it is missing."""
+        name = instance["agent_name"]
+        container = self._docker_container_name(instance)
+        if not container:
+            logger.warning("  could not read the log of %s: no container", name)
             return
 
-        streams = [part for part in (result.stdout, result.stderr) if part]
-        for stream in streams:
-            for line in stream.splitlines():
-                logger.warning("  %s", line)
-        if not streams:
-            logger.warning("  (the container produced no output)")
+        result = self._run_cmd(
+            ["docker", "logs", "--tail", str(_FAILURE_LOG_TAIL_LINES), container],
+            instance["host"],
+            self._ssh_user_for(instance),
+        )
+
+        if result.returncode != 0:
+            # stderr here is docker's complaint, not the agent's output.
+            logger.warning(
+                "  could not read the log of %s: %s",
+                name,
+                (result.stderr or result.stdout or "").strip(),
+            )
+            return
+
+        lines = [
+            line
+            for stream in (result.stdout, result.stderr)
+            if stream
+            for line in stream.splitlines()
+        ]
+        for line in lines or ["(the container produced no output)"]:
+            logger.warning("  %s", line)
+
+    def _docker_container_name(self, instance):
+        """The name this instance's container answers to under `docker`.
+
+        Not interchangeable with its runtime id: EC2 appends the host's instance
+        id to that, so each provider says which part `docker` was given.
+        """
+        runtime = self.instance_manager._provider_runtime(
+            instance.get("provider", "local")
+        )
+        return runtime.docker_container_name(instance)
+
+    def _ssh_user_for(self, instance):
+        """The SSH user a command against this instance's host needs.
+
+        EC2 records carry none: that provider reads the user from the deploy
+        config on every call rather than storing it per replica.
+        """
+        return instance.get("user") or self.config.get("ec2", {}).get("ssh_user")
 
     # ------------------------------------------------------------------ #
     #  Polling loop                                                       #

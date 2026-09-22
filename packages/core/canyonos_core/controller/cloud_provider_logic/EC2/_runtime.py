@@ -386,3 +386,14 @@ def terminate_instance(instance):
 def routing_endpoint_for(instance):
     """Return the gRPC endpoint string used for routing to this instance."""
     return instance["endpoint"]
+
+
+def docker_container_name(instance):
+    """The name this instance's container answers to on its EC2 host.
+
+    The runtime id is `<container name>--<ec2 instance id>`, since terminating
+    the replica means terminating the host; only the part before the separator
+    was ever passed to `docker run --name`.
+    """
+    runtime_id = instance.get("runtime_id")
+    return runtime_id.rsplit("--", 1)[0] if runtime_id else None

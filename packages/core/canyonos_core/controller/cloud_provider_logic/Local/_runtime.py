@@ -247,3 +247,11 @@ def terminate_instance(instance):
 
 def routing_endpoint_for(instance):
     return f"{instance['runtime_id']}:{instance.get('container_port', CONTAINER_PORT)}"
+
+
+def docker_container_name(instance):
+    """The name this instance's container answers to under `docker`.
+
+    Here the runtime id is that name: `docker run --name` is given it verbatim.
+    """
+    return instance.get("runtime_id")
