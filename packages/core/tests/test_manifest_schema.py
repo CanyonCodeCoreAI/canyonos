@@ -565,6 +565,55 @@ class UnparseableFileTests(unittest.TestCase):
         # No field to name, so the location is followed by the message itself.
         self.assertNotIn(": : ", rendered)
 
+    def test_a_key_set_twice_in_a_service_is_rejected_at_the_second(self):
+        # PyYAML keeps the last value silently; the first `replicas` would
+        # simply vanish from the deploy.
+        (violation,) = self._load(
+            "agents:\n"
+            "  - name: ExampleAgent\n"
+            "    entrypoint: agents/example_agent.py\n"
+            "    replicas: 1\n"
+            "    replicas: 3\n"
+        )
+
+        self.assertEqual(violation.line, 5)
+        self.assertIn("found duplicate key 'replicas'", violation.message)
+        self.assertIn("first set on line 4", violation.message)
+        self.assertNotIn("\n", render_violation(violation))
+
+    def test_a_top_level_key_set_twice_is_rejected(self):
+        (violation,) = self._load(
+            "agents:\n"
+            "  - name: ExampleAgent\n"
+            "    entrypoint: agents/example_agent.py\n"
+            "agents:\n"
+            "  - name: OtherAgent\n"
+            "    entrypoint: agents/other_agent.py\n"
+        )
+
+        self.assertEqual(violation.line, 4)
+        self.assertIn("found duplicate key 'agents'", violation.message)
+
+    def test_keys_that_only_look_alike_are_not_duplicates(self):
+        # `1` is an int and `"1"` a string: two different keys to YAML.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "global_controller.yaml")
+            Path(path).write_text(
+                "agents:\n"
+                "  - name: ExampleAgent\n"
+                "    entrypoint: agents/example_agent.py\n"
+                "    env:\n"
+                "      1: a\n"
+                "      '1': b\n"
+            )
+            with self.assertRaises(SchemaError) as raised:
+                load_manifest(path)
+
+        # Rejected, but for the int key in a string mapping -- not as a duplicate.
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.field, "agents[0].env")
+        self.assertNotIn("duplicate", violation.message)
+
     def test_an_empty_file_is_reported(self):
         (violation,) = self._load("# nothing here\n")
 

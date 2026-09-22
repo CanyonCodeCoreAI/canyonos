@@ -71,6 +71,20 @@ class DeclarationShapeTests(_DeclarationCase):
         self.assertEqual(violation.field, "agent.name")
         self.assertEqual(violation.message, "is required but missing")
 
+    def test_a_key_set_twice_is_rejected_at_the_second(self):
+        # Two `name:` keys would otherwise generate a stub for whichever came
+        # last, with no word about the other.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "example_agent.yaml")
+            Path(path).write_text("agent:\n  name: ExampleAgent\n  name: OtherAgent\n")
+            with self.assertRaises(SchemaError) as raised:
+                load_agent_declaration(path)
+
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.line, 3)
+        self.assertIn("found duplicate key 'name'", violation.message)
+        self.assertNotIn("\n", render_violation(violation))
+
     def test_a_declaration_with_no_functions_is_fine(self):
         declaration = self.load({"agent": {"name": "ExampleAgent"}})
 
