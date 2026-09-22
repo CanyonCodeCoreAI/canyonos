@@ -22,9 +22,11 @@ from canyonos_core.controller.local_controller import LocalController
 
 
 def _bind_failure_marker(controller):
-    controller._mark_future_failed = lambda future_id, error, origin=None, error_name=None: (
-        LocalController._mark_future_failed(
-            controller, future_id, error, origin, error_name
+    controller._mark_future_failed = (
+        lambda future_id, error, origin=None, error_name=None: (
+            LocalController._mark_future_failed(
+                controller, future_id, error, origin, error_name
+            )
         )
     )
     controller._send_result_callback = (
@@ -195,9 +197,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
 
         self.assertEqual(redis.hget("future:future-2", "error"), "ValueError")
         self.assertEqual(redis.hget("future:future-2", "result"), "")
-        self.assertEqual(
-            redis.hget("future:future-2", "failed"), 1
-        )
+        self.assertEqual(redis.hget("future:future-2", "failed"), 1)
         logs = json.loads(redis.hget("future:future-2", "logs"))
         self.assertEqual(logs[0]["Body"], "nope")
         self.assertNotIn("future:future-2:metrics", redis.hashes)

@@ -20,7 +20,10 @@ from canyonos_core.controller.local_controller import LocalController
 from canyonos_core.controller.local_controller_frontend import LocalControllerServicer
 from canyonos_core.controller.future import Future
 from canyonos_core.controller.utils.log_handler import LogHandler
-from canyonos_core.controller.utils.log_entry import append_log_entry, build_failure_entry
+from canyonos_core.controller.utils.log_entry import (
+    append_log_entry,
+    build_failure_entry,
+)
 import canyonos_core.controller.canyonos_context as canyonos_context
 import local_controler_pb2
 
@@ -51,9 +54,11 @@ class _FakeRedis:
 
 
 def _bind_failure_marker(controller):
-    controller._mark_future_failed = lambda future_id, error, origin=None, error_name=None: (
-        LocalController._mark_future_failed(
-            controller, future_id, error, origin, error_name
+    controller._mark_future_failed = (
+        lambda future_id, error, origin=None, error_name=None: (
+            LocalController._mark_future_failed(
+                controller, future_id, error, origin, error_name
+            )
         )
     )
     controller._fan_out_to_consumers = (
@@ -70,13 +75,15 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_forward_request_writes_future_error_on_grpc_failure(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(Execute=MagicMock(side_effect=RuntimeError("boom")))
-        controller = _bind_failure_marker(SimpleNamespace(
-            redis=redis,
-            agent_id=None,
-            agent_name=None,
-            _my_endpoint="172.31.19.107:50051",
-            _get_remote_stub=lambda endpoint: stub,
-        ))
+        controller = _bind_failure_marker(
+            SimpleNamespace(
+                redis=redis,
+                agent_id=None,
+                agent_name=None,
+                _my_endpoint="172.31.19.107:50051",
+                _get_remote_stub=lambda endpoint: stub,
+            )
+        )
         data = {
             "future_id": "future-1",
             "service": "ExampleAgent",
@@ -228,7 +235,10 @@ class ErrorPropagationTests(unittest.TestCase):
         redis = _FakeRedis()
         controller = _bind_failure_marker(
             SimpleNamespace(
-                redis=redis, agent_id=None, agent_name=None, _my_endpoint="localhost:50051"
+                redis=redis,
+                agent_id=None,
+                agent_name=None,
+                _my_endpoint="localhost:50051",
             )
         )
 
@@ -247,14 +257,17 @@ class ErrorPropagationTests(unittest.TestCase):
         redis = _FakeRedis()
         controller = _bind_failure_marker(
             SimpleNamespace(
-                redis=redis, agent_id=None, agent_name=None, _my_endpoint="localhost:50051",
+                redis=redis,
+                agent_id=None,
+                agent_name=None,
+                _my_endpoint="localhost:50051",
             )
         )
         controller._load_policy_rules = lambda: [
             {"match": {"role": "admin"}, "access": ["SomeAgent"]}
         ]
-        controller._check_policy = lambda service, context: LocalController._check_policy(
-            controller, service, context
+        controller._check_policy = lambda service, context: (
+            LocalController._check_policy(controller, service, context)
         )
 
         LocalController._process_request(
@@ -271,12 +284,15 @@ class ErrorPropagationTests(unittest.TestCase):
         redis = _FakeRedis()
         controller = _bind_failure_marker(
             SimpleNamespace(
-                redis=redis, agent_id=None, agent_name=None, _my_endpoint="localhost:50051",
+                redis=redis,
+                agent_id=None,
+                agent_name=None,
+                _my_endpoint="localhost:50051",
             )
         )
         controller._load_policy_rules = lambda: []
-        controller._check_policy = lambda service, context: LocalController._check_policy(
-            controller, service, context
+        controller._check_policy = lambda service, context: (
+            LocalController._check_policy(controller, service, context)
         )
         controller._resolve_endpoint = lambda service, request_id: None
 
@@ -333,14 +349,18 @@ class ErrorPropagationTests(unittest.TestCase):
 
         self.assertEqual(redis.hget("future:future-5", "error"), "ResultCallbackFailed")
         logs = json.loads(redis.hget("future:future-5", "logs"))
-        self.assertEqual(logs[0]["Attributes"]["exception.type"], "ResultCallbackFailed")
+        self.assertEqual(
+            logs[0]["Attributes"]["exception.type"], "ResultCallbackFailed"
+        )
         self.assertIn("Result callback failed", logs[0]["Body"])
 
     def test_log_handler_never_duplicates_a_failure_already_recorded(self):
         """LogHandler must refuse WARNING+ so ambient capture can never double-record
         the same event `_mark_future_failed` already wrote via `build_failure_entry`."""
         redis = _FakeRedis()
-        handler = LogHandler(redis, agent_id="agent-1", agent_name="ExampleAgent", endpoint="ep:1")
+        handler = LogHandler(
+            redis, agent_id="agent-1", agent_name="ExampleAgent", endpoint="ep:1"
+        )
         test_logger = logging.getLogger("test_error_propagation_boundary")
         test_logger.setLevel(logging.DEBUG)
         test_logger.addHandler(handler)
@@ -510,16 +530,19 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_mark_future_failed_never_raises_when_redis_is_unreachable(self):
         """A Redis blip while recording a failure must not escape _mark_future_failed --
         callers (including the main polling loop) rely on this being a safe sink."""
+
         class _FlakyRedis(_FakeRedis):
             def hset_multiple(self, name, mapping):
                 raise ConnectionError("redis unreachable")
 
-        controller = _bind_failure_marker(SimpleNamespace(
-            redis=_FlakyRedis(),
-            agent_id=None,
-            agent_name=None,
-            _my_endpoint="localhost:50051",
-        ))
+        controller = _bind_failure_marker(
+            SimpleNamespace(
+                redis=_FlakyRedis(),
+                agent_id=None,
+                agent_name=None,
+                _my_endpoint="localhost:50051",
+            )
+        )
 
         try:
             controller._mark_future_failed("future-1", ValueError("boom"))

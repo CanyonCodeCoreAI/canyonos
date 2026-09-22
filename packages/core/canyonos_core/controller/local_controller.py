@@ -20,7 +20,11 @@ try:
     from canyonos_core.controller.utils.redis_client import RedisClient
     from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
     from canyonos_core.controller.utils.log_handler import LogHandler
-    from canyonos_core.controller.utils.log_entry import build_failure_entry, append_log_entry, error_type_name
+    from canyonos_core.controller.utils.log_entry import (
+        build_failure_entry,
+        append_log_entry,
+        error_type_name,
+    )
 except ImportError:
     from gpu_metrics import read_gpu_percent
     from local_controller_frontend import start_server
@@ -109,7 +113,9 @@ class LocalController(object):
 
         # global_controller.yaml's `logs:` flag, on by default -- set `logs: false` to opt out. Only
         # gates the rich `logs` detail below -- never the cheap `error`/`failed` fields, always written.
-        self.logs_enabled = os.environ.get("CANYONOS_LOGS_ENABLED", "true").lower() == "true"
+        self.logs_enabled = (
+            os.environ.get("CANYONOS_LOGS_ENABLED", "true").lower() == "true"
+        )
         self._log_handler = None
         if self.logs_enabled:
             self._log_handler = LogHandler(
@@ -536,7 +542,9 @@ class LocalController(object):
         if not self._check_policy(service, context):
             err_msg = f"Unauthorized: Policy denied access to service '{service}'"
             logger.warning(err_msg)
-            self._mark_future_failed(future_id, err_msg, origin, error_name="PolicyDenied")
+            self._mark_future_failed(
+                future_id, err_msg, origin, error_name="PolicyDenied"
+            )
             return
 
         # Resolve which endpoint to route to.

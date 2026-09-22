@@ -66,7 +66,9 @@ def error_type_name(error, error_name=None):
     )
 
 
-def build_failure_entry(error, agent_id=None, agent_name=None, endpoint=None, error_name=None):
+def build_failure_entry(
+    error, agent_id=None, agent_name=None, endpoint=None, error_name=None
+):
     """Return an OTel-shaped log entry for one future failure (an exception or a plain message)."""
     is_exception = isinstance(error, BaseException)
     return _otel_entry(

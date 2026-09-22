@@ -44,7 +44,6 @@ class FutureParentIdTests(unittest.TestCase):
         self.fake_redis = _FakeRedis()
         self._orig_redis = future_module.Future.redis
         self._orig_stub = future_module.Future._stub
-        self._orig_logs_enabled = future_module.Future._logs_enabled
         future_module.Future.redis = self.fake_redis
         future_module.Future._stub = MagicMock()
         canyonos_context.set_current_future_id("")

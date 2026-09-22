@@ -88,7 +88,9 @@ class CleanupDispatchTests(unittest.TestCase):
             resonse=json.dumps({"request_ids": ["req1", "req2", "req3"]})
         )
 
-        with patch("canyonos_core.controller.local_controller_frontend.Thread", _SyncThread):
+        with patch(
+            "canyonos_core.controller.local_controller_frontend.Thread", _SyncThread
+        ):
             LocalControllerServicer.Cleanup(servicer, request, context=None)
 
         self.assertEqual(cleaned, ["req1", "req3"])
@@ -109,6 +111,9 @@ class _FakeRedisStore:
 
     def smembers(self, name):
         return set(self.sets.get(name, set()))
+
+    def hget(self, name, key):
+        return None
 
     def scan_keys(self, pattern):
         return [k for k in self.strings if fnmatch.fnmatch(k, pattern)]

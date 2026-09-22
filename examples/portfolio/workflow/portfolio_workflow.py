@@ -21,9 +21,6 @@
 #   curl http://localhost:8080/status/<request_id>
 
 import json
-import sys
-import os
-
 
 from deploy import deploy
 from agents.intent_agent import IntentAgent

@@ -8,7 +8,10 @@ except ImportError:
     import canyonos_context
 
 try:
-    from canyonos_core.controller.utils.log_entry import build_log_entry, append_log_entry
+    from canyonos_core.controller.utils.log_entry import (
+        build_log_entry,
+        append_log_entry,
+    )
 except ImportError:
     from log_entry import build_log_entry, append_log_entry
 

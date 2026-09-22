@@ -146,11 +146,14 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                     # they vanish. The TTL guarantees cleanup even if the poll
                     # never reads it (e.g. controller restarts).
                     self.redis.delete(future_key)
-                    self.redis.hset_multiple(future_key, {
-                        "id": fid,
-                        "request_id": request_id,
-                        "logs": logs,
-                    })
+                    self.redis.hset_multiple(
+                        future_key,
+                        {
+                            "id": fid,
+                            "request_id": request_id,
+                            "logs": logs,
+                        },
+                    )
                     self.redis.expire(future_key, 30)
                 else:
                     keys_to_delete.append(future_key)

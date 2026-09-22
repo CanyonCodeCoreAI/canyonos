@@ -346,6 +346,8 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
                     "-e",
                     "ANTHROPIC_API_BASE=http://127.0.0.1:8081/anthropic",
                     "-e",
+                    "CANYONOS_LOGS_ENABLED=true",
+                    "-e",
                     "CANYONOS_LLM_STUB_TEXT=",
                     "-p",
                     "8080:8080",

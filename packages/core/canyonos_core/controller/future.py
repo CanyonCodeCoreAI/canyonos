@@ -18,7 +18,11 @@ except ImportError:
     from grpc_options import GRPC_CHANNEL_OPTIONS
 
 try:
-    from canyonos_core.controller.utils.log_entry import build_failure_entry, append_log_entry, error_type_name
+    from canyonos_core.controller.utils.log_entry import (
+        build_failure_entry,
+        append_log_entry,
+        error_type_name,
+    )
 except ImportError:
     from log_entry import build_failure_entry, append_log_entry, error_type_name
 
@@ -130,11 +134,16 @@ class Future(object):
         except Exception as e:
             logger.error("gRPC call failed for %s.%s: %s", self.service, self.method, e)
             try:
-                self.redis.hset_multiple(f"future:{self.id}", {
-                    "error": error_type_name(e),
-                    "failed": 1,
-                })
-                append_log_entry(self.redis, f"future:{self.id}", build_failure_entry(e))
+                self.redis.hset_multiple(
+                    f"future:{self.id}",
+                    {
+                        "error": error_type_name(e),
+                        "failed": 1,
+                    },
+                )
+                append_log_entry(
+                    self.redis, f"future:{self.id}", build_failure_entry(e)
+                )
             except Exception as record_error:
                 # Never let the failure-recording path itself raise out of the constructor.
                 logger.error(

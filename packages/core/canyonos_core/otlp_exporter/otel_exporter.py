@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 _running = True
 _trace_exporters = []  # (name, OTLPSpanExporter)
 _metric_exporters = []  # (name, OTLPMetricExporter)
-_log_exporters = []     # (name, OTLPLogExporter)
+_log_exporters = []  # (name, OTLPLogExporter)
 _last_destinations_raw = None
 POLL_INTERVAL_SECONDS = 5
 MAX_SPANS_PER_POLL = 512
@@ -324,25 +324,28 @@ def _log_build_exporter(destination):
     Like metrics, there is no partial-success recorder: a logs export is accepted or
     retried whole.
     """
-    kwargs = {
-        "endpoint": destination["endpoint"],
-    }
-    if destination["headers"] is not None: kwargs["headers"] = destination["headers"]  # fmt: skip
-    if destination["timeout"] is not None: kwargs["timeout"] = destination["timeout"]  # fmt: skip
-
     if destination["protocol"] == "grpc":
-        if destination["insecure"] is not None: kwargs["insecure"] = destination["insecure"]  # fmt: skip
-        return GrpcOTLPLogExporter(**kwargs)
+        return GrpcOTLPLogExporter(
+            endpoint=destination["endpoint"],
+            headers=destination["headers"],
+            timeout=destination["timeout"],
+            insecure=destination["insecure"],
+        )
     # opentelemetry-python does not append the signal path when endpoint= is explicit.
-    kwargs["endpoint"] = f"{destination['endpoint'].rstrip('/')}/v1/logs"
-    return HttpOTLPLogExporter(**kwargs)
+    return HttpOTLPLogExporter(
+        endpoint=f"{destination['endpoint'].rstrip('/')}/v1/logs",
+        headers=destination["headers"],
+        timeout=destination["timeout"],
+    )
 
 
 def _log_build_exporters(raw):
     """Build one OTLP log exporter per configured destination."""
     destinations = _configured_destinations(raw)
     if destinations is None:
-        raise RuntimeError(f"{DESTINATIONS_KEY} is not set; otel.destinations is required")
+        raise RuntimeError(
+            f"{DESTINATIONS_KEY} is not set; otel.destinations is required"
+        )
 
     exporters = []
     try:
@@ -767,7 +770,9 @@ def _prune_expired_rows():
         metrics = otel_reader.prune_expired(
             "metrics_waiting", "observed_at", METRIC_RETENTION_SECONDS, DB_PATH
         )
-        logs = otel_reader.prune_expired("logs_waiting", "observed_at", LOG_RETENTION_SECONDS, DB_PATH)
+        logs = otel_reader.prune_expired(
+            "logs_waiting", "observed_at", LOG_RETENTION_SECONDS, DB_PATH
+        )
     except Exception as e:
         logger.error("Failed to prune aged-out rows (non-fatal): %s", e, exc_info=True)
         return
@@ -901,7 +906,9 @@ def _log_send_pending():
             continue
         if not converted:
             # Unparseable/empty row: mark sent so it isn't retried forever.
-            logger.warning("Skipping log row %s -- unparseable or empty.", row["log_id"])
+            logger.warning(
+                "Skipping log row %s -- unparseable or empty.", row["log_id"]
+            )
             try:
                 otel_reader.log_mark_sent(row["log_id"], DB_PATH)
             except Exception as e:
@@ -935,11 +942,18 @@ def _log_send_pending():
             return False
         return True
 
-    _deliver_and_mark(exporters, deliver, log_ids, otel_reader.log_mark_sent_many, "log record(s)")
+    _deliver_and_mark(
+        exporters, deliver, log_ids, otel_reader.log_mark_sent_many, "log record(s)"
+    )
 
 
 def main():
-    global _trace_exporters, _metric_exporters, _log_exporters, _redis, _last_destinations_raw
+    global \
+        _trace_exporters, \
+        _metric_exporters, \
+        _log_exporters, \
+        _redis, \
+        _last_destinations_raw
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
     try:

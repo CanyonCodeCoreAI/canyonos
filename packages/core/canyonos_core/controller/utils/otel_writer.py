@@ -296,19 +296,25 @@ def metric_write_rows(rows, db_path=DB_PATH):
 # `sent` is excluded from the update set for the same reason as the other tables: re-upserting
 # a log row (a GC re-poll of the same future) must not reset an already-exported row back
 # to unsent.
-_LOGS_COLUMNS = [
-    "log_id", "future_id", "session_id", "project_id", "agent_id",
-    "observed_at", "severity_number", "severity_text", "body", "attributes",
-]
-
 _LOGS_UPSERT = """
-    INSERT INTO logs_waiting ({cols}) VALUES ({placeholders})
-    ON CONFLICT(log_id) DO UPDATE SET {updates}
-""".format(
-    cols=", ".join(_LOGS_COLUMNS),
-    placeholders=", ".join(f":{c}" for c in _LOGS_COLUMNS),
-    updates=", ".join(f"{c}=excluded.{c}" for c in _LOGS_COLUMNS if c != "log_id"),
-)
+    INSERT INTO logs_waiting (
+        log_id, future_id, session_id, project_id, agent_id,
+        observed_at, severity_number, severity_text, body, attributes
+    ) VALUES (
+        :log_id, :future_id, :session_id, :project_id, :agent_id,
+        :observed_at, :severity_number, :severity_text, :body, :attributes
+    )
+    ON CONFLICT(log_id) DO UPDATE SET
+        future_id=excluded.future_id,
+        session_id=excluded.session_id,
+        project_id=excluded.project_id,
+        agent_id=excluded.agent_id,
+        observed_at=excluded.observed_at,
+        severity_number=excluded.severity_number,
+        severity_text=excluded.severity_text,
+        body=excluded.body,
+        attributes=excluded.attributes
+"""
 
 
 def log_write_rows(rows, project_id=None, db_path=DB_PATH):
@@ -345,7 +351,8 @@ def log_write_rows(rows, project_id=None, db_path=DB_PATH):
                         "session_id": session_id,
                         "project_id": project_id,
                         "agent_id": agent_id,
-                        "observed_at": entry.get("ObservedTimestamp") or entry.get("Timestamp"),
+                        "observed_at": entry.get("ObservedTimestamp")
+                        or entry.get("Timestamp"),
                         "severity_number": entry.get("SeverityNumber"),
                         "severity_text": entry.get("SeverityText"),
                         "body": entry.get("Body"),

@@ -53,9 +53,7 @@ def log_row_to_log_records(row):
     trace_id = int(session_id, 16) if session_id else None
     span_id = int(future_id, 16) if future_id else None
 
-    resource = Resource(
-        {"service.name": row.get("agent_id") or "unknown_agent"}
-    )
+    resource = Resource({"service.name": row.get("agent_id") or "unknown_agent"})
 
     # CanyonOS-specific identity fields are namespaced as canyonos.* per the OTel
     # naming spec's app-name-prefix rule (export-time only, no storage change).

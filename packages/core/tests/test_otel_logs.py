@@ -41,6 +41,7 @@ for _name, _attr in (
 # log_convert.log_row_to_log_records
 # ---------------------------------------------------------------------------
 
+
 def _make_row(
     log_id="0011223344556677:0",
     future_id="0011223344556677",
@@ -162,8 +163,10 @@ class LogRowToLogRecordsTests(unittest.TestCase):
 # otel_writer.log_write_rows
 # ---------------------------------------------------------------------------
 
-def _log_entry(severity_text="INFO", severity_number=9, body="hello", attrs=None,
-               timestamp=1.0):
+
+def _log_entry(
+    severity_text="INFO", severity_number=9, body="hello", attrs=None, timestamp=1.0
+):
     return {
         "Timestamp": timestamp,
         "ObservedTimestamp": timestamp,
@@ -174,8 +177,15 @@ def _log_entry(severity_text="INFO", severity_number=9, body="hello", attrs=None
     }
 
 
-def _future_row(future_id="f1", request_id="ffeeddccbbaa99887766554433221100", agent="a1", logs=None):
-    return {"future_id": future_id, "request_id": request_id, "agent": agent, "logs": logs}
+def _future_row(
+    future_id="f1", request_id="ffeeddccbbaa99887766554433221100", agent="a1", logs=None
+):
+    return {
+        "future_id": future_id,
+        "request_id": request_id,
+        "agent": agent,
+        "logs": logs,
+    }
 
 
 class WriteLogRowsTests(unittest.TestCase):
@@ -194,7 +204,9 @@ class WriteLogRowsTests(unittest.TestCase):
             return {r["log_id"]: r for r in conn.execute("SELECT * FROM logs_waiting")}
 
     def test_logs_array_explodes_into_one_row_per_entry(self):
-        row = _future_row(logs=json.dumps([_log_entry(body="first"), _log_entry(body="second")]))
+        row = _future_row(
+            logs=json.dumps([_log_entry(body="first"), _log_entry(body="second")])
+        )
         otel_writer.log_write_rows([row], db_path=self.tmp)
         rows = self._rows()
         self.assertEqual(len(rows), 2)
@@ -232,7 +244,8 @@ class WriteLogRowsTests(unittest.TestCase):
 
     def test_row_missing_future_id_or_logs_is_skipped(self):
         otel_writer.log_write_rows(
-            [_future_row(future_id=None, logs=json.dumps([_log_entry()]))], db_path=self.tmp
+            [_future_row(future_id=None, logs=json.dumps([_log_entry()]))],
+            db_path=self.tmp,
         )
         otel_writer.log_write_rows([_future_row(logs=None)], db_path=self.tmp)
         self.assertEqual(len(self._rows()), 0)
@@ -246,13 +259,18 @@ class WriteLogRowsTests(unittest.TestCase):
 # otel_reader.log_mark_sent / log_mark_sent_many
 # ---------------------------------------------------------------------------
 
+
 class MarkSentTests(unittest.TestCase):
     def setUp(self):
         fd, self.tmp = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         schema.init_db(self.tmp)
         otel_writer.log_write_rows(
-            [_future_row(logs=json.dumps([_log_entry(body="a"), _log_entry(body="b")]))],
+            [
+                _future_row(
+                    logs=json.dumps([_log_entry(body="a"), _log_entry(body="b")])
+                )
+            ],
             db_path=self.tmp,
         )
 
@@ -285,6 +303,7 @@ class MarkSentTests(unittest.TestCase):
 # otel_exporter._log_send_pending
 # ---------------------------------------------------------------------------
 
+
 class SendPendingLogsTests(unittest.TestCase):
     def setUp(self):
         fd, self.tmp = tempfile.mkstemp(suffix=".db")
@@ -299,7 +318,11 @@ class SendPendingLogsTests(unittest.TestCase):
 
     def _seed(self, entries=None, future_id="f1"):
         otel_writer.log_write_rows(
-            [_future_row(future_id=future_id, logs=json.dumps(entries or [_log_entry()]))],
+            [
+                _future_row(
+                    future_id=future_id, logs=json.dumps(entries or [_log_entry()])
+                )
+            ],
             db_path=self.tmp,
         )
 
@@ -340,7 +363,9 @@ class SendPendingLogsTests(unittest.TestCase):
             otel_exporter._log_send_pending()
         first.export.assert_called_once()
         second.export.assert_called_once()
-        self.assertEqual(first.export.call_args.args[0], second.export.call_args.args[0])
+        self.assertEqual(
+            first.export.call_args.args[0], second.export.call_args.args[0]
+        )
         self.assertEqual(self._sent(), 1)
 
     def test_tries_every_destination_and_leaves_row_unsent_when_one_fails(self):
@@ -349,7 +374,10 @@ class SendPendingLogsTests(unittest.TestCase):
         failing.export.side_effect = RuntimeError("down")
         succeeding = MagicMock(name="succeeding")
         succeeding.export.return_value = LogRecordExportResult.SUCCESS
-        otel_exporter._log_exporters = [("failing", failing), ("succeeding", succeeding)]
+        otel_exporter._log_exporters = [
+            ("failing", failing),
+            ("succeeding", succeeding),
+        ]
         with patch.object(otel_exporter, "DB_PATH", self.tmp):
             otel_exporter._log_send_pending()
         failing.export.assert_called_once()
@@ -385,8 +413,9 @@ class SendPendingLogsTests(unittest.TestCase):
                 raise RuntimeError("boom")
             return real_convert(row)
 
-        with patch.object(otel_exporter, "DB_PATH", self.tmp), patch.object(
-            log_convert, "log_row_to_log_records", side_effect=flaky
+        with (
+            patch.object(otel_exporter, "DB_PATH", self.tmp),
+            patch.object(log_convert, "log_row_to_log_records", side_effect=flaky),
         ):
             otel_exporter._log_send_pending()
 
@@ -405,9 +434,10 @@ class SendPendingLogsTests(unittest.TestCase):
         exporter = MagicMock(name="live")
         exporter.export.return_value = LogRecordExportResult.SUCCESS
         otel_exporter._log_exporters = [("live", exporter)]
-        with patch.object(otel_exporter, "DB_PATH", self.tmp), self.assertLogs(
-            otel_exporter.logger, level="INFO"
-        ) as captured:
+        with (
+            patch.object(otel_exporter, "DB_PATH", self.tmp),
+            self.assertLogs(otel_exporter.logger, level="INFO") as captured,
+        ):
             otel_exporter._log_send_pending()
         self.assertTrue(any("Exported 2 log record(s)" in m for m in captured.output))
 
@@ -480,13 +510,17 @@ class PruneExpiredLogsTests(unittest.TestCase):
         self._seed_log("old-sent", now - 10000, 1)
         self._seed_log("old-unsent", now - 10000, 0)
         self._seed_log("new-unsent", now - 10, 0)
-        removed = otel_reader.prune_expired("logs_waiting", "observed_at", 600, self.tmp)
+        removed = otel_reader.prune_expired(
+            "logs_waiting", "observed_at", 600, self.tmp
+        )
         self.assertEqual(removed, 2)
         self.assertEqual(self._log_ids(), {"new-unsent"})
 
     def test_prune_leaves_rows_with_a_null_timestamp(self):
         self._seed_log("unsent-null-ts", None, 0)
-        self.assertEqual(otel_reader.prune_expired("logs_waiting", "observed_at", 0, self.tmp), 0)
+        self.assertEqual(
+            otel_reader.prune_expired("logs_waiting", "observed_at", 0, self.tmp), 0
+        )
         self.assertEqual(self._log_ids(), {"unsent-null-ts"})
 
     def test_prune_expired_rows_covers_the_logs_table(self):
