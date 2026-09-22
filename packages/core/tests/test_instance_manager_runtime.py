@@ -388,6 +388,33 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
         self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
         self.assertEqual(controller.containers["Alpha"], [])
 
+    def test_a_status_key_does_not_outlive_the_instance_record(self):
+        # The key has no TTL and the endpoint is derived from the container
+        # name, so one left behind is inherited by the next replica to land
+        # there and read as that replica's own health.
+        controller = _fake_controller()
+        manager = InstanceManager(controller, controller.redis)
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+        status_key = "controller:canyonos-alpha-0:50051:status"
+        controller.redis.set(status_key, "healthy")
+
+        manager.remove_instance("local:Alpha:0")
+
+        self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
+        self.assertIsNone(controller.redis.get(status_key))
+
+    def test_a_node_whose_redis_is_gone_does_not_break_the_teardown(self):
+        controller = _fake_controller()
+        manager = InstanceManager(controller, controller.redis)
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+        node_redis = _FakeRedis()
+        node_redis.delete = MagicMock(side_effect=ConnectionError("node redis is gone"))
+        controller.node_redis["localhost"] = node_redis
+
+        manager.remove_instance("local:Alpha:0")
+
+        self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
+
     def test_manager_keeps_ec2_runtime_boundary_behavior(self):
         controller = _fake_controller()
         manager = InstanceManager(controller, controller.redis)

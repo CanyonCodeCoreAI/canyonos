@@ -7,6 +7,7 @@ publishes the routing data other parts of CanyonOS use to reach those agents.
 """
 
 import json
+import logging
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,6 +16,8 @@ from canyonos_core.controller.cloud_provider_logic.Local import (
     _runtime as local_runtime,
 )
 from canyonos_core.controller.utils import container_names
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_HOST_PORT_START = 8000
 
@@ -162,6 +165,9 @@ class InstanceManager:
         if not instance:
             return
 
+        # Before _destroy_runtime: on EC2 that terminates the host this status
+        # lives on, and drops the node's Redis client with it.
+        self._delete_controller_status(instance)
         self._destroy_runtime(instance)
         self.redis.delete(key)
         self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
@@ -173,6 +179,25 @@ class InstanceManager:
         self.publish_routing_snapshot(
             getattr(self, "_agent_specs", getattr(self.controller, "controllers", []))
         )
+
+    def _delete_controller_status(self, instance):
+        """Drop the status key belonging to this instance.
+
+        The invariant: a status key never outlives the instance record it
+        belongs to. The key has no TTL, and endpoints are derived from the
+        container name, so one left behind is inherited by the next replica to
+        land there -- and read as that replica's own health. Best effort: a node
+        whose Redis is already gone must not stop the teardown.
+        """
+        try:
+            node_redis = self.controller.node_redis.get(instance["host"]) or self.redis
+            node_redis.delete(
+                f"controller:{self._routing_endpoint_for(instance)}:status"
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not clear the status of %s: %s", instance.get("runtime_id"), e
+            )
 
     def list_instances(self, agent_name=None):
         if agent_name:
