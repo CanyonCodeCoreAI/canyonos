@@ -257,6 +257,34 @@ class EntrypointTests(_ManifestCase):
         self.assertEqual(violation.field, "agents[0].workflow_file")
         self.assertEqual(violation.message, "is required but missing")
 
+    def test_a_windows_rooted_entrypoint_is_rejected(self):
+        # posixpath reads all three as relative names inside the project.
+        for entrypoint in (
+            "\\outside\\agent.py",
+            "C:\\x\\agent.py",
+            "\\\\server\\share\\agent.py",
+        ):
+            with self.subTest(entrypoint=entrypoint):
+                violation = self.one({"agents": [_agent(entrypoint=entrypoint)]})
+                self.assertEqual(violation.field, "agents[0].entrypoint")
+                self.assertIn("must be relative to the project", violation.message)
+
+    def test_a_windows_rooted_workflow_file_is_rejected(self):
+        violation = self.one(
+            {
+                "agents": [
+                    {
+                        "name": "Workflow",
+                        "type": "workflow",
+                        "workflow_file": "C:\\flows\\workflow.py",
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(violation.field, "agents[0].workflow_file")
+        self.assertIn("must be relative to the project", violation.message)
+
     def test_an_entrypoint_outside_the_project_is_rejected(self):
         for entrypoint, expected in (
             ("/etc/passwd.py", "must be relative to the project"),

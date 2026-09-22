@@ -5,6 +5,7 @@ number instead of being silently ignored, and a wrong type fails here rather
 than deep inside the instance manager once containers are already up.
 """
 
+import ntpath
 import posixpath
 from dataclasses import dataclass, field
 from typing import ClassVar
@@ -221,13 +222,29 @@ class Manifest:
 # ------------------------------------------------------------------ #
 
 
+def _is_rooted(path):
+    """True for a path anchored anywhere but the project, on either OS.
+
+    `posixpath` alone takes `\\outside\\agent.py`, `C:\\x` and
+    `\\\\server\\share` for relative names. The leading-backslash test is
+    explicit because newer Pythons no longer call a drive-relative `\\x`
+    absolute.
+    """
+    return (
+        posixpath.isabs(path)
+        or ntpath.isabs(path)
+        or path.startswith("\\")
+        or (len(path) > 1 and path[1] == ":")
+    )
+
+
 def _project_relative_py(collector, node, key, prefix, required):
     """A source path inside the project: relative, no `..`, ending in `.py`."""
     value = _string(collector, node, key, prefix, required=required)
     if value is None:
         return ""
     field_name = _field(prefix, key)
-    if posixpath.isabs(value) or (len(value) > 1 and value[1] == ":"):
+    if _is_rooted(value):
         collector.add(
             node, key, field_name, f"must be relative to the project, got {value!r}"
         )
