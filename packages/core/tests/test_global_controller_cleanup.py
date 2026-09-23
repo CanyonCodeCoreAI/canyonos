@@ -70,6 +70,15 @@ class _FakeInstanceManager:
     def list_instances(self):
         return self._instances
 
+    def _routing_endpoint_for(self, instance):
+        # Real InstanceManager resolves the container-reachable address
+        # (runtime_id:CONTAINER_PORT); these fixtures use "endpoint" as
+        # that already-resolved stand-in, since these tests are about
+        # batching/draining semantics, not address resolution itself.
+        # A fixture that needs "endpoint" and the routing address to differ
+        # (see RoutingEndpointTests) sets "routing_endpoint" explicitly.
+        return instance.get("routing_endpoint", instance["endpoint"])
+
 
 def _bare_controller(redis, instances, node_redis=None):
     """Build a GlobalController without running its heavy __init__.
@@ -115,7 +124,12 @@ class TriggerCleanupTests(unittest.TestCase):
         # Drained after broadcasting, same as before.
         self.assertEqual(redis.smembers("request:completed"), set())
 
-    def test_one_instance_failing_does_not_block_others_or_stop_draining(self):
+    def test_one_instance_failing_leaves_the_batch_queued_for_retry(self):
+        # CAN-391: a batch is only ever removed from "request:completed" once
+        # every instance has confirmed receipt. If even one Cleanup RPC fails
+        # (e.g. an unreachable endpoint), the whole batch must stay queued --
+        # dropping it here is how cleanup entries went missing and Redis grew
+        # unbounded.
         completed = {"reqA", "reqB"}
         expected = set(completed)  # snapshot -- see note in the test above
         redis = _FakeRedis({"request:completed": completed})
@@ -128,9 +142,11 @@ class TriggerCleanupTests(unittest.TestCase):
 
         controller._trigger_cleanup()  # must not raise
 
+        # The reachable instance still gets the batch...
         self.assertEqual(len(good_stub.calls), 1)
         self.assertEqual(set(good_stub.calls[0]["request_ids"]), expected)
-        self.assertEqual(redis.smembers("request:completed"), set())
+        # ...but nothing is drained until every instance has confirmed.
+        self.assertEqual(redis.smembers("request:completed"), expected)
 
     def test_noop_when_nothing_completed(self):
         redis = _FakeRedis()
@@ -144,12 +160,13 @@ class TriggerCleanupTests(unittest.TestCase):
         self.assertEqual(stub.calls, [])
 
     def test_noop_when_no_instances_registered(self):
+        # CAN-391: with nothing to broadcast to, nothing has confirmed the
+        # batch -- it must stay queued rather than being silently dropped.
         redis = _FakeRedis({"request:completed": {"req1"}})
         controller = _bare_controller(redis, [])
 
-        # Should still drain the completed set even with nothing to broadcast to.
         controller._trigger_cleanup()
-        self.assertEqual(redis.smembers("request:completed"), set())
+        self.assertEqual(redis.smembers("request:completed"), {"req1"})
 
 
 class MultiNodeTriggerCleanupTests(unittest.TestCase):
@@ -250,6 +267,70 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
 
         self.assertEqual(set(stub.calls[0]["request_ids"]), completed)
         self.assertEqual(redis.smembers("request:completed"), set())
+
+
+class RoutingEndpointTests(unittest.TestCase):
+    """CAN-391: the GC container must send Cleanup to each instance's
+    container-reachable routing endpoint, never its host-published endpoint
+    (e.g. localhost:8001) -- the GC can't reach that from inside Docker.
+    Every other test in this file gives an instance the same value for both,
+    so a regression back to instance["endpoint"] would pass them unnoticed."""
+
+    def test_cleanup_uses_routing_endpoint_not_published_endpoint(self):
+        completed = {"req1"}
+        redis = _FakeRedis({"request:completed": set(completed)})
+        instances = [
+            {"endpoint": "localhost:8001", "routing_endpoint": "runtime-abc:50051"}
+        ]
+        controller = _bare_controller(redis, instances)
+
+        routing_stub = _FakeStub()
+
+        def _get_lc_stub(endpoint):
+            if endpoint == "localhost:8001":
+                raise AssertionError(
+                    "Cleanup must not be sent to the host-published endpoint; "
+                    "the GC container cannot reach it."
+                )
+            return routing_stub
+
+        controller._get_lc_stub = _get_lc_stub
+
+        controller._trigger_cleanup()
+
+        self.assertEqual(len(routing_stub.calls), 1)
+        self.assertEqual(set(routing_stub.calls[0]["request_ids"]), completed)
+        self.assertEqual(redis.smembers("request:completed"), set())
+
+    def test_distinct_endpoints_across_multiple_instances(self):
+        completed = {"req1", "req2"}
+        redis = _FakeRedis({"request:completed": set(completed)})
+        instances = [
+            {"endpoint": f"localhost:800{i}", "routing_endpoint": f"runtime-{i}:50051"}
+            for i in range(3)
+        ]
+        controller = _bare_controller(redis, instances)
+
+        stubs = {inst["routing_endpoint"]: _FakeStub() for inst in instances}
+        published = {inst["endpoint"] for inst in instances}
+
+        def _get_lc_stub(endpoint):
+            self.assertNotIn(
+                endpoint, published, "must route by routing_endpoint, not endpoint"
+            )
+            return stubs[endpoint]
+
+        controller._get_lc_stub = _get_lc_stub
+
+        controller._trigger_cleanup()
+
+        for routing_endpoint, stub in stubs.items():
+            self.assertEqual(
+                len(stub.calls),
+                1,
+                f"expected exactly one Cleanup call to {routing_endpoint}",
+            )
+            self.assertEqual(set(stub.calls[0]["request_ids"]), completed)
 
 
 class StaleContainerNameTests(unittest.TestCase):

@@ -22,6 +22,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+POLL_INTERVAL_SECONDS = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
+FUTURE_CLEANUP_GRACE_MULTIPLIER = 3
+FUTURE_CLEANUP_GRACE_MIN_SECONDS = 30
+FUTURE_CLEANUP_GRACE_SECONDS = max(
+    FUTURE_CLEANUP_GRACE_MIN_SECONDS,
+    POLL_INTERVAL_SECONDS * FUTURE_CLEANUP_GRACE_MULTIPLIER,
+)
+
+
 class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
     """gRPC servicer that accepts requests and pushes them into a queue."""
 
@@ -132,35 +141,22 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                 logger.info("No futures found for request %s on this node.", request_id)
                 return
 
-            keys_to_delete = [futures_key]
+            keys_to_expire = [futures_key]
             for fid in future_ids:
-                future_key = f"future:{fid}"
-                # Delete sibling collection keys (e.g. future:{fid}:consumers)
-                # but handle the main hash separately to preserve logs.
-                keys_to_delete.extend(self.redis.scan_keys(f"{future_key}:*"))
-
-                logs = self.redis.hget(future_key, "logs")
-                if logs:
-                    # Replace the hash with a minimal snapshot so the global
-                    # controller's next poll can persist logs to SQLite before
-                    # they vanish. The TTL guarantees cleanup even if the poll
-                    # never reads it (e.g. controller restarts).
-                    self.redis.delete(future_key)
-                    self.redis.hset_multiple(
-                        future_key,
-                        {
-                            "id": fid,
-                            "request_id": request_id,
-                            "logs": logs,
-                        },
-                    )
-                    self.redis.expire(future_key, 30)
-                else:
-                    keys_to_delete.append(future_key)
-
-            self.redis.delete(*keys_to_delete)
+                keys_to_expire.extend(
+                    [
+                        f"future:{fid}",
+                        f"future:{fid}:children",
+                        f"future:{fid}:consumers",
+                    ]
+                )
+            for key in keys_to_expire:
+                self.redis.expire(key, FUTURE_CLEANUP_GRACE_SECONDS, nx=True)
             logger.info(
-                "Cleaned up %d future(s) for request %s", len(future_ids), request_id
+                "Scheduled %d future(s) for request %s to expire in %ds",
+                len(future_ids),
+                request_id,
+                FUTURE_CLEANUP_GRACE_SECONDS,
             )
 
             # Clean up affinity bindings for this request
