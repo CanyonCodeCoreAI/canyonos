@@ -157,8 +157,8 @@ def _arguments(collector, node, prefix):
         argument_prefix = f"{prefix}.arguments[{index}]"
         if not isinstance(entry, dict):
             collector.add(
-                node,
-                "arguments",
+                raw,
+                index,
                 argument_prefix,
                 f"expected a mapping, got {_describe(entry)}",
             )
@@ -208,7 +208,7 @@ def _functions(collector, node):
         prefix = f"agent.functions[{index}]"
         if not isinstance(entry, dict):
             collector.add(
-                node, "functions", prefix, f"expected a mapping, got {_describe(entry)}"
+                raw, index, prefix, f"expected a mapping, got {_describe(entry)}"
             )
             continue
         _check_keys(collector, entry, prefix, _FUNCTION_KEYS)

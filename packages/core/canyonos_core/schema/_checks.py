@@ -244,15 +244,15 @@ def _string_list(collector, node, key, prefix, required=False):
         )
         return ()
     items = [_resolve(item) for item in value]
-    for raw, item in zip(value, items):
+    for index, (raw, item) in enumerate(zip(value, items)):
         if required and _unset_reference(item):
-            collector.add(node, key, _field(prefix, key), _unset_message(raw))
+            collector.add(value, index, _field(prefix, key), _unset_message(raw))
             return ()
         if isinstance(item, str) and item.strip():
             continue
         collector.add(
-            node,
-            key,
+            value,
+            index,
             _field(prefix, key),
             f"expected a list of strings, got {_describe_rejected(raw, item)}",
         )

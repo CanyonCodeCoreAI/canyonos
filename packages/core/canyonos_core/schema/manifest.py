@@ -285,8 +285,8 @@ def _requirements(collector, node, prefix):
             Requirement(requirement)
         except InvalidRequirement:
             collector.add(
-                node,
-                "requirements",
+                node["requirements"],
+                index,
                 f"{_field(prefix, 'requirements')}[{index}]",
                 f"{requirement!r} is not a single PEP 508 requirement; write one "
                 "package per entry, and a URL as `name @ url`",
@@ -346,26 +346,24 @@ def _provider(collector, node, prefix):
     return canonical[value.casefold()]
 
 
-def _service(collector, node, index):
-    """Parse one entry of `agents`, or None when it cannot be identified."""
+def _service(collector, entries, index):
+    """Parse one entry of `agents`, or None when it cannot be identified.
+
+    A type or name that is wrong still leaves the rest of the entry checked,
+    so every problem in it is reported at once.
+    """
+    node = entries[index]
     prefix = f"agents[{index}]"
     if not isinstance(node, dict):
-        collector.violations.append(
-            SchemaViolation(
-                collector.path, 0, prefix, f"expected a mapping, got {_describe(node)}"
-            )
+        collector.add(
+            entries, index, prefix, f"expected a mapping, got {_describe(node)}"
         )
         return None
 
     service_type = _service_type(collector, node, prefix)
-    if service_type is None:
-        return None
     _check_service_keys(collector, node, prefix, service_type)
 
     name = _string(collector, node, "name", prefix, required=True)
-    if name is None:
-        return None
-
     common = {
         "name": name,
         "provider": _provider(collector, node, prefix),
@@ -398,17 +396,16 @@ def _service(collector, node, index):
                 "a local workflow runs as a single replica: every replica "
                 "would publish the same api_port",
             )
-        return WorkflowService(
-            **common,
-            workflow_file=_project_relative_py(
+        service_class = WorkflowService
+        fields = {
+            "workflow_file": _project_relative_py(
                 collector, node, "workflow_file", prefix, required=True
             ),
-            requirements=_requirements(collector, node, prefix),
-            api_port=_port(collector, node, "api_port", prefix, 8080),
-            dashboard_port=_port(collector, node, "dashboard_port", prefix, 8081),
-        )
-
-    if service_type == "database":
+            "requirements": _requirements(collector, node, prefix),
+            "api_port": _port(collector, node, "api_port", prefix, 8080),
+            "dashboard_port": _port(collector, node, "dashboard_port", prefix, 8081),
+        }
+    elif service_type == "database":
         if common["replicas"] != 1:
             collector.add(
                 node,
@@ -416,24 +413,30 @@ def _service(collector, node, index):
                 _field(prefix, "replicas"),
                 f"a database runs as a single container, got {_describe(node['replicas'])}",
             )
-        return DatabaseService(
-            **common,
-            image=_string(collector, node, "image", prefix, "", required=True) or "",
-            db_port=_port(collector, node, "db_port", prefix, 5432),
-            volume_path=_string(collector, node, "volume_path", prefix),
-        )
+        service_class = DatabaseService
+        fields = {
+            "image": _string(collector, node, "image", prefix, "", required=True) or "",
+            "db_port": _port(collector, node, "db_port", prefix, 5432),
+            "volume_path": _string(collector, node, "volume_path", prefix),
+        }
+    elif service_type == "agent":
+        service_class = AgentService
+        fields = {
+            "entrypoint": _project_relative_py(
+                collector, node, "entrypoint", prefix, required=True
+            ),
+            "requirements": _requirements(collector, node, prefix),
+        }
+    else:
+        return None
 
-    return AgentService(
-        **common,
-        entrypoint=_project_relative_py(
-            collector, node, "entrypoint", prefix, required=True
-        ),
-        requirements=_requirements(collector, node, prefix),
-    )
+    if name is None:
+        return None
+    return service_class(**common, **fields)
 
 
 def _check_service_keys(collector, node, prefix, service_type):
-    allowed = _SERVICE_KEYS_BY_TYPE[service_type]
+    allowed = _SERVICE_KEYS_BY_TYPE.get(service_type, _ALL_SERVICE_KEYS)
     for key in node:
         if key in allowed:
             continue
@@ -460,7 +463,7 @@ def _services(collector, node):
 
     parsed = []
     for index, entry in enumerate(raw):
-        service = _service(collector, entry, index)
+        service = _service(collector, raw, index)
         if service is not None:
             parsed.append((index, entry, service))
 
@@ -500,10 +503,7 @@ def _otel(collector, node):
         prefix = f"otel.destinations[{index}]"
         if not isinstance(entry, dict):
             collector.add(
-                block,
-                "destinations",
-                prefix,
-                f"expected a mapping, got {_describe(entry)}",
+                raw, index, prefix, f"expected a mapping, got {_describe(entry)}"
             )
             continue
         _check_keys(collector, entry, prefix, DESTINATION_KEYS)

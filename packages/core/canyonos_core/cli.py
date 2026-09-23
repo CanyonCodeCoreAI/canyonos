@@ -20,10 +20,9 @@ from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
     DependencyPinConflict,
+    check_project,
     declarations_by_name,
-    load_manifest,
     render_violation,
-    validate_project,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -170,13 +169,13 @@ def _reject(violations, summary):
 
 def validate_or_exit(config_path, declarations_dir, source_dir=None):
     """Reject the config before anything is generated; return the parsed manifest."""
-    violations = validate_project(config_path, declarations_dir, source_dir)
+    manifest, violations = check_project(config_path, declarations_dir, source_dir)
     if violations:
         _reject(
             violations,
             "Configuration rejected: %d problem(s) found; nothing was built.",
         )
-    return load_manifest(config_path)
+    return manifest
 
 
 def _normalize_requirements(agent_cfg):

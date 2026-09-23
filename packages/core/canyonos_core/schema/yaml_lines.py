@@ -19,6 +19,15 @@ class LineDict(dict):
         self.key_lines = {}
 
 
+class LineList(list):
+    """A sequence that remembers where it and each of its items were written."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.line = 0
+        self.item_lines = []
+
+
 class LineLoader(yaml.SafeLoader):
     pass
 
@@ -58,18 +67,36 @@ def _construct_mapping(loader, node):
     }
 
 
+def _construct_sequence(loader, node):
+    data = LineList()
+    yield data
+    data.extend(loader.construct_sequence(node, deep=False))
+    data.line = node.start_mark.line + 1
+    data.item_lines = [item.start_mark.line + 1 for item in node.value]
+
+
 LineLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping
 )
+LineLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_SEQUENCE_TAG, _construct_sequence
+)
 
 
-def line_of(mapping, key=None):
-    """The 1-based line of `key` inside `mapping`, or of the mapping itself."""
-    if not isinstance(mapping, LineDict):
+def line_of(node, key=None):
+    """The 1-based line of `key` inside `node`, or of `node` itself.
+
+    `key` is a mapping key, or an index into a sequence.
+    """
+    if isinstance(node, LineList):
+        if isinstance(key, int) and 0 <= key < len(node.item_lines):
+            return node.item_lines[key]
+        return node.line
+    if not isinstance(node, LineDict):
         return 0
     if key is not None:
-        return mapping.key_lines.get(key, mapping.line)
-    return mapping.line
+        return node.key_lines.get(key, node.line)
+    return node.line
 
 
 def load_yaml_lines(path):

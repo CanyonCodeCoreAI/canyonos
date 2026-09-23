@@ -780,3 +780,24 @@ class CliCleanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ValidateOrExitTests(unittest.TestCase):
+    def test_the_manifest_is_parsed_once(self):
+        from canyonos_core import schema
+        from canyonos_core.cli import validate_or_exit
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "global_controller.yaml")
+            with open(manifest_path, "w") as f:
+                f.write(
+                    "agents:\n  - name: Workflow\n    type: workflow\n"
+                    "    workflow_file: workflow.py\n"
+                )
+            with patch.object(
+                schema, "load_manifest", wraps=schema.load_manifest
+            ) as load_manifest:
+                manifest = validate_or_exit(manifest_path, tmpdir)
+
+        self.assertEqual(load_manifest.call_count, 1)
+        self.assertEqual(manifest.agents[0].name, "Workflow")

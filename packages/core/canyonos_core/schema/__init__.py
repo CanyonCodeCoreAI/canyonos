@@ -56,6 +56,7 @@ __all__ = [
     "SchemaError",
     "SchemaViolation",
     "WorkflowService",
+    "check_project",
     "declarations_by_name",
     "load_agent_declaration",
     "load_manifest",
@@ -164,10 +165,11 @@ def declarations_by_name(declarations_dir):
     return _scan_declarations(declarations_dir)[0]
 
 
-def validate_project(manifest_path, declarations_dir, source_dir=None):
-    """Every violation in a project's manifest and agent declarations.
+def check_project(manifest_path, declarations_dir, source_dir=None):
+    """`(manifest, violations)` for a project's manifest and agent declarations.
 
-    Never raises: the caller decides how to report. The manifest and the
+    Never raises: the caller decides how to report. The manifest is None when
+    it did not parse. The manifest and the
     declarations are checked independently so one broken file does not hide
     the others; only the last step, binding each agent to the declaration that
     names it, needs a manifest that parsed.
@@ -187,7 +189,7 @@ def validate_project(manifest_path, declarations_dir, source_dir=None):
     violations.extend(declaration_violations)
 
     if manifest is None:
-        return tuple(violations)
+        return None, tuple(violations)
 
     for index, service in enumerate(manifest.agents):
         if service.type != "agent" or service.name in declared:
@@ -204,4 +206,9 @@ def validate_project(manifest_path, declarations_dir, source_dir=None):
 
     if source_dir is not None:
         violations.extend(_missing_sources(manifest, manifest_path, source_dir))
-    return tuple(violations)
+    return manifest, tuple(violations)
+
+
+def validate_project(manifest_path, declarations_dir, source_dir=None):
+    """Every violation in a project's manifest and agent declarations."""
+    return check_project(manifest_path, declarations_dir, source_dir)[1]

@@ -848,6 +848,85 @@ class EnvExpansionTests(_ManifestCase):
         )
 
 
+class EveryProblemInAnEntryTests(_ManifestCase):
+    """One wrong field used to hide every other problem in the same entry."""
+
+    def test_an_unknown_type_does_not_hide_the_entrys_other_keys(self):
+        fields = self.fields({"agents": [{"name": "A", "type": "typo", "replias": 0}]})
+
+        self.assertEqual(fields, ["agents[0].type", "agents[0].replias"])
+
+    def test_a_missing_name_does_not_hide_the_entrys_other_fields(self):
+        fields = self.fields(
+            {"agents": [{"name": None, "entrypoint": 7, "replicas": "many"}]}
+        )
+
+        self.assertEqual(
+            sorted(fields),
+            ["agents[0].entrypoint", "agents[0].name", "agents[0].replicas"],
+        )
+
+    def test_a_missing_required_ec2_key_does_not_hide_the_optional_ones(self):
+        block = {**_EC2_BLOCK, "public_ip_timeout": "soon"}
+        del block["region"]
+        fields = self.fields(
+            {
+                "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+                "ec2": block,
+            }
+        )
+
+        self.assertEqual(sorted(fields), ["ec2.public_ip_timeout", "ec2.region"])
+
+
+class ListItemLineTests(unittest.TestCase):
+    """A problem with one list item points at that item, not at the list's key."""
+
+    def _violations(self, text):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "global_controller.yaml")
+            Path(path).write_text(text)
+            with self.assertRaises(SchemaError) as raised:
+                load_manifest(path)
+        return raised.exception.violations
+
+    def test_a_service_that_is_not_a_mapping_points_at_its_line(self):
+        (violation,) = self._violations(
+            "agents:\n"
+            "  - name: ExampleAgent\n"
+            "    entrypoint: agents/example_agent.py\n"
+            "  - not-a-mapping\n"
+        )
+
+        self.assertEqual((violation.field, violation.line), ("agents[1]", 4))
+
+    def test_a_destination_that_is_not_a_mapping_points_at_its_line(self):
+        (violation,) = self._violations(
+            "agents:\n"
+            "  - name: ExampleAgent\n"
+            "    entrypoint: agents/example_agent.py\n"
+            "otel:\n"
+            "  destinations:\n"
+            "    - just-a-string\n"
+        )
+
+        self.assertEqual((violation.field, violation.line), ("otel.destinations[0]", 6))
+
+    def test_a_bad_requirement_points_at_its_line(self):
+        (violation,) = self._violations(
+            "agents:\n"
+            "  - name: ExampleAgent\n"
+            "    entrypoint: agents/example_agent.py\n"
+            "    requirements:\n"
+            "      - requests\n"
+            "      - -r deps.txt\n"
+        )
+
+        self.assertEqual(
+            (violation.field, violation.line), ("agents[0].requirements[1]", 6)
+        )
+
+
 class NonFiniteNumberTests(unittest.TestCase):
     """YAML's `.inf` and `.nan` are floats, and a long enough integer overflows
     one: all three used to pass a numeric field, the last as a traceback."""
