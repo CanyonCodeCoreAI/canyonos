@@ -63,3 +63,12 @@ def project_root_for_config(config_path):
 def load_root_dotenv(config_path):
     """Import the project `.env` that sits next to a config file's project root."""
     load_dotenv(os.path.join(project_root_for_config(config_path), ".env"))
+
+
+def load_config(config_path):
+    """The config as every reader acts on it: root `.env` imported, `${VAR}` expanded."""
+    import yaml
+
+    load_root_dotenv(config_path)
+    with open(config_path, "r") as f:
+        return expand_env_value(yaml.safe_load(f))

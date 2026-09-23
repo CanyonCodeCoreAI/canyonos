@@ -1,11 +1,10 @@
 import json
 
-import yaml
+from canyonos_core.controller.utils.config_env import load_config
 
 
 def write_agent_specs(config_path, redis_client, redis_ports=None):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f) or {}
+    config = load_config(config_path) or {}
 
     redis_ports = redis_ports or {}
     for agent in config.get("agents", []):

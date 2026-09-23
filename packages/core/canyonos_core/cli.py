@@ -16,10 +16,7 @@ import shutil
 import subprocess
 import sys
 
-from canyonos_core.controller.utils.config_env import (
-    expand_env_value,
-    load_root_dotenv,
-)
+from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
     DependencyPinConflict,
@@ -58,11 +55,7 @@ def _load_config(config_path):
     reference the schema had validated in its expanded form reach the build
     as the literal `${VAR}`.
     """
-    import yaml
-
-    load_root_dotenv(config_path)
-    with open(config_path, "r") as f:
-        config = expand_env_value(yaml.safe_load(f))
+    config = load_config(config_path)
     # Everything below here till "return config" is basically just checks to make sure the folder is correct
     if not isinstance(config, dict):
         raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")

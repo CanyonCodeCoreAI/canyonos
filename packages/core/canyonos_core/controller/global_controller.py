@@ -247,14 +247,11 @@ class GlobalController(object):
     @staticmethod
     def _load_config(config_path):
         """Load the YAML config file after importing root .env values."""
-        config_env.load_root_dotenv(config_path)
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+        config = config_env.load_config(config_path)
         if not isinstance(config, dict):
             raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
         if not config.get("project_id"):
             config["project_id"] = GlobalController._assign_new_project_id(config_path)
-        config = GlobalController._expand_env_value(config)
         return config
 
     @staticmethod
