@@ -45,7 +45,7 @@ def _read_key(fd):
     return ch
 
 
-def select_menu(options, title, deletable=False, quittable=False):
+def select_menu(options, title, deletable=False, quittable=False, footer=None):
     """Arrow-key single-select over `options` (a list of (value, label) pairs).
 
     Returns the chosen value, or None if there's nothing to choose from or
@@ -58,6 +58,9 @@ def select_menu(options, title, deletable=False, quittable=False):
     If `quittable` is True, pressing the quit key ('q') returns the sentinel
     `QUIT_ACTION` -- distinct from None -- so the caller can unwind an entire
     nested session rather than just this one menu.
+
+    A label may span several lines (split on newlines); the cursor sits on its
+    middle line. `footer` lines are drawn under the options and can't be selected.
     """
     if not options or not sys.stdin.isatty():
         return None
@@ -71,7 +74,16 @@ def select_menu(options, title, deletable=False, quittable=False):
     def frame():
         lines = [f"\x1b[1m{title}\x1b[0m", ""]
         for i, (_, label) in enumerate(options):
-            lines.append(f"{_GREEN}❯ {label}\x1b[0m" if i == idx else f"  {label}")
+            label_lines = str(label).splitlines() or [""]
+            middle = len(label_lines) // 2
+            for j, line in enumerate(label_lines):
+                if i != idx:
+                    lines.append(f"  {line}")
+                elif j == middle:
+                    lines.append(f"{_GREEN}❯ {line}\x1b[0m")
+                else:
+                    lines.append(f"{_GREEN}  {line}\x1b[0m")
+        lines.extend(f"  {line}" for line in footer or ())
         hint = "↑/↓ move · 1-9 jump · enter select"
         if deletable:
             hint += " · d delete"
@@ -79,7 +91,8 @@ def select_menu(options, title, deletable=False, quittable=False):
             hint += " · q quit"
         hint += " · esc cancel"
         lines.append(f"\x1b[2m{hint}\x1b[0m")
-        return "\r\n".join(lines)
+        # Each line clears only its own leftover tail, so redraws overwrite in place.
+        return "\x1b[K\r\n".join(lines) + "\x1b[K"
 
     prev_frame = None
     try:
@@ -87,12 +100,14 @@ def select_menu(options, title, deletable=False, quittable=False):
         out.write("\x1b[?25l")
         while True:
             text = frame()
+            # Synchronized update: supporting terminals paint the whole frame at once.
+            out.write("\x1b[?2026h")
             if prev_frame is not None:
                 # How far back up to move is read off the frame we actually
                 # wrote last time, not recomputed separately -- it can't drift
                 # out of sync with what's really on screen.
-                out.write(f"\r\x1b[{prev_frame.count(chr(10))}A\x1b[J")
-            out.write(text)
+                out.write(f"\r\x1b[{prev_frame.count(chr(10))}A")
+            out.write(text + "\x1b[J\x1b[?2026l")
             out.flush()
             prev_frame = text
 

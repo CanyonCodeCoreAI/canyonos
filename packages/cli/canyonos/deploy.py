@@ -41,6 +41,7 @@ from canyonos.constants import (
 from canyonos.gc import GCError, deploy_status, post_deploy, workflow_endpoints
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import GC_CONTAINER_NAME, docker_env, load_state, run_init
+from canyonos.resources import configure_resources
 from canyonos.serve import serve_dashboard
 from canyonos.sync import run_sync
 
@@ -174,6 +175,11 @@ def run_deploy(
             raise RuntimeError(
                 "Config must be inside the project directory being synced."
             )
+
+    # `canyonos test` (quiet) deploys the config as-is, without the picker.
+    if not quiet and not configure_resources(config_path or default_config_path()):
+        ui.say("Deploy cancelled.")
+        return None
 
     run_init(banner=banner, extra_env=extra_env)
 
