@@ -486,17 +486,17 @@ class ReportFreshnessTests(unittest.TestCase):
             f"controller:{instance['runtime_id']}:{instance['container_port']}:metrics"
         )
 
-    def test_a_recent_updated_at_is_fresh(self):
+    def test_a_recent_observed_at_is_fresh(self):
         instance = _instance("Alpha", 0)
         node_redis = _FakeRedis()
-        node_redis.hset(self._metrics_key(instance), "updated_at", time.time())
+        node_redis.hset(self._metrics_key(instance), "observed_at", time.time())
 
         self.assertTrue(self._reconciler(node_redis)._reports_are_fresh(instance))
 
-    def test_an_updated_at_older_than_stale_after_is_not_fresh(self):
+    def test_an_observed_at_older_than_stale_after_is_not_fresh(self):
         instance = _instance("Alpha", 0)
         node_redis = _FakeRedis()
-        node_redis.hset(self._metrics_key(instance), "updated_at", time.time() - 3600)
+        node_redis.hset(self._metrics_key(instance), "observed_at", time.time() - 3600)
 
         self.assertFalse(self._reconciler(node_redis)._reports_are_fresh(instance))
 

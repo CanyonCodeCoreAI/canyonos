@@ -76,11 +76,11 @@ class Reconciler(object):
             logger.warning("Failed to read metrics for %s: %s", key, e)
             return True  # a Redis blip is not evidence the instance is unhealthy
 
-        updated_at = metrics.get("updated_at")
-        if not updated_at:
+        observed_at = metrics.get("observed_at")
+        if not observed_at:
             return False
         try:
-            return time.time() - float(updated_at) <= self.stale_after
+            return time.time() - float(observed_at) <= self.stale_after
         except (TypeError, ValueError):
             return False
 
