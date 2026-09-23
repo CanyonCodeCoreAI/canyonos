@@ -96,7 +96,7 @@ canyonos doctor
 | `clean` | Remove generated build artifacts |
 | `doctor` | Check that your environment is ready |
 | `new-app` | Scaffold a new project |
-| `version` | Print the installed version |
+| `-v`, `--version` | Print the installed version |
 
 ---
 

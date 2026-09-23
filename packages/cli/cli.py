@@ -1,6 +1,6 @@
 """
 Almost all commands will be executing on the canyonos container spawned by deploy
-Commands like doctor, version, and new_app will not though
+Commands like doctor and new_app will not though
 """
 
 import argparse
