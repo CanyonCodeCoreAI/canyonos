@@ -104,10 +104,6 @@ class LocalController(object):
             self.server.stop(0)
             raise
 
-        if publish_ready:
-            self._wait_until_reachable()
-            self.redis.set(self._status_key, "healthy")
-
         # Written by the Provisioner; stamps completed requests with the replica that ran them.
         self.agent_id = self.redis.get(
             f"controller:{self.agent_host}:{self.public_port}:agent_id"
@@ -175,6 +171,7 @@ class LocalController(object):
             )
 
         if publish_ready:
+            self._wait_until_reachable()
             self.redis.set(self._status_key, "healthy")
         self._metrics_thread.start()
 
