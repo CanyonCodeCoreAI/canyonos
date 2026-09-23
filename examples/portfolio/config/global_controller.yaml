@@ -13,9 +13,8 @@ agents:
     redis_port: 6379
     replicas: 1
     resources:
-      cpu: 5
-      memory: 1028
-      gpu: 0
+      cpu: 1
+      memory: 256
     entrypoint: agents/intent_agent.py
     provider: local
     instance_type: t3.micro
@@ -28,7 +27,6 @@ agents:
     resources:
       cpu: 1
       memory: 256
-      gpu: 0
     entrypoint: agents/price_agent.py
     provider: local
     instance_type: t3.micro
@@ -42,7 +40,6 @@ agents:
     resources:
       cpu: 1
       memory: 256
-      gpu: 0
     entrypoint: agents/metrics_agent.py
     provider: local
     instance_type: t3.micro
@@ -53,9 +50,8 @@ agents:
     redis_port: 6379
     replicas: 1
     resources:
-      cpu: 9
+      cpu: 1
       memory: 256
-      gpu: 0
     entrypoint: agents/risk_agent.py
     provider: local
     instance_type: t3.micro
@@ -68,7 +64,6 @@ agents:
     resources:
       cpu: 1
       memory: 512
-      gpu: 0
     entrypoint: agents/advisor_agent.py
     provider: local
     instance_type: t3.micro
@@ -85,10 +80,6 @@ agents:
     instance_type: t3.micro
 
 
-    resources:
-      cpu: 1
-      memory: 512
-      gpu: 0
 otel:
   # The dashboard api's own OTLP ingest. Must be the full url including the
   # path: the http exporter uses an explicitly-passed endpoint verbatim and
