@@ -499,6 +499,27 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(database.db_port, 5432)
 
 
+class RequirementTests(_ManifestCase):
+    def test_an_entry_the_pin_check_cannot_read_is_rejected(self):
+        for requirement in ("-r deps.txt", "protobuf<5\nyfinance", "git+https://x/y"):
+            with self.subTest(requirement=requirement):
+                violation = self.one(
+                    {"agents": [_agent(requirements=["requests", requirement])]}
+                )
+                self.assertEqual(violation.field, "agents[0].requirements[1]")
+                self.assertIn("not a single PEP 508 requirement", violation.message)
+
+    def test_a_pep_508_requirement_is_accepted(self):
+        requirements = [
+            "requests>=2",
+            "pkg @ https://example.com/pkg.whl",
+            "yfinance; python_version >= '3.8'",
+        ]
+        manifest = self.load({"agents": [_agent(requirements=requirements)]})
+
+        self.assertEqual(manifest.agents[0].requirements, tuple(requirements))
+
+
 class IntervalTests(_ManifestCase):
     def test_an_interval_may_be_fractional(self):
         manifest = self.load(

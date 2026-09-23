@@ -14,7 +14,7 @@ import argparse
 import ast
 import os
 import shutil
-from packaging.requirements import InvalidRequirement, Requirement
+from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
@@ -48,6 +48,17 @@ BASE_AGENT_REQUIREMENTS = [
 # Workflow containers currently need nothing beyond the base agent requirements
 # (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
 BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
+
+IMAGE_PYTHON_VERSION = "3.11"
+# What a requirement's environment marker is evaluated against: the image,
+# not the machine running the build.
+_IMAGE_MARKER_ENVIRONMENT = {
+    "python_version": IMAGE_PYTHON_VERSION,
+    "python_full_version": f"{IMAGE_PYTHON_VERSION}.0",
+    "sys_platform": "linux",
+    "platform_system": "Linux",
+    "os_name": "posix",
+}
 
 # Packages the image's own code is built against, so an app cannot be left to
 # pick them alone.
@@ -579,9 +590,8 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
     """
     declared = {}
     for requirement in requirements:
-        try:
-            parsed = Requirement(requirement)
-        except InvalidRequirement:
+        parsed = Requirement(requirement)
+        if parsed.marker and not parsed.marker.evaluate(_IMAGE_MARKER_ENVIRONMENT):
             continue
         # PEP 503 names: `grpcio_tools`, `Grpcio-Tools` and `grpcio.tools`
         # are all the package pinned as `grpcio-tools`. A package asked for
@@ -606,12 +616,13 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
             continue
         asked_name, specifier = asked
         wanted = f"{asked_name}{specifier}"
-        # Newer only if everything that rules the pin out is a lower bound
-        # above it; one upper bound below it and nothing newer can satisfy both.
-        if all(
-            _only_newer_than(spec, pinned_version)
-            for spec in specifier
-            if not spec.contains(pinned_version)
+        # Newer only if a lower bound above the pin rules it out and nothing
+        # else does but an exclusion; one upper bound below it and nothing
+        # newer can satisfy both.
+        ruling = [spec for spec in specifier if not spec.contains(pinned_version)]
+        if any(_only_newer_than(spec, pinned_version) for spec in ruling) and all(
+            _only_newer_than(spec, pinned_version) or spec.operator == "!="
+            for spec in ruling
         ):
             overrides.append(wanted)
             print(f"  Note: '{wanted}' outranks the platform pin {pin}")
@@ -773,7 +784,7 @@ def generate_docker(
     # ---- Dockerfile ------------------------------------------------------
     agent_basename = os.path.basename(agent_file)
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
@@ -956,7 +967,7 @@ except Exception:
 
     # ---- Dockerfile ------------------------------------------------------
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app

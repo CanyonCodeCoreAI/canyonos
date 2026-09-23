@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 import yaml
+from packaging.requirements import InvalidRequirement, Requirement
 
 from canyonos_core.controller.utils.config_env import (
     ENV_REF,
@@ -271,6 +272,29 @@ def _project_relative_py(collector, node, key, prefix, required):
     return value
 
 
+def _requirements(collector, node, prefix):
+    """Each entry must be one PEP 508 requirement, the form the pin check reads.
+
+    requirements.txt takes the entries verbatim, so an option line such as
+    `-r deps.txt` or two requirements in one entry installed packages the
+    platform pin check never saw.
+    """
+    requirements = _string_list(collector, node, "requirements", prefix)
+    for index, requirement in enumerate(requirements):
+        try:
+            Requirement(requirement)
+        except InvalidRequirement:
+            collector.add(
+                node,
+                "requirements",
+                f"{_field(prefix, 'requirements')}[{index}]",
+                f"{requirement!r} is not a single PEP 508 requirement; write one "
+                "package per entry, and a URL as `name @ url`",
+            )
+            return ()
+    return requirements
+
+
 def _resources(collector, node, prefix):
     block = _mapping(collector, node, "resources", prefix, _RESOURCE_KEYS)
     if block is None:
@@ -379,7 +403,7 @@ def _service(collector, node, index):
             workflow_file=_project_relative_py(
                 collector, node, "workflow_file", prefix, required=True
             ),
-            requirements=_string_list(collector, node, "requirements", prefix),
+            requirements=_requirements(collector, node, prefix),
             api_port=_port(collector, node, "api_port", prefix, 8080),
             dashboard_port=_port(collector, node, "dashboard_port", prefix, 8081),
         )
@@ -404,7 +428,7 @@ def _service(collector, node, index):
         entrypoint=_project_relative_py(
             collector, node, "entrypoint", prefix, required=True
         ),
-        requirements=_string_list(collector, node, "requirements", prefix),
+        requirements=_requirements(collector, node, prefix),
     )
 
 

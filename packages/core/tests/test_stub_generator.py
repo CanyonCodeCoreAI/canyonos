@@ -649,6 +649,35 @@ class PlatformPinTests(unittest.TestCase):
                 self.assertEqual(overrides, list(PLATFORM_PINS))
                 self.assertEqual(notes, [])
 
+    def test_an_exclusion_beside_a_newer_bound_is_still_a_newer_ask(self):
+        for requirement in ("protobuf>=7,!=6.33.5", "requests>=3,!=2.34.2"):
+            with self.subTest(requirement=requirement):
+                with redirect_stdout(io.StringIO()):
+                    overrides = _platform_overrides([requirement])
+                name = requirement.split(">=")[0]
+                self.assertFalse(
+                    [pin for pin in overrides if pin.startswith(f"{name}==")]
+                )
+
+    def test_excluding_the_pin_alone_is_still_a_conflict(self):
+        with self.assertRaises(DependencyPinConflict):
+            _platform_overrides(["protobuf!=6.33.5"], service=0)
+
+    def test_a_requirement_whose_marker_is_false_in_the_image_is_ignored(self):
+        overrides = _platform_overrides(
+            [
+                'grpcio<0.1; sys_platform == "win32"',
+                "grpcio>=1.60; python_version >= '3.8'",
+                "grpcio<1.50; python_version < '3.8'",
+            ]
+        )
+
+        self.assertIn("grpcio==1.83.1", overrides)
+
+    def test_a_requirement_whose_marker_is_true_in_the_image_is_checked(self):
+        with self.assertRaises(DependencyPinConflict):
+            _platform_overrides(['grpcio<0.1; sys_platform == "linux"'], service=0)
+
     def test_two_newer_asks_for_one_package_still_win(self):
         with redirect_stdout(io.StringIO()):
             overrides = _platform_overrides(["protobuf>=7", "Protobuf>=7.1"])
