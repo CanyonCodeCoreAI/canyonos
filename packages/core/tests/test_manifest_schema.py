@@ -499,6 +499,23 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(database.db_port, 5432)
 
 
+class IntervalTests(_ManifestCase):
+    def test_an_interval_may_be_fractional(self):
+        manifest = self.load(
+            {"agents": [_agent()], "poll_interval": 0.5, "cleanup_interval": 2.5}
+        )
+
+        self.assertEqual(manifest.poll_interval, 0.5)
+        self.assertEqual(manifest.cleanup_interval, 2.5)
+
+    def test_an_interval_must_be_positive(self):
+        for value in (0, -1, "5", True):
+            with self.subTest(value=value):
+                violation = self.one({"agents": [_agent()], "poll_interval": value})
+                self.assertEqual(violation.field, "poll_interval")
+                self.assertIn("expected a finite number > 0", violation.message)
+
+
 class OtelTests(_ManifestCase):
     def _otel(self, destination):
         return {"agents": [_agent()], "otel": {"destinations": [destination]}}

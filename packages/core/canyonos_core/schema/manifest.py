@@ -212,8 +212,8 @@ class DatabaseService(_Service):
 @dataclass(frozen=True)
 class Manifest:
     agents: tuple
-    poll_interval: int = 5
-    cleanup_interval: int = 10
+    poll_interval: float = 5
+    cleanup_interval: float = 10
     project_id: str | None = None
     redis: RedisSpec = field(default_factory=RedisSpec)
     env_file: str | None = None
@@ -601,8 +601,8 @@ def load_manifest(path):
     services = _services(collector, document)
     manifest = Manifest(
         agents=services,
-        poll_interval=_integer(collector, document, "poll_interval", "", 5, 1),
-        cleanup_interval=_integer(collector, document, "cleanup_interval", "", 10, 1),
+        poll_interval=_number(collector, document, "poll_interval", "", 5, 0),
+        cleanup_interval=_number(collector, document, "cleanup_interval", "", 10, 0),
         project_id=_string(collector, document, "project_id", ""),
         redis=_redis(collector, document),
         env_file=_string(collector, document, "env_file", ""),
