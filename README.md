@@ -143,7 +143,7 @@ canyonos test "Hello World!" --json
 
 If your code imports any of these, it must allow at least this version. Older isn't supported, sorry!
 
-`grpcio>=1.76.0` · `protobuf>=6.31.1` · `redis>=3.5` · `flask>=2.3.3` · `requests>=2.25`
+`grpcio>=1.76.0` · `protobuf>=6.31.1` · `redis>=3.5`
 
 </details>
 
