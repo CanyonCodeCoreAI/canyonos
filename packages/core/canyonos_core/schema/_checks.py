@@ -66,8 +66,8 @@ def _resolve(raw):
 def _describe_rejected(raw, value):
     """How to name a rejected value, as the reference it was written as if it is one.
 
-    An expansion can hide what the author typed -- an unset or empty variable
-    reads back as `''` -- so the message quotes the reference instead.
+    An expansion can hide what the author typed -- an empty variable reads back
+    as `''` -- so the message quotes the reference instead.
     """
     if isinstance(raw, str) and ENV_REF.search(raw):
         return f"{raw!r}{_ENV_REF_HINT}"
@@ -176,6 +176,15 @@ def _number(collector, node, key, prefix, default, minimum=None):
     return number
 
 
+def _unset_reference(value):
+    """True when expansion left a `${VAR}` in place because VAR is not set."""
+    return isinstance(value, str) and ENV_REF.search(value) is not None
+
+
+def _unset_message(raw):
+    return f"{raw!r} names an environment variable that is not set"
+
+
 def _string(collector, node, key, prefix, default=None, required=False):
     if key not in node or node[key] is None:
         if required:
@@ -183,6 +192,9 @@ def _string(collector, node, key, prefix, default=None, required=False):
         return default
     raw = node[key]
     value = _resolve(raw)
+    if required and _unset_reference(value):
+        collector.add(node, key, _field(prefix, key), _unset_message(raw))
+        return default
     if not isinstance(value, str) or not value.strip():
         collector.add(
             node,
@@ -233,6 +245,9 @@ def _string_list(collector, node, key, prefix, required=False):
         return ()
     items = [_resolve(item) for item in value]
     for raw, item in zip(value, items):
+        if required and _unset_reference(item):
+            collector.add(node, key, _field(prefix, key), _unset_message(raw))
+            return ()
         if isinstance(item, str) and item.strip():
             continue
         collector.add(

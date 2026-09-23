@@ -517,19 +517,21 @@ def _otel(collector, node):
 
 def _ec2(collector, node, services):
     block = _mapping(collector, node, "ec2", "", _EC2_KEYS)
-    needs_ec2 = any(service.provider == "EC2" for service in services)
+    if not any(service.provider == "EC2" for service in services):
+        # Only an EC2 deploy reads the block; a local project may carry one
+        # whose variables are unset.
+        return None
     if block is None:
-        if needs_ec2:
-            # No `ec2:` to point at, so the violation names the file only.
-            collector.violations.append(
-                SchemaViolation(
-                    collector.path,
-                    0,
-                    "ec2",
-                    "is required because a service declares provider 'EC2'; it "
-                    f"must set {', '.join(_EC2_REQUIRED_KEYS)}",
-                )
+        # No `ec2:` to point at, so the violation names the file only.
+        collector.violations.append(
+            SchemaViolation(
+                collector.path,
+                0,
+                "ec2",
+                "is required because a service declares provider 'EC2'; it "
+                f"must set {', '.join(_EC2_REQUIRED_KEYS)}",
             )
+        )
         return None
 
     region = _string(collector, block, "region", "ec2", required=True)
@@ -539,6 +541,14 @@ def _ec2(collector, node, services):
     security_group_ids = _string_list(
         collector, block, "security_group_ids", "ec2", required=True
     )
+    ssh_private_key_path = (
+        _string(collector, block, "ssh_private_key_path", "ec2", "~/.ssh/ventis_ec2")
+        or "~/.ssh/ventis_ec2"
+    )
+    public_ip_timeout = _integer(collector, block, "public_ip_timeout", "ec2", 120, 1)
+    controller_health_timeout = _integer(
+        collector, block, "controller_health_timeout", "ec2", 180, 1
+    )
     if not (region and ami_id and subnet_id and ssh_user and security_group_ids):
         return None
     return Ec2Spec(
@@ -547,16 +557,9 @@ def _ec2(collector, node, services):
         subnet_id=subnet_id,
         security_group_ids=security_group_ids,
         ssh_user=ssh_user,
-        ssh_private_key_path=_string(
-            collector, block, "ssh_private_key_path", "ec2", "~/.ssh/ventis_ec2"
-        )
-        or "~/.ssh/ventis_ec2",
-        public_ip_timeout=_integer(
-            collector, block, "public_ip_timeout", "ec2", 120, 1
-        ),
-        controller_health_timeout=_integer(
-            collector, block, "controller_health_timeout", "ec2", 180, 1
-        ),
+        ssh_private_key_path=ssh_private_key_path,
+        public_ip_timeout=public_ip_timeout,
+        controller_health_timeout=controller_health_timeout,
     )
 
 

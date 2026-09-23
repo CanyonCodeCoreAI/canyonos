@@ -19,6 +19,7 @@ import yaml
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from canyonos_core.controller.utils.config_env import ENV_REF
 from canyonos_core.schema import (
     AgentService,
     DatabaseService,
@@ -30,6 +31,12 @@ from canyonos_core.schema import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def example_environment(manifest_path):
+    """A placeholder for every `${VAR}` an example manifest reads, as its `.env` would set."""
+    names = ENV_REF.findall(Path(manifest_path).read_text())
+    return {name: f"example-{name.lower()}" for name in names}
 
 
 def _agent(**overrides):
@@ -70,7 +77,10 @@ class ExampleManifestTests(unittest.TestCase):
         )
         self.assertTrue(manifests, "no example manifests found")
         for path in manifests:
-            with self.subTest(manifest=os.path.relpath(path, REPO_ROOT)):
+            with (
+                self.subTest(manifest=os.path.relpath(path, REPO_ROOT)),
+                patch.dict(os.environ, example_environment(path)),
+            ):
                 manifest = load_manifest(path)
                 self.assertTrue(manifest.agents)
 
@@ -735,17 +745,55 @@ class EnvExpansionTests(_ManifestCase):
         self.assertEqual(violation.field, "ec2.security_group_ids")
         self.assertIn("'${CANYONOS_TEST_SG}'", violation.message)
 
-    def test_an_unset_ref_is_left_literal_just_as_the_controller_leaves_it(self):
-        config = {
-            "agents": [_agent(provider="EC2", instance_type="t3.micro")],
-            "ec2": {**_EC2_BLOCK, "region": "${CANYONOS_TEST_REGION}"},
-        }
+    def test_an_unset_ref_in_an_optional_field_is_left_literal_as_the_controller_leaves_it(
+        self,
+    ):
+        config = {"agents": [_agent(host="${CANYONOS_TEST_HOST}")]}
 
-        environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_REGION"}
+        environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_HOST"}
         with patch.dict(os.environ, environ, clear=True):
             manifest = self.load(config)
 
-        self.assertEqual(manifest.ec2.region, "${CANYONOS_TEST_REGION}")
+        self.assertEqual(manifest.agents[0].host, "${CANYONOS_TEST_HOST}")
+
+    def test_an_unset_ref_in_a_required_field_counts_as_missing(self):
+        for key, value in (
+            ("region", "${CANYONOS_TEST_REGION}"),
+            ("security_group_ids", ["${CANYONOS_TEST_REGION}"]),
+        ):
+            with self.subTest(key=key):
+                config = {
+                    "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+                    "ec2": {**_EC2_BLOCK, key: value},
+                }
+                environ = {
+                    k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_REGION"
+                }
+                with patch.dict(os.environ, environ, clear=True):
+                    violation = self.one(config)
+
+                self.assertEqual(violation.field, f"ec2.{key}")
+                self.assertEqual(
+                    violation.message,
+                    "'${CANYONOS_TEST_REGION}' names an environment variable that "
+                    "is not set",
+                )
+
+    def test_the_ec2_block_is_only_checked_when_a_service_uses_ec2(self):
+        environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_REGION"}
+        for block in (
+            {"region": "${CANYONOS_TEST_REGION}", "ami_id": "ami-1"},
+            {**_EC2_BLOCK, "region": ""},
+        ):
+            with self.subTest(block=block):
+                with patch.dict(os.environ, environ, clear=True):
+                    manifest = self.load({"agents": [_agent()], "ec2": block})
+                self.assertIsNone(manifest.ec2)
+
+    def test_an_unknown_ec2_key_is_still_rejected_in_a_local_project(self):
+        violation = self.one({"agents": [_agent()], "ec2": {"regoin": "us-east-1"}})
+
+        self.assertEqual(violation.field, "ec2.regoin")
 
     def test_an_unset_ref_in_a_numeric_field_is_reported_the_same_way(self):
         config = {"agents": [_agent(replicas="${CANYONOS_TEST_REPLICAS}")]}

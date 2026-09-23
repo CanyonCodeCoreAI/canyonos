@@ -11,9 +11,11 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import yaml
+from test_manifest_schema import example_environment
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -399,7 +401,10 @@ class ValidateProjectTests(unittest.TestCase):
             declarations = os.path.join(
                 os.path.dirname(os.path.dirname(manifest)), "agents"
             )
-            with self.subTest(project=os.path.relpath(manifest, REPO_ROOT)):
+            with (
+                self.subTest(project=os.path.relpath(manifest, REPO_ROOT)),
+                patch.dict(os.environ, example_environment(manifest)),
+            ):
                 violations = validate_project(manifest, declarations)
                 self.assertEqual(
                     violations, (), [render_violation(v) for v in violations]
