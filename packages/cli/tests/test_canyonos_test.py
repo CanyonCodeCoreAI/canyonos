@@ -342,3 +342,27 @@ def test_running_containers_are_filtered_to_the_runtime_prefix(monkeypatch):
 
     assert verify._running_containers() == ["canyonos-echoagent-0"]
     assert "name=canyonos-" in seen[0]
+
+
+def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(monkeypatch):
+    log = (
+        "Building Docker image: echoagent\n"
+        "ERROR:opentelemetry.exporter:ingest unreachable\n"
+        "CRITICAL:canyonos_core.controller.global_controller:Failed to launch Redis on 127.0.0.1: port taken\n"
+        "Traceback (most recent call last):\n"
+    )
+    monkeypatch.setattr(test_cmd, "READY_TIMEOUT", 0)
+    monkeypatch.setattr(
+        test_cmd.subprocess,
+        "run",
+        lambda argv, **_k: subprocess.CompletedProcess(argv, 0, log, None),
+    )
+
+    with pytest.raises(RuntimeError) as err:
+        test_cmd._wait_for_workflow(1, 2, "cid")
+
+    assert str(err.value) == "Timed out after 0s waiting for the workflow to come up."
+    assert err.value.root_cause == (
+        "CRITICAL:canyonos_core.controller.global_controller:"
+        "Failed to launch Redis on 127.0.0.1: port taken"
+    )

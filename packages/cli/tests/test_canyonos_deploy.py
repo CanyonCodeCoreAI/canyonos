@@ -25,7 +25,7 @@ def test_a_config_path_outside_the_project_raises(monkeypatch, deployable):
     monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda _p: None)
 
     with pytest.raises(
-        RuntimeError, match="Config must be inside the project directory"
+        RuntimeError, match="The config file must be inside this project folder"
     ):
         deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
 

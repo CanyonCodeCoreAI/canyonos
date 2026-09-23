@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from canyonos import deploy as deploy_cmd
@@ -271,3 +273,47 @@ def test_reveal_failure_prints_no_cause_line_when_nothing_tripped_it(capsys):
     deploy_cmd._reveal_failure(lines, [], {"port": 1})
 
     assert "Cause:" not in capsys.readouterr().out
+
+
+def test_a_deploy_with_no_output_for_the_idle_timeout_is_reported_stuck(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "_IDLE_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": True})
+
+    def stream():
+        yield "INFO:canyonos_core.controller.global_controller:Waiting for 2 replica(s) to become healthy (timeout=300s)...\n"
+        threading.Event().wait()
+
+    summary = deploy_cmd._tail_quiet(
+        deploy_cmd._queued_lines(stream()),
+        {"port": 1},
+        8080,
+        "config/global_controller.yaml",
+        serve=False,
+    )
+
+    assert summary is None
+    out = capsys.readouterr().out
+    assert "Deploy stuck" in out
+    assert "Starting agents (0/2 ready)..." in out
+
+
+def test_a_failed_build_step_is_explained_by_its_own_error_lines():
+    lines = [
+        "#22 0.976    Updating https://github.com/trailofbits/buttercup (aa35b23)\n",
+        "#22 0.995 error: Failed to download and build `program-model`\n",
+        "#22 0.996   cause: Git executable not found. Ensure that Git is installed and available.\n",
+        '#22 ERROR: process "/bin/sh -c uv pip install" did not complete successfully: exit code: 1\n',
+    ]
+
+    assert deploy_cmd.explain_failure(lines, lines[-1]) == (
+        "error: Failed to download and build `program-model`\n"
+        "cause: Git executable not found. Ensure that Git is installed and available."
+    )
+
+
+def test_any_other_trigger_is_its_own_explanation():
+    line = "CRITICAL:canyonos_core:Failed to launch Redis\n"
+    assert deploy_cmd.explain_failure([line], line) == line.strip()

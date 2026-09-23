@@ -286,10 +286,9 @@ def report_port(skill_dir: str) -> bool:
     """
     validator = os.path.join(skill_dir, VALIDATOR)
     if not os.path.isdir(CAR_DIR):
-        ui.fail(f"Port incomplete: no {CAR_DIR}/ was produced.")
         return False
     if not os.path.isfile(validator):
-        ui.fail(f"Port unverified: no {VALIDATOR} in {skill_dir}.")
+        ui.fail(f"There is no validator script in the {skill_dir}, please rerun canyonos build")
         return False
 
     check = subprocess.run(
@@ -304,10 +303,10 @@ def report_port(skill_dir: str) -> bool:
     if output:
         ui.say(output)
     if check.returncode == 0:
-        ui.ok(f"Port complete: {CAR_DIR}/ passed validation.")
+        ui.ok(f"Conversion complete: {CAR_DIR}/ passed validation.")
         return True
 
-    ui.fail(f"Port incomplete: {CAR_DIR}/ did not pass validation.")
+    ui.fail(f"Conversion incomplete: {CAR_DIR}/ did not pass validation.")
     return False
 
 
@@ -354,6 +353,6 @@ def run_build(
     if status is None:
         return False
     if status != 0:
-        ui.fail(f"Port incomplete: {spec['label']} exited with status {status}.")
+        ui.fail(f"Conversion incomplete: {spec['label']} exited with status {status}.")
         return False
     return report_port(dest)

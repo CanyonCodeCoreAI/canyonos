@@ -39,6 +39,10 @@ def fail(message):
     _emit(message, "bold red", "✗")
 
 
+def root_cause(message):
+    console.print(Text(f"✗ Root Cause: {message}", style="bold bright_red"))
+
+
 def warn(message):
     _emit(message, "yellow", "!")
 

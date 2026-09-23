@@ -48,6 +48,7 @@ from canyonos.sync import run_sync
 # wait out the real poll/grace windows.
 _STATUS_POLL_SECONDS = 2.0
 _REVEAL_GRACE_SECONDS = 30.0
+_IDLE_TIMEOUT_SECONDS = 180.0
 
 # Substrings that mean the in-container deploy hit something fatal. `WARNING:` is
 # deliberately absent: the OTel-not-configured notice and stub_generator's
@@ -155,6 +156,17 @@ class PhaseTracker:
         return f"{ready} agent(s) ready", True
 
 
+def explain_failure(lines, trigger):
+    """The failing build step's own `error:`/`cause:` lines when buildx's generic step failure is the trigger, else the trigger."""
+    step = re.match(r"#(\d+) ERROR: ", trigger)
+    if step:
+        pattern = re.compile(rf"#{step.group(1)} [\d.]+\s+((?:error|cause): .*)")
+        detail = [m.group(1) for m in map(pattern.match, lines) if m]
+        if detail:
+            return "\n".join(detail)
+    return trigger.strip()
+
+
 def run_deploy(
     config_path=None,
     serve=True,
@@ -172,7 +184,7 @@ def run_deploy(
         config_path = workspace_relative(config_path)
         if config_path is None:
             raise RuntimeError(
-                "Config must be inside the project directory being synced."
+                "The config file must be inside this project folder"
             )
 
     run_init(banner=banner, extra_env=extra_env)
@@ -204,7 +216,7 @@ def run_deploy(
         # LLM proxy (e.g. a guardrail calling the OpenAI SDK directly) works
         # under `canyonos test` too -- just skip the log-tail/summary UI.
         if serve:
-            _start_dashboard()
+            _start_dashboard(report_failure=False)
         return state
 
     if not _stream_logs_and_autoserve(
@@ -320,14 +332,17 @@ def print_deploy_summary(dashboard_url, targets, config_path):
     ui.blank()
 
 
-def _start_dashboard():
+def _start_dashboard(report_failure=True):
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy."""
     try:
-        return serve_dashboard().url
+        result = serve_dashboard(report_failure=report_failure)
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")
         ui.hint("Run `canyonos serve` manually to view it.")
         return None
+    if not result.ok and not report_failure:
+        ui.warn(f"Dashboard didn't start ({result.message}); continuing without it.")
+    return result.url
 
 
 def _deploy_summary(state, api_port, config_path, serve):
@@ -376,28 +391,35 @@ def _tail_quiet(lines, state, api_port, config_path, serve):
     # spinner is drawn, and on the way out of a Ctrl+C, so the cursor is restored.
     # A nested spinner wouldn't raise, it would silently render nothing.
     trigger_line = None
-    with ui.status("Starting build...") as spinner:
-        for line in _drain(lines, state):
-            recent.append(line)
-            message, done, is_error = tracker.feed(line)
-            if is_error:
-                trigger_line = line
-                break
-            if done:
-                ui.ok(done)
-            if message:
-                spinner.update(message)
-            # Logged exactly once, right after the workflow finishes coming up.
-            if "Global controller started, polling every" in line:
-                summary_line, all_ready = tracker.agents_ready_message()
-                (ui.ok if all_ready else ui.warn)(summary_line)
-                reached_up_marker = True
-                break
+    hung = False
+    with ui.status("Deploying agents...") as spinner:
+        try:
+            for line in _drain(lines, state, idle_timeout=_IDLE_TIMEOUT_SECONDS):
+                recent.append(line)
+                message, done, is_error = tracker.feed(line)
+                if is_error:
+                    trigger_line = line
+                    break
+                if done:
+                    ui.ok(done)
+                if message:
+                    spinner.update(message)
+                # Logged exactly once, right after the workflow finishes coming up.
+                if "Global controller started, polling every" in line:
+                    summary_line, all_ready = tracker.agents_ready_message()
+                    (ui.ok if all_ready else ui.warn)(summary_line)
+                    reached_up_marker = True
+                    break
+        except TimeoutError:
+            hung = True
 
     if reached_up_marker:
         return _deploy_summary(state, api_port, config_path, serve)
 
-    _reveal_failure(lines, recent, state, trigger_line)
+    if hung:
+        _report_hang(recent, tracker.spinner)
+    else:
+        _reveal_failure(lines, recent, state, trigger_line)
     return None
 
 
@@ -419,15 +441,20 @@ def _queued_lines(stream):
     return lines
 
 
-def _drain(lines, state, deadline=None):
+def _drain(lines, state, deadline=None, idle_timeout=None):
     """Yield log lines until the stream ends, the deploy dies, or `deadline` passes.
+
+    Raises TimeoutError once `idle_timeout` seconds pass without a yielded line.
 
     The container's /status is polled on the read timeout rather than per line,
     because the container logs each of those requests into the very stream being
     read -- which would otherwise feed itself.
     """
     misses = 0
+    last_output = time.monotonic()
     while deadline is None or time.monotonic() < deadline:
+        if idle_timeout is not None and time.monotonic() - last_output > idle_timeout:
+            raise TimeoutError
         try:
             line = lines.get(timeout=_STATUS_POLL_SECONDS)
         except queue.Empty:
@@ -442,6 +469,7 @@ def _drain(lines, state, deadline=None):
         misses = 0
         # Otherwise the container logs its own polling into the stream being read.
         if "GET /status HTTP/1.1" not in line:
+            last_output = time.monotonic()
             yield line
 
 
@@ -478,11 +506,25 @@ def _reveal_failure(lines, recent, state, trigger_line=None):
 
     if trigger_line:
         ui.blank()
-        ui.hint("Full Logging Trace Above, Root Cause Below.")
-        ui.fail(f"Root Cause: {trigger_line.rstrip()}")
+        ui.hint("Recent Logging Trace Above, Root Cause Below.")
+        ui.root_cause(explain_failure(recent, trigger_line))
 
     ui.blank()
     ui.hint("Run `canyonos deploy -v` or `canyonos logs` for the full container log.")
+
+
+def _report_hang(recent, step):
+    ui.fail(
+        f"Deploy stuck: no output for {int(_IDLE_TIMEOUT_SECONDS)}s "
+        f"(last step: {step or 'Deploying agents...'})"
+    )
+    ui.blank()
+    for buffered in recent:
+        print(buffered, end="")
+    ui.blank()
+    ui.hint(
+        "The deploy is still running. `canyonos logs` to keep watching, `canyonos stop` to stop it."
+    )
 
 
 def _stream_logs_and_autoserve(state, api_port, config_path, serve=True, verbose=False):

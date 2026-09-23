@@ -4,12 +4,22 @@ CLI output for the local dashboard stack.
 Automatically gets created when deploy runs unless --serve flag is set to false.
 """
 
+import re
+from dataclasses import replace
+
 from canyonos import ui
 from canyonos.constants import dashboard_port, default_config_path
 from .dashboard_stack import ServeResult, run_dashboard
 
 
-def serve_dashboard() -> ServeResult:
+def _plain_message(message: str) -> str:
+    port = re.search(r"Bind for \S+:(\d+) failed: port is already allocated", message)
+    if port:
+        return f"port {port.group(1)} is already in use by another process or container"
+    return message
+
+
+def serve_dashboard(report_failure: bool = True) -> ServeResult:
     """Bring the dashboard up, reporting progress. Returns the stack's result.
 
     Phases drive the spinner while the stack comes up; the trace itself is
@@ -26,7 +36,8 @@ def serve_dashboard() -> ServeResult:
 
         result = run_dashboard(report, preferred_port)
 
-    if result.ok:
+    result = replace(result, message=_plain_message(result.message))
+    if result.ok or not report_failure:
         return result
 
     for phase, message in trace:
