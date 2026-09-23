@@ -114,6 +114,7 @@ class Provisioner(object):
 
         max_workers = min(len(jobs), (os.cpu_count() or 1) * 100)
         provisioned = []
+        failures = []
         if jobs:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_job = {
@@ -121,7 +122,11 @@ class Provisioner(object):
                 }
                 for future in as_completed(future_to_job):
                     job = future_to_job[future]
-                    instance = future.result()
+                    try:
+                        instance = future.result()
+                    except Exception as e:
+                        failures.append(e)
+                        continue
                     provisioned.append(
                         (job["agent_name"], job["instance_id"], instance)
                     )
@@ -132,6 +137,10 @@ class Provisioner(object):
             instances.append(instance)
 
         self._publish_routing(self._agent_specs)
+        if failures:
+            for extra in failures[1:]:
+                logger.warning("Another replica also failed to provision: %s", extra)
+            raise failures[0]
         return instances
 
     def _provision_one(self, job):

@@ -407,6 +407,32 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         self.assertIn(["docker", "rm", "-f", "canyonos-alpha-0"], commands)
         self.assertEqual(controller.containers["Alpha"], [])
 
+    def test_one_failed_replica_still_registers_and_routes_the_others(self):
+        controller = _fake_controller()
+        manager = Provisioner(controller)
+        provision_one = manager._provision_one
+
+        def fail_beta(job):
+            if job["agent_name"] == "Beta":
+                raise RuntimeError("beta failed")
+            return provision_one(job)
+
+        manager._provision_one = fail_beta
+        manager._publish_routing = MagicMock()
+
+        with self.assertRaisesRegex(RuntimeError, "beta failed"):
+            manager.ensure_instances(
+                [
+                    {"name": "Alpha", "provider": "local"},
+                    {"name": "Beta", "provider": "local"},
+                ]
+            )
+
+        self.assertEqual(
+            controller.redis.smembers("agent:Alpha:instances"), {"local:Alpha:0"}
+        )
+        manager._publish_routing.assert_called_once()
+
     def test_missing_runtime_behind_stale_record_is_reprovisioned(self):
         controller = _fake_controller()
         manager = Provisioner(controller)
