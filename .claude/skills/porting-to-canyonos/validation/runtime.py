@@ -48,8 +48,8 @@ IMPORT_TO_DISTRIBUTION = {
 
 
 def _base_requirements():
-    agent = ["grpcio", "protobuf", "redis", "flask", "requests"]
-    workflow = [*agent]
+    agent = ["grpcio", "protobuf", "redis"]
+    workflow = [*agent, "flask"]
     try:
         from canyonos_core import stub_generator
     except Exception:  # noqa: BLE001 - a broken install must not crash validation

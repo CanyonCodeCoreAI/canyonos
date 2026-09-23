@@ -335,12 +335,21 @@ def _run_build(config_path):
             "Cannot build configured sources: " + "; ".join(missing_sources)
         )
 
-    from canyonos_core.stub_generator import unsupported_requirements
+    from canyonos_core.stub_generator import (
+        BASE_AGENT_REQUIREMENTS,
+        BASE_WORKFLOW_REQUIREMENTS,
+        unsupported_requirements,
+    )
 
     too_old = [
         f"{agent['name']} currently requires {asked}, but CanyonOS only supports {supported}"
         for agent in agents
-        for asked, supported in unsupported_requirements(_normalize_requirements(agent))
+        for asked, supported in unsupported_requirements(
+            _normalize_requirements(agent),
+            BASE_WORKFLOW_REQUIREMENTS
+            if agent.get("type", "agent") == "workflow"
+            else BASE_AGENT_REQUIREMENTS,
+        )
     ]
     for message in too_old:
         logger.error("%s", message)

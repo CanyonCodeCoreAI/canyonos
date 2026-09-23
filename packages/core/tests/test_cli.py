@@ -236,13 +236,14 @@ class CliBuildTests(unittest.TestCase):
         )
         return agent_yaml
 
-    def test_build_stops_on_a_requirement_below_the_supported_floor(self):
+    def test_build_stops_on_a_workflow_requirement_below_the_supported_floor(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             agent_yaml = self._write_agent_and_workflow_config(project_dir)
             config_path = project_dir / "config" / "global_controller.yaml"
             config = yaml.safe_load(config_path.read_text())
             config["agents"][0]["requirements"] = ["flask==1.9"]
+            config["agents"][1]["requirements"] = ["flask==1.9"]
             config_path.write_text(yaml.safe_dump(config))
 
             with (
@@ -254,7 +255,7 @@ class CliBuildTests(unittest.TestCase):
         self.assertEqual(
             logs.output,
             [
-                "ERROR:canyonos_core:ExampleAgent currently requires flask==1.9, "
+                "ERROR:canyonos_core:Workflow currently requires flask==1.9, "
                 "but CanyonOS only supports flask>=2.3.3"
             ],
         )

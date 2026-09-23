@@ -23,8 +23,6 @@ BASE_AGENT_REQUIREMENTS = [
     "grpcio>=1.76.0",
     "protobuf>=6.31.1",
     "redis>=3.5",
-    "flask>=2.3.3",
-    "requests>=2.25",
 ]
 
 # Newest major version of each base package CanyonOS is tested on; newer installs with a warning.
@@ -33,12 +31,17 @@ TESTED_MAJOR_VERSIONS = {
     "protobuf": 6,
     "redis": 8,
     "flask": 3,
-    "requests": 2,
 }
 
-# Workflow containers currently need nothing beyond the base agent requirements
-# (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
-BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
+# deploy.py serves the workflow's HTTP API from the workflow's own process.
+BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["flask>=2.3.3"]
+
+# The LLM proxy runs from its own venv, so these exact pins never meet the app's.
+# These requirements are not pinned to a specific version because LLM-proxy is completely managed by CanyonOS, with no user code interacting with the internals
+PROXY_REQUIREMENTS = ["flask==3.1.3", "requests==2.34.2", "redis==8.1.0"]
+
+# Only images whose app can import boto3 can call Bedrock, so only they get the proxy's Bedrock route.
+PROXY_BEDROCK_REQUIREMENT = "boto3==1.43.91"
 
 # Every *_pb2.py checks this floor at import, which no package metadata carries,
 # so it is forced past transitive bounds rather than left to the resolver.
@@ -583,10 +586,10 @@ def _caps_below(spec, floor):
     return False
 
 
-def unsupported_requirements(requirements):
+def unsupported_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
     """(asked, supported) for each requirement that rules out every base-package version CanyonOS supports."""
     floors = {}
-    for base in BASE_AGENT_REQUIREMENTS:
+    for base in base_requirements:
         parsed = Requirement(base)
         floors[parsed.name] = (Version(next(iter(parsed.specifier)).version), base)
     unsupported = []
@@ -601,7 +604,7 @@ def unsupported_requirements(requirements):
     return unsupported
 
 
-def _dependency_stage(overrides):
+def _dependency_stage(overrides, base_requirements):
     """Render the install stage. uv reads overrides from a file and takes no
     inline form, so the image writes one; the entries are quoted because a bare
     `>=` would be a redirect."""
@@ -610,15 +613,20 @@ def _dependency_stage(overrides):
 RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
  && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt
 RUN uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
-RUN python -c "{_untested_version_check()}"
+RUN python -c "{_untested_version_check(base_requirements)}"
+RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-proxy \\
+ && uv pip install --python /opt/canyonos-proxy/bin/python {" ".join(PROXY_REQUIREMENTS)} \\
+ && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-proxy/bin/python {PROXY_BEDROCK_REQUIREMENT}; fi
 """
 
 
-def _untested_version_check():
+def _untested_version_check(base_requirements):
     """One-line Python that warns for each base package installed past its tested major version."""
+    names = {Requirement(r).name for r in base_requirements}
+    tested = {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
     return (
         "import importlib.metadata as m; "
-        f"tested = {TESTED_MAJOR_VERSIONS!r}; "
+        f"tested = {tested!r}; "
         "[print(f'WARNING: {n} {m.version(n)} is newer than CanyonOS has tested (up to {t}.x) and may not work.') "
         "for n, t in tested.items() if int(m.version(n).split('.')[0]) > t]"
     )
@@ -760,7 +768,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides)}
+{_dependency_stage(overrides, BASE_AGENT_REQUIREMENTS)}
 COPY . .
 
 ENV CANYONOS_AGENT_NAME={agent_name}
@@ -943,7 +951,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides)}
+{_dependency_stage(overrides, BASE_WORKFLOW_REQUIREMENTS)}
 COPY . .
 
 EXPOSE 50051

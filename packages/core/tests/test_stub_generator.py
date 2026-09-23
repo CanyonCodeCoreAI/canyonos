@@ -57,8 +57,6 @@ class GenerateDockerRequirementsTests(unittest.TestCase):
                 "grpcio>=1.76.0",
                 "protobuf>=6.31.1",
                 "redis>=3.5",
-                "flask>=2.3.3",
-                "requests>=2.25",
             ],
         )
         self.assertNotIn("yfinance", requirements)
@@ -549,14 +547,12 @@ class PlatformPinTests(unittest.TestCase):
 
     def test_other_base_packages_are_left_to_the_resolver(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            yaml_path, agent_file = GenerateDockerRequirementsTests._write_agent_yaml(
-                self, tmpdir
-            )
+            workflow_file = _write(Path(tmpdir) / "workflow.py", "print('ok')\n")
             output_dir = os.path.join(tmpdir, "out")
             with redirect_stdout(io.StringIO()):
-                generate_docker(
-                    yaml_path,
-                    agent_file,
+                generate_workflow_docker(
+                    str(workflow_file),
+                    [],
                     output_dir=output_dir,
                     requirements=["flask==2.3.3"],
                 )
@@ -566,22 +562,21 @@ class PlatformPinTests(unittest.TestCase):
         self.assertIn("flask==2.3.3", requirements)
 
     def test_base_requirements_carry_no_upper_bound(self):
-        for requirement in BASE_AGENT_REQUIREMENTS:
+        for requirement in BASE_WORKFLOW_REQUIREMENTS:
             with self.subTest(requirement=requirement):
                 self.assertNotIn("<", requirement)
 
     def test_every_base_package_has_a_tested_major_version(self):
-        names = {Requirement(r).name for r in BASE_AGENT_REQUIREMENTS}
+        names = {Requirement(r).name for r in BASE_WORKFLOW_REQUIREMENTS}
         self.assertEqual(names, set(TESTED_MAJOR_VERSIONS))
 
     def test_the_untested_version_check_warns_only_past_the_tested_major(self):
-        check = stub_generator._untested_version_check()
+        check = stub_generator._untested_version_check(BASE_WORKFLOW_REQUIREMENTS)
         installed = {
             "grpcio": "1.80.0",
             "protobuf": "7.0.1",
             "redis": "8.1.0",
             "flask": "3.1.3",
-            "requests": "2.34.2",
         }
         buffer = io.StringIO()
         with mock.patch(
@@ -596,29 +591,65 @@ class PlatformPinTests(unittest.TestCase):
             ],
         )
 
-    def test_the_untested_version_check_runs_in_both_dockerfiles(self):
+    def _dockerfile(self, workflow, requirements=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            output_dir = os.path.join(tmpdir, "out")
+            with redirect_stdout(io.StringIO()):
+                if workflow:
+                    wf = _write(project / "workflow.py", "print('ok')\n")
+                    generate_workflow_docker(
+                        str(wf), [], output_dir=output_dir, requirements=requirements
+                    )
+                else:
+                    yaml_path = project / "ExampleAgent.yaml"
+                    yaml_path.write_text(
+                        yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
+                    )
+                    agent = _write(project / "agent.py", "print('ok')\n")
+                    generate_docker(
+                        str(yaml_path),
+                        str(agent),
+                        output_dir=output_dir,
+                        requirements=requirements,
+                    )
+            return _read_dockerfile(output_dir)
+
+    def test_the_untested_version_check_covers_only_that_images_base(self):
+        for workflow, base in (
+            (False, BASE_AGENT_REQUIREMENTS),
+            (True, BASE_WORKFLOW_REQUIREMENTS),
+        ):
+            with self.subTest(workflow=workflow):
+                self.assertIn(
+                    f'RUN python -c "{stub_generator._untested_version_check(base)}"',
+                    self._dockerfile(workflow),
+                )
+        self.assertNotIn(
+            "'flask'", stub_generator._untested_version_check(BASE_AGENT_REQUIREMENTS)
+        )
+
+    def test_the_proxy_gets_its_own_venv_after_the_app_install(self):
         for workflow in (False, True):
             with self.subTest(workflow=workflow):
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    project = Path(tmpdir)
-                    output_dir = os.path.join(tmpdir, "out")
-                    with redirect_stdout(io.StringIO()):
-                        if workflow:
-                            wf = _write(project / "workflow.py", "print('ok')\n")
-                            generate_workflow_docker(str(wf), [], output_dir=output_dir)
-                        else:
-                            yaml_path = project / "ExampleAgent.yaml"
-                            yaml_path.write_text(
-                                yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
-                            )
-                            agent = _write(project / "agent.py", "print('ok')\n")
-                            generate_docker(
-                                str(yaml_path), str(agent), output_dir=output_dir
-                            )
-                    dockerfile = _read_dockerfile(output_dir)
+                dockerfile = self._dockerfile(workflow)
+                app_install = dockerfile.index("uv pip install --system")
+                proxy_install = dockerfile.index("uv venv /opt/canyonos-proxy")
+                self.assertLess(app_install, proxy_install)
+                proxy_stage = dockerfile[proxy_install:]
+                for pin in stub_generator.PROXY_REQUIREMENTS:
+                    self.assertIn(pin, proxy_stage)
                 self.assertIn(
-                    f'RUN python -c "{stub_generator._untested_version_check()}"',
-                    dockerfile,
+                    'if python -c "import boto3" 2>/dev/null; then uv pip install '
+                    f"--python /opt/canyonos-proxy/bin/python {stub_generator.PROXY_BEDROCK_REQUIREMENT}; fi",
+                    proxy_stage,
+                )
+
+    def test_agents_no_longer_carry_the_proxys_packages(self):
+        for name in ("flask", "requests", "boto3"):
+            with self.subTest(name=name):
+                self.assertFalse(
+                    any(Requirement(r).name == name for r in BASE_AGENT_REQUIREMENTS)
                 )
 
     def test_requirements_below_a_floor_are_reported(self):
@@ -630,7 +661,8 @@ class PlatformPinTests(unittest.TestCase):
                     "flask~=2.2.0",
                     "flask==2.2.*",
                     "protobuf<5",
-                ]
+                ],
+                BASE_WORKFLOW_REQUIREMENTS,
             ),
             [
                 ("flask==1.9", "flask>=2.3.3"),
@@ -650,10 +682,14 @@ class PlatformPinTests(unittest.TestCase):
                     "flask!=2.3.3",
                     "flask==2.3.3",
                     "yfinance==0.1",
-                ]
+                ],
+                BASE_WORKFLOW_REQUIREMENTS,
             ),
             [],
         )
+
+    def test_an_agent_may_pin_any_flask_now_the_proxy_has_its_own(self):
+        self.assertEqual(stub_generator.unsupported_requirements(["flask==1.0"]), [])
 
     def test_the_workflow_context_decides_the_same_way(self):
         overrides, _ = self._context(["protobuf>=6.32"], workflow=True)
