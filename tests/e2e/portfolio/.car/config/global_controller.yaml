@@ -1,0 +1,76 @@
+agents:
+  - name: IntentAgent
+    entrypoint: agents/intent_agent.py
+    provider: local
+    replicas: 1
+    redis_port: 6379
+    resources:
+      cpu: 1
+      memory: 256
+    requirements: []
+
+  - name: PriceAgent
+    entrypoint: agents/price_agent.py
+    provider: local
+    replicas: 1
+    redis_port: 6379
+    resources:
+      cpu: 1
+      memory: 256
+    requirements:
+      - yfinance>=0.2.40,<2.0
+
+  - name: MetricsAgent
+    entrypoint: agents/metrics_agent.py
+    provider: local
+    replicas: 1
+    redis_port: 6379
+    resources:
+      cpu: 1
+      memory: 256
+    requirements: []
+
+  - name: RiskAgent
+    entrypoint: agents/risk_agent.py
+    provider: local
+    replicas: 1
+    redis_port: 6379
+    resources:
+      cpu: 1
+      memory: 256
+    requirements: []
+
+  - name: AdvisorAgent
+    entrypoint: agents/advisor_agent.py
+    provider: local
+    replicas: 1
+    redis_port: 6379
+    resources:
+      cpu: 1
+      memory: 512
+    requirements: []
+
+  - name: Workflow
+    type: workflow
+    workflow_file: workflow/portfolio_workflow.py
+    api_port: 8080
+    provider: local
+    replicas: 1
+    redis_port: 6379
+    requirements: []
+
+poll_interval: 4
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+
+env_file: .env
+
+otel:
+  destinations:
+    - name: local
+      protocol: http
+      endpoint: http://host.docker.internal:3000/v1/traces
+      headers: {}

@@ -1,0 +1,19 @@
+{
+  "source_files": {
+    ".env.example": "8b73dfede82582c1e6af81e725f0725ca8d8238976322a47c3c85d09eeec38ec",
+    "agents/advisor_agent.py": "bfb264411027b76708ab8bc152825bb6907941c3d2a3a80643901fc99b36c1cd",
+    "agents/advisor_agent.yaml": "979e3718f58f965ba40b61a0bbfd0af24439aa5c1385f8b6d34514452b787a04",
+    "agents/intent_agent.py": "1df1321d6e079f64c8be99ef49de72e4a00c1d9097f0e5f001c11f902e3b5927",
+    "agents/intent_agent.yaml": "7fa0f61dcf7f00bac4a8302dc3df952df1a2aac56801d9e9667a864e8c626a3b",
+    "agents/metrics_agent.py": "724fd2ec2c128a3d47964ecfb80e237f549e546ce89883e96bea3ba4a9b55bcc",
+    "agents/metrics_agent.yaml": "c1b061e0990c7cc11bd21b5232a28b687173bcca7d3e43a799fefd5bbbcd3412",
+    "agents/price_agent.py": "9a9e3429f928a498e2435f1af64ab134e6daba291364b2d898068e449261c674",
+    "agents/price_agent.yaml": "8209250f18c450aa1daeb6a1f28a50588b0f4049dee06ec2ebf1f52611774d08",
+    "agents/risk_agent.py": "53c86a0a24fe3967757d1c276300880064741ebd30406ad50b44770afa717733",
+    "agents/risk_agent.yaml": "61826eb54d92748fb682c6d7e665274b93f7f1305791e7cbc766e3855d54c4da",
+    "config/global_controller.yaml": "91bfa73f583986e1669f268a20e7fc02962f785f1f538bd8838009d754653e6b",
+    "config/policy.yaml": "bfdb448cc296689df90ef757b0e24c225313b0db6b6f16596721b44d7d21abcd",
+    "workflow/portfolio_workflow.py": "e9daf369db9bdc2975d5fa668f74c123710fc045579465289ae27c2e108a8b96"
+  },
+  "version": 1
+}

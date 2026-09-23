@@ -1,0 +1,128 @@
+# Global Controller Configuration — portfolio-analysis fan-out pipeline
+# Lists all agents and the workflow that CanyonOS manages.
+#
+# The pipeline fans out per-ticker metrics computation, then aggregates into
+# portfolio-level risk, then generates an LLM briefing. Resource classes below
+# reflect each stage's real cost so the scheduler has placement decisions to make.
+
+agents:
+  # Stage 0: parse the free-text request into structured holdings + lookback
+  # window (calls Bedrock via boto3, routed through the CanyonOS LLM proxy). Cheap CPU, one
+  # call per request, on the critical path before the fan-out.
+  - name: IntentAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/intent_agent.py
+    provider: local
+    instance_type: t3.micro
+
+  # Stage 0b: price history fetch. Network/IO-bound, cheap CPU. Called by
+  # MetricsAgent, one fetch per ticker — high fan-out, so multiple replicas.
+  - name: PriceAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/price_agent.py
+    provider: local
+    instance_type: t3.micro
+    requirements: [yfinance]
+
+  # Stage 1: per-ticker metrics. Cheap CPU, high fan-out (one call per holding).
+  # Calls PriceAgent remotely, then computes return/vol/Sharpe/drawdown.
+  - name: MetricsAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/metrics_agent.py
+    provider: local
+    instance_type: t3.micro
+
+  # Stage 2: portfolio-level risk aggregation. Single call per request; needs
+  # every ticker's metrics (the barrier).
+  - name: RiskAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/risk_agent.py
+    provider: local
+    instance_type: t3.micro
+
+  # Stage 3: LLM briefing via Bedrock. On the critical path, one call per
+  # request.
+  - name: AdvisorAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/advisor_agent.py
+    provider: local
+    instance_type: t3.micro
+
+  # The workflow, exposed as a REST API.
+  - name: Workflow
+    type: workflow
+    api_port: 8080         # Flask REST API port
+    dashboard_port: 8081   # Local dashboard's preferred port
+    redis_port: 6379
+    replicas: 1
+    workflow_file: workflow/portfolio_workflow.py
+    provider: local
+    instance_type: t3.micro
+
+  # Example: a shared Postgres state store (commented out, not used by this pipeline).
+  # - name: StateDB
+  #   type: database
+  #   image: postgres:16-alpine
+  #   db_port: 5432
+  #   volume_path: /var/lib/postgresql/data
+  #   env:
+  #     POSTGRES_USER: username
+  #     POSTGRES_PASSWORD: password
+  #     POSTGRES_DB: canyonos_state_db
+  #   provider: local
+
+
+otel:
+  # The dashboard api's own OTLP ingest. Base url only -- the exporter appends the
+  # per-signal path (/v1/traces, /v1/metrics, /v1/logs) to whatever is set here.
+  destinations:
+    - name: local
+      protocol: http
+      endpoint: http://host.docker.internal:3000
+      headers: {}
+
+# User secrets (AWS Bedrock credentials, etc.) -- see .env.example.
+env_file: .env
+
+# Polling interval in seconds
+poll_interval: 4
+logs: true
+
+# Secrets handed to every agent container (AWS_BEARER_TOKEN_BEDROCK for the LLM proxy).
+env_file: .env
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+
+# EC2 defaults for `provider: EC2` replicas.
+ec2:
+  region: ${EC2_REGION}
+  ami_id: ${EC2_AMI_ID}
+  subnet_id: ${EC2_SUBNET_ID}
+  security_group_ids:
+    - ${EC2_SECURITY_GROUP_ID}
+  ssh_user: ${EC2_SSH_USER}
+  ssh_private_key_path: ${EC2_SSH_PRIVATE_KEY_PATH}
+
