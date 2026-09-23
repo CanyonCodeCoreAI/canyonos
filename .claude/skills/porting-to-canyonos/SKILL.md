@@ -21,7 +21,7 @@ Copy this checklist into the response and update it while working:
 Port progress:
 - [ ] 1. Prepare `.car`
 - [ ] 2. Survey the copy and choose service boundaries
-- [ ] 3. Write adapters, workflow, declarations, and reviewed configuration
+- [ ] 3. Write adapters, workflow, test input, declarations, and reviewed configuration
 - [ ] 4. Gap validation exits 0; report readiness and stop
 ```
 

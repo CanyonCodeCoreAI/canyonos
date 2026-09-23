@@ -3,8 +3,9 @@
 **When:** after selecting service boundaries, before writing an adapter or
 workflow.
 
-**Output:** one loadable adapter per service and one workflow exposing
-`main(query: str)`.
+**Output:** one loadable adapter per service, one workflow exposing
+`main(query: str)`, and `.car/config/test_query.txt` holding one input that
+workflow accepts.
 
 Use this order:
 
@@ -12,6 +13,7 @@ Use this order:
 2. Write a no-argument synchronous adapter around source-owned behavior.
 3. Bridge async or session state only when the source requires it.
 4. Write the workflow and preserve parallel dispatch.
+5. Write the workflow's test input.
 
 Complete `manifest.md`, then validate only the authored contracts that CanyonOS
 does not already guarantee.
@@ -22,6 +24,7 @@ only when a container loads.
 ## Contents
 
 - Adapter and workflow shape
+- Workflow input and its test case
 - Choosing the entrypoint
 - Bridging async
 - Multi-turn and session state
@@ -54,6 +57,20 @@ results = [json.loads(future.value()) for future in futures]
 ```
 
 Combining dispatch and `.value()` in one comprehension serializes the work.
+
+## Workflow input and its test case
+
+`query` is always a `str`. Parse richer input out of it inside `main`
+(`int(query)`, `json.loads(query)`). Future arguments and `.value()` results
+are also text; the yaml `type` does not coerce them.
+
+Write one eligible input to `.car/config/test_query.txt`: the required input
+only, taken from the source, with no comments, quotes, or `{"query": ...}`
+wrapper. End-to-end testing sends it verbatim:
+
+```bash
+canyonos test "$(cat .car/config/test_query.txt)"
+```
 
 ## Choosing the entrypoint
 
