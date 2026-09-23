@@ -501,13 +501,13 @@ class OtelTests(_ManifestCase):
         )
 
         self.assertEqual(violation.field, "otel.destinations[0].protocol")
-        self.assertIn("'grpc', 'http'", violation.message)
+        self.assertIn("'grpc', 'http', 'http/protobuf'", violation.message)
 
     def test_a_destination_without_an_endpoint_is_caught_at_load(self):
         violation = self.one(self._otel({"name": "local", "protocol": "http"}))
 
         self.assertEqual(violation.field, "otel.destinations[0].endpoint")
-        self.assertEqual(violation.message, "is required but missing")
+        self.assertEqual(violation.message, "endpoint must be a non-empty string")
 
     def test_a_timeout_may_be_fractional(self):
         # The exporter takes a float; a timeout is a duration, not a count.
@@ -526,7 +526,7 @@ class OtelTests(_ManifestCase):
         self.assertEqual(destination.timeout, 2.5)
 
     def test_a_timeout_that_is_not_a_number_is_rejected(self):
-        for timeout, quoted in (("2", "the string '2'"), (0, "the number 0")):
+        for timeout in ("2", 0):
             with self.subTest(timeout=timeout):
                 violation = self.one(
                     self._otel(
@@ -539,9 +539,7 @@ class OtelTests(_ManifestCase):
                     )
                 )
                 self.assertEqual(violation.field, "otel.destinations[0].timeout")
-                self.assertEqual(
-                    violation.message, f"expected a finite number > 0, got {quoted}"
-                )
+                self.assertEqual(violation.message, "timeout must be a positive number")
 
     def test_a_complete_destination_parses(self):
         manifest = self.load(
@@ -559,6 +557,63 @@ class OtelTests(_ManifestCase):
         self.assertEqual(destination.protocol, "http")
         self.assertEqual(destination.headers, {"x-key": "value"})
         self.assertFalse(destination.insecure)
+
+    def test_every_protocol_the_exporter_supports_is_accepted_in_any_case(self):
+        for given, expected in (
+            ("GRPC", "grpc"),
+            ("HTTP", "http"),
+            ("http/protobuf", "http/protobuf"),
+            ("Http/Protobuf", "http/protobuf"),
+        ):
+            with self.subTest(protocol=given):
+                manifest = self.load(
+                    self._otel({"name": "d", "protocol": given, "endpoint": "h:1"})
+                )
+                self.assertEqual(manifest.otel.destinations[0].protocol, expected)
+
+    def test_header_values_must_be_strings(self):
+        for headers in ({"x-retries": 3}, {"x-flag": True}):
+            with self.subTest(headers=headers):
+                violation = self.one(
+                    self._otel(
+                        {
+                            "name": "d",
+                            "protocol": "grpc",
+                            "endpoint": "h:1",
+                            "headers": headers,
+                        }
+                    )
+                )
+                self.assertEqual(violation.field, "otel.destinations[0].headers")
+                self.assertIn("strings to strings", violation.message)
+
+    def test_an_empty_destination_list_is_rejected(self):
+        violation = self.one({"agents": [_agent()], "otel": {"destinations": []}})
+
+        self.assertEqual(violation.field, "otel.destinations")
+        self.assertEqual(violation.message, "must be a non-empty list")
+
+    def test_null_destinations_mean_otel_is_not_configured(self):
+        manifest = self.load({"agents": [_agent()], "otel": {"destinations": None}})
+
+        self.assertEqual(manifest.otel.destinations, ())
+
+    def test_names_that_collide_once_trimmed_are_rejected(self):
+        destination = {"protocol": "grpc", "endpoint": "h:1"}
+        violation = self.one(
+            {
+                "agents": [_agent()],
+                "otel": {
+                    "destinations": [
+                        {"name": "d", **destination},
+                        {"name": " d ", **destination},
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(violation.field, "otel.destinations[1].name")
+        self.assertIn("duplicate 'd'", violation.message)
 
 
 class RetiredKeyTests(unittest.TestCase):

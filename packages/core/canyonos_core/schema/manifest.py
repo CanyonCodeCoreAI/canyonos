@@ -12,8 +12,13 @@ from typing import ClassVar
 
 import yaml
 
-from canyonos_core.controller.utils.config_env import load_root_dotenv
+from canyonos_core.controller.utils.config_env import (
+    ENV_REF,
+    expand_env_value,
+    load_root_dotenv,
+)
 from canyonos_core.schema._checks import (
+    _ENV_REF_HINT,
     _boolean,
     _check_keys,
     _Collector,
@@ -30,11 +35,17 @@ from canyonos_core.schema._checks import (
     _unknown_key_message,
 )
 from canyonos_core.schema.errors import SchemaError, SchemaViolation
+from canyonos_core.schema.otel_destinations import (
+    DESTINATION_KEYS,
+    destination_problems,
+    destinations_problem,
+    duplicate_name_message,
+    normalize_destination,
+)
 from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
 
 SERVICE_TYPES = ("agent", "workflow", "database")
 PROVIDERS = ("local", "EC2")
-OTEL_PROTOCOLS = ("grpc", "http")
 
 # Keys every service entry may carry, whatever its type.
 _COMMON_SERVICE_KEYS = frozenset(
@@ -89,9 +100,6 @@ _RETIRED_KEYS = {
     "database": "is no longer used; telemetry is configured under otel: -- remove it",
 }
 _OTEL_KEYS = frozenset({"destinations"})
-_OTEL_DESTINATION_KEYS = frozenset(
-    {"name", "protocol", "endpoint", "headers", "insecure", "timeout"}
-)
 _EC2_KEYS = frozenset(
     {
         "region",
@@ -457,16 +465,13 @@ def _otel(collector, node):
     raw = block.get("destinations")
     if raw is None:
         return OtelSpec()
-    if not isinstance(raw, list):
-        collector.add(
-            block,
-            "destinations",
-            "otel.destinations",
-            f"expected a list of destinations, got {_describe(raw)}",
-        )
+    problem = destinations_problem(raw)
+    if problem:
+        collector.add(block, "destinations", "otel.destinations", problem)
         return OtelSpec()
 
     destinations = []
+    names = set()
     for index, entry in enumerate(raw):
         prefix = f"otel.destinations[{index}]"
         if not isinstance(entry, dict):
@@ -477,32 +482,36 @@ def _otel(collector, node):
                 f"expected a mapping, got {_describe(entry)}",
             )
             continue
-        _check_keys(collector, entry, prefix, _OTEL_DESTINATION_KEYS)
-        name = _string(collector, entry, "name", prefix, required=True)
-        endpoint = _string(collector, entry, "endpoint", prefix, required=True)
-        protocol = _string(collector, entry, "protocol", prefix, required=True)
-        if protocol is not None and protocol not in OTEL_PROTOCOLS:
+        _check_keys(collector, entry, prefix, DESTINATION_KEYS)
+        expanded = expand_env_value(entry)
+        problems = list(destination_problems(expanded))
+        for key, message in problems:
+            raw_value = entry.get(key)
+            if isinstance(raw_value, str) and ENV_REF.search(raw_value):
+                message += _ENV_REF_HINT
+            collector.add(entry, key, _field(prefix, key), message)
+        if problems:
+            continue
+        destination = normalize_destination(expanded)
+        if destination["name"] in names:
             collector.add(
                 entry,
-                "protocol",
-                _field(prefix, "protocol"),
-                f"expected one of {list(OTEL_PROTOCOLS)}, got {_describe(protocol)}",
+                "name",
+                _field(prefix, "name"),
+                duplicate_name_message(destination["name"]),
             )
-            protocol = None
-        timeout = None
-        if entry.get("timeout") is not None:
-            timeout = _number(collector, entry, "timeout", prefix, None, 0)
-        if name and endpoint and protocol:
-            destinations.append(
-                OtelDestination(
-                    name=name,
-                    protocol=protocol,
-                    endpoint=endpoint,
-                    headers=_string_mapping(collector, entry, "headers", prefix),
-                    insecure=_boolean(collector, entry, "insecure", prefix, False),
-                    timeout=timeout,
-                )
+            continue
+        names.add(destination["name"])
+        destinations.append(
+            OtelDestination(
+                name=destination["name"],
+                protocol=destination["protocol"],
+                endpoint=destination["endpoint"],
+                headers=destination["headers"] or {},
+                insecure=bool(destination["insecure"]),
+                timeout=destination["timeout"],
             )
+        )
     return OtelSpec(destinations=tuple(destinations))
 
 
