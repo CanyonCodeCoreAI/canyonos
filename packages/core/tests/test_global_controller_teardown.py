@@ -83,6 +83,23 @@ class TeardownTests(unittest.TestCase):
         self.assertFalse(state.is_draining(controller.redis))
         controller._stop_redis_containers.assert_called_once()
 
+    def test_a_redis_outage_during_the_drain_still_finishes_shutting_down(self):
+        controller = self._controller([])
+        controller._drain_instances = MagicMock(side_effect=ConnectionError("down"))
+        controller.redis.delete = MagicMock(side_effect=ConnectionError("down"))
+        controller._stop_redis_containers.return_value = []
+
+        with self.assertLogs("canyonos_core.controller.global_controller", "ERROR"):
+            failures = controller.stop()
+
+        controller.process_supervisor.terminate_all.assert_called_once()
+        controller._stop_redis_containers.assert_called_once()
+        controller._stop_metrics_collectors.assert_called_once()
+        self.assertEqual(
+            [failure.split(":")[0] for failure in failures],
+            ["instance drain", "draining flag"],
+        )
+
     def test_a_second_stop_is_a_noop(self):
         """cleanup() runs from a signal handler and again from atexit."""
         controller = self._controller([[], []])

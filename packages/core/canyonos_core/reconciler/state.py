@@ -118,14 +118,17 @@ def request_replace(redis_client, instance_id):
     redis_client.sadd(REAP_SET_KEY, instance_id)
 
 
-def take_reap_requests(redis_client, agent_name):
-    """Claim an agent's pending reap requests, removing them up front."""
+def reap_requests(redis_client, agent_name):
+    """An agent's pending reap requests; they stay pending until cleared."""
     prefix = f":{agent_name}:"
-    claimed = {
+    return {
         instance_id
         for instance_id in redis_client.smembers(REAP_SET_KEY)
         if prefix in instance_id
     }
-    if claimed:
-        redis_client.srem(REAP_SET_KEY, *claimed)
-    return claimed
+
+
+def clear_reap_requests(redis_client, *instance_ids):
+    """Mark reap requests as done."""
+    if instance_ids:
+        redis_client.srem(REAP_SET_KEY, *instance_ids)

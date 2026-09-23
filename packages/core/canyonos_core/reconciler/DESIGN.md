@@ -33,10 +33,11 @@ reaping index 1 leaves a hole the same pass's fill step provisions into.
 | --- | --- | --- | --- |
 | `agent:{name}:desired_replicas` | int (string) | GlobalController — `seed_desired`, `set_replicas` | Reconciler (`get_desired`, `desired_agent_specs`) |
 | `reconciler:wake` | list | GlobalController — `_request_reconcile` | Reconciler (`drain`: `BRPOP` then non-blocking `RPOP`s) |
-| `reconciler:reap` | set | GlobalController — `replace_instance` | Reconciler (`take_reap_requests`) |
+| `reconciler:reap` | set | GlobalController — `replace_instance` | Reconciler (`reap_requests`; `clear_reap_requests` once removed) |
 | `reconciler:draining` | string (TTL) | GlobalController — `set_draining` / `clear_draining` | Reconciler (`is_draining`, once per pass) |
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
-| `agents:active` | set | GlobalController — `write_config_specs`, written **last** | Reconciler (`read_config_specs`, read **first**) |
+| `agents:active` | set | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
+| `agents:published` | string | GlobalController — `write_config_specs`, every publish | Reconciler (`read_config_specs`, only when `agents:active` is empty) |
 | `agent:{name}:instances` | set | `Provisioner` | both |
 | `agent_instance:{provider}:{name}:{index}` | hash | `Provisioner` | both |
 | `routing_table:services` / `:endpoints` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
@@ -144,9 +145,13 @@ visibly wrong value, not a silent default.
 The `agents:` list is handed off through Redis rather than read twice: `write_config_specs`
 publishes each spec as JSON then the name list **last**, and `refresh_controllers_from_redis`
 adopts them every pass, so a reload needs no SIGHUP handler here. List-last makes a torn
-read impossible without version numbers. `read_config_specs` returns `None` (not `[]`) when
-nothing is published and the reader keeps its specs — `[]` would read as "no agents
-configured" and reap the fleet on an unseeded Redis. Everything outside `agents:` is still
+read impossible without version numbers. New names are added before stale ones are removed,
+so a reader never sees an empty list mid-swap. `read_config_specs` returns `None` (not `[]`)
+when nothing has ever been published and the reader keeps its specs — `[]` would read as "no
+agents configured" and reap the fleet on an unseeded Redis. An intentionally empty publish is
+told apart by the `agents:published` marker and reads as `[]`. A full pass also removes instances
+of any agent no longer published, and `reload_config` deletes a removed agent's
+`desired_replicas` so a runtime scale does not return if the agent is re-added. Everything outside `agents:` is still
 read from the YAML by both processes at construction.
 
 ## Known gaps
@@ -157,9 +162,6 @@ read from the YAML by both processes at construction.
 - **A list-form `replicas` is unsupported, just not silently** — `ensure_instances` raises
   `TypeError`, and `desired_agent_specs` passes the spec through rather than drop the agent
   from routing.
-- **Deleting an agent from the config leaves its instances running**, unpublished and
-  unreachable: nothing removes its `desired_replicas`, and reap and fill iterate only
-  published agents.
-- **Smaller, known:** instance identity is a slot index, not a UUID; `take_reap_requests`
+- **Smaller, known:** instance identity is a slot index, not a UUID; `reap_requests`
   matches by substring, so an agent name containing a colon mis-claims; a vanished node is
   reaped one slot at a time as "unhealthy".

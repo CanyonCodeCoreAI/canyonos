@@ -18,6 +18,51 @@ from fakes import _FakeRedis
 import local_controler_pb2
 
 
+class ExecuteDedupTests(unittest.TestCase):
+    def _servicer(self, endpoint="10.0.0.1:50051", redis=None):
+        servicer = SimpleNamespace(
+            my_endpoint=endpoint,
+            redis=redis if redis is not None else _FakeRedis(),
+            request_queue=__import__("queue").Queue(),
+        )
+        servicer._already_accepted = lambda payload: (
+            LocalControllerServicer._already_accepted(servicer, payload)
+        )
+        return servicer
+
+    def _execute(self, servicer, payload):
+        request = local_controler_pb2.JsonResponse(resonse=json.dumps(payload))
+        return LocalControllerServicer.Execute(servicer, request, context=None)
+
+    def test_a_retried_delivery_of_the_same_future_is_queued_once(self):
+        servicer = self._servicer()
+
+        first = self._execute(servicer, {"future_id": "f1", "function": "run"})
+        second = self._execute(servicer, {"future_id": "f1", "function": "run"})
+
+        self.assertEqual(servicer.request_queue.qsize(), 1)
+        self.assertEqual(first.resonse, second.resonse)
+
+    def test_the_same_future_is_accepted_by_each_endpoint_sharing_a_redis(self):
+        redis = _FakeRedis()
+        origin = self._servicer("10.0.0.1:50051", redis)
+        target = self._servicer("10.0.0.1:50052", redis)
+
+        self._execute(origin, {"future_id": "f1"})
+        self._execute(target, {"future_id": "f1"})
+
+        self.assertEqual(origin.request_queue.qsize(), 1)
+        self.assertEqual(target.request_queue.qsize(), 1)
+
+    def test_payloads_without_a_future_id_are_always_queued(self):
+        servicer = self._servicer()
+
+        self._execute(servicer, {"function": "run"})
+        self._execute(servicer, {"function": "run"})
+
+        self.assertEqual(servicer.request_queue.qsize(), 2)
+
+
 class _SyncThread:
     """Stand-in for threading.Thread that runs its target immediately, inline.
 
@@ -152,9 +197,7 @@ class CleanupRequestTests(unittest.TestCase):
         self.assertNotIn("affinity:req1", redis.strings)
         # The future itself is expired (grace period), not deleted outright.
         self.assertIn("future:fut1", redis.strings)
-        self.assertEqual(
-            redis.ttls.get("future:fut1"), FUTURE_CLEANUP_GRACE_SECONDS
-        )
+        self.assertEqual(redis.ttls.get("future:fut1"), FUTURE_CLEANUP_GRACE_SECONDS)
 
     def test_cleanup_releases_its_lock_even_with_no_futures(self):
         redis = _FakeRedis(sets={"request:req1:futures": set()})

@@ -6,9 +6,7 @@ import atexit
 import json
 import logging
 import os
-import shlex
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -19,6 +17,7 @@ import yaml
 from canyonos_core.controller.controller_context import (
     ControllerContext,
     _is_local_host,
+    _redis_connect_host,
 )
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
@@ -79,15 +78,12 @@ class GlobalController(ControllerContext):
 
     def __init__(self, config_path):
         super().__init__(config_path)
-        # Validate before launching anything: an agent that boots without its
-        # API keys fails deep inside a container, where it is expensive to debug.
-        self.env_file_path = resolve_env_file(self.config)
 
         redis_cfg = self.config.get("redis", {})
         # Kept in step with self.redis, including the reassignment in
         # _launch_redis_containers -- the otel_exporter subprocess is handed these.
         self._redis_addr = (
-            redis_cfg.get("host", "localhost"),
+            _redis_connect_host(redis_cfg.get("host", "localhost")),
             redis_cfg.get("port", 6379),
         )
 
@@ -279,7 +275,11 @@ class GlobalController(ControllerContext):
         logger.info("Reloading config from %s", self.config_path)
         self.config = self._load_config(self.config_path)
         self.env_file_path = resolve_env_file(self.config)
+        previous = set(self.agent_specs)
         self._set_controllers(self.config.get("agents", []))
+        # Otherwise a runtime scale would come back if the agent is re-added later.
+        for name in previous - set(self.agent_specs):
+            self.redis.delete(state.desired_key(name))
         self.poll_interval = self.config.get("poll_interval", 5)
         write_config_specs(self.controllers, self.redis)
         # Write-if-absent: seeds an agent the reload added, leaves a runtime scale alone.
@@ -416,11 +416,7 @@ class GlobalController(ControllerContext):
             redis_port = node_cfg["redis_port"]
             user = node_cfg["user"]
             container_name = redis_container_name(host)
-            # CANYONOS_REDIS_HOST overrides the localhost case for a containerized GC; host/remote paths unchanged.
-            if host in ("localhost", "127.0.0.1"):
-                connect_host = os.environ.get("CANYONOS_REDIS_HOST", "localhost")
-            else:
-                connect_host = host
+            connect_host = _redis_connect_host(host)
 
             running = self._redis_container_running(container_name, host, user)
             # Without this the ping below could be answered by an unrelated Redis
@@ -711,12 +707,13 @@ class GlobalController(ControllerContext):
             timeout:  Maximum seconds to wait.
             interval: Seconds between checks.
         """
-        expected = sum(
-            state.get_desired(self.redis, spec["name"], configured)
+        expected = {
+            spec["name"]: state.get_desired(self.redis, spec["name"], configured)
             for spec in self.controllers
             if (configured := state.replica_count(spec)) is not None
-        )
-        if not expected and self.controllers:
+        }
+        total = sum(expected.values())
+        if not total and self.controllers:
             logger.critical(
                 "No agent declares an integer replica count; nothing will be "
                 "provisioned. Check `replicas` in %s.",
@@ -728,10 +725,11 @@ class GlobalController(ControllerContext):
         ready = set()
         any_instances_appeared = False
         pending = []
+        healthy = {}
 
         logger.info(
             "Waiting for %d replica(s) to become healthy (timeout=%ds)...",
-            expected,
+            total,
             timeout,
         )
 
@@ -739,7 +737,7 @@ class GlobalController(ControllerContext):
             instances = list_instances(self.redis)
             any_instances_appeared = any_instances_appeared or bool(instances)
             pending = []
-            ready_count = 0
+            healthy = {}
             for instance in instances:
                 name = instance["agent_name"]
                 host = instance["host"]
@@ -748,7 +746,7 @@ class GlobalController(ControllerContext):
                 endpoint = routing_endpoint_for(instance)
                 status = node_redis.get(f"controller:{endpoint}:status")
                 if status == "healthy":
-                    ready_count += 1
+                    healthy[name] = healthy.get(name, 0) + 1
                     instance_key = (name, host, port)
                     if instance_key not in ready:
                         logger.info("Controller %s (%s:%s) is ready.", name, host, port)
@@ -757,7 +755,7 @@ class GlobalController(ControllerContext):
                 else:
                     pending.append(instance)
 
-            if ready_count >= expected:
+            if all(healthy.get(name, 0) >= want for name, want in expected.items()):
                 return
             if time.time() >= deadline:
                 break
@@ -769,24 +767,41 @@ class GlobalController(ControllerContext):
                 "have failed to provision them.",
                 timeout,
             )
+            return
 
-        if pending:
-            for instance in pending:
-                logger.warning(
-                    "Controller %s (%s:%s) not ready after %ds.",
-                    instance["agent_name"],
-                    instance["host"],
-                    instance["host_port"],
-                    timeout,
-                )
-            names = ", ".join(
-                f"{instance['agent_name']} ({instance['host']}:{instance['host_port']})"
-                for instance in pending
+        for instance in pending:
+            logger.warning(
+                "Controller %s (%s:%s) not ready after %ds.",
+                instance["agent_name"],
+                instance["host"],
+                instance["host_port"],
+                timeout,
             )
-            raise RuntimeError(
-                f"{len(pending)} controller replica(s) failed to become healthy "
-                f"within {timeout}s: {names}"
+
+        short = {
+            name: (healthy.get(name, 0), want)
+            for name, want in expected.items()
+            if healthy.get(name, 0) < want
+        }
+        for name, (have, want) in short.items():
+            logger.warning(
+                "Agent %s has %d/%d healthy replica(s) after %ds.",
+                name,
+                have,
+                want,
+                timeout,
             )
+        # An existing unhealthy replica fails startup; a missing one may still be provisioning.
+        failing = {instance["agent_name"] for instance in pending}
+        failed = {name: counts for name, counts in short.items() if name in failing}
+        if not failed:
+            return
+        summary = ", ".join(
+            f"{name} {have}/{want}" for name, (have, want) in failed.items()
+        )
+        raise RuntimeError(
+            f"Agent replica(s) failed to become healthy within {timeout}s: {summary}"
+        )
 
     # ------------------------------------------------------------------ #
     #  Polling loop                                                       #
@@ -1119,48 +1134,6 @@ class GlobalController(ControllerContext):
     #  Runtime launching                                                  #
     # ------------------------------------------------------------------ #
 
-    def _push_file(self, local_path, remote_path, host, user=None):
-        """
-        Copy a local file to a remote host over SSH.
-
-        Streams the bytes through `cat` under `umask 077` rather than using
-        `scp`, so a secrets file is never briefly world-readable on the far
-        side.
-
-        Anything already sitting at the destination is removed first: `umask`
-        only governs files the shell creates, and `>` follows symlinks. Without
-        the `rm`, a local user on the remote host could pre-create the path
-        world-readable, or point it at a file of their own, and collect
-        whatever we write there.
-
-        Returns:
-            subprocess.CompletedProcess
-        """
-        quoted = shlex.quote(remote_path)
-        remote_cmd = f"umask 077; rm -f {quoted}; cat > {quoted}"
-        try:
-            with open(local_path, "rb") as f:
-                result = subprocess.run(
-                    self._ssh_args(host, user) + [remote_cmd],
-                    stdin=f,
-                    capture_output=True,
-                    text=True,
-                    timeout=180,
-                    check=False,
-                )
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(
-                f"Copying {local_path} to {host} timed out after 180s"
-            ) from None
-        except OSError as e:
-            raise RuntimeError(f"Could not copy {local_path} to {host}: {e}") from None
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to copy {local_path} to {host}:{remote_path}: "
-                f"{(result.stderr or result.stdout or '').strip()}"
-            )
-        return result
-
     # ------------------------------------------------------------------ #
     #  Shutdown                                                           #
     # ------------------------------------------------------------------ #
@@ -1212,14 +1185,20 @@ class GlobalController(ControllerContext):
         self.running = False
 
         failures = []
-        self._drain_instances()
+        try:
+            self._drain_instances()
+        except Exception as e:
+            failures.append(f"instance drain: {e}")
         # The reconciler does the removing, so it has to outlive the drain; clearing
         # the flag before it dies would have it refill everything just removed.
         try:
             self.process_supervisor.terminate_all()
         except Exception as e:
             failures.append(f"supervised processes: {e}")
-        state.clear_draining(self.redis)
+        try:
+            state.clear_draining(self.redis)
+        except Exception as e:
+            failures.append(f"draining flag: {e}")
         failures += self._stop_redis_containers() or []
         self._stop_metrics_collectors()
         if failures:

@@ -42,8 +42,32 @@ class WriteAndReadTests(unittest.TestCase):
 
         write_config_specs([ALPHA, BETA], redis)
 
-        self.assertEqual(order[-1], ("sadd", ACTIVE_AGENTS_KEY))
-        self.assertIn(("set", spec_key("Alpha")), order)
+        listed_at = order.index(("sadd", ACTIVE_AGENTS_KEY))
+        self.assertLess(order.index(("set", spec_key("Alpha"))), listed_at)
+        self.assertLess(order.index(("set", spec_key("Beta"))), listed_at)
+
+    def test_an_empty_published_list_reads_as_empty_not_none(self):
+        redis = _FakeRedis()
+        write_config_specs([ALPHA], redis)
+
+        write_config_specs([], redis)
+
+        self.assertEqual(read_config_specs(redis), [])
+
+    def test_replacing_every_agent_never_empties_the_list_mid_write(self):
+        redis = _FakeRedis()
+        write_config_specs([ALPHA], redis)
+        sizes = []
+        real_srem = redis.srem
+        redis.srem = lambda n, *v: (
+            real_srem(n, *v),
+            sizes.append(len(redis.smembers(ACTIVE_AGENTS_KEY))),
+        )[0]
+
+        write_config_specs([BETA], redis)
+
+        self.assertEqual(sizes, [1])
+        self.assertEqual(read_config_specs(redis), [BETA])
 
     def test_an_agent_dropped_from_the_config_is_unpublished(self):
         redis = _FakeRedis()

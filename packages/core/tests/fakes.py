@@ -1,3 +1,4 @@
+import contextlib
 import fnmatch
 import os
 import sys
@@ -40,6 +41,9 @@ class _FakeRedis:
             self.sets.pop(key, None)
             self.lists.pop(key, None)
             self.ttls.pop(key, None)
+
+    def lock(self, name, timeout):
+        return contextlib.nullcontext()
 
     def expire(self, key, seconds, nx=False):
         if not self._key_exists(key) or (nx and key in self.ttls):
@@ -119,18 +123,23 @@ def _instance(agent_name, replica_index, created_at=None, host_port=None):
 class _FakeProvisioner:
     """Records what the reconciler asked for without touching Docker."""
 
-    def __init__(self, instances=None, raise_for=None):
+    def __init__(self, instances=None, raise_for=None, remove_raises=False):
         self.instances = instances or {}
         self.raise_for = raise_for
+        self.remove_raises = remove_raises
         self.removed = []
         self.ensure_calls = []
 
     def list_instances(self, agent_name=None):
         if self.raise_for and agent_name == self.raise_for:
             raise RuntimeError("boom")
+        if agent_name is None:
+            return [record for records in self.instances.values() for record in records]
         return list(self.instances.get(agent_name, []))
 
     def remove_instance(self, instance_id):
+        if self.remove_raises:
+            raise RuntimeError("terminate failed")
         self.removed.append(instance_id)
 
     def ensure_instances(self, agent_specs):

@@ -8,11 +8,15 @@ import subprocess
 import yaml
 
 from canyonos_core.controller.utils.config_specs import read_config_specs
+from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
 _RESERVED_ENV_KEYS = frozenset({"CANYONOS_LLM_STUB_TEXT"})
+_REMOTE_COPY_PATH = re.compile(
+    r"(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+/canyonos\.[A-Za-z0-9]+/env"
+)
 
 
 def _is_local_host(host):
@@ -21,7 +25,9 @@ def _is_local_host(host):
 
 def _redis_connect_host(host):
     """Host to open a Redis connection to from this process."""
-    return "localhost" if _is_local_host(host) else host
+    if _is_local_host(host):
+        return os.environ.get("CANYONOS_REDIS_HOST", "localhost")
+    return host
 
 
 class ControllerContext(object):
@@ -30,10 +36,13 @@ class ControllerContext(object):
     def __init__(self, config_path):
         self.config_path = config_path
         self.config = self._load_config(config_path)
+        # Validate before launching anything: an agent that boots without its
+        # API keys fails deep inside a container, where it is expensive to debug.
+        self.env_file_path = resolve_env_file(self.config)
 
         redis_cfg = self.config.get("redis", {})
         self.redis = RedisClient(
-            host=redis_cfg.get("host", "localhost"),
+            host=_redis_connect_host(redis_cfg.get("host", "localhost")),
             port=redis_cfg.get("port", 6379),
             db=redis_cfg.get("db", 0),
         )
@@ -115,6 +124,15 @@ class ControllerContext(object):
         self._set_controllers(specs)
         return True
 
+    def refresh_env_file(self):
+        """Re-read the env file path from the config; keep the old one if the new is unusable."""
+        try:
+            self.env_file_path = resolve_env_file(self._load_config(self.config_path))
+        except Exception as e:
+            logger.warning(
+                "Keeping env file %s; reloading it failed: %s", self.env_file_path, e
+            )
+
     @staticmethod
     def _get_replica_placements(ctrl):
         """Normalize replicas into a list of (host, port) placements."""
@@ -144,7 +162,7 @@ class ControllerContext(object):
         port = self._localhost_redis_port()
         if port is None:
             return
-        client = RedisClient(host="localhost", port=port)
+        client = RedisClient(host=_redis_connect_host("localhost"), port=port)
         self.node_redis["localhost"] = client
         self.redis = client
 
@@ -183,6 +201,42 @@ class ControllerContext(object):
             ) from None
         except OSError as e:
             raise RuntimeError(f"Could not run command on {host}: {e}") from None
+
+    def _push_file(self, local_path, host, user=None):
+        """Copy a file into a new owner-only directory on a remote host; return its path."""
+        # mktemp -d creates the dir exclusively, so no other user can pre-plant the path.
+        remote_cmd = (
+            'umask 077 && d=$(mktemp -d "${TMPDIR:-/tmp}/canyonos.XXXXXXXXXX") '
+            '&& cat > "$d/env" && printf %s "$d/env"'
+        )
+        try:
+            with open(local_path, "rb") as f:
+                result = subprocess.run(
+                    self._ssh_args(host, user) + [remote_cmd],
+                    stdin=f,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    check=False,
+                )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Copying {local_path} to {host} timed out after 180s"
+            ) from None
+        except OSError as e:
+            raise RuntimeError(f"Could not copy {local_path} to {host}: {e}") from None
+        stdout = result.stdout or ""
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to copy {local_path} to {host}: "
+                f"{(result.stderr or stdout).strip()}"
+            )
+        # The path later goes to `rm -rf`, so accept only what mktemp could print.
+        if not _REMOTE_COPY_PATH.fullmatch(stdout):
+            raise RuntimeError(
+                f"Copying {local_path} to {host} returned an unexpected path: {stdout!r}"
+            )
+        return stdout
 
     def _ssh_args(self, host, user=None):
         """Return the `ssh ... target` prefix used to reach a remote host."""

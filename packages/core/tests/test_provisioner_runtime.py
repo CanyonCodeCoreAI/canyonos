@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
+from canyonos_core.instances.records import list_instances
 from canyonos_core.reconciler.provisioner import Provisioner
 from fakes import _FakeRedis
 
@@ -611,6 +612,83 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         runtime = manager._provider_runtime("local")
 
         self.assertIs(runtime, local_runtime)
+
+
+class PortReservationTests(unittest.TestCase):
+    def _reserve(self, redis, replica_index, port):
+        redis.hset_multiple(
+            f"agent_instance:local:Alpha:{replica_index}",
+            {
+                "agent_name": "Alpha",
+                "provider": "local",
+                "replica_index": str(replica_index),
+                "host": "localhost",
+                "host_port": str(port),
+            },
+        )
+
+    def test_a_port_reservation_is_hidden_from_full_instance_scans(self):
+        controller = _fake_controller()
+        self._reserve(controller.redis, 0, 8000)
+
+        self.assertEqual(list_instances(controller.redis), [])
+
+    def test_a_port_reservation_still_blocks_its_port_for_the_next_replica(self):
+        controller = _fake_controller()
+        self._reserve(controller.redis, 0, 8000)
+        manager = Provisioner(controller)
+
+        port = manager._next_host_port(
+            "localhost", "agent_instance:local:Alpha:1", "Alpha", "local", 1
+        )
+
+        self.assertEqual(port, 8001)
+
+    def test_a_reservation_for_a_slot_no_agent_wants_is_pruned(self):
+        controller = _fake_controller()
+        self._reserve(controller.redis, 3, 8003)
+        manager = Provisioner(controller)
+        manager._agent_specs = [{"name": "Alpha", "provider": "local", "replicas": 1}]
+
+        manager._prune_stale_reservations()
+
+        self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:3"), {})
+
+    def test_a_reservation_for_a_wanted_slot_is_kept(self):
+        controller = _fake_controller()
+        self._reserve(controller.redis, 0, 8000)
+        manager = Provisioner(controller)
+        manager._agent_specs = [{"name": "Alpha", "provider": "local", "replicas": 1}]
+
+        manager._prune_stale_reservations()
+
+        self.assertEqual(
+            controller.redis.hgetall("agent_instance:local:Alpha:0")["host_port"],
+            "8000",
+        )
+
+    def test_a_failed_provision_removes_its_port_reservation(self):
+        controller = _fake_controller()
+        self._reserve(controller.redis, 0, 8000)
+        runtime = _fake_runtime(
+            provision_instance=MagicMock(side_effect=RuntimeError("boom"))
+        )
+        manager = Provisioner(controller)
+
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            manager._provision_one(
+                {
+                    "agent_name": "Alpha",
+                    "agent_spec": {"name": "Alpha"},
+                    "runtime": runtime,
+                    "replica_index": 0,
+                    "instance_id": "local:Alpha:0",
+                    "reserved_port": 8000,
+                }
+            )
+
+        self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
+        runtime.terminate_instance.assert_not_called()
 
 
 if __name__ == "__main__":

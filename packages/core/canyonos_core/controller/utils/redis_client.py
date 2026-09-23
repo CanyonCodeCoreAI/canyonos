@@ -28,6 +28,10 @@ class RedisClient(object):
         """Set key to value only if it does not already exist. Returns True if set, False otherwise."""
         return self.client.setnx(key, value)
 
+    def lock(self, name, timeout):
+        """A Redis mutex, usable as a context manager, that expires after timeout seconds."""
+        return self.client.lock(name, timeout=timeout, blocking_timeout=timeout)
+
     def expire(self, key, seconds, nx=False):
         """Set a TTL (in seconds) on a key. No-op if the key does not exist."""
         return self.client.expire(key, seconds, nx=nx)

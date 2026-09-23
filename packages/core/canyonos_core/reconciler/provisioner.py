@@ -18,6 +18,7 @@ from canyonos_core.reconciler.providers.Local import (
 )
 
 DEFAULT_HOST_PORT_START = 8000
+PORT_RESERVATION_LOCK_SECONDS = 10
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +67,7 @@ class Provisioner(object):
                 )
             agent_spec["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
             self._agent_specs.append(agent_spec)
+        self._prune_stale_reservations()
         instances = []
         existing = []
         jobs = []
@@ -141,33 +143,35 @@ class Provisioner(object):
         def next_host_port(_host):
             return reserved_port
 
-        provisioned = runtime.provision_instance(
-            agent_spec, replica_index, next_host_port
-        )
-        runtime_id = provisioned.get("runtime_id")
-        if runtime_id:
-            self._track_runtime(job["agent_name"], runtime_id)
-
-        instance = provisioned
+        instance = None
+        runtime_id = None
         try:
+            instance = runtime.provision_instance(
+                agent_spec, replica_index, next_host_port
+            )
+            runtime_id = instance.get("runtime_id")
+            if runtime_id:
+                self._track_runtime(job["agent_name"], runtime_id)
+
             agent_id = uuid.uuid4().hex
             instance = runtime.bootstrap_instance(
-                provisioned, agent_spec, replica_index, agent_id
+                instance, agent_spec, replica_index, agent_id
             )
             instance["agent_id"] = agent_id
             self._write_instance(instance)
             return instance
         except Exception:
-            try:
-                runtime.terminate_instance(instance)
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Failed to clean up runtime %s after provisioning failed: %s",
-                    runtime_id,
-                    cleanup_error,
-                )
-            else:
-                self._untrack_runtime(job["agent_name"], runtime_id)
+            if instance is not None:
+                try:
+                    runtime.terminate_instance(instance)
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Failed to clean up runtime %s after provisioning failed: %s",
+                        runtime_id,
+                        cleanup_error,
+                    )
+                else:
+                    self._untrack_runtime(job["agent_name"], runtime_id)
             try:
                 self.redis.delete(f"agent_instance:{job['instance_id']}")
                 self.redis.srem(
@@ -289,26 +293,50 @@ class Provisioner(object):
         self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
         self._untrack_runtime(instance["agent_name"], instance["runtime_id"])
 
-    def _next_host_port(self, host, key, agent_name, provider, replica_index):
-        used = {
-            int(instance["host_port"])
-            for instance in self.list_instances()
-            if instance.get("host") == host and instance.get("host_port")
+    def _prune_stale_reservations(self):
+        """Delete port reservations left for replica slots no agent wants anymore."""
+        wanted = {
+            _instance_key(spec["provider"], spec["name"], replica_index)
+            for spec in self._agent_specs
+            for replica_index in range(int(spec.get("replicas", 1)))
         }
-        port = DEFAULT_HOST_PORT_START
-        while port in used:
-            port += 1
+        for key in self.redis.scan_keys("agent_instance:*"):
+            if key in wanted:
+                continue
+            record = self.redis.hgetall(key)
+            if record and not record.get("runtime_id"):
+                logger.info("Removing stale port reservation %s", key)
+                self.redis.delete(key)
 
-        self.redis.hset_multiple(
-            key,
-            {
-                "agent_name": agent_name,
-                "provider": provider,
-                "replica_index": str(replica_index),
-                "host": host,
-                "host_port": str(port),
-            },
-        )
+    def _next_host_port(self, host, key, agent_name, provider, replica_index):
+        # Held across scan and write so two reconcilers can't claim the same port.
+        with self.redis.lock(
+            f"port_reservation_lock:{host}", PORT_RESERVATION_LOCK_SECONDS
+        ):
+            # Raw scan: port reservations from this pass must count as used too.
+            records = (
+                self.redis.hgetall(record_key)
+                for record_key in self.redis.scan_keys("agent_instance:*")
+            )
+            used = {
+                int(instance["host_port"])
+                for instance in records
+                if instance.get("host") == host and instance.get("host_port")
+            }
+            port = DEFAULT_HOST_PORT_START
+            while port in used:
+                port += 1
+
+            self.redis.hset_multiple(
+                key,
+                {
+                    "agent_name": agent_name,
+                    "provider": provider,
+                    "replica_index": str(replica_index),
+                    "host": host,
+                    "host_port": str(port),
+                },
+            )
         return port
 
     def _publish_routing(self, agent_specs):

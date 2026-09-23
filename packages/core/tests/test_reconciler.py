@@ -171,20 +171,22 @@ class WakeQueueTests(unittest.TestCase):
 
 
 class ReapRequestTests(unittest.TestCase):
-    def test_only_ids_belonging_to_the_named_agent_are_claimed(self):
+    def test_only_ids_belonging_to_the_named_agent_are_returned(self):
         redis = _FakeRedis()
         state.request_replace(redis, "local:Alpha:1")
         state.request_replace(redis, "local:Beta:0")
 
-        self.assertEqual(state.take_reap_requests(redis, "Alpha"), {"local:Alpha:1"})
-        self.assertEqual(redis.smembers(state.REAP_SET_KEY), {"local:Beta:0"})
+        self.assertEqual(state.reap_requests(redis, "Alpha"), {"local:Alpha:1"})
 
-    def test_a_second_call_claims_nothing(self):
+    def test_a_request_stays_pending_until_cleared(self):
         redis = _FakeRedis()
         state.request_replace(redis, "local:Alpha:1")
 
-        state.take_reap_requests(redis, "Alpha")
-        self.assertEqual(state.take_reap_requests(redis, "Alpha"), set())
+        state.reap_requests(redis, "Alpha")
+        self.assertEqual(state.reap_requests(redis, "Alpha"), {"local:Alpha:1"})
+
+        state.clear_reap_requests(redis, "local:Alpha:1")
+        self.assertEqual(state.reap_requests(redis, "Alpha"), set())
 
 
 class ScalingEntryPointTests(unittest.TestCase):
@@ -338,6 +340,58 @@ class ReconcileTests(unittest.TestCase):
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(manager.ensure_calls, [])
+
+    def test_a_replacement_request_is_cleared_once_its_instance_is_removed(self):
+        redis = _FakeRedis()
+        state.set_desired(redis, "Alpha", 2)
+        state.request_replace(redis, "local:Alpha:1")
+        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(2)]})
+        reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
+
+        reconciler.reconcile("Alpha")
+
+        self.assertEqual(manager.removed, ["local:Alpha:1"])
+        self.assertEqual(state.reap_requests(redis, "Alpha"), set())
+
+    def test_a_replacement_request_survives_a_failed_removal(self):
+        redis = _FakeRedis()
+        state.set_desired(redis, "Alpha", 2)
+        state.request_replace(redis, "local:Alpha:1")
+        manager = _FakeProvisioner(
+            {"Alpha": [_instance("Alpha", i) for i in range(2)]}, remove_raises=True
+        )
+        reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
+
+        with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
+            reconciler.reconcile("Alpha")
+
+        self.assertEqual(state.reap_requests(redis, "Alpha"), {"local:Alpha:1"})
+
+    def test_a_replacement_request_for_a_missing_instance_is_dropped(self):
+        redis = _FakeRedis()
+        state.set_desired(redis, "Alpha", 2)
+        state.request_replace(redis, "local:Alpha:7")
+        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
+        reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
+
+        reconciler.reconcile("Alpha")
+
+        self.assertEqual(state.reap_requests(redis, "Alpha"), set())
+
+    def test_a_full_pass_reaps_instances_of_an_agent_removed_from_the_config(self):
+        redis = _FakeRedis()
+        state.set_desired(redis, "Alpha", 1)
+        manager = _FakeProvisioner(
+            {"Alpha": [_instance("Alpha", 0)], "Gone": [_instance("Gone", 0)]}
+        )
+        context = _fake_context(redis, agents=[{**ALPHA_SPEC, "replicas": 1}])
+        reconciler = self._healthy(_bare_reconciler(context, manager))
+
+        reconciler.reconcile("Alpha")
+        self.assertEqual(manager.removed, [])
+
+        reconciler.reconcile()
+        self.assertEqual(manager.removed, ["local:Gone:0"])
 
     def test_full_pass_keeps_going_when_one_agent_raises(self):
         redis = _FakeRedis()

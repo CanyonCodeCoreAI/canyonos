@@ -191,7 +191,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         # User secrets from `env_file`. Explicit -e flags above still win, so a
         # stray CANYONOS_* line in someone's .env cannot break agent wiring.
         with env_file_args(
-            _require_controller(), host, user, runtime_id, _is_local_host(host)
+            _require_controller(), host, user, _is_local_host(host)
         ) as env_args:
             cmd.extend(env_args)
             cmd.append(image)

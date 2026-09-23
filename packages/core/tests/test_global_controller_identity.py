@@ -20,6 +20,7 @@ def _bare_controller(config, node_redis=None):
     controller.config = config
     controller.redis = _FakeRedis()
     controller.node_redis = node_redis if node_redis is not None else {}
+    controller._set_controllers(config.get("agents", []))
     return controller
 
 

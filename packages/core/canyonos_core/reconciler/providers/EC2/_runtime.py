@@ -342,9 +342,7 @@ def _bootstrap_instance(
 
     # User secrets from `env_file`. Explicit -e flags above still win over
     # anything in the file.
-    with env_file_args(
-        _controller, host, ssh_user, container, is_local=False
-    ) as env_args:
+    with env_file_args(_controller, host, ssh_user, is_local=False) as env_args:
         cmd.extend(env_args)
         cmd.append(image)
         result = _controller._run_cmd(cmd, host, user=ssh_user)

@@ -115,6 +115,11 @@ class Reconciler(object):
                 reaped |= self._reap(name, draining)
             except Exception as e:
                 logger.warning("Failed to reap agent %s: %s", name, e)
+        if agent_name is None:
+            try:
+                self._reap_removed_agents()
+            except Exception as e:
+                logger.warning("Failed to reap instances of removed agents: %s", e)
 
         # desired_agent_specs falls back to the configured count, so a fill would undo the drain.
         if draining:
@@ -152,12 +157,16 @@ class Reconciler(object):
             return False
         else:
             desired = state.get_desired(redis_client, agent_name, configured)
-        reap_requested = state.take_reap_requests(redis_client, agent_name)
+        reap_requested = state.reap_requests(redis_client, agent_name)
 
         instances = self.provisioner.list_instances(agent_name)
         for instance in instances:
             # Routing republishes fan out to node_redis, so every node needs a client first.
             self.context.node_redis_for_instance(instance)
+
+        # A request for an instance that no longer exists has nothing left to do.
+        existing_ids = {instance_id_from_record(instance) for instance in instances}
+        state.clear_reap_requests(redis_client, *(reap_requested - existing_ids))
 
         for instance in instances:
             instance_id = instance_id_from_record(instance)
@@ -166,10 +175,23 @@ class Reconciler(object):
             )
             if reason is None:
                 continue
-            logger.info("Removing instance %s (%s)", instance_id, reason)
-            self._seen_healthy.discard(instance_id)
-            self.provisioner.remove_instance(instance_id)
+            self._remove(instance_id, reason)
+            if instance_id in reap_requested:
+                state.clear_reap_requests(redis_client, instance_id)
         return True
+
+    def _remove(self, instance_id, reason):
+        logger.info("Removing instance %s (%s)", instance_id, reason)
+        self._seen_healthy.discard(instance_id)
+        self.provisioner.remove_instance(instance_id)
+
+    def _reap_removed_agents(self):
+        """Remove instances of agents that are no longer in the published specs."""
+        for instance in self.provisioner.list_instances():
+            if instance["agent_name"] in self.context.agent_specs:
+                continue
+            self.context.node_redis_for_instance(instance)
+            self._remove(instance_id_from_record(instance), "agent removed from config")
 
     def _removal_reason(self, instance, instance_id, desired, reap_requested):
         if instance_id in reap_requested:
@@ -202,6 +224,8 @@ class Reconciler(object):
                 continue
 
             if state.WAKE_ALL in signals:
+                # A config reload wakes all; new replicas need the reloaded env file.
+                self.context.refresh_env_file()
                 self.reconcile()
                 last_sweep = time.time()
                 signals.discard(state.WAKE_ALL)

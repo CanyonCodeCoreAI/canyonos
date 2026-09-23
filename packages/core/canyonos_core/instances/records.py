@@ -19,14 +19,13 @@ def list_instances(redis_client, agent_name=None):
     """Instance records straight from Redis."""
     if agent_name:
         instance_ids = sorted(redis_client.smembers(f"agent:{agent_name}:instances"))
-        return [
-            instance
-            for instance_id in instance_ids
-            if (instance := redis_client.hgetall(f"agent_instance:{instance_id}"))
-        ]
+        keys = [f"agent_instance:{instance_id}" for instance_id in instance_ids]
+    else:
+        keys = sorted(redis_client.scan_keys("agent_instance:*"))
 
+    # Skips port reservations whose runtime hasn't been provisioned yet.
     return [
         instance
-        for key in sorted(redis_client.scan_keys("agent_instance:*"))
-        if (instance := redis_client.hgetall(key))
+        for key in keys
+        if (instance := redis_client.hgetall(key)).get("runtime_id")
     ]

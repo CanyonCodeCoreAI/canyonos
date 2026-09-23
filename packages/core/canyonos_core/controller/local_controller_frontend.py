@@ -29,6 +29,7 @@ FUTURE_CLEANUP_GRACE_SECONDS = max(
     FUTURE_CLEANUP_GRACE_MIN_SECONDS,
     POLL_INTERVAL_SECONDS * FUTURE_CLEANUP_GRACE_MULTIPLIER,
 )
+EXECUTE_DEDUP_TTL_SECONDS = 3600
 
 
 class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
@@ -52,8 +53,29 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
     def Execute(self, request, context):
         """Accept an Execute request and push it into the queue."""
         logger.info(f"Received request: {request.resonse}")
-        self.request_queue.put(request.resonse)
+        if self._already_accepted(request.resonse):
+            logger.info("Execute: duplicate delivery of a queued request, skipping.")
+        else:
+            self.request_queue.put(request.resonse)
         return local_controler_pb2.JsonResponse(resonse="Request queued successfully")
+
+    def _already_accepted(self, payload):
+        """True when this endpoint has already queued the payload's future."""
+        # The sender retries on UNAVAILABLE, which can follow a delivery whose reply was lost.
+        try:
+            future_id = json.loads(payload).get("future_id")
+        except (ValueError, AttributeError):
+            return False
+        if not future_id:
+            return False
+        key = f"execute:{self.my_endpoint}:{future_id}:accepted"
+        try:
+            if not self.redis.setnx(key, "1"):
+                return True
+            self.redis.expire(key, EXECUTE_DEDUP_TTL_SECONDS)
+        except Exception as e:
+            logger.warning("Execute: dedup check failed, queueing anyway: %s", e)
+        return False
 
     def WriteResult(self, request, context):
         """Accept a result or error from a remote controller and write it to local Redis."""
