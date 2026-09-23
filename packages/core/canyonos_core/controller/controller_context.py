@@ -42,6 +42,7 @@ class ControllerContext(object):
         self._set_controllers(self.config.get("agents", []))
         self.containers = {}  # name -> [runtime_id, ...]
         self.redis_containers = {}  # host -> container_name
+        self.redis_ports = {}  # host -> published redis port
         self.node_redis = {}  # host -> RedisClient
 
     @staticmethod
@@ -54,6 +55,8 @@ class ControllerContext(object):
         ControllerContext._load_dotenv(os.path.join(project_root, ".env"))
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
+        if not isinstance(config, dict):
+            raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
         return ControllerContext._expand_env_value(config)
 
     @staticmethod
@@ -161,9 +164,10 @@ class ControllerContext(object):
     def _run_cmd(self, cmd, host, user=None):
         """Run a command locally, or on a remote host over SSH."""
         is_local = _is_local_host(host)
-        if is_local:
-            return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        else:
+        try:
+            if is_local:
+                return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+
             remote_cmd = " ".join(cmd)
             if cmd and cmd[0] == "docker":
                 remote_cmd = f"sudo {remote_cmd}"
@@ -173,6 +177,12 @@ class ControllerContext(object):
                 text=True,
                 timeout=180,
             )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Command timed out after 180s on {host}: {' '.join(cmd)}"
+            ) from None
+        except OSError as e:
+            raise RuntimeError(f"Could not run command on {host}: {e}") from None
 
     def _ssh_args(self, host, user=None):
         """Return the `ssh ... target` prefix used to reach a remote host."""

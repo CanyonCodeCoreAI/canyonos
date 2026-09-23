@@ -1,5 +1,6 @@
 """Create and destroy agent runtime instances; the controller imports nothing from here."""
 
+import logging
 import os
 import time
 import uuid
@@ -17,6 +18,7 @@ from canyonos_core.reconciler.providers.Local import (
 )
 
 DEFAULT_HOST_PORT_START = 8000
+logger = logging.getLogger(__name__)
 
 
 class Provisioner(object):
@@ -35,17 +37,35 @@ class Provisioner(object):
 
     def _provider_runtime(self, provider):
         """The provider's runtime module, bound to this process's controller."""
-        if provider.upper() == "EC2":
+        normalized = provider.casefold()
+        if normalized == "ec2":
             from canyonos_core.reconciler.providers.EC2 import (
                 _runtime as runtime,
             )
-        else:
+        elif normalized == "local":
             runtime = local_runtime
+        else:
+            raise RuntimeError(
+                f"Unsupported provider {provider!r}; use `local` or `EC2`."
+            )
         runtime._controller = self.controller
         return runtime
 
     def ensure_instances(self, agent_specs):
-        self._agent_specs = list(agent_specs)
+        self._agent_specs = []
+        for original in agent_specs:
+            agent_spec = dict(original)
+            provider = agent_spec.get("provider", "local")
+            if not isinstance(provider, str) or provider.casefold() not in {
+                "local",
+                "ec2",
+            }:
+                raise RuntimeError(
+                    f"Agent {agent_spec.get('name', '<unnamed>')} has unsupported "
+                    f"provider {provider!r}; use `local` or `EC2`."
+                )
+            agent_spec["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
+            self._agent_specs.append(agent_spec)
         instances = []
         existing = []
         jobs = []
@@ -66,8 +86,11 @@ class Provisioner(object):
                 instance = self.redis.hgetall(key)
 
                 if instance and instance.get("runtime_id"):
-                    existing.append((agent_name, instance_id, instance))
-                    continue
+                    if self._runtime_is_running(instance):
+                        existing.append((agent_name, instance_id, instance))
+                        continue
+                    self._destroy_runtime(instance)
+                    self._discard_instance_record(instance_id, instance)
 
                 reserved_port = None
                 if provider == "local":
@@ -121,13 +144,42 @@ class Provisioner(object):
         provisioned = runtime.provision_instance(
             agent_spec, replica_index, next_host_port
         )
-        agent_id = uuid.uuid4().hex
-        instance = runtime.bootstrap_instance(
-            provisioned, agent_spec, replica_index, agent_id
-        )
-        instance["agent_id"] = agent_id
-        self._write_instance(instance)
-        return instance
+        runtime_id = provisioned.get("runtime_id")
+        if runtime_id:
+            self._track_runtime(job["agent_name"], runtime_id)
+
+        instance = provisioned
+        try:
+            agent_id = uuid.uuid4().hex
+            instance = runtime.bootstrap_instance(
+                provisioned, agent_spec, replica_index, agent_id
+            )
+            instance["agent_id"] = agent_id
+            self._write_instance(instance)
+            return instance
+        except Exception:
+            try:
+                runtime.terminate_instance(instance)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to clean up runtime %s after provisioning failed: %s",
+                    runtime_id,
+                    cleanup_error,
+                )
+            else:
+                self._untrack_runtime(job["agent_name"], runtime_id)
+            try:
+                self.redis.delete(f"agent_instance:{job['instance_id']}")
+                self.redis.srem(
+                    f"agent:{job['agent_name']}:instances", job["instance_id"]
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to remove the partial instance record for %s: %s",
+                    job["instance_id"],
+                    cleanup_error,
+                )
+            raise
 
     def _write_instance(self, instance):
         key = _instance_key(
@@ -198,6 +250,44 @@ class Provisioner(object):
         containers = self.controller.containers.setdefault(agent_name, [])
         if runtime_id not in containers:
             containers.append(runtime_id)
+
+    def _untrack_runtime(self, agent_name, runtime_id):
+        self.controller.containers[agent_name] = [
+            tracked
+            for tracked in self.controller.containers.get(agent_name, [])
+            if tracked != runtime_id
+        ]
+
+    def _runtime_is_running(self, instance):
+        runtime_id = instance.get("runtime_id")
+        host = instance.get("host")
+        if not runtime_id or not host:
+            return False
+
+        provider = instance.get("provider", "local")
+        user = instance.get("user")
+        if provider.casefold() == "ec2":
+            runtime_id = runtime_id.rsplit("--", 1)[0]
+            user = user or self.controller.config.get("ec2", {}).get("ssh_user")
+
+        try:
+            result = self.controller._run_cmd(
+                ["docker", "inspect", "-f", "{{.State.Running}}", runtime_id],
+                host,
+                user,
+            )
+        except RuntimeError as e:
+            # _run_cmd raises when the host can't be reached at all. This
+            # answers whether a record is reusable, and an unreachable host
+            # isn't; let the re-provision that follows report the real failure.
+            logger.warning("Could not inspect %s on %s: %s", runtime_id, host, e)
+            return False
+        return result.returncode == 0 and result.stdout.strip() == "true"
+
+    def _discard_instance_record(self, instance_id, instance):
+        self.redis.delete(f"agent_instance:{instance_id}")
+        self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
+        self._untrack_runtime(instance["agent_name"], instance["runtime_id"])
 
     def _next_host_port(self, host, key, agent_name, provider, replica_index):
         used = {

@@ -30,7 +30,12 @@ services:
     environment:
       DATABASE_URL: postgresql://canyonos:canyonos@db:5432/canyonos
       JWT_SECRET: ${CANYONOS_JWT_SECRET}
-      CANYONOS_DISABLE_AUTH: "true"
+      # The image always sets NODE_ENV=production, where the api refuses to
+      # boot unless AUTH_MODE and DEPLOY_WORKER are named. FILE_STORAGE
+      # accepts only mock.
+      AUTH_MODE: fixed_code
+      DEPLOY_WORKER: none
+      FILE_STORAGE: mock
       CANYONOS_REDIS_HOST: ${CANYONOS_REDIS_HOST}
       CANYONOS_REDIS_PORT: ${CANYONOS_REDIS_PORT}
       LOG_LEVEL: info

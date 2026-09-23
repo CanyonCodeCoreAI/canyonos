@@ -1,19 +1,31 @@
 name: Core image
 
-# Builds and publishes the Global Controller image that `canyonos init` pulls.
+# Builds the Global Controller image on every change, and publishes it when a
+# "core-v*" GitHub release is published.
 
 on:
   # Paths are duplicated because Actions does not resolve YAML anchors.
   pull_request:
     paths:
       - 'packages/core/**'
+      - '!packages/core/tests/**'
+      - '!packages/core/**.md'
       - '.github/workflows/core-image.yml'
   push:
     branches: [main]
     paths:
       - 'packages/core/**'
+      - '!packages/core/tests/**'
+      - '!packages/core/**.md'
       - '.github/workflows/core-image.yml'
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. core-v0.1.0)'
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -26,9 +38,9 @@ env:
   IMAGE_NAME: canyonos-core
 
 jobs:
-  # PR builds only verify the image builds: no login, no package write.
+  # PR and main builds only verify the image builds: no login, no package write.
   build:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -51,9 +63,39 @@ jobs:
           cache-from: type=gha,scope=canyonos-core
           cache-to: type=gha,mode=max,scope=canyonos-core
 
-  # Only pushes to main and manual runs may publish.
+  # Other prefixes belong to other release workflows, so a non "core-v" tag skips
+  # this job and the publish behind it.
+  verify:
+    if: startsWith(inputs.tag || github.event.release.tag_name, 'core-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          persist-credentials: false
+
+      - id: tag
+        name: Check the tag against the manifest
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          tagged="${TAG#core-v}"
+          manifest=$(grep -m1 '^version = ' packages/core/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          if [ "$tagged" != "$manifest" ]; then
+            echo "$TAG does not match packages/core/pyproject.toml version $manifest" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$tagged" >> "$GITHUB_OUTPUT"
+
+  # The only job that pushes. A published "core-v*" release is the switch.
   publish:
-    if: github.event_name != 'pull_request'
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -62,6 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ needs.verify.outputs.tag }}
           persist-credentials: false
 
       # ghcr requires a lowercase namespace; the org login is mixed case.
@@ -84,9 +127,12 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ steps.registry.outputs.path }}/${{ env.IMAGE_NAME }}
-          # `latest` is compiled into shipped CLI binaries; the sha tag is for pinning.
+          # The version comes from the verified tag, not from github.ref, because
+          # the image tag carries no "core-v" prefix. `latest` is compiled into
+          # shipped CLI binaries; the sha tag is for pinning.
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},value=${{ needs.verify.outputs.version }}
+            type=raw,value=latest
             type=sha,format=long
           labels: |
             org.opencontainers.image.title=canyonos-core

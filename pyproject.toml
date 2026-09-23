@@ -3,6 +3,8 @@ name = "canyonos-python"
 
 [tool.uv.workspace]
 members = ["packages/*"]
+# TypeScript-only workspace packages; the glob above matches them, uv must not.
+exclude = ["packages/api", "packages/tsconfig", "packages/ui", "packages/web"]
 
 [tool.uv]
 required-version = ">=0.12.15"
@@ -13,7 +15,6 @@ canyonos = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=9.1.1",
     "ruff==0.16.7",
     "ty==0.0.81",
     "canyonos-core",
@@ -44,10 +45,15 @@ exclude = [
 [tool.ty.analysis]
 allowed-unresolved-imports = [
     # These names are the deliberate flat-module fallbacks used in container images.
-    "convert",
-    "db",
     "gpu_metrics",
+    "metric_convert",
+    "otel_reader",
+    "trace_convert",
+    "utils.otlp_utils",
     "grpc_options",
+    "log_entry",
+    "log_handler",
+    "log_convert",
     "llm_proxy",
     "local_controler_pb2",
     "local_controler_pb2_grpc",
@@ -55,7 +61,7 @@ allowed-unresolved-imports = [
     "redis_client",
     "canyonos_context",
     "deploy",
-    "session_logging",
+    "poller",
     "*_stub",
     "*_agent_stub",
 ]

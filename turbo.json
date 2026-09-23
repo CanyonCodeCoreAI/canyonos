@@ -4,9 +4,96 @@
     "experimentalPythonWorkspaces": true,
     "experimentalTaskCommand": true
   },
+  "globalPassThroughEnv": [
+    "APP_ENV",
+    "API_URL",
+    "AUTH_EMAIL_FROM",
+    "AUTH_MODE",
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "NODE_ENV",
+    "PLAYWRIGHT_BASE_URL",
+    "PORT",
+    "VITE_API_URL",
+    "VITE_WEB_PORT",
+    "WEB_PUBLIC_URL",
+    "WORKFLOW_GENERATION_STUB"
+  ],
   "tasks": {
+    "dev": {
+      "dependsOn": ["^build"],
+      "persistent": true,
+      "cache": false,
+      "passThroughEnv": ["SEED_DEV_DATA"]
+    },
     "build": {
-      "cache": true
+      "cache": true,
+      "outputs": ["dist/**"]
+    },
+    "lint": {},
+    "typecheck": {},
+    "@canyonos/api#typecheck": {
+      "dependsOn": ["build"]
+    },
+    "web#build": {
+      "dependsOn": ["^build"]
+    },
+    "web#typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "web#lint": {
+      "dependsOn": ["^build"]
+    },
+    "web#test": {
+      "dependsOn": ["^build"]
+    },
+    "@repo/ui#lint": {
+      "dependsOn": ["^build"]
+    },
+    "@repo/ui#typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "@repo/ui#test": {
+      "dependsOn": ["^build"]
+    },
+    "format": {
+      "cache": false
+    },
+    "format:check": {},
+    "test": {},
+    "canyonos#build:binary": {
+      "cache": false,
+      "command": [
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "-m",
+        "nuitka",
+        "--mode=onefile",
+        "--output-dir=dist",
+        "--include-data-file=canyonos/dashboard.compose.yml=canyonos/dashboard.compose.yml",
+        "--include-distribution-metadata=canyonos",
+        "--assume-yes-for-downloads",
+        "cli.py"
+      ]
+    },
+    "canyonos-python#test": {
+      "command": [
+        "uv",
+        "run",
+        "--active",
+        "--frozen",
+        "pytest",
+        "tests"
+      ],
+      "inputs": [
+        "tests/**",
+        "!tests/**/__pycache__/**",
+        ".claude/skills/porting-to-canyonos/**",
+        "pyproject.toml",
+        "uv.lock"
+      ]
     },
     "canyonos-python#lint": {
       "command": [

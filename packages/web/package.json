@@ -1,0 +1,68 @@
+{
+  "name": "web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "bun": ">=1.3.1"
+  },
+  "browserslist": [
+    "chrome >= 111",
+    "safari >= 16.4",
+    "firefox >= 128",
+    "edge >= 111",
+    "ios_saf >= 16.4"
+  ],
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p ./tsconfig.app.json --noEmit",
+    "web:test:unit": "bun test src/modules",
+    "test": "bun test src/modules",
+    "test:e2e": "bunx playwright test",
+    "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",
+    "format": "prettier --ignore-path ../../.gitignore --write .",
+    "format:check": "prettier --ignore-path ../../.gitignore --check ."
+  },
+  "dependencies": {
+    "@canyonos/api": "*",
+    "@elysiajs/eden": "^1.4.9",
+    "@hookform/resolvers": "^5.4.0",
+    "@lottiefiles/dotlottie-web": "^0.76.0",
+    "@repo/ui": "*",
+    "@tanstack/react-query": "^5.81.2",
+    "@tanstack/react-query-devtools": "^5.81.2",
+    "@tanstack/react-router": "^1.121.34",
+    "@tanstack/react-table": "^8.21.3",
+    "@xstate/react": "^6.0.0",
+    "fflate": "^0.8.3",
+    "framer-motion": "^12.23.22",
+    "lucide-react": "^0.456.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-hook-form": "^7.80.0",
+    "tailwind-merge": "^3.0.1",
+    "tailwindcss": "^4.1.11",
+    "tw-animate-css": "^1.2.4",
+    "use-debounce": "^10.0.6",
+    "vite-tsconfig-paths": "^5.1.4",
+    "xstate": "^5.25.1",
+    "zod": "^3.25.71",
+    "zustand": "^5.0.6"
+  },
+  "devDependencies": {
+    "@canyonos/tsconfig": "workspace:*",
+    "@playwright/test": "^1.57.0",
+    "@tailwindcss/vite": "^4.1.10",
+    "@tanstack/router-plugin": "^1.121.37",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react-swc": "^3.10.2",
+    "playwright": "^1.57.0",
+    "terser": "^5.46.0",
+    "typescript": "5.9.3",
+    "vite": "^7.3.0"
+  }
+}
