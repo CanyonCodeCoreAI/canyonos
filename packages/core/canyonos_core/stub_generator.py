@@ -14,12 +14,15 @@ import argparse
 import ast
 import os
 import shutil
-import yaml
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from canyonos_core.schema import DependencyPinConflict, SchemaViolation
+from canyonos_core.schema import (
+    DependencyPinConflict,
+    SchemaViolation,
+    load_agent_declaration,
+)
 
 # Packages every agent container needs regardless of its specific business logic.
 #
@@ -66,7 +69,7 @@ def _build_import_nodes():
     ]
 
 
-def _build_stub_method(func_config, agent_name):
+def _build_stub_method(function, agent_name):
     """
     Build an AST node for a single stub method.
 
@@ -86,16 +89,16 @@ def _build_stub_method(func_config, agent_name):
             return Future(parent=inspect.stack()[1].filename, service="FinanceAgent",
                           method="get_stock_price", args=args, grpc_stub=self.stub)
     """
-    func_name = func_config["name"]
-    description = func_config.get("description", "")
-    arguments = func_config.get("arguments", [])
+    func_name = function.name
+    description = function.description
+    arguments = function.arguments
 
     # Build argument nodes: self + declared args with type annotations
     args_list = [ast.arg(arg="self")]
     for arg in arguments:
         arg_node = ast.arg(
-            arg=arg["name"],
-            annotation=ast.Name(id=arg["type"]) if "type" in arg else None,
+            arg=arg.name,
+            annotation=ast.parse(arg.type, mode="eval").body if arg.type else None,
         )
         args_list.append(arg_node)
 
@@ -118,7 +121,7 @@ def _build_stub_method(func_config, agent_name):
 
     # Build the args dict with Future replacement:
     # args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker, ...}
-    arg_dict_keys = [ast.Constant(value=a["name"]) for a in arguments]
+    arg_dict_keys = [ast.Constant(value=a.name) for a in arguments]
     arg_dict_values = []
     for a in arguments:
         # value.id if isinstance(value, Future) else value
@@ -126,11 +129,11 @@ def _build_stub_method(func_config, agent_name):
             ast.IfExp(
                 test=ast.Call(
                     func=ast.Name(id="isinstance"),
-                    args=[ast.Name(id=a["name"]), ast.Name(id="Future")],
+                    args=[ast.Name(id=a.name), ast.Name(id="Future")],
                     keywords=[],
                 ),
-                body=ast.Attribute(value=ast.Name(id=a["name"]), attr="id"),
-                orelse=ast.Name(id=a["name"]),
+                body=ast.Attribute(value=ast.Name(id=a.name), attr="id"),
+                orelse=ast.Name(id=a.name),
             )
         )
 
@@ -196,7 +199,7 @@ def _build_stub_method(func_config, agent_name):
     return func_def
 
 
-def _build_stub_class(agent_config):
+def _build_stub_class(declaration):
     """
     Build an AST node for the entire stub class.
 
@@ -206,8 +209,8 @@ def _build_stub_class(agent_config):
                 pass
             ...stub methods...
     """
-    class_name = agent_config["name"]
-    functions = agent_config.get("functions", [])
+    class_name = declaration.name
+    functions = declaration.functions
 
     # __init__ method: simple pass, no gRPC setup needed.
     # Future handles its own gRPC connections via env vars.
@@ -229,8 +232,8 @@ def _build_stub_class(agent_config):
 
     # Build all stub methods
     methods = [init_method]
-    for func_config in functions:
-        methods.append(_build_stub_method(func_config, agent_config["name"]))
+    for function in functions:
+        methods.append(_build_stub_method(function, declaration.name))
 
     class_def = ast.ClassDef(
         name=class_name,
@@ -246,13 +249,11 @@ def _build_stub_class(agent_config):
 def generate_stub(yaml_path, output_path):
     """
     Read a YAML agent definition and generate an importable Python stub file.
+
+    Raises:
+        SchemaError: the declaration fails the agent schema.
     """
-    with open(yaml_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    agent_config = config["agent"]
-
-    class_def = _build_stub_class(agent_config)
+    class_def = _build_stub_class(load_agent_declaration(yaml_path))
 
     # Build the full module AST
     module = ast.Module(
@@ -672,10 +673,7 @@ def generate_docker(
         stub_entrypoints:  Optional {stub_basename: entrypoint} map for exact stub placement.
         requirements:   Optional list of extra pip packages this agent needs.
     """
-    with open(yaml_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    agent_name = config["agent"]["name"]
+    agent_name = load_agent_declaration(yaml_path).name
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.join(script_dir, "..")
 

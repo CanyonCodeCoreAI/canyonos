@@ -56,6 +56,7 @@ __all__ = [
     "SchemaError",
     "SchemaViolation",
     "WorkflowService",
+    "declarations_by_name",
     "load_agent_declaration",
     "load_manifest",
     "render_violation",
@@ -132,6 +133,33 @@ def _missing_sources(manifest, manifest_path, source_dir):
     return violations
 
 
+def _scan_declarations(declarations_dir):
+    """`({agent.name: path}, names claimed, violations)` for a declarations directory."""
+    by_name = {}
+    claimed = set()
+    violations = []
+    for path in sorted(glob.glob(os.path.join(declarations_dir, "*.yaml"))):
+        name = _declared_name(path)
+        if name is None:
+            continue
+        # A declaration that fails its own checks still claims its name, so the
+        # agent it belongs to is not also reported as having none.
+        claimed.add(name)
+        try:
+            declaration = load_agent_declaration(path)
+        except SchemaError as error:
+            violations.extend(error.violations)
+            continue
+        claimed.add(declaration.name)
+        by_name[declaration.name] = path
+    return by_name, claimed, violations
+
+
+def declarations_by_name(declarations_dir):
+    """Each valid agent declaration's path, keyed by the `agent.name` it sets."""
+    return _scan_declarations(declarations_dir)[0]
+
+
 def validate_project(manifest_path, declarations_dir, source_dir=None):
     """Every violation in a project's manifest and agent declarations.
 
@@ -151,20 +179,8 @@ def validate_project(manifest_path, declarations_dir, source_dir=None):
     except SchemaError as error:
         violations.extend(error.violations)
 
-    declared = set()
-    for path in sorted(glob.glob(os.path.join(declarations_dir, "*.yaml"))):
-        name = _declared_name(path)
-        if name is None:
-            continue
-        # A declaration that fails its own checks still claims its name, so the
-        # agent it belongs to is not also reported as having none.
-        declared.add(name)
-        try:
-            declaration = load_agent_declaration(path)
-        except SchemaError as error:
-            violations.extend(error.violations)
-            continue
-        declared.add(declaration.name)
+    _, declared, declaration_violations = _scan_declarations(declarations_dir)
+    violations.extend(declaration_violations)
 
     if manifest is None:
         return tuple(violations)

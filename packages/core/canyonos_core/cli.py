@@ -20,6 +20,7 @@ from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
     DependencyPinConflict,
+    declarations_by_name,
     load_manifest,
     render_violation,
     validate_project,
@@ -391,15 +392,8 @@ def _run_build(config_path):
     if not yaml_files:
         logger.warning("No agent YAML files found in %s", declarations_dir)
 
-    import yaml
-
     # Looks up a config entry's YAML and to map stubs to entrypoints.
-    yaml_by_name = {}
-    for yaml_path in yaml_files:
-        with open(yaml_path) as f:
-            name = yaml.safe_load(f).get("agent", {}).get("name")
-        if name:
-            yaml_by_name[name] = yaml_path
+    yaml_by_name = declarations_by_name(declarations_dir)
 
     # Maps each generated stub's basename to its agent's entrypoint path, which
     # is the single location the stub is written to and copied to.

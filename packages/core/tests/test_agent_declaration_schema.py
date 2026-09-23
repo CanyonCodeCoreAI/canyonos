@@ -135,14 +135,34 @@ class ArgumentTypeTests(_DeclarationCase):
                 self.assertEqual(declaration.functions[0].arguments[0].type, type_name)
 
     def test_a_type_the_stub_cannot_import_is_rejected(self):
-        for type_name in ("List[str]", "MyModel", "Str", "typing.Any"):
+        for type_name in (
+            "List[str]",
+            "MyModel",
+            "Str",
+            "typing.Any",
+            "list[MyModel]",
+            "'str'",
+            "str(",
+        ):
             with self.subTest(type=type_name):
                 violation = self.one(self._declaration(type_name))
                 self.assertEqual(
                     violation.field, "agent.functions[0].arguments[0].type"
                 )
                 self.assertIn(repr(type_name), violation.message)
-                self.assertIn("not a builtin type", violation.message)
+                self.assertIn("not built from builtin types", violation.message)
+
+    def test_a_type_built_from_builtins_is_accepted(self):
+        for type_name in (
+            "list[str]",
+            "dict[str, int]",
+            "tuple[int, ...]",
+            "int | None",
+            "None",
+        ):
+            with self.subTest(type=type_name):
+                declaration = self.load(self._declaration(type_name))
+                self.assertEqual(declaration.functions[0].arguments[0].type, type_name)
 
     def test_the_rejection_names_the_file_and_the_field(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,6 +189,50 @@ class ArgumentTypeTests(_DeclarationCase):
         )
 
         self.assertIsNone(declaration.functions[0].arguments[0].type)
+
+
+class GeneratedNameTests(_DeclarationCase):
+    """Every name in a declaration is written into the stub as Python source."""
+
+    def _declaration(self, agent="ExampleAgent", function="hello", arguments=()):
+        return {
+            "agent": {
+                "name": agent,
+                "functions": [{"name": function, "arguments": list(arguments)}],
+            }
+        }
+
+    def test_a_name_that_is_not_an_identifier_is_rejected(self):
+        cases = [
+            ("agent.name", self._declaration(agent="Bad-Agent")),
+            ("agent.functions[0].name", self._declaration(function="bad-name")),
+            ("agent.functions[0].name", self._declaration(function="class")),
+            (
+                "agent.functions[0].arguments[0].name",
+                self._declaration(arguments=[{"name": "from"}]),
+            ),
+            (
+                "agent.functions[0].arguments[0].name",
+                self._declaration(arguments=[{"name": "my-arg"}]),
+            ),
+        ]
+        for field, document in cases:
+            with self.subTest(field=field, document=document):
+                violation = self.one(document)
+                self.assertEqual(violation.field, field)
+                self.assertIn("not a valid Python identifier", violation.message)
+
+    def test_an_argument_named_self_is_rejected(self):
+        violation = self.one(self._declaration(arguments=[{"name": "self"}]))
+
+        self.assertEqual(violation.field, "agent.functions[0].arguments[0].name")
+
+    def test_a_repeated_argument_name_is_rejected(self):
+        violation = self.one(
+            self._declaration(arguments=[{"name": "a"}, {"name": "a"}])
+        )
+
+        self.assertEqual(violation.field, "agent.functions[0].arguments[1].name")
 
 
 class ValidateProjectTests(unittest.TestCase):
