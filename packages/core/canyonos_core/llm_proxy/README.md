@@ -1,5 +1,7 @@
 # llm_proxy
 
+Contract reference: [docs/llm-proxy.md](../../../../docs/llm-proxy.md).
+
 A local, single-machine pass-through proxy for **OpenAI**, **Anthropic**, and
 **Bedrock**. Callers keep their exact SDK calling convention — the only change is
 one base-URL env var per provider. Every call flows through one function

@@ -1,3 +1,5 @@
+Contract reference: [docs/ec2.md](../../../../../../docs/ec2.md).
+
 What you need to run agents on EC2. 
 
 For local controller
