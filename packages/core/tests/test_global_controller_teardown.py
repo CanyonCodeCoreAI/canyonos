@@ -22,9 +22,9 @@ class TeardownTests(unittest.TestCase):
         controller.redis_containers = {}
         controller.containers = {}
         controller.process_supervisor = MagicMock()
-        self.list_instances = self.enterContext(
-            patch("canyonos_core.controller.global_controller.list_instances")
-        )
+        patcher = patch("canyonos_core.controller.global_controller.list_instances")
+        self.list_instances = patcher.start()
+        self.addCleanup(patcher.stop)
         self.list_instances.side_effect = list(instances)
         controller._stop_redis_containers = MagicMock()
         controller._stop_metrics_collectors = MagicMock()

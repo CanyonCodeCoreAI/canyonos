@@ -57,22 +57,22 @@ def _bare_controller(testcase, redis, instances, node_redis=None):
     """
     controller = GlobalController.__new__(GlobalController)
     controller.redis = redis
-    testcase.enterContext(
-        patch(
-            "canyonos_core.controller.global_controller.list_instances",
-            return_value=instances,
-        )
+    patcher = patch(
+        "canyonos_core.controller.global_controller.list_instances",
+        return_value=instances,
     )
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
     # Fixtures use "endpoint" as the already-resolved container address unless a
     # test needs the two to differ, in which case it sets "routing_endpoint".
-    testcase.enterContext(
-        patch(
-            "canyonos_core.controller.global_controller.routing_endpoint_for",
-            side_effect=lambda instance: instance.get(
-                "routing_endpoint", instance["endpoint"]
-            ),
-        )
+    patcher = patch(
+        "canyonos_core.controller.global_controller.routing_endpoint_for",
+        side_effect=lambda instance: instance.get(
+            "routing_endpoint", instance["endpoint"]
+        ),
     )
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
     controller._lc_stubs = {}
     if node_redis is not None:
         controller.node_redis = node_redis

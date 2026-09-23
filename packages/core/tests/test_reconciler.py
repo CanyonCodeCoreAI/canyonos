@@ -1,3 +1,4 @@
+import itertools
 import os
 import sys
 import time
@@ -44,9 +45,9 @@ class StartupReadinessTests(unittest.TestCase):
         # _launch_redis_containers registers the local node in production
         controller.node_redis = {"localhost": controller.redis}
         controller._last_status = {}
-        self.list_instances = self.enterContext(
-            patch("canyonos_core.controller.global_controller.list_instances")
-        )
+        patcher = patch("canyonos_core.controller.global_controller.list_instances")
+        self.list_instances = patcher.start()
+        self.addCleanup(patcher.stop)
         return controller
 
     def _ready(self, controller, instance):
@@ -92,7 +93,7 @@ class StartupReadinessTests(unittest.TestCase):
         with (
             patch(
                 "canyonos_core.controller.global_controller.time.time",
-                side_effect=[0, 0, 2],
+                side_effect=itertools.chain([0, 0], itertools.repeat(2)),
             ),
             patch("canyonos_core.controller.global_controller.time.sleep") as sleep,
             self.assertLogs(
@@ -237,12 +238,12 @@ class ScalingEntryPointTests(unittest.TestCase):
 class ReconcileTests(unittest.TestCase):
     def _healthy(self, reconciler):
         """Force every health probe to pass without opening a socket."""
-        self.enterContext(
-            patch.object(Reconciler, "_accepts_connections", return_value=True)
-        )
-        self.enterContext(
-            patch.object(Reconciler, "_reports_are_fresh", return_value=True)
-        )
+        patcher = patch.object(Reconciler, "_accepts_connections", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(Reconciler, "_reports_are_fresh", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         return reconciler
 
     def test_surplus_instances_are_reaped_and_the_kept_one_is_left_alone(self):
@@ -474,12 +475,12 @@ class DrainingFlagTests(unittest.TestCase):
 
 class DrainReconcileTests(unittest.TestCase):
     def _reconciler(self, redis, manager):
-        self.enterContext(
-            patch.object(Reconciler, "_accepts_connections", return_value=True)
-        )
-        self.enterContext(
-            patch.object(Reconciler, "_reports_are_fresh", return_value=True)
-        )
+        patcher = patch.object(Reconciler, "_accepts_connections", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(Reconciler, "_reports_are_fresh", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         return _bare_reconciler(_fake_context(redis), manager)
 
     def test_draining_reaps_every_instance_regardless_of_desired(self):

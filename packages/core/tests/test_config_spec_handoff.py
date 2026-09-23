@@ -132,12 +132,12 @@ class ReloadPropagationTests(unittest.TestCase):
         context.node_redis_for_instance = lambda instance: redis
         context._set_controllers(agents)
 
-        self.enterContext(
-            patch.object(Reconciler, "_accepts_connections", return_value=True)
-        )
-        self.enterContext(
-            patch.object(Reconciler, "_reports_are_fresh", return_value=True)
-        )
+        patcher = patch.object(Reconciler, "_accepts_connections", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(Reconciler, "_reports_are_fresh", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         return _bare_reconciler(context, provisioner)
 
     def test_an_agent_added_by_a_reload_is_provisioned_without_a_reload_signal(self):

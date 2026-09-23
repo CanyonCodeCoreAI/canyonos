@@ -20,8 +20,13 @@ class _FakeRedis:
         self.ttls = {}
         self.client = self
 
-    def set(self, key, value):
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.strings:
+            return None
         self.strings[key] = str(value)
+        if ex is not None:
+            self.ttls[key] = ex
+        return True
 
     def setnx(self, key, value):
         if key in self.strings:

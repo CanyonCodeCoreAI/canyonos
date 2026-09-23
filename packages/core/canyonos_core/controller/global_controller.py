@@ -1140,8 +1140,6 @@ class GlobalController(ControllerContext):
 
     def cleanup(self):
         """Full cleanup — stop all containers and Redis, called on exit."""
-        if not self.running and not self.redis_containers:
-            return []  # Already cleaned up
         logger.info("Cleaning up all resources...")
         return self.stop()
 

@@ -11,6 +11,7 @@ sys.path.insert(
 )
 
 from canyonos_core.controller.local_controller_frontend import (
+    EXECUTE_DEDUP_TTL_SECONDS,
     FUTURE_CLEANUP_GRACE_SECONDS,
     LocalControllerServicer,
 )
@@ -42,6 +43,16 @@ class ExecuteDedupTests(unittest.TestCase):
 
         self.assertEqual(servicer.request_queue.qsize(), 1)
         self.assertEqual(first.resonse, second.resonse)
+
+    def test_the_acceptance_key_is_created_with_its_expiry(self):
+        servicer = self._servicer()
+
+        self._execute(servicer, {"future_id": "f1", "function": "run"})
+
+        self.assertEqual(
+            servicer.redis.ttls["execute:10.0.0.1:50051:f1:accepted"],
+            EXECUTE_DEDUP_TTL_SECONDS,
+        )
 
     def test_the_same_future_is_accepted_by_each_endpoint_sharing_a_redis(self):
         redis = _FakeRedis()

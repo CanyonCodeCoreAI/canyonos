@@ -70,9 +70,8 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
             return False
         key = f"execute:{self.my_endpoint}:{future_id}:accepted"
         try:
-            if not self.redis.setnx(key, "1"):
+            if not self.redis.set(key, "1", nx=True, ex=EXECUTE_DEDUP_TTL_SECONDS):
                 return True
-            self.redis.expire(key, EXECUTE_DEDUP_TTL_SECONDS)
         except Exception as e:
             logger.warning("Execute: dedup check failed, queueing anyway: %s", e)
         return False

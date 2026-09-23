@@ -316,13 +316,15 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_result_callback_failure_is_marked_with_category(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(WriteResult=MagicMock(side_effect=RuntimeError("boom")))
-        controller = _bind_failure_marker(
-            SimpleNamespace(
-                redis=redis,
-                agent_id="agent-1",
-                agent_name="ExampleAgent",
-                _my_endpoint="localhost:50051",
-                _get_remote_stub=lambda endpoint: stub,
+        controller = _bind_call_with_retry(
+            _bind_failure_marker(
+                SimpleNamespace(
+                    redis=redis,
+                    agent_id="agent-1",
+                    agent_name="ExampleAgent",
+                    _my_endpoint="localhost:50051",
+                    _get_remote_stub=lambda endpoint: stub,
+                )
             )
         )
 
@@ -340,6 +342,7 @@ class ErrorPropagationTests(unittest.TestCase):
             logs[0]["Attributes"]["exception.type"], "ResultCallbackFailed"
         )
         self.assertIn("Result callback failed", logs[0]["Body"])
+        stub.WriteResult.assert_called()
 
     def test_log_handler_never_duplicates_a_failure_already_recorded(self):
         """LogHandler must refuse WARNING+ so ambient capture can never double-record

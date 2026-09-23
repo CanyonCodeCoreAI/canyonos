@@ -9,9 +9,9 @@ class RedisClient(object):
 
     # --- String operations ---
 
-    def set(self, key, value):
-        """Set a key-value pair in Redis."""
-        self.client.set(key, value)
+    def set(self, key, value, nx=False, ex=None):
+        """Set a key-value pair in Redis. With nx, returns False if the key already exists."""
+        return self.client.set(key, value, nx=nx, ex=ex)
 
     def get(self, key):
         """Get a value by key from Redis. Returns None if key does not exist."""
