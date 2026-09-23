@@ -3,7 +3,6 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest import mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -570,27 +569,6 @@ class PlatformPinTests(unittest.TestCase):
         names = {Requirement(r).name for r in BASE_WORKFLOW_REQUIREMENTS}
         self.assertEqual(names, set(TESTED_MAJOR_VERSIONS))
 
-    def test_the_untested_version_check_warns_only_past_the_tested_major(self):
-        check = stub_generator._untested_version_check(BASE_WORKFLOW_REQUIREMENTS)
-        installed = {
-            "grpcio": "1.80.0",
-            "protobuf": "7.0.1",
-            "redis": "8.1.0",
-            "flask": "3.1.3",
-        }
-        buffer = io.StringIO()
-        with mock.patch(
-            "importlib.metadata.version", side_effect=installed.__getitem__
-        ):
-            with redirect_stdout(buffer):
-                exec(check, {})
-        self.assertEqual(
-            buffer.getvalue().splitlines(),
-            [
-                "WARNING: protobuf 7.0.1 is newer than CanyonOS has tested (up to 6.x) and may not work."
-            ],
-        )
-
     def _dockerfile(self, workflow, requirements=None):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
@@ -615,20 +593,6 @@ class PlatformPinTests(unittest.TestCase):
                     )
             return _read_dockerfile(output_dir)
 
-    def test_the_untested_version_check_covers_only_that_images_base(self):
-        for workflow, base in (
-            (False, BASE_AGENT_REQUIREMENTS),
-            (True, BASE_WORKFLOW_REQUIREMENTS),
-        ):
-            with self.subTest(workflow=workflow):
-                self.assertIn(
-                    f'RUN python -c "{stub_generator._untested_version_check(base)}"',
-                    self._dockerfile(workflow),
-                )
-        self.assertNotIn(
-            "'flask'", stub_generator._untested_version_check(BASE_AGENT_REQUIREMENTS)
-        )
-
     def test_the_proxy_gets_its_own_venv_after_the_app_install(self):
         for workflow in (False, True):
             with self.subTest(workflow=workflow):
@@ -645,6 +609,61 @@ class PlatformPinTests(unittest.TestCase):
                     proxy_stage,
                 )
 
+    def test_installs_are_held_below_each_images_tested_majors(self):
+        for workflow, caps in (
+            (False, "'grpcio<2' 'protobuf<7' 'redis<9'"),
+            (True, "'grpcio<2' 'protobuf<7' 'redis<9' 'flask<4'"),
+        ):
+            with self.subTest(workflow=workflow):
+                dockerfile = self._dockerfile(workflow)
+                self.assertIn(f"printf '%s\\n' {caps} > /tmp/tested.txt", dockerfile)
+                self.assertIn(
+                    "uv pip install --system -r requirements.txt "
+                    "--overrides /tmp/overrides.txt -c /tmp/tested.txt",
+                    dockerfile,
+                )
+
+    def test_a_package_the_app_asks_newer_for_is_left_uncapped(self):
+        dockerfile = self._dockerfile(False, requirements=["protobuf>=7"])
+        self.assertIn(
+            "printf '%s\\n' 'grpcio<2' 'redis<9' > /tmp/tested.txt", dockerfile
+        )
+
+    def test_requirements_above_the_tested_major_are_reported(self):
+        self.assertEqual(
+            stub_generator.too_new_requirements(
+                [
+                    "protobuf>=7",
+                    "protobuf==7.1",
+                    "protobuf==7.*",
+                    "protobuf~=7.0",
+                    "flask>4",
+                    "grpcio>=2",
+                ],
+                BASE_WORKFLOW_REQUIREMENTS,
+            ),
+            [
+                ("protobuf>=7", "protobuf<7"),
+                ("protobuf==7.1", "protobuf<7"),
+                ("protobuf==7.*", "protobuf<7"),
+                ("protobuf~=7.0", "protobuf<7"),
+                ("flask>4", "flask<4"),
+                ("grpcio>=2", "grpcio<2"),
+            ],
+        )
+
+    def test_requirements_that_still_allow_a_tested_version_are_not_reported(self):
+        self.assertEqual(
+            stub_generator.too_new_requirements(
+                ["protobuf>6.9", "protobuf>=6,<8", "redis", "yfinance>=9"],
+                BASE_WORKFLOW_REQUIREMENTS,
+            ),
+            [],
+        )
+
+    def test_an_agent_flask_pin_is_not_a_base_package_to_warn_about(self):
+        self.assertEqual(stub_generator.too_new_requirements(["flask>=4"]), [])
+
     def test_agents_no_longer_carry_the_proxys_packages(self):
         for name in ("flask", "requests", "boto3"):
             with self.subTest(name=name):
@@ -654,7 +673,7 @@ class PlatformPinTests(unittest.TestCase):
 
     def test_requirements_below_a_floor_are_reported(self):
         self.assertEqual(
-            stub_generator.unsupported_requirements(
+            stub_generator.too_old_requirements(
                 [
                     "flask==1.9",
                     "flask<2.3",
@@ -675,7 +694,7 @@ class PlatformPinTests(unittest.TestCase):
 
     def test_requirements_that_reach_a_floor_are_not_reported(self):
         self.assertEqual(
-            stub_generator.unsupported_requirements(
+            stub_generator.too_old_requirements(
                 [
                     "flask~=2.2",
                     "flask>=2",
@@ -689,7 +708,7 @@ class PlatformPinTests(unittest.TestCase):
         )
 
     def test_an_agent_may_pin_any_flask_now_the_proxy_has_its_own(self):
-        self.assertEqual(stub_generator.unsupported_requirements(["flask==1.0"]), [])
+        self.assertEqual(stub_generator.too_old_requirements(["flask==1.0"]), [])
 
     def test_the_workflow_context_decides_the_same_way(self):
         overrides, _ = self._context(["protobuf>=6.32"], workflow=True)

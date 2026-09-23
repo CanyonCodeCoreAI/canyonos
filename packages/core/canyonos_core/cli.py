@@ -338,19 +338,29 @@ def _run_build(config_path):
     from canyonos_core.stub_generator import (
         BASE_AGENT_REQUIREMENTS,
         BASE_WORKFLOW_REQUIREMENTS,
-        unsupported_requirements,
+        too_new_requirements,
+        too_old_requirements,
     )
 
-    too_old = [
-        f"{agent['name']} currently requires {asked}, but CanyonOS only supports {supported}"
-        for agent in agents
-        for asked, supported in unsupported_requirements(
-            _normalize_requirements(agent),
+    too_old = []
+    for agent in agents:
+        requirements = _normalize_requirements(agent)
+        base = (
             BASE_WORKFLOW_REQUIREMENTS
             if agent.get("type", "agent") == "workflow"
-            else BASE_AGENT_REQUIREMENTS,
+            else BASE_AGENT_REQUIREMENTS
         )
-    ]
+        too_old += [
+            f"{agent['name']} currently requires {asked}, but CanyonOS only supports {supported}"
+            for asked, supported in too_old_requirements(requirements, base)
+        ]
+        for asked, tested in too_new_requirements(requirements, base):
+            logger.warning(
+                "%s currently requires %s, but CanyonOS has only tested %s; it may not work",
+                agent["name"],
+                asked,
+                tested,
+            )
     for message in too_old:
         logger.error("%s", message)
     if too_old:

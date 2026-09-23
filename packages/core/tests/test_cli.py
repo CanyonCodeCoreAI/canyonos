@@ -260,6 +260,27 @@ class CliBuildTests(unittest.TestCase):
             ],
         )
 
+    def test_build_warns_on_a_requirement_above_the_tested_major_and_continues(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            config_path = project_dir / "config" / "global_controller.yaml"
+            config = yaml.safe_load(config_path.read_text())
+            config["agents"][0]["requirements"] = ["protobuf>=7"]
+            config_path.write_text(yaml.safe_dump(config))
+
+            with self.assertLogs("canyonos_core", level="WARNING") as logs:
+                _, generate_docker, _ = self._run_build(
+                    project_dir, [str(agent_yaml)], buildx_available=True
+                )
+
+        self.assertIn(
+            "WARNING:canyonos_core:ExampleAgent currently requires protobuf>=7, "
+            "but CanyonOS has only tested protobuf<7; it may not work",
+            logs.output,
+        )
+        generate_docker.assert_called_once()
+
     def test_build_falls_back_to_sequential_docker_build_without_buildx(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)

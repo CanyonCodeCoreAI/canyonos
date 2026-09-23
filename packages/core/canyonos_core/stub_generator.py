@@ -25,7 +25,7 @@ BASE_AGENT_REQUIREMENTS = [
     "redis>=3.5",
 ]
 
-# Newest major version of each base package CanyonOS is tested on; newer installs with a warning.
+# Newest major version of each base package CanyonOS is tested on; installs stay below the next major unless the app asks for newer, which only warns.
 TESTED_MAJOR_VERSIONS = {
     "grpcio": 1,
     "protobuf": 6,
@@ -586,8 +586,8 @@ def _caps_below(spec, floor):
     return False
 
 
-def unsupported_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
-    """(asked, supported) for each requirement that rules out every base-package version CanyonOS supports."""
+def too_old_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+    """Return (requirement, our_floor) for each requirement that only allows versions older than CanyonOS supports."""
     floors = {}
     for base in base_requirements:
         parsed = Requirement(base)
@@ -604,32 +604,66 @@ def unsupported_requirements(requirements, base_requirements=BASE_AGENT_REQUIREM
     return unsupported
 
 
-def _dependency_stage(overrides, base_requirements):
-    """Render the install stage. uv reads overrides from a file and takes no
-    inline form, so the image writes one; the entries are quoted because a bare
-    `>=` would be a redirect."""
+def _forces_at_or_above(spec, limit):
+    """Whether this one specifier allows only versions at or above limit."""
+    try:
+        if spec.operator == "==" and spec.version.endswith(".*"):
+            return Version(spec.version[:-2]) >= limit
+        version = Version(spec.version)
+    except InvalidVersion:
+        return False
+    return spec.operator in ("==", "===", ">=", ">", "~=") and version >= limit
+
+
+def too_new_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+    """Return (requirement, tested_limit) for each requirement that only allows versions newer than CanyonOS has tested."""
+    limits = {
+        name: Version(str(major + 1))
+        for name, major in _tested_majors(base_requirements).items()
+    }
+    too_new = []
+    for requirement in requirements:
+        try:
+            parsed = Requirement(requirement)
+        except InvalidRequirement:
+            continue
+        limit = limits.get(parsed.name.lower())
+        if limit and any(_forces_at_or_above(spec, limit) for spec in parsed.specifier):
+            too_new.append((requirement, f"{parsed.name.lower()}<{limit}"))
+    return too_new
+
+
+def _tested_majors(base_requirements):
+    """TESTED_MAJOR_VERSIONS narrowed to the packages this image's base list installs."""
+    names = {Requirement(r).name for r in base_requirements}
+    return {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
+
+
+def _dependency_stage(overrides, base_requirements, requirements):
+    """Render the install stage: app packages held below the tested majors, then the proxy's own venv.
+
+    uv reads overrides and constraints only from files, so the image writes them;
+    entries are quoted because a bare `>=` or `<` would be a redirect.
+    """
     forced = " ".join(f"'{override}'" for override in overrides)
+    asked_newer = {
+        Requirement(requirement).name.lower()
+        for requirement, _ in too_new_requirements(requirements, base_requirements)
+    }
+    caps = " ".join(
+        f"'{name}<{major + 1}'"
+        for name, major in _tested_majors(base_requirements).items()
+        if name not in asked_newer
+    )
     return f"""COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
- && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt
+ && printf '%s\\n' {caps} > /tmp/tested.txt \\
+ && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
 RUN uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
-RUN python -c "{_untested_version_check(base_requirements)}"
 RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-proxy \\
  && uv pip install --python /opt/canyonos-proxy/bin/python {" ".join(PROXY_REQUIREMENTS)} \\
  && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-proxy/bin/python {PROXY_BEDROCK_REQUIREMENT}; fi
 """
-
-
-def _untested_version_check(base_requirements):
-    """One-line Python that warns for each base package installed past its tested major version."""
-    names = {Requirement(r).name for r in base_requirements}
-    tested = {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
-    return (
-        "import importlib.metadata as m; "
-        f"tested = {tested!r}; "
-        "[print(f'WARNING: {n} {m.version(n)} is newer than CanyonOS has tested (up to {t}.x) and may not work.') "
-        "for n, t in tested.items() if int(m.version(n).split('.')[0]) > t]"
-    )
 
 
 def generate_docker(
@@ -768,7 +802,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides, BASE_AGENT_REQUIREMENTS)}
+{_dependency_stage(overrides, BASE_AGENT_REQUIREMENTS, requirements or [])}
 COPY . .
 
 ENV CANYONOS_AGENT_NAME={agent_name}
@@ -951,7 +985,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides, BASE_WORKFLOW_REQUIREMENTS)}
+{_dependency_stage(overrides, BASE_WORKFLOW_REQUIREMENTS, requirements or [])}
 COPY . .
 
 EXPOSE 50051

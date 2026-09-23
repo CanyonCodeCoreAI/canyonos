@@ -243,6 +243,7 @@ class LocalController(object):
         # Popen only raises if the process can't be spawned -- it returns a healthy
         # handle even if the proxy starts and dies immediately, so poll /healthz.
         deadline = time.time() + 10
+        last_error = None
         while time.time() < deadline:
             if proxy_process.poll() is not None:
                 raise RuntimeError(
@@ -255,13 +256,14 @@ class LocalController(object):
                     "http://127.0.0.1:8081/healthz", timeout=0.5
                 ):
                     break
-            except OSError:
-                pass
+            except OSError as e:
+                last_error = e
             time.sleep(0.2)
         else:
             proxy_process.kill()
             raise RuntimeError(
-                "LLM proxy did not become healthy on 127.0.0.1:8081 within 10s; "
+                "LLM proxy did not become healthy on 127.0.0.1:8081 within 10s "
+                f"(last health check: {last_error}); "
                 "agent LLM calls are routed through it unconditionally and would "
                 "otherwise fail silently."
             )
