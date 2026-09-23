@@ -547,11 +547,7 @@ def _copy_files(output_dir, files_to_copy):
 
 
 def _platform_overrides(requirements):
-    """Force the protobuf floor, intersected with any bound the app itself declares.
-
-    uv replaces a requirement rather than intersecting it, so the app's own
-    protobuf bound is folded into the override instead of being dropped.
-    """
+    """Defines the range of versions protobuf can take."""
     specifier = PROTOBUF_FLOOR.specifier
     for requirement in requirements:
         try:
@@ -563,8 +559,8 @@ def _platform_overrides(requirements):
     return [f"{PROTOBUF_FLOOR.name}{specifier}"]
 
 
-def _caps_below(spec, floor):
-    """Whether this one specifier allows no version at or above floor."""
+def _below_supported_version(spec, floor):
+    """Checks if a version specified in an agents requirements list is below the minimum required version CanyonOS requires."""
     try:
         if spec.operator == "==" and spec.version.endswith(".*"):
             release = Version(spec.version[:-2]).release
@@ -599,13 +595,15 @@ def too_old_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS
         except InvalidRequirement:
             continue
         floor = floors.get(parsed.name.lower())
-        if floor and any(_caps_below(spec, floor[0]) for spec in parsed.specifier):
+        if floor and any(
+            _below_supported_version(spec, floor[0]) for spec in parsed.specifier
+        ):
             unsupported.append((requirement, floor[1]))
     return unsupported
 
 
-def _forces_at_or_above(spec, limit):
-    """Whether this one specifier allows only versions at or above limit."""
+def _above_tested_version(spec, limit):
+    """Checks if a version specified in an agents requirements list is above the newest version CanyonOS has tested."""
     try:
         if spec.operator == "==" and spec.version.endswith(".*"):
             return Version(spec.version[:-2]) >= limit
@@ -628,7 +626,9 @@ def too_new_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS
         except InvalidRequirement:
             continue
         limit = limits.get(parsed.name.lower())
-        if limit and any(_forces_at_or_above(spec, limit) for spec in parsed.specifier):
+        if limit and any(
+            _above_tested_version(spec, limit) for spec in parsed.specifier
+        ):
             too_new.append((requirement, f"{parsed.name.lower()}<{limit}"))
     return too_new
 
@@ -639,12 +639,8 @@ def _tested_majors(base_requirements):
     return {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
 
 
-def _dependency_stage(overrides, base_requirements, requirements):
-    """Render the install stage: app packages held below the tested majors, then the proxy's own venv.
-
-    uv reads overrides and constraints only from files, so the image writes them;
-    entries are quoted because a bare `>=` or `<` would be a redirect.
-    """
+def _dockerfile_install_steps(overrides, base_requirements, requirements):
+    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM proxy's own separate packages."""
     forced = " ".join(f"'{override}'" for override in overrides)
     asked_newer = {
         Requirement(requirement).name.lower()
@@ -802,7 +798,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides, BASE_AGENT_REQUIREMENTS, requirements or [])}
+{_dockerfile_install_steps(overrides, BASE_AGENT_REQUIREMENTS, requirements or [])}
 COPY . .
 
 ENV CANYONOS_AGENT_NAME={agent_name}
@@ -985,7 +981,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides, BASE_WORKFLOW_REQUIREMENTS, requirements or [])}
+{_dockerfile_install_steps(overrides, BASE_WORKFLOW_REQUIREMENTS, requirements or [])}
 COPY . .
 
 EXPOSE 50051
