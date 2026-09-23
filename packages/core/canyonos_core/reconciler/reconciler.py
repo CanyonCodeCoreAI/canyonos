@@ -8,7 +8,10 @@ import socket
 import sys
 import time
 
-from canyonos_core.controller.controller_context import ControllerContext
+from canyonos_core.controller.controller_context import (
+    ControllerContext,
+    _redis_connect_host,
+)
 from canyonos_core.instances.endpoints import routing_endpoint_for
 from canyonos_core.instances.records import instance_id_from_record
 from canyonos_core.reconciler import state
@@ -53,8 +56,10 @@ class Reconciler(object):
         if not host or not port:
             return False
         try:
+            # A containerized reconciler reaches host-published ports via host.docker.internal.
             with socket.create_connection(
-                (host, int(port)), timeout=TCP_PROBE_TIMEOUT_SECONDS
+                (_redis_connect_host(host), int(port)),
+                timeout=TCP_PROBE_TIMEOUT_SECONDS,
             ):
                 return True
         except (OSError, ValueError):
@@ -80,7 +85,14 @@ class Reconciler(object):
             return False
 
     def _is_healthy(self, instance, instance_id):
-        if self._accepts_connections(instance) and self._reports_are_fresh(instance):
+        # A stock database image has no controller to write the metrics heartbeat.
+        is_database = (
+            self.context.agent_specs.get(instance["agent_name"], {}).get("type")
+            == "database"
+        )
+        if self._accepts_connections(instance) and (
+            is_database or self._reports_are_fresh(instance)
+        ):
             self._seen_healthy.add(instance_id)
             return True
         if instance_id not in self._seen_healthy and self._within_startup_grace(

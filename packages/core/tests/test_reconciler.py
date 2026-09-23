@@ -317,6 +317,38 @@ class ReconcileTests(unittest.TestCase):
                 self.assertEqual(manager.removed, expected)
                 self.assertNotIn("local:Alpha:0", reconciler._seen_healthy)
 
+    def test_a_database_is_judged_by_its_connection_alone(self):
+        for accepts, expected in ((True, []), (False, ["local:Db:0"])):
+            with self.subTest(accepts=accepts):
+                redis = _FakeRedis()
+                manager = _FakeProvisioner(
+                    {"Db": [_instance("Db", 0, created_at=time.time() - 3600)]}
+                )
+                context = _fake_context(
+                    redis, [{"name": "Db", "type": "database", "replicas": 1}]
+                )
+                reconciler = _bare_reconciler(context, manager)
+
+                with (
+                    patch.object(
+                        Reconciler, "_accepts_connections", return_value=accepts
+                    ),
+                    patch.object(Reconciler, "_reports_are_fresh", return_value=False),
+                ):
+                    reconciler.reconcile("Db")
+
+                self.assertEqual(manager.removed, expected)
+
+    def test_an_ec2_instance_is_routed_on_its_published_port(self):
+        instance = {
+            "provider": "EC2",
+            "host": "10.0.0.5",
+            "host_port": "5433",
+            "container_port": "5432",
+        }
+
+        self.assertEqual(routing_endpoint_for(instance), "10.0.0.5:5433")
+
     def test_an_agent_with_non_integer_replicas_is_skipped_not_reaped(self):
         redis = _FakeRedis()
         manager = _FakeProvisioner()
@@ -405,6 +437,42 @@ class ReconcileTests(unittest.TestCase):
             reconciler.reconcile()
 
         self.assertEqual(len(manager.ensure_calls), 1)
+
+
+class ConnectionProbeTests(unittest.TestCase):
+    def _probed_address(self, instance, env):
+        reconciler = _bare_reconciler(_fake_context(), _FakeProvisioner())
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch(
+                "canyonos_core.reconciler.reconciler.socket.create_connection"
+            ) as connect,
+        ):
+            if "CANYONOS_REDIS_HOST" not in env:
+                os.environ.pop("CANYONOS_REDIS_HOST", None)
+            self.assertTrue(reconciler._accepts_connections(instance))
+        return connect.call_args.args[0]
+
+    def test_a_containerized_reconciler_probes_local_ports_via_the_host_gateway(self):
+        address = self._probed_address(
+            _instance("Alpha", 0), {"CANYONOS_REDIS_HOST": "host.docker.internal"}
+        )
+
+        self.assertEqual(address, ("host.docker.internal", 8000))
+
+    def test_a_reconciler_on_the_host_probes_localhost(self):
+        self.assertEqual(
+            self._probed_address(_instance("Alpha", 0), {}), ("localhost", 8000)
+        )
+
+    def test_a_remote_host_is_probed_directly(self):
+        instance = {**_instance("Alpha", 0), "host": "10.0.0.5"}
+
+        address = self._probed_address(
+            instance, {"CANYONOS_REDIS_HOST": "host.docker.internal"}
+        )
+
+        self.assertEqual(address, ("10.0.0.5", 8000))
 
 
 class ReportFreshnessTests(unittest.TestCase):

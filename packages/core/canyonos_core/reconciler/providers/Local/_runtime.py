@@ -111,11 +111,12 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             f"{spec.get('api_port', 8080)} is already in use on {host}."
         )
 
-    if ctrl_type == "database" and _is_local_host(host):
-        db_port = int(spec.get("db_port", 5432))
-        if _port_bound(db_port):
+    container_port = CONTAINER_PORT
+    if ctrl_type == "database":
+        host_port, container_port = int(spec.get("db_port", 5432)), 5432
+        if _is_local_host(host) and _port_bound(host_port):
             raise RuntimeError(
-                f"db_port {db_port} is already in use and can't be reassigned "
+                f"db_port {host_port} is already in use and can't be reassigned "
                 "automatically -- free it or change `db_port` in the database's config."
             )
 
@@ -137,7 +138,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             "--add-host",
             "host.docker.internal:host-gateway",
             "-p",
-            f"{host_port}:{CONTAINER_PORT}",
+            f"{host_port}:{container_port}",
             "-e",
             f"CANYONOS_AGENT_PORT={CONTAINER_PORT}",
             "-e",
@@ -175,7 +176,6 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             if project_id:
                 cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
         elif ctrl_type == "database":
-            cmd.extend(["-p", f"{spec.get('db_port', 5432)}:5432"])
             volume_path = spec.get("volume_path")
             if volume_path:
                 cmd.extend(["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"])
@@ -216,7 +216,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             f"{MAX_PORT_ATTEMPTS} attempts"
         )
 
-    endpoint = f"{runtime_id}:{CONTAINER_PORT}"
+    endpoint = f"{runtime_id}:{container_port}"
     _require_controller().redis.set(f"controller:{endpoint}:agent_id", agent_id)
 
     instance = {
@@ -225,7 +225,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         "replica_index": str(replica_index),
         "host": host,
         "host_port": str(host_port),
-        "container_port": str(CONTAINER_PORT),
+        "container_port": str(container_port),
         "endpoint": f"{host}:{host_port}",
         "redis_host": redis_host,
         "redis_port": str(redis_port),
@@ -235,8 +235,6 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         instance["user"] = user
     if ctrl_type == "workflow":
         instance["api_port"] = str(spec.get("api_port", 8080))
-    elif ctrl_type == "database":
-        instance["container_port"] = "5432"
     logger.info("Runtime ready: %s -> %s", runtime_id, instance["endpoint"])
     return instance
 
