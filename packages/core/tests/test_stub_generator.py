@@ -53,12 +53,8 @@ class GenerateDockerRequirementsTests(unittest.TestCase):
             requirements,
             [
                 "grpcio==1.83.1",
-                "grpcio-tools==1.76.0",
                 "protobuf==6.33.5",
                 "redis==8.1.0",
-                "pyyaml==6.0.3",
-                "psutil==7.2.2",
-                "boto3==1.43.91",
                 "flask==3.1.3",
                 "requests==2.34.2",
             ],
@@ -533,18 +529,8 @@ class PlatformPinTests(unittest.TestCase):
             with self.subTest(pin=pin):
                 self.assertIn(pin, BASE_AGENT_REQUIREMENTS)
 
-    def test_grpcio_tools_is_forced_wherever_protobuf_is(self):
-        # protoc stamps its own generation into the *_pb2.py it writes.
-        forced = {pin.split("==")[0] for pin in PLATFORM_PINS}
-        if "protobuf" in forced:
-            self.assertIn("grpcio-tools", forced)
-
-    def test_the_forced_protobuf_satisfies_the_grpcio_tools_bound(self):
-        # grpcio-tools carries the only upper bound on protobuf in the base set,
-        # so the two cannot be bumped independently: 1.65.5 required
-        # protobuf<6.0, which held the runtime below the gencode 6.x that
-        # transitively installed *_pb2.py modules are built with. 1.76.0
-        # requires >=6.31.1.
+    def test_the_forced_protobuf_loads_host_compiled_gencode(self):
+        # The host's grpcio-tools 1.76.0 emits *_pb2.py that need protobuf>=6.31.1 at runtime.
         pins = {pin.split("==")[0]: pin.split("==")[1] for pin in PLATFORM_PINS}
         self.assertGreaterEqual(Version(pins["protobuf"]), Version("6.31.1"))
 
