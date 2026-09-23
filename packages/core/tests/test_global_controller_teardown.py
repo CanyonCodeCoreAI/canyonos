@@ -73,6 +73,24 @@ class TeardownTests(unittest.TestCase):
         self.assertFalse(state.is_draining(controller.redis))
         controller._stop_redis_containers.assert_called_once()
 
+    def test_redis_is_the_last_thing_stopped(self):
+        controller = self._controller([[]])
+        calls = []
+        controller.process_supervisor.terminate_all.side_effect = lambda: calls.append(
+            "terminate"
+        )
+        controller._stop_metrics_collectors.side_effect = lambda: calls.append(
+            "metrics"
+        )
+        controller._stop_redis_containers.side_effect = lambda: calls.append(
+            "redis"
+        ) or []
+
+        with patch("time.sleep"):
+            controller.stop()
+
+        self.assertEqual(calls, ["terminate", "metrics", "redis"])
+
     def test_a_timed_out_drain_still_finishes_shutting_down(self):
         """Instances left by a timed-out drain are the next startup's reconcile to deal with."""
         controller = self._controller([[_instance("Alpha", 0)]])
@@ -81,7 +99,8 @@ class TeardownTests(unittest.TestCase):
         controller.stop()
 
         self.assertFalse(state.is_draining(controller.redis))
-        controller._stop_redis_containers.assert_called_once()
+        controller.process_supervisor.terminate_all.assert_called_once()
+        controller._stop_redis_containers.assert_not_called()
 
     def test_a_redis_outage_during_the_drain_still_finishes_shutting_down(self):
         controller = self._controller([])
@@ -93,11 +112,11 @@ class TeardownTests(unittest.TestCase):
             failures = controller.stop()
 
         controller.process_supervisor.terminate_all.assert_called_once()
-        controller._stop_redis_containers.assert_called_once()
+        controller._stop_redis_containers.assert_not_called()
         controller._stop_metrics_collectors.assert_called_once()
         self.assertEqual(
             [failure.split(":")[0] for failure in failures],
-            ["instance drain", "draining flag"],
+            ["instance drain", "draining flag", "redis"],
         )
 
     def test_a_second_stop_is_a_noop(self):

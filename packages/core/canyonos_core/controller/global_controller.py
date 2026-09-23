@@ -48,8 +48,8 @@ import grpc
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Teardown waits this long for the reconciler to remove every instance before
-# falling back to stopping them directly.
+# Teardown waits this long for the reconciler to remove every instance; any left
+# over keep Redis up so the next startup can reconcile their records.
 DRAIN_TIMEOUT_SECONDS = 30
 
 LOCAL_NETWORK = "canyonos-local"
@@ -1183,8 +1183,9 @@ class GlobalController(ControllerContext):
         self.running = False
 
         failures = []
+        drained = False
         try:
-            self._drain_instances()
+            drained = self._drain_instances()
         except Exception as e:
             failures.append(f"instance drain: {e}")
         # The reconciler does the removing, so it has to outlive the drain; clearing
@@ -1197,8 +1198,12 @@ class GlobalController(ControllerContext):
             state.clear_draining(self.redis)
         except Exception as e:
             failures.append(f"draining flag: {e}")
-        failures += self._stop_redis_containers() or []
         self._stop_metrics_collectors()
+        # Instance records live in Redis; removing it with instances left would orphan them.
+        if drained and not failures:
+            failures += self._stop_redis_containers() or []
+        else:
+            failures.append("redis: kept for the next startup to reconcile")
         if failures:
             logger.error("Cleanup incomplete:\n- %s", "\n- ".join(failures))
         else:

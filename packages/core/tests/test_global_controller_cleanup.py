@@ -383,7 +383,7 @@ class StaleContainerNameTests(unittest.TestCase):
 
 
 class ShutdownCleanupTests(unittest.TestCase):
-    def test_supervisor_failure_does_not_skip_redis(self):
+    def test_supervisor_failure_keeps_redis_for_the_next_startup(self):
         controller = GlobalController.__new__(GlobalController)
         controller.running = True
         controller._stopping = False
@@ -395,7 +395,7 @@ class ShutdownCleanupTests(unittest.TestCase):
         }
         controller.node_redis = {host: object() for host in controller.redis_containers}
         controller._metrics_collectors = {}
-        controller._drain_instances = lambda: False
+        controller._drain_instances = lambda: True
 
         class FailingSupervisor:
             def terminate_all(self):
@@ -413,15 +413,7 @@ class ShutdownCleanupTests(unittest.TestCase):
         failures = controller.cleanup()
 
         self.assertTrue(any("terminate failed" in f for f in failures))
-        self.assertEqual(
-            redis_actions,
-            [
-                ("localhost", "stop"),
-                ("localhost", "rm"),
-                ("10.0.0.5", "stop"),
-                ("10.0.0.5", "rm"),
-            ],
-        )
+        self.assertEqual(redis_actions, [])
 
     def test_failed_redis_removal_stays_tracked_for_retry(self):
         controller = GlobalController.__new__(GlobalController)
