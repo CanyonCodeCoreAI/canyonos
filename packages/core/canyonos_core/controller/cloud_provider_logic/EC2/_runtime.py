@@ -177,8 +177,13 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             redis_port=redis_port,
             agent_id=agent_id,
         )
+        health_port = (
+            spec.get("db_port", 5432)
+            if spec.get("type") == "database"
+            else CONTAINER_PORT
+        )
         _check_controller_health(
-            f"{host}:{CONTAINER_PORT}",
+            f"{host}:{health_port}",
             timeout=cfg.get("controller_health_timeout", 180),
         )
         instance = {
@@ -198,6 +203,11 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             instance["public_host"] = provisioned["public_host"]
         if spec.get("type") == "workflow":
             instance["api_port"] = str(spec.get("api_port", 8080))
+        elif spec.get("type") == "database":
+            db_port = str(spec.get("db_port", 5432))
+            instance["container_port"] = "5432"
+            instance["host_port"] = db_port
+            instance["endpoint"] = f"{host}:{db_port}"
         return instance
     except Exception:
         terminate_instance(provisioned)
@@ -227,8 +237,11 @@ def _bootstrap_instance(
             "--name",
             redis_container,
             "-p",
-            f"{redis_port}:6379",
+            f"{redis_port}:{redis_port}",
             "redis:alpine",
+            "redis-server",
+            "--port",
+            str(redis_port),
         ],
         host,
         user=ssh_user,
@@ -251,9 +264,18 @@ def _bootstrap_instance(
     image = f"canyonos-{agent_name.lower()}"
     container = container_name(agent_name, replica_index)
     key = _ssh_key_path(cfg)
-    port_args = ["-p", f"{CONTAINER_PORT}:{CONTAINER_PORT}"]
-    if spec.get("type") == "workflow":
-        port_args += ["-p", f"{spec.get('api_port', 8080)}:8080"]
+    if spec.get("type") == "database":
+        port_args = ["-p", f"{spec.get('db_port', 5432)}:5432"]
+    else:
+        port_args = ["-p", f"{CONTAINER_PORT}:{CONTAINER_PORT}"]
+        if spec.get("type") == "workflow":
+            port_args += ["-p", f"{spec.get('api_port', 8080)}:8080"]
+
+    volume_args = []
+    if spec.get("type") == "database":
+        volume_path = spec.get("volume_path")
+        if volume_path:
+            volume_args = ["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"]
 
     logger.info("Transferring image %s to %s", image, host)
     result = subprocess.run(
@@ -289,6 +311,7 @@ def _bootstrap_instance(
         "--name",
         container,
         *port_args,
+        *volume_args,
         "-e",
         f"CANYONOS_REDIS_HOST={redis_host}",
         "-e",
@@ -306,14 +329,16 @@ def _bootstrap_instance(
         # turn it on (docker: -e beats --env-file).
         "-e",
         "CANYONOS_LLM_STUB_TEXT=",
+        "-e",
+        f"CANYONOS_LOGS_ENABLED={str(bool(_controller.config.get('logs', True))).lower()}",
     ]
     if spec.get("type") == "workflow":
-        db_url = _controller.config.get("database", {}).get("url")
         project_id = _controller.config.get("project_id")
-        if db_url:
-            cmd.extend(["-e", f"CANYONOS_DATABASE_URL={db_url}"])
         if project_id:
             cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
+    elif spec.get("type") == "database":
+        for key, value in spec.get("env", {}).items():
+            cmd.extend(["-e", f"{key}={value}"])
 
     # User secrets from `env_file`. Explicit -e flags above still win over
     # anything in the file.
