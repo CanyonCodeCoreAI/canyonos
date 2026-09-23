@@ -20,6 +20,8 @@
       "inputs": [
         "tests/**",
         "!tests/**/__pycache__/**",
+        "packages/core/canyonos_core/__init__.py",
+        "packages/cli/canyonos/init.py",
         ".claude/skills/porting-to-canyonos/**",
         "pyproject.toml",
         "uv.lock"

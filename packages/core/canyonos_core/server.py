@@ -6,6 +6,7 @@ import sys
 import yaml
 from flask import Flask, jsonify, request
 
+from canyonos_core import CONTRACT_VERSION, __version__
 from canyonos_core.cli import _artifact_prefix
 from canyonos_core.controller.utils.redis_client import RedisClient
 
@@ -76,6 +77,13 @@ def clean():
     process.wait()
     _gc_process = None
     return jsonify({"status": "stopped"}), 200
+
+
+@app.route("/version", methods=["GET"])
+def version():
+    return jsonify(
+        {"core_version": __version__, "contract_version": CONTRACT_VERSION}
+    ), 200
 
 
 @app.route("/status", methods=["GET"])

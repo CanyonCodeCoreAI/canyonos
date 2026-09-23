@@ -55,6 +55,9 @@ DOCKER_RUNTIMES = {
 }
 DOCKER_START_TIMEOUT = 60
 
+# Global Controller contract versions this CLI can drive.
+SUPPORTED_CORE_CONTRACTS = {1}
+
 
 def docker_running():
     try:
@@ -187,6 +190,34 @@ def _port_reachable(port, attempts=10, delay=0.5):
         except (urllib.error.URLError, OSError):
             time.sleep(delay)
     return False
+
+
+def core_contract(port):
+    """Contract version the running Global Controller reports, or None if it reports none."""
+    url = f"http://127.0.0.1:{port}/version"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read()).get("contract_version")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def check_core_contract(port, image=GC_IMAGE):
+    """Raise if the running Global Controller speaks a contract this CLI doesn't support."""
+    contract = core_contract(port)
+    if contract in SUPPORTED_CORE_CONTRACTS:
+        return
+    if contract is not None and contract > max(SUPPORTED_CORE_CONTRACTS):
+        raise RuntimeError(
+            f"The Global Controller image is newer than this CLI supports "
+            f"(contract {contract}). Upgrade with `brew upgrade canyonos`, then "
+            f"rerun `canyonos deploy`."
+        )
+    raise RuntimeError(
+        f"The Global Controller image ({image}) is older than this CLI supports "
+        f"(contract {contract or 'unknown'}). Pull or rebuild a newer image, then "
+        f"rerun `canyonos deploy`."
+    )
 
 
 def _named_container(name=GC_CONTAINER_NAME):
@@ -341,4 +372,5 @@ def run_init(banner=True, extra_env=None, image=GC_IMAGE):
             image=image, extra_env=extra_env
         )
     save_state(container_id, port, docker_socket)
+    check_core_contract(port, image)
     ui.ok(f"Global Controller running in container {container_id[:12]} on port {port}")
