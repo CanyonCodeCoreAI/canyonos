@@ -335,6 +335,18 @@ def _run_build(config_path):
             "Cannot build configured sources: " + "; ".join(missing_sources)
         )
 
+    from canyonos_core.stub_generator import unsupported_requirements
+
+    too_old = [
+        f"{agent['name']} currently requires {asked}, but CanyonOS only supports {supported}"
+        for agent in agents
+        for asked, supported in unsupported_requirements(_normalize_requirements(agent))
+    ]
+    for message in too_old:
+        logger.error("%s", message)
+    if too_old:
+        sys.exit(1)
+
     # -------------------------------------------------------------- #
     #  Step 1: Discover agent YAML files and generate Python stubs    #
     # -------------------------------------------------------------- #

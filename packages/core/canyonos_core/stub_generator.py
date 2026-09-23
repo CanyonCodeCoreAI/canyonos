@@ -16,27 +16,35 @@ import os
 import shutil
 import yaml
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
-# Packages every agent container needs; protobuf must be at least the gencode version of any *_pb2.py in the image.
+# Lowest versions the image's own code runs on; an app asking for older fails the install.
 BASE_AGENT_REQUIREMENTS = [
-    "grpcio==1.83.1",
-    "protobuf==6.33.5",
-    "redis==8.1.0",
-    "flask==3.1.3",
-    "requests==2.34.2",
+    "grpcio>=1.76.0",
+    "protobuf>=6.31.1",
+    "redis>=3.5",
+    "flask>=2.3.3",
+    "requests>=2.25",
 ]
+
+# Newest major version of each base package CanyonOS is tested on; newer installs with a warning.
+TESTED_MAJOR_VERSIONS = {
+    "grpcio": 1,
+    "protobuf": 6,
+    "redis": 8,
+    "flask": 3,
+    "requests": 2,
+}
 
 # Workflow containers currently need nothing beyond the base agent requirements
 # (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
 BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
 
-# Packages the image's own code is built against, so an app cannot be left to
-# pick them alone.
-_FORCED_FROM_BASE = ("protobuf", "grpcio", "requests")
-PLATFORM_PINS = [
-    pin for pin in BASE_AGENT_REQUIREMENTS if pin.split("==")[0] in _FORCED_FROM_BASE
-]
+# Every *_pb2.py checks this floor at import, which no package metadata carries,
+# so it is forced past transitive bounds rather than left to the resolver.
+PROTOBUF_FLOOR = Requirement(
+    next(pin for pin in BASE_AGENT_REQUIREMENTS if pin.startswith("protobuf"))
+)
 
 
 def _build_import_nodes():
@@ -536,38 +544,61 @@ def _copy_files(output_dir, files_to_copy):
 
 
 def _platform_overrides(requirements):
-    """Take the higher of each platform pin and what the app asked for.
+    """Force the protobuf floor, intersected with any bound the app itself declares.
 
-    uv replaces a requirement rather than intersecting it, so the comparison
-    cannot be left to the resolver.
+    uv replaces a requirement rather than intersecting it, so the app's own
+    protobuf bound is folded into the override instead of being dropped.
     """
-    declared = {}
+    specifier = PROTOBUF_FLOOR.specifier
     for requirement in requirements:
         try:
             parsed = Requirement(requirement)
         except InvalidRequirement:
             continue
-        declared[parsed.name.lower()] = parsed
+        if parsed.name.lower() == PROTOBUF_FLOOR.name:
+            specifier &= parsed.specifier
+    return [f"{PROTOBUF_FLOOR.name}{specifier}"]
 
-    overrides = []
-    for pin in PLATFORM_PINS:
-        name, pinned = pin.split("==")
-        asked = declared.get(name)
-        if asked is None or asked.specifier.contains(Version(pinned)):
-            overrides.append(pin)
+
+def _caps_below(spec, floor):
+    """Whether this one specifier allows no version at or above floor."""
+    try:
+        if spec.operator == "==" and spec.version.endswith(".*"):
+            release = Version(spec.version[:-2]).release
+            return (
+                Version(".".join(map(str, (*release[:-1], release[-1] + 1)))) <= floor
+            )
+        version = Version(spec.version)
+    except InvalidVersion:
+        return False
+    if spec.operator in ("==", "==="):
+        return version < floor
+    if spec.operator == "<":
+        return version <= floor
+    if spec.operator == "<=":
+        return version < floor
+    if spec.operator == "~=":
+        release = version.release
+        return Version(".".join(map(str, (*release[:-2], release[-2] + 1)))) <= floor
+    return False
+
+
+def unsupported_requirements(requirements):
+    """(asked, supported) for each requirement that rules out every base-package version CanyonOS supports."""
+    floors = {}
+    for base in BASE_AGENT_REQUIREMENTS:
+        parsed = Requirement(base)
+        floors[parsed.name] = (Version(next(iter(parsed.specifier)).version), base)
+    unsupported = []
+    for requirement in requirements:
+        try:
+            parsed = Requirement(requirement)
+        except InvalidRequirement:
             continue
-        wanted = f"{asked.name}{asked.specifier}"
-        if any(
-            spec.operator in (">=", ">", "==", "~=")
-            and Version(spec.version.rstrip(".*")) > Version(pinned)
-            for spec in asked.specifier
-        ):
-            overrides.append(wanted)
-            print(f"  Note: '{wanted}' outranks the platform pin {pin}")
-        else:
-            overrides.append(pin)
-            print(f"  Warning: the platform pin {pin} breaks '{wanted}'")
-    return overrides
+        floor = floors.get(parsed.name.lower())
+        if floor and any(_caps_below(spec, floor[0]) for spec in parsed.specifier):
+            unsupported.append((requirement, floor[1]))
+    return unsupported
 
 
 def _dependency_stage(overrides):
@@ -579,7 +610,18 @@ def _dependency_stage(overrides):
 RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
  && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt
 RUN uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
+RUN python -c "{_untested_version_check()}"
 """
+
+
+def _untested_version_check():
+    """One-line Python that warns for each base package installed past its tested major version."""
+    return (
+        "import importlib.metadata as m; "
+        f"tested = {TESTED_MAJOR_VERSIONS!r}; "
+        "[print(f'WARNING: {n} {m.version(n)} is newer than CanyonOS has tested (up to {t}.x) and may not work.') "
+        "for n, t in tested.items() if int(m.version(n).split('.')[0]) > t]"
+    )
 
 
 def generate_docker(

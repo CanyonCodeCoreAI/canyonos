@@ -236,6 +236,29 @@ class CliBuildTests(unittest.TestCase):
         )
         return agent_yaml
 
+    def test_build_stops_on_a_requirement_below_the_supported_floor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            config_path = project_dir / "config" / "global_controller.yaml"
+            config = yaml.safe_load(config_path.read_text())
+            config["agents"][0]["requirements"] = ["flask==1.9"]
+            config_path.write_text(yaml.safe_dump(config))
+
+            with (
+                self.assertRaises(SystemExit),
+                self.assertLogs("canyonos_core", level="ERROR") as logs,
+            ):
+                self._run_build(project_dir, [str(agent_yaml)], buildx_available=True)
+
+        self.assertEqual(
+            logs.output,
+            [
+                "ERROR:canyonos_core:ExampleAgent currently requires flask==1.9, "
+                "but CanyonOS only supports flask>=2.3.3"
+            ],
+        )
+
     def test_build_falls_back_to_sequential_docker_build_without_buildx(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
