@@ -128,13 +128,24 @@ class LocalController(object):
         # GlobalController polls with (via CANYONOS_POLL_INTERVAL).
         self._metrics_key = f"controller:{self.agent_host}:{self.public_port}:metrics"
         self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
+        # One transaction, so a reader never sees "initializing" without a heartbeat to judge it by.
         # Cumulative request counters are always increasing, never reset. It is the consumers job to get the delta between polls to get the specific metrics.
-        self.redis.hset_multiple(
+        now = str(time.time())
+        self.redis.set_with_hash(
+            self._status_key,
+            "initializing",
             self._metrics_key,
-            {"started_at": str(time.time()), "requests_served": 0, "full_failures": 0},
+            {
+                "started_at": now,
+                "observed_at": now,
+                "requests_served": 0,
+                "full_failures": 0,
+            },
         )
         self._metrics_stop_event = threading.Event()
         self._metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
+        self._ready = threading.Event()
+        self._status_lock = threading.Lock()
 
         # Cache for gRPC stubs to remote controllers
         self._remote_channels = {}  # endpoint -> grpc.Channel
@@ -151,6 +162,9 @@ class LocalController(object):
         self._executor_futures = {}
         self._executor_futures_lock = threading.Lock()
 
+        # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
+        self._metrics_thread.start()
+
         # Machine-level metrics (cpu/gpu/disk/memory/uptime) are sampled by a separate
         # one-per-machine process launched by GlobalController (see
         # GlobalController._launch_metrics_collectors), NOT here -- a container-scoped
@@ -164,7 +178,9 @@ class LocalController(object):
         # must not advertise readiness if constructing the agent failed.
         self.agent = self._load_agent()
         if (self.agent_name or self.agent_file) and self.agent is None:
-            self.redis.set(self._status_key, "failed")
+            self._metrics_stop_event.set()
+            self._metrics_thread.join(timeout=2)
+            self.mark_failed()
             self.server.stop(0)
             raise RuntimeError(
                 f"Failed to load configured agent {self.agent_name or self.agent_file}."
@@ -172,8 +188,7 @@ class LocalController(object):
 
         if publish_ready:
             self._wait_until_reachable()
-            self.redis.set(self._status_key, "healthy")
-        self._metrics_thread.start()
+            self.mark_ready()
 
         logger.info(
             "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
@@ -182,10 +197,14 @@ class LocalController(object):
         )
 
     def mark_ready(self):
-        self.redis.set(self._status_key, "healthy")
+        with self._status_lock:
+            self._ready.set()
+            self.redis.set(self._status_key, "healthy")
 
     def mark_failed(self):
-        self.redis.set(self._status_key, "failed")
+        with self._status_lock:
+            self._ready.clear()
+            self.redis.set(self._status_key, "failed")
 
     def _wait_until_reachable(self, timeout=30, attempt_timeout=0.5):
         """Block until this controller answers on its published endpoint, not just its local bind."""
@@ -311,7 +330,9 @@ class LocalController(object):
             try:
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
-                self.redis.set(self._status_key, "healthy")
+                with self._status_lock:
+                    if self._ready.is_set():
+                        self.redis.set(self._status_key, "healthy")
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             self._metrics_stop_event.wait(self._metrics_interval)

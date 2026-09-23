@@ -75,6 +75,10 @@ class _FakeRedis:
     def hset_multiple(self, name, mapping):
         self.hashes.setdefault(name, {}).update(mapping)
 
+    def set_with_hash(self, key, value, name, mapping):
+        self.set(key, value)
+        self.hset_multiple(name, mapping)
+
     def hget(self, name, field):
         return self.hashes.get(name, {}).get(field)
 

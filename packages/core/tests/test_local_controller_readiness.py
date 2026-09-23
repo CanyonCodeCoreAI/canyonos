@@ -54,10 +54,12 @@ def _build_controller(redis, publish_ready=False):
 
 
 class LocalControllerReadinessTests(unittest.TestCase):
-    def test_publish_ready_false_does_not_write_status(self):
+    def test_publish_ready_false_stays_initializing(self):
         redis = _FakeRedis()
         _build_controller(redis, publish_ready=False)
-        self.assertEqual(redis.strings, {})
+        self.assertEqual(
+            redis.strings, {"controller:localhost:50051:status": "initializing"}
+        )
 
     def test_mark_ready_writes_healthy_to_controller_status_key(self):
         redis = _FakeRedis()

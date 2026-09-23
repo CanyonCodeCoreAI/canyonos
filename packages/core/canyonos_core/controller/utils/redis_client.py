@@ -66,6 +66,13 @@ class RedisClient(object):
         """Set multiple fields in a hash at once."""
         self.client.hset(name, mapping=mapping)
 
+    def set_with_hash(self, key, value, name, mapping):
+        """Set a string key and hash fields together in one transaction."""
+        pipe = self.client.pipeline(transaction=True)
+        pipe.set(key, value)
+        pipe.hset(name, mapping=mapping)
+        pipe.execute()
+
     def hdel(self, name, *fields):
         """Remove one or more fields from a hash."""
         self.client.hdel(name, *fields)
