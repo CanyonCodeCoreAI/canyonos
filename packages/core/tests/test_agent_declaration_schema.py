@@ -383,6 +383,33 @@ class ValidateProjectTests(unittest.TestCase):
             Path(tmpdir, "agents", "example_agent.py").write_text("print('ok')\n")
             self.assertEqual(validate_project(manifest, declarations, tmpdir), ())
 
+    def test_an_entrypoint_that_resolves_outside_the_project_is_rejected(self):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            tempfile.TemporaryDirectory() as outside,
+        ):
+            manifest, declarations = self._project(tmpdir)
+            Path(outside, "secret.py").write_text("SECRET = 1\n")
+            os.symlink(
+                os.path.join(outside, "secret.py"),
+                os.path.join(tmpdir, "agents", "example_agent.py"),
+            )
+            violations = validate_project(manifest, declarations, tmpdir)
+
+        (violation,) = violations
+        self.assertEqual(violation.field, "agents[0].entrypoint")
+        self.assertIn("resolves outside the project", violation.message)
+
+    def test_a_symlink_inside_the_project_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest, declarations = self._project(tmpdir)
+            Path(tmpdir, "real_agent.py").write_text("print('ok')\n")
+            os.symlink(
+                os.path.join(tmpdir, "real_agent.py"),
+                os.path.join(tmpdir, "agents", "example_agent.py"),
+            )
+            self.assertEqual(validate_project(manifest, declarations, tmpdir), ())
+
     def test_a_missing_source_dir_is_one_violation_naming_it(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest, declarations = self._project(tmpdir)
