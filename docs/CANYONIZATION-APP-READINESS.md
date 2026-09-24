@@ -41,7 +41,10 @@ on local absolute paths, a GPU, or a display.
 
 ## 3. Use a supported model provider
 
-The CanyonOS-managed LLM path currently supports:
+The CanyonOS-managed LLM path supports the providers routed by the in-container
+LLM proxy of the CanyonOS version you are deploying; see
+[`packages/core/canyonos_core/llm_proxy/config.py`](../packages/core/canyonos_core/llm_proxy/config.py).
+As of this guide, those are:
 
 - OpenAI;
 - Anthropic;
@@ -111,6 +114,10 @@ agents:
     requirements:
       - httpx==0.28.1
 ```
+
+This example is abbreviated. A real entry lists the complete pinned set resolved
+from the application's lockfile or tested environment (for example, the output of
+`python3 -m pip freeze`), including the serving path's transitive dependencies.
 
 If the application has a lockfile or a pinned `requirements.txt`, copy those exact
 versions. If it pins nothing, bound each fast-moving package with a floor and a cap
