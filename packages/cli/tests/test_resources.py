@@ -71,3 +71,20 @@ def test_edits_from_the_picker_are_saved(config, monkeypatch):
 
 def test_a_missing_config_is_left_to_the_deploy_to_report(tmp_path):
     assert resources.configure_resources(str(tmp_path / "nope.yaml")) is True
+
+
+@pytest.mark.parametrize(
+    "field, raw, expected",
+    [("cpu", "0.5", 0.5), ("cpu", "2", 2), ("gpu", "1.5", 1.5), ("memory", "1024", 1024), ("replicas", "3", 3)],
+)
+def test_valid_values_are_cast(field, raw, expected):
+    assert resources._cast(field, raw) == expected
+
+
+@pytest.mark.parametrize(
+    "field, raw",
+    [("memory", "1.5"), ("replicas", "abc"), ("cpu", "abc"), ("gpu", "inf")],
+)
+def test_invalid_values_raise(field, raw):
+    with pytest.raises(ValueError):
+        resources._cast(field, raw)

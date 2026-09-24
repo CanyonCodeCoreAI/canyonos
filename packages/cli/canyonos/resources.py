@@ -4,6 +4,7 @@ replicas are shown (and filled with defaults when missing), the user can change
 any of them, and the result is written back to the global controller config.
 """
 
+import math
 import os
 import sys
 
@@ -51,12 +52,22 @@ def _set(agent, field, value):
         agent["resources"][field] = value
 
 
+DECIMAL_FIELDS = ("cpu", "gpu")
+
+
 def _cast(field, raw):
-    """Raises ValueError. cpu may be fractional; the rest are whole numbers."""
-    if field == "cpu":
+    """Raises ValueError. cpu and gpu may be decimals; the rest are whole numbers."""
+    if field in DECIMAL_FIELDS:
         value = float(raw)
+        if not math.isfinite(value):
+            raise ValueError(raw)
         return int(value) if value.is_integer() else value
     return int(raw)
+
+
+def _invalid_message(field, raw):
+    kind = "a number" if field in DECIMAL_FIELDS else "a whole number"
+    return f"{raw!r} is not valid: {_label(field)} must be {kind}"
 
 
 def _gradient_color(position):
@@ -137,15 +148,19 @@ def _edit_agent(agent, status):
         if field is None or field == BACK:
             return status
 
-        _render(f"{name} › {field}", status)
-        raw = input_line(f"{_label(field)} (current {_get(agent, field)}): ")
-        if not raw:
-            continue
-        try:
-            _set(agent, field, _cast(field, raw))
+        error = None
+        while True:
+            _render(f"{name} › {field}", status)
+            raw = input_line(f"{_label(field)} (current {_get(agent, field)}): ", error=error)
+            if not raw:
+                break
+            try:
+                _set(agent, field, _cast(field, raw))
+            except ValueError:
+                error = _invalid_message(field, raw)
+                continue
             status = f"Set {name} {field} = {_get(agent, field)}"
-        except ValueError:
-            status = f"Invalid {field}: {raw!r}"
+            break
 
 
 def _pick(agents):

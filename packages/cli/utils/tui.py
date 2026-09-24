@@ -132,8 +132,8 @@ def select_menu(options, title, deletable=False, quittable=False, footer=None):
         out.flush()
 
 
-def input_line(prompt, hint="enter save · esc back"):
-    """Read one line of typed text; returns None on Esc/Ctrl-C."""
+def input_line(prompt, hint="enter save · esc back", error=None):
+    """Read one line of typed text, with an optional red error under it; returns None on Esc/Ctrl-C."""
     if not sys.stdin.isatty():
         return None
 
@@ -143,7 +143,8 @@ def input_line(prompt, hint="enter save · esc back"):
     buffer = ""
     try:
         tty.setraw(fd)
-        out.write(f"\x1b[?25h{prompt}\r\n\r\n\x1b[2m{hint}\x1b[0m\x1b[2A")
+        error_line = f"\x1b[1;31m✗ {error}\x1b[0m" if error else ""
+        out.write(f"\x1b[?25h{prompt}\r\n{error_line}\r\n\x1b[2m{hint}\x1b[0m\x1b[2A")
         while True:
             out.write(f"\r\x1b[K{prompt}{buffer}")
             out.flush()
