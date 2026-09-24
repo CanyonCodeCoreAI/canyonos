@@ -6,11 +6,10 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from canyonos_core.instances.endpoints import routing_endpoint_for
 from canyonos_core.instances.records import (
     instance_id as _instance_id,
     instance_key as _instance_key,
-    list_instances,
+    routing_endpoint_for,
 )
 from canyonos_core.instances.routing import publish_routing_snapshot
 from canyonos_core.reconciler.providers.Local import (
@@ -18,7 +17,7 @@ from canyonos_core.reconciler.providers.Local import (
 )
 
 DEFAULT_HOST_PORT_START = 8000
-PORT_RESERVATION_LOCK_SECONDS = 10
+PORT_CLAIM_LOCK_SECONDS = 10
 logger = logging.getLogger(__name__)
 
 
@@ -32,9 +31,6 @@ class Provisioner(object):
     @property
     def redis(self):
         return self.controller.redis
-
-    def list_instances(self, agent_name=None):
-        return list_instances(self.redis, agent_name)
 
     def _provider_runtime(self, provider):
         """The provider's runtime module, bound to this process's controller."""
@@ -67,7 +63,7 @@ class Provisioner(object):
                 )
             agent_spec["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
             self._agent_specs.append(agent_spec)
-        self._prune_stale_reservations()
+        self._prune_stale_port_claims()
         instances = []
         existing = []
         jobs = []
@@ -94,10 +90,10 @@ class Provisioner(object):
                     self._destroy_runtime(instance)
                     self._discard_instance_record(instance_id, instance)
 
-                reserved_port = None
+                claimed_port = None
                 if provider == "local":
                     host = agent_spec.get("host", local_runtime.DEFAULT_HOST)
-                    reserved_port = self._next_host_port(
+                    claimed_port = self._claim_host_port(
                         host, key, agent_name, provider, replica_index
                     )
 
@@ -108,7 +104,7 @@ class Provisioner(object):
                         "runtime": runtime,
                         "replica_index": replica_index,
                         "instance_id": instance_id,
-                        "reserved_port": reserved_port,
+                        "claimed_port": claimed_port,
                     }
                 )
 
@@ -136,7 +132,9 @@ class Provisioner(object):
             self._track_runtime(agent_name, instance["runtime_id"])
             instances.append(instance)
 
-        self._publish_routing(self._agent_specs)
+        publish_routing_snapshot(
+            self._agent_specs, self.redis, self.controller.node_redis
+        )
         if failures:
             for extra in failures[1:]:
                 logger.warning("Another replica also failed to provision: %s", extra)
@@ -147,10 +145,10 @@ class Provisioner(object):
         runtime = job["runtime"]
         agent_spec = job["agent_spec"]
         replica_index = job["replica_index"]
-        reserved_port = job["reserved_port"]
+        claimed_port = job["claimed_port"]
 
         def next_host_port(_host):
-            return reserved_port
+            return claimed_port
 
         instance = None
         runtime_id = None
@@ -249,10 +247,12 @@ class Provisioner(object):
             for runtime_id in self.controller.containers.get(instance["agent_name"], [])
             if runtime_id != instance["runtime_id"]
         ]
-        self._publish_routing(
+        publish_routing_snapshot(
             self.controller.controllers
             if self._agent_specs is None
-            else self._agent_specs
+            else self._agent_specs,
+            self.redis,
+            self.controller.node_redis,
         )
 
     def _destroy_runtime(self, instance):
@@ -302,8 +302,8 @@ class Provisioner(object):
         self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
         self._untrack_runtime(instance["agent_name"], instance["runtime_id"])
 
-    def _prune_stale_reservations(self):
-        """Delete port reservations left for replica slots no agent wants anymore."""
+    def _prune_stale_port_claims(self):
+        """Delete port claims left for replica slots no agent wants anymore."""
         wanted = {
             _instance_key(spec["provider"], spec["name"], replica_index)
             for spec in self._agent_specs or []
@@ -314,15 +314,14 @@ class Provisioner(object):
                 continue
             record = self.redis.hgetall(key)
             if record and not record.get("runtime_id"):
-                logger.info("Removing stale port reservation %s", key)
+                logger.info("Removing stale port claim %s", key)
                 self.redis.delete(key)
 
-    def _next_host_port(self, host, key, agent_name, provider, replica_index):
+    def _claim_host_port(self, host, key, agent_name, provider, replica_index):
+        """Claim the lowest free port on a machine for one local replica and record the claim in Redis."""
         # Held across scan and write so two reconcilers can't claim the same port.
-        with self.redis.lock(
-            f"port_reservation_lock:{host}", PORT_RESERVATION_LOCK_SECONDS
-        ):
-            # Raw scan: port reservations from this pass must count as used too.
+        with self.redis.lock(f"port_claim_lock:{host}", PORT_CLAIM_LOCK_SECONDS):
+            # Raw scan: port claims from this pass must count as used too.
             records = (
                 self.redis.hgetall(record_key)
                 for record_key in self.redis.scan_keys("agent_instance:*")
@@ -347,6 +346,3 @@ class Provisioner(object):
                 },
             )
         return port
-
-    def _publish_routing(self, agent_specs):
-        publish_routing_snapshot(agent_specs, self.redis, self.controller.node_redis)

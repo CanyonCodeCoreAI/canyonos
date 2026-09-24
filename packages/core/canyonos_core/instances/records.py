@@ -15,6 +15,13 @@ def instance_id_from_record(instance):
     )
 
 
+def routing_endpoint_for(instance):
+    """The address other services reach an instance on: container name for local, host for any other provider."""
+    if instance.get("provider", "local").casefold() == "local":
+        return f"{instance['runtime_id']}:{instance['container_port']}"
+    return f"{instance['host']}:{instance['host_port']}"
+
+
 def list_instances(redis_client, agent_name=None):
     """Instance records straight from Redis."""
     if agent_name:
@@ -23,7 +30,7 @@ def list_instances(redis_client, agent_name=None):
     else:
         keys = sorted(redis_client.scan_keys("agent_instance:*"))
 
-    # Skips port reservations whose runtime hasn't been provisioned yet.
+    # Skips port claims whose runtime hasn't been provisioned yet.
     return [
         instance
         for key in keys

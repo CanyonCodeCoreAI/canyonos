@@ -35,7 +35,7 @@ reaping index 1 leaves a hole the same pass's fill step provisions into.
 | --- | --- | --- | --- |
 | `agent:{name}:desired_replicas` | int (string) | GlobalController — `set_replicas` (also from `_apply_configured_replicas`) | Reconciler (`get_desired`, `desired_agent_specs`) |
 | `reconciler:wake` | list | GlobalController — `_request_reconcile` | Reconciler (`drain`: `BRPOP` then non-blocking `RPOP`s) |
-| `reconciler:reap` | set | GlobalController — `replace_instance` | Reconciler (`reap_requests`; `clear_reap_requests` once removed) |
+| `reconciler:reap` | set | GlobalController — `replace_replica` | Reconciler (`reap_requests`; `clear_reap_requests` once removed) |
 | `reconciler:draining` | string (TTL) | GlobalController — `set_draining` / `clear_draining` | Reconciler (`is_draining`, once per pass) |
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
 | `agents:active` | string (JSON list) | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |

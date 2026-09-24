@@ -139,13 +139,6 @@ class _FakeProvisioner:
         self.removed = []
         self.ensure_calls = []
 
-    def list_instances(self, agent_name=None):
-        if self.raise_for and agent_name == self.raise_for:
-            raise RuntimeError("boom")
-        if agent_name is None:
-            return [record for records in self.instances.values() for record in records]
-        return list(self.instances.get(agent_name, []))
-
     def remove_instance(self, instance_id):
         if self.remove_raises:
             raise RuntimeError("terminate failed")
@@ -156,10 +149,30 @@ class _FakeProvisioner:
         return []
 
 
+def _seed_instance_records(redis, provisioner):
+    """Write the fake provisioner's instances into Redis, where the reconciler reads them."""
+    for agent_name, records in getattr(provisioner, "instances", {}).items():
+        for record in records:
+            instance_id = f"{record['provider']}:{agent_name}:{record['replica_index']}"
+            redis.hset_multiple(f"agent_instance:{instance_id}", record)
+            redis.sadd(f"agent:{agent_name}:instances", instance_id)
+    raise_for = getattr(provisioner, "raise_for", None)
+    if raise_for:
+        smembers = redis.smembers
+
+        def failing_smembers(name):
+            if name == f"agent:{raise_for}:instances":
+                raise RuntimeError("boom")
+            return smembers(name)
+
+        redis.smembers = failing_smembers
+
+
 def _bare_reconciler(context, provisioner, **overrides):
     """Build a Reconciler without running its __init__ (no config, no Docker, no Redis)."""
     from canyonos_core.reconciler.reconciler import Reconciler
 
+    _seed_instance_records(context.redis, provisioner)
     reconciler = Reconciler.__new__(Reconciler)
     reconciler.context = context
     reconciler.provisioner = provisioner

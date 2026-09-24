@@ -12,7 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.instances.endpoints import routing_endpoint_for
+from canyonos_core.instances.records import routing_endpoint_for
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.reconciler import Reconciler
 from fakes import _bare_reconciler, _FakeProvisioner, _FakeRedis, _instance
@@ -263,7 +263,7 @@ class ScalingEntryPointTests(unittest.TestCase):
     def test_the_named_replica_is_queued_for_reaping_and_the_reconciler_woken(self):
         controller = self._controller()
 
-        target = controller.replace_instance("Alpha", 1)
+        target = controller.replace_replica("Alpha", 1)
 
         self.assertEqual(target, "local:Alpha:1")
         self.assertEqual(
@@ -275,7 +275,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller = self._controller(specs={})
 
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
-            self.assertIsNone(controller.replace_instance("Nope", 0))
+            self.assertIsNone(controller.replace_replica("Nope", 0))
 
         self.assertEqual(controller.redis.smembers(state.REAP_SET_KEY), set())
 

@@ -12,8 +12,11 @@ from canyonos_core.controller.controller_context import (
     ControllerContext,
     _redis_connect_host,
 )
-from canyonos_core.instances.endpoints import routing_endpoint_for
-from canyonos_core.instances.records import instance_id_from_record
+from canyonos_core.instances.records import (
+    instance_id_from_record,
+    list_instances,
+    routing_endpoint_for,
+)
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.provisioner import Provisioner
 
@@ -171,7 +174,7 @@ class Reconciler(object):
             desired = state.get_desired(redis_client, agent_name, configured)
         reap_requested = state.reap_requests(redis_client, agent_name)
 
-        instances = self.provisioner.list_instances(agent_name)
+        instances = list_instances(redis_client, agent_name)
         for instance in instances:
             # Routing republishes fan out to node_redis, so every node needs a client first.
             self.context.node_redis_for_instance(instance)
@@ -199,7 +202,7 @@ class Reconciler(object):
 
     def _reap_removed_agents(self):
         """Remove instances of agents that are no longer in the published specs."""
-        for instance in self.provisioner.list_instances():
+        for instance in list_instances(self.context.redis):
             if instance["agent_name"] in self.context.agent_specs:
                 continue
             self.context.node_redis_for_instance(instance)

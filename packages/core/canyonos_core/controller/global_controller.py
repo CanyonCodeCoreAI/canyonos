@@ -25,8 +25,11 @@ from canyonos_core.controller.utils.container_names import (
     container_name as agent_container_name,
     redis_container_name,
 )
-from canyonos_core.instances.endpoints import routing_endpoint_for
-from canyonos_core.instances.records import instance_id, list_instances
+from canyonos_core.instances.records import (
+    instance_id,
+    list_instances,
+    routing_endpoint_for,
+)
 from canyonos_core.reconciler import state
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
@@ -994,7 +997,7 @@ class GlobalController(ControllerContext):
             )
 
     def set_replicas(self, agent_name, count):
-        """Set an agent's desired replica count; the reconciler adds or reaps to match."""
+        """Change one agent's replica count without touching the others; the entry point for scaling."""
         if agent_name not in self.agent_specs:
             logger.warning("Cannot scale unknown agent %s", agent_name)
             return None
@@ -1003,7 +1006,7 @@ class GlobalController(ControllerContext):
         return desired
 
     def _apply_configured_replicas(self):
-        """Set every agent's desired replica count to its configured value."""
+        """Reset every agent's replica count to what the YAML says, at startup and on reload."""
         for spec in self.controllers:
             count = state.replica_count(spec)
             if count is None:
@@ -1016,7 +1019,7 @@ class GlobalController(ControllerContext):
                 continue
             self.set_replicas(spec["name"], count)
 
-    def replace_instance(self, agent_name, replica_index):
+    def replace_replica(self, agent_name, replica_index):
         """Destroy one replica; the desired count is unchanged, so the slot is refilled."""
         if agent_name not in self.agent_specs:
             logger.warning("Cannot replace an instance of unknown agent %s", agent_name)

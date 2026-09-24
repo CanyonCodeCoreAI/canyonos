@@ -184,7 +184,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
             ),
         )
 
-    def test_local_provider_case_is_normalized_before_port_reservation(self):
+    def test_local_provider_case_is_normalized_before_claiming_a_port(self):
         controller = _fake_controller()
         manager = Provisioner(controller)
 
@@ -418,9 +418,13 @@ class ProvisionerRuntimeTests(unittest.TestCase):
             return provision_one(job)
 
         manager._provision_one = fail_beta
-        manager._publish_routing = MagicMock()
 
-        with self.assertRaisesRegex(RuntimeError, "beta failed"):
+        with (
+            patch(
+                "canyonos_core.reconciler.provisioner.publish_routing_snapshot"
+            ) as publish,
+            self.assertRaisesRegex(RuntimeError, "beta failed"),
+        ):
             manager.ensure_instances(
                 [
                     {"name": "Alpha", "provider": "local"},
@@ -431,7 +435,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         self.assertEqual(
             controller.redis.smembers("agent:Alpha:instances"), {"local:Alpha:0"}
         )
-        manager._publish_routing.assert_called_once()
+        publish.assert_called_once()
 
     def test_missing_runtime_behind_stale_record_is_reprovisioned(self):
         controller = _fake_controller()
@@ -536,7 +540,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                 0,
             ),
         )
-        # EC2 jobs never get a pre-reserved port, so this must resolve to None.
+        # EC2 jobs never get a pre-claimed port, so this must resolve to None.
         self.assertIsNone(provision_args[2]("10.0.0.30"))
         runtime.bootstrap_instance.assert_called_once_with(
             provisioned,
@@ -612,7 +616,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         self.assertEqual(
             local_provision_args[:2], ({"name": "Local", "provider": "local"}, 0)
         )
-        # Local jobs get a pre-reserved port (8000 is the first free port).
+        # Local jobs get a pre-claimed port (8000 is the first free port).
         self.assertEqual(local_provision_args[2]("localhost"), 8000)
         local_runtime.bootstrap_instance.assert_called_once_with(
             {}, {"name": "Local", "provider": "local"}, 0, ANY
@@ -640,8 +644,8 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         self.assertIs(runtime, local_runtime)
 
 
-class PortReservationTests(unittest.TestCase):
-    def _reserve(self, redis, replica_index, port):
+class PortClaimTests(unittest.TestCase):
+    def _claim(self, redis, replica_index, port):
         redis.hset_multiple(
             f"agent_instance:local:Alpha:{replica_index}",
             {
@@ -653,49 +657,49 @@ class PortReservationTests(unittest.TestCase):
             },
         )
 
-    def test_a_port_reservation_is_hidden_from_full_instance_scans(self):
+    def test_a_port_claim_is_hidden_from_full_instance_scans(self):
         controller = _fake_controller()
-        self._reserve(controller.redis, 0, 8000)
+        self._claim(controller.redis, 0, 8000)
 
         self.assertEqual(list_instances(controller.redis), [])
 
-    def test_a_port_reservation_still_blocks_its_port_for_the_next_replica(self):
+    def test_a_port_claim_still_blocks_its_port_for_the_next_replica(self):
         controller = _fake_controller()
-        self._reserve(controller.redis, 0, 8000)
+        self._claim(controller.redis, 0, 8000)
         manager = Provisioner(controller)
 
-        port = manager._next_host_port(
+        port = manager._claim_host_port(
             "localhost", "agent_instance:local:Alpha:1", "Alpha", "local", 1
         )
 
         self.assertEqual(port, 8001)
 
-    def test_a_reservation_for_a_slot_no_agent_wants_is_pruned(self):
+    def test_a_port_claim_for_a_slot_no_agent_wants_is_pruned(self):
         controller = _fake_controller()
-        self._reserve(controller.redis, 3, 8003)
+        self._claim(controller.redis, 3, 8003)
         manager = Provisioner(controller)
         manager._agent_specs = [{"name": "Alpha", "provider": "local", "replicas": 1}]
 
-        manager._prune_stale_reservations()
+        manager._prune_stale_port_claims()
 
         self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:3"), {})
 
-    def test_a_reservation_for_a_wanted_slot_is_kept(self):
+    def test_a_port_claim_for_a_wanted_slot_is_kept(self):
         controller = _fake_controller()
-        self._reserve(controller.redis, 0, 8000)
+        self._claim(controller.redis, 0, 8000)
         manager = Provisioner(controller)
         manager._agent_specs = [{"name": "Alpha", "provider": "local", "replicas": 1}]
 
-        manager._prune_stale_reservations()
+        manager._prune_stale_port_claims()
 
         self.assertEqual(
             controller.redis.hgetall("agent_instance:local:Alpha:0")["host_port"],
             "8000",
         )
 
-    def test_a_failed_provision_removes_its_port_reservation(self):
+    def test_a_failed_provision_removes_its_port_claim(self):
         controller = _fake_controller()
-        self._reserve(controller.redis, 0, 8000)
+        self._claim(controller.redis, 0, 8000)
         runtime = _fake_runtime(
             provision_instance=MagicMock(side_effect=RuntimeError("boom"))
         )
@@ -709,7 +713,7 @@ class PortReservationTests(unittest.TestCase):
                     "runtime": runtime,
                     "replica_index": 0,
                     "instance_id": "local:Alpha:0",
-                    "reserved_port": 8000,
+                    "claimed_port": 8000,
                 }
             )
 

@@ -2,8 +2,7 @@
 
 import json
 
-from canyonos_core.instances.endpoints import routing_endpoint_for
-from canyonos_core.instances.records import list_instances
+from canyonos_core.instances.records import list_instances, routing_endpoint_for
 
 ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
