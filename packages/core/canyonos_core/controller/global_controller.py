@@ -785,9 +785,12 @@ class GlobalController(ControllerContext):
 
             if all(healthy.get(name, 0) >= want for name, want in expected.items()):
                 return
-            if any(status in _TERMINAL_STATUSES for _, status in pending):
-                break
-            if time.time() >= deadline:
+            terminal = [
+                (instance, status)
+                for instance, status in pending
+                if status in _TERMINAL_STATUSES
+            ]
+            if terminal or time.time() >= deadline:
                 break
             time.sleep(interval)
 
@@ -831,7 +834,9 @@ class GlobalController(ControllerContext):
 
         # The cause exists only inside the container -- an adapter's
         # ModuleNotFoundError, say -- and the teardown that follows removes it.
-        for instance, status in pending:
+        # After a terminal status the others were still starting when the wait
+        # ended, so their logs hold nothing yet; a timeout shows every laggard.
+        for instance, status in terminal or pending:
             if instance["agent_name"] in failed:
                 self._dump_container_log(instance, status)
 

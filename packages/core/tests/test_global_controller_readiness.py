@@ -210,3 +210,58 @@ def test_an_ec2_replicas_log_is_read_by_its_container_name_over_ssh(monkeypatch)
     assert commands == [
         (["docker", "logs", "--tail", "40", "canyonos-broken-0"], "127.0.0.1", "ubuntu")
     ]
+
+
+def test_an_early_exit_dumps_only_the_replicas_that_reported_a_terminal_status(
+    monkeypatch, caplog
+):
+    """The others were still starting when the wait ended: their logs hold
+    nothing yet, and dumping them buries the one that actually failed."""
+    commands = []
+
+    def run_cmd(cmd, host, user=None):
+        commands.append(cmd[-1])
+        return _no_output()
+
+    controller = _controller(
+        monkeypatch,
+        [_replica("Broken", 50051), _replica("Slow", 50052)],
+        _StatusRedis(
+            {
+                "controller:127.0.0.1:50051:status": "failed",
+                "controller:127.0.0.1:50052:status": "starting",
+            }
+        ),
+        run_cmd=run_cmd,
+    )
+
+    with caplog.at_level(logging.WARNING), pytest.raises(RuntimeError, match="Broken"):
+        controller._wait_for_healthy(timeout=600, interval=0)
+
+    assert commands == ["canyonos-broken-0"]
+    assert "Controller Slow (127.0.0.1:50052) is starting after 0s." in caplog.messages
+
+
+def test_a_timeout_dumps_every_replica_still_short(monkeypatch):
+    commands = []
+
+    def run_cmd(cmd, host, user=None):
+        commands.append(cmd[-1])
+        return _no_output()
+
+    controller = _controller(
+        monkeypatch,
+        [_replica("Stuck", 50051), _replica("Slow", 50052)],
+        _StatusRedis(
+            {
+                "controller:127.0.0.1:50051:status": "starting",
+                "controller:127.0.0.1:50052:status": None,
+            }
+        ),
+        run_cmd=run_cmd,
+    )
+
+    with pytest.raises(RuntimeError):
+        controller._wait_for_healthy(timeout=0, interval=0)
+
+    assert sorted(commands) == ["canyonos-slow-0", "canyonos-stuck-0"]
