@@ -37,7 +37,7 @@ ignore = ["E402"]
 python = ".venv"
 
 [tool.ty.src]
-include = ["packages/core/canyonos_core"]
+include = ["packages/core/canyonos_core", "packages/cli"]
 exclude = [
     "packages/core/canyonos_core/stub_generator.py",
 ]
