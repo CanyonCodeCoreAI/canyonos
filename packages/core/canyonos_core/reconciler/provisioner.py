@@ -242,6 +242,9 @@ class Provisioner(object):
         if not instance:
             return
 
+        # Before the runtime goes: on EC2 that terminates the host this status
+        # lives on, and drops the node's Redis client with it.
+        self._delete_controller_status(instance)
         self._destroy_runtime(instance)
         self.redis.delete(key)
         self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
@@ -257,6 +260,25 @@ class Provisioner(object):
             self.redis,
             self.controller.node_redis,
         )
+
+    def _delete_controller_status(self, instance):
+        """Drop the status key belonging to this instance.
+
+        Hygiene: a status key should not outlive the instance record it belongs
+        to. The guarantee that a stale one is never read lives at launch, where
+        the local runtime clears the key, fail-closed, right before `docker run`.
+        Best effort here: a node whose Redis is already gone must not stop the
+        teardown.
+        """
+        try:
+            node_redis = (
+                self.controller.node_redis.get(instance.get("host")) or self.redis
+            )
+            node_redis.delete(f"controller:{routing_endpoint_for(instance)}:status")
+        except Exception as e:
+            logger.warning(
+                "Could not clear the status of %s: %s", instance.get("runtime_id"), e
+            )
 
     def _destroy_runtime(self, instance):
         runtime = self._provider_runtime(instance.get("provider", "local"))

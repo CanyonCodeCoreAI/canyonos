@@ -381,3 +381,14 @@ def terminate_instance(instance):
 
     _, client = _aws_clients()
     client.terminate_instances(InstanceIds=[runtime_id.rsplit("--", 1)[1]])
+
+
+def docker_container_name(instance):
+    """The name this instance's container answers to on its EC2 host.
+
+    The runtime id is `<container name>--<ec2 instance id>`, since terminating
+    the replica means terminating the host; only the part before the separator
+    was ever passed to `docker run --name`.
+    """
+    runtime_id = instance.get("runtime_id")
+    return runtime_id.rsplit("--", 1)[0] if runtime_id else None
