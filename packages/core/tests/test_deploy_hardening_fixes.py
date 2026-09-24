@@ -10,10 +10,10 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.controller.cloud_provider_logic.Local import (
+from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.controller.instance_manager import InstanceManager
+from canyonos_core.reconciler.provisioner import Provisioner
 from canyonos_core.controller.local_controller import LocalController
 
 
@@ -90,7 +90,7 @@ class RuntimeReuseScanTests(unittest.TestCase):
             node_redis={},
             _run_cmd=run_cmd,
         )
-        return InstanceManager(controller, redis_client=MagicMock())
+        return Provisioner(controller)
 
     def test_an_unreachable_host_is_not_reusable_rather_than_fatal(self):
         def run_cmd(_cmd, host, user=None):
@@ -105,9 +105,7 @@ class RuntimeReuseScanTests(unittest.TestCase):
             "provider": "EC2",
         }
 
-        with self.assertLogs(
-            "canyonos_core.controller.instance_manager", level="WARNING"
-        ):
+        with self.assertLogs("canyonos_core.reconciler.provisioner", level="WARNING"):
             self.assertFalse(manager._runtime_is_running(instance))
 
     def test_a_running_runtime_is_still_reported_as_reusable(self):

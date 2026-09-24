@@ -1,40 +1,55 @@
-"""
-Coordinate agent runtime instances for the controller.
+"""Create and destroy agent runtime instances; the controller imports nothing from here."""
 
-This file decides whether each agent replica should run locally or on EC2,
-starts missing instances, records their runtime metadata in Redis, and
-publishes the routing data other parts of CanyonOS use to reach those agents.
-"""
-
-import json
 import logging
 import os
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from canyonos_core.controller.cloud_provider_logic.Local import (
+from canyonos_core.controller.controller_context import (
+    instance_id as _instance_id,
+    instance_key as _instance_key,
+    routing_endpoint_for,
+)
+from canyonos_core.reconciler.routing import publish_routing_snapshot
+from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.controller.utils import container_names
 
 DEFAULT_HOST_PORT_START = 8000
+PORT_CLAIM_LOCK_SECONDS = 10
 logger = logging.getLogger(__name__)
 
 
-class InstanceManager:
-    ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
-    ROUTING_STATEFUL_KEY = "routing_table:stateful"
-    SERVICES_SET_KEY = "routing_table:services"
+class Provisioner(object):
+    """Makes the running instances match the specs it is handed."""
 
-    def __init__(self, controller, redis_client=None):
+    def __init__(self, controller):
         self.controller = controller
-        self._redis = redis_client
+        self._agent_specs = None
 
     @property
     def redis(self):
-        return self._redis or self.controller.redis
+        return self.controller.redis
 
-    def ensure_instances(self, agent_specs):
+    def _provider_runtime(self, provider):
+        """The provider's runtime module, bound to this process's controller."""
+        normalized = provider.casefold()
+        if normalized == "ec2":
+            from canyonos_core.reconciler.providers.EC2 import (
+                _runtime as runtime,
+            )
+        elif normalized == "local":
+            runtime = local_runtime
+        else:
+            raise RuntimeError(
+                f"Unsupported provider {provider!r}; use `local` or `EC2`."
+            )
+        runtime._controller = self.controller
+        return runtime
+
+    def ensure_instances(self, agent_specs, only=None):
+        """Start missing replicas of the agents in only (all when None) and republish routing for every agent."""
         self._agent_specs = []
         for original in agent_specs:
             agent_spec = dict(original)
@@ -49,12 +64,15 @@ class InstanceManager:
                 )
             agent_spec["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
             self._agent_specs.append(agent_spec)
+        self._prune_stale_port_claims()
         instances = []
         existing = []
         jobs = []
 
         for agent_spec in self._agent_specs:
             agent_name = agent_spec["name"]
+            if only is not None and agent_name not in only:
+                continue
             provider = agent_spec.get("provider", "local")
             runtime = self._provider_runtime(provider)
             self.controller.containers.setdefault(agent_name, [])
@@ -64,8 +82,8 @@ class InstanceManager:
                 validate()
 
             for replica_index in range(int(agent_spec.get("replicas", 1))):
-                instance_id = self._instance_id(provider, agent_name, replica_index)
-                key = self._instance_key(provider, agent_name, replica_index)
+                instance_id = _instance_id(provider, agent_name, replica_index)
+                key = _instance_key(provider, agent_name, replica_index)
                 instance = self.redis.hgetall(key)
 
                 if instance and instance.get("runtime_id"):
@@ -75,10 +93,10 @@ class InstanceManager:
                     self._destroy_runtime(instance)
                     self._discard_instance_record(instance_id, instance)
 
-                reserved_port = None
+                claimed_port = None
                 if provider == "local":
                     host = agent_spec.get("host", local_runtime.DEFAULT_HOST)
-                    reserved_port = self._next_host_port(
+                    claimed_port = self._claim_host_port(
                         host, key, agent_name, provider, replica_index
                     )
 
@@ -89,12 +107,13 @@ class InstanceManager:
                         "runtime": runtime,
                         "replica_index": replica_index,
                         "instance_id": instance_id,
-                        "reserved_port": reserved_port,
+                        "claimed_port": claimed_port,
                     }
                 )
 
         max_workers = min(len(jobs), (os.cpu_count() or 1) * 100)
         provisioned = []
+        failures = []
         if jobs:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_job = {
@@ -102,7 +121,11 @@ class InstanceManager:
                 }
                 for future in as_completed(future_to_job):
                     job = future_to_job[future]
-                    instance = future.result()
+                    try:
+                        instance = future.result()
+                    except Exception as e:
+                        failures.append(e)
+                        continue
                     provisioned.append(
                         (job["agent_name"], job["instance_id"], instance)
                     )
@@ -112,45 +135,53 @@ class InstanceManager:
             self._track_runtime(agent_name, instance["runtime_id"])
             instances.append(instance)
 
-        self.publish_routing_snapshot(self._agent_specs)
+        publish_routing_snapshot(
+            self._agent_specs, self.redis, self.controller.node_redis
+        )
+        if failures:
+            for extra in failures[1:]:
+                logger.warning("Another replica also failed to provision: %s", extra)
+            raise failures[0]
         return instances
 
     def _provision_one(self, job):
         runtime = job["runtime"]
         agent_spec = job["agent_spec"]
         replica_index = job["replica_index"]
-        reserved_port = job["reserved_port"]
+        claimed_port = job["claimed_port"]
 
         def next_host_port(_host):
-            return reserved_port
+            return claimed_port
 
-        provisioned = runtime.provision_instance(
-            agent_spec, replica_index, next_host_port
-        )
-        runtime_id = provisioned.get("runtime_id")
-        if runtime_id:
-            self._track_runtime(job["agent_name"], runtime_id)
-
-        instance = provisioned
+        instance = None
+        runtime_id = None
         try:
+            instance = runtime.provision_instance(
+                agent_spec, replica_index, next_host_port
+            )
+            runtime_id = instance.get("runtime_id")
+            if runtime_id:
+                self._track_runtime(job["agent_name"], runtime_id)
+
             agent_id = uuid.uuid4().hex
             instance = runtime.bootstrap_instance(
-                provisioned, agent_spec, replica_index, agent_id
+                instance, agent_spec, replica_index, agent_id
             )
             instance["agent_id"] = agent_id
             self._write_instance(instance)
             return instance
         except Exception:
-            try:
-                runtime.terminate_instance(instance)
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Failed to clean up runtime %s after provisioning failed: %s",
-                    runtime_id,
-                    cleanup_error,
-                )
-            else:
-                self._untrack_runtime(job["agent_name"], runtime_id)
+            if instance is not None:
+                try:
+                    runtime.terminate_instance(instance)
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Failed to clean up runtime %s after provisioning failed: %s",
+                        runtime_id,
+                        cleanup_error,
+                    )
+                else:
+                    self._untrack_runtime(job["agent_name"], runtime_id)
             try:
                 self.redis.delete(f"agent_instance:{job['instance_id']}")
                 self.redis.srem(
@@ -165,7 +196,7 @@ class InstanceManager:
             raise
 
     def _write_instance(self, instance):
-        key = self._instance_key(
+        key = _instance_key(
             instance["provider"], instance["agent_name"], int(instance["replica_index"])
         )
         mapping = {
@@ -180,6 +211,8 @@ class InstanceManager:
             "redis_host": instance["redis_host"],
             "redis_port": str(instance["redis_port"]),
             "runtime_id": instance["runtime_id"],
+            # Lets the reconciler tell a starting replica from one that stopped answering.
+            "created_at": str(time.time()),
         }
         # public_host: set by providers whose `host` isn't reachable from outside
         # the deployment's network. api_port: workflow replicas only.
@@ -190,7 +223,7 @@ class InstanceManager:
 
         node_redis = self.controller.node_redis.get(instance["host"]) or self.redis
 
-        endpoint = self._routing_endpoint_for(instance)
+        endpoint = routing_endpoint_for(instance)
         node_redis.set(f"controller:{endpoint}:agent_id", instance["agent_id"])
 
         # Direct agent_id -> instance_type lookup so cost computation can look up
@@ -217,24 +250,13 @@ class InstanceManager:
             for runtime_id in self.controller.containers.get(instance["agent_name"], [])
             if runtime_id != instance["runtime_id"]
         ]
-        self.publish_routing_snapshot(
-            getattr(self, "_agent_specs", getattr(self.controller, "controllers", []))
+        publish_routing_snapshot(
+            self.controller.controllers
+            if self._agent_specs is None
+            else self._agent_specs,
+            self.redis,
+            self.controller.node_redis,
         )
-
-    def list_instances(self, agent_name=None):
-        if agent_name:
-            instance_ids = sorted(self.redis.smembers(f"agent:{agent_name}:instances"))
-            return [
-                instance
-                for instance_id in instance_ids
-                if (instance := self.redis.hgetall(f"agent_instance:{instance_id}"))
-            ]
-
-        return [
-            instance
-            for key in sorted(self.redis.scan_keys("agent_instance:*"))
-            if (instance := self.redis.hgetall(key))
-        ]
 
     def _destroy_runtime(self, instance):
         runtime = self._provider_runtime(instance.get("provider", "local"))
@@ -283,97 +305,47 @@ class InstanceManager:
         self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
         self._untrack_runtime(instance["agent_name"], instance["runtime_id"])
 
-    def _next_host_port(self, host, key, agent_name, provider, replica_index):
-        used = {
-            int(instance["host_port"])
-            for instance in self.list_instances()
-            if instance.get("host") == host and instance.get("host_port")
+    def _prune_stale_port_claims(self):
+        """Delete port claims left for replica slots no agent wants anymore."""
+        wanted = {
+            _instance_key(spec["provider"], spec["name"], replica_index)
+            for spec in self._agent_specs or []
+            for replica_index in range(int(spec.get("replicas", 1)))
         }
-        port = DEFAULT_HOST_PORT_START
-        while port in used:
-            port += 1
+        for key in self.redis.scan_keys("agent_instance:*"):
+            if key in wanted:
+                continue
+            record = self.redis.hgetall(key)
+            if record and not record.get("runtime_id"):
+                logger.info("Removing stale port claim %s", key)
+                self.redis.delete(key)
 
-        self.redis.hset_multiple(
-            key,
-            {
-                "agent_name": agent_name,
-                "provider": provider,
-                "replica_index": str(replica_index),
-                "host": host,
-                "host_port": str(port),
-            },
-        )
+    def _claim_host_port(self, host, key, agent_name, provider, replica_index):
+        """Claim the lowest free port on a machine for one local replica and record the claim in Redis."""
+        # Held across scan and write so two reconcilers can't claim the same port.
+        with self.redis.lock(f"port_claim_lock:{host}", PORT_CLAIM_LOCK_SECONDS):
+            # Raw scan: port claims from this pass must count as used too.
+            records = (
+                self.redis.hgetall(record_key)
+                for record_key in self.redis.scan_keys("agent_instance:*")
+            )
+            used = {
+                int(instance["host_port"])
+                for instance in records
+                if instance.get("host") == host and instance.get("host_port")
+            }
+            port = DEFAULT_HOST_PORT_START
+            while port in used:
+                port += 1
+
+            self.redis.hset_multiple(
+                key,
+                {
+                    "agent_name": agent_name,
+                    "provider": provider,
+                    "replica_index": str(replica_index),
+                    "host": host,
+                    "host_port": str(port),
+                },
+            )
         return port
-
-    @staticmethod
-    def _instance_id(provider, agent_name, replica_index):
-        return f"{provider}:{agent_name}:{replica_index}"
-
-    @classmethod
-    def _instance_key(cls, provider, agent_name, replica_index):
-        return f"agent_instance:{cls._instance_id(provider, agent_name, replica_index)}"
-
-    def _instance_id_from_record(self, instance):
-        return self._instance_id(
-            instance["provider"], instance["agent_name"], int(instance["replica_index"])
-        )
-
-    def container_name(self, agent_spec, replica_index):
-        return container_names.container_name(agent_spec["name"], replica_index)
-
-    def _provider_runtime(self, provider):
-        normalized = provider.casefold()
-        if normalized == "ec2":
-            from canyonos_core.controller.cloud_provider_logic.EC2 import (
-                _runtime as runtime,
-            )
-        elif normalized == "local":
-            runtime = local_runtime
-        else:
-            raise RuntimeError(
-                f"Unsupported provider {provider!r}; use `local` or `EC2`."
-            )
-        runtime._controller = self.controller
-        return runtime
-
-    def publish_routing_snapshot(self, agent_specs):
-        services = {agent_spec["name"] for agent_spec in agent_specs}
-        stateful = {
-            agent_spec["name"]
-            for agent_spec in agent_specs
-            if agent_spec.get("stateful", False)
-        }
-        targets = list(getattr(self.controller, "node_redis", {}).values()) or [
-            self.redis
-        ]
-
-        for redis_client in targets:
-            hdel = getattr(redis_client, "hdel", None) or redis_client.client.hdel
-            existing_services = redis_client.smembers(self.SERVICES_SET_KEY)
-            for stale in existing_services - services:
-                redis_client.srem(self.SERVICES_SET_KEY, stale)
-                hdel(self.ROUTING_STATEFUL_KEY, stale)
-                hdel(self.ROUTING_ENDPOINTS_KEY, stale)
-            for service in services:
-                redis_client.sadd(self.SERVICES_SET_KEY, service)
-                if service in stateful:
-                    redis_client.hset(self.ROUTING_STATEFUL_KEY, service, "true")
-                else:
-                    hdel(self.ROUTING_STATEFUL_KEY, service)
-                endpoints = [
-                    self._routing_endpoint_for(item)
-                    for item in sorted(
-                        self.list_instances(service),
-                        key=lambda item: int(item["replica_index"]),
-                    )
-                ]
-                if endpoints:
-                    redis_client.hset(
-                        self.ROUTING_ENDPOINTS_KEY, service, json.dumps(endpoints)
-                    )
-                else:
-                    hdel(self.ROUTING_ENDPOINTS_KEY, service)
-
-    def _routing_endpoint_for(self, instance):
-        runtime = self._provider_runtime(instance.get("provider", "local"))
-        return runtime.routing_endpoint_for(instance)

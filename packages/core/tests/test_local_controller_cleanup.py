@@ -1,4 +1,3 @@
-import fnmatch
 import json
 import os
 import sys
@@ -12,10 +11,67 @@ sys.path.insert(
 )
 
 from canyonos_core.controller.local_controller_frontend import (
+    EXECUTE_DEDUP_TTL_SECONDS,
     FUTURE_CLEANUP_GRACE_SECONDS,
     LocalControllerServicer,
 )
+from fakes import _FakeRedis
 import local_controler_pb2
+
+
+class ExecuteDedupTests(unittest.TestCase):
+    def _servicer(self, endpoint="10.0.0.1:50051", redis=None):
+        servicer = SimpleNamespace(
+            my_endpoint=endpoint,
+            redis=redis if redis is not None else _FakeRedis(),
+            request_queue=__import__("queue").Queue(),
+        )
+        servicer._already_accepted = lambda payload: (
+            LocalControllerServicer._already_accepted(servicer, payload)
+        )
+        return servicer
+
+    def _execute(self, servicer, payload):
+        request = local_controler_pb2.JsonResponse(resonse=json.dumps(payload))
+        return LocalControllerServicer.Execute(servicer, request, context=None)
+
+    def test_a_retried_delivery_of_the_same_future_is_queued_once(self):
+        servicer = self._servicer()
+
+        first = self._execute(servicer, {"future_id": "f1", "function": "run"})
+        second = self._execute(servicer, {"future_id": "f1", "function": "run"})
+
+        self.assertEqual(servicer.request_queue.qsize(), 1)
+        self.assertEqual(first.resonse, second.resonse)
+
+    def test_the_acceptance_key_is_created_with_its_expiry(self):
+        servicer = self._servicer()
+
+        self._execute(servicer, {"future_id": "f1", "function": "run"})
+
+        self.assertEqual(
+            servicer.redis.ttls["execute:10.0.0.1:50051:f1:accepted"],
+            EXECUTE_DEDUP_TTL_SECONDS,
+        )
+
+    def test_the_same_future_is_accepted_by_each_endpoint_sharing_a_redis(self):
+        redis = _FakeRedis()
+        origin = self._servicer("10.0.0.1:50051", redis)
+        target = self._servicer("10.0.0.1:50052", redis)
+
+        self._execute(origin, {"future_id": "f1"})
+        self._execute(target, {"future_id": "f1"})
+
+        self.assertEqual(origin.request_queue.qsize(), 1)
+        self.assertEqual(target.request_queue.qsize(), 1)
+
+    def test_payloads_without_a_future_id_are_always_queued(self):
+        servicer = self._servicer()
+
+        self._execute(servicer, {"function": "run"})
+        self._execute(servicer, {"function": "run"})
+
+        self.assertEqual(servicer.request_queue.qsize(), 2)
 
 
 class _SyncThread:
@@ -99,41 +155,6 @@ class CleanupDispatchTests(unittest.TestCase):
         self.assertEqual(cleaned, ["req1", "req3"])
 
 
-class _FakeRedisStore:
-    """Enough of RedisClient's surface for _cleanup_request: strings, sets, setnx."""
-
-    def __init__(self, strings=None, sets=None):
-        self.strings = strings or {}
-        self.sets = sets or {}
-        self.expirations = {}  # key -> seconds, as recorded by expire()
-
-    def setnx(self, key, value):
-        if key in self.strings:
-            return False
-        self.strings[key] = value
-        return True
-
-    def smembers(self, name):
-        return set(self.sets.get(name, set()))
-
-    def hget(self, name, key):
-        return None
-
-    def scan_keys(self, pattern):
-        return [k for k in self.strings if fnmatch.fnmatch(k, pattern)]
-
-    def delete(self, *keys):
-        for key in keys:
-            self.strings.pop(key, None)
-            self.sets.pop(key, None)
-
-    def expire(self, key, seconds, nx=False):
-        # Real Redis: schedules removal after `seconds`, doesn't touch the
-        # value now. This fake just records the call so tests can assert on
-        # it without needing to fake time passing.
-        self.expirations[key] = seconds
-
-
 def _bare_servicer(redis):
     servicer = LocalControllerServicer.__new__(LocalControllerServicer)
     servicer.redis = redis
@@ -148,7 +169,7 @@ class CleanupRequestTests(unittest.TestCase):
         # Deleting it immediately here races that read and silently drops the
         # span. Expiring with a grace period keeps memory bounded without
         # deleting out from under the poll loop.
-        redis = _FakeRedisStore(
+        redis = _FakeRedis(
             sets={"request:req1:futures": {"fut1", "fut2"}},
             strings={
                 "future:fut1": "x",
@@ -169,14 +190,14 @@ class CleanupRequestTests(unittest.TestCase):
             "future:fut1:children",
             "future:fut1:consumers",
         ):
-            self.assertEqual(redis.expirations.get(key), FUTURE_CLEANUP_GRACE_SECONDS)
+            self.assertEqual(redis.ttls.get(key), FUTURE_CLEANUP_GRACE_SECONDS)
         self.assertIn("request:req1:futures", redis.sets)
         self.assertIn("future:fut1", redis.strings)
 
     def test_cleanup_still_deletes_affinity_bindings_outright(self):
         # Affinity bindings aren't read by the telemetry poll loop, so there's
         # no race to protect against here -- immediate deletion is still fine.
-        redis = _FakeRedisStore(
+        redis = _FakeRedis(
             sets={"request:req1:futures": {"fut1"}},
             strings={"future:fut1": "x", "affinity:req1": "some-host"},
         )
@@ -187,12 +208,10 @@ class CleanupRequestTests(unittest.TestCase):
         self.assertNotIn("affinity:req1", redis.strings)
         # The future itself is expired (grace period), not deleted outright.
         self.assertIn("future:fut1", redis.strings)
-        self.assertEqual(
-            redis.expirations.get("future:fut1"), FUTURE_CLEANUP_GRACE_SECONDS
-        )
+        self.assertEqual(redis.ttls.get("future:fut1"), FUTURE_CLEANUP_GRACE_SECONDS)
 
     def test_cleanup_releases_its_lock_even_with_no_futures(self):
-        redis = _FakeRedisStore(sets={"request:req1:futures": set()})
+        redis = _FakeRedis(sets={"request:req1:futures": set()})
         servicer = _bare_servicer(redis)
 
         servicer._cleanup_request("req1")

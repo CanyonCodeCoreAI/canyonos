@@ -6,58 +6,12 @@ from unittest.mock import ANY, MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.controller.cloud_provider_logic.Local import (
+from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.controller.instance_manager import InstanceManager
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.strings = {}
-        self.hashes = {}
-        self.sets = {}
-
-    def set(self, key, value):
-        self.strings[key] = value
-
-    def get(self, key):
-        return self.strings.get(key)
-
-    def delete(self, *keys):
-        for key in keys:
-            self.strings.pop(key, None)
-            self.hashes.pop(key, None)
-            self.sets.pop(key, None)
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = value
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hget(self, name, field):
-        return self.hashes.get(name, {}).get(field)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def hdel(self, name, field):
-        self.hashes.setdefault(name, {}).pop(field, None)
-
-    def sadd(self, name, *values):
-        self.sets.setdefault(name, set()).update(values)
-
-    def srem(self, name, *values):
-        self.sets.setdefault(name, set()).difference_update(values)
-
-    def smembers(self, name):
-        return set(self.sets.get(name, set()))
-
-    def scan_keys(self, pattern):
-        prefix = pattern.rstrip("*")
-        keys = set(self.strings) | set(self.hashes) | set(self.sets)
-        return [key for key in sorted(keys) if key.startswith(prefix)]
+from canyonos_core.controller.controller_context import list_instances
+from canyonos_core.reconciler.provisioner import Provisioner
+from fakes import _FakeRedis
 
 
 def _fake_controller():
@@ -103,7 +57,7 @@ def _fake_runtime(**kwargs):
     return runtime
 
 
-class InstanceManagerRuntimeTests(unittest.TestCase):
+class ProvisionerRuntimeTests(unittest.TestCase):
     def test_bootstrap_instance_removes_an_orphaned_running_container_before_recreating(
         self,
     ):
@@ -121,7 +75,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout="")
 
         controller._run_cmd = fake_run_cmd
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
@@ -137,7 +91,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_a_configured_redis_port_reaches_a_local_agent(self):
         """Redis listens on the declared port inside the container, so agents use it too."""
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         instance = manager.ensure_instances(
             [{"name": "Alpha", "provider": "local", "redis_port": 9002}]
@@ -149,7 +103,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_local_instances_keep_default_host_and_increment_host_ports(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         alpha = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
         beta = manager.ensure_instances([{"name": "Beta", "provider": "local"}])[0]
@@ -230,9 +184,29 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
             ),
         )
 
-    def test_local_provider_case_is_normalized_before_port_reservation(self):
+    def test_only_limits_which_agents_get_replicas_but_routing_keeps_every_agent(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
+
+        manager.ensure_instances(
+            [
+                {"name": "Alpha", "provider": "local"},
+                {"name": "Beta", "provider": "local"},
+            ],
+            only={"Alpha"},
+        )
+
+        self.assertEqual(
+            [instance["agent_name"] for instance in list_instances(controller.redis)],
+            ["Alpha"],
+        )
+        self.assertEqual(
+            controller.redis.smembers("routing_table:services"), {"Alpha", "Beta"}
+        )
+
+    def test_local_provider_case_is_normalized_before_claiming_a_port(self):
+        controller = _fake_controller()
+        manager = Provisioner(controller)
 
         instance = manager.ensure_instances([{"name": "Alpha", "provider": "LOCAL"}])[0]
 
@@ -242,7 +216,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_bootstrap_instance_passes_poll_interval_env_var(self):
         controller = _fake_controller()
         controller.config = {"poll_interval": 7}
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
@@ -255,7 +229,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
         positional argument, breaking the launch entirely."""
         controller = _fake_controller()
         controller.config = {"logs": True}
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
@@ -266,7 +240,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_local_bootstrap_defaults_logs_enabled_to_true(self):
         controller = _fake_controller()
         controller.config = {}
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
@@ -277,7 +251,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_local_bootstrap_honors_explicit_logs_false(self):
         controller = _fake_controller()
         controller.config = {"logs": False}
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
@@ -287,7 +261,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_llm_stub_env_is_forwarded_to_the_agent_when_set(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.dict(os.environ, {"CANYONOS_LLM_STUB_TEXT": "test"}):
             manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
@@ -298,20 +272,19 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_llm_stub_is_explicitly_disabled_by_default(self):
         """Without `canyonos test`, the stub is pinned empty (off) and immune to --env-file."""
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         os.environ.pop("CANYONOS_LLM_STUB_TEXT", None)
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
         cmd = controller._run_cmd.call_args_list[1].args[0]
-        # Always present, explicitly empty -> stub off, and a user's .env value
-        # for this key is overridden (docker: -e beats --env-file).
+        # Explicitly empty means stub off; -e beats --env-file, so a user's .env loses.
         self.assertIn("CANYONOS_LLM_STUB_TEXT=", cmd)
         self.assertNotIn("CANYONOS_LLM_STUB_TEXT=test", cmd)
 
     def test_local_workflow_and_resource_flags_stay_the_same(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.object(local_runtime, "_port_check", return_value=False):
             manager.ensure_instances(
@@ -388,7 +361,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_workflow_bootstrap_fails_fast_on_an_occupied_api_port(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.object(local_runtime, "_port_check", return_value=True):
             with self.assertRaises(RuntimeError) as ctx:
@@ -408,7 +381,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
     def test_plain_agent_bootstrap_ignores_api_port_conflicts(self):
         """Only `type: workflow` publishes api_port -- a plain agent has nothing to conflict on."""
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         with patch.object(local_runtime, "_port_check", return_value=True):
             manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
@@ -417,7 +390,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_agent_id_is_stable_across_repeated_ensure_instances_calls(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         first = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
         second = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
@@ -426,7 +399,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_agent_id_is_published_under_the_controller_endpoint_key(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         alpha = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
 
@@ -437,7 +410,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_instance_record_failure_removes_the_new_local_runtime(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
         write = controller.redis.hset_multiple
 
         def fail_instance_record(name, mapping):
@@ -454,9 +427,39 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
         self.assertIn(["docker", "rm", "-f", "canyonos-alpha-0"], commands)
         self.assertEqual(controller.containers["Alpha"], [])
 
+    def test_one_failed_replica_still_registers_and_routes_the_others(self):
+        controller = _fake_controller()
+        manager = Provisioner(controller)
+        provision_one = manager._provision_one
+
+        def fail_beta(job):
+            if job["agent_name"] == "Beta":
+                raise RuntimeError("beta failed")
+            return provision_one(job)
+
+        manager._provision_one = fail_beta
+
+        with (
+            patch(
+                "canyonos_core.reconciler.provisioner.publish_routing_snapshot"
+            ) as publish,
+            self.assertRaisesRegex(RuntimeError, "beta failed"),
+        ):
+            manager.ensure_instances(
+                [
+                    {"name": "Alpha", "provider": "local"},
+                    {"name": "Beta", "provider": "local"},
+                ]
+            )
+
+        self.assertEqual(
+            controller.redis.smembers("agent:Alpha:instances"), {"local:Alpha:0"}
+        )
+        publish.assert_called_once()
+
     def test_missing_runtime_behind_stale_record_is_reprovisioned(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
         key = "agent_instance:local:Alpha:0"
         stale = {
             "agent_id": "stale-agent-id",
@@ -487,7 +490,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_local_remove_instance_still_removes_the_same_container(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
         manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
         controller._run_cmd.reset_mock()
@@ -502,7 +505,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_manager_keeps_ec2_runtime_boundary_behavior(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         provisioned = {
             "host": "10.0.0.30",
@@ -557,8 +560,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
                 0,
             ),
         )
-        # EC2 jobs never get a pre-reserved port; the callback stands in for
-        # one but should always resolve to None for this provider.
+        # EC2 jobs never get a pre-claimed port, so this must resolve to None.
         self.assertIsNone(provision_args[2]("10.0.0.30"))
         runtime.bootstrap_instance.assert_called_once_with(
             provisioned,
@@ -571,12 +573,16 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
             0,
             ANY,
         )
-        runtime.terminate_instance.assert_called_once_with(instance)
+        # The record read back from Redis carries the creation timestamp
+        # _write_instance stamps on it.
+        runtime.terminate_instance.assert_called_once_with(
+            {**instance, "created_at": ANY}
+        )
         self.assertEqual(created, instance)
 
     def test_manager_uses_same_runtime_contract_for_local_and_ec2(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         local_instance = {
             "agent_name": "Local",
@@ -630,7 +636,7 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
         self.assertEqual(
             local_provision_args[:2], ({"name": "Local", "provider": "local"}, 0)
         )
-        # Local jobs get a pre-reserved port (8000 is the first free port).
+        # Local jobs get a pre-claimed port (8000 is the first free port).
         self.assertEqual(local_provision_args[2]("localhost"), 8000)
         local_runtime.bootstrap_instance.assert_called_once_with(
             {}, {"name": "Local", "provider": "local"}, 0, ANY
@@ -651,11 +657,88 @@ class InstanceManagerRuntimeTests(unittest.TestCase):
 
     def test_local_provider_runtime_does_not_require_ec2_import(self):
         controller = _fake_controller()
-        manager = InstanceManager(controller, controller.redis)
+        manager = Provisioner(controller)
 
         runtime = manager._provider_runtime("local")
 
         self.assertIs(runtime, local_runtime)
+
+
+class PortClaimTests(unittest.TestCase):
+    def _claim(self, redis, replica_index, port):
+        redis.hset_multiple(
+            f"agent_instance:local:Alpha:{replica_index}",
+            {
+                "agent_name": "Alpha",
+                "provider": "local",
+                "replica_index": str(replica_index),
+                "host": "localhost",
+                "host_port": str(port),
+            },
+        )
+
+    def test_a_port_claim_is_hidden_from_full_instance_scans(self):
+        controller = _fake_controller()
+        self._claim(controller.redis, 0, 8000)
+
+        self.assertEqual(list_instances(controller.redis), [])
+
+    def test_a_port_claim_still_blocks_its_port_for_the_next_replica(self):
+        controller = _fake_controller()
+        self._claim(controller.redis, 0, 8000)
+        manager = Provisioner(controller)
+
+        port = manager._claim_host_port(
+            "localhost", "agent_instance:local:Alpha:1", "Alpha", "local", 1
+        )
+
+        self.assertEqual(port, 8001)
+
+    def test_a_port_claim_for_a_slot_no_agent_wants_is_pruned(self):
+        controller = _fake_controller()
+        self._claim(controller.redis, 3, 8003)
+        manager = Provisioner(controller)
+        manager._agent_specs = [{"name": "Alpha", "provider": "local", "replicas": 1}]
+
+        manager._prune_stale_port_claims()
+
+        self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:3"), {})
+
+    def test_a_port_claim_for_a_wanted_slot_is_kept(self):
+        controller = _fake_controller()
+        self._claim(controller.redis, 0, 8000)
+        manager = Provisioner(controller)
+        manager._agent_specs = [{"name": "Alpha", "provider": "local", "replicas": 1}]
+
+        manager._prune_stale_port_claims()
+
+        self.assertEqual(
+            controller.redis.hgetall("agent_instance:local:Alpha:0")["host_port"],
+            "8000",
+        )
+
+    def test_a_failed_provision_removes_its_port_claim(self):
+        controller = _fake_controller()
+        self._claim(controller.redis, 0, 8000)
+        runtime = _fake_runtime(
+            provision_instance=MagicMock(side_effect=RuntimeError("boom"))
+        )
+        manager = Provisioner(controller)
+
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            manager._provision_one(
+                {
+                    "agent_name": "Alpha",
+                    "agent_spec": {"name": "Alpha"},
+                    "runtime": runtime,
+                    "replica_index": 0,
+                    "instance_id": "local:Alpha:0",
+                    "claimed_port": 8000,
+                }
+            )
+
+        self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
+        runtime.terminate_instance.assert_not_called()
 
 
 if __name__ == "__main__":

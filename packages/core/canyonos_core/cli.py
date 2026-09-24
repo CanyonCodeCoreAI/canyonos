@@ -16,19 +16,18 @@ import shutil
 import subprocess
 import sys
 
+from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.env_file import resolve_env_file
+from canyonos_core.schema import (
+    check_project,
+    declarations_by_name,
+    render_violation,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("canyonos_core")
-DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 ARTIFACT_DIR_NAME = ".car"
 SOURCE_DIR_NAME = "app"
-EC2_REQUIRED_CONFIG_KEYS = (
-    "ami_id",
-    "subnet_id",
-    "security_group_ids",
-    "region",
-)
 
 
 # ------------------------------------------------------------------ #
@@ -47,11 +46,14 @@ def _get_package_dir():
 
 
 def _load_config(config_path):
-    """Load a YAML config file."""
-    import yaml
+    """Load the config as the schema checked it and the controller will read it.
 
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
+    The root `.env` is imported and `${VAR}` refs are expanded through the
+    same helper both of those use. Reading the raw YAML here instead let a
+    reference the schema had validated in its expanded form reach the build
+    as the literal `${VAR}`.
+    """
+    config = load_config(config_path)
     # Everything below here till "return config" is basically just checks to make sure the folder is correct
     if not isinstance(config, dict):
         raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
@@ -135,25 +137,55 @@ def _artifact_prefix(root):
     )
 
 
-def _normalize_requirements(agent_cfg):
-    """Return an agent's `requirements` list, or [] if absent/null/malformed."""
-    requirements = agent_cfg.get("requirements") or []
-    if not isinstance(requirements, list) or not all(
-        isinstance(r, str) for r in requirements
-    ):
-        # The requirements list is bad, assuming file has no requirements and logging error
-        logger.warning(
-            "Agent '%s': `requirements` must be a list of strings, got %r; ignoring.",
-            agent_cfg.get("name"),
-            requirements,
+def _project_layout():
+    """(artifact_root, source_root, declarations_dir) for the project in cwd.
+
+    The .car layout keeps the app's own code under `.car/app` and everything
+    generated beside it; a plain checkout keeps both at the project root.
+    """
+    project_dir = os.path.abspath(os.getcwd())
+    prefix = _artifact_prefix(project_dir)
+    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
+    return (
+        artifact_root,
+        os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir,
+        os.path.join(artifact_root, "config" if prefix else "agents"),
+    )
+
+
+def _reject(violations, summary):
+    """Log each violation on its own line, then exit.
+
+    The host CLI reads the first `ERROR:` line out of this process's output as
+    the root cause, so a violation is never split across lines.
+    """
+    for violation in violations:
+        logger.error("%s", render_violation(violation))
+    logger.error(summary, len(violations))
+    sys.exit(1)
+
+
+def validate_or_exit(config_path, declarations_dir, source_dir=None):
+    """Reject the config before anything is generated; return the parsed manifest."""
+    manifest, violations = check_project(config_path, declarations_dir, source_dir)
+    if violations:
+        _reject(
+            violations,
+            "Configuration rejected: %d problem(s) found; nothing was built.",
         )
-        return []
-    return requirements
+    return manifest
+
+
+def _normalize_requirements(agent_cfg):
+    """Return a service's `requirements` list; the schema already checked its shape."""
+    return list(agent_cfg.get("requirements") or [])
 
 
 def _docker_platform():
     """Return the target Docker platform for portable runtime images."""
-    return os.environ.get("CANYONOS_DOCKER_PLATFORM", DEFAULT_DOCKER_PLATFORM)
+    from canyonos_core.stub_generator import target_docker_platform
+
+    return target_docker_platform()
 
 
 def _docker_build_cmd(*args):
@@ -229,13 +261,8 @@ def _ensure_grpc_stubs_importable(project_dir):
 
 
 def _preflight_ec2_deploy(config, project_dir):
-    ec2_cfg = config.get("ec2", {})
-    missing = [key for key in EC2_REQUIRED_CONFIG_KEYS if not ec2_cfg.get(key)]
-    if missing:
-        raise RuntimeError(
-            f"EC2 deploy preflight failed: missing ec2 config keys: {', '.join(sorted(missing))}"
-        )
-
+    # The required `ec2:` keys are the manifest schema's job, checked before
+    # anything was built; what is left here is the local toolchain.
     _require_docker_for_ec2("deploy")
     _ensure_grpc_stubs_importable(project_dir)
 
@@ -308,32 +335,18 @@ def _run_build(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
 
+    artifact_root, source_root, declarations_dir = _project_layout()
+
+    # Nothing below this line runs against a config the schema rejects: no
+    # stubs, no protoc, no Docker context, no image. It comes before the load
+    # so a file that is not YAML at all is rendered as a violation too, and it
+    # is handed source_root so a service whose code is missing fails here
+    # rather than being skipped out of a deploy that then reports success.
+    validate_or_exit(config_path, declarations_dir, source_root)
+
     config = _load_config(config_path)
     agents = config.get("agents", [])
-    project_dir = os.path.abspath(os.getcwd())
-    prefix = _artifact_prefix(project_dir)
-    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
-    source_root = (
-        os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir
-    )
     package_dir = _get_package_dir()
-
-    missing_sources = []
-    for agent in agents:
-        source_field = (
-            "workflow_file"
-            if agent.get("type", "agent") == "workflow"
-            else "entrypoint"
-        )
-        source_path = agent.get(source_field)
-        if not isinstance(source_path, str) or not source_path:
-            missing_sources.append(f"{agent['name']}: missing `{source_field}`")
-        elif not os.path.isfile(os.path.join(source_root, source_path)):
-            missing_sources.append(f"{agent['name']}: {source_path} not found")
-    if missing_sources:
-        raise RuntimeError(
-            "Cannot build configured sources: " + "; ".join(missing_sources)
-        )
 
     from canyonos_core.stub_generator import (
         BASE_AGENT_REQUIREMENTS,
@@ -369,7 +382,6 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     #  Step 1: Discover agent YAML files and generate Python stubs    #
     # -------------------------------------------------------------- #
-    declarations_dir = os.path.join(artifact_root, "config" if prefix else "agents")
     stubs_dir = os.path.join(artifact_root, "stubs")
     os.makedirs(stubs_dir, exist_ok=True)
 
@@ -383,15 +395,8 @@ def _run_build(config_path):
     if not yaml_files:
         logger.warning("No agent YAML files found in %s", declarations_dir)
 
-    import yaml
-
     # Looks up a config entry's YAML and to map stubs to entrypoints.
-    yaml_by_name = {}
-    for yaml_path in yaml_files:
-        with open(yaml_path) as f:
-            name = yaml.safe_load(f).get("agent", {}).get("name")
-        if name:
-            yaml_by_name[name] = yaml_path
+    yaml_by_name = declarations_by_name(declarations_dir)
 
     # Maps each generated stub's basename to its agent's entrypoint path, which
     # is the single location the stub is written to and copied to.
@@ -461,10 +466,7 @@ def _run_build(config_path):
             # No build: pull the declared image and tag it like any other
             # agent image so the rest of the deploy pipeline treats it the
             # same way (EC2 image transfer, etc.) without further changes.
-            image = agent_cfg.get("image")
-            if not image:
-                logger.warning("Skipping database '%s': no image specified", agent_name)
-                continue
+            image = agent_cfg["image"]
             target_image = f"canyonos-{agent_name.lower()}"
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
             subprocess.run(
@@ -473,20 +475,12 @@ def _run_build(config_path):
             subprocess.run(["docker", "tag", image, target_image], check=True)
             continue
 
+        # Every key read below is one the schema requires and has checked,
+        # down to the file being on disk -- a service that cannot be built
+        # fails the deploy rather than dropping quietly out of it.
         if agent_type == "workflow":
             # Workflow container
-            workflow_file = agent_cfg.get("workflow_file")
-            if not workflow_file:
-                logger.warning(
-                    "Skipping workflow '%s': no workflow_file specified", agent_name
-                )
-                continue
-
-            workflow_path = os.path.join(source_root, workflow_file)
-            if not os.path.isfile(workflow_path):
-                logger.error("Workflow file not found: %s", workflow_path)
-                continue
-
+            workflow_path = os.path.join(source_root, agent_cfg["workflow_file"])
             docker_context = os.path.join(artifact_root, "docker_container", "Workflow")
             logger.info("Generating workflow Docker context for '%s'", agent_name)
             generate_workflow_docker(
@@ -504,17 +498,7 @@ def _run_build(config_path):
 
         else:
             # Agent container
-            entrypoint = agent_cfg.get("entrypoint")
-            if not entrypoint:
-                logger.warning(
-                    "Skipping agent '%s': no entrypoint specified", agent_name
-                )
-                continue
-
-            agent_file = os.path.join(source_root, entrypoint)
-            if not os.path.isfile(agent_file):
-                logger.error("Agent file not found: %s", agent_file)
-                continue
+            agent_file = os.path.join(source_root, agent_cfg["entrypoint"])
 
             # Find matching YAML by agent name
             matching_yaml = yaml_by_name.get(agent_name)
@@ -651,7 +635,6 @@ def cmd_deploy(args):
     signal.signal(signal.SIGHUP, _reload_handler)
 
     logger.info("Deploying from config: %s", config_path)
-    controller.launch_docker_agents()
     controller._wait_for_healthy()
     controller.run()
 

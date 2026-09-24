@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -710,6 +711,26 @@ class PlatformPinTests(unittest.TestCase):
     def test_an_agent_may_pin_any_flask_now_the_proxy_has_its_own(self):
         self.assertEqual(stub_generator.too_old_requirements(["flask==1.0"]), [])
 
+    def test_a_repeated_package_is_still_written_line_for_line(self):
+        # Combining the bounds is only for the comparison; requirements.txt
+        # keeps exactly what the app asked for.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            yaml_path = project / "ExampleAgent.yaml"
+            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
+            agent_file = _write(project / "agent.py", "print('ok')\n")
+            output_dir = os.path.join(tmpdir, "out")
+            with redirect_stdout(io.StringIO()):
+                generate_docker(
+                    str(yaml_path),
+                    str(agent_file),
+                    output_dir=output_dir,
+                    requirements=["protobuf>=7", "Protobuf>=7.1"],
+                )
+            requirements = _read_requirements(output_dir)
+
+        self.assertEqual(requirements[-2:], ["protobuf>=7", "Protobuf>=7.1"])
+
     def test_the_workflow_context_decides_the_same_way(self):
         overrides, _ = self._context(["protobuf>=6.32"], workflow=True)
         self.assertEqual(overrides, self._context(["protobuf>=6.32"])[0])
@@ -762,3 +783,46 @@ class PlatformPinTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenerateStubTests(unittest.TestCase):
+    """The stub is generated from the declaration the schema checked."""
+
+    def _generate(self, text, env=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_path = Path(tmpdir) / "hello.yaml"
+            yaml_path.write_text(text)
+            output_path = Path(tmpdir) / "stubs" / "hello.py"
+            with (
+                unittest.mock.patch.dict(os.environ, env or {}),
+                redirect_stdout(io.StringIO()),
+            ):
+                source = stub_generator.generate_stub(str(yaml_path), str(output_path))
+        compile(source, "hello.py", "exec")
+        return source
+
+    def test_a_blank_list_or_type_is_generated_as_absent(self):
+        for text in (
+            "agent:\n  name: Hello\n  functions:\n",
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n      arguments:\n",
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
+            "      arguments:\n        - name: a\n          type:\n",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("class Hello(object):", self._generate(text))
+
+    def test_env_references_are_expanded_into_the_stub(self):
+        source = self._generate(
+            "agent:\n  name: Hello\n  functions:\n    - name: ${STUB_FN_NAME}\n",
+            env={"STUB_FN_NAME": "hello"},
+        )
+
+        self.assertIn("def hello(self)", source)
+
+    def test_a_type_built_from_builtins_is_written_as_its_annotation(self):
+        source = self._generate(
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
+            "      arguments:\n        - name: a\n          type: dict[str, int] | None\n"
+        )
+
+        self.assertIn("def hello(self, a: dict[str, int] | None)", source)
