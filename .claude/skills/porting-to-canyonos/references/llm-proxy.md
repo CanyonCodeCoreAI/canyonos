@@ -6,7 +6,7 @@ call during the survey as the trigger, not a pre-existing `llm_proxy`
 reference or an env hook already wired into the deployment.
 
 **Output:** the proxy's environment settings written into the deployment's own
-env files, verified routing, and a clear blocker for unsupported call shapes.
+env files and verified routing.
 
 ## Contents
 
@@ -146,28 +146,29 @@ cross-host proxy address is ever needed.
 ## Supported call shape
 
 - OpenAI and Anthropic non-streaming HTTP calls are buffered and forwarded.
+- OpenAI and Anthropic streaming calls are relayed as they arrive: a
+  `text/event-stream` response passes through byte for byte, so `.stream()`,
+  `.astream()`, and a raw `stream=True` read token by token work unchanged. An
+  upstream failure mid-stream aborts the response instead of ending it cleanly,
+  so the caller sees an error, not a truncated answer.
 - Bedrock `invoke`, `converse`, `invoke-with-response-stream`, and
   `converse-stream` are all reissued through the proxy's boto3 client. The two
   streaming ops are decoded by boto3 and re-encoded back into the AWS
   event-stream wire format, so the caller's own boto3 client decodes them
   exactly as if it had hit Bedrock directly.
 
-Streaming splits by how the source **consumes** the response, not by whether a
-`streaming` flag is set. For OpenAI and Anthropic, the proxy buffers, so it
-forwards anything that reads a complete response and breaks anything that
-reads tokens as they arrive (Bedrock's `converse-stream` and
-`invoke-with-response-stream` are the exception -- see above, they stream
-end to end):
+Never report a streaming call as a blocker, and never disable streaming to make
+it fit.
 
-- `ChatOpenAI(streaming=True)` reached through `.invoke()` works. LangChain
-  drains the stream inside the call and returns one message; the proxy sees an
-  ordinary buffered request. Verified end to end against this proxy.
-- `.stream()`, `.astream()`, and a raw `stream=True` against OpenAI or
-  Anthropic, read token by token, do not.
+Two streaming caveats, neither a blocker:
 
-Read the call site before deciding. Report and stop only for an OpenAI or
-Anthropic call read token by token; never silently disable streaming to make
-it fit, and never report a Bedrock streaming call as a blocker.
+- Token metrics for a streamed OpenAI call exist only when the caller sets
+  `stream_options={"include_usage": True}`. Do not edit the source to add it;
+  report the missing usage as a telemetry gap.
+- The `canyonos test` LLM stub answers OpenAI and Anthropic with a plain JSON
+  body even when the request asks to stream, so a call read token by token can
+  fail or come back empty under the stub. Verify such a port with
+  `canyonos test --real-llm`; do not change the call to suit the stub.
 
 ## Credential behavior
 
