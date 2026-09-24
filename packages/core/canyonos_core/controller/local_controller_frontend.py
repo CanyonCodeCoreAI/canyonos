@@ -22,6 +22,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+POLL_INTERVAL_SECONDS = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
+FUTURE_CLEANUP_GRACE_MULTIPLIER = 3
+FUTURE_CLEANUP_GRACE_MIN_SECONDS = 30
+FUTURE_CLEANUP_GRACE_SECONDS = max(
+    FUTURE_CLEANUP_GRACE_MIN_SECONDS,
+    POLL_INTERVAL_SECONDS * FUTURE_CLEANUP_GRACE_MULTIPLIER,
+)
+EXECUTE_DEDUP_TTL_SECONDS = 3600
+
+
 class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
     """gRPC servicer that accepts requests and pushes them into a queue."""
 
@@ -43,8 +53,28 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
     def Execute(self, request, context):
         """Accept an Execute request and push it into the queue."""
         logger.info(f"Received request: {request.resonse}")
-        self.request_queue.put(request.resonse)
+        if self._already_accepted(request.resonse):
+            logger.info("Execute: duplicate delivery of a queued request, skipping.")
+        else:
+            self.request_queue.put(request.resonse)
         return local_controler_pb2.JsonResponse(resonse="Request queued successfully")
+
+    def _already_accepted(self, payload):
+        """Tells Execute whether this replica has already accepted a given request, so a request delivered twice isn't run twice."""
+        # The sender retries on UNAVAILABLE, which can follow a delivery whose reply was lost.
+        try:
+            future_id = json.loads(payload).get("future_id")
+        except (ValueError, AttributeError):
+            return False
+        if not future_id:
+            return False
+        key = f"execute:{self.my_endpoint}:{future_id}:accepted"
+        try:
+            if not self.redis.set(key, "1", nx=True, ex=EXECUTE_DEDUP_TTL_SECONDS):
+                return True
+        except Exception as e:
+            logger.warning("Execute: dedup check failed, queueing anyway: %s", e)
+        return False
 
     def WriteResult(self, request, context):
         """Accept a result or error from a remote controller and write it to local Redis."""
@@ -53,7 +83,7 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
             future_id = data.get("future_id")
             result = data.get("result")
             failed = int(bool(data.get("failed", 0)))
-            error_message = str(data.get("error") or "")
+            error_message = data.get("error") or data.get("error_message") or ""
 
             logger.info(
                 f"WriteResult: received result for future {future_id}: {result}"
@@ -100,7 +130,12 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                 # Process the cleanup batch asynchronously so the RPC returns immediately.
                 def _cleanup_batch():
                     for request_id in request_ids:
-                        self._cleanup_request(request_id)
+                        try:
+                            self._cleanup_request(request_id)
+                        except Exception as e:
+                            logger.error(
+                                "Cleanup failed for request %s: %s", request_id, e
+                            )
 
                 Thread(target=_cleanup_batch, daemon=True).start()
             else:
@@ -127,18 +162,22 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                 logger.info("No futures found for request %s on this node.", request_id)
                 return
 
-            keys_to_delete = [futures_key]
+            keys_to_expire = [futures_key]
             for fid in future_ids:
-                keys_to_delete.extend(
+                keys_to_expire.extend(
                     [
                         f"future:{fid}",
                         f"future:{fid}:children",
                         f"future:{fid}:consumers",
                     ]
                 )
-            self.redis.delete(*keys_to_delete)
+            for key in keys_to_expire:
+                self.redis.expire(key, FUTURE_CLEANUP_GRACE_SECONDS, nx=True)
             logger.info(
-                "Cleaned up %d future(s) for request %s", len(future_ids), request_id
+                "Scheduled %d future(s) for request %s to expire in %ds",
+                len(future_ids),
+                request_id,
+                FUTURE_CLEANUP_GRACE_SECONDS,
             )
 
             # Clean up affinity bindings for this request

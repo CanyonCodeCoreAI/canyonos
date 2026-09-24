@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -15,27 +16,7 @@ sys.path.insert(
 
 import canyonos_core.controller.future as future_module
 import canyonos_core.controller.canyonos_context as canyonos_context
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-        self.sets = {}
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = value
-
-    def hget(self, name, field):
-        return self.hashes.get(name, {}).get(field)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def sadd(self, name, *values):
-        self.sets.setdefault(name, set()).update(values)
+from fakes import _FakeRedis
 
 
 class FutureParentIdTests(unittest.TestCase):
@@ -78,8 +59,36 @@ class FutureParentIdTests(unittest.TestCase):
             parent="ignored/file.py", service="Svc", method="do_thing"
         )
 
-        with self.assertRaisesRegex(RuntimeError, "submit failed"):
+        # The hash's `error` field is just the exception type name; the full
+        # message lives in `logs` instead.
+        with self.assertRaisesRegex(RuntimeError, "RuntimeError"):
             future.value()
+
+        logs = json.loads(self.fake_redis.hashes[f"future:{future.id}"]["logs"])
+        self.assertEqual(logs[0]["Attributes"]["exception.type"], "RuntimeError")
+        self.assertEqual(logs[0]["Body"], "submit failed")
+
+    def test_submit_request_never_raises_when_redis_fails_while_recording(self):
+        """A Redis blip while recording a submission failure must not escape
+        _submit_request/Future.__init__ into caller code."""
+        call_count = {"n": 0}
+
+        class _FlakyRedis(_FakeRedis):
+            def hset_multiple(self, name, mapping):
+                call_count["n"] += 1
+                if call_count["n"] > 1:
+                    raise ConnectionError("redis unreachable")
+                super().hset_multiple(name, mapping)
+
+        future_module.Future.redis = _FlakyRedis()
+        future_module.Future._stub.Execute.side_effect = RuntimeError("submit failed")
+
+        try:
+            future_module.Future(
+                parent="ignored/file.py", service="Svc", method="do_thing"
+            )
+        except Exception as e:
+            self.fail(f"Future.__init__ raised unexpectedly: {e}")
 
 
 if __name__ == "__main__":

@@ -1,30 +1,18 @@
-"""Bug E: a Workflow container's CANYONOS_PROJECT_ID/CANYONOS_DATABASE_URL env vars are frozen at
-launch. _write_identity() publishes the controller's current project/database identity to
-every node's Redis (mirroring the existing policy:rules/routing_table:* pattern) so deploy.py's
-_current_identity() can read it live instead of trusting a boot-time env var. reload_config()
-must call this too, or the fix is only half-applied -- see the sibling test in
-test_global_controller_reload.py for the assign_project_id() half of the same bug class.
+"""Bug E: a Workflow container's CANYONOS_PROJECT_ID env var is frozen at launch.
+_write_identity() publishes the controller's current project identity to every node's Redis
+(mirroring the existing policy:rules/routing_table:* pattern) so consumers can read it live
+instead of trusting a boot-time env var. reload_config() must call this too, or the fix is
+only half-applied.
 """
 
 import os
 import sys
 import unittest
-from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
+from fakes import _FakeRedis
 
 
 def _bare_controller(config, node_redis=None):
@@ -32,28 +20,21 @@ def _bare_controller(config, node_redis=None):
     controller.config = config
     controller.redis = _FakeRedis()
     controller.node_redis = node_redis if node_redis is not None else {}
+    controller._set_controllers(config.get("agents", []))
     return controller
 
 
 class WriteIdentityTests(unittest.TestCase):
-    def test_publishes_project_id_and_database_url_to_self_redis_when_no_node_redis(
-        self,
-    ):
+    def test_publishes_project_id_to_self_redis_when_no_node_redis(self):
         controller = _bare_controller(
-            {
-                "project_id": "11111111-1111-1111-1111-111111111111",
-                "database": {"url": "postgresql://example/db"},
-            }
+            {"project_id": "11111111-1111-1111-1111-111111111111"}
         )
 
         controller._write_identity()
 
         self.assertEqual(
             controller.redis.hgetall(GlobalController.IDENTITY_KEY),
-            {
-                "project_id": "11111111-1111-1111-1111-111111111111",
-                "database_url": "postgresql://example/db",
-            },
+            {"project_id": "11111111-1111-1111-1111-111111111111"},
         )
 
     def test_publishes_to_every_node_not_just_self_redis(self):
@@ -63,10 +44,7 @@ class WriteIdentityTests(unittest.TestCase):
         node_a = _FakeRedis()
         node_b = _FakeRedis()
         controller = _bare_controller(
-            {
-                "project_id": "11111111-1111-1111-1111-111111111111",
-                "database": {"url": "postgresql://example/db"},
-            },
+            {"project_id": "11111111-1111-1111-1111-111111111111"},
             node_redis={"localhost": node_a, "172.31.0.5": node_b},
         )
 
@@ -83,40 +61,17 @@ class WriteIdentityTests(unittest.TestCase):
         the *new* project after a switch, not just get set once at boot."""
         node = _FakeRedis()
         controller = _bare_controller(
-            {
-                "project_id": "11111111-1111-1111-1111-111111111111",
-                "database": {"url": "postgresql://example/old-db"},
-            },
+            {"project_id": "11111111-1111-1111-1111-111111111111"},
             node_redis={"localhost": node},
         )
         controller._write_identity()
 
-        controller.config = {
-            "project_id": "22222222-2222-2222-2222-222222222222",
-            "database": {"url": "postgresql://example/new-db"},
-        }
+        controller.config = {"project_id": "22222222-2222-2222-2222-222222222222"}
         controller._write_identity()
 
         self.assertEqual(
             node.hgetall(GlobalController.IDENTITY_KEY),
-            {
-                "project_id": "22222222-2222-2222-2222-222222222222",
-                "database_url": "postgresql://example/new-db",
-            },
-        )
-
-    def test_missing_database_publishes_safe_default(self):
-        # project_id is always populated by _load_config() by the time _write_identity()
-        # runs -- only database_url has a real "unset" case to default here.
-        controller = _bare_controller(
-            {"project_id": "11111111-1111-1111-1111-111111111111"}
-        )
-
-        controller._write_identity()
-
-        self.assertEqual(
-            controller.redis.hgetall(GlobalController.IDENTITY_KEY),
-            {"project_id": "11111111-1111-1111-1111-111111111111", "database_url": ""},
+            {"project_id": "22222222-2222-2222-2222-222222222222"},
         )
 
 
@@ -129,10 +84,7 @@ class ReloadConfigWritesIdentityTests(unittest.TestCase):
             {"project_id": "11111111-1111-1111-1111-111111111111", "agents": []},
             node_redis={"localhost": node},
         )
-        controller.config_path = None
-        controller.instance_manager = SimpleNamespace(
-            publish_routing_snapshot=lambda *_: None
-        )
+        controller.config_path = "/nonexistent/config/global_controller.yaml"
         controller._load_config = lambda path: {
             "project_id": "22222222-2222-2222-2222-222222222222",
             "agents": [],

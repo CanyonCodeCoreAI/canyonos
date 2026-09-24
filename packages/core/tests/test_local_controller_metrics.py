@@ -19,11 +19,19 @@ sys.path.insert(
 )
 
 from canyonos_core.controller.local_controller import LocalController
+from fakes import _FakeRedis
 
 
 def _bind_failure_marker(controller):
-    controller._mark_future_failed = lambda future_id, error, origin=None: (
-        LocalController._mark_future_failed(controller, future_id, error, origin)
+    controller._mark_future_failed = (
+        lambda future_id, error, origin=None, error_name=None: (
+            LocalController._mark_future_failed(
+                controller, future_id, error, origin, error_name
+            )
+        )
+    )
+    controller._call_with_retry = lambda fn, endpoint: LocalController._call_with_retry(
+        controller, fn, endpoint
     )
     controller._send_result_callback = (
         lambda origin, future_id, result="", failed=0, error_message="": (
@@ -42,96 +50,114 @@ def _bind_failure_marker(controller):
     return controller
 
 
-class _FakeRedisClient:
-    def __init__(self):
-        self.counters = {}
-
-    def incr(self, key):
-        self.counters[key] = self.counters.get(key, 0) + 1
-        return self.counters[key]
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-        self.strings = {}
-        self.client = _FakeRedisClient()
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = value
-
-    def hincrby(self, name, field, amount=1):
-        bucket = self.hashes.setdefault(name, {})
-        bucket[field] = int(bucket.get(field, 0)) + amount
-        return bucket[field]
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hget(self, name, field):
-        return self.hashes.get(name, {}).get(field)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def set(self, key, value):
-        self.strings[key] = value
-
-    def get(self, key):
-        return self.strings.get(key)
-
-    def smembers(self, key):
-        return set()
-
-
 class LocalControllerMetricsTests(unittest.TestCase):
+    def test_configured_agent_load_failure_never_reports_healthy(self):
+        redis = _FakeRedis()
+        server = MagicMock()
+        servicer = SimpleNamespace(request_queue=None, on_result=None)
+        controllers = []
+
+        def capture_heartbeat_then_fail(controller):
+            controllers.append(controller)
+            return None
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "CANYONOS_AGENT_NAME": "MissingAgent",
+                    "CANYONOS_AGENT_FILE": "/definitely/missing-agent.py",
+                },
+            ),
+            patch(
+                "canyonos_core.controller.local_controller.start_server",
+                return_value=(server, servicer),
+            ),
+            patch(
+                "canyonos_core.controller.local_controller.RedisClient",
+                return_value=redis,
+            ),
+            patch.object(LocalController, "_start_llm_proxy", return_value=None),
+            patch.object(LocalController, "_load_agent", capture_heartbeat_then_fail),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "Failed to load configured agent"
+            ):
+                LocalController()
+
+        self.assertEqual(redis.get("controller:localhost:50051:status"), "failed")
+        server.stop.assert_called_once_with(0)
+        self.assertFalse(controllers[0]._metrics_thread.is_alive())
+
+    def test_heartbeat_is_running_while_the_agent_loads(self):
+        redis = _FakeRedis()
+        servicer = SimpleNamespace(request_queue=None, on_result=None)
+        seen_during_load = {}
+
+        def load_agent(controller):
+            seen_during_load["heartbeat_running"] = (
+                controller._metrics_thread.is_alive()
+            )
+            seen_during_load["status"] = redis.get("controller:localhost:50051:status")
+            seen_during_load["observed_at"] = redis.hget(
+                "controller:localhost:50051:metrics", "observed_at"
+            )
+            return object()
+
+        with (
+            patch(
+                "canyonos_core.controller.local_controller.start_server",
+                return_value=(MagicMock(), servicer),
+            ),
+            patch(
+                "canyonos_core.controller.local_controller.RedisClient",
+                return_value=redis,
+            ),
+            patch.object(LocalController, "_start_llm_proxy", return_value=None),
+            patch.object(LocalController, "_load_agent", load_agent),
+        ):
+            controller = LocalController(publish_ready=False)
+        controller._metrics_stop_event.set()
+        controller._metrics_thread.join(timeout=2)
+
+        self.assertTrue(seen_during_load["heartbeat_running"])
+        self.assertEqual(seen_during_load["status"], "initializing")
+        self.assertIsNotNone(seen_during_load["observed_at"])
+
     def test_collect_metrics_returns_expected_keys(self):
+        # Machine-level metrics (cpu/gpu/disk/memory/uptime) moved to the per-machine
+        # collector container; _collect_metrics now reports only in-process instance
+        # state that a sibling process can't observe.
         controller = SimpleNamespace(
             _executor=ThreadPoolExecutor(max_workers=1),
             _metrics_interval=5,
         )
-        with patch(
-            "canyonos_core.controller.local_controller.read_gpu_percent",
-            return_value=0.0,
-        ):
-            metrics = LocalController._collect_metrics(controller)
+        metrics = LocalController._collect_metrics(controller)
         self.assertEqual(metrics["status"], "healthy")
         self.assertEqual(
             set(metrics.keys()),
-            {
-                "status",
-                "cpu_percent",
-                "gpu_percent",
-                "disk_percent",
-                "memory_percent",
-                "uptime_seconds",
-                "queue_length",
-                "updated_at",
-            },
+            {"status", "queue_length", "observed_at"},
         )
-        float(metrics["cpu_percent"])
-        float(metrics["gpu_percent"])
-        float(metrics["disk_percent"])
-        float(metrics["memory_percent"])
-        float(metrics["uptime_seconds"])
         int(metrics["queue_length"])
-        float(metrics["updated_at"])
+        float(metrics["observed_at"])
 
-    def test_metrics_loop_writes_hash_and_refreshes_status(self):
-        redis = _FakeRedis()
+    def _run_one_metrics_tick(self, redis, ready):
         stop_event = threading.Event()
+        ready_event = threading.Event()
+        if ready:
+            ready_event.set()
         controller = SimpleNamespace(
             redis=redis,
             _metrics_key="controller:localhost:50051:metrics",
             _status_key="controller:localhost:50051:status",
             _metrics_stop_event=stop_event,
             _metrics_interval=5,
+            _ready=ready_event,
+            _status_lock=threading.Lock(),
             _collect_metrics=lambda: {
                 "status": "healthy",
-                "cpu_percent": "1.0",
-                "gpu_percent": "0.0",
-                "uptime_seconds": "10.0",
-                "updated_at": "100.0",
+                "queue_length": "3",
+                "observed_at": "100.0",
             },
         )
 
@@ -142,10 +168,31 @@ class LocalControllerMetricsTests(unittest.TestCase):
 
         LocalController._metrics_loop(controller)
 
+    def test_metrics_loop_writes_hash_and_refreshes_status_once_ready(self):
+        redis = _FakeRedis()
+        self._run_one_metrics_tick(redis, ready=True)
+
         self.assertEqual(
-            redis.hgetall("controller:localhost:50051:metrics")["cpu_percent"], "1.0"
+            redis.hgetall("controller:localhost:50051:metrics")["queue_length"], "3"
         )
         self.assertEqual(redis.get("controller:localhost:50051:status"), "healthy")
+
+    def test_metrics_loop_heartbeats_without_reporting_healthy_before_ready(self):
+        redis = _FakeRedis()
+        redis.set("controller:localhost:50051:status", "initializing")
+        self._run_one_metrics_tick(redis, ready=False)
+
+        self.assertEqual(
+            redis.hgetall("controller:localhost:50051:metrics")["observed_at"], "100.0"
+        )
+        self.assertEqual(redis.get("controller:localhost:50051:status"), "initializing")
+
+    def test_metrics_loop_does_not_overwrite_failed(self):
+        redis = _FakeRedis()
+        redis.set("controller:localhost:50051:status", "failed")
+        self._run_one_metrics_tick(redis, ready=False)
+
+        self.assertEqual(redis.get("controller:localhost:50051:status"), "failed")
 
     def test_execute_locally_writes_gpu_resource_to_future_hash(self):
         redis = _FakeRedis()
@@ -208,9 +255,11 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 controller, "Greeter", "greet", {"name": "world"}, "future-2"
             )
 
-        self.assertEqual(redis.hget("future:future-2", "error"), "nope")
+        self.assertEqual(redis.hget("future:future-2", "error"), "ValueError")
         self.assertEqual(redis.hget("future:future-2", "result"), "")
         self.assertEqual(redis.hget("future:future-2", "failed"), 1)
+        logs = json.loads(redis.hget("future:future-2", "logs"))
+        self.assertEqual(logs[0]["Body"], "nope")
         self.assertNotIn("future:future-2:metrics", redis.hashes)
         self.assertEqual(
             redis.hget("controller:localhost:50051:metrics", "requests_served"), 1
@@ -240,9 +289,12 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 controller, "MissingAgent", "greet", {}, "future-3"
             )
 
-        self.assertEqual(redis.hget("future:future-3", "error"), "No agent loaded")
+        self.assertEqual(redis.hget("future:future-3", "error"), "NoAgentLoaded")
         self.assertEqual(redis.hget("future:future-3", "failed"), 1)
         self.assertNotIn("future:future-3:metrics", redis.hashes)
+        logs = json.loads(redis.hget("future:future-3", "logs"))
+        self.assertEqual(logs[0]["Body"], "No agent loaded")
+        self.assertEqual(logs[0]["Attributes"]["exception.type"], "NoAgentLoaded")
 
     def test_remote_execution_failure_sends_error_callback(self):
         redis = _FakeRedis()
@@ -277,18 +329,24 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 origin="origin:50051",
             )
 
-        self.assertEqual(redis.hget("future:future-4", "error"), "remote nope")
+        self.assertEqual(redis.hget("future:future-4", "error"), "ValueError")
         payload = json.loads(stub.WriteResult.call_args.args[0].resonse)
         self.assertEqual(payload["future_id"], "future-4")
         self.assertEqual(payload["result"], "")
         self.assertEqual(payload["failed"], 1)
-        self.assertEqual(payload["error"], "remote nope")
+        self.assertEqual(payload["error"], "ValueError")
         # The callback fires only after the finally block writes final metrics,
         # so the snapshot sent to origin carries the full execution record.
         self.assertEqual(payload["agent"], "agent-1")
         self.assertIn("finished_at", payload)
         self.assertIn("cpu_resource", payload)
         self.assertEqual(payload["gpu_resource"], 0.0)
+        # logs is just another hash field, so it rides along in the same
+        # snapshot automatically -- the origin gets the full detail for free.
+        logs = json.loads(payload["logs"])
+        self.assertEqual(logs[0]["Body"], "remote nope")
+        self.assertEqual(logs[0]["Attributes"]["agent.id"], "agent-1")
+        self.assertEqual(logs[0]["Attributes"]["endpoint"], "target:50051")
 
     def test_callback_fires_once_and_only_after_final_metrics_written(self):
         redis = _FakeRedis()
