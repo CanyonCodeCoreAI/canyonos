@@ -32,21 +32,7 @@ if "local_controler_pb2_grpc" not in sys.modules:
     sys.modules["local_controler_pb2_grpc"] = local_pb2_grpc
 
 from canyonos_core.controller.local_controller import LocalController
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.strings = {}
-        self.hashes = {}
-
-    def set(self, key, value):
-        self.strings[key] = value
-
-    def get(self, key):
-        return self.strings.get(key)
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
+from fakes import _FakeRedis
 
 
 def _build_controller(redis, publish_ready=False):
@@ -68,10 +54,12 @@ def _build_controller(redis, publish_ready=False):
 
 
 class LocalControllerReadinessTests(unittest.TestCase):
-    def test_publish_ready_false_does_not_write_status(self):
+    def test_publish_ready_false_stays_initializing(self):
         redis = _FakeRedis()
         _build_controller(redis, publish_ready=False)
-        self.assertEqual(redis.strings, {})
+        self.assertEqual(
+            redis.strings, {"controller:localhost:50051:status": "initializing"}
+        )
 
     def test_mark_ready_writes_healthy_to_controller_status_key(self):
         redis = _FakeRedis()

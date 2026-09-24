@@ -30,8 +30,7 @@ COMPOSE_PROJECT = "canyonos-dashboard"
 API_VERSION = "0.1.0"
 WEB_VERSION = "0.1.0"
 # The images this repo publishes from its `api-v*` and `web-v*` releases, unless a
-# developer points the CLI at locally built ones (see cli/DEVELOPMENT.md). The two
-# versions move independently.
+# developer points the CLI at locally built ones. The two versions move independently.
 API_IMAGE = env.api_image(f"ghcr.io/canyoncodecoreai/canyonos-api:{API_VERSION}")
 WEB_IMAGE = env.web_image(f"ghcr.io/canyoncodecoreai/canyonos-web:{WEB_VERSION}")
 HOST_GATEWAY = "host.docker.internal"
