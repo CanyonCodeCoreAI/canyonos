@@ -30,6 +30,7 @@ only when a container loads.
 - Choosing the entrypoint
 - Bridging async
 - Multi-turn and session state
+- Backing services default to the wrong host
 
 ## Adapter and workflow shape
 
@@ -170,3 +171,16 @@ in-process one -- read `routing_table:endpoints` from Redis
 (`CANYONOS_REDIS_HOST`/`CANYONOS_REDIS_PORT`, already in every container's env)
 for the database entry's name, the same way any other declared agent's address
 is resolved.
+
+## Backing services default to the wrong host
+
+A checkpointer, cache, or store the source constructs (e.g. a Redis- or
+Postgres-backed client) often defaults to `localhost` when no connection
+variable is set. Under CanyonOS's Local provider each agent and the workflow
+get their own container, so `localhost` there is that container's own
+loopback, not a shared service -- the client raises a connection error at
+startup instead of connecting. Local and EC2 both inject `CANYONOS_REDIS_HOST`
+and `CANYONOS_REDIS_PORT` into every container pointing at the real Redis
+instance; rebuild any such default from those instead of trusting the source's
+`localhost` default, while still honoring an explicit override the source
+already reads (e.g. `REDIS_URL`).
