@@ -5,6 +5,8 @@ name: Core image
 
 on:
   # Paths are duplicated because Actions does not resolve YAML anchors.
+  # The pull_request paths must stay the inverse of the pull_request paths in
+  # core-image-skip.yml, which reports the required "build" check when this is skipped.
   pull_request:
     paths:
       - 'packages/core/**'
