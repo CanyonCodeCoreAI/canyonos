@@ -1,12 +1,16 @@
 import json
 
+# A JSON list of names, not a set: an empty list still exists, so it reads as [] not None.
 ACTIVE_AGENTS_KEY = "agents:active"
-# Set once any list is published, so an empty agent list reads as [] rather than None.
-PUBLISHED_KEY = "agents:published"
 
 
 def spec_key(agent_name):
     return f"agent:{agent_name}:spec"
+
+
+def _published_names(redis_client):
+    raw = redis_client.get(ACTIVE_AGENTS_KEY)
+    return None if raw is None else json.loads(raw)
 
 
 def write_config_specs(agents, redis_client):
@@ -40,24 +44,23 @@ def write_config_specs(agents, redis_client):
         redis_client.set(spec_key(name), json.dumps(agent))
 
     names = [agent["name"] for agent in agents]
-    # Add before removing, so a reader never sees an empty list mid-swap.
-    if names:
-        redis_client.sadd(ACTIVE_AGENTS_KEY, *names)
-    stale = set(redis_client.smembers(ACTIVE_AGENTS_KEY)) - set(names)
+    stale = set(_published_names(redis_client) or []) - set(names)
+    redis_client.set(ACTIVE_AGENTS_KEY, json.dumps(names))
+    # Deleted only once the list no longer names them.
     if stale:
-        redis_client.srem(ACTIVE_AGENTS_KEY, *stale)
         redis_client.delete(*(spec_key(name) for name in stale))
-    redis_client.set(PUBLISHED_KEY, "1")
 
 
 def read_config_specs(redis_client):
     """Every published agent spec, or None when nothing has published them yet."""
-    names = redis_client.smembers(ACTIVE_AGENTS_KEY)
+    names = _published_names(redis_client)
+    if names is None:
+        return None
     if not names:
-        return [] if redis_client.get(PUBLISHED_KEY) else None
+        return []
 
     specs = []
-    for name in sorted(names):
+    for name in names:
         raw = redis_client.get(spec_key(name))
         if raw is None:
             continue

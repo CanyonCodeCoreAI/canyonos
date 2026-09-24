@@ -36,13 +36,12 @@ class WriteAndReadTests(unittest.TestCase):
         """Torn-read guard: a reader takes the list first, so a half-written spec is unlisted."""
         redis = _FakeRedis()
         order = []
-        real_set, real_sadd = redis.set, redis.sadd
+        real_set = redis.set
         redis.set = lambda k, v: (order.append(("set", k)), real_set(k, v))[1]
-        redis.sadd = lambda n, *v: (order.append(("sadd", n)), real_sadd(n, *v))[1]
 
         write_config_specs([ALPHA, BETA], redis)
 
-        listed_at = order.index(("sadd", ACTIVE_AGENTS_KEY))
+        listed_at = order.index(("set", ACTIVE_AGENTS_KEY))
         self.assertLess(order.index(("set", spec_key("Alpha"))), listed_at)
         self.assertLess(order.index(("set", spec_key("Beta"))), listed_at)
 
@@ -54,19 +53,19 @@ class WriteAndReadTests(unittest.TestCase):
 
         self.assertEqual(read_config_specs(redis), [])
 
-    def test_replacing_every_agent_never_empties_the_list_mid_write(self):
+    def test_a_stale_spec_is_deleted_only_after_the_list_drops_it(self):
         redis = _FakeRedis()
         write_config_specs([ALPHA], redis)
-        sizes = []
-        real_srem = redis.srem
-        redis.srem = lambda n, *v: (
-            real_srem(n, *v),
-            sizes.append(len(redis.smembers(ACTIVE_AGENTS_KEY))),
-        )[0]
+        listed_at_delete = []
+        real_delete = redis.delete
+        redis.delete = lambda *k: (
+            listed_at_delete.append(redis.get(ACTIVE_AGENTS_KEY)),
+            real_delete(*k),
+        )[1]
 
         write_config_specs([BETA], redis)
 
-        self.assertEqual(sizes, [1])
+        self.assertEqual(listed_at_delete, ['["Beta"]'])
         self.assertEqual(read_config_specs(redis), [BETA])
 
     def test_an_agent_dropped_from_the_config_is_unpublished(self):
@@ -76,7 +75,7 @@ class WriteAndReadTests(unittest.TestCase):
         write_config_specs([ALPHA], redis)
 
         self.assertEqual(read_config_specs(redis), [ALPHA])
-        self.assertEqual(redis.smembers(ACTIVE_AGENTS_KEY), {"Alpha"})
+        self.assertEqual(redis.get(ACTIVE_AGENTS_KEY), '["Alpha"]')
         self.assertIsNone(redis.get(spec_key("Beta")))
 
 
@@ -112,7 +111,7 @@ class RefreshTests(unittest.TestCase):
 
     def test_a_redis_failure_leaves_the_current_specs_in_place(self):
         class _Boom(_FakeRedis):
-            def smembers(self, name):
+            def get(self, key):
                 raise RuntimeError("connection refused")
 
         context = self._context(_Boom(), [ALPHA])

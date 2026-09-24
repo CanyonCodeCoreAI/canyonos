@@ -38,15 +38,14 @@ reaping index 1 leaves a hole the same pass's fill step provisions into.
 | `reconciler:reap` | set | GlobalController — `replace_instance` | Reconciler (`reap_requests`; `clear_reap_requests` once removed) |
 | `reconciler:draining` | string (TTL) | GlobalController — `set_draining` / `clear_draining` | Reconciler (`is_draining`, once per pass) |
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
-| `agents:active` | set | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
-| `agents:published` | string | GlobalController — `write_config_specs`, every publish | Reconciler (`read_config_specs`, only when `agents:active` is empty) |
+| `agents:active` | string (JSON list) | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
 | `agent:{name}:instances` | set | `Provisioner` | both |
 | `agent_instance:{provider}:{name}:{index}` | hash | `Provisioner` | both |
 | `routing_table:services` / `:endpoints` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
 | `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness check |
 | `controller:{host}:{port}:status` | string | the agent's `LocalController` | GlobalController only — deliberately not a health signal |
 
-The first six are owned here; the rest is pre-existing observed state this reads. Desired
+The first five are owned here; the rest is pre-existing observed state this reads. Desired
 state and records live on the **primary** client (`context.redis`); `controller:*` metrics
 live on the node's own Redis, via `node_redis_for_instance`.
 
@@ -146,11 +145,11 @@ visibly wrong value, not a silent default.
 The `agents:` list is handed off through Redis rather than read twice: `write_config_specs`
 publishes each spec as JSON then the name list **last**, and `refresh_controllers_from_redis`
 adopts them every pass, so a reload needs no SIGHUP handler here. List-last makes a torn
-read impossible without version numbers. New names are added before stale ones are removed,
-so a reader never sees an empty list mid-swap. `read_config_specs` returns `None` (not `[]`)
-when nothing has ever been published and the reader keeps its specs — `[]` would read as "no
-agents configured" and reap the fleet on an unseeded Redis. An intentionally empty publish is
-told apart by the `agents:published` marker and reads as `[]`. A full pass also removes instances
+read impossible without version numbers. The list is one JSON string replaced by a single
+`SET`, and stale specs are deleted only after it stops naming them. `read_config_specs` returns
+`None` (not `[]`) when the key is missing and the reader keeps its specs — `[]` would read as
+"no agents configured" and reap the fleet on an unseeded Redis. An intentionally empty publish
+is the string `[]`, which still exists, so it reads as `[]`. A full pass also removes instances
 of any agent no longer published, and `reload_config` deletes a removed agent's
 `desired_replicas` so a runtime scale does not return if the agent is re-added. Everything outside `agents:` is still
 read from the YAML by both processes at construction.
