@@ -194,9 +194,12 @@ class LocalController(object):
             self.mark_ready()
 
         logger.info(
-            "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
+            "Local controller initialized at %s (max_agent_instances=%d); %s.",
             self._my_endpoint,
             max_instances,
+            "reported healthy to Redis"
+            if publish_ready
+            else "readiness left to the launcher",
         )
 
     def mark_ready(self):
