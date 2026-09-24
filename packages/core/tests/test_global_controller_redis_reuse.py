@@ -1,7 +1,7 @@
 """Fix C: a restart must not unconditionally wipe and recreate each node's Redis container.
 
 _launch_redis_containers() used to `docker run` a fresh canyonos-redis-<host> container on every
-__init__, unconditionally -- wiping every `agent_instance:*` record InstanceManager needs to
+__init__, unconditionally -- wiping every `agent_instance:*` record the Provisioner needs to
 recognize already-running EC2 replicas as reusable. ensure_instances()'s dedup logic was already
 correct; it was just fed an empty Redis on every restart, so it reprovisioned everything from
 scratch and orphaned the previous replicas. The fix: check whether the existing container is
@@ -96,6 +96,23 @@ class RedisContainerReuseTests(unittest.TestCase):
             "a not-running container must still be (re)created",
         )
         self.assertIn("localhost", controller.redis_containers)
+
+    def test_a_127_0_0_1_node_becomes_the_primary_redis_like_localhost(self):
+        """The reconciler treats 127.0.0.1 as local, so the controller must pick the same Redis."""
+        controller = _bare_controller(
+            [
+                {
+                    "name": "Workflow",
+                    "replicas": 1,
+                    "host": "127.0.0.1",
+                    "redis_port": 6379,
+                }
+            ]
+        )
+
+        self._run(controller, inspect_stdout="true\n")
+
+        self.assertIs(controller.redis, controller.node_redis["127.0.0.1"])
 
     def test_reuse_check_probes_the_exact_expected_container_name(self):
         controller = _bare_controller(

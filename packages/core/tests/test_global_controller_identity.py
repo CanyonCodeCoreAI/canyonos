@@ -8,22 +8,11 @@ only half-applied.
 import os
 import sys
 import unittest
-from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
+from fakes import _FakeRedis
 
 
 def _bare_controller(config, node_redis=None):
@@ -31,6 +20,7 @@ def _bare_controller(config, node_redis=None):
     controller.config = config
     controller.redis = _FakeRedis()
     controller.node_redis = node_redis if node_redis is not None else {}
+    controller._set_controllers(config.get("agents", []))
     return controller
 
 
@@ -94,10 +84,7 @@ class ReloadConfigWritesIdentityTests(unittest.TestCase):
             {"project_id": "11111111-1111-1111-1111-111111111111", "agents": []},
             node_redis={"localhost": node},
         )
-        controller.config_path = None
-        controller.instance_manager = SimpleNamespace(
-            publish_routing_snapshot=lambda *_: None
-        )
+        controller.config_path = "/nonexistent/config/global_controller.yaml"
         controller._load_config = lambda path: {
             "project_id": "22222222-2222-2222-2222-222222222222",
             "agents": [],

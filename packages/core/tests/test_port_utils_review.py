@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from canyonos_core.controller.cloud_provider_logic.Local import (
+from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
 from canyonos_core.controller.utils import port_utils
