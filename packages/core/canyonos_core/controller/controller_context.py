@@ -1,4 +1,17 @@
-# Config, Redis clients and command execution shared by GlobalController and the reconciler.
+"""Config, Redis clients and command execution shared by GlobalController and the reconciler.
+
+What it holds:
+- Config loading: reads the project's .env, loads the YAML and fills in ${VAR} values, so
+  both processes see the same values.
+- Redis connections: the main one, plus one per machine opened when first needed.
+- The agent list from the config, by name, and a refresh from the list published to Redis.
+- Running commands locally or over SSH, and copying the env file to a remote machine.
+
+The reconciler runs as a separate process and cannot import global_controller.py, which
+adds a grpc_stubs folder to the import path based on the current directory. GlobalController
+extends this class with the controller-only work; the reconciler creates one directly and
+hands it to the Provisioner.
+"""
 
 import logging
 import os

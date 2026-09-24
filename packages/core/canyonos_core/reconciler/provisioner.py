@@ -306,7 +306,7 @@ class Provisioner(object):
         """Delete port reservations left for replica slots no agent wants anymore."""
         wanted = {
             _instance_key(spec["provider"], spec["name"], replica_index)
-            for spec in self._agent_specs
+            for spec in self._agent_specs or []
             for replica_index in range(int(spec.get("replicas", 1)))
         }
         for key in self.redis.scan_keys("agent_instance:*"):

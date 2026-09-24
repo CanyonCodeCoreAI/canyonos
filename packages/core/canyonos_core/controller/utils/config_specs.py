@@ -1,3 +1,5 @@
+"""Publish the configured agent specs to Redis and read them back in the reconciler."""
+
 import json
 
 # A JSON list of names, not a set: an empty list still exists, so it reads as [] not None.

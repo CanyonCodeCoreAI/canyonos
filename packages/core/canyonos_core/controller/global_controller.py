@@ -864,7 +864,7 @@ class GlobalController(ControllerContext):
 
         def _read_host_metrics(host):
             try:
-                metrics = self._get_node_redis_for(host).hgetall(
+                metrics = self.node_redis.get(host, self.redis).hgetall(
                     f"machine:{host}:metrics"
                 )
                 if metrics:

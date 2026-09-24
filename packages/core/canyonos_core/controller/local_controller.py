@@ -187,7 +187,6 @@ class LocalController(object):
             )
 
         if publish_ready:
-            self._wait_until_reachable()
             self.mark_ready()
 
         logger.info(
@@ -205,29 +204,6 @@ class LocalController(object):
         with self._status_lock:
             self._ready.clear()
             self.redis.set(self._status_key, "failed")
-
-    def _wait_until_reachable(self, timeout=30, attempt_timeout=0.5):
-        """Block until this controller answers on its published endpoint, not just its local bind."""
-        if self.agent_host != "host.docker.internal":
-            return
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            channel = grpc.insecure_channel(
-                self._my_endpoint, options=GRPC_CHANNEL_OPTIONS
-            )
-            try:
-                grpc.channel_ready_future(channel).result(timeout=attempt_timeout)
-                return
-            except grpc.FutureTimeoutError:
-                pass
-            finally:
-                channel.close()
-        logger.warning(
-            "Controller %s not confirmed reachable at its own endpoint after %ds; "
-            "reporting healthy anyway.",
-            self._my_endpoint,
-            timeout,
-        )
 
     def _start_llm_proxy(self, redis_host, redis_port):
         """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
@@ -908,7 +884,11 @@ class LocalController(object):
             try:
                 return fn()
             except grpc.RpcError as e:
-                if e.code() != grpc.StatusCode.UNAVAILABLE or attempt == max_attempts:
+                if (
+                    not isinstance(e, grpc.Call)
+                    or e.code() != grpc.StatusCode.UNAVAILABLE
+                    or attempt == max_attempts
+                ):
                     raise
                 logger.warning(
                     "Transient UNAVAILABLE calling %s (attempt %d/%d), retrying in %.1fs",
