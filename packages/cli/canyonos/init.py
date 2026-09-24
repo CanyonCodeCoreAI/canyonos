@@ -30,7 +30,7 @@ from canyonos.port_utils import is_port_conflict
 
 
 # Production is `env.PROD_CORE_IMAGE`; a developer can point this at the image
-# built from their checkout instead (see packages/cli/DEVELOPMENT.md).
+# built from their checkout instead.
 GC_IMAGE = env.core_image
 GC_CONTAINER_PORT = 8000
 GC_CONTAINER_NAME = "canyonos-global-controller"

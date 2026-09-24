@@ -9,9 +9,9 @@ class RedisClient(object):
 
     # --- String operations ---
 
-    def set(self, key, value):
-        """Set a key-value pair in Redis."""
-        self.client.set(key, value)
+    def set(self, key, value, nx=False, ex=None):
+        """Set a key-value pair in Redis. With nx, returns False if the key already exists."""
+        return self.client.set(key, value, nx=nx, ex=ex)
 
     def get(self, key):
         """Get a value by key from Redis. Returns None if key does not exist."""
@@ -28,9 +28,33 @@ class RedisClient(object):
         """Set key to value only if it does not already exist. Returns True if set, False otherwise."""
         return self.client.setnx(key, value)
 
+    def lock(self, name, timeout):
+        """A Redis mutex, usable as a context manager, that expires after timeout seconds."""
+        return self.client.lock(name, timeout=timeout, blocking_timeout=timeout)
+
     def expire(self, key, seconds, nx=False):
         """Set a TTL (in seconds) on a key. No-op if the key does not exist."""
         return self.client.expire(key, seconds, nx=nx)
+
+    # --- List operations ---
+
+    def lpush(self, key, *values):
+        """Push one or more values onto the head of a list."""
+        self.client.lpush(key, *values)
+
+    def rpop(self, key):
+        """Pop one value off the tail of a list. Returns None if the list is empty."""
+        value = self.client.rpop(key)
+        if isinstance(value, (bytes, str)):
+            return self._decode(value)
+        return None
+
+    def brpop(self, key, timeout=0):
+        """Pop off the tail of a list, blocking up to timeout seconds. None on timeout."""
+        result = self.client.brpop(key, timeout=timeout)
+        if result is not None:
+            return self._decode(result[1])
+        return None
 
     # --- Hash operations ---
 
@@ -41,6 +65,17 @@ class RedisClient(object):
     def hset_multiple(self, name, mapping):
         """Set multiple fields in a hash at once."""
         self.client.hset(name, mapping=mapping)
+
+    def set_with_hash(self, key, value, name, mapping):
+        """Set a string key and hash fields together in one transaction."""
+        pipe = self.client.pipeline(transaction=True)
+        pipe.set(key, value)
+        pipe.hset(name, mapping=mapping)
+        pipe.execute()
+
+    def hdel(self, name, *fields):
+        """Remove one or more fields from a hash."""
+        self.client.hdel(name, *fields)
 
     def hincrby(self, name, field, amount=1):
         """Atomically increment a hash field by the given amount."""

@@ -633,7 +633,6 @@ def cmd_deploy(args):
     signal.signal(signal.SIGHUP, _reload_handler)
 
     logger.info("Deploying from config: %s", config_path)
-    controller.launch_docker_agents()
     controller._wait_for_healthy()
     controller.run()
 

@@ -104,8 +104,7 @@ class LocalController(object):
             self.server.stop(0)
             raise
 
-        # Set once by InstanceManager when this replica was provisioned; read back
-        # here so completed requests can be stamped with which replica ran them.
+        # Written by the Provisioner; stamps completed requests with the replica that ran them.
         self.agent_id = self.redis.get(
             f"controller:{self.agent_host}:{self.public_port}:agent_id"
         )
@@ -129,13 +128,24 @@ class LocalController(object):
         # GlobalController polls with (via CANYONOS_POLL_INTERVAL).
         self._metrics_key = f"controller:{self.agent_host}:{self.public_port}:metrics"
         self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
+        # One transaction, so a reader never sees "initializing" without a heartbeat to judge it by.
         # Cumulative request counters are always increasing, never reset. It is the consumers job to get the delta between polls to get the specific metrics.
-        self.redis.hset_multiple(
+        now = str(time.time())
+        self.redis.set_with_hash(
+            self._status_key,
+            "initializing",
             self._metrics_key,
-            {"started_at": str(time.time()), "requests_served": 0, "full_failures": 0},
+            {
+                "started_at": now,
+                "observed_at": now,
+                "requests_served": 0,
+                "full_failures": 0,
+            },
         )
         self._metrics_stop_event = threading.Event()
         self._metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
+        self._ready = threading.Event()
+        self._status_lock = threading.Lock()
 
         # Cache for gRPC stubs to remote controllers
         self._remote_channels = {}  # endpoint -> grpc.Channel
@@ -152,6 +162,9 @@ class LocalController(object):
         self._executor_futures = {}
         self._executor_futures_lock = threading.Lock()
 
+        # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
+        self._metrics_thread.start()
+
         # Machine-level metrics (cpu/gpu/disk/memory/uptime) are sampled by a separate
         # one-per-machine process launched by GlobalController (see
         # GlobalController._launch_metrics_collectors), NOT here -- a container-scoped
@@ -165,15 +178,16 @@ class LocalController(object):
         # must not advertise readiness if constructing the agent failed.
         self.agent = self._load_agent()
         if (self.agent_name or self.agent_file) and self.agent is None:
-            self.redis.set(self._status_key, "failed")
+            self._metrics_stop_event.set()
+            self._metrics_thread.join(timeout=2)
+            self.mark_failed()
             self.server.stop(0)
             raise RuntimeError(
                 f"Failed to load configured agent {self.agent_name or self.agent_file}."
             )
 
         if publish_ready:
-            self.redis.set(self._status_key, "healthy")
-        self._metrics_thread.start()
+            self.mark_ready()
 
         logger.info(
             "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
@@ -182,10 +196,14 @@ class LocalController(object):
         )
 
     def mark_ready(self):
-        self.redis.set(self._status_key, "healthy")
+        with self._status_lock:
+            self._ready.set()
+            self.redis.set(self._status_key, "healthy")
 
     def mark_failed(self):
-        self.redis.set(self._status_key, "failed")
+        with self._status_lock:
+            self._ready.clear()
+            self.redis.set(self._status_key, "failed")
 
     def _start_llm_proxy(self, redis_host, redis_port):
         """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
@@ -288,7 +306,9 @@ class LocalController(object):
             try:
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
-                self.redis.set(self._status_key, "healthy")
+                with self._status_lock:
+                    if self._ready.is_set():
+                        self.redis.set(self._status_key, "healthy")
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             self._metrics_stop_event.wait(self._metrics_interval)
@@ -856,6 +876,30 @@ class LocalController(object):
             logger.info("Created gRPC connection to remote controller at %s", endpoint)
         return self._remote_stubs[endpoint]
 
+    def _call_with_retry(self, fn, endpoint):
+        """Call a remote stub RPC, retrying transient UNAVAILABLE before raising."""
+        max_attempts = 8
+        backoff = 0.5
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return fn()
+            except grpc.RpcError as e:
+                if (
+                    not isinstance(e, grpc.Call)
+                    or e.code() != grpc.StatusCode.UNAVAILABLE
+                    or attempt == max_attempts
+                ):
+                    raise
+                logger.warning(
+                    "Transient UNAVAILABLE calling %s (attempt %d/%d), retrying in %.1fs",
+                    endpoint,
+                    attempt,
+                    max_attempts,
+                    backoff,
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 8)
+
     def _forward_request(self, endpoint, data):
         """Forward a request to a remote controller via gRPC."""
         # Tag the request with our endpoint so the remote LC can call back
@@ -867,7 +911,7 @@ class LocalController(object):
         stub = self._get_remote_stub(endpoint)
         request = local_controler_pb2.JsonResponse(resonse=json.dumps(data))
         try:
-            stub.Execute(request)
+            self._call_with_retry(lambda: stub.Execute(request), endpoint)
             logger.debug("Forwarded request to %s", endpoint)
         except Exception as e:
             logger.error("Failed to forward request to %s: %s", endpoint, e)
@@ -900,7 +944,7 @@ class LocalController(object):
         logger.info("Payload: Future %s,Sent %s ", future_id, payload)
         request = local_controler_pb2.JsonResponse(resonse=payload)
         try:
-            stub.WriteResult(request)
+            self._call_with_retry(lambda: stub.WriteResult(request), origin)
             logger.info(
                 "Sent result callback to %s for future %s, result %s",
                 origin,
