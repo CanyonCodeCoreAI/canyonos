@@ -34,7 +34,10 @@ class RedisClient(object):
 
     def expire(self, key, seconds, nx=False):
         """Set a TTL (in seconds) on a key. No-op if the key does not exist."""
-        return self.client.expire(key, seconds, nx=nx)
+        # Raw command because redis-py only takes nx= from 4.2.
+        return self.client.execute_command(
+            "EXPIRE", key, seconds, *(["NX"] if nx else [])
+        )
 
     # --- List operations ---
 

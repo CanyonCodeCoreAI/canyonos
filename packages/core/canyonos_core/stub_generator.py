@@ -13,68 +13,45 @@ Usage:
 import argparse
 import ast
 import os
-import re
 import shutil
-from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
-from packaging.version import Version
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.version import InvalidVersion, Version
 
-from canyonos_core.schema import (
-    DependencyPinConflict,
-    SchemaViolation,
-    load_agent_declaration,
-)
+from canyonos_core.schema import load_agent_declaration
 
-# Packages every agent container needs regardless of its specific business logic.
-#
-# protobuf and grpcio-tools move together: grpcio-tools carries the only upper
-# bound on protobuf here (1.65.5 capped it below 6.0), and a runtime older than
-# the gencode of any *_pb2.py in the image refuses to load. Transitively
-# installed packages ship gencode 6.x -- googleapis-common-protos, pulled in by
-# the OTLP gRPC exporter, is one -- so a 5.x runtime crashed on import with
-# "gencode 6.33.5 runtime 5.29.6". Neither uv nor pip can reject that pairing,
-# because the constraint lives in the generated module, not in any metadata.
+# Lowest versions the image's own code runs on; an app asking for older fails the install.
 BASE_AGENT_REQUIREMENTS = [
-    "grpcio==1.83.1",
-    "grpcio-tools==1.76.0",
-    "protobuf==6.33.5",
-    "redis==8.1.0",
-    "pyyaml==6.0.3",
-    "psutil==7.2.2",
-    "boto3==1.43.91",
-    "flask==3.1.3",
-    "requests==2.34.2",
+    "grpcio>=1.76.0",
+    "protobuf>=6.31.1",
+    "redis>=3.5",
 ]
 
-# Workflow containers currently need nothing beyond the base agent requirements
-# (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
-BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
+# Newest major version of each base package CanyonOS is tested on; installs stay below the next major unless the app asks for newer, which only warns.
+TESTED_MAJOR_VERSIONS = {
+    "grpcio": 1,
+    "protobuf": 6,
+    "redis": 8,
+    "flask": 3,
+}
+
+# deploy.py serves the workflow's HTTP API from the workflow's own process.
+BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["flask>=2.3.3"]
+
+# The LLM proxy runs from its own venv, so these exact pins never meet the app's.
+# These requirements are not pinned to a specific version because LLM-proxy is completely managed by CanyonOS, with no user code interacting with the internals
+PROXY_REQUIREMENTS = ["flask==3.1.3", "requests==2.34.2", "redis==8.1.0"]
+
+# Only images whose app can import boto3 can call Bedrock, so only they get the proxy's Bedrock route.
+PROXY_BEDROCK_REQUIREMENT = "boto3==1.43.91"
+
+# Every *_pb2.py checks this floor at import, which no package metadata carries,
+# so it is forced past transitive bounds rather than left to the resolver.
+PROTOBUF_FLOOR = Requirement(
+    next(pin for pin in BASE_AGENT_REQUIREMENTS if pin.startswith("protobuf"))
+)
 
 IMAGE_PYTHON_VERSION = "3.11"
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
-_MACHINE_BY_DOCKER_ARCH = {"amd64": "x86_64", "arm64": "aarch64"}
-_MARKER_VARIABLES = frozenset(
-    {
-        "implementation_name",
-        "implementation_version",
-        "os_name",
-        "platform_machine",
-        "platform_python_implementation",
-        "platform_release",
-        "platform_system",
-        "platform_version",
-        "python_full_version",
-        "python_version",
-        "sys_platform",
-    }
-)
-
-# Packages the image's own code is built against, so an app cannot be left to
-# pick them alone.
-_FORCED_FROM_BASE = ("protobuf", "grpcio", "grpcio-tools", "requests", "boto3")
-PLATFORM_PINS = [
-    pin for pin in BASE_AGENT_REQUIREMENTS if pin.split("==")[0] in _FORCED_FROM_BASE
-]
 
 
 def _build_import_nodes():
@@ -576,132 +553,119 @@ def target_docker_platform():
     return os.environ.get("CANYONOS_DOCKER_PLATFORM", DEFAULT_DOCKER_PLATFORM)
 
 
-def _image_marker_environment():
-    """The marker values the image fixes; the rest are unknown until it runs."""
-    environment = {
-        "python_version": IMAGE_PYTHON_VERSION,
-        "sys_platform": "linux",
-        "platform_system": "Linux",
-        "os_name": "posix",
-        "implementation_name": "cpython",
-        "platform_python_implementation": "CPython",
-    }
-    arch = target_docker_platform().partition("/")[2].partition("/")[0]
-    if arch in _MACHINE_BY_DOCKER_ARCH:
-        environment["platform_machine"] = _MACHINE_BY_DOCKER_ARCH[arch]
-    return environment
+def _platform_overrides(requirements):
+    """Defines the range of versions protobuf can take."""
+    specifier = PROTOBUF_FLOOR.specifier
+    for requirement in requirements:
+        try:
+            parsed = Requirement(requirement)
+        except InvalidRequirement:
+            continue
+        if parsed.name.lower() == PROTOBUF_FLOOR.name:
+            specifier &= parsed.specifier
+    return [f"{PROTOBUF_FLOOR.name}{specifier}"]
 
 
-def _applies_in_image(marker):
-    """False only when the marker is known to be false inside the image.
-
-    A marker reading a value the image does not fix, such as the Python patch
-    version, is checked rather than guessed from the machine running the build.
-    """
-    environment = _image_marker_environment()
-    unquoted = re.sub(r"'[^']*'|\"[^\"]*\"", "", str(marker))
-    used = _MARKER_VARIABLES.intersection(re.findall(r"[a-z_]+", unquoted))
-    if used - environment.keys():
-        return True
-    return marker.evaluate(environment)
-
-
-def _only_newer_than(spec, pinned):
-    """True when `spec` rules `pinned` out only by demanding something newer."""
-    if spec.operator not in (">=", ">", "==", "~="):
+def _below_supported_version(spec, floor):
+    """Checks if a version specified in an agents requirements list is below the minimum required version CanyonOS requires."""
+    try:
+        if spec.operator == "==" and spec.version.endswith(".*"):
+            release = Version(spec.version[:-2]).release
+            return (
+                Version(".".join(map(str, (*release[:-1], release[-1] + 1)))) <= floor
+            )
+        version = Version(spec.version)
+    except InvalidVersion:
         return False
-    bound = Version(spec.version.rstrip(".*"))
-    # `>PIN` excludes the pin itself and nothing older, so every version it
-    # allows is newer; the other operators need a version past the pin for that.
-    return bound >= pinned if spec.operator == ">" else bound > pinned
+    if spec.operator in ("==", "==="):
+        return version < floor
+    if spec.operator == "<":
+        return version <= floor
+    if spec.operator == "<=":
+        return version < floor
+    if spec.operator == "~=":
+        release = version.release
+        return Version(".".join(map(str, (*release[:-2], release[-2] + 1)))) <= floor
+    return False
 
 
-def _platform_overrides(requirements, *, service=None, manifest_path=None, lines=None):
-    """Take the higher of each platform pin and what the app asked for.
-
-    uv replaces a requirement rather than intersecting it, so the comparison
-    cannot be left to the resolver.
-
-    `service` is the manifest index of the service these requirements belong
-    to, and with `manifest_path` and `lines` (each requirement's line) it is
-    only there to point a conflict at the line the user has to edit.
-
-    Raises:
-        DependencyPinConflict: the app pinned a package *below* the version the
-            image's own code is built against. Forcing the platform pin over it
-            produced an image that installed cleanly and then failed at import,
-            so the build stops here instead.
-    """
-    declared = {}
-    first_lines = {}
-    for index, requirement in enumerate(requirements):
-        parsed = Requirement(requirement)
-        if parsed.marker and not _applies_in_image(parsed.marker):
+def too_old_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+    """Return (requirement, our_floor) for each requirement that only allows versions older than CanyonOS supports."""
+    floors = {}
+    for base in base_requirements:
+        parsed = Requirement(base)
+        floors[parsed.name] = (Version(next(iter(parsed.specifier)).version), base)
+    unsupported = []
+    for requirement in requirements:
+        try:
+            parsed = Requirement(requirement)
+        except InvalidRequirement:
             continue
-        # PEP 503 names: `grpcio_tools`, `Grpcio-Tools` and `grpcio.tools`
-        # are all the package pinned as `grpcio-tools`. A package asked for
-        # more than once is asked for once with every bound, since only the
-        # intersection can be installed -- keeping just the last line made the
-        # answer depend on the order they were written in.
-        key = canonicalize_name(parsed.name)
-        if lines and key not in first_lines:
-            first_lines[key] = lines[index]
-        if key in declared:
-            first_name, specifier = declared[key]
-            declared[key] = (first_name, specifier & parsed.specifier)
-        else:
-            declared[key] = (parsed.name, parsed.specifier)
-
-    overrides = []
-    conflicts = []
-    for pin in PLATFORM_PINS:
-        name, pinned = pin.split("==")
-        pinned_version = Version(pinned)
-        asked = declared.get(canonicalize_name(name))
-        if asked is None or asked[1].contains(pinned_version):
-            overrides.append(pin)
-            continue
-        asked_name, specifier = asked
-        wanted = f"{asked_name}{specifier}"
-        # Newer only if a lower bound above the pin rules it out and nothing
-        # else does but an exclusion; one upper bound below it and nothing
-        # newer can satisfy both.
-        ruling = [spec for spec in specifier if not spec.contains(pinned_version)]
-        if any(_only_newer_than(spec, pinned_version) for spec in ruling) and all(
-            _only_newer_than(spec, pinned_version) or spec.operator == "!="
-            for spec in ruling
+        floor = floors.get(parsed.name.lower())
+        if floor and any(
+            _below_supported_version(spec, floor[0]) for spec in parsed.specifier
         ):
-            overrides.append(wanted)
-            print(f"  Note: '{wanted}' outranks the platform pin {pin}")
-        else:
-            overrides.append(pin)
-            field = (
-                "requirements" if service is None else f"agents[{service}].requirements"
-            )
-            conflicts.append(
-                SchemaViolation(
-                    manifest_path or "",
-                    first_lines.get(canonicalize_name(name), 0),
-                    field,
-                    f"'{wanted}' conflicts with the platform pin {pin}, which the "
-                    f"agent image is built against: relax the bound or pin "
-                    f"{name} at or above {pinned}",
-                )
-            )
-    if conflicts:
-        raise DependencyPinConflict(conflicts)
-    return overrides
+            unsupported.append((requirement, floor[1]))
+    return unsupported
 
 
-def _dependency_stage(overrides):
-    """Render the install stage. uv reads overrides from a file and takes no
-    inline form, so the image writes one; the entries are quoted because a bare
-    `>=` would be a redirect."""
+def _above_tested_version(spec, limit):
+    """Checks if a version specified in an agents requirements list is above the newest version CanyonOS has tested."""
+    try:
+        if spec.operator == "==" and spec.version.endswith(".*"):
+            return Version(spec.version[:-2]) >= limit
+        version = Version(spec.version)
+    except InvalidVersion:
+        return False
+    return spec.operator in ("==", "===", ">=", ">", "~=") and version >= limit
+
+
+def too_new_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+    """Return (requirement, tested_limit) for each requirement that only allows versions newer than CanyonOS has tested."""
+    limits = {
+        name: Version(str(major + 1))
+        for name, major in _tested_majors(base_requirements).items()
+    }
+    too_new = []
+    for requirement in requirements:
+        try:
+            parsed = Requirement(requirement)
+        except InvalidRequirement:
+            continue
+        limit = limits.get(parsed.name.lower())
+        if limit and any(
+            _above_tested_version(spec, limit) for spec in parsed.specifier
+        ):
+            too_new.append((requirement, f"{parsed.name.lower()}<{limit}"))
+    return too_new
+
+
+def _tested_majors(base_requirements):
+    """TESTED_MAJOR_VERSIONS narrowed to the packages this image's base list installs."""
+    names = {Requirement(r).name for r in base_requirements}
+    return {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
+
+
+def _dockerfile_install_steps(overrides, base_requirements, requirements):
+    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM proxy's own separate packages."""
     forced = " ".join(f"'{override}'" for override in overrides)
+    asked_newer = {
+        Requirement(requirement).name.lower()
+        for requirement, _ in too_new_requirements(requirements, base_requirements)
+    }
+    caps = " ".join(
+        f"'{name}<{major + 1}'"
+        for name, major in _tested_majors(base_requirements).items()
+        if name not in asked_newer
+    )
     return f"""COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
- && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt
+ && printf '%s\\n' {caps} > /tmp/tested.txt \\
+ && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
 RUN uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
+RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-proxy \\
+ && uv pip install --python /opt/canyonos-proxy/bin/python {" ".join(PROXY_REQUIREMENTS)} \\
+ && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-proxy/bin/python {PROXY_BEDROCK_REQUIREMENT}; fi
 """
 
 
@@ -838,7 +802,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides)}
+{_dockerfile_install_steps(overrides, BASE_AGENT_REQUIREMENTS, requirements or [])}
 COPY . .
 
 ENV CANYONOS_AGENT_NAME={agent_name}
@@ -1026,7 +990,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides)}
+{_dockerfile_install_steps(overrides, BASE_WORKFLOW_REQUIREMENTS, requirements or [])}
 COPY . .
 
 EXPOSE 50051

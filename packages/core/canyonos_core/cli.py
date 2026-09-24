@@ -19,7 +19,6 @@ import sys
 from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
-    DependencyPinConflict,
     check_project,
     declarations_by_name,
     render_violation,
@@ -180,33 +179,6 @@ def validate_or_exit(config_path, declarations_dir, source_dir=None):
 def _normalize_requirements(agent_cfg):
     """Return a service's `requirements` list; the schema already checked its shape."""
     return list(agent_cfg.get("requirements") or [])
-
-
-def _check_dependency_pins(manifest):
-    """Fail the build when an app pin cannot share a version with a platform pin.
-
-    Every service is checked before the first one is built, so a project with
-    two bad pins is told about both instead of one per run.
-    """
-    from canyonos_core.stub_generator import _platform_overrides
-
-    violations = []
-    for index, service in enumerate(manifest.agents):
-        try:
-            _platform_overrides(
-                getattr(service, "requirements", ()),
-                service=index,
-                manifest_path=manifest.path,
-                lines=getattr(service, "requirement_lines", ()),
-            )
-        except DependencyPinConflict as conflict:
-            violations.extend(conflict.violations)
-
-    if violations:
-        _reject(
-            violations,
-            "Dependency pins rejected: %d conflict(s) found; nothing was built.",
-        )
 
 
 def _docker_platform():
@@ -370,12 +342,42 @@ def _run_build(config_path):
     # so a file that is not YAML at all is rendered as a violation too, and it
     # is handed source_root so a service whose code is missing fails here
     # rather than being skipped out of a deploy that then reports success.
-    manifest = validate_or_exit(config_path, declarations_dir, source_root)
-    _check_dependency_pins(manifest)
+    validate_or_exit(config_path, declarations_dir, source_root)
 
     config = _load_config(config_path)
     agents = config.get("agents", [])
     package_dir = _get_package_dir()
+
+    from canyonos_core.stub_generator import (
+        BASE_AGENT_REQUIREMENTS,
+        BASE_WORKFLOW_REQUIREMENTS,
+        too_new_requirements,
+        too_old_requirements,
+    )
+
+    too_old = []
+    for agent in agents:
+        requirements = _normalize_requirements(agent)
+        base = (
+            BASE_WORKFLOW_REQUIREMENTS
+            if agent.get("type", "agent") == "workflow"
+            else BASE_AGENT_REQUIREMENTS
+        )
+        too_old += [
+            f"{agent['name']} currently requires {asked}, but CanyonOS only supports {supported}"
+            for asked, supported in too_old_requirements(requirements, base)
+        ]
+        for asked, tested in too_new_requirements(requirements, base):
+            logger.warning(
+                "%s currently requires %s, but CanyonOS has only tested %s; it may not work",
+                agent["name"],
+                asked,
+                tested,
+            )
+    for message in too_old:
+        logger.error("%s", message)
+    if too_old:
+        sys.exit(1)
 
     # -------------------------------------------------------------- #
     #  Step 1: Discover agent YAML files and generate Python stubs    #
