@@ -161,6 +161,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 "queue_length": "3",
                 "observed_at": "100.0",
             },
+            _load_policy_rules=lambda reload=False: None,
         )
 
         def stop_after_one_tick(timeout):
@@ -188,6 +189,22 @@ class LocalControllerMetricsTests(unittest.TestCase):
             redis.hgetall("controller:localhost:50051:metrics")["observed_at"], "100.0"
         )
         self.assertEqual(redis.get("controller:localhost:50051:status"), "initializing")
+
+    def test_reload_replaces_cached_policy_rules(self):
+        redis = _FakeRedis()
+        redis.set("policy:rules", json.dumps([{"match": {}, "access": "all"}]))
+        controller = SimpleNamespace(redis=redis, _policy_rules=None)
+
+        LocalController._load_policy_rules(controller)
+        redis.set("policy:rules", json.dumps([{"match": {}, "access": ["A"]}]))
+
+        self.assertEqual(
+            LocalController._load_policy_rules(controller)[0]["access"], "all"
+        )
+        self.assertEqual(
+            LocalController._load_policy_rules(controller, reload=True)[0]["access"],
+            ["A"],
+        )
 
     def test_metrics_loop_does_not_overwrite_failed(self):
         redis = _FakeRedis()

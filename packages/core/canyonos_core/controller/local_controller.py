@@ -323,13 +323,12 @@ class LocalController(object):
         """Background thread: periodically publish instance metrics and refresh status."""
         while not self._metrics_stop_event.is_set():
             try:
-                rules_json = self.redis.get(POLICY_RULES_KEY)
-                self._policy_rules = json.loads(rules_json) if rules_json else []
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
                 with self._status_lock:
                     if self._ready.is_set():
                         self.redis.set(self._status_key, "healthy")
+                self._load_policy_rules(reload=True)
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             self._metrics_stop_event.wait(self._metrics_interval)
@@ -388,9 +387,9 @@ class LocalController(object):
     #  Policy evaluation                                                   #
     # ------------------------------------------------------------------ #
 
-    def _load_policy_rules(self):
-        """Load policy rules from Redis (cached after first load)."""
-        if self._policy_rules is not None:
+    def _load_policy_rules(self, reload=False):
+        """Load policy rules from Redis (cached after first load unless reload is set)."""
+        if self._policy_rules is not None and not reload:
             return self._policy_rules
 
         rules_json = self.redis.get(POLICY_RULES_KEY)
