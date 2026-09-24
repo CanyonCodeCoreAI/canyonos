@@ -26,31 +26,7 @@ from canyonos_core.controller.utils.log_entry import (
 )
 import canyonos_core.controller.canyonos_context as canyonos_context
 import local_controler_pb2
-
-
-class _FakeRedis:
-    def __init__(self):
-        self.hashes = {}
-
-    def hset(self, name, field, value):
-        self.hashes.setdefault(name, {})[field] = value
-
-    def hset_multiple(self, name, mapping):
-        self.hashes.setdefault(name, {}).update(mapping)
-
-    def hget(self, name, field):
-        return self.hashes.get(name, {}).get(field)
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def hincrby(self, name, field, amount=1):
-        bucket = self.hashes.setdefault(name, {})
-        bucket[field] = int(bucket.get(field, 0)) + amount
-        return bucket[field]
-
-    def smembers(self, key):
-        return set()
+from fakes import _FakeRedis
 
 
 def _bind_failure_marker(controller):
@@ -71,17 +47,26 @@ def _bind_failure_marker(controller):
     return controller
 
 
+def _bind_call_with_retry(controller):
+    controller._call_with_retry = lambda fn, endpoint: LocalController._call_with_retry(
+        controller, fn, endpoint
+    )
+    return controller
+
+
 class ErrorPropagationTests(unittest.TestCase):
     def test_forward_request_writes_future_error_on_grpc_failure(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(Execute=MagicMock(side_effect=RuntimeError("boom")))
-        controller = _bind_failure_marker(
-            SimpleNamespace(
-                redis=redis,
-                agent_id=None,
-                agent_name=None,
-                _my_endpoint="172.31.19.107:50051",
-                _get_remote_stub=lambda endpoint: stub,
+        controller = _bind_call_with_retry(
+            _bind_failure_marker(
+                SimpleNamespace(
+                    redis=redis,
+                    agent_id=None,
+                    agent_name=None,
+                    _my_endpoint="172.31.19.107:50051",
+                    _get_remote_stub=lambda endpoint: stub,
+                )
             )
         )
         data = {
@@ -147,10 +132,12 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_result_callback_sends_error_separately_from_result(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(WriteResult=MagicMock())
-        controller = SimpleNamespace(
-            redis=redis,
-            agent_name="ExampleAgent",
-            _get_remote_stub=lambda endpoint: stub,
+        controller = _bind_call_with_retry(
+            SimpleNamespace(
+                redis=redis,
+                agent_name="ExampleAgent",
+                _get_remote_stub=lambda endpoint: stub,
+            )
         )
 
         LocalController._send_result_callback(
@@ -329,13 +316,15 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_result_callback_failure_is_marked_with_category(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(WriteResult=MagicMock(side_effect=RuntimeError("boom")))
-        controller = _bind_failure_marker(
-            SimpleNamespace(
-                redis=redis,
-                agent_id="agent-1",
-                agent_name="ExampleAgent",
-                _my_endpoint="localhost:50051",
-                _get_remote_stub=lambda endpoint: stub,
+        controller = _bind_call_with_retry(
+            _bind_failure_marker(
+                SimpleNamespace(
+                    redis=redis,
+                    agent_id="agent-1",
+                    agent_name="ExampleAgent",
+                    _my_endpoint="localhost:50051",
+                    _get_remote_stub=lambda endpoint: stub,
+                )
             )
         )
 
@@ -353,6 +342,7 @@ class ErrorPropagationTests(unittest.TestCase):
             logs[0]["Attributes"]["exception.type"], "ResultCallbackFailed"
         )
         self.assertIn("Result callback failed", logs[0]["Body"])
+        stub.WriteResult.assert_called()
 
     def test_log_handler_never_duplicates_a_failure_already_recorded(self):
         """LogHandler must refuse WARNING+ so ambient capture can never double-record
@@ -416,15 +406,17 @@ class ErrorPropagationTests(unittest.TestCase):
 
         stub.WriteResult.side_effect = capture_write_result
 
-        executor = SimpleNamespace(
-            redis=executor_redis,
-            agent=SimpleNamespace(greet=boom),
-            agent_name="Greeter",
-            agent_id="executor-agent",
-            _my_endpoint="executor:50051",
-            _metrics_key="controller:executor:50051:metrics",
-            _resolve_future_args=lambda args: args,
-            _get_remote_stub=lambda endpoint: stub,
+        executor = _bind_call_with_retry(
+            SimpleNamespace(
+                redis=executor_redis,
+                agent=SimpleNamespace(greet=boom),
+                agent_name="Greeter",
+                agent_id="executor-agent",
+                _my_endpoint="executor:50051",
+                _metrics_key="controller:executor:50051:metrics",
+                _resolve_future_args=lambda args: args,
+                _get_remote_stub=lambda endpoint: stub,
+            )
         )
         executor._mark_future_failed = lambda future_id, error, origin=None: (
             LocalController._mark_future_failed(executor, future_id, error, origin)
@@ -512,6 +504,7 @@ class ErrorPropagationTests(unittest.TestCase):
         executor._send_result_callback = lambda *a, **k: (
             LocalController._send_result_callback(executor, *a, **k)
         )
+        _bind_call_with_retry(executor)
 
         LocalController._execute_locally(
             executor, "Greeter", "greet", {}, "future-1", origin="localhost:8002"

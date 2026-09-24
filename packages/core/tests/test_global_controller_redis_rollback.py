@@ -45,7 +45,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
             patch.object(GlobalController, "_cleanup_stale_containers"),
             patch.object(GlobalController, "_run_cmd", new=fake_run_cmd),
             patch(
-                "canyonos_core.controller.global_controller.write_agent_specs",
+                "canyonos_core.controller.global_controller.write_config_specs",
                 side_effect=failure,
             ),
         ):

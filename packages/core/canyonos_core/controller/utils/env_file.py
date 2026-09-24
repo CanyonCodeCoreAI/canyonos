@@ -10,13 +10,9 @@ way it reaches Docker as `--env-file`.
 
 import logging
 import os
-import re
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
-
-REMOTE_ENV_DIR = "/tmp"
-_UNSAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
 
 # Where a managed deployment leaves the user's secrets. /var/run is tmpfs, so
 # the file dies with the host instead of persisting on disk.
@@ -90,22 +86,8 @@ def _resolve_project_env_file(config, base_dir):
     return path
 
 
-def remote_env_path(container_name):
-    """
-    Where a remote host holds this container's copy of the env file.
-
-    The name is scrubbed down to a shell-safe alphabet. This path is
-    interpolated into remote commands that `_run_cmd` joins with spaces and
-    hands to a shell unquoted, so a container name carrying a space would
-    split the cleanup `rm` into two harmless arguments -- it would exit 0
-    while the secrets stayed on the host, with nothing in the log to say so.
-    """
-    safe_name = _UNSAFE_PATH_CHARS.sub("-", container_name)
-    return f"{REMOTE_ENV_DIR}/canyonos-env-{safe_name}"
-
-
 @contextmanager
-def env_file_args(controller, host, user, container_name, is_local):
+def env_file_args(controller, host, user, is_local):
     """
     Yield the `docker run` flags that hand the user's env file to a container.
 
@@ -127,8 +109,7 @@ def env_file_args(controller, host, user, container_name, is_local):
         yield ["--env-file", env_file_path]
         return
 
-    remote_path = remote_env_path(container_name)
-    controller._push_file(env_file_path, remote_path, host, user=user)
+    remote_path = controller._push_file(env_file_path, host, user=user)
     try:
         yield ["--env-file", remote_path]
     finally:
@@ -150,7 +131,8 @@ def _has_no_variables(path):
 def _remove_remote_copy(controller, remote_path, host, user):
     """Delete a remote copy. Best effort -- never masks the caller's error."""
     try:
-        result = controller._run_cmd(["rm", "-f", remote_path], host, user=user)
+        remote_dir = os.path.dirname(remote_path)
+        result = controller._run_cmd(["rm", "-rf", remote_dir], host, user=user)
         if getattr(result, "returncode", 0) != 0:
             logger.warning("Failed to delete env file copy %s on %s", remote_path, host)
     except Exception as e:

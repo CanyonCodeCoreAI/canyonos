@@ -11,9 +11,8 @@ import subprocess
 
 from canyonos import ui
 from canyonos.build import AGENTS
-from canyonos.constants import default_config_path, port_in_use
+from canyonos.constants import default_config_path, local_redis_port, port_in_use
 from canyonos.dashboard_stack import (
-    REDIS_PORT,
     _container_health,
     _container_name,
     _endpoint_healthy,
@@ -96,11 +95,12 @@ def _gc_check(state, status):
 def _redis_check():
     """TCP reachability only -- not a real PING, but enough to say something's
     listening where the local provider and dashboard both expect Redis."""
+    port = local_redis_port(default_config_path())
     return _print_check(
         "Redis",
-        port_in_use(int(REDIS_PORT)),
-        f"127.0.0.1:{REDIS_PORT}",
-        "nothing is listening on 6379 -- redeploy, or check `docker ps`",
+        port_in_use(int(port)),
+        f"127.0.0.1:{port}",
+        f"nothing is listening on {port} -- redeploy, or check `docker ps`",
     )
 
 
