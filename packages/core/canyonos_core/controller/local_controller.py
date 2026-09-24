@@ -57,6 +57,7 @@ except ImportError:
 import local_controler_pb2
 import local_controler_pb2_grpc
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,7 @@ class LocalController(object):
         """
         import socket
         import subprocess
-
-        import requests
+        import urllib.request
 
         # An orphaned proxy on 8081 would answer the /healthz probe below and mask
         # one of ours that never bound, so prove the port free before spawning.
@@ -242,9 +242,13 @@ class LocalController(object):
                 "CANYONOS_REDIS_PORT": str(redis_port),
             }
         )
+        # The image gives the proxy its own venv so its packages never share versions with the agent's.
+        proxy_python = "/opt/canyonos-proxy/bin/python"
+        if not os.path.exists(proxy_python):
+            proxy_python = sys.executable
         try:
             proxy_process = subprocess.Popen(
-                [sys.executable, "-m", "canyonos_core.llm_proxy"],
+                [proxy_python, "-m", "canyonos_core.llm_proxy"],
                 env=proxy_env,
             )
         except Exception as e:
@@ -257,6 +261,7 @@ class LocalController(object):
         # Popen only raises if the process can't be spawned -- it returns a healthy
         # handle even if the proxy starts and dies immediately, so poll /healthz.
         deadline = time.time() + 10
+        last_error = None
         while time.time() < deadline:
             if proxy_process.poll() is not None:
                 raise RuntimeError(
@@ -265,15 +270,18 @@ class LocalController(object):
                     "otherwise fail silently."
                 )
             try:
-                if requests.get("http://127.0.0.1:8081/healthz", timeout=0.5).ok:
+                with urllib.request.urlopen(
+                    "http://127.0.0.1:8081/healthz", timeout=0.5
+                ):
                     break
-            except requests.exceptions.RequestException:
-                pass
+            except OSError as e:
+                last_error = e
             time.sleep(0.2)
         else:
             proxy_process.kill()
             raise RuntimeError(
-                "LLM proxy did not become healthy on 127.0.0.1:8081 within 10s; "
+                "LLM proxy did not become healthy on 127.0.0.1:8081 within 10s "
+                f"(last health check: {last_error}); "
                 "agent LLM calls are routed through it unconditionally and would "
                 "otherwise fail silently."
             )

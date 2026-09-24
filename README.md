@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/canyonos-banner.gif" alt="CanyonOS" width="600">
+  <img src="images/canyonos-banner.gif" alt="CanyonOS" width="720" height="123">
 </p>
 
 ## CanyonOS turns plain Python into a running, distributed workflow — without changing a line of code.
@@ -137,6 +137,15 @@ canyonos test "Hello World!" --json
 ```
 
 ### 3. Deploy
+
+<details>
+<summary>Supported dependency versions</summary>
+
+If your code imports any of these, it must allow at least this version. Older isn't supported, sorry!
+
+`grpcio>=1.76.0` · `protobuf>=6.31.1` · `redis>=3.5`
+
+</details>
 
 Deploy the project fully, configured by the config files.
 On deploy success, a `POST` endpoint will be returned, in which you can send your workflow queries to.
