@@ -157,15 +157,28 @@ def _as_finite_float(value):
     return number if math.isfinite(number) else None
 
 
-def _number(collector, node, key, prefix, default, minimum=None):
-    """A field that accepts a fraction, unlike the integer counts and ports."""
+def _number(collector, node, key, prefix, default, minimum=None, floor=None):
+    """A field that accepts a fraction, unlike the integer counts and ports.
+
+    `minimum` is exclusive; `floor` is inclusive, for a field where the bound
+    itself is a meaningful value.
+    """
     if key not in node:
         return default
     raw = node[key]
     value = _resolve(raw)
-    bound = f" > {minimum}" if minimum is not None else ""
+    if minimum is not None:
+        bound = f" > {minimum}"
+    elif floor is not None:
+        bound = f" >= {floor}"
+    else:
+        bound = ""
     number = _as_finite_float(value)
-    if number is None or (minimum is not None and number <= minimum):
+    if (
+        number is None
+        or (minimum is not None and number <= minimum)
+        or (floor is not None and number < floor)
+    ):
         collector.add(
             node,
             key,
