@@ -18,8 +18,10 @@ is already durable; a delta would be a second source of truth that a re-delivere
 dropped message would permanently skew. The queue decouples callers from provisioning
 latency and serializes reconciles into one worker, so two cannot race on a slot.
 
-**Redis wins over the YAML once written.** `seed_desired` writes the configured `replicas`
-only if the key is absent, so a runtime scale survives a restart. Each pass reaps, then fills.
+**The YAML is the source of truth.** Startup and every reload write each agent's configured
+`replicas` through `set_replicas`, overwriting whatever Redis holds, so a changed config
+always takes effect. A runtime `set_replicas` holds only until the next reload or redeploy.
+Each pass reaps, then fills.
 
 The reap predicate is on the **index**, not "remove the last N": that makes scale-down
 deterministic and idempotent (5→2 always removes 2, 3, 4) and reaps orphans a count-based
@@ -31,7 +33,7 @@ reaping index 1 leaves a hole the same pass's fill step provisions into.
 
 | Key | Type | Written by | Read by |
 | --- | --- | --- | --- |
-| `agent:{name}:desired_replicas` | int (string) | GlobalController — `seed_desired`, `set_replicas` | Reconciler (`get_desired`, `desired_agent_specs`) |
+| `agent:{name}:desired_replicas` | int (string) | GlobalController — `set_replicas` (also from `_apply_configured_replicas`) | Reconciler (`get_desired`, `desired_agent_specs`) |
 | `reconciler:wake` | list | GlobalController — `_request_reconcile` | Reconciler (`drain`: `BRPOP` then non-blocking `RPOP`s) |
 | `reconciler:reap` | set | GlobalController — `replace_instance` | Reconciler (`reap_requests`; `clear_reap_requests` once removed) |
 | `reconciler:draining` | string (TTL) | GlobalController — `set_draining` / `clear_draining` | Reconciler (`is_draining`, once per pass) |
@@ -118,11 +120,10 @@ another, forever. Going down there is no debounce: replacement is cheap, downtim
 Teardown converges through the loop rather than tearing the fleet down underneath the
 process whose job is to rebuild it. **Why a flag, not desired counts:** deleting the
 keys does not drain, since `_reap` and `desired_agent_specs` fall back to the YAML count;
-setting them to 0 does drain, but `seed_desired` is write-if-absent, so the 0 survives to
-the next boot and every agent comes up empty forever, indistinguishable from a deliberate
-scale to zero. **Why the TTL:** a SIGKILLed controller orphans its child, and a permanent
+setting them to 0 does drain, but a zero never expires, and only an expiring flag lets an
+orphaned reconciler recover. **Why the TTL:** a SIGKILLed controller orphans its child, and a permanent
 flag would have it hold the fleet at zero forever. `__init__` clears the flag before
-seeding, so one stranded by a mid-drain kill cannot poison the next run.
+starting the reconciler, so one stranded by a mid-drain kill cannot poison the next run.
 
 `stop()` orders four load-bearing steps: drain, then `terminate_all()` (the reconciler is
 what removes instances), then `clear_draining()` (or the live reconciler refills), then

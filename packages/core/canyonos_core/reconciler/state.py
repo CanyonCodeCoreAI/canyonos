@@ -47,23 +47,6 @@ def replica_count(spec):
     return replicas if isinstance(replicas, int) else None
 
 
-def seed_desired(redis_client, agent_specs):
-    """Record each agent's configured count, leaving any existing value alone."""
-    for spec in agent_specs:
-        name = spec["name"]
-        replicas = replica_count(spec)
-        if replicas is None:
-            logger.warning(
-                "Agent %s declares a non-integer replicas value (%r); "
-                "reconciliation needs a count, skipping it.",
-                name,
-                spec.get("replicas"),
-            )
-            continue
-        if redis_client.get(desired_key(name)) is None:
-            set_desired(redis_client, name, replicas)
-
-
 def desired_agent_specs(redis_client, agent_specs):
     """The full spec list with each spec's replicas replaced by its desired count."""
     specs = []

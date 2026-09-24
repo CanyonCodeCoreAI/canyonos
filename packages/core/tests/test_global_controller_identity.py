@@ -84,7 +84,7 @@ class ReloadConfigWritesIdentityTests(unittest.TestCase):
             {"project_id": "11111111-1111-1111-1111-111111111111", "agents": []},
             node_redis={"localhost": node},
         )
-        controller.config_path = None
+        controller.config_path = "/nonexistent/config/global_controller.yaml"
         controller._load_config = lambda path: {
             "project_id": "22222222-2222-2222-2222-222222222222",
             "agents": [],

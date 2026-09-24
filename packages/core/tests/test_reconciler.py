@@ -1,6 +1,9 @@
 import itertools
+import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 import unittest
 from types import SimpleNamespace
@@ -118,19 +121,6 @@ class DesiredStateTests(unittest.TestCase):
         redis.set(state.desired_key("Alpha"), "many")
         self.assertEqual(state.get_desired(redis, "Alpha", default=2), 2)
 
-    def test_seed_desired_writes_the_configured_count_when_absent(self):
-        redis = _FakeRedis()
-        state.seed_desired(redis, [ALPHA_SPEC, BETA_SPEC])
-        self.assertEqual(redis.get(state.desired_key("Alpha")), "2")
-        self.assertEqual(redis.get(state.desired_key("Beta")), "1")
-
-    def test_seed_desired_leaves_an_existing_value_untouched(self):
-        """Redis stays authoritative so a runtime scale survives a controller restart."""
-        redis = _FakeRedis()
-        redis.set(state.desired_key("Alpha"), 7)
-        state.seed_desired(redis, [ALPHA_SPEC])
-        self.assertEqual(redis.get(state.desired_key("Alpha")), "7")
-
     def test_desired_agent_specs_returns_the_full_list_with_desired_counts(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 4)
@@ -214,6 +204,61 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller.redis = _FakeRedis()
         controller.agent_specs = specs if specs is not None else {"Alpha": ALPHA_SPEC}
         return controller
+
+    def test_configured_replicas_overwrite_a_stale_stored_count(self):
+        controller = self._controller(specs={"Alpha": ALPHA_SPEC, "Beta": BETA_SPEC})
+        controller.controllers = [ALPHA_SPEC, BETA_SPEC]
+        state.set_desired(controller.redis, "Alpha", 7)
+
+        controller._apply_configured_replicas()
+
+        self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
+        self.assertEqual(state.get_desired(controller.redis, "Beta"), 1)
+
+    def test_a_non_integer_replicas_is_skipped_without_failing_the_others(self):
+        listed = {"name": "Listed", "provider": "local", "replicas": ["a", "b"]}
+        controller = self._controller(specs={"Listed": listed, "Alpha": ALPHA_SPEC})
+        controller.controllers = [listed, ALPHA_SPEC]
+
+        with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
+            controller._apply_configured_replicas()
+
+        self.assertIsNone(controller.redis.get(state.desired_key("Listed")))
+        self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
+
+    def test_a_reload_applies_a_changed_replicas_count(self):
+        controller = GlobalController.__new__(GlobalController)
+        controller.redis = _FakeRedis()
+        controller.node_redis = {}
+        controller.config_path = "/nonexistent/config/global_controller.yaml"
+        controller._set_controllers([ALPHA_SPEC])
+        controller._apply_configured_replicas()
+        controller._load_config = lambda path: {
+            "agents": [{**ALPHA_SPEC, "replicas": 5}]
+        }
+
+        controller.reload_config()
+
+        self.assertEqual(state.get_desired(controller.redis, "Alpha"), 5)
+
+    def test_a_reload_republishes_policy_rules(self):
+        config_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, config_dir)
+        with open(os.path.join(config_dir, "policy.yaml"), "w") as f:
+            f.write("rules:\n  - match: {}\n    access: all\n")
+        controller = GlobalController.__new__(GlobalController)
+        controller.redis = _FakeRedis()
+        controller.node_redis = {}
+        controller.config_path = os.path.join(config_dir, "global_controller.yaml")
+        controller._set_controllers([ALPHA_SPEC])
+        controller._load_config = lambda path: {"agents": [ALPHA_SPEC]}
+
+        controller.reload_config()
+
+        self.assertEqual(
+            json.loads(controller.redis.get(GlobalController.POLICY_RULES_KEY)),
+            [{"match": {}, "access": "all"}],
+        )
 
     def test_the_named_replica_is_queued_for_reaping_and_the_reconciler_woken(self):
         controller = self._controller()
@@ -531,7 +576,7 @@ class DrainingFlagTests(unittest.TestCase):
         self.assertFalse(state.is_draining(redis))
 
     def test_draining_leaves_desired_replicas_untouched(self):
-        """seed_desired is write-if-absent, so a zero persisted here would outlive teardown."""
+        """Draining is a separate flag, so clearing it leaves the desired counts as they were."""
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 3)
 

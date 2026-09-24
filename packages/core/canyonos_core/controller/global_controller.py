@@ -102,12 +102,9 @@ class GlobalController(ControllerContext):
             self._launch_redis_containers()
             # One machine-level metrics collector per host (best-effort, local hosts only).
             self._launch_metrics_collectors()
-            write_config_specs(self.controllers, self.redis)
+            self._apply_config()
             # A teardown killed mid-drain leaves the flag set; clear it or the fleet stays at zero.
             state.clear_draining(self.redis)
-            state.seed_desired(self.redis, self.controllers)
-            self._load_and_write_policies()
-            self._write_identity()
             logger.info(
                 "Global controller initialized with %d controller(s).",
                 len(self.controllers),
@@ -277,14 +274,10 @@ class GlobalController(ControllerContext):
         self.env_file_path = resolve_env_file(self.config)
         previous = set(self.agent_specs)
         self._set_controllers(self.config.get("agents", []))
-        # Otherwise a runtime scale would come back if the agent is re-added later.
         for name in previous - set(self.agent_specs):
             self.redis.delete(state.desired_key(name))
         self.poll_interval = self.config.get("poll_interval", 5)
-        write_config_specs(self.controllers, self.redis)
-        # Write-if-absent: seeds an agent the reload added, leaves a runtime scale alone.
-        state.seed_desired(self.redis, self.controllers)
-        self._write_identity()
+        self._apply_config()
         self._request_reconcile(state.WAKE_ALL)
 
         # Only meaningful if the exporter was already running.
@@ -293,6 +286,14 @@ class GlobalController(ControllerContext):
             "otel_exporter"
         ):
             self._write_otel_destinations(destinations)
+
+    def _apply_config(self):
+        """Publish the loaded config to Redis: agent specs, replica counts, policies, identity."""
+        write_config_specs(self.controllers, self.redis)
+        # The YAML is authoritative, so this overwrites any runtime scale.
+        self._apply_configured_replicas()
+        self._load_and_write_policies()
+        self._write_identity()
 
     def _load_policy_rules(self):
         """Load policy rules from config/policy.yaml."""
@@ -1005,6 +1006,20 @@ class GlobalController(ControllerContext):
         desired = state.set_desired(self.redis, agent_name, count)
         self._request_reconcile(agent_name)
         return desired
+
+    def _apply_configured_replicas(self):
+        """Set every agent's desired replica count to its configured value."""
+        for spec in self.controllers:
+            count = state.replica_count(spec)
+            if count is None:
+                logger.warning(
+                    "Agent %s declares a non-integer replicas value (%r); "
+                    "reconciliation needs a count, skipping it.",
+                    spec["name"],
+                    spec.get("replicas"),
+                )
+                continue
+            self.set_replicas(spec["name"], count)
 
     def replace_instance(self, agent_name, replica_index):
         """Destroy one replica; the desired count is unchanged, so the slot is refilled."""
