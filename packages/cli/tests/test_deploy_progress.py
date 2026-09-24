@@ -464,6 +464,7 @@ def test_verbose_fails_on_a_fatal_line_instead_of_waiting_for_the_timeout(
         deploy_cmd, "_deploy_summary", lambda *a: pytest.fail("no summary")
     )
     monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0)
     monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": True})
     verdict = "CRITICAL:canyonos_core.cli:Agent replica(s) failed to become healthy within 4s: Broken 0/1\n"
     lines = deploy_cmd._queued_lines(iter([_BEGIN, *_QUOTED_TRACEBACK, _END, verdict]))
@@ -509,3 +510,32 @@ def test_verbose_echoes_a_quoted_log_without_failing_on_it(monkeypatch, capsys):
 
     assert summary == ("url", [], "config.yaml")
     assert "No module named 'langchain'" in capsys.readouterr().out
+
+
+def test_verbose_keeps_echoing_after_a_fatal_line_until_the_deploy_is_gone(
+    monkeypatch, capsys
+):
+    """The global controller tears its agents down on the way out; raising the
+    moment the verdict lands would kill it mid-teardown and orphan them."""
+    monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 5)
+    replies = iter([{"running": True}, None, None])
+    monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: next(replies, None))
+    verdict = "CRITICAL:canyonos_core:Controller readiness failed: Broken 0/1\n"
+    teardown = (
+        "INFO:canyonos_core.reconciler.reconciler:Removing instance local:Broken:0\n"
+    )
+    lines = deploy_cmd._queued_lines(iter([verdict, teardown]))
+    lines.put = lambda *a, **k: None
+
+    with pytest.raises(RuntimeError, match="Deploy failed: CRITICAL"):
+        deploy_cmd._tail_verbose(
+            lines,
+            {"port": 1},
+            8080,
+            "config/global_controller.yaml",
+            serve=False,
+            on_ready=lambda _ready: None,
+        )
+
+    assert "Removing instance local:Broken:0" in capsys.readouterr().out

@@ -424,6 +424,7 @@ def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
         print(line, end="")
         _, _, is_error = tracker.feed(line)
         if is_error:
+            _echo_until_the_deploy_is_gone(lines, state)
             raise RuntimeError(
                 f"Deploy failed: {line.strip()} "
                 "Automatic cleanup will be attempted; see the log above for the cause."
@@ -439,6 +440,23 @@ def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
         "Automatic cleanup will be attempted; rerun with `canyonos deploy -v` "
         "for full logs."
     )
+
+
+def _echo_until_the_deploy_is_gone(lines, state):
+    """Keep echoing after a fatal line until the container confirms the deploy
+    has stopped, or the reveal grace passes.
+
+    The global controller tears its agents down on the way out, which takes
+    seconds; quitting the moment the verdict lands kills it mid-teardown and
+    leaves the agent containers, Redis and the workflow's port behind.
+    """
+    for line in _drain(
+        lines,
+        state,
+        deadline=time.monotonic() + _REVEAL_GRACE_SECONDS,
+        hide_status_requests=False,
+    ):
+        print(line, end="")
 
 
 def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
