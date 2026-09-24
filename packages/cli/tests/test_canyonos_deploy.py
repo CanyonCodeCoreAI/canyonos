@@ -15,6 +15,7 @@ def deployable(monkeypatch):
         deploy_cmd, "run_init", lambda banner=True, extra_env=None: None
     )
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
+    monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)
     monkeypatch.setattr(deploy_cmd, "load_state", lambda: dict(STATE))
     monkeypatch.setattr(deploy_cmd, "workflow_api_port", lambda _config: 8080)
     monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: False)
@@ -157,3 +158,22 @@ def test_extra_env_and_banner_are_forwarded_to_run_init(monkeypatch, deployable)
     )
 
     assert seen == {"banner": False, "extra_env": {"CANYONOS_LLM_STUB_TEXT": "test"}}
+
+
+def test_a_cancelled_resource_picker_stops_before_run_init(monkeypatch, deployable):
+    monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: False)
+    monkeypatch.setattr(
+        deploy_cmd, "run_init", lambda **_k: pytest.fail("run_init should not run")
+    )
+
+    assert deploy_cmd.run_deploy(CONFIG_PATH, serve=False) is None
+
+
+def test_quiet_skips_the_resource_picker(monkeypatch, deployable):
+    monkeypatch.setattr(
+        deploy_cmd,
+        "configure_resources",
+        lambda _path: pytest.fail("picker should not run under quiet"),
+    )
+
+    assert deploy_cmd.run_deploy(CONFIG_PATH, quiet=True) == STATE
