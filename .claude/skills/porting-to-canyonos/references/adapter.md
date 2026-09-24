@@ -12,7 +12,8 @@ Use this order:
 1. Choose a safe entrypoint module for each service.
 2. Write a no-argument synchronous adapter around source-owned behavior.
 3. Bridge async or session state only when the source requires it.
-4. Write the workflow and preserve parallel dispatch.
+4. Write the workflow, preserve parallel dispatch, and resolve final outputs
+   with `.value()` before returning.
 5. Write the workflow's test input.
 
 Complete `manifest.md`, then validate only the authored contracts that CanyonOS
@@ -24,6 +25,7 @@ only when a container loads.
 ## Contents
 
 - Adapter and workflow shape
+- Resolving workflow outputs
 - Workflow input and its test case
 - Choosing the entrypoint
 - Bridging async
@@ -49,6 +51,26 @@ writes there holds the LLM proxy alone, under an `__init__` that exports
 nothing. `from canyonos_core import deploy` builds green and raises ImportError
 at container start. V021.
 
+## Resolving workflow outputs
+
+Every remote service call returns a Future, not its computed value. In
+`main(query: str)`, explicitly call `.value()` on each Future contributing to
+the final output before returning it, including values nested in dictionaries,
+lists, or tuples. 
+
+```python
+def main(query: str) -> dict[str, str]:
+    answer = agent.work(query=query)
+    return {"answer": answer.value()}
+```
+
+Before returning from `main`, resolve any Future included in the final output
+with `.value()`. For example, if `answer` is a Future, use
+`return answer.value()`. Calling `str(...)` or `json.dumps(...)` does not resolve
+a Future. Decode the resolved value with `json.loads(...)` only when it is JSON
+text and the workflow needs the decoded structure. Return already concrete
+values unchanged.
+
 For parallel remote calls, dispatch all work before resolving any result:
 
 ```python
@@ -57,6 +79,11 @@ results = [json.loads(future.value()) for future in futures]
 ```
 
 Combining dispatch and `.value()` in one comprehension serializes the work.
+
+Before completing the workflow, trace every `return` in `main`, including
+early returns and conditional branches. Verify that every remote result in
+the returned payload passes through `.value()` before parsing, formatting, or
+serialization, and that no nested Future escapes. 
 
 ## Workflow input and its test case
 

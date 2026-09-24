@@ -92,8 +92,8 @@ credential into a 401 that reads like a broken port.
 This is a step, not a recommendation. Do not ask for approval first, and do not
 close the port by reporting that the `.env` "should" point at the proxy: a
 report that says so while the file still says otherwise is the failure this
-section exists to prevent. `git status` will show `.env.example`; name it in the
-handoff.
+section exists to prevent. `git status` will show `.env.example`; report that
+change in progress updates and name the required keys in the final handoff.
 
 ## A source with no env hook needs one in the `.car/app` copy
 
