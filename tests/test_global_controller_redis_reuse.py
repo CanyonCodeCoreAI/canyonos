@@ -158,6 +158,33 @@ class RedisContainerReuseTests(unittest.TestCase):
             ],
         )
 
+    def test_stop_remote_redis_uses_ec2_user(self):
+        controller = _bare_controller(
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "EC2",
+                    "host": "10.0.0.5",
+                    "user": "ubuntu",
+                }
+            ]
+        )
+        controller.redis_containers = {"10.0.0.5": "canyonos-redis-10-0-0-5"}
+        calls = []
+        controller._run_cmd = lambda cmd, host, user=None: calls.append(
+            (cmd, host, user)
+        )
+
+        controller._stop_redis_containers()
+
+        self.assertEqual(
+            calls,
+            [
+                (["docker", "stop", "canyonos-redis-10-0-0-5"], "10.0.0.5", "ubuntu"),
+                (["docker", "rm", "canyonos-redis-10-0-0-5"], "10.0.0.5", "ubuntu"),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

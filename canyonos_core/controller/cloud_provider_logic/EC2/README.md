@@ -126,7 +126,7 @@ key pre-authorized.
 
 ## [OPTIONAL] Creating your own AMI
 
-We have provided our own base AMI_ID: ami-0101d5f2a2a9cd55c, but if you want to create your own, the ami you create just needs to have docker and zstd installed. The commands to install it are below.
+We have provided our own base AMI_ID: ami-0101d5f2a2a9cd55c. You need to be in `us-east-1` to use our AMI. If you want to create your own, the ami you create just needs to have docker and zstd installed. The commands to install it are below.
 If using a different AMI base than Ubuntu, you will need to change the ssh_user manually.
 
 ```bash

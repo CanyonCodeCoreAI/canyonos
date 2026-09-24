@@ -40,7 +40,7 @@ CONTROLLER_HEALTH_TIMEOUT = 180
 DEFAULT_SSH_USER = "ubuntu"
 DEFAULT_SSH_KEY_PATH = os.path.expanduser("~/.ssh/canyonos_ec2")
 
-# This default AMI is a public AMI created by Canyon Code, containing base Ubuntu + Docker + zstd. Can be overriden manually with your own ami_id
+# This default AMI is a public AMI created by Canyon Code, containing base Ubuntu + Docker + zstd. Can be overridden manually with your own ami_id
 DEFAULT_AMI_ID = "ami-0101d5f2a2a9cd55c"
 _controller: Any = None
 _default_key_lock = threading.Lock()

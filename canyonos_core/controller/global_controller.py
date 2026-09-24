@@ -517,10 +517,17 @@ class GlobalController(object):
 
     def _stop_redis_containers(self):
         """Stop and remove all launched Redis containers."""
+        users = {}
+        for ctrl in self.controllers:
+            is_ec2 = ctrl.get("provider", "local").upper() == "EC2"
+            user = ctrl.get("user") if is_ec2 else None
+            for host, _port in self._get_replica_placements(ctrl):
+                users.setdefault(host, user)
         for host, container_name in self.redis_containers.items():
+            user = users.get(host)
             try:
-                self._run_cmd(["docker", "stop", container_name], host, None)
-                self._run_cmd(["docker", "rm", container_name], host, None)
+                self._run_cmd(["docker", "stop", container_name], host, user)
+                self._run_cmd(["docker", "rm", container_name], host, user)
                 logger.info("Stopped Redis %s on %s", container_name, host)
             except Exception as e:
                 logger.warning("Failed to stop Redis %s: %s", container_name, e)
