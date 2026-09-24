@@ -108,8 +108,8 @@ formats and writes files is a plain step.
 Decide each candidate in this order; the first match wins.
 
 1. **Not invoked as a unit by the source workflow** — a helper, tool, prompt
-   builder, or parser that a node calls. Not an agent; it stays inside the agent that
-   calls it. Tools are never agents.
+   builder, or parser that a node calls. Not an agent; it stays inside the
+   agent that calls it. Tools are never agents.
 2. **Builds or runs other units** — constructs a `StateGraph`, calls
    `compile().invoke/ainvoke`, fans out with `Send` or `asyncio.gather`
    over invocations. An orchestrator: its logic becomes the workflow.
