@@ -4,10 +4,9 @@
 
 **Inspect:** `.car/app`, not a framework-based guess about the original tree.
 
-**Output:** a short survey record and a service map with one service per
-agent. Do not start adapter or config work until the readiness gate passes and
-each section is resolved. A blocker pauses the build, not just the survey
-checklist.
+**Output:** a short survey record and the smallest useful service map. Do not
+start adapter or config work until the readiness gate passes and each section
+is resolved. A blocker pauses the build, not just the survey checklist.
 
 ## Application-readiness gate
 
@@ -94,52 +93,23 @@ complete.
 
 ## 5. Choose service boundaries
 
-**Output:** one service per agent, including which edges of the source
-workflow cross services and which services require `replicas: 1`.
+**Output:** the smallest useful service map, including which framework edges
+cross services and which services require `replicas: 1`.
 
-### What counts as an agent
+Start with one service. Split only when doing so creates independently parallel
+work or a genuinely distinct resource or replica profile.
 
-An agent is a unit that the original workflow being ported invokes as a whole,
-whose output depends on a model call. Split each agent into its own service.
-Class and node names are not evidence: a class called `ChiefEditorAgent` that
-builds and runs a graph is an orchestrator, and a `PublisherAgent` that only
-formats and writes files is a plain step.
+- Keep a ReAct loop together; each turn needs shared message history.
+- Hoist supervisor task lists and `Send`-style fan-out into the workflow.
+- Do not create a one-replica service with no distinct resource profile merely
+  to mirror every source graph node.
 
-Decide each candidate in this order; the first match wins.
-
-1. **Not invoked as a unit by the source workflow** — a helper, tool, prompt
-   builder, or parser that a node calls. Not an agent; it stays inside the
-   agent that calls it. Tools are never agents.
-2. **Builds or runs other units** — constructs a `StateGraph`, calls
-   `compile().invoke/ainvoke`, fans out with `Send` or `asyncio.gather`
-   over invocations. An orchestrator: its logic becomes the workflow.
-3. **Output does not depend on a model call** — an edge router (`route_*`,
-   `should_continue`) or a pure transform (formatting, publishing, file I/O).
-   Not an agent; the workflow imports and calls it from the source unchanged.
-4. **Needs a human or device during the request** — `input()`, a websocket
-   receive, `interrupt()` waiting on a person. A readiness blocker, not a
-   service; see the application-readiness gate above.
-5. **Otherwise it is an agent.**
-
-Group agents into services by the object the source workflow calls:
-
-- Nodes bound to methods of one instance are one agent: one service, one
-  declared method per node.
-- A prebuilt or ReAct agent (`create_react_agent`, `create_agent`,
-  `AgentExecutor`) is one agent, including its internal agent/tools loop.
-  Do not split its tools node.
-- A module-level function node that calls a model is one agent by itself.
-- A model that chooses the next unit (a supervisor, an LLM router) is an
-  agent whose output is that choice; the workflow executes the handoff.
-- A plain LangChain chain (`prompt | llm | parser`) is an agent only when it
-  is itself a graph node; otherwise it belongs to the agent that invokes it.
-
-### Edges between agents
-
-Every edge between two agents crosses a service boundary, so the workflow
-re-expresses it as ordinary Python. Import the connected source node functions
-and routers unchanged. If the graph holds a single agent, preserve
-`graph.compile().invoke(...)` and wrap it.
+Rewrite framework-owned edges as ordinary Python **only where they cross a
+service boundary**. If every graph node stays in one service, preserve
+`graph.compile().invoke(...)` and wrap it. Rewriting internal edges restates
+working source behavior without creating a deployment benefit. Where an edge
+must move into the workflow, import the connected source node functions
+unchanged.
 
 Construct runtime-injected service objects from source configuration. Never
 invent models, embedding dimensions, stores, or defaults silently; report any

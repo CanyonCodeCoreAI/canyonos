@@ -34,9 +34,9 @@ import root from actual imports and use `prepare.py`; do not assemble or refresh
 ## 2. Survey and design
 
 Read [references/source-survey.md](references/source-survey.md) in full. Produce
-its survey record and map each agent to a service before writing runtime code
-or configuration. Apply its application-readiness gate; pause the build and
-cite the guide when the source has a blocking prerequisite.
+its survey record and choose the smallest useful service map before writing
+runtime code or configuration. Apply its application-readiness gate; pause the
+build and cite the guide when the source has a blocking prerequisite.
 
 ## 3. Implement the port
 
