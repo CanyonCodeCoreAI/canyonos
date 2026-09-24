@@ -323,6 +323,8 @@ class LocalController(object):
         """Background thread: periodically publish instance metrics and refresh status."""
         while not self._metrics_stop_event.is_set():
             try:
+                rules_json = self.redis.get(POLICY_RULES_KEY)
+                self._policy_rules = json.loads(rules_json) if rules_json else []
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
                 with self._status_lock:
