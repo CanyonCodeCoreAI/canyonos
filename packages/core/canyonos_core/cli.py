@@ -633,7 +633,14 @@ def cmd_deploy(args):
     signal.signal(signal.SIGHUP, _reload_handler)
 
     logger.info("Deploying from config: %s", config_path)
-    controller._wait_for_healthy()
+    try:
+        controller._wait_for_healthy()
+    except RuntimeError as e:
+        # One CRITICAL line, not a traceback: `canyonos deploy` reports the line
+        # that tripped the failure as the root cause, and the cause itself sits in
+        # the container logs dumped just above it.
+        logger.critical("Controller readiness failed: %s", e)
+        sys.exit(1)
     controller.run()
 
 

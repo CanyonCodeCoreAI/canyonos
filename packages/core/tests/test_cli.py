@@ -95,6 +95,45 @@ class CliDeployTests(unittest.TestCase):
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
     @patch("canyonos_core.cli._preflight_ec2_deploy")
+    def test_deploy_exits_with_one_critical_line_when_replicas_never_become_healthy(
+        self,
+        _preflight,
+        _ensure_grpc,
+        _run_build,
+        _signal_patch,
+        _atexit_patch,
+    ):
+        controller = MagicMock()
+        controller._wait_for_healthy.side_effect = RuntimeError(
+            "Agent replica(s) failed to become healthy within 4s: Broken 0/1"
+        )
+        controller_module = self._fake_controller_module(controller)
+        args = SimpleNamespace(config="config/global_controller.yaml")
+        config = {"agents": [{"name": "Broken", "provider": "local"}]}
+
+        with (
+            patch("canyonos_core.cli.os.path.isfile", return_value=True),
+            patch("canyonos_core.cli._load_config", return_value=config),
+            patch("canyonos_core.cli.resolve_env_file", return_value=None),
+            patch("canyonos_core.cli.validate_or_exit"),
+            patch.dict(
+                sys.modules,
+                {"canyonos_core.controller.global_controller": controller_module},
+            ),
+            self.assertLogs("canyonos_core", level="CRITICAL") as logs,
+            self.assertRaises(SystemExit) as exit_info,
+        ):
+            cli.cmd_deploy(args)
+
+        self.assertEqual(exit_info.exception.code, 1)
+        self.assertIn("Broken 0/1", "\n".join(logs.output))
+        controller.run.assert_not_called()
+
+    @patch("atexit.register")
+    @patch("signal.signal")
+    @patch("canyonos_core.cli._run_build")
+    @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
+    @patch("canyonos_core.cli._preflight_ec2_deploy")
     def test_deploy_uses_car_when_present(
         self, preflight, ensure_grpc, _run_build, _signal_patch, _atexit_patch
     ):
