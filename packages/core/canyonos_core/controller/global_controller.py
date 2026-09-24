@@ -56,6 +56,7 @@ LOCAL_NETWORK = "canyonos-local"
 # silently running a stale image that need not hold the code this GC was built from.
 CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 
+
 class GlobalController(ControllerContext):
     """
     Daemon that manages a routing table across multiple local controller instances.
