@@ -130,3 +130,33 @@ def select_menu(options, title, deletable=False, quittable=False, footer=None):
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         out.write("\x1b[?25h\r\n")
         out.flush()
+
+
+def input_line(prompt, hint="enter save · esc back"):
+    """Read one line of typed text; returns None on Esc/Ctrl-C."""
+    if not sys.stdin.isatty():
+        return None
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    out = sys.stderr
+    buffer = ""
+    try:
+        tty.setraw(fd)
+        out.write(f"\x1b[?25h{prompt}\r\n\r\n\x1b[2m{hint}\x1b[0m\x1b[2A")
+        while True:
+            out.write(f"\r\x1b[K{prompt}{buffer}")
+            out.flush()
+            key = _read_key(fd)
+            if key in ("\r", "\n"):
+                return buffer.strip()
+            if key in CANCEL_KEYS:
+                return None
+            if key in ("\x7f", "\x08"):
+                buffer = buffer[:-1]
+            elif len(key) == 1 and key.isprintable():
+                buffer += key
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        out.write("\r\n")
+        out.flush()

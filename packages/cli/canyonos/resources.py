@@ -12,7 +12,7 @@ from ruamel.yaml.comments import CommentedMap
 from canyonos import ui
 from canyonos.constants import round_trip_yaml
 from canyonos.theme import GRADIENT, GREEN, WHITE
-from utils.tui import select_menu
+from utils.tui import input_line, select_menu
 
 DEPLOY = "__deploy__"
 BACK = "__back__"
@@ -21,6 +21,7 @@ RESOURCE_DEFAULTS = (("cpu", 1), ("memory", 512), ("gpu", 0))
 REPLICAS_DEFAULT = 1
 
 FIELDS = ("cpu", "memory", "gpu", "replicas")
+UNITS = {"cpu": "cores", "memory": "MiB"}
 
 BOLD = "\x1b[1m"
 
@@ -33,6 +34,10 @@ def _fill_defaults(agent):
     for key, default in RESOURCE_DEFAULTS:
         resources.setdefault(key, default)
     agent.setdefault("replicas", REPLICAS_DEFAULT)
+
+
+def _label(field):
+    return f"{field} ({UNITS[field]})" if field in UNITS else field
 
 
 def _get(agent, field):
@@ -93,7 +98,7 @@ def _name(agent, index):
 def _cells(agents):
     """Per agent, the name and each field padded to its column's width, plus those widths."""
     rows = [
-        [_name(agent, i)] + [f"{field} {_get(agent, field)}" for field in FIELDS]
+        [_name(agent, i)] + [f"{_label(field)} {_get(agent, field)}" for field in FIELDS]
         for i, agent in enumerate(agents)
     ]
     widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
@@ -126,14 +131,14 @@ def _edit_agent(agent, status):
     name = agent.get("name", "agent")
     while True:
         _render(name, status)
-        options = [(field, f"{field}: {_get(agent, field)}") for field in FIELDS]
+        options = [(field, f"{_label(field)}: {_get(agent, field)}") for field in FIELDS]
         options.append((BACK, "← Back"))
         field = select_menu(options, title=f"Resources for {name}")
         if field is None or field == BACK:
             return status
 
         _render(f"{name} › {field}", status)
-        raw = input(f"{field} (current {_get(agent, field)}, blank to keep): ").strip()
+        raw = input_line(f"{_label(field)} (current {_get(agent, field)}): ")
         if not raw:
             continue
         try:
