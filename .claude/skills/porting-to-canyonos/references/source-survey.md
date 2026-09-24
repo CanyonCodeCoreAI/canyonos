@@ -94,21 +94,21 @@ complete.
 
 ## 5. Choose service boundaries
 
-**Output:** one service per agent, including which framework edges cross
-services and which services require `replicas: 1`.
+**Output:** one service per agent, including which edges of the source
+workflow cross services and which services require `replicas: 1`.
 
 ### What counts as an agent
 
-An agent is a unit the framework's control flow invokes as a whole, whose output
-depends on a model call. Split each agent into its own service. Class and node
-names are not evidence: a class called `ChiefEditorAgent` that builds and runs
-a graph is an orchestrator, and a `PublisherAgent` that only formats and writes
-files is a plain step.
+An agent is a unit that the original workflow being ported invokes as a whole,
+whose output depends on a model call. Split each agent into its own service.
+Class and node names are not evidence: a class called `ChiefEditorAgent` that
+builds and runs a graph is an orchestrator, and a `PublisherAgent` that only
+formats and writes files is a plain step.
 
 Decide each candidate in this order; the first match wins.
 
-1. **Not invoked as a unit by the framework** — a helper, tool, prompt builder,
-   or parser that a node calls. Not an agent; it stays inside the agent that
+1. **Not invoked as a unit by the source workflow** — a helper, tool, prompt
+   builder, or parser that a node calls. Not an agent; it stays inside the agent that
    calls it. Tools are never agents.
 2. **Builds or runs other units** — constructs a `StateGraph`, calls
    `compile().invoke/ainvoke`, fans out with `Send` or `asyncio.gather`
@@ -121,7 +121,7 @@ Decide each candidate in this order; the first match wins.
    service; see the application-readiness gate above.
 5. **Otherwise it is an agent.**
 
-Group agents into services by the object the framework calls:
+Group agents into services by the object the source workflow calls:
 
 - Nodes bound to methods of one instance are one agent: one service, one
   declared method per node.
