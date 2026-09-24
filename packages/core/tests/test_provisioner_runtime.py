@@ -743,3 +743,89 @@ class PortClaimTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ControllerStatusKeyTests(unittest.TestCase):
+    STATUS_KEY = "controller:canyonos-alpha-0:50051:status"
+
+    def test_launch_clears_the_status_the_last_container_at_this_endpoint_left(self):
+        """The key has no TTL and the endpoint is the container name, so a
+        previous run's "healthy" would pass for the new container's."""
+        controller = _fake_controller()
+        controller.redis.set(self.STATUS_KEY, "healthy")
+        manager = Provisioner(controller)
+
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        self.assertNotIn(self.STATUS_KEY, controller.redis.strings)
+
+    def test_launch_clears_the_status_right_before_docker_run(self):
+        controller = _fake_controller()
+        controller.redis.set(self.STATUS_KEY, "healthy")
+        seen_at_run = []
+        run_cmd = controller._run_cmd.side_effect
+
+        def observe(cmd, host, user=None):
+            if cmd[:2] == ["docker", "run"]:
+                seen_at_run.append(controller.redis.get(self.STATUS_KEY))
+            return run_cmd(cmd, host, user)
+
+        controller._run_cmd = observe
+        manager = Provisioner(controller)
+
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        self.assertEqual(seen_at_run, [None])
+
+    def test_a_launch_that_cannot_clear_the_status_does_not_proceed(self):
+        controller = _fake_controller()
+
+        def refuse(*_keys):
+            raise ConnectionError("redis away")
+
+        controller.redis.delete = refuse
+        manager = Provisioner(controller)
+
+        with self.assertRaisesRegex(RuntimeError, "could not clear the stale"):
+            manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+
+        commands = [call.args[0][:2] for call in controller._run_cmd.call_args_list]
+        self.assertNotIn(["docker", "run"], commands)
+
+    def test_remove_instance_deletes_the_status_before_destroying_the_runtime(self):
+        controller = _fake_controller()
+        manager = Provisioner(controller)
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+        controller.redis.set(self.STATUS_KEY, "healthy")
+        seen_at_rm = []
+        run_cmd = controller._run_cmd.side_effect
+
+        def observe(cmd, host, user=None):
+            if cmd[:3] == ["docker", "rm", "-f"]:
+                seen_at_rm.append(controller.redis.get(self.STATUS_KEY))
+            return run_cmd(cmd, host, user)
+
+        controller._run_cmd = observe
+
+        manager.remove_instance("local:Alpha:0")
+
+        self.assertEqual(seen_at_rm, [None])
+        self.assertNotIn(self.STATUS_KEY, controller.redis.strings)
+
+    def test_a_status_that_cannot_be_deleted_does_not_stop_the_teardown(self):
+        controller = _fake_controller()
+        manager = Provisioner(controller)
+        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
+        delete = controller.redis.delete
+
+        def refuse_status(*keys):
+            if any(key.endswith(":status") for key in keys):
+                raise ConnectionError("redis away")
+            delete(*keys)
+
+        controller.redis.delete = refuse_status
+
+        with self.assertLogs("canyonos_core.reconciler.provisioner", level="WARNING"):
+            manager.remove_instance("local:Alpha:0")
+
+        self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
