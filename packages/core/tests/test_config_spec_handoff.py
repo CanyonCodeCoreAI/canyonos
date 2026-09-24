@@ -103,7 +103,7 @@ class RefreshTests(unittest.TestCase):
         self.assertFalse(context.refresh_controllers_from_redis())
 
     def test_an_unseeded_redis_leaves_the_current_specs_in_place(self):
-        """Absent specs must not read as "no agents"; that would reap the fleet."""
+        """Absent specs must not read as "no agents"; that would remove the fleet."""
         context = self._context(_FakeRedis(), [ALPHA])
 
         self.assertFalse(context.refresh_controllers_from_redis())

@@ -11,8 +11,6 @@ import time
 from canyonos_core.controller.controller_context import (
     ControllerContext,
     _redis_connect_host,
-)
-from canyonos_core.instances.records import (
     instance_id_from_record,
     list_instances,
     routing_endpoint_for,
@@ -124,23 +122,23 @@ class Reconciler(object):
         names = (
             [agent_name] if agent_name is not None else list(self.context.agent_specs)
         )
-        reaped = False
+        checked = False
         for name in names:
             try:
-                reaped |= self._reap(name, draining)
+                checked |= self._remove_unwanted(name, draining)
             except Exception as e:
-                logger.warning("Failed to reap agent %s: %s", name, e)
+                logger.warning("Failed to remove unwanted instances of %s: %s", name, e)
         if agent_name is None:
             try:
-                self._reap_removed_agents()
+                self._remove_instances_of_removed_agents()
             except Exception as e:
-                logger.warning("Failed to reap instances of removed agents: %s", e)
+                logger.warning("Failed to remove instances of removed agents: %s", e)
 
         # desired_agent_specs falls back to the configured count, so a fill would undo the drain.
         if draining:
             return
-        # A named agent that could not be reaped has nothing to fill into.
-        if agent_name is not None and not reaped:
+        # A named agent that could not be checked has nothing to fill into.
+        if agent_name is not None and not checked:
             return
         try:
             # The whole spec list: ensure_instances republishes routing from what it is handed.
@@ -150,7 +148,7 @@ class Reconciler(object):
         except Exception as e:
             logger.warning("Failed to provision missing instances: %s", e)
 
-    def _reap(self, agent_name, draining=False):
+    def _remove_unwanted(self, agent_name, draining=False):
         """Remove an agent's surplus, unhealthy and replaced instances."""
         spec = self.context.agent_specs.get(agent_name)
         if spec is None:
@@ -172,7 +170,7 @@ class Reconciler(object):
             return False
         else:
             desired = state.get_desired(redis_client, agent_name, configured)
-        reap_requested = state.reap_requests(redis_client, agent_name)
+        replace_requested = state.replace_requests(redis_client, agent_name)
 
         instances = list_instances(redis_client, agent_name)
         for instance in instances:
@@ -181,35 +179,37 @@ class Reconciler(object):
 
         # A request for an instance that no longer exists has nothing left to do.
         existing_ids = {instance_id_from_record(instance) for instance in instances}
-        state.clear_reap_requests(redis_client, *(reap_requested - existing_ids))
+        state.clear_replace_requests(redis_client, *(replace_requested - existing_ids))
 
         for instance in instances:
             instance_id = instance_id_from_record(instance)
             reason = self._removal_reason(
-                instance, instance_id, desired, reap_requested
+                instance, instance_id, desired, replace_requested
             )
             if reason is None:
                 continue
-            self._remove(instance_id, reason)
-            if instance_id in reap_requested:
-                state.clear_reap_requests(redis_client, instance_id)
+            self._remove_instance(instance_id, reason)
+            if instance_id in replace_requested:
+                state.clear_replace_requests(redis_client, instance_id)
         return True
 
-    def _remove(self, instance_id, reason):
+    def _remove_instance(self, instance_id, reason):
         logger.info("Removing instance %s (%s)", instance_id, reason)
         self._seen_healthy.discard(instance_id)
         self.provisioner.remove_instance(instance_id)
 
-    def _reap_removed_agents(self):
+    def _remove_instances_of_removed_agents(self):
         """Remove instances of agents that are no longer in the published specs."""
         for instance in list_instances(self.context.redis):
             if instance["agent_name"] in self.context.agent_specs:
                 continue
             self.context.node_redis_for_instance(instance)
-            self._remove(instance_id_from_record(instance), "agent removed from config")
+            self._remove_instance(
+                instance_id_from_record(instance), "agent removed from config"
+            )
 
-    def _removal_reason(self, instance, instance_id, desired, reap_requested):
-        if instance_id in reap_requested:
+    def _removal_reason(self, instance, instance_id, desired, replace_requested):
+        if instance_id in replace_requested:
             return "replacement requested"
         if int(instance["replica_index"]) >= desired:
             return f"surplus to desired count {desired}"

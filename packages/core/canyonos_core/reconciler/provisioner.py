@@ -6,12 +6,12 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from canyonos_core.instances.records import (
+from canyonos_core.controller.controller_context import (
     instance_id as _instance_id,
     instance_key as _instance_key,
     routing_endpoint_for,
 )
-from canyonos_core.instances.routing import publish_routing_snapshot
+from canyonos_core.reconciler.routing import publish_routing_snapshot
 from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )

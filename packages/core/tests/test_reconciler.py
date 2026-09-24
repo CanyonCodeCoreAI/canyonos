@@ -12,7 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.instances.records import routing_endpoint_for
+from canyonos_core.controller.controller_context import routing_endpoint_for
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.reconciler import Reconciler
 from fakes import _bare_reconciler, _FakeProvisioner, _FakeRedis, _instance
@@ -161,23 +161,23 @@ class WakeQueueTests(unittest.TestCase):
         self.assertEqual(state.drain(redis, timeout=0), {state.WAKE_ALL})
 
 
-class ReapRequestTests(unittest.TestCase):
+class ReplaceRequestTests(unittest.TestCase):
     def test_only_ids_belonging_to_the_named_agent_are_returned(self):
         redis = _FakeRedis()
         state.request_replace(redis, "local:Alpha:1")
         state.request_replace(redis, "local:Beta:0")
 
-        self.assertEqual(state.reap_requests(redis, "Alpha"), {"local:Alpha:1"})
+        self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
 
     def test_a_request_stays_pending_until_cleared(self):
         redis = _FakeRedis()
         state.request_replace(redis, "local:Alpha:1")
 
-        state.reap_requests(redis, "Alpha")
-        self.assertEqual(state.reap_requests(redis, "Alpha"), {"local:Alpha:1"})
+        state.replace_requests(redis, "Alpha")
+        self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
 
-        state.clear_reap_requests(redis, "local:Alpha:1")
-        self.assertEqual(state.reap_requests(redis, "Alpha"), set())
+        state.clear_replace_requests(redis, "local:Alpha:1")
+        self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
 
 class ScalingEntryPointTests(unittest.TestCase):
@@ -260,14 +260,14 @@ class ScalingEntryPointTests(unittest.TestCase):
             [{"match": {}, "access": "all"}],
         )
 
-    def test_the_named_replica_is_queued_for_reaping_and_the_reconciler_woken(self):
+    def test_the_named_replica_is_queued_for_replacement_and_the_reconciler_woken(self):
         controller = self._controller()
 
         target = controller.replace_replica("Alpha", 1)
 
         self.assertEqual(target, "local:Alpha:1")
         self.assertEqual(
-            controller.redis.smembers(state.REAP_SET_KEY), {"local:Alpha:1"}
+            controller.redis.smembers(state.REPLACE_SET_KEY), {"local:Alpha:1"}
         )
         self.assertEqual(controller.redis.lists[state.WAKE_QUEUE_KEY], ["Alpha"])
 
@@ -277,7 +277,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
             self.assertIsNone(controller.replace_replica("Nope", 0))
 
-        self.assertEqual(controller.redis.smembers(state.REAP_SET_KEY), set())
+        self.assertEqual(controller.redis.smembers(state.REPLACE_SET_KEY), set())
 
 
 class ReconcileTests(unittest.TestCase):
@@ -291,7 +291,7 @@ class ReconcileTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return reconciler
 
-    def test_surplus_instances_are_reaped_and_the_kept_one_is_left_alone(self):
+    def test_surplus_instances_are_removed_and_the_kept_one_is_left_alone(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(3)]})
@@ -394,7 +394,7 @@ class ReconcileTests(unittest.TestCase):
 
         self.assertEqual(routing_endpoint_for(instance), "10.0.0.5:5433")
 
-    def test_an_agent_with_non_integer_replicas_is_skipped_not_reaped(self):
+    def test_an_agent_with_non_integer_replicas_is_skipped_not_removed(self):
         redis = _FakeRedis()
         manager = _FakeProvisioner()
         context = _fake_context(redis)
@@ -429,7 +429,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler.reconcile("Alpha")
 
         self.assertEqual(manager.removed, ["local:Alpha:1"])
-        self.assertEqual(state.reap_requests(redis, "Alpha"), set())
+        self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
     def test_a_replacement_request_survives_a_failed_removal(self):
         redis = _FakeRedis()
@@ -443,7 +443,7 @@ class ReconcileTests(unittest.TestCase):
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
             reconciler.reconcile("Alpha")
 
-        self.assertEqual(state.reap_requests(redis, "Alpha"), {"local:Alpha:1"})
+        self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
 
     def test_a_replacement_request_for_a_missing_instance_is_dropped(self):
         redis = _FakeRedis()
@@ -454,9 +454,9 @@ class ReconcileTests(unittest.TestCase):
 
         reconciler.reconcile("Alpha")
 
-        self.assertEqual(state.reap_requests(redis, "Alpha"), set())
+        self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
-    def test_a_full_pass_reaps_instances_of_an_agent_removed_from_the_config(self):
+    def test_a_full_pass_removes_instances_of_an_agent_removed_from_the_config(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
         manager = _FakeProvisioner(
@@ -596,7 +596,7 @@ class DrainReconcileTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return _bare_reconciler(_fake_context(redis), manager)
 
-    def test_draining_reaps_every_instance_regardless_of_desired(self):
+    def test_draining_removes_every_instance_regardless_of_desired(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 3)
         state.set_draining(redis)
@@ -622,8 +622,8 @@ class DrainReconcileTests(unittest.TestCase):
         self.assertEqual(sorted(manager.removed), ["local:Alpha:0", "local:Beta:0"])
         self.assertEqual(manager.ensure_calls, [])
 
-    def test_draining_reaps_an_agent_whose_replicas_is_not_a_count(self):
-        """The non-integer guard skips reaping, but a teardown still has to remove it."""
+    def test_draining_removes_instances_of_an_agent_whose_replicas_is_not_a_count(self):
+        """The non-integer guard skips removal, but a teardown still has to remove it."""
         redis = _FakeRedis()
         state.set_draining(redis)
         agents = [{"name": "Alpha", "provider": "local", "replicas": [["host", 9000]]}]

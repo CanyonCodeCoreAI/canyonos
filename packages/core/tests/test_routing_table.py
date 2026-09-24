@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import canyonos_core.controller.global_controller as global_controller_module
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.instances.routing import (
+from canyonos_core.reconciler.routing import (
     ROUTING_ENDPOINTS_KEY,
     ROUTING_STATEFUL_KEY,
     SERVICES_SET_KEY,

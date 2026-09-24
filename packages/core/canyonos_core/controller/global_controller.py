@@ -18,17 +18,15 @@ from canyonos_core.controller.controller_context import (
     ControllerContext,
     _is_local_host,
     _redis_connect_host,
+    instance_id,
+    list_instances,
+    routing_endpoint_for,
 )
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.utils.container_names import (
     container_name as agent_container_name,
     redis_container_name,
-)
-from canyonos_core.instances.records import (
-    instance_id,
-    list_instances,
-    routing_endpoint_for,
 )
 from canyonos_core.reconciler import state
 from canyonos_core.controller.utils.config_specs import write_config_specs
@@ -1174,7 +1172,7 @@ class GlobalController(ControllerContext):
             if time.time() >= deadline:
                 logger.warning(
                     "%d instance(s) still running after %ds; the next startup's "
-                    "reconcile will reap whichever are no longer healthy.",
+                    "reconcile will remove whichever are no longer healthy.",
                     len(remaining),
                     timeout,
                 )

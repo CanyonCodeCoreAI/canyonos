@@ -6,6 +6,7 @@ What it holds:
 - Redis connections: the main one, plus one per machine opened when first needed.
 - The agent list from the config, by name, and a refresh from the list published to Redis.
 - Running commands locally or over SSH, and copying the env file to a remote machine.
+- Reading replica records (agent_instance:*) out of Redis, as plain functions.
 
 The reconciler runs as a separate process and cannot import global_controller.py, which
 adds a grpc_stubs folder to the import path based on the current directory. GlobalController
@@ -41,6 +42,43 @@ def _redis_connect_host(host):
     if _is_local_host(host):
         return os.environ.get("CANYONOS_REDIS_HOST", "localhost")
     return host
+
+
+def instance_id(provider, agent_name, replica_index):
+    return f"{provider}:{agent_name}:{replica_index}"
+
+
+def instance_key(provider, agent_name, replica_index):
+    return f"agent_instance:{instance_id(provider, agent_name, replica_index)}"
+
+
+def instance_id_from_record(instance):
+    return instance_id(
+        instance["provider"], instance["agent_name"], int(instance["replica_index"])
+    )
+
+
+def routing_endpoint_for(instance):
+    """The address other services reach an instance on: container name for local, host for any other provider."""
+    if instance.get("provider", "local").casefold() == "local":
+        return f"{instance['runtime_id']}:{instance['container_port']}"
+    return f"{instance['host']}:{instance['host_port']}"
+
+
+def list_instances(redis_client, agent_name=None):
+    """Instance records straight from Redis."""
+    if agent_name:
+        instance_ids = sorted(redis_client.smembers(f"agent:{agent_name}:instances"))
+        keys = [f"agent_instance:{instance_id}" for instance_id in instance_ids]
+    else:
+        keys = sorted(redis_client.scan_keys("agent_instance:*"))
+
+    # Skips port claims whose runtime hasn't been provisioned yet.
+    return [
+        instance
+        for key in keys
+        if (instance := redis_client.hgetall(key)).get("runtime_id")
+    ]
 
 
 class ControllerContext(object):

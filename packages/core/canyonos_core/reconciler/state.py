@@ -5,15 +5,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 WAKE_QUEUE_KEY = "reconciler:wake"
-REAP_SET_KEY = "reconciler:reap"
-DRAINING_KEY = "reconciler:draining"
 WAKE_ALL = "*"
+# One drain must not spin forever on a queue being written to concurrently.
+_DRAIN_LIMIT = 1000
 
+REPLACE_SET_KEY = "reconciler:replace"
+
+DRAINING_KEY = "reconciler:draining"
 # Expires so a hard-killed controller cannot hold the fleet at zero forever.
 DRAINING_TTL_SECONDS = 60
 
-# One drain must not spin forever on a queue being written to concurrently.
-_DRAIN_LIMIT = 1000
+
+# ------------------------------------------------------------------ #
+#  Desired replica counts                                            #
+# ------------------------------------------------------------------ #
 
 
 def desired_key(agent_name):
@@ -61,19 +66,9 @@ def desired_agent_specs(redis_client, agent_specs):
     return specs
 
 
-def set_draining(redis_client):
-    """Hold every agent at zero replicas while the controller tears the fleet down."""
-    redis_client.set(DRAINING_KEY, 1)
-    redis_client.expire(DRAINING_KEY, DRAINING_TTL_SECONDS)
-
-
-def clear_draining(redis_client):
-    """Stop holding agents at zero, letting desired state drive the loop again."""
-    redis_client.delete(DRAINING_KEY)
-
-
-def is_draining(redis_client):
-    return redis_client.get(DRAINING_KEY) is not None
+# ------------------------------------------------------------------ #
+#  Wake queue                                                        #
+# ------------------------------------------------------------------ #
 
 
 def request_reconcile(redis_client, agent_name=WAKE_ALL):
@@ -96,22 +91,47 @@ def drain(redis_client, timeout=1):
     return signals
 
 
+# ------------------------------------------------------------------ #
+#  Replacement requests                                              #
+# ------------------------------------------------------------------ #
+
+
 def request_replace(redis_client, instance_id):
     """Mark one instance to be destroyed; the loop refills its slot afterwards."""
-    redis_client.sadd(REAP_SET_KEY, instance_id)
+    redis_client.sadd(REPLACE_SET_KEY, instance_id)
 
 
-def reap_requests(redis_client, agent_name):
-    """An agent's pending reap requests; they stay pending until cleared."""
+def replace_requests(redis_client, agent_name):
+    """An agent's pending replace requests; they stay pending until cleared."""
     prefix = f":{agent_name}:"
     return {
         instance_id
-        for instance_id in redis_client.smembers(REAP_SET_KEY)
+        for instance_id in redis_client.smembers(REPLACE_SET_KEY)
         if prefix in instance_id
     }
 
 
-def clear_reap_requests(redis_client, *instance_ids):
-    """Mark reap requests as done."""
+def clear_replace_requests(redis_client, *instance_ids):
+    """Mark replace requests as done."""
     if instance_ids:
-        redis_client.srem(REAP_SET_KEY, *instance_ids)
+        redis_client.srem(REPLACE_SET_KEY, *instance_ids)
+
+
+# ------------------------------------------------------------------ #
+#  Draining                                                          #
+# ------------------------------------------------------------------ #
+
+
+def set_draining(redis_client):
+    """Hold every agent at zero replicas while the controller tears the fleet down."""
+    redis_client.set(DRAINING_KEY, 1)
+    redis_client.expire(DRAINING_KEY, DRAINING_TTL_SECONDS)
+
+
+def clear_draining(redis_client):
+    """Stop holding agents at zero, letting desired state drive the loop again."""
+    redis_client.delete(DRAINING_KEY)
+
+
+def is_draining(redis_client):
+    return redis_client.get(DRAINING_KEY) is not None

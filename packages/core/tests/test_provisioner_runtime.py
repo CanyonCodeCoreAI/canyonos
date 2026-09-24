@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.instances.records import list_instances
+from canyonos_core.controller.controller_context import list_instances
 from canyonos_core.reconciler.provisioner import Provisioner
 from fakes import _FakeRedis
 

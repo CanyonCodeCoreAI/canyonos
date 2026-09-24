@@ -21,13 +21,13 @@ latency and serializes reconciles into one worker, so two cannot race on a slot.
 **The YAML is the source of truth.** Startup and every reload write each agent's configured
 `replicas` through `set_replicas`, overwriting whatever Redis holds, so a changed config
 always takes effect. A runtime `set_replicas` holds only until the next reload or redeploy.
-Each pass reaps, then fills.
+Each pass removes, then fills.
 
-The reap predicate is on the **index**, not "remove the last N": that makes scale-down
-deterministic and idempotent (5→2 always removes 2, 3, 4) and reaps orphans a count-based
+The removal rule is on the **index**, not "remove the last N": that makes scale-down
+deterministic and idempotent (5→2 always removes 2, 3, 4) and removes orphans a count-based
 rule cannot see, since `ensure_instances` only looks at `range(0, desired)`. Replacement
 needs no code of its own — `ensure_instances` is create-only and per-slot idempotent, so
-reaping index 1 leaves a hole the same pass's fill step provisions into.
+removing index 1 leaves a hole the same pass's fill step provisions into.
 
 ## Redis schema
 
@@ -35,7 +35,7 @@ reaping index 1 leaves a hole the same pass's fill step provisions into.
 | --- | --- | --- | --- |
 | `agent:{name}:desired_replicas` | int (string) | GlobalController — `set_replicas` (also from `_apply_configured_replicas`) | Reconciler (`get_desired`, `desired_agent_specs`) |
 | `reconciler:wake` | list | GlobalController — `_request_reconcile` | Reconciler (`drain`: `BRPOP` then non-blocking `RPOP`s) |
-| `reconciler:reap` | set | GlobalController — `replace_replica` | Reconciler (`reap_requests`; `clear_reap_requests` once removed) |
+| `reconciler:replace` | set | GlobalController — `replace_replica` | Reconciler (`replace_requests`; `clear_replace_requests` once removed) |
 | `reconciler:draining` | string (TTL) | GlobalController — `set_draining` / `clear_draining` | Reconciler (`is_draining`, once per pass) |
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
 | `agents:active` | string (JSON list) | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
@@ -66,10 +66,11 @@ never import it. The slice provisioning needs is `ControllerContext`, which
 GlobalController subclasses and the reconciler constructs directly; cluster bootstrap
 (cleanup, launching Redis, policies, identity) stays the controller's.
 
-The write side lives under `reconciler/`, the readers in a neutral `instances/` package, so
-**the controller cannot create or destroy a container because it does not import the code
-that can**. `routing_endpoint_for` is derived from the record rather than the provider
-module, or the controller would import provisioning code to format an endpoint.
+The write side (`provisioner.py`, `providers/`, `routing.py`) lives under `reconciler/`, and
+the record readers are plain functions in `controller_context.py`, so **the controller
+cannot create or destroy a container because it does not import the code that can**.
+`routing_endpoint_for` is derived from the record rather than the provider module, or the
+controller would import provisioning code to format an endpoint.
 
 ## Traps
 
@@ -86,7 +87,7 @@ side effect of provisioning, so an instance created by the *other* process is re
 only there. `node_redis_for_instance(instance)` connects on demand from the record's own
 `host`/`redis_port`. The host-keyed accessor it replaced fell back to `self.redis` on a
 miss, which would have the reconciler read a local key, call a remote instance's metrics
-stale, and reap every remote replica on the first pass.
+stale, and remove every remote replica on the first pass.
 
 **`attach_local_node_redis()` must run in the reconciler's `__init__`.** GlobalController
 repoints its primary `self.redis` at the local node's Redis after launching that container;
@@ -118,7 +119,7 @@ another, forever. Going down there is no debounce: replacement is cheap, downtim
 
 Teardown converges through the loop rather than tearing the fleet down underneath the
 process whose job is to rebuild it. **Why a flag, not desired counts:** deleting the
-keys does not drain, since `_reap` and `desired_agent_specs` fall back to the YAML count;
+keys does not drain, since `_remove_unwanted` and `desired_agent_specs` fall back to the YAML count;
 setting them to 0 does drain, but a zero never expires, and only an expiring flag lets an
 orphaned reconciler recover. **Why the TTL:** a SIGKILLed controller orphans its child, and a permanent
 flag would have it hold the fleet at zero forever. `__init__` clears the flag before
@@ -126,9 +127,9 @@ starting the reconciler, so one stranded by a mid-drain kill cannot poison the n
 
 `stop()` orders four load-bearing steps: drain, then `terminate_all()` (the reconciler is
 what removes instances), then `clear_draining()` (or the live reconciler refills), then
-`_stop_redis_containers()` last, since the reconciler needs Redis to reap.
+`_stop_redis_containers()` last, since the reconciler needs Redis to remove instances.
 
-Nothing sweeps at startup, deliberately: the first full `reconcile()` reaps a leftover
+Nothing sweeps at startup, deliberately: the first full `reconcile()` removes a leftover
 record whose container is gone (probe fails, `created_at` is old so no grace) and refills
 the slot in the same pass, while a still-healthy leftover is reused — which an
 unconditional sweep would destroy.
@@ -148,7 +149,7 @@ adopts them every pass, so a reload needs no SIGHUP handler here. List-last make
 read impossible without version numbers. The list is one JSON string replaced by a single
 `SET`, and stale specs are deleted only after it stops naming them. `read_config_specs` returns
 `None` (not `[]`) when the key is missing and the reader keeps its specs — `[]` would read as
-"no agents configured" and reap the fleet on an unseeded Redis. An intentionally empty publish
+"no agents configured" and remove the fleet on an unseeded Redis. An intentionally empty publish
 is the string `[]`, which still exists, so it reads as `[]`. A full pass also removes instances
 of any agent no longer published, and `reload_config` deletes a removed agent's
 `desired_replicas` so a runtime scale does not return if the agent is re-added. Everything outside `agents:` is still
@@ -162,6 +163,6 @@ read from the YAML by both processes at construction.
 - **A list-form `replicas` is unsupported, just not silently** — `ensure_instances` raises
   `TypeError`, and `desired_agent_specs` passes the spec through rather than drop the agent
   from routing.
-- **Smaller, known:** instance identity is a slot index, not a UUID; `reap_requests`
+- **Smaller, known:** instance identity is a slot index, not a UUID; `replace_requests`
   matches by substring, so an agent name containing a colon mis-claims; a vanished node is
-  reaped one slot at a time as "unhealthy".
+  removed one slot at a time as "unhealthy".

@@ -60,7 +60,7 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
         return local_controler_pb2.JsonResponse(resonse="Request queued successfully")
 
     def _already_accepted(self, payload):
-        """True when this endpoint has already queued the payload's future."""
+        """Tells Execute whether this replica has already accepted a given request, so a request delivered twice isn't run twice."""
         # The sender retries on UNAVAILABLE, which can follow a delivery whose reply was lost.
         try:
             future_id = json.loads(payload).get("future_id")
