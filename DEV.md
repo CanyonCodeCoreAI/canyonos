@@ -1,8 +1,8 @@
 # Local CanyonOS development
 
-Use this loop when changing the CLI, API, or web dashboard locally. It keeps
-the workflow/Core in Docker, but runs the dashboard API and Vite on the host
-with watch mode and hot reload.
+For when  changing the CLI, API, or web dashboard locally. It keeps  
+the workflow/Core in Docker, but runs the dashboard API and Vite on the host  
+with watch mode and hot reload (dev mode).
 
 ## One-time setup
 
@@ -73,11 +73,12 @@ send their traces to the host API, and the Vite dashboard shows them.
 ## A few quirks
 
 - The API reads the workflow identity from Redis during startup. After a new
-  deploy, restart `bun run canyonos:dev` so it bootstraps the new project.
+deploy, restart `bun run canyonos:dev` so it bootstraps the new project.
 - API and web edits reload while the command is running. Core edits need the
-  Core image rebuild and a workflow redeploy.
+Core image rebuild and a workflow redeploy.
 - The default ports are API `3000`, web `5173`, Postgres `5432`, Mailpit `1025`
-  and `8025`, workflow `8080`, and workflow Redis `6379`. Stop or reconfigure
-  anything already using one of them.
+and `8025`, workflow `8080`, and workflow Redis `6379`. Stop or reconfigure
+anything already using one of them.
 - This is the fast host-dashboard loop. It intentionally does not build the
-  API or web images. Use the image build flow when testing container parity.
+API or web images. Use the image build flow when testing container parity.
+
