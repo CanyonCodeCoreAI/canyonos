@@ -152,6 +152,15 @@ class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
         self.assertIn("target=controller.run", launcher)
         self.assertIn('socket.create_connection(("127.0.0.1", 9123)', launcher)
         self.assertIn("controller.mark_ready()", launcher)
+        self.assertIn("WORKFLOW_READY_TIMEOUT_SECONDS = 120", launcher)
+        # The watcher gives up as failed, not silently: a port that never opens
+        # must not leave the deploy waiting on a status nobody wrote.
+        watcher = launcher[
+            launcher.index("def mark_ready_when_serving") : launcher.index(
+                "controller = LocalController("
+            )
+        ]
+        self.assertIn("controller.mark_failed()", watcher)
         self.assertIn("except Exception:", launcher)
         self.assertIn("controller.mark_failed()", launcher)
         self.assertIn("traceback.print_exc()", launcher)
