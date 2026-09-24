@@ -48,7 +48,8 @@ class Provisioner(object):
         runtime._controller = self.controller
         return runtime
 
-    def ensure_instances(self, agent_specs):
+    def ensure_instances(self, agent_specs, only=None):
+        """Start missing replicas of the agents in only (all when None) and republish routing for every agent."""
         self._agent_specs = []
         for original in agent_specs:
             agent_spec = dict(original)
@@ -70,6 +71,8 @@ class Provisioner(object):
 
         for agent_spec in self._agent_specs:
             agent_name = agent_spec["name"]
+            if only is not None and agent_name not in only:
+                continue
             provider = agent_spec.get("provider", "local")
             runtime = self._provider_runtime(provider)
             self.controller.containers.setdefault(agent_name, [])

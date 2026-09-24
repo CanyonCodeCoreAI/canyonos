@@ -51,68 +51,12 @@ class Reconciler(object):
 
         self._seen_healthy = set()  # instance_id, once it has answered at least once
 
-    def _accepts_connections(self, instance):
-        host = instance.get("host")
-        port = instance.get("host_port")
-        if not host or not port:
-            return False
-        try:
-            # A containerized reconciler reaches host-published ports via host.docker.internal.
-            with socket.create_connection(
-                (_redis_connect_host(host), int(port)),
-                timeout=TCP_PROBE_TIMEOUT_SECONDS,
-            ):
-                return True
-        except (OSError, ValueError):
-            return False
+    # ------------------------------------------------------------------ #
+    #  Reconcile                                                         #
+    # ------------------------------------------------------------------ #
 
-    def _reports_are_fresh(self, instance):
-        """Whether the instance's metrics heartbeat is recent."""
-        node_redis = self.context.node_redis_for_instance(instance)
-        # The agent writes this key from its own env, under its routing endpoint.
-        key = f"controller:{routing_endpoint_for(instance)}:metrics"
-        try:
-            metrics = node_redis.hgetall(key)
-        except Exception as e:
-            logger.warning("Failed to read metrics for %s: %s", key, e)
-            return True  # a Redis blip is not evidence the instance is unhealthy
-
-        observed_at = metrics.get("observed_at")
-        if not observed_at:
-            return False
-        try:
-            return time.time() - float(observed_at) <= self.stale_after
-        except (TypeError, ValueError):
-            return False
-
-    def _is_healthy(self, instance, instance_id):
-        # A stock database image has no controller to write the metrics heartbeat.
-        is_database = (
-            self.context.agent_specs.get(instance["agent_name"], {}).get("type")
-            == "database"
-        )
-        if self._accepts_connections(instance) and (
-            is_database or self._reports_are_fresh(instance)
-        ):
-            self._seen_healthy.add(instance_id)
-            return True
-        if instance_id not in self._seen_healthy and self._within_startup_grace(
-            instance
-        ):
-            return True
-        return False
-
-    def _within_startup_grace(self, instance):
-        created_at = instance.get("created_at")
-        if not created_at:
-            return False
-        try:
-            return time.time() - float(created_at) <= self.startup_grace
-        except (TypeError, ValueError):
-            return False
-
-    def reconcile(self, agent_name=None):
-        """Converge one agent, or every configured agent when agent_name is None."""
+    def reconcile(self, agent_names=None):
+        """Converge the named agents, or every configured agent when agent_names is None."""
         if self.context.refresh_controllers_from_redis():
             logger.info(
                 "Adopted %d published agent spec(s).", len(self.context.controllers)
@@ -120,7 +64,7 @@ class Reconciler(object):
         draining = state.is_draining(self.context.redis)
 
         names = (
-            [agent_name] if agent_name is not None else list(self.context.agent_specs)
+            agent_names if agent_names is not None else list(self.context.agent_specs)
         )
         checked = False
         for name in names:
@@ -128,7 +72,7 @@ class Reconciler(object):
                 checked |= self._remove_unwanted(name, draining)
             except Exception as e:
                 logger.warning("Failed to remove unwanted instances of %s: %s", name, e)
-        if agent_name is None:
+        if agent_names is None:
             try:
                 self._remove_instances_of_removed_agents()
             except Exception as e:
@@ -138,15 +82,20 @@ class Reconciler(object):
         if draining:
             return
         # A named agent that could not be checked has nothing to fill into.
-        if agent_name is not None and not checked:
+        if agent_names is not None and not checked:
             return
         try:
             # The whole spec list: ensure_instances republishes routing from what it is handed.
             self.provisioner.ensure_instances(
-                state.desired_agent_specs(self.context.redis, self.context.controllers)
+                state.desired_agent_specs(self.context.redis, self.context.controllers),
+                only=agent_names,
             )
         except Exception as e:
             logger.warning("Failed to provision missing instances: %s", e)
+
+    # ------------------------------------------------------------------ #
+    #  Removal                                                           #
+    # ------------------------------------------------------------------ #
 
     def _remove_unwanted(self, agent_name, draining=False):
         """Remove an agent's surplus, unhealthy and replaced instances."""
@@ -193,6 +142,15 @@ class Reconciler(object):
                 state.clear_replace_requests(redis_client, instance_id)
         return True
 
+    def _removal_reason(self, instance, instance_id, desired, replace_requested):
+        if instance_id in replace_requested:
+            return "replacement requested"
+        if int(instance["replica_index"]) >= desired:
+            return f"surplus to desired count {desired}"
+        if not self._is_healthy(instance, instance_id):
+            return "unhealthy"
+        return None
+
     def _remove_instance(self, instance_id, reason):
         logger.info("Removing instance %s (%s)", instance_id, reason)
         self._seen_healthy.discard(instance_id)
@@ -208,14 +166,71 @@ class Reconciler(object):
                 instance_id_from_record(instance), "agent removed from config"
             )
 
-    def _removal_reason(self, instance, instance_id, desired, replace_requested):
-        if instance_id in replace_requested:
-            return "replacement requested"
-        if int(instance["replica_index"]) >= desired:
-            return f"surplus to desired count {desired}"
-        if not self._is_healthy(instance, instance_id):
-            return "unhealthy"
-        return None
+    # ------------------------------------------------------------------ #
+    #  Health checks                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _is_healthy(self, instance, instance_id):
+        # A stock database image has no controller to write the metrics heartbeat.
+        is_database = (
+            self.context.agent_specs.get(instance["agent_name"], {}).get("type")
+            == "database"
+        )
+        if self._port_is_open(instance) and (
+            is_database or self._reports_are_fresh(instance)
+        ):
+            self._seen_healthy.add(instance_id)
+            return True
+        if instance_id not in self._seen_healthy and self._may_still_be_booting(
+            instance
+        ):
+            return True
+        return False
+
+    def _port_is_open(self, instance):
+        """Whether something is listening on the instance's port."""
+        host = instance.get("host")
+        port = instance.get("host_port")
+        if not host or not port:
+            return False
+        try:
+            # A containerized reconciler reaches host-published ports via host.docker.internal.
+            with socket.create_connection(
+                (_redis_connect_host(host), int(port)),
+                timeout=TCP_PROBE_TIMEOUT_SECONDS,
+            ):
+                return True
+        except (OSError, ValueError):
+            return False
+
+    def _reports_are_fresh(self, instance):
+        """Whether the instance's metrics heartbeat is recent."""
+        node_redis = self.context.node_redis_for_instance(instance)
+        # The agent writes this key from its own env, under its routing endpoint.
+        key = f"controller:{routing_endpoint_for(instance)}:metrics"
+        try:
+            metrics = node_redis.hgetall(key)
+        except Exception as e:
+            logger.warning("Failed to read metrics for %s: %s", key, e)
+            return True  # a Redis blip is not evidence the instance is unhealthy
+
+        observed_at = metrics.get("observed_at")
+        if not observed_at:
+            return False
+        try:
+            return time.time() - float(observed_at) <= self.stale_after
+        except (TypeError, ValueError):
+            return False
+
+    def _may_still_be_booting(self, instance):
+        """Whether the instance was created within the startup grace period."""
+        created_at = instance.get("created_at")
+        if not created_at:
+            return False
+        try:
+            return time.time() - float(created_at) <= self.startup_grace
+        except (TypeError, ValueError):
+            return False
 
     # ------------------------------------------------------------------ #
     #  Loop                                                              #
@@ -241,18 +256,22 @@ class Reconciler(object):
             if state.WAKE_ALL in signals:
                 # A config reload wakes all; new replicas need the reloaded env file.
                 self.context.refresh_env_file()
-                self.reconcile()
-                last_sweep = time.time()
-                signals.discard(state.WAKE_ALL)
-
-            for agent_name in sorted(signals):
                 try:
-                    self.reconcile(agent_name)
+                    self.reconcile()
                 except Exception as e:
-                    logger.warning("Failed to reconcile agent %s: %s", agent_name, e)
+                    logger.warning("Failed to reconcile all agents: %s", e)
+                last_sweep = time.time()
+            elif signals:
+                try:
+                    self.reconcile(sorted(signals))
+                except Exception as e:
+                    logger.warning("Failed to reconcile %s: %s", sorted(signals), e)
 
             if time.time() - last_sweep >= self.sweep_interval:
-                self.reconcile()
+                try:
+                    self.reconcile()
+                except Exception as e:
+                    logger.warning("Failed to sweep all agents: %s", e)
                 last_sweep = time.time()
 
         logger.info("Reconciler exiting.")

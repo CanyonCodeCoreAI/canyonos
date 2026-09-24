@@ -283,7 +283,7 @@ class ScalingEntryPointTests(unittest.TestCase):
 class ReconcileTests(unittest.TestCase):
     def _healthy(self, reconciler):
         """Force every health probe to pass without opening a socket."""
-        patcher = patch.object(Reconciler, "_accepts_connections", return_value=True)
+        patcher = patch.object(Reconciler, "_port_is_open", return_value=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher = patch.object(Reconciler, "_reports_are_fresh", return_value=True)
@@ -297,7 +297,7 @@ class ReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(3)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        reconciler.reconcile("Alpha")
+        reconciler.reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, ["local:Alpha:1", "local:Alpha:2"])
 
@@ -309,13 +309,15 @@ class ReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner()
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        for target in (None, "Alpha"):
+        for target, only in ((None, None), (["Alpha"], ["Alpha"])):
             with self.subTest(target=target):
                 manager.ensure_calls.clear()
+                manager.ensure_only.clear()
                 reconciler.reconcile(target)
 
                 # One call per pass, not one per agent: each republishes routing.
                 self.assertEqual(len(manager.ensure_calls), 1)
+                self.assertEqual(manager.ensure_only, [only])
                 self.assertEqual(
                     manager.ensure_calls[0],
                     [
@@ -352,12 +354,10 @@ class ReconcileTests(unittest.TestCase):
                 )
 
                 with (
-                    patch.object(
-                        Reconciler, "_accepts_connections", return_value=accepts
-                    ),
+                    patch.object(Reconciler, "_port_is_open", return_value=accepts),
                     patch.object(Reconciler, "_reports_are_fresh", return_value=fresh),
                 ):
-                    reconciler.reconcile("Alpha")
+                    reconciler.reconcile(["Alpha"])
 
                 self.assertEqual(manager.removed, expected)
                 self.assertNotIn("local:Alpha:0", reconciler._seen_healthy)
@@ -375,12 +375,10 @@ class ReconcileTests(unittest.TestCase):
                 reconciler = _bare_reconciler(context, manager)
 
                 with (
-                    patch.object(
-                        Reconciler, "_accepts_connections", return_value=accepts
-                    ),
+                    patch.object(Reconciler, "_port_is_open", return_value=accepts),
                     patch.object(Reconciler, "_reports_are_fresh", return_value=False),
                 ):
-                    reconciler.reconcile("Db")
+                    reconciler.reconcile(["Db"])
 
                 self.assertEqual(manager.removed, expected)
 
@@ -404,7 +402,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler = _bare_reconciler(context, manager)
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile("Placed")
+            reconciler.reconcile(["Placed"])
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(manager.ensure_calls, [])
@@ -414,7 +412,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler = _bare_reconciler(_fake_context(), manager)
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile("Nope")
+            reconciler.reconcile(["Nope"])
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(manager.ensure_calls, [])
@@ -426,7 +424,7 @@ class ReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(2)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        reconciler.reconcile("Alpha")
+        reconciler.reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, ["local:Alpha:1"])
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
@@ -441,7 +439,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile("Alpha")
+            reconciler.reconcile(["Alpha"])
 
         self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
 
@@ -452,7 +450,7 @@ class ReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        reconciler.reconcile("Alpha")
+        reconciler.reconcile(["Alpha"])
 
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
@@ -465,7 +463,7 @@ class ReconcileTests(unittest.TestCase):
         context = _fake_context(redis, agents=[{**ALPHA_SPEC, "replicas": 1}])
         reconciler = self._healthy(_bare_reconciler(context, manager))
 
-        reconciler.reconcile("Alpha")
+        reconciler.reconcile(["Alpha"])
         self.assertEqual(manager.removed, [])
 
         reconciler.reconcile()
@@ -495,7 +493,7 @@ class ConnectionProbeTests(unittest.TestCase):
         ):
             if "CANYONOS_REDIS_HOST" not in env:
                 os.environ.pop("CANYONOS_REDIS_HOST", None)
-            self.assertTrue(reconciler._accepts_connections(instance))
+            self.assertTrue(reconciler._port_is_open(instance))
         return connect.call_args.args[0]
 
     def test_a_containerized_reconciler_probes_local_ports_via_the_host_gateway(self):
@@ -588,7 +586,7 @@ class DrainingFlagTests(unittest.TestCase):
 
 class DrainReconcileTests(unittest.TestCase):
     def _reconciler(self, redis, manager):
-        patcher = patch.object(Reconciler, "_accepts_connections", return_value=True)
+        patcher = patch.object(Reconciler, "_port_is_open", return_value=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher = patch.object(Reconciler, "_reports_are_fresh", return_value=True)
@@ -602,7 +600,7 @@ class DrainReconcileTests(unittest.TestCase):
         state.set_draining(redis)
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(3)]})
 
-        self._reconciler(redis, manager).reconcile("Alpha")
+        self._reconciler(redis, manager).reconcile(["Alpha"])
 
         self.assertEqual(
             manager.removed, ["local:Alpha:0", "local:Alpha:1", "local:Alpha:2"]
@@ -641,7 +639,7 @@ class DrainReconcileTests(unittest.TestCase):
         state.clear_draining(redis)
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
 
-        self._reconciler(redis, manager).reconcile("Alpha")
+        self._reconciler(redis, manager).reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(len(manager.ensure_calls), 1)

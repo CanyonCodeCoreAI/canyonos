@@ -131,7 +131,7 @@ class ReloadPropagationTests(unittest.TestCase):
         context.node_redis_for_instance = lambda instance: redis
         context._set_controllers(agents)
 
-        patcher = patch.object(Reconciler, "_accepts_connections", return_value=True)
+        patcher = patch.object(Reconciler, "_port_is_open", return_value=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher = patch.object(Reconciler, "_reports_are_fresh", return_value=True)
@@ -147,7 +147,7 @@ class ReloadPropagationTests(unittest.TestCase):
 
         write_config_specs([ALPHA, BETA], redis)
         with self.assertNoLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile("Beta")
+            reconciler.reconcile(["Beta"])
             reconciler.reconcile()
 
         self.assertEqual(

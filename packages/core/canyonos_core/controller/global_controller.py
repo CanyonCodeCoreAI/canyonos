@@ -24,10 +24,7 @@ from canyonos_core.controller.controller_context import (
 )
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
-from canyonos_core.controller.utils.container_names import (
-    container_name as agent_container_name,
-    redis_container_name,
-)
+from canyonos_core.controller.utils.container_names import redis_container_name
 from canyonos_core.reconciler import state
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
@@ -186,7 +183,7 @@ class GlobalController(ControllerContext):
     # ------------------------------------------------------------------ #
 
     def _cleanup_stale_containers(self):
-        """Remove any containers from previous runs before launching new ones."""
+        """Remove stopped Redis and metrics containers left from previous runs."""
         logger.info("Checking for stale containers from previous runs...")
 
         # Collect all expected container names and the hosts they run on
@@ -197,14 +194,13 @@ class GlobalController(ControllerContext):
             user = ctrl.get("user")
             placements = self._get_replica_placements(ctrl)
 
-            for i, (host, port) in enumerate(placements):
+            for host, _port in placements:
                 if host not in host_containers:
                     host_containers[host] = (user, set())
                 host_containers[host][1].add(redis_container_name(host))
                 host_containers[host][1].add(
                     f"canyonos-metrics-{host.replace('.', '-')}"
                 )
-                host_containers[host][1].add(agent_container_name(ctrl["name"], i))
 
         # Try to remove each one on its respective host
         for host, (user, container_names) in host_containers.items():

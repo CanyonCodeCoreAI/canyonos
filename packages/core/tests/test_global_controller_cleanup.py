@@ -10,9 +10,6 @@ sys.path.insert(
     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "grpc_stubs"))
 )
 
-from canyonos_core.reconciler.providers.Local import (
-    _runtime as local_runtime,
-)
 from canyonos_core.controller.global_controller import GlobalController
 from fakes import _FakeRedis
 import local_controler_pb2
@@ -318,9 +315,7 @@ class RoutingEndpointTests(unittest.TestCase):
 
 
 class StaleContainerNameTests(unittest.TestCase):
-    """Bug 14: the cleanup used to build "canyonos-<agent>-<i>", which never
-    matched the name the Local runtime actually creates, so no stale agent
-    container was ever removed."""
+    """Agent containers belong to the reconciler; GC startup cleanup must not touch them."""
 
     @staticmethod
     def _controller(agents, running=False):
@@ -343,37 +338,21 @@ class StaleContainerNameTests(unittest.TestCase):
         controller._run_cmd = run_cmd
         return controller
 
-    def test_cleanup_targets_the_names_the_local_runtime_creates(self):
+    def test_cleanup_removes_only_redis_and_metrics_containers(self):
         agents = [
             {"name": "IntentAgent", "replicas": 2},
-            {"name": "Router", "replicas": 1},
+            {"name": "Remote", "provider": "EC2", "replicas": 1},
         ]
         controller = self._controller(agents)
 
         controller._cleanup_stale_containers()
 
-        expected = {
-            local_runtime.provision_instance(agent, i, lambda host: 9000)["runtime_id"]
-            for agent in agents
-            for i in range(agent["replicas"])
-        }
-        self.assertEqual(len(expected), 3)
-        agent_containers = {
-            name
-            for name in controller.removed
-            if not name.startswith(("canyonos-redis-", "canyonos-metrics-"))
-        }
-        self.assertEqual(agent_containers, expected)
+        self.assertEqual(
+            set(controller.removed),
+            {"canyonos-redis-localhost", "canyonos-metrics-localhost"},
+        )
 
-    def test_container_name_is_independent_of_provider(self):
-        agents = [{"name": "Remote", "provider": "EC2", "replicas": 1}]
-        controller = self._controller(agents)
-
-        controller._cleanup_stale_containers()
-
-        self.assertIn("canyonos-remote-0", controller.removed)
-
-    def test_running_replica_is_left_alone(self):
+    def test_running_containers_are_left_alone(self):
         agents = [{"name": "IntentAgent", "replicas": 1}]
         controller = self._controller(agents, running=True)
 

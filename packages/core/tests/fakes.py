@@ -138,14 +138,16 @@ class _FakeProvisioner:
         self.remove_raises = remove_raises
         self.removed = []
         self.ensure_calls = []
+        self.ensure_only = []
 
     def remove_instance(self, instance_id):
         if self.remove_raises:
             raise RuntimeError("terminate failed")
         self.removed.append(instance_id)
 
-    def ensure_instances(self, agent_specs):
+    def ensure_instances(self, agent_specs, only=None):
         self.ensure_calls.append(agent_specs)
+        self.ensure_only.append(only)
         return []
 
 

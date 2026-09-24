@@ -184,6 +184,26 @@ class ProvisionerRuntimeTests(unittest.TestCase):
             ),
         )
 
+    def test_only_limits_which_agents_get_replicas_but_routing_keeps_every_agent(self):
+        controller = _fake_controller()
+        manager = Provisioner(controller)
+
+        manager.ensure_instances(
+            [
+                {"name": "Alpha", "provider": "local"},
+                {"name": "Beta", "provider": "local"},
+            ],
+            only={"Alpha"},
+        )
+
+        self.assertEqual(
+            [instance["agent_name"] for instance in list_instances(controller.redis)],
+            ["Alpha"],
+        )
+        self.assertEqual(
+            controller.redis.smembers("routing_table:services"), {"Alpha", "Beta"}
+        )
+
     def test_local_provider_case_is_normalized_before_claiming_a_port(self):
         controller = _fake_controller()
         manager = Provisioner(controller)
