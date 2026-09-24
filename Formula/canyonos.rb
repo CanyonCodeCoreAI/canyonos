@@ -28,6 +28,6 @@ class Canyonos < Formula
   end
 
   test do
-    system "#{bin}/canyonos", "version"
+    system "#{bin}/canyonos", "--version"
   end
 end

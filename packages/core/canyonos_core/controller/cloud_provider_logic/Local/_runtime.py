@@ -10,11 +10,15 @@ import logging
 import os
 import socket
 
-from canyonos_core.controller.utils.container_names import container_name
+from canyonos_core.controller.utils.container_names import (
+    container_name,
+    redis_container_name,
+)
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.cloud_provider_logic.shared_utils.llm_proxy_env import (
     llm_proxy_docker_env_args,
 )
+from canyonos_core.controller.utils.port_utils import is_port_conflict
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,7 @@ CONTAINER_PORT = 50051
 PROVIDER = "local"
 MAX_PORT_ATTEMPTS = 50
 NETWORK = "canyonos-local"
+HOST_GATEWAY = "host.docker.internal"
 _controller = None
 
 
@@ -53,6 +58,16 @@ def validate_config():
     return None
 
 
+def _port_check(host, port):
+    """Preflight check to test if the port (8080) is available, fails immediately if not instead of failing later"""
+    probe_host = HOST_GATEWAY if _is_local_host(host) else host
+    try:
+        with socket.create_connection((probe_host, int(port)), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
 def provision_instance(spec, replica_index, next_host_port):
     host = spec.get("host", DEFAULT_HOST)
     host_port = int(spec.get("host_port", spec.get("port", next_host_port(host))))
@@ -62,7 +77,7 @@ def provision_instance(spec, replica_index, next_host_port):
         "provider": PROVIDER,
         "host": host,
         "host_port": host_port,
-        "redis_host": f"canyonos-redis-{host.replace('.', '-')}",
+        "redis_host": redis_container_name(host),
         "runtime_id": container_name(agent_name, replica_index),
         "user": spec.get("user"),
     }
@@ -90,13 +105,23 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         )
         _require_controller()._run_cmd(["docker", "rm", "-f", runtime_id], host, user)
 
-    if ctrl_type == "workflow" and _is_local_host(host):
-        api_port = int(spec.get("api_port", 8080))
-        if _port_bound(api_port):
+    if ctrl_type == "workflow" and _port_check(host, spec.get("api_port", 8080)):
+        raise RuntimeError(
+            f"Cannot launch {runtime_id}: workflow api_port "
+            f"{spec.get('api_port', 8080)} is already in use on {host}."
+        )
+
+    if ctrl_type == "database" and _is_local_host(host):
+        db_port = int(spec.get("db_port", 5432))
+        if _port_bound(db_port):
             raise RuntimeError(
-                f"api_port {api_port} is already in use and can't be reassigned "
-                "automatically -- free it or change `api_port` in the workflow's config."
+                f"db_port {db_port} is already in use and can't be reassigned "
+                "automatically -- free it or change `db_port` in the database's config."
             )
+
+    redis_port = _require_controller().redis_ports.get(
+        host, spec.get("redis_port", 6379)
+    )
 
     for attempt in range(MAX_PORT_ATTEMPTS):
         cmd = [
@@ -107,6 +132,10 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             NETWORK,
             "--name",
             runtime_id,
+            # Docker Desktop resolves this automatically; native Linux Docker
+            # (e.g. an EC2 test box) does not unless told to.
+            "--add-host",
+            "host.docker.internal:host-gateway",
             "-p",
             f"{host_port}:{CONTAINER_PORT}",
             "-e",
@@ -116,11 +145,13 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             "-e",
             f"CANYONOS_REDIS_HOST={redis_host}",
             "-e",
-            f"CANYONOS_REDIS_PORT={spec.get('redis_port', 6379)}",
+            f"CANYONOS_REDIS_PORT={redis_port}",
             "-e",
             f"CANYONOS_POLL_INTERVAL={_require_controller().config.get('poll_interval', 5)}",
             # Route the agent's LLM SDK calls through the in-container proxy for telemetry.
             *llm_proxy_docker_env_args(),
+            "-e",
+            f"CANYONOS_LOGS_ENABLED={str(bool(_require_controller().config.get('logs', True))).lower()}",
         ]
 
         # LLM stub is a `canyonos test`-only control. `canyonos test` injects
@@ -140,12 +171,16 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         if ctrl_type == "workflow":
             cmd.extend(["-p", f"{spec.get('api_port', 8080)}:8080"])
             config = _require_controller().config
-            db_url = config.get("database", {}).get("url")
             project_id = config.get("project_id")
-            if db_url:
-                cmd.extend(["-e", f"CANYONOS_DATABASE_URL={db_url}"])
             if project_id:
                 cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
+        elif ctrl_type == "database":
+            cmd.extend(["-p", f"{spec.get('db_port', 5432)}:5432"])
+            volume_path = spec.get("volume_path")
+            if volume_path:
+                cmd.extend(["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"])
+            for key, value in spec.get("env", {}).items():
+                cmd.extend(["-e", f"{key}={value}"])
         if resources.get("cpu"):
             cmd.extend(["--cpus", str(resources["cpu"])])
         if resources.get("memory"):
@@ -164,7 +199,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
 
         if result.returncode == 0:
             break
-        if "port is already allocated" in (result.stderr or ""):
+        if is_port_conflict(result.stderr):
             # `docker run` leaves a `Created`-but-never-started container behind
             # under this name when the port bind fails. Remove it before
             # retrying with a new port, or the retry hits a name conflict
@@ -193,13 +228,15 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         "container_port": str(CONTAINER_PORT),
         "endpoint": f"{host}:{host_port}",
         "redis_host": redis_host,
-        "redis_port": str(spec.get("redis_port", 6379)),
+        "redis_port": str(redis_port),
         "runtime_id": runtime_id,
     }
     if user:
         instance["user"] = user
     if ctrl_type == "workflow":
         instance["api_port"] = str(spec.get("api_port", 8080))
+    elif ctrl_type == "database":
+        instance["container_port"] = "5432"
     logger.info("Runtime ready: %s -> %s", runtime_id, instance["endpoint"])
     return instance
 
@@ -215,8 +252,13 @@ def terminate_instance(instance):
         instance.get("user"),
     )
     if result.returncode != 0:
-        logger.warning("Failed to remove runtime %s", runtime_id)
+        detail = (result.stderr or result.stdout or "").strip()
+        if "no such container" not in detail.casefold():
+            raise RuntimeError(
+                f"Failed to remove runtime {runtime_id}: "
+                f"{detail or f'exit code {result.returncode}'}"
+            )
 
 
 def routing_endpoint_for(instance):
-    return f"{instance['runtime_id']}:{CONTAINER_PORT}"
+    return f"{instance['runtime_id']}:{instance.get('container_port', CONTAINER_PORT)}"

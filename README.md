@@ -57,6 +57,7 @@ Use any of the following package managers to install the canyonos CLI (curl, bre
 curl -fsSL https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/packages/cli/install.sh | sh
 # OR
 brew tap CanyonCodeCoreAI/canyonos https://github.com/CanyonCodeCoreAI/canyonos
+brew trust --formula CanyonCodeCoreAI/canyonos/canyonos
 brew install canyonos
 # OR
 uv tool install canyonos
@@ -95,7 +96,7 @@ canyonos doctor
 | `clean` | Remove generated build artifacts |
 | `doctor` | Check that your environment is ready |
 | `new-app` | Scaffold a new project |
-| `version` | Print the installed version |
+| `-v`, `--version` | Print the installed version |
 
 ---
 
@@ -157,7 +158,11 @@ Example Success Message:
 
 ### 4. Sending requests to the workflow
 
-Upon running the deploy command, canyonos automatically generates a REST API endpoint for the workflow. Send requests to this endpoint to trigger the workflow:
+Upon running the deploy command, canyonos automatically generates a REST API endpoint for the workflow. 
+
+For verifying the workflow has been deployed fine, run `canyonos test "A test query"` to send a query through the workflow.
+
+For manually sending requests, use the given endpoint to trigger the workflow:
 
 ```bash
 curl -X POST http://localhost:8000/main \

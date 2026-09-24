@@ -109,7 +109,8 @@ def _name(agent, index):
 def _cells(agents):
     """Per agent, the name and each field padded to its column's width, plus those widths."""
     rows = [
-        [_name(agent, i)] + [f"{_label(field)} {_get(agent, field)}" for field in FIELDS]
+        [_name(agent, i)]
+        + [f"{_label(field)} {_get(agent, field)}" for field in FIELDS]
         for i, agent in enumerate(agents)
     ]
     widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
@@ -142,7 +143,9 @@ def _edit_agent(agent, status):
     name = agent.get("name", "agent")
     while True:
         _render(name, status)
-        options = [(field, f"{_label(field)}: {_get(agent, field)}") for field in FIELDS]
+        options = [
+            (field, f"{_label(field)}: {_get(agent, field)}") for field in FIELDS
+        ]
         options.append((BACK, "← Back"))
         field = select_menu(options, title=f"Resources for {name}")
         if field is None or field == BACK:
@@ -151,7 +154,9 @@ def _edit_agent(agent, status):
         error = None
         while True:
             _render(f"{name} › {field}", status)
-            raw = input_line(f"{_label(field)} (current {_get(agent, field)}): ", error=error)
+            raw = input_line(
+                f"{_label(field)} (current {_get(agent, field)}): ", error=error
+            )
             if not raw:
                 break
             try:

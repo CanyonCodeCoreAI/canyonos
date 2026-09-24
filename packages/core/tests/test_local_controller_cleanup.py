@@ -1,3 +1,4 @@
+import fnmatch
 import json
 import os
 import sys
@@ -10,7 +11,10 @@ sys.path.insert(
     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "grpc_stubs"))
 )
 
-from canyonos_core.controller.local_controller_frontend import LocalControllerServicer
+from canyonos_core.controller.local_controller_frontend import (
+    FUTURE_CLEANUP_GRACE_SECONDS,
+    LocalControllerServicer,
+)
 import local_controler_pb2
 
 
@@ -74,6 +78,26 @@ class CleanupDispatchTests(unittest.TestCase):
 
         self.assertEqual(cleaned, [])
 
+    def test_one_failing_request_id_does_not_stop_the_rest_of_the_batch(self):
+        cleaned = []
+
+        def _cleanup_request(rid):
+            if rid == "req2":
+                raise ConnectionError("redis unreachable")
+            cleaned.append(rid)
+
+        servicer = SimpleNamespace(_cleanup_request=_cleanup_request)
+        request = local_controler_pb2.JsonResponse(
+            resonse=json.dumps({"request_ids": ["req1", "req2", "req3"]})
+        )
+
+        with patch(
+            "canyonos_core.controller.local_controller_frontend.Thread", _SyncThread
+        ):
+            LocalControllerServicer.Cleanup(servicer, request, context=None)
+
+        self.assertEqual(cleaned, ["req1", "req3"])
+
 
 class _FakeRedisStore:
     """Enough of RedisClient's surface for _cleanup_request: strings, sets, setnx."""
@@ -81,6 +105,7 @@ class _FakeRedisStore:
     def __init__(self, strings=None, sets=None):
         self.strings = strings or {}
         self.sets = sets or {}
+        self.expirations = {}  # key -> seconds, as recorded by expire()
 
     def setnx(self, key, value):
         if key in self.strings:
@@ -91,10 +116,22 @@ class _FakeRedisStore:
     def smembers(self, name):
         return set(self.sets.get(name, set()))
 
+    def hget(self, name, key):
+        return None
+
+    def scan_keys(self, pattern):
+        return [k for k in self.strings if fnmatch.fnmatch(k, pattern)]
+
     def delete(self, *keys):
         for key in keys:
             self.strings.pop(key, None)
             self.sets.pop(key, None)
+
+    def expire(self, key, seconds, nx=False):
+        # Real Redis: schedules removal after `seconds`, doesn't touch the
+        # value now. This fake just records the call so tests can assert on
+        # it without needing to fake time passing.
+        self.expirations[key] = seconds
 
 
 def _bare_servicer(redis):
@@ -105,7 +142,12 @@ def _bare_servicer(redis):
 
 
 class CleanupRequestTests(unittest.TestCase):
-    def test_cleanup_deletes_consolidated_future_hashes_and_bookkeeping(self):
+    def test_cleanup_expires_consolidated_future_hashes_and_bookkeeping(self):
+        # CAN-391 follow-up: GlobalController's poll loop reads future:{id} to
+        # build an OTel span (see telemetry_logging.pull_runtime_information).
+        # Deleting it immediately here races that read and silently drops the
+        # span. Expiring with a grace period keeps memory bounded without
+        # deleting out from under the poll loop.
         redis = _FakeRedisStore(
             sets={"request:req1:futures": {"fut1", "fut2"}},
             strings={
@@ -119,14 +161,21 @@ class CleanupRequestTests(unittest.TestCase):
 
         servicer._cleanup_request("req1")
 
-        # Future-resolution bookkeeping: gone.
-        self.assertNotIn("request:req1:futures", redis.sets)
-        self.assertNotIn("future:fut1", redis.strings)
-        self.assertNotIn("future:fut2", redis.strings)
-        self.assertNotIn("future:fut1:children", redis.strings)
-        self.assertNotIn("future:fut1:consumers", redis.strings)
+        # Not deleted outright -- still readable until the TTL elapses.
+        for key in (
+            "request:req1:futures",
+            "future:fut1",
+            "future:fut2",
+            "future:fut1:children",
+            "future:fut1:consumers",
+        ):
+            self.assertEqual(redis.expirations.get(key), FUTURE_CLEANUP_GRACE_SECONDS)
+        self.assertIn("request:req1:futures", redis.sets)
+        self.assertIn("future:fut1", redis.strings)
 
-    def test_cleanup_still_deletes_affinity_bindings(self):
+    def test_cleanup_still_deletes_affinity_bindings_outright(self):
+        # Affinity bindings aren't read by the telemetry poll loop, so there's
+        # no race to protect against here -- immediate deletion is still fine.
         redis = _FakeRedisStore(
             sets={"request:req1:futures": {"fut1"}},
             strings={"future:fut1": "x", "affinity:req1": "some-host"},
@@ -136,7 +185,11 @@ class CleanupRequestTests(unittest.TestCase):
         servicer._cleanup_request("req1")
 
         self.assertNotIn("affinity:req1", redis.strings)
-        self.assertNotIn("future:fut1", redis.strings)
+        # The future itself is expired (grace period), not deleted outright.
+        self.assertIn("future:fut1", redis.strings)
+        self.assertEqual(
+            redis.expirations.get("future:fut1"), FUTURE_CLEANUP_GRACE_SECONDS
+        )
 
     def test_cleanup_releases_its_lock_even_with_no_futures(self):
         redis = _FakeRedisStore(sets={"request:req1:futures": set()})

@@ -26,7 +26,9 @@ def config(tmp_path, monkeypatch):
 def test_missing_values_are_filled_and_existing_ones_kept(config):
     assert resources.configure_resources(str(config)) is True
 
-    assert config.read_text() == """\
+    assert (
+        config.read_text()
+        == """\
 # top comment
 agents:
   - name: Sized
@@ -43,6 +45,7 @@ agents:
       gpu: 0
     replicas: 1
 """
+    )
 
 
 def test_a_cancelled_picker_leaves_the_file_untouched(config, monkeypatch):
@@ -75,7 +78,13 @@ def test_a_missing_config_is_left_to_the_deploy_to_report(tmp_path):
 
 @pytest.mark.parametrize(
     "field, raw, expected",
-    [("cpu", "0.5", 0.5), ("cpu", "2", 2), ("gpu", "1.5", 1.5), ("memory", "1024", 1024), ("replicas", "3", 3)],
+    [
+        ("cpu", "0.5", 0.5),
+        ("cpu", "2", 2),
+        ("gpu", "1.5", 1.5),
+        ("memory", "1024", 1024),
+        ("replicas", "3", 3),
+    ],
 )
 def test_valid_values_are_cast(field, raw, expected):
     assert resources._cast(field, raw) == expected
