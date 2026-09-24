@@ -103,6 +103,7 @@ class ControllerContext(object):
 
     @staticmethod
     def _expand_env_value(value):
+        """Replace every ${VAR} in the config with its environment value, leaving unset ones as written."""
         if isinstance(value, str):
             return re.sub(
                 r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",

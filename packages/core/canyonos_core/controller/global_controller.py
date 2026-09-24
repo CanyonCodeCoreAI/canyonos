@@ -69,9 +69,6 @@ class GlobalController(ControllerContext):
     Designed to be subclassed — override the _on_* hooks to extend behavior.
     """
 
-    ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
-    ROUTING_STATEFUL_KEY = "routing_table:stateful"
-    SERVICES_SET_KEY = "routing_table:services"
     POLICY_RULES_KEY = "policy:rules"
     IDENTITY_KEY = "controller:identity"  # has the controller's current project_id
     OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
@@ -530,12 +527,10 @@ class GlobalController(ControllerContext):
                 logger.critical("%s", e)
                 sys.exit(1)
             self.node_redis[host] = redis_client
-            if host == "localhost":
+            if _is_local_host(host):
                 self._redis_addr = (connect_host, redis_port)
-
-        # Update the primary redis client to the local node's Redis
-        if "localhost" in self.node_redis:
-            self.redis = self.node_redis["localhost"]
+                # Update the primary redis client to the local node's Redis
+                self.redis = redis_client
 
         logger.info(
             "Redis ready on %d node(s); %d owned by this controller.",

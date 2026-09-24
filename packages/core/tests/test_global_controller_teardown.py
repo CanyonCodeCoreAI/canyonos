@@ -82,9 +82,9 @@ class TeardownTests(unittest.TestCase):
         controller._stop_metrics_collectors.side_effect = lambda: calls.append(
             "metrics"
         )
-        controller._stop_redis_containers.side_effect = lambda: calls.append(
-            "redis"
-        ) or []
+        controller._stop_redis_containers.side_effect = lambda: (
+            calls.append("redis") or []
+        )
 
         with patch("time.sleep"):
             controller.stop()

@@ -105,9 +105,7 @@ class RuntimeReuseScanTests(unittest.TestCase):
             "provider": "EC2",
         }
 
-        with self.assertLogs(
-            "canyonos_core.reconciler.provisioner", level="WARNING"
-        ):
+        with self.assertLogs("canyonos_core.reconciler.provisioner", level="WARNING"):
             self.assertFalse(manager._runtime_is_running(instance))
 
     def test_a_running_runtime_is_still_reported_as_reusable(self):

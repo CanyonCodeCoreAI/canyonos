@@ -97,6 +97,23 @@ class RedisContainerReuseTests(unittest.TestCase):
         )
         self.assertIn("localhost", controller.redis_containers)
 
+    def test_a_127_0_0_1_node_becomes_the_primary_redis_like_localhost(self):
+        """The reconciler treats 127.0.0.1 as local, so the controller must pick the same Redis."""
+        controller = _bare_controller(
+            [
+                {
+                    "name": "Workflow",
+                    "replicas": 1,
+                    "host": "127.0.0.1",
+                    "redis_port": 6379,
+                }
+            ]
+        )
+
+        self._run(controller, inspect_stdout="true\n")
+
+        self.assertIs(controller.redis, controller.node_redis["127.0.0.1"])
+
     def test_reuse_check_probes_the_exact_expected_container_name(self):
         controller = _bare_controller(
             [
