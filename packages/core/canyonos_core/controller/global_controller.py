@@ -33,6 +33,7 @@ from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
+from canyonos_core.schema.yaml_lines import load_yaml_lines
 
 # Add generated grpc_stubs from the local project to the path. Projects using
 # the .car artifact layout keep grpc_stubs under .car/; older/plain layouts
@@ -239,10 +240,24 @@ class GlobalController(ControllerContext):
 
     @staticmethod
     def _assign_new_project_id(config_path):
-        """Generate a project_id and append it to the config file so it stays stable across reloads/restarts."""
+        """Generate a project_id and write it to the config file so it stays stable across reloads/restarts.
+
+        A `project_id:` already in the file with no value is replaced in place;
+        appending a second one would make the file a duplicate-key error.
+        """
         project_id = str(uuid.uuid4())
-        with open(config_path, "a") as f:
-            f.write(f'project_id: "{project_id}"\n')
+        entry = f'project_id: "{project_id}"\n'
+        document = load_yaml_lines(config_path)
+        with open(config_path, "r") as f:
+            lines = f.readlines()
+        if isinstance(document, dict) and "project_id" in document:
+            lines[document.key_lines["project_id"] - 1] = entry
+        else:
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.append(entry)
+        with open(config_path, "w") as f:
+            f.writelines(lines)
         return project_id
 
     @staticmethod

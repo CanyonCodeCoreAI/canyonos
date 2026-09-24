@@ -86,14 +86,30 @@ def local_redis_port(config_path):
     """Host port the local node's Redis is published on, or the default."""
     try:
         with open(config_path) as f:
-            config = yaml.safe_load(f) or {}
+            config = yaml.safe_load(f)
     except (OSError, yaml.YAMLError):
         return DEFAULT_REDIS_PORT
+    if not isinstance(config, dict):
+        return DEFAULT_REDIS_PORT
 
-    for agent in config.get("agents") or []:
-        if agent.get("host", "localhost") in ("localhost", "127.0.0.1"):
-            return agent.get("redis_port", DEFAULT_REDIS_PORT)
-    return (config.get("redis") or {}).get("port", DEFAULT_REDIS_PORT)
+    agents = config.get("agents")
+    for agent in agents if isinstance(agents, list) else []:
+        if isinstance(agent, dict) and agent.get("host", "localhost") in (
+            "localhost",
+            "127.0.0.1",
+        ):
+            return _port_or_default(agent.get("redis_port", DEFAULT_REDIS_PORT))
+    redis = config.get("redis")
+    if not isinstance(redis, dict):
+        return DEFAULT_REDIS_PORT
+    return _port_or_default(redis.get("port", DEFAULT_REDIS_PORT))
+
+
+def _port_or_default(value):
+    """`value` when it is a usable TCP port, else the default the runtime falls back to."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return DEFAULT_REDIS_PORT
+    return value if 1 <= value <= 65535 else DEFAULT_REDIS_PORT
 
 
 def _source_root(config_path):

@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -12,10 +13,12 @@ from packaging.version import Version
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core import stub_generator
+from canyonos_core.schema import DependencyPinConflict, render_violation
 from canyonos_core.stub_generator import (
     BASE_AGENT_REQUIREMENTS,
     BASE_WORKFLOW_REQUIREMENTS,
     PLATFORM_PINS,
+    _platform_overrides,
     _stub_destination,
     _sweep_project_files,
     generate_docker,
@@ -568,12 +571,176 @@ class PlatformPinTests(unittest.TestCase):
             notes, ["Note: 'protobuf>=7' outranks the platform pin protobuf==6.33.5"]
         )
 
-    def test_an_app_asking_for_older_loses_and_is_told(self):
-        overrides, notes = self._context(["protobuf<5"])
-        self.assertIn("protobuf==6.33.5", overrides)
+    def test_an_app_asking_for_older_fails_the_build(self):
+        # Forcing the platform pin over the app's bound used to produce an image
+        # that installed cleanly and then failed at import, so it is fatal now.
+        with self.assertRaises(DependencyPinConflict) as raised:
+            self._context(["protobuf<5"])
+
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.field, "requirements")
+        self.assertIn("protobuf<5", violation.message)
+        self.assertIn("protobuf==6.33.5", violation.message)
+        self.assertIn("at or above 6.33.5", violation.message)
+
+    def test_the_conflict_points_at_the_manifest_entry_to_edit(self):
+        with self.assertRaises(DependencyPinConflict) as raised:
+            _platform_overrides(
+                ["boto3<1"],
+                service=2,
+                manifest_path="config/global_controller.yaml",
+            )
+
+        (violation,) = raised.exception.violations
+        rendered = render_violation(violation)
+        self.assertTrue(rendered.startswith("config/global_controller.yaml: "))
+        self.assertIn("agents[2].requirements", rendered)
+        self.assertNotIn("\n", rendered)
+
+    def test_a_conflict_is_caught_however_the_package_name_is_spelled(self):
+        # pip treats these as one package; matching on .lower() alone missed
+        # the underscore and forced the pin over the app's bound instead.
+        for requirement in ("grpcio_tools<1", "Grpcio-Tools<1", "grpcio.tools<1"):
+            with self.subTest(requirement=requirement):
+                with self.assertRaises(DependencyPinConflict) as raised:
+                    _platform_overrides([requirement], service=0)
+                (violation,) = raised.exception.violations
+                self.assertIn("grpcio-tools==1.76.0", violation.message)
+
+    def test_a_newer_ask_wins_however_the_package_name_is_spelled(self):
+        overrides = _platform_overrides(["grpcio_tools>=2"])
+
+        self.assertIn("grpcio_tools>=2", overrides)
+        self.assertNotIn("grpcio-tools==1.76.0", overrides)
+
+    def test_a_package_asked_for_twice_conflicts_whatever_the_order(self):
+        # Only the last line used to count, so `protobuf>=7` written second
+        # hid the `<5` bound and the build went ahead.
+        messages = []
+        for requirements in (
+            ["protobuf<5", "protobuf>=7"],
+            ["protobuf>=7", "protobuf<5"],
+        ):
+            with self.subTest(requirements=requirements):
+                with self.assertRaises(DependencyPinConflict) as raised:
+                    _platform_overrides(requirements, service=0)
+                (violation,) = raised.exception.violations
+                messages.append(violation.message)
+
+        self.assertEqual(messages[0], messages[1])
+        self.assertIn("'protobuf<5,>=7'", messages[0])
+
+    def test_strictly_greater_than_the_pin_is_a_newer_ask(self):
+        # Every version `>6.33.5` allows is newer than the pin, but it used to
+        # be reported as a conflict because its bound was not past the pin.
+        overrides, notes = self._context(["protobuf>6.33.5"])
+
+        self.assertIn("protobuf>6.33.5", overrides)
+        self.assertNotIn("protobuf==6.33.5", overrides)
         self.assertEqual(
-            notes, ["Warning: the platform pin protobuf==6.33.5 breaks 'protobuf<5'"]
+            notes,
+            ["Note: 'protobuf>6.33.5' outranks the platform pin protobuf==6.33.5"],
         )
+
+    def test_at_or_equal_to_the_pin_keeps_the_pin_quietly(self):
+        for requirement in ("protobuf>=6.33.5", "protobuf==6.33.5"):
+            with self.subTest(requirement=requirement):
+                overrides, notes = self._context([requirement])
+                self.assertEqual(overrides, list(PLATFORM_PINS))
+                self.assertEqual(notes, [])
+
+    def test_an_exclusion_beside_a_newer_bound_is_still_a_newer_ask(self):
+        for requirement in ("protobuf>=7,!=6.33.5", "requests>=3,!=2.34.2"):
+            with self.subTest(requirement=requirement):
+                with redirect_stdout(io.StringIO()):
+                    overrides = _platform_overrides([requirement])
+                name = requirement.split(">=")[0]
+                self.assertFalse(
+                    [pin for pin in overrides if pin.startswith(f"{name}==")]
+                )
+
+    def test_excluding_the_pin_alone_is_still_a_conflict(self):
+        with self.assertRaises(DependencyPinConflict):
+            _platform_overrides(["protobuf!=6.33.5"], service=0)
+
+    def test_a_requirement_whose_marker_is_false_in_the_image_is_ignored(self):
+        overrides = _platform_overrides(
+            [
+                'grpcio<0.1; sys_platform == "win32"',
+                "grpcio>=1.60; python_version >= '3.8'",
+                "grpcio<1.50; python_version < '3.8'",
+            ]
+        )
+
+        self.assertIn("grpcio==1.83.1", overrides)
+
+    def test_a_requirement_whose_marker_is_true_in_the_image_is_checked(self):
+        with self.assertRaises(DependencyPinConflict):
+            _platform_overrides(['grpcio<0.1; sys_platform == "linux"'], service=0)
+
+    def test_a_marker_is_evaluated_for_the_image_architecture(self):
+        requirement = 'grpcio<0.1; platform_machine == "aarch64"'
+        with unittest.mock.patch.dict(
+            os.environ, {"CANYONOS_DOCKER_PLATFORM": "linux/amd64"}
+        ):
+            self.assertIn("grpcio==1.83.1", _platform_overrides([requirement]))
+        with unittest.mock.patch.dict(
+            os.environ, {"CANYONOS_DOCKER_PLATFORM": "linux/arm64"}
+        ):
+            with self.assertRaises(DependencyPinConflict):
+                _platform_overrides([requirement], service=0)
+
+    def test_a_marker_on_a_value_the_image_does_not_fix_is_still_checked(self):
+        with self.assertRaises(DependencyPinConflict):
+            _platform_overrides(
+                ['grpcio<0.1; python_full_version >= "3.11.99"'], service=0
+            )
+
+    def test_a_conflict_points_at_the_requirements_line(self):
+        with self.assertRaises(DependencyPinConflict) as raised:
+            _platform_overrides(
+                ["requests", "grpcio_tools<1", "grpcio-tools<0.5"],
+                service=0,
+                manifest_path="config/global_controller.yaml",
+                lines=[7, 8, 9],
+            )
+
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.line, 8)
+        self.assertTrue(
+            render_violation(violation).startswith("config/global_controller.yaml:8: ")
+        )
+
+    def test_two_newer_asks_for_one_package_still_win(self):
+        with redirect_stdout(io.StringIO()):
+            overrides = _platform_overrides(["protobuf>=7", "Protobuf>=7.1"])
+
+        self.assertIn("protobuf>=7,>=7.1", overrides)
+        self.assertNotIn("protobuf==6.33.5", overrides)
+
+    def test_a_repeated_package_is_still_written_line_for_line(self):
+        # Combining the bounds is only for the comparison; requirements.txt
+        # keeps exactly what the app asked for.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            yaml_path = project / "ExampleAgent.yaml"
+            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
+            agent_file = _write(project / "agent.py", "print('ok')\n")
+            output_dir = os.path.join(tmpdir, "out")
+            with redirect_stdout(io.StringIO()):
+                generate_docker(
+                    str(yaml_path),
+                    str(agent_file),
+                    output_dir=output_dir,
+                    requirements=["protobuf>=7", "Protobuf>=7.1"],
+                )
+            requirements = _read_requirements(output_dir)
+
+        self.assertEqual(requirements[-2:], ["protobuf>=7", "Protobuf>=7.1"])
+
+    def test_the_workflow_context_fails_on_a_conflict_too(self):
+        with self.assertRaises(DependencyPinConflict):
+            self._context(["protobuf<5"], workflow=True)
 
     def test_the_workflow_context_decides_the_same_way(self):
         overrides, notes = self._context(["protobuf>=7"], workflow=True)
@@ -629,3 +796,46 @@ class PlatformPinTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenerateStubTests(unittest.TestCase):
+    """The stub is generated from the declaration the schema checked."""
+
+    def _generate(self, text, env=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_path = Path(tmpdir) / "hello.yaml"
+            yaml_path.write_text(text)
+            output_path = Path(tmpdir) / "stubs" / "hello.py"
+            with (
+                unittest.mock.patch.dict(os.environ, env or {}),
+                redirect_stdout(io.StringIO()),
+            ):
+                source = stub_generator.generate_stub(str(yaml_path), str(output_path))
+        compile(source, "hello.py", "exec")
+        return source
+
+    def test_a_blank_list_or_type_is_generated_as_absent(self):
+        for text in (
+            "agent:\n  name: Hello\n  functions:\n",
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n      arguments:\n",
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
+            "      arguments:\n        - name: a\n          type:\n",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("class Hello(object):", self._generate(text))
+
+    def test_env_references_are_expanded_into_the_stub(self):
+        source = self._generate(
+            "agent:\n  name: Hello\n  functions:\n    - name: ${STUB_FN_NAME}\n",
+            env={"STUB_FN_NAME": "hello"},
+        )
+
+        self.assertIn("def hello(self)", source)
+
+    def test_a_type_built_from_builtins_is_written_as_its_annotation(self):
+        source = self._generate(
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
+            "      arguments:\n        - name: a\n          type: dict[str, int] | None\n"
+        )
+
+        self.assertIn("def hello(self, a: dict[str, int] | None)", source)
