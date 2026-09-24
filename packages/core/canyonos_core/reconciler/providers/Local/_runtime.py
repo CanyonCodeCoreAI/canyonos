@@ -256,3 +256,11 @@ def terminate_instance(instance):
                 f"Failed to remove runtime {runtime_id}: "
                 f"{detail or f'exit code {result.returncode}'}"
             )
+
+
+def docker_container_name(instance):
+    """The name this instance's container answers to under `docker`.
+
+    Here the runtime id is that name: `docker run --name` is given it verbatim.
+    """
+    return instance.get("runtime_id")
