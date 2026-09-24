@@ -13,10 +13,17 @@ Usage:
 import argparse
 import ast
 import os
+import re
 import shutil
-import yaml
-from packaging.requirements import InvalidRequirement, Requirement
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
+
+from canyonos_core.schema import (
+    DependencyPinConflict,
+    SchemaViolation,
+    load_agent_declaration,
+)
 
 # Packages every agent container needs regardless of its specific business logic.
 #
@@ -43,6 +50,25 @@ BASE_AGENT_REQUIREMENTS = [
 # (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
 BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
 
+IMAGE_PYTHON_VERSION = "3.11"
+DEFAULT_DOCKER_PLATFORM = "linux/amd64"
+_MACHINE_BY_DOCKER_ARCH = {"amd64": "x86_64", "arm64": "aarch64"}
+_MARKER_VARIABLES = frozenset(
+    {
+        "implementation_name",
+        "implementation_version",
+        "os_name",
+        "platform_machine",
+        "platform_python_implementation",
+        "platform_release",
+        "platform_system",
+        "platform_version",
+        "python_full_version",
+        "python_version",
+        "sys_platform",
+    }
+)
+
 # Packages the image's own code is built against, so an app cannot be left to
 # pick them alone.
 _FORCED_FROM_BASE = ("protobuf", "grpcio", "grpcio-tools", "requests", "boto3")
@@ -63,7 +89,7 @@ def _build_import_nodes():
     ]
 
 
-def _build_stub_method(func_config, agent_name):
+def _build_stub_method(function, agent_name):
     """
     Build an AST node for a single stub method.
 
@@ -83,16 +109,16 @@ def _build_stub_method(func_config, agent_name):
             return Future(parent=inspect.stack()[1].filename, service="FinanceAgent",
                           method="get_stock_price", args=args, grpc_stub=self.stub)
     """
-    func_name = func_config["name"]
-    description = func_config.get("description", "")
-    arguments = func_config.get("arguments", [])
+    func_name = function.name
+    description = function.description
+    arguments = function.arguments
 
     # Build argument nodes: self + declared args with type annotations
     args_list = [ast.arg(arg="self")]
     for arg in arguments:
         arg_node = ast.arg(
-            arg=arg["name"],
-            annotation=ast.Name(id=arg["type"]) if "type" in arg else None,
+            arg=arg.name,
+            annotation=ast.parse(arg.type, mode="eval").body if arg.type else None,
         )
         args_list.append(arg_node)
 
@@ -115,7 +141,7 @@ def _build_stub_method(func_config, agent_name):
 
     # Build the args dict with Future replacement:
     # args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker, ...}
-    arg_dict_keys = [ast.Constant(value=a["name"]) for a in arguments]
+    arg_dict_keys = [ast.Constant(value=a.name) for a in arguments]
     arg_dict_values = []
     for a in arguments:
         # value.id if isinstance(value, Future) else value
@@ -123,11 +149,11 @@ def _build_stub_method(func_config, agent_name):
             ast.IfExp(
                 test=ast.Call(
                     func=ast.Name(id="isinstance"),
-                    args=[ast.Name(id=a["name"]), ast.Name(id="Future")],
+                    args=[ast.Name(id=a.name), ast.Name(id="Future")],
                     keywords=[],
                 ),
-                body=ast.Attribute(value=ast.Name(id=a["name"]), attr="id"),
-                orelse=ast.Name(id=a["name"]),
+                body=ast.Attribute(value=ast.Name(id=a.name), attr="id"),
+                orelse=ast.Name(id=a.name),
             )
         )
 
@@ -193,7 +219,7 @@ def _build_stub_method(func_config, agent_name):
     return func_def
 
 
-def _build_stub_class(agent_config):
+def _build_stub_class(declaration):
     """
     Build an AST node for the entire stub class.
 
@@ -203,8 +229,8 @@ def _build_stub_class(agent_config):
                 pass
             ...stub methods...
     """
-    class_name = agent_config["name"]
-    functions = agent_config.get("functions", [])
+    class_name = declaration.name
+    functions = declaration.functions
 
     # __init__ method: simple pass, no gRPC setup needed.
     # Future handles its own gRPC connections via env vars.
@@ -226,8 +252,8 @@ def _build_stub_class(agent_config):
 
     # Build all stub methods
     methods = [init_method]
-    for func_config in functions:
-        methods.append(_build_stub_method(func_config, agent_config["name"]))
+    for function in functions:
+        methods.append(_build_stub_method(function, declaration.name))
 
     class_def = ast.ClassDef(
         name=class_name,
@@ -243,13 +269,11 @@ def _build_stub_class(agent_config):
 def generate_stub(yaml_path, output_path):
     """
     Read a YAML agent definition and generate an importable Python stub file.
+
+    Raises:
+        SchemaError: the declaration fails the agent schema.
     """
-    with open(yaml_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    agent_config = config["agent"]
-
-    class_def = _build_stub_class(agent_config)
+    class_def = _build_stub_class(load_agent_declaration(yaml_path))
 
     # Build the full module AST
     module = ast.Module(
@@ -547,38 +571,125 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
-def _platform_overrides(requirements):
+def target_docker_platform():
+    """The platform every image is built for."""
+    return os.environ.get("CANYONOS_DOCKER_PLATFORM", DEFAULT_DOCKER_PLATFORM)
+
+
+def _image_marker_environment():
+    """The marker values the image fixes; the rest are unknown until it runs."""
+    environment = {
+        "python_version": IMAGE_PYTHON_VERSION,
+        "sys_platform": "linux",
+        "platform_system": "Linux",
+        "os_name": "posix",
+        "implementation_name": "cpython",
+        "platform_python_implementation": "CPython",
+    }
+    arch = target_docker_platform().partition("/")[2].partition("/")[0]
+    if arch in _MACHINE_BY_DOCKER_ARCH:
+        environment["platform_machine"] = _MACHINE_BY_DOCKER_ARCH[arch]
+    return environment
+
+
+def _applies_in_image(marker):
+    """False only when the marker is known to be false inside the image.
+
+    A marker reading a value the image does not fix, such as the Python patch
+    version, is checked rather than guessed from the machine running the build.
+    """
+    environment = _image_marker_environment()
+    unquoted = re.sub(r"'[^']*'|\"[^\"]*\"", "", str(marker))
+    used = _MARKER_VARIABLES.intersection(re.findall(r"[a-z_]+", unquoted))
+    if used - environment.keys():
+        return True
+    return marker.evaluate(environment)
+
+
+def _only_newer_than(spec, pinned):
+    """True when `spec` rules `pinned` out only by demanding something newer."""
+    if spec.operator not in (">=", ">", "==", "~="):
+        return False
+    bound = Version(spec.version.rstrip(".*"))
+    # `>PIN` excludes the pin itself and nothing older, so every version it
+    # allows is newer; the other operators need a version past the pin for that.
+    return bound >= pinned if spec.operator == ">" else bound > pinned
+
+
+def _platform_overrides(requirements, *, service=None, manifest_path=None, lines=None):
     """Take the higher of each platform pin and what the app asked for.
 
     uv replaces a requirement rather than intersecting it, so the comparison
     cannot be left to the resolver.
+
+    `service` is the manifest index of the service these requirements belong
+    to, and with `manifest_path` and `lines` (each requirement's line) it is
+    only there to point a conflict at the line the user has to edit.
+
+    Raises:
+        DependencyPinConflict: the app pinned a package *below* the version the
+            image's own code is built against. Forcing the platform pin over it
+            produced an image that installed cleanly and then failed at import,
+            so the build stops here instead.
     """
     declared = {}
-    for requirement in requirements:
-        try:
-            parsed = Requirement(requirement)
-        except InvalidRequirement:
+    first_lines = {}
+    for index, requirement in enumerate(requirements):
+        parsed = Requirement(requirement)
+        if parsed.marker and not _applies_in_image(parsed.marker):
             continue
-        declared[parsed.name.lower()] = parsed
+        # PEP 503 names: `grpcio_tools`, `Grpcio-Tools` and `grpcio.tools`
+        # are all the package pinned as `grpcio-tools`. A package asked for
+        # more than once is asked for once with every bound, since only the
+        # intersection can be installed -- keeping just the last line made the
+        # answer depend on the order they were written in.
+        key = canonicalize_name(parsed.name)
+        if lines and key not in first_lines:
+            first_lines[key] = lines[index]
+        if key in declared:
+            first_name, specifier = declared[key]
+            declared[key] = (first_name, specifier & parsed.specifier)
+        else:
+            declared[key] = (parsed.name, parsed.specifier)
 
     overrides = []
+    conflicts = []
     for pin in PLATFORM_PINS:
         name, pinned = pin.split("==")
-        asked = declared.get(name)
-        if asked is None or asked.specifier.contains(Version(pinned)):
+        pinned_version = Version(pinned)
+        asked = declared.get(canonicalize_name(name))
+        if asked is None or asked[1].contains(pinned_version):
             overrides.append(pin)
             continue
-        wanted = f"{asked.name}{asked.specifier}"
-        if any(
-            spec.operator in (">=", ">", "==", "~=")
-            and Version(spec.version.rstrip(".*")) > Version(pinned)
-            for spec in asked.specifier
+        asked_name, specifier = asked
+        wanted = f"{asked_name}{specifier}"
+        # Newer only if a lower bound above the pin rules it out and nothing
+        # else does but an exclusion; one upper bound below it and nothing
+        # newer can satisfy both.
+        ruling = [spec for spec in specifier if not spec.contains(pinned_version)]
+        if any(_only_newer_than(spec, pinned_version) for spec in ruling) and all(
+            _only_newer_than(spec, pinned_version) or spec.operator == "!="
+            for spec in ruling
         ):
             overrides.append(wanted)
             print(f"  Note: '{wanted}' outranks the platform pin {pin}")
         else:
             overrides.append(pin)
-            print(f"  Warning: the platform pin {pin} breaks '{wanted}'")
+            field = (
+                "requirements" if service is None else f"agents[{service}].requirements"
+            )
+            conflicts.append(
+                SchemaViolation(
+                    manifest_path or "",
+                    first_lines.get(canonicalize_name(name), 0),
+                    field,
+                    f"'{wanted}' conflicts with the platform pin {pin}, which the "
+                    f"agent image is built against: relax the bound or pin "
+                    f"{name} at or above {pinned}",
+                )
+            )
+    if conflicts:
+        raise DependencyPinConflict(conflicts)
     return overrides
 
 
@@ -620,10 +731,7 @@ def generate_docker(
         stub_entrypoints:  Optional {stub_basename: entrypoint} map for exact stub placement.
         requirements:   Optional list of extra pip packages this agent needs.
     """
-    with open(yaml_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    agent_name = config["agent"]["name"]
+    agent_name = load_agent_declaration(yaml_path).name
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.join(script_dir, "..")
 
@@ -723,7 +831,7 @@ def generate_docker(
     # ---- Dockerfile ------------------------------------------------------
     agent_basename = os.path.basename(agent_file)
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
@@ -906,7 +1014,7 @@ except Exception:
 
     # ---- Dockerfile ------------------------------------------------------
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app

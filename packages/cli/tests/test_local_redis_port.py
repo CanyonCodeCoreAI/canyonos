@@ -37,6 +37,20 @@ class LocalRedisPortTests(unittest.TestCase):
     def test_an_unreadable_config_falls_back_to_the_default(self):
         self.assertEqual(local_redis_port("/nonexistent/global_controller.yaml"), 6379)
 
+    def test_a_malformed_config_falls_back_to_the_default(self):
+        for config in (
+            {"agents": [{"name": "A", "redis_port": "abc"}]},
+            {"agents": [{"name": "A", "redis_port": "${REDIS_PORT}"}]},
+            {"agents": [{"name": "A", "redis_port": None}]},
+            {"agents": [{"name": "A", "redis_port": 70000}]},
+            {"agents": ["just-a-string"]},
+            {"agents": "not-a-list", "redis": {"port": True}},
+            {"agents": [], "redis": "not-a-mapping"},
+            ["not", "a", "mapping"],
+        ):
+            with self.subTest(config=config):
+                self.assertEqual(local_redis_port(self._config(config)), 6379)
+
 
 if __name__ == "__main__":
     unittest.main()

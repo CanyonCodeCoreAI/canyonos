@@ -51,6 +51,26 @@ class LoadConfigProjectIdTests(unittest.TestCase):
         finally:
             os.unlink(config_path)
 
+    def test_a_null_project_id_is_replaced_instead_of_duplicated(self):
+        for body in (
+            "agents: []\nproject_id:\npoll_interval: 5\n",
+            "project_id: null\n",
+        ):
+            with self.subTest(body=body):
+                config_path = _write_config(body)
+                try:
+                    config = GlobalController._load_config(config_path)
+
+                    with open(config_path) as f:
+                        contents = f.read()
+                    self.assertEqual(contents.count("project_id"), 1)
+                    self.assertEqual(
+                        yaml.safe_load(contents)["project_id"], config["project_id"]
+                    )
+                    self.assertTrue(UUID_HEX_RE.match(config["project_id"]))
+                finally:
+                    os.unlink(config_path)
+
     def test_existing_project_id_is_left_untouched(self):
         config_path = _write_config(
             'agents: []\nproject_id: "11111111-1111-1111-1111-111111111111"\n'
