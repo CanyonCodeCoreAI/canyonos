@@ -1,19 +1,11 @@
 import redis
-from redis.backoff import ExponentialWithJitterBackoff
-from redis.retry import Retry
 
 
 class RedisClient(object):
     """Redis utility for connecting to localhost with support for strings, hashes, and sets."""
 
     def __init__(self, host="localhost", port=6379, db=0):
-        # redis-py's default 10 retries stall each call ~60s on an unreachable host.
-        self.client = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            retry=Retry(ExponentialWithJitterBackoff(), 1),
-        )
+        self.client = redis.Redis(host=host, port=port, db=db)
 
     # --- String operations ---
 
