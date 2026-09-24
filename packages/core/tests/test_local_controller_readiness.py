@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import types
 import unittest
 from types import SimpleNamespace
@@ -74,6 +75,29 @@ class LocalControllerReadinessTests(unittest.TestCase):
         controller = _build_controller(redis, publish_ready=False)
         controller.mark_failed()
         self.assertEqual(redis.strings, {"controller:localhost:50051:status": "failed"})
+
+    def test_an_agent_that_fails_to_import_logs_the_traceback(self):
+        """The first line names the agent; the traceback under it names the
+        import that actually failed, which is what a deploy failure has to show.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            agent_file = os.path.join(tmpdir, "broken_agent.py")
+            with open(agent_file, "w") as f:
+                f.write("import a_module_nobody_installed\n")
+            controller = SimpleNamespace(
+                agent_name="BrokenAgent", agent_file=agent_file
+            )
+
+            with self.assertLogs(
+                "canyonos_core.controller.local_controller", level="ERROR"
+            ) as logs:
+                agent = LocalController._load_agent(controller)
+
+        self.assertIsNone(agent)
+        output = "\n".join(logs.output)
+        self.assertIn("Failed to load agent BrokenAgent", output)
+        self.assertIn("Traceback (most recent call last):", output)
+        self.assertIn("a_module_nobody_installed", output)
 
 
 if __name__ == "__main__":
