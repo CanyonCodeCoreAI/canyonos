@@ -94,52 +94,54 @@ complete.
 
 ## 5. Choose service boundaries
 
-**Output:** one service per agent, including which edges of the source
-workflow cross services and which services require `replicas: 1`.
+**Output:** one service per agent, the graph edges that move into the workflow,
+and which services require `replicas: 1`.
+
+LangChain defines what an agent is; LangGraph defines how agents are
+orchestrated. Each LangChain agent becomes a service, and the LangGraph graph
+around them becomes the workflow.
 
 ### What counts as an agent
 
-An agent is a unit that the original workflow being ported invokes as a whole,
-whose output depends on a model call. Split each agent into its own service.
-Class and node names are not evidence: a class called `ChiefEditorAgent` that
-builds and runs a graph is an orchestrator, and a `PublisherAgent` that only
-formats and writes files is a plain step.
+An agent is a LangChain agent: a model that calls tools in a loop until it
+produces an answer. Class and node names are not evidence: a
+`ChiefEditorAgent` that builds and runs a graph is orchestration, and a
+`PublisherAgent` that only formats and writes files is a plain step.
 
-Decide each candidate in this order; the first match wins.
+Each of these is one agent, including its internal model/tools loop. Do not
+split its tools node.
 
-1. **Not invoked as a unit by the source workflow** — a helper, tool, prompt
-   builder, or parser that a node calls. Not an agent; it stays inside the
-   agent that calls it. Tools are never agents.
-2. **Builds or runs other units** — constructs a `StateGraph`, calls
-   `compile().invoke/ainvoke`, fans out with `Send` or `asyncio.gather`
-   over invocations. An orchestrator: its logic becomes the workflow.
-3. **Output does not depend on a model call** — an edge router (`route_*`,
-   `should_continue`) or a pure transform (formatting, publishing, file I/O).
-   Not an agent; the workflow imports and calls it from the source unchanged.
-4. **Needs a human or device during the request** — `input()`, a websocket
-   receive, `interrupt()` waiting on a person. A readiness blocker, not a
-   service; see the application-readiness gate above.
-5. **Otherwise it is an agent.**
+- An agent built by `create_agent`, or by the older `create_react_agent` or
+  `AgentExecutor`.
+- A hand-built equivalent: a model node bound to tools, a `ToolNode`, and a
+  `tools_condition` (or equivalent) edge looping between them.
 
-Group agents into services by the object the source workflow calls:
+None of these is an agent:
 
-- Nodes bound to methods of one instance are one agent: one service, one
-  declared method per node.
-- A prebuilt or ReAct agent (`create_react_agent`, `create_agent`,
-  `AgentExecutor`) is one agent, including its internal agent/tools loop.
-  Do not split its tools node.
-- A module-level function node that calls a model is one agent by itself.
-- A model that chooses the next unit (a supervisor, an LLM router) is an
-  agent whose output is that choice; the workflow executes the handoff.
-- A plain LangChain chain (`prompt | llm | parser`) is an agent only when it
-  is itself a graph node; otherwise it belongs to the agent that invokes it.
+- A tool, including one that wraps another agent. A subagent called as a tool
+  stays inside the agent that calls it.
+- A model call outside an agent loop: `llm.invoke`, a chain such as
+  `prompt | llm | parser`, or `with_structured_output`, including a supervisor
+  or router that picks the next node. It runs in the workflow, which has its
+  own `llm_proxy`.
+- An edge router, a pure transform, formatting, or file I/O.
 
-### Edges between agents
+A node that waits on a person or device during the request (`input()`, a
+websocket receive, `interrupt()`) is a readiness blocker, not a service; see
+the application-readiness gate above.
 
-Every edge between two agents crosses a service boundary, so the workflow
-re-expresses it as ordinary Python. Import the connected source node functions
-and routers unchanged. If the graph holds a single agent, preserve
-`graph.compile().invoke(...)` and wrap it.
+### Services and the workflow
+
+The service method is the graph node that runs the agent: the compiled agent
+itself when it is added as a node, or the node function that invokes it.
+
+Everything else in the graph is orchestration and becomes the workflow:
+`StateGraph` construction, edges, conditional edges, `Command(goto=...)`
+handoffs, and `Send` fan-out. Re-express it as ordinary Python, and import the
+remaining node functions and routers from the source unchanged.
+
+If the graph holds no agent or a single agent, do not split it: preserve
+`graph.compile().invoke(...)` and wrap it as one service.
 
 Construct runtime-injected service objects from source configuration. Never
 invent models, embedding dimensions, stores, or defaults silently; report any
