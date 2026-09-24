@@ -83,12 +83,15 @@ dependencies on the Workflow entry in the same way. The application's own
 `requirements.txt`, `pyproject.toml`, or lockfile is not installed, so an entry's
 `requirements` must describe everything its runtime path needs.
 
-For CanyonOS runtime dependency requirements, see the `project.dependencies` list in
-[`packages/core/pyproject.toml`](../packages/core/pyproject.toml).
-Use the declarations from the CanyonOS version you are deploying as the
-compatibility baseline. Each agent or Workflow container resolves and installs
-its CanyonOS base dependencies together with its YAML entry's `requirements` in
-the same Python environment, applying CanyonOS's platform overrides.
+The base packages resolved into every image are `BASE_AGENT_REQUIREMENTS` and
+`BASE_WORKFLOW_REQUIREMENTS` in
+[`packages/core/canyonos_core/stub_generator.py`](../packages/core/canyonos_core/stub_generator.py).
+Use the lists from the CanyonOS version you are deploying as the compatibility
+baseline. Each agent or Workflow container resolves and installs them together
+with its YAML entry's `requirements` in the same Python environment. The
+`PLATFORM_PINS` subset in the same file is forced as an override: an entry whose
+`requirements` exclude a pinned version fails the build, unless it only asks for
+a newer one.
 
 Each entry's `requirements` must satisfy the runtime requirements of that entry:
 
