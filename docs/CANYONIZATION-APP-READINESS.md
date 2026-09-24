@@ -159,7 +159,7 @@ environment.
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install -r requirements.txt
-python3 -m compileall -q .
+python3 -m compileall -q -x '/\.venv/' .
 python3 -c "from your_package.entrypoint import YourAgent"
 ```
 

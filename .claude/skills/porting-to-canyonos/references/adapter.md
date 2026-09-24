@@ -181,6 +181,7 @@ get their own container, so `localhost` there is that container's own
 loopback, not a shared service -- the client raises a connection error at
 startup instead of connecting. Local and EC2 both inject `CANYONOS_REDIS_HOST`
 and `CANYONOS_REDIS_PORT` into every container pointing at the real Redis
-instance; rebuild any such default from those instead of trusting the source's
-`localhost` default, while still honoring an explicit override the source
-already reads (e.g. `REDIS_URL`).
+instance; rebuild a Redis client's default from those instead of trusting the
+source's `localhost` default. Point a Postgres or other database client at its
+declared `type: database` entry's address, resolved as above. Either way, still
+honor an explicit override the source already reads (e.g. `REDIS_URL`).

@@ -10,7 +10,7 @@ is resolved. A blocker pauses the build, not just the survey checklist.
 
 ## Application-readiness gate
 
-Read [Preparing an Agent App for CanyonOS](https://github.com/CanyonCodeCoreAI/canyonos/blob/5cd4fa8c51082e414aad64e27283ba50c27c579f/docs/CANYONIZATION-APP-READINESS.md)
+Read [Preparing an Agent App for CanyonOS](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/docs/CANYONIZATION-APP-READINESS.md)
 and check the selected serving path against its requirements before adapting
 it. Use the target image's dependency baseline rather than copying version
 numbers from the guide.
