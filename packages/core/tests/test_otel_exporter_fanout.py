@@ -23,6 +23,7 @@ from opentelemetry.sdk.trace.export import SpanExportResult  # noqa: E402
 import trace_convert  # noqa: E402
 from canyonos_core.controller.utils import otel_writer, schema  # noqa: E402
 import otel_exporter  # noqa: E402
+from canyonos_core.schema.otel_destinations import SUPPORTED_PROTOCOLS  # noqa: E402
 
 
 # The generated local-controller protobuf modules are build artifacts and are
@@ -603,7 +604,7 @@ class OTelExporterConfigValidationTests(unittest.TestCase):
                 self.assertEqual(parsed[0]["protocol"], expected)
 
     def test_supported_protocols_are_accepted(self):
-        for protocol in otel_exporter.SUPPORTED_PROTOCOLS:
+        for protocol in SUPPORTED_PROTOCOLS:
             with self.subTest(protocol=protocol):
                 parsed = otel_exporter._configured_destinations(
                     json.dumps([{"name": "a", "protocol": protocol, "endpoint": "h:1"}])

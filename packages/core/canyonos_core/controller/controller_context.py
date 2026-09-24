@@ -19,15 +19,13 @@ import os
 import re
 import subprocess
 
-import yaml
-
+from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
-_RESERVED_ENV_KEYS = frozenset({"CANYONOS_LLM_STUB_TEXT"})
 _REMOTE_COPY_PATH = re.compile(
     r"(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+/canyonos\.[A-Za-z0-9]+/env"
 )
@@ -108,54 +106,16 @@ class ControllerContext(object):
     @staticmethod
     def _load_config(config_path):
         """Load the YAML config, importing root .env values and expanding ${VAR} refs."""
-        project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
-        # Under the .car layout the parent-of-parent lands on .car itself, not the root.
-        if os.path.basename(project_root) == ".car":
-            project_root = os.path.dirname(project_root)
-        ControllerContext._load_dotenv(os.path.join(project_root, ".env"))
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+        config = config_env.load_config(config_path)
         if not isinstance(config, dict):
             raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
-        return ControllerContext._expand_env_value(config)
+        return config
 
-    @staticmethod
-    def _load_dotenv(path):
-        """Load simple KEY=VALUE entries without overriding existing environment values."""
-        if not os.path.isfile(path):
-            return
-        with open(path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-                    value = value[1:-1]
-                if key in _RESERVED_ENV_KEYS:
-                    continue
-                if key and key not in os.environ:
-                    os.environ[key] = value
-
-    @staticmethod
-    def _expand_env_value(value):
-        """Replace every ${VAR} in the config with its environment value, leaving unset ones as written."""
-        if isinstance(value, str):
-            return re.sub(
-                r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
-                lambda m: os.environ.get(m.group(1), m.group(0)),
-                value,
-            )
-        if isinstance(value, dict):
-            return {
-                key: ControllerContext._expand_env_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [ControllerContext._expand_env_value(item) for item in value]
-        return value
+    # Kept as aliases for callers that use these helpers directly. The parser
+    # itself lives in config_env so the controller, reconciler and schema use
+    # the same dotenv and expansion rules.
+    _load_dotenv = staticmethod(config_env.load_dotenv)
+    _expand_env_value = staticmethod(config_env.expand_env_value)
 
     def _set_controllers(self, agents):
         """Set the agent spec list and its by-name index together so they can't drift."""

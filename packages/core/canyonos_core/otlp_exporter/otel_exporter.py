@@ -2,7 +2,6 @@
 
 import json
 import logging
-import math
 import os
 import signal
 import sqlite3
@@ -45,6 +44,12 @@ import metric_convert
 import log_convert
 import otel_reader
 from canyonos_core.controller.utils.schema import DB_PATH, init_db
+from canyonos_core.schema.otel_destinations import (
+    destination_problems,
+    destinations_problem,
+    duplicate_name_message,
+    normalize_destination,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,7 +74,6 @@ PRUNE_INTERVAL_SECONDS = 5 * 60
 TRACE_RETENTION_SECONDS = 30 * 60
 METRIC_RETENTION_SECONDS = 10 * 60
 LOG_RETENTION_SECONDS = 30 * 60
-SUPPORTED_PROTOCOLS = ("grpc", "http", "http/protobuf")
 # Separate empty-queue trackers per signal: {"consecutive": int, "warned_at": int|None}.
 _trace_empty_queue = {"consecutive": 0, "warned_at": None}
 _metric_empty_queue = {"consecutive": 0, "warned_at": None}
@@ -99,54 +103,12 @@ class Destination(TypedDict):
 def _validate_destination(destination, index) -> Destination:
     if not isinstance(destination, dict):
         raise ValueError(f"destination {index} must be an object")
-
-    name = destination.get("name")
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError(f"destination {index} name must be a non-empty string")
-
-    protocol = destination.get("protocol")
-    protocol = protocol.lower() if isinstance(protocol, str) else protocol
-    if protocol not in SUPPORTED_PROTOCOLS:
-        raise ValueError(
-            f"destination {name!r} protocol must be one of "
-            f"{list(SUPPORTED_PROTOCOLS)}; got {protocol!r}"
-        )
-    endpoint = destination.get("endpoint")
-    if not isinstance(endpoint, str) or not endpoint.strip():
-        raise ValueError(f"destination {name!r} endpoint must be a non-empty string")
-
-    headers = destination.get("headers")
-    if headers is not None:
-        if not isinstance(headers, dict):
-            raise ValueError(f"destination {name!r} headers must be an object")
-        if any(
-            not isinstance(key, str) or not key.strip() or not isinstance(value, str)
-            for key, value in headers.items()
-        ):
-            raise ValueError(
-                f"destination {name!r} headers must map non-empty strings to strings"
-            )
-        headers = dict(headers)
-
-    insecure = destination.get("insecure")
-    if insecure is not None and not isinstance(insecure, bool):
-        raise ValueError(f"destination {name!r} insecure must be a boolean")
-
-    timeout = destination.get("timeout")
-    if timeout is not None:
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-            raise ValueError(f"destination {name!r} timeout must be a positive number")
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError(f"destination {name!r} timeout must be a positive number")
-
-    return {
-        "name": name.strip(),
-        "protocol": cast(DestinationProtocol, protocol),
-        "endpoint": endpoint.strip(),
-        "headers": headers,
-        "insecure": insecure,
-        "timeout": float(timeout) if timeout is not None else None,
-    }
+    problems = list(destination_problems(destination))
+    if problems:
+        name = destination.get("name")
+        label = repr(name) if isinstance(name, str) and name.strip() else index
+        raise ValueError(f"destination {label} {problems[0][1]}")
+    return cast(Destination, normalize_destination(destination))
 
 
 def _configured_destinations(raw):
@@ -157,8 +119,9 @@ def _configured_destinations(raw):
         destinations = json.loads(raw)
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{DESTINATIONS_KEY} must contain a JSON list") from exc
-    if not isinstance(destinations, list) or not destinations:
-        raise ValueError(f"{DESTINATIONS_KEY} must contain a non-empty JSON list")
+    problem = destinations_problem(destinations)
+    if problem:
+        raise ValueError(f"{DESTINATIONS_KEY} {problem}")
 
     validated = []
     names = set()
@@ -166,7 +129,7 @@ def _configured_destinations(raw):
         validated_destination = _validate_destination(destination, index)
         name = validated_destination["name"]
         if name in names:
-            raise ValueError(f"destination names must be unique; duplicate {name!r}")
+            raise ValueError(duplicate_name_message(name))
         names.add(name)
         validated.append(validated_destination)
     return validated

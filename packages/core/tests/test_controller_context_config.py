@@ -12,6 +12,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from canyonos_core.controller.controller_context import ControllerContext
 from canyonos_core.controller.global_controller import GlobalController
+from canyonos_core.controller.utils.config_specs import (
+    read_config_specs,
+    write_config_specs,
+)
+from fakes import _FakeRedis
 
 _CONFIG = """\
 poll_interval: 5
@@ -61,6 +66,15 @@ class ConfigExpansionParityTests(unittest.TestCase):
             config = ControllerContext._load_config(self.config_path)
 
         self.assertEqual(config["ec2"]["ami_id"], "${TEST_EC2_AMI_ID}")
+
+    def test_expanded_agents_are_published_without_reparsing_the_manifest(self):
+        with patch.dict(os.environ, self.env):
+            config = ControllerContext._load_config(self.config_path)
+
+        redis = _FakeRedis()
+        write_config_specs(config["agents"], redis)
+
+        self.assertEqual(read_config_specs(redis)[0]["instance_type"], "t3.small")
 
 
 class ReconcilerContextParityTests(unittest.TestCase):
