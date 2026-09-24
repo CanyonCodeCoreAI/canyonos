@@ -115,10 +115,6 @@ agents:
       - httpx==0.28.1
 ```
 
-This example is abbreviated. A real entry lists the complete pinned set resolved
-from the application's lockfile or tested environment (for example, the output of
-`python3 -m pip freeze`), including the serving path's transitive dependencies.
-
 If the application has a lockfile or a pinned `requirements.txt`, copy those exact
 versions. If it pins nothing, bound each fast-moving package with a floor and a cap
 below its next major version, for example `langchain>=0.3,<1.0`. Test that each
