@@ -54,6 +54,11 @@ local defaults: fixed-code auth, no deploy worker, and Redis at
 `127.0.0.1:6379`. Shell variables still win if you need different ports or
 services.
 
+`canyonos:dev` uses Compose defaults instead of the optional `.docker/.env`,
+so this loop does not need another local env file. Use `.docker/.env` with the
+`bun run docker:*` commands when you need custom backing-service ports or
+volumes.
+
 Query the workflow normally. For example:
 
 ```bash
