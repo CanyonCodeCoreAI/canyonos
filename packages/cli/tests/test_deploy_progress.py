@@ -383,3 +383,129 @@ def test_reveal_failure_prints_no_cause_line_when_nothing_tripped_it(capsys):
     deploy_cmd._reveal_failure(lines, [], {"port": 1})
 
     assert "Cause:" not in capsys.readouterr().out
+
+
+_BEGIN = "WARNING:canyonos_core.controller.global_controller:--- begin container log: Broken (127.0.0.1:50051) status=failed ---\n"
+_END = "WARNING:canyonos_core.controller.global_controller:--- end container log: Broken ---\n"
+_QUOTED_TRACEBACK = [
+    "WARNING:canyonos_core.controller.global_controller:  Traceback (most recent call last):\n",
+    "WARNING:canyonos_core.controller.global_controller:  ModuleNotFoundError: No module named 'langchain'\n",
+    "WARNING:canyonos_core.controller.global_controller:  ERROR:local_controller:Failed to load agent Broken\n",
+]
+
+
+def test_a_quoted_container_log_does_not_trip_the_error_path():
+    """The dumped log is another process's output: its tracebacks and ERROR lines
+    are the diagnosis, not this deploy's verdict."""
+    _, _, _, errored = drive([_BEGIN, *_QUOTED_TRACEBACK, _END])
+    assert not errored
+
+
+def test_the_verdict_after_a_quoted_log_still_fails_the_deploy():
+    tracker, _, _, errored = drive(
+        [
+            _BEGIN,
+            *_QUOTED_TRACEBACK,
+            _END,
+            "ERROR:canyonos_core.cli:Agent replica(s) failed to become healthy within 4s: Broken 0/1\n",
+        ]
+    )
+    assert errored
+    assert not tracker.in_container_log
+
+
+def test_a_quoted_line_mentioning_a_sentinel_does_not_close_the_block():
+    """Quoted lines are indented, so a sentinel counts only at the start of a message."""
+    tracker, _, _, errored = drive(
+        [
+            _BEGIN,
+            "WARNING:canyonos_core.controller.global_controller:  agent printed --- end container log: Broken ---\n",
+            "WARNING:canyonos_core.controller.global_controller:  Traceback (most recent call last):\n",
+        ]
+    )
+    assert tracker.in_container_log
+    assert not errored
+
+
+def test_an_up_marker_quoted_from_a_container_log_is_not_the_deploys_own(monkeypatch):
+    monkeypatch.setattr(
+        deploy_cmd, "_deploy_summary", lambda *a: pytest.fail("no summary")
+    )
+    monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0)
+    monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": False})
+    lines = deploy_cmd._queued_lines(
+        iter(
+            [
+                _BEGIN,
+                "WARNING:canyonos_core.controller.global_controller:  Global controller started, polling every 5s...\n",
+                _END,
+                "ERROR:canyonos_core.cli:Agent replica(s) failed to become healthy within 4s: Broken 0/1\n",
+            ]
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="stopped or timed out"):
+        deploy_cmd._tail_quiet(
+            lines,
+            {"port": 1},
+            8080,
+            "config/global_controller.yaml",
+            serve=False,
+            on_ready=lambda _ready: None,
+        )
+
+
+def test_verbose_fails_on_a_fatal_line_instead_of_waiting_for_the_timeout(
+    monkeypatch, capsys
+):
+    """Whether a broken deploy fails must not depend on `-v`."""
+    monkeypatch.setattr(
+        deploy_cmd, "_deploy_summary", lambda *a: pytest.fail("no summary")
+    )
+    monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": True})
+    verdict = "CRITICAL:canyonos_core.cli:Agent replica(s) failed to become healthy within 4s: Broken 0/1\n"
+    lines = deploy_cmd._queued_lines(iter([_BEGIN, *_QUOTED_TRACEBACK, _END, verdict]))
+
+    with pytest.raises(RuntimeError, match="Deploy failed: CRITICAL.*Broken 0/1"):
+        deploy_cmd._tail_verbose(
+            lines,
+            {"port": 1},
+            8080,
+            "config/global_controller.yaml",
+            serve=False,
+            on_ready=lambda _ready: None,
+        )
+
+    out = capsys.readouterr().out
+    assert "No module named 'langchain'" in out
+    assert "Broken 0/1" in out
+
+
+def test_verbose_echoes_a_quoted_log_without_failing_on_it(monkeypatch, capsys):
+    monkeypatch.setattr(
+        deploy_cmd, "_deploy_summary", lambda *_a: ("url", [], "config.yaml")
+    )
+    lines = deploy_cmd._queued_lines(
+        iter(
+            [
+                _BEGIN,
+                *_QUOTED_TRACEBACK,
+                _END,
+                "INFO:canyonos_core.controller.global_controller:Global controller started, polling every 5s...\n",
+            ]
+        )
+    )
+
+    summary = deploy_cmd._tail_verbose(
+        lines,
+        {"port": 1},
+        8080,
+        "config/global_controller.yaml",
+        serve=False,
+        on_ready=lambda _ready: None,
+    )
+
+    assert summary == ("url", [], "config.yaml")
+    assert "No module named 'langchain'" in capsys.readouterr().out
