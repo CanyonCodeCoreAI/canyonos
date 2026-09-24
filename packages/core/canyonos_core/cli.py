@@ -116,16 +116,17 @@ def _load_config(config_path):
         resources = agent.get("resources", {})
         if not isinstance(resources, dict):
             raise RuntimeError(f"Agent {name} `resources` must be a mapping.")
-        for field in ("cpu", "memory", "gpu"):
+        # gpu: 0 is "no GPU", which the CLI's resource picker writes by default.
+        for field, floor in (("cpu", 0), ("memory", 0), ("gpu", None)):
             value = resources.get(field)
-            if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or value <= 0
-            ):
-                raise RuntimeError(
-                    f"Agent {name} resource `{field}` must be a positive number."
-                )
+            if value is None:
+                continue
+            not_a_number = isinstance(value, bool) or not isinstance(
+                value, (int, float)
+            )
+            if not_a_number or (value <= 0 if floor is not None else value < 0):
+                bound = "a positive number" if floor is not None else "0 or more"
+                raise RuntimeError(f"Agent {name} resource `{field}` must be {bound}.")
     return config
 
 

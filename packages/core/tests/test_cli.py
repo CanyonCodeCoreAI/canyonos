@@ -174,6 +174,36 @@ class CliDeployTests(unittest.TestCase):
         self.assertIn("agents[0].entrypoint", log.output[0])
         self.assertNotIn("\n", log.output[0])
 
+    def test_load_config_accepts_gpu_zero_but_not_negative_resources(self):
+        """The CLI's resource picker writes `gpu: 0` for agents without a GPU."""
+
+        def load(resources):
+            with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+                yaml.safe_dump(
+                    {
+                        "agents": [
+                            {
+                                "name": "A",
+                                "entrypoint": "agents/a.py",
+                                "resources": resources,
+                            }
+                        ]
+                    },
+                    f,
+                )
+            try:
+                return cli._load_config(f.name)
+            finally:
+                os.unlink(f.name)
+
+        config = load({"cpu": 1, "memory": 256, "gpu": 0})
+        self.assertEqual(config["agents"][0]["resources"]["gpu"], 0)
+
+        with self.assertRaisesRegex(RuntimeError, "`gpu` must be 0 or more"):
+            load({"gpu": -1})
+        with self.assertRaisesRegex(RuntimeError, "`cpu` must be a positive number"):
+            load({"cpu": 0})
+
 
 class CliBuildTests(unittest.TestCase):
     def _run_build(
