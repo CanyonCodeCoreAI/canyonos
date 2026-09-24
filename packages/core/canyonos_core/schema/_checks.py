@@ -273,14 +273,22 @@ def _string_mapping(collector, node, key, prefix):
         )
         return {}
     resolved = {}
-    for name, item in value.items():
-        item = _resolve(item)
-        if not isinstance(name, str) or not isinstance(item, (str, int, float)):
+    for name, raw in value.items():
+        item = _resolve(raw)
+        if not isinstance(name, str):
             collector.add(
-                node,
-                key,
+                value,
+                name,
                 _field(prefix, key),
-                f"expected a mapping of strings to strings, got {_describe(value)}",
+                f"expected string keys, got the key {_describe(name)}",
+            )
+            return {}
+        if not isinstance(item, (str, int, float)):
+            collector.add(
+                value,
+                name,
+                _field(_field(prefix, key), name),
+                f"expected a string, got {_describe_rejected(raw, item)}",
             )
             return {}
         resolved[name] = str(item)

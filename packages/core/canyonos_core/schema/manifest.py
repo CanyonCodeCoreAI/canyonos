@@ -187,6 +187,7 @@ class _Service:
 class AgentService(_Service):
     entrypoint: str = ""
     requirements: tuple = ()
+    requirement_lines: tuple = field(default=(), compare=False, repr=False)
 
     type: ClassVar[str] = "agent"
 
@@ -195,6 +196,7 @@ class AgentService(_Service):
 class WorkflowService(_Service):
     workflow_file: str = ""
     requirements: tuple = ()
+    requirement_lines: tuple = field(default=(), compare=False, repr=False)
     api_port: int = 8080
     dashboard_port: int = 8081
 
@@ -270,6 +272,10 @@ def _project_relative_py(collector, node, key, prefix, required):
         collector.add(node, key, field_name, f"must name a .py file, got {value!r}")
         return ""
     return value
+
+
+def _item_lines(node, key):
+    return tuple(getattr(node.get(key), "item_lines", ()))
 
 
 def _requirements(collector, node, prefix):
@@ -402,6 +408,7 @@ def _service(collector, entries, index):
                 collector, node, "workflow_file", prefix, required=True
             ),
             "requirements": _requirements(collector, node, prefix),
+            "requirement_lines": _item_lines(node, "requirements"),
             "api_port": _port(collector, node, "api_port", prefix, 8080),
             "dashboard_port": _port(collector, node, "dashboard_port", prefix, 8081),
         }
@@ -426,6 +433,7 @@ def _service(collector, entries, index):
                 collector, node, "entrypoint", prefix, required=True
             ),
             "requirements": _requirements(collector, node, prefix),
+            "requirement_lines": _item_lines(node, "requirements"),
         }
     else:
         return None

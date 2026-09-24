@@ -145,6 +145,9 @@ class ArgumentTypeTests(_DeclarationCase):
             "list[MyModel]",
             "'str'",
             "str(",
+            "int[str]",
+            "list[int][str]",
+            "None | None",
         ):
             with self.subTest(type=type_name):
                 violation = self.one(self._declaration(type_name))
@@ -223,6 +226,20 @@ class GeneratedNameTests(_DeclarationCase):
                 violation = self.one(document)
                 self.assertEqual(violation.field, field)
                 self.assertIn("not a valid Python identifier", violation.message)
+
+    def test_a_name_the_stub_itself_uses_is_rejected(self):
+        for name in ("Future", "inspect", "isinstance"):
+            for field, document in (
+                ("agent.name", self._declaration(agent=name)),
+                (
+                    "agent.functions[0].arguments[0].name",
+                    self._declaration(arguments=[{"name": name}]),
+                ),
+            ):
+                with self.subTest(name=name, field=field):
+                    violation = self.one(document)
+                    self.assertEqual(violation.field, field)
+                    self.assertIn("would shadow", violation.message)
 
     def test_an_argument_named_self_is_rejected(self):
         violation = self.one(self._declaration(arguments=[{"name": "self"}]))

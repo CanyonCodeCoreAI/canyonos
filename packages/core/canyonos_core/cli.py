@@ -27,7 +27,6 @@ from canyonos_core.schema import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("canyonos_core")
-DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 ARTIFACT_DIR_NAME = ".car"
 SOURCE_DIR_NAME = "app"
 
@@ -198,6 +197,7 @@ def _check_dependency_pins(manifest):
                 getattr(service, "requirements", ()),
                 service=index,
                 manifest_path=manifest.path,
+                lines=getattr(service, "requirement_lines", ()),
             )
         except DependencyPinConflict as conflict:
             violations.extend(conflict.violations)
@@ -211,7 +211,9 @@ def _check_dependency_pins(manifest):
 
 def _docker_platform():
     """Return the target Docker platform for portable runtime images."""
-    return os.environ.get("CANYONOS_DOCKER_PLATFORM", DEFAULT_DOCKER_PLATFORM)
+    from canyonos_core.stub_generator import target_docker_platform
+
+    return target_docker_platform()
 
 
 def _docker_build_cmd(*args):

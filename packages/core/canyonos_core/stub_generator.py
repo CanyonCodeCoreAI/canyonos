@@ -13,6 +13,7 @@ Usage:
 import argparse
 import ast
 import os
+import re
 import shutil
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -50,15 +51,23 @@ BASE_AGENT_REQUIREMENTS = [
 BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
 
 IMAGE_PYTHON_VERSION = "3.11"
-# What a requirement's environment marker is evaluated against: the image,
-# not the machine running the build.
-_IMAGE_MARKER_ENVIRONMENT = {
-    "python_version": IMAGE_PYTHON_VERSION,
-    "python_full_version": f"{IMAGE_PYTHON_VERSION}.0",
-    "sys_platform": "linux",
-    "platform_system": "Linux",
-    "os_name": "posix",
-}
+DEFAULT_DOCKER_PLATFORM = "linux/amd64"
+_MACHINE_BY_DOCKER_ARCH = {"amd64": "x86_64", "arm64": "aarch64"}
+_MARKER_VARIABLES = frozenset(
+    {
+        "implementation_name",
+        "implementation_version",
+        "os_name",
+        "platform_machine",
+        "platform_python_implementation",
+        "platform_release",
+        "platform_system",
+        "platform_version",
+        "python_full_version",
+        "python_version",
+        "sys_platform",
+    }
+)
 
 # Packages the image's own code is built against, so an app cannot be left to
 # pick them alone.
@@ -562,6 +571,41 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
+def target_docker_platform():
+    """The platform every image is built for."""
+    return os.environ.get("CANYONOS_DOCKER_PLATFORM", DEFAULT_DOCKER_PLATFORM)
+
+
+def _image_marker_environment():
+    """The marker values the image fixes; the rest are unknown until it runs."""
+    environment = {
+        "python_version": IMAGE_PYTHON_VERSION,
+        "sys_platform": "linux",
+        "platform_system": "Linux",
+        "os_name": "posix",
+        "implementation_name": "cpython",
+        "platform_python_implementation": "CPython",
+    }
+    arch = target_docker_platform().partition("/")[2].partition("/")[0]
+    if arch in _MACHINE_BY_DOCKER_ARCH:
+        environment["platform_machine"] = _MACHINE_BY_DOCKER_ARCH[arch]
+    return environment
+
+
+def _applies_in_image(marker):
+    """False only when the marker is known to be false inside the image.
+
+    A marker reading a value the image does not fix, such as the Python patch
+    version, is checked rather than guessed from the machine running the build.
+    """
+    environment = _image_marker_environment()
+    unquoted = re.sub(r"'[^']*'|\"[^\"]*\"", "", str(marker))
+    used = _MARKER_VARIABLES.intersection(re.findall(r"[a-z_]+", unquoted))
+    if used - environment.keys():
+        return True
+    return marker.evaluate(environment)
+
+
 def _only_newer_than(spec, pinned):
     """True when `spec` rules `pinned` out only by demanding something newer."""
     if spec.operator not in (">=", ">", "==", "~="):
@@ -572,15 +616,15 @@ def _only_newer_than(spec, pinned):
     return bound >= pinned if spec.operator == ">" else bound > pinned
 
 
-def _platform_overrides(requirements, *, service=None, manifest_path=None):
+def _platform_overrides(requirements, *, service=None, manifest_path=None, lines=None):
     """Take the higher of each platform pin and what the app asked for.
 
     uv replaces a requirement rather than intersecting it, so the comparison
     cannot be left to the resolver.
 
     `service` is the manifest index of the service these requirements belong
-    to, and with `manifest_path` it is only there to point a conflict at the
-    line the user has to edit.
+    to, and with `manifest_path` and `lines` (each requirement's line) it is
+    only there to point a conflict at the line the user has to edit.
 
     Raises:
         DependencyPinConflict: the app pinned a package *below* the version the
@@ -589,9 +633,10 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
             so the build stops here instead.
     """
     declared = {}
-    for requirement in requirements:
+    first_lines = {}
+    for index, requirement in enumerate(requirements):
         parsed = Requirement(requirement)
-        if parsed.marker and not parsed.marker.evaluate(_IMAGE_MARKER_ENVIRONMENT):
+        if parsed.marker and not _applies_in_image(parsed.marker):
             continue
         # PEP 503 names: `grpcio_tools`, `Grpcio-Tools` and `grpcio.tools`
         # are all the package pinned as `grpcio-tools`. A package asked for
@@ -599,6 +644,8 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
         # intersection can be installed -- keeping just the last line made the
         # answer depend on the order they were written in.
         key = canonicalize_name(parsed.name)
+        if lines and key not in first_lines:
+            first_lines[key] = lines[index]
         if key in declared:
             first_name, specifier = declared[key]
             declared[key] = (first_name, specifier & parsed.specifier)
@@ -634,7 +681,7 @@ def _platform_overrides(requirements, *, service=None, manifest_path=None):
             conflicts.append(
                 SchemaViolation(
                     manifest_path or "",
-                    0,
+                    first_lines.get(canonicalize_name(name), 0),
                     field,
                     f"'{wanted}' conflicts with the platform pin {pin}, which the "
                     f"agent image is built against: relax the bound or pin "

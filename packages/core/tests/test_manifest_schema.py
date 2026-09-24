@@ -499,6 +499,24 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(database.db_port, 5432)
 
 
+class StringMappingTests(_ManifestCase):
+    def test_a_bad_value_is_named_with_its_key(self):
+        for value, described in (([1], "the list [1]"), ({"a": 1}, "a mapping")):
+            with self.subTest(value=value):
+                violation = self.one(
+                    {"agents": [_agent(env={"OK": "1", "BAD": value})]}
+                )
+                self.assertEqual(violation.field, "agents[0].env.BAD")
+                self.assertEqual(
+                    violation.message, f"expected a string, got {described}"
+                )
+
+    def test_numbers_are_still_accepted_as_their_text(self):
+        manifest = self.load({"agents": [_agent(env={"PORT": 8080, "RATIO": 0.5})]})
+
+        self.assertEqual(manifest.agents[0].env, {"PORT": "8080", "RATIO": "0.5"})
+
+
 class RequirementTests(_ManifestCase):
     def test_an_entry_the_pin_check_cannot_read_is_rejected(self):
         for requirement in ("-r deps.txt", "protobuf<5\nyfinance", "git+https://x/y"):
@@ -1047,6 +1065,10 @@ class UnparseableFileTests(unittest.TestCase):
         (violation,) = raised.exception.violations
         self.assertEqual(violation.field, "agents[0].env")
         self.assertNotIn("duplicate", violation.message)
+        self.assertEqual(
+            violation.message, "expected string keys, got the key the number 1"
+        )
+        self.assertEqual(violation.line, 5)
 
     def test_an_empty_file_is_reported(self):
         (violation,) = self._load("# nothing here\n")

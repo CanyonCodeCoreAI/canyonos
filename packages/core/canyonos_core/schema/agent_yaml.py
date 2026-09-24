@@ -7,6 +7,7 @@ and the stub imports nothing, so a type may only be built from builtins.
 """
 
 import ast
+import builtins
 import keyword
 from dataclasses import dataclass
 
@@ -41,6 +42,8 @@ BUILTIN_TYPE_NAMES = frozenset(
     }
 )
 
+_BUILTIN_TYPES = {name: getattr(builtins, name) for name in BUILTIN_TYPE_NAMES}
+
 # Nodes an annotation may be built from: `list[str]`, `dict[str, int]`,
 # `tuple[int, ...]`, `int | None`.
 _ANNOTATION_NODES = (
@@ -52,6 +55,10 @@ _ANNOTATION_NODES = (
     ast.BinOp,
     ast.BitOr,
 )
+
+# Module-level names every generated method body reads; an agent class or an
+# argument by one of these names would shadow it.
+STUB_GLOBAL_NAMES = frozenset({"Future", "inspect", "isinstance"})
 
 _DOCUMENT_KEYS = frozenset({"agent"})
 _DECLARATION_KEYS = frozenset({"name", "functions"})
@@ -100,10 +107,16 @@ def is_builtin_annotation(type_name):
             return False
         elif isinstance(node, ast.Name) and node.id not in BUILTIN_TYPE_NAMES:
             return False
+    # Only builtin type names reach here, so evaluating is safe; it rejects
+    # what parses but fails when the stub's `def` runs, such as `int[str]`.
+    try:
+        eval(compile(tree, "<annotation>", "eval"), {"__builtins__": _BUILTIN_TYPES})
+    except TypeError:
+        return False
     return True
 
 
-def _identifier(collector, node, key, prefix, required=False):
+def _identifier(collector, node, key, prefix, required=False, reserved=()):
     """A name the generated stub writes as Python source."""
     value = _string(collector, node, key, prefix, required=required)
     if value is None:
@@ -115,6 +128,15 @@ def _identifier(collector, node, key, prefix, required=False):
             _field(prefix, key),
             f"{value!r} is not a valid Python identifier; the generated stub "
             "uses it as a name",
+        )
+        return None
+    if value in reserved:
+        collector.add(
+            node,
+            key,
+            _field(prefix, key),
+            f"{value!r} would shadow the name the generated stub uses for "
+            "itself; choose another",
         )
         return None
     return value
@@ -164,7 +186,14 @@ def _arguments(collector, node, prefix):
             )
             continue
         _check_keys(collector, entry, argument_prefix, _ARGUMENT_KEYS)
-        name = _identifier(collector, entry, "name", argument_prefix, required=True)
+        name = _identifier(
+            collector,
+            entry,
+            "name",
+            argument_prefix,
+            required=True,
+            reserved=STUB_GLOBAL_NAMES,
+        )
         if name == "self" or name in seen:
             collector.add(
                 entry,
@@ -278,7 +307,9 @@ def load_agent_declaration(path):
         raise SchemaError(collector.violations)
 
     _check_keys(collector, block, "agent", _DECLARATION_KEYS)
-    name = _identifier(collector, block, "name", "agent", required=True)
+    name = _identifier(
+        collector, block, "name", "agent", required=True, reserved=STUB_GLOBAL_NAMES
+    )
     functions = _functions(collector, block)
     if collector.violations:
         raise SchemaError(collector.violations)

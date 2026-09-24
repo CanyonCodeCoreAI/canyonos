@@ -678,6 +678,39 @@ class PlatformPinTests(unittest.TestCase):
         with self.assertRaises(DependencyPinConflict):
             _platform_overrides(['grpcio<0.1; sys_platform == "linux"'], service=0)
 
+    def test_a_marker_is_evaluated_for_the_image_architecture(self):
+        requirement = 'grpcio<0.1; platform_machine == "aarch64"'
+        with unittest.mock.patch.dict(
+            os.environ, {"CANYONOS_DOCKER_PLATFORM": "linux/amd64"}
+        ):
+            self.assertIn("grpcio==1.83.1", _platform_overrides([requirement]))
+        with unittest.mock.patch.dict(
+            os.environ, {"CANYONOS_DOCKER_PLATFORM": "linux/arm64"}
+        ):
+            with self.assertRaises(DependencyPinConflict):
+                _platform_overrides([requirement], service=0)
+
+    def test_a_marker_on_a_value_the_image_does_not_fix_is_still_checked(self):
+        with self.assertRaises(DependencyPinConflict):
+            _platform_overrides(
+                ['grpcio<0.1; python_full_version >= "3.11.99"'], service=0
+            )
+
+    def test_a_conflict_points_at_the_requirements_line(self):
+        with self.assertRaises(DependencyPinConflict) as raised:
+            _platform_overrides(
+                ["requests", "grpcio_tools<1", "grpcio-tools<0.5"],
+                service=0,
+                manifest_path="config/global_controller.yaml",
+                lines=[7, 8, 9],
+            )
+
+        (violation,) = raised.exception.violations
+        self.assertEqual(violation.line, 8)
+        self.assertTrue(
+            render_violation(violation).startswith("config/global_controller.yaml:8: ")
+        )
+
     def test_two_newer_asks_for_one_package_still_win(self):
         with redirect_stdout(io.StringIO()):
             overrides = _platform_overrides(["protobuf>=7", "Protobuf>=7.1"])
