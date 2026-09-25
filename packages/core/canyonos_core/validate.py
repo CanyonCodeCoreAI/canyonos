@@ -118,7 +118,148 @@ def _module_path(entrypoint):
 # ------------------------------------------------------------------ #
 
 
-def _check_adapter(report, entrypoint_path, service, declaration):
+class _Class(NamedTuple):
+    """A class statement, and the file and module it was read from."""
+
+    node: ast.ClassDef
+    path: str
+    tree: ast.Module
+
+
+# A name bound by something that only running the module could follow: a call,
+# an installed package, a star import, a conditional definition.
+_UNREADABLE = "unreadable"
+
+
+def _inside(source_dir, path):
+    """Whether `path` resolves to a file under `source_dir`, symlinks followed."""
+    real_source_dir = os.path.realpath(source_dir)
+    try:
+        common = os.path.commonpath([real_source_dir, os.path.realpath(path)])
+    except ValueError:
+        # A different drive on Windows.
+        return False
+    return common == real_source_dir
+
+
+def _binds(node, name):
+    """Whether anything inside `node` binds `name`."""
+    for child in ast.walk(node):
+        if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if child.name == name:
+                return True
+        elif isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            if child.id == name:
+                return True
+        elif isinstance(child, (ast.Import, ast.ImportFrom)):
+            for alias in child.names:
+                if alias.name == "*" or (alias.asname or alias.name) == name:
+                    return True
+    return False
+
+
+def _imported_file(source_dir, path, node):
+    """The source file an `ImportFrom` reads, or None outside the project."""
+    if node.level:
+        package = os.path.dirname(os.path.relpath(path, source_dir))
+        for _ in range(node.level - 1):
+            package = os.path.dirname(package)
+        parts = package.split(os.sep) if package else []
+    else:
+        parts = []
+    parts += node.module.split(".") if node.module else []
+    base = os.path.join(source_dir, *parts)
+    for candidate in (base + ".py", os.path.join(base, "__init__.py")):
+        if os.path.isfile(candidate) and _inside(source_dir, candidate):
+            return candidate
+    return None
+
+
+def _resolve_class(source_dir, path, tree, name, seen=frozenset()):
+    """What `name` is at module level: a `_Class`, None, or `_UNREADABLE`.
+
+    Follows what the controller's getattr(module, name) would reach without
+    running anything: a class statement, an alias of another name, and a
+    `from ... import` of a module in the project.
+    """
+    if (path, name) in seen:
+        return _UNREADABLE
+    seen = seen | {(path, name)}
+
+    binding = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            binding = _Class(node, path, tree)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                value = node.value
+                binding = (
+                    _resolve_class(source_dir, path, tree, value.id, seen)
+                    if isinstance(value, ast.Name)
+                    else _UNREADABLE
+                )
+        elif isinstance(node, ast.ImportFrom):
+            alias = next(
+                (
+                    a
+                    for a in node.names
+                    if a.name == "*" or (a.asname or a.name) == name
+                ),
+                None,
+            )
+            if alias is not None:
+                binding = _UNREADABLE
+                imported = _imported_file(source_dir, path, node)
+                if alias.name != "*" and imported is not None:
+                    imported_tree, _ = _parse(imported)
+                    if imported_tree is not None:
+                        binding = _resolve_class(
+                            source_dir, imported, imported_tree, alias.name, seen
+                        )
+        elif _binds(node, name):
+            binding = _UNREADABLE
+    return binding
+
+
+def _methods(source_dir, cls, seen=frozenset()):
+    """`({name: (node, path) or None}, complete)` for a class and its bases.
+
+    None is an attribute bound some other way than `def`, which only running
+    the class would read. Incomplete when a base cannot be read, or the class
+    answers any name through `__getattr__`: either may supply anything.
+    """
+    methods = {}
+    for node in cls.node.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            methods[node.name] = (node, cls.path)
+        else:
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                    methods[child.id] = None
+    complete = "__getattr__" not in methods
+    seen = seen | {(cls.path, cls.node.name)}
+    for base in cls.node.bases:
+        if isinstance(base, ast.Name) and base.id == "object":
+            continue
+        resolved = (
+            _resolve_class(source_dir, cls.path, cls.tree, base.id)
+            if isinstance(base, ast.Name)
+            else _UNREADABLE
+        )
+        if not isinstance(resolved, _Class) or (
+            (resolved.path, resolved.node.name) in seen
+        ):
+            complete = False
+            continue
+        inherited, base_complete = _methods(source_dir, resolved, seen)
+        complete = complete and base_complete
+        for name, found in inherited.items():
+            methods.setdefault(name, found)
+    return methods, complete
+
+
+def _check_adapter(report, source_dir, entrypoint_path, service, declaration):
     """The class the controller loads, and the methods it calls on it."""
     tree, error = _parse(entrypoint_path)
     if tree is None:
@@ -132,15 +273,10 @@ def _check_adapter(report, entrypoint_path, service, declaration):
         )
         return
 
-    class_node = next(
-        (
-            node
-            for node in tree.body
-            if isinstance(node, ast.ClassDef) and node.name == service.name
-        ),
-        None,
-    )
-    if class_node is None:
+    cls = _resolve_class(source_dir, entrypoint_path, tree, service.name)
+    if cls is _UNREADABLE:
+        return
+    if cls is None:
         defined = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
         found = ", ".join(defined) if defined else "no classes at all"
         report.add(
@@ -153,29 +289,25 @@ def _check_adapter(report, entrypoint_path, service, declaration):
         )
         return
 
-    methods = {
-        node.name: node
-        for node in class_node.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    _check_constructor(report, entrypoint_path, service.name, methods)
+    methods, complete = _methods(source_dir, cls)
+    _check_constructor(report, service.name, methods)
     if declaration is None:
         return
     for function in declaration.functions:
-        _check_method(report, entrypoint_path, service.name, function, methods)
+        _check_method(report, cls.path, service.name, function, methods, complete)
 
 
-def _check_constructor(report, entrypoint_path, name, methods):
+def _check_constructor(report, name, methods):
     """The controller constructs the agent with no arguments."""
-    init = methods.get("__init__")
-    if init is None:
+    if methods.get("__init__") is None:
         return
+    init, path = methods["__init__"]
     required = _required_parameters(init)
     if not required:
         return
     report.add(
         "CAR-ADAPTER-INIT",
-        entrypoint_path,
+        path,
         init.lineno,
         f"`{name}.__init__` requires {', '.join(required)}",
         "_load_agent calls agent_class() with no arguments; the TypeError is "
@@ -184,24 +316,28 @@ def _check_constructor(report, entrypoint_path, name, methods):
     )
 
 
-def _check_method(report, entrypoint_path, class_name, function, methods):
+def _check_method(report, class_path, class_name, function, methods, complete):
     """One declared function against the method it is generated from."""
-    method = methods.get(function.name)
-    if method is None:
+    if function.name not in methods:
+        if not complete:
+            return
         report.add(
             "CAR-ADAPTER-SIGNATURE",
-            entrypoint_path,
+            class_path,
             0,
             f"`{class_name}` has no method `{function.name}`",
             "The declaration gives callers a stub for it; the controller then "
             f"answers \"Agent {class_name} has no method '{function.name}'\".",
         )
         return
+    if methods[function.name] is None:
+        return
+    method, path = methods[function.name]
 
     if isinstance(method, ast.AsyncFunctionDef):
         report.add(
             "CAR-ADAPTER-ASYNC",
-            entrypoint_path,
+            path,
             method.lineno,
             f"`{class_name}.{function.name}` is `async def`",
             "The executor calls method(**args) with no await, so Redis receives "
@@ -211,11 +347,15 @@ def _check_method(report, entrypoint_path, class_name, function, methods):
 
     declared = [argument.name for argument in function.arguments]
     actual = _parameter_names(method)
-    missing = [name for name in declared if name not in actual]
+    missing = (
+        []
+        if method.args.kwarg is not None
+        else [name for name in declared if name not in actual]
+    )
     if missing:
         report.add(
             "CAR-ADAPTER-SIGNATURE",
-            entrypoint_path,
+            path,
             method.lineno,
             f"`{class_name}.{function.name}` has no parameter "
             f"{', '.join(repr(name) for name in missing)}, but the declaration "
@@ -229,7 +369,7 @@ def _check_method(report, entrypoint_path, class_name, function, methods):
     if unfilled:
         report.add(
             "CAR-ADAPTER-SIGNATURE",
-            entrypoint_path,
+            path,
             method.lineno,
             f"`{class_name}.{function.name}` requires {', '.join(unfilled)}, "
             "which the declaration does not declare",
@@ -282,9 +422,7 @@ def _check_workflow(report, workflow_path, stub_modules):
         _check_main_signature(report, workflow_path, main)
 
     if not any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "deploy"
+        isinstance(node, ast.Call) and _calls_deploy(node.func, tree)
         for node in ast.walk(tree)
     ):
         report.add(
@@ -298,6 +436,38 @@ def _check_workflow(report, workflow_path, stub_modules):
 
     _check_main_guard(report, workflow_path, tree)
     _check_stub_imports(report, workflow_path, tree, stub_modules)
+
+
+def _deploy_names(tree):
+    """`(names bound to deploy(), names bound to the deploy module)`."""
+    functions, modules = {"deploy"}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "deploy":
+            functions.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "deploy"
+            )
+        elif isinstance(node, ast.Import):
+            modules.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "deploy"
+            )
+    return functions, modules
+
+
+def _calls_deploy(func, tree):
+    """Whether a call's target is deploy(), by any name the workflow gave it."""
+    functions, modules = _deploy_names(tree)
+    if isinstance(func, ast.Name):
+        return func.id in functions
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "deploy"
+        and isinstance(func.value, ast.Name)
+        and func.value.id in modules
+    )
 
 
 def _check_main_signature(report, workflow_path, main):
@@ -434,6 +604,11 @@ _MISSING_WORKFLOW = (
     "and the deployment has nothing to serve."
 )
 
+_OUTSIDE = (
+    "The in-container deploy follows the link and rejects a service whose file "
+    "is not in the project, before it builds anything."
+)
+
 
 def _check_entrypoints(report, manifest, source_dir, config_path):
     """Every file the manifest points at is in the source copy."""
@@ -463,16 +638,27 @@ def _check_entrypoints(report, manifest, source_dir, config_path):
         else:
             continue
         # An absent value is the schema's to report, not this check's.
-        if not declared or os.path.isfile(os.path.join(source_dir, declared)):
+        if not declared:
             continue
-        report.add(
-            "CAR-ENTRYPOINT-MISSING",
-            config_path,
-            0,
-            f"agents[{index}].{field}: "
-            f"{os.path.join(SOURCE_DIR_NAME, declared)} does not exist",
-            mechanism,
-        )
+        path = os.path.join(source_dir, declared)
+        shown = os.path.join(SOURCE_DIR_NAME, declared)
+        if not os.path.isfile(path):
+            report.add(
+                "CAR-ENTRYPOINT-MISSING",
+                config_path,
+                0,
+                f"agents[{index}].{field}: {shown} does not exist",
+                mechanism,
+            )
+        elif not _inside(source_dir, path):
+            report.add(
+                "CAR-ENTRYPOINT-OUTSIDE",
+                config_path,
+                0,
+                f"agents[{index}].{field}: {shown} resolves outside "
+                f"`{SOURCE_DIR_NAME}/`",
+                _OUTSIDE,
+            )
 
 
 def _check_flat_collisions(report, source_dir):
@@ -501,15 +687,13 @@ def _check_package_reexport(report, source_dir, service):
     every image except this agent's own the module at the entrypoint is the
     generated stub, which defines the agent class and nothing else.
     """
-    directory = os.path.dirname(service.entrypoint)
-    if not directory:
+    package, _, module = _module_path(service.entrypoint).rpartition(".")
+    if not package:
         return
-    init_path = os.path.join(source_dir, directory, "__init__.py")
+    init_path = os.path.join(source_dir, *package.split("."), "__init__.py")
     if not os.path.isfile(init_path):
         return
 
-    module = os.path.splitext(os.path.basename(service.entrypoint))[0]
-    package = directory.replace("\\", "/").replace("/", ".")
     tree, _ = _parse(init_path)
     if tree is None:
         return
@@ -630,18 +814,22 @@ def validate_car(artifact_root, config_path=None):
         if not isinstance(service, AgentService) or not service.entrypoint:
             continue
         entrypoint_path = os.path.join(source_dir, service.entrypoint)
-        if not os.path.isfile(entrypoint_path):
+        if not os.path.isfile(entrypoint_path) or not _inside(
+            source_dir, entrypoint_path
+        ):
             continue  # reported by _check_entrypoints
         if service.name in declarations:
             stub_modules[service.name] = _module_path(service.entrypoint)
-        _check_adapter(report, entrypoint_path, service, declarations.get(service.name))
+        _check_adapter(
+            report, source_dir, entrypoint_path, service, declarations.get(service.name)
+        )
         _check_package_reexport(report, source_dir, service)
 
     for service in manifest.agents:
         if not isinstance(service, WorkflowService) or not service.workflow_file:
             continue
         workflow_path = os.path.join(source_dir, service.workflow_file)
-        if os.path.isfile(workflow_path):
+        if os.path.isfile(workflow_path) and _inside(source_dir, workflow_path):
             _check_workflow(report, workflow_path, stub_modules)
 
     _check_flat_collisions(report, source_dir)

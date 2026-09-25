@@ -197,6 +197,159 @@ class ValidateCarTests(unittest.TestCase):
             [],
         )
 
+    def test_a_method_inherited_from_a_base_in_the_module_is_found(self):
+        """The controller does getattr(agent, name), which walks the MRO."""
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "class _Base:\n"
+                    "    def echo(self, text):\n"
+                    "        return text\n\n\n"
+                    "class EchoAgent(_Base):\n"
+                    "    pass\n"
+                }
+            ),
+            [],
+        )
+
+    def test_an_inherited_method_is_still_checked(self):
+        findings = validate_car(
+            self.car(
+                {
+                    "app/agents/echo_agent.py": "class _Base:\n"
+                    "    async def echo(self, text):\n"
+                    "        return text\n\n\n"
+                    "class EchoAgent(_Base):\n"
+                    "    pass\n"
+                }
+            )
+        )
+
+        self.assertEqual([f.code for f in findings], ["CAR-ADAPTER-ASYNC"])
+        self.assertEqual(findings[0].line, 2)
+
+    def test_a_method_inherited_from_another_module_is_found(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "from agents.base import Base\n\n\n"
+                    "class EchoAgent(Base):\n"
+                    "    pass\n",
+                    "app/agents/base.py": "class Base:\n"
+                    "    def echo(self, text):\n"
+                    "        return text\n",
+                }
+            ),
+            [],
+        )
+
+    def test_a_base_that_cannot_be_read_does_not_report_a_missing_method(self):
+        """A base from an installed package may define it; only the import knows."""
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "from somelib import Base\n\n\n"
+                    "class EchoAgent(Base):\n"
+                    "    pass\n"
+                }
+            ),
+            [],
+        )
+
+    def test_a_method_bound_by_assignment_is_not_reported(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "def _echo(self, text):\n"
+                    "    return text\n\n\n"
+                    "class EchoAgent:\n"
+                    "    echo = _echo\n"
+                }
+            ),
+            [],
+        )
+
+    def test_a_class_with_getattr_does_not_report_a_missing_method(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "    def __getattr__(self, name):\n"
+                    "        return lambda text: text\n"
+                }
+            ),
+            [],
+        )
+
+    def test_a_method_taking_var_keywords_accepts_every_declared_argument(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "    def echo(self, **kwargs):\n"
+                    "        return kwargs['text']\n"
+                }
+            ),
+            [],
+        )
+
+    def test_an_adapter_imported_into_the_entrypoint_is_found_and_checked(self):
+        findings = validate_car(
+            self.car(
+                {
+                    "app/agents/echo_agent.py": "from agents._impl import EchoAgent\n",
+                    "app/agents/_impl.py": "class EchoAgent:\n"
+                    "    async def echo(self, text):\n"
+                    "        return text\n",
+                }
+            )
+        )
+
+        self.assertEqual([f.code for f in findings], ["CAR-ADAPTER-ASYNC"])
+        self.assertEqual(findings[0].path, os.path.join("app", "agents", "_impl.py"))
+
+    def test_an_adapter_imported_relatively_is_found(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "from ._impl import EchoAgent\n",
+                    "app/agents/_impl.py": "class EchoAgent:\n"
+                    "    def echo(self, text):\n"
+                    "        return text\n",
+                }
+            ),
+            [],
+        )
+
+    def test_an_adapter_assigned_from_another_class_is_found(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "class _Echo:\n"
+                    "    def echo(self, text):\n"
+                    "        return text\n\n\n"
+                    "EchoAgent = _Echo\n"
+                }
+            ),
+            [],
+        )
+
+    def test_an_adapter_bound_by_something_unreadable_is_not_reported(self):
+        """A factory call binds the name; only running it would say to what."""
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "def build():\n"
+                    "    class Echo:\n"
+                    "        def echo(self, text):\n"
+                    "            return text\n"
+                    "    return Echo\n\n\n"
+                    "EchoAgent = build()\n"
+                }
+            ),
+            [],
+        )
+
     def test_an_async_method_is_reported(self):
         findings = validate_car(
             self.car(
@@ -282,6 +435,32 @@ class ValidateCarTests(unittest.TestCase):
 
         self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
         self.assertIn("never calls `deploy(...)`", findings[0].summary)
+
+    def test_deploy_called_through_its_module_is_fine(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/workflow/echo_workflow.py": WORKFLOW.replace(
+                        "deploy(main, port=8080)",
+                        "import deploy\n\ndeploy.deploy(main, port=8080)",
+                    )
+                }
+            ),
+            [],
+        )
+
+    def test_deploy_imported_under_another_name_is_fine(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/workflow/echo_workflow.py": "from deploy import deploy as serve\n"
+                    + WORKFLOW.replace(
+                        "deploy(main, port=8080)", "serve(main, port=8080)"
+                    )
+                }
+            ),
+            [],
+        )
 
     def test_a_main_guard_is_reported(self):
         findings = validate_car(
@@ -379,6 +558,22 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual([f.code for f in findings], ["CAR-PACKAGE-REEXPORT"])
         self.assertEqual(findings[0].path, os.path.join("app", "agents", "__init__.py"))
 
+    def test_a_dot_slash_entrypoint_is_checked_for_a_reexport_too(self):
+        """`./agents/x.py` puts its stub over the same file `agents/x.py` does."""
+        findings = validate_car(
+            self.car(
+                {
+                    "app/agents/__init__.py": "from agents.echo_agent import EchoAgent\n",
+                    "config/global_controller.yaml": CONFIG.replace(
+                        "entrypoint: agents/", "entrypoint: ./agents/"
+                    ),
+                }
+            )
+        )
+
+        self.assertEqual([f.code for f in findings], ["CAR-PACKAGE-REEXPORT"])
+        self.assertIn("`agents/__init__.py`", findings[0].summary)
+
     def test_a_package_that_reexports_another_module_is_fine(self):
         self.assertEqual(
             self.codes(
@@ -419,6 +614,20 @@ class ValidateCarTests(unittest.TestCase):
 
         self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-MISSING"])
         self.assertIn("agents[1].workflow_file:", findings[0].summary)
+
+    def test_an_entrypoint_that_resolves_outside_the_source_is_reported(self):
+        """The deploy rejects it; validate must not pass what the deploy refuses."""
+        root = self.car()
+        entrypoint = os.path.join(root, "app", "agents", "echo_agent.py")
+        outside = os.path.join(self.tmpdir, "echo_agent.py")
+        shutil.move(entrypoint, outside)
+        os.symlink(outside, entrypoint)
+
+        findings = validate_car(root)
+
+        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-OUTSIDE"])
+        self.assertIn("agents[0].entrypoint:", findings[0].summary)
+        self.assertIn("resolves outside", findings[0].summary)
 
     def test_a_missing_source_root_is_reported_once(self):
         root = self.car()
