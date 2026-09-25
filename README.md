@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/canyonos-banner.gif" alt="CanyonOS" width="720" height="123">
+  <img src="https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/images/canyonos-banner.gif" alt="CanyonOS" width="720" height="123">
 </p>
 
 ## CanyonOS turns plain Python into a running, distributed workflow — without changing a line of code.
@@ -261,4 +261,4 @@ If you find CanyonOS (Nalar) useful for your research, please cite our paper:
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/LICENSE) file for details.
