@@ -4,59 +4,94 @@ import {
   deduplicateIssues,
   deduplicatePullRequests,
   extractCanIdentifiers,
+  findShippedPackages,
+  packagesTouchedBy,
   pickPreviousRelease,
   queryLinearIssues,
+  readManifestVersion,
   releaseLine,
   runReleaseNotesPipeline,
 } from './release-notes';
-import type { LinearIssue, PipelineDependencies, PullRequest, Release } from './release-notes';
+import type {
+  FallbackPullRequest,
+  LinearIssue,
+  PipelineDependencies,
+  PullRequest,
+  Release,
+} from './release-notes';
 
 const pullRequest = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   number: 42,
   url: 'https://github.com/CanyonCodeCoreAI/canyonos/pull/42',
-  title: 'Improve dashboard CAN-42',
+  title: 'Improve deploy output CAN-42',
   body: null,
-  headRefName: 'felipea/can-42-dashboard',
+  headRefName: 'felipea/can-42-deploy-output',
   mergedAt: '2026-09-10T00:00:00Z',
   ...overrides,
 });
 
 const issue = (overrides: Partial<LinearIssue> = {}): LinearIssue => ({
   identifier: 'CAN-42',
-  title: 'Improve dashboard',
-  description: 'A user-visible dashboard update.',
+  title: 'Improve deploy output',
+  description: 'A user-visible CLI update.',
   state: { name: 'Done', type: 'completed' },
-  labels: ['web'],
+  labels: ['cli'],
   project: { name: 'Platform' },
   cycle: { name: 'September', number: 12 },
   ...overrides,
 });
 
+const pyproject = (version: string) => `[project]\nname = "canyonos"\nversion = "${version}"\n`;
+const packageJson = (version: string) => JSON.stringify({ name: 'web', version });
+
+const manifests: Record<string, Record<string, string>> = {
+  'v2026.09.18': {
+    'packages/cli/pyproject.toml': pyproject('0.1.730'),
+    'packages/core/pyproject.toml': pyproject('0.1.0'),
+    'packages/api/package.json': packageJson('0.1.0'),
+    'packages/web/package.json': packageJson('0.1.0'),
+  },
+  'v2026.09.25': {
+    'packages/cli/pyproject.toml': pyproject('0.1.731'),
+    'packages/core/pyproject.toml': pyproject('0.2.0'),
+    'packages/api/package.json': packageJson('0.1.0'),
+    'packages/web/package.json': packageJson('0.1.0'),
+  },
+};
+
 function dependencies(overrides: Partial<PipelineDependencies> = {}) {
   const files = new Map<string, string>();
   const calls: {
     linear: number;
-    claude: number;
-    fallbackPullRequests: Array<Pick<PullRequest, 'title' | 'body'>>;
-  } = { linear: 0, claude: 0, fallbackPullRequests: [] };
+    claude: Array<{
+      packageName: string;
+      issues: string[];
+      fallbackPullRequests: FallbackPullRequest[];
+    }>;
+  } = { linear: 0, claude: [] };
   const base: PipelineDependencies = {
     findPreviousRelease: async () => ({
-      tagName: 'cli-v0.3.4',
+      tagName: 'v2026.09.18',
       draft: false,
       prerelease: false,
-      publishedAt: '2026-09-09T00:00:00Z',
+      publishedAt: '2026-09-18T00:00:00Z',
     }),
     isAncestor: async () => true,
+    readFileAt: async (ref, path) => manifests[ref]?.[path] ?? null,
     listRangeCommits: async () => ['commit-a'],
     listAssociatedPullRequests: async () => [pullRequest()],
+    listPullRequestFiles: async () => ['packages/cli/src/canyonos/deploy.py'],
     queryLinearIssues: async () => {
       calls.linear += 1;
       return [issue()];
     },
-    generateClaudeNotes: async (_issues, fallbackPullRequests) => {
-      calls.claude += 1;
-      calls.fallbackPullRequests = fallbackPullRequests ?? [];
-      return '## New\n\n## Improved\n\n- The dashboard is easier to use.\n\n## Fixed\n';
+    generateClaudeNotes: async (packageName, issues, fallbackPullRequests) => {
+      calls.claude.push({
+        packageName,
+        issues: issues.map((entry) => entry.identifier),
+        fallbackPullRequests,
+      });
+      return `### Improved\n\n- ${packageName} change.`;
     },
     writeFile: async (path, content) => {
       files.set(path, content);
@@ -64,6 +99,12 @@ function dependencies(overrides: Partial<PipelineDependencies> = {}) {
   };
   return { dependencies: { ...base, ...overrides }, files, calls };
 }
+
+const options = {
+  targetTag: 'v2026.09.25',
+  repository: 'CanyonCodeCoreAI/canyonos',
+  outputDirectory: '/output',
+};
 
 describe('release-note validation', () => {
   test('extracts identifiers from the title and head branch only', () => {
@@ -93,16 +134,11 @@ describe('release-note validation', () => {
       const request = JSON.parse(String(init?.body)) as (typeof requests)[number];
       requests.push(request);
       const identifier = request.variables.identifier;
-      const response = request.query.includes('issue(id: $identifier)')
-        ? {
-            data: {
-              issue: identifier
-                ? { ...issue(), identifier, labels: { nodes: [{ name: 'web' }] } }
-                : null,
-            },
-          }
-        : { data: { issues: { nodes: [] } } };
-      return new Response(JSON.stringify(response));
+      return new Response(
+        JSON.stringify({
+          data: { issue: { ...issue(), identifier, labels: { nodes: [{ name: 'cli' }] } } },
+        })
+      );
     };
 
     const issues = await queryLinearIssues(['CAN-42', 'CAN-43'], {
@@ -110,60 +146,195 @@ describe('release-note validation', () => {
       fetch: fetch as typeof globalThis.fetch,
     });
 
-    expect(requests).toHaveLength(2);
     expect(requests.map((request) => request.variables.identifier)).toEqual(['CAN-42', 'CAN-43']);
     expect(requests.every((request) => request.query.includes('issue(id: $identifier)'))).toBe(
       true
     );
     expect(issues.map((entry) => entry.identifier)).toEqual(['CAN-42', 'CAN-43']);
   });
+});
 
-  test('uses a no-CAN PR title and body as Claude fallback context', async () => {
-    const fallbackPullRequest = pullRequest({
-      title: 'Improve dashboard',
-      body: 'Make the dashboard easier to use.',
-      headRefName: 'feature/dashboard',
-    });
-    const testRun = dependencies({
-      listAssociatedPullRequests: async () => [fallbackPullRequest],
-    });
+describe('release lines', () => {
+  const release = (tagName: string, publishedAt: string, flags: Partial<Release> = {}) => ({
+    tagName,
+    draft: false,
+    prerelease: false,
+    publishedAt,
+    ...flags,
+  });
 
-    const result = await runReleaseNotesPipeline(
-      { targetTag: 'cli-v0.3.5', outputDirectory: '/output' },
-      testRun.dependencies
+  test('reads the release line from the tag prefix', () => {
+    expect(releaseLine('cli-v0.1.730')).toBe('cli-');
+    expect(releaseLine('v2026.09.25')).toBe('');
+  });
+
+  test('picks the latest earlier release on the same release line', () => {
+    const target = release('v2026.09.25', '2026-09-25T00:00:00Z');
+
+    const previous = pickPreviousRelease(target, [
+      release('v2026.09.11', '2026-09-11T00:00:00Z'),
+      release('v2026.09.18', '2026-09-18T00:00:00Z'),
+      release('cli-v0.1.731', '2026-09-24T00:00:00Z'),
+      release('v2026.09.24', '2026-09-24T00:00:00Z', { prerelease: true }),
+      target,
+      release('v2026.10.02', '2026-10-02T00:00:00Z'),
+    ]);
+
+    expect(previous.tagName).toBe('v2026.09.18');
+  });
+
+  test('fails when the release line has no earlier release', () => {
+    const target = release('v2026.09.25', '2026-09-25T00:00:00Z');
+
+    expect(() =>
+      pickPreviousRelease(target, [release('cli-v0.1.0', '2026-09-01T00:00:00Z')])
+    ).toThrow('No previous published release exists before v2026.09.25.');
+  });
+});
+
+describe('shipped packages', () => {
+  test('reads versions from pyproject and package.json manifests', () => {
+    expect(readManifestVersion('packages/cli/pyproject.toml', pyproject('0.1.731'))).toBe(
+      '0.1.731'
     );
+    expect(readManifestVersion('packages/web/package.json', packageJson('0.2.0'))).toBe('0.2.0');
+  });
+
+  test('ships only the packages whose version changed', async () => {
+    const shipped = await findShippedPackages(
+      'v2026.09.18',
+      'v2026.09.25',
+      async (ref, path) => manifests[ref]?.[path] ?? null
+    );
+
+    expect(
+      shipped.map(({ name, version, previousVersion }) => [name, version, previousVersion])
+    ).toEqual([
+      ['CLI', '0.1.731', '0.1.730'],
+      ['Core', '0.2.0', '0.1.0'],
+    ]);
+  });
+
+  test('assigns shared UI changes to the web package', async () => {
+    const shipped = await findShippedPackages('v2026.09.18', 'v2026.09.25', async (ref, path) =>
+      path === 'packages/web/package.json' && ref === 'v2026.09.25'
+        ? packageJson('0.2.0')
+        : (manifests[ref]?.[path] ?? null)
+    );
+
+    expect(
+      packagesTouchedBy(['packages/ui/src/button.tsx', 'README.md'], shipped).map(
+        (entry) => entry.name
+      )
+    ).toEqual(['Web']);
+  });
+});
+
+describe('release-notes pipeline', () => {
+  test('writes one section per shipped package with its release link', async () => {
+    const testRun = dependencies({
+      listAssociatedPullRequests: async () => [
+        pullRequest(),
+        pullRequest({
+          number: 43,
+          title: 'Faster agent startup',
+          body: 'Agents boot twice as fast.',
+          headRefName: 'feature/startup',
+        }),
+      ],
+      listPullRequestFiles: async (number) =>
+        number === 42 ? ['packages/cli/src/canyonos/deploy.py'] : ['packages/core/src/runtime.py'],
+    });
+
+    const result = await runReleaseNotesPipeline(options, testRun.dependencies);
 
     expect(result.ok).toBe(true);
-    expect(testRun.calls.linear).toBe(0);
-    expect(testRun.calls.claude).toBe(1);
-    expect(testRun.calls.fallbackPullRequests).toEqual([
-      { title: fallbackPullRequest.title, body: fallbackPullRequest.body },
+    expect(testRun.calls.claude).toEqual([
+      { packageName: 'CLI', issues: ['CAN-42'], fallbackPullRequests: [] },
+      {
+        packageName: 'Core',
+        issues: [],
+        fallbackPullRequests: [
+          { title: 'Faster agent startup', body: 'Agents boot twice as fast.' },
+        ],
+      },
     ]);
-    expect(JSON.parse(testRun.files.get('/output/release-notes-audit.json')!).pullRequests).toEqual(
-      [expect.objectContaining({ number: fallbackPullRequest.number, source: 'fallback' })]
-    );
-    expect(testRun.files.get('/output/release-notes-audit.json')).not.toContain(
-      fallbackPullRequest.body
+    expect(testRun.files.get('/output/release-notes.md')).toBe(
+      [
+        '# Release notes for v2026.09.25',
+        '',
+        '## CLI [cli-v0.1.731](https://github.com/CanyonCodeCoreAI/canyonos/releases/tag/cli-v0.1.731)',
+        '',
+        '### Improved',
+        '',
+        '- CLI change.',
+        '',
+        '## Core [core-v0.2.0](https://github.com/CanyonCodeCoreAI/canyonos/releases/tag/core-v0.2.0)',
+        '',
+        '### Improved',
+        '',
+        '- Core change.',
+        '',
+      ].join('\n')
     );
   });
 
-  test('writes Claude Markdown after complete Linear validation', async () => {
-    const markdown = '## New\n\n- A user-facing feature.\n\n## Improved\n\n## Fixed\n';
-    const titledMarkdown = `# Release notes for cli-v0.3.5\n\n${markdown}`;
+  test('excludes pull requests that touch no shipped package', async () => {
     const testRun = dependencies({
-      generateClaudeNotes: async () => markdown,
+      listAssociatedPullRequests: async () => [
+        pullRequest({ title: 'Tweak web copy CAN-99', headRefName: 'feature/web' }),
+      ],
+      listPullRequestFiles: async () => ['packages/web/src/app.tsx'],
+    });
+
+    const result = await runReleaseNotesPipeline(options, testRun.dependencies);
+
+    expect(result.ok).toBe(true);
+    expect(testRun.calls.linear).toBe(0);
+    expect(result.audit.pullRequests).toEqual([
+      expect.objectContaining({ number: 42, packages: [], source: 'excluded' }),
+    ]);
+  });
+
+  test('uses the given previous tag instead of looking one up', async () => {
+    const testRun = dependencies({
+      findPreviousRelease: async () => {
+        throw new Error('must not be called');
+      },
     });
 
     const result = await runReleaseNotesPipeline(
-      { targetTag: 'cli-v0.3.5', outputDirectory: '/output' },
+      { ...options, previousTag: 'v2026.09.18' },
       testRun.dependencies
     );
 
     expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ markdown: titledMarkdown });
-    expect(testRun.files.get('/output/release-notes.md')).toBe(titledMarkdown);
+    expect(result.audit.previousTag).toBe('v2026.09.18');
+  });
+
+  test('rejects tags that are not dated release tags', async () => {
+    const testRun = dependencies();
+
+    const result = await runReleaseNotesPipeline(
+      { ...options, targetTag: 'cli-v0.1.731' },
+      testRun.dependencies
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.audit.failure).toBe('cli-v0.1.731 is not a release tag like v2026.09.25.');
+  });
+
+  test('fails when no package version changed', async () => {
+    const testRun = dependencies({
+      readFileAt: async (_ref, path) => manifests['v2026.09.18']![path] ?? null,
+    });
+
+    const result = await runReleaseNotesPipeline(options, testRun.dependencies);
+
+    expect(result.ok).toBe(false);
+    expect(testRun.calls.claude).toHaveLength(0);
     expect(testRun.files.get('/output/release-notes-audit.json')).toContain(
-      '"status": "generated"'
+      'No package version changed'
     );
   });
 
@@ -171,61 +342,13 @@ describe('release-note validation', () => {
     ['missing', []],
     ['canceled', [issue({ state: { name: 'Canceled', type: 'canceled' } })]],
     ['incomplete', [issue({ state: { name: 'In progress', type: 'started' } })]],
-  ] as const)('stops when Linear issue is %s', async (_caseName, linearIssues) => {
+  ] as const)('stops when Linear issue is %s', async (caseName, linearIssues) => {
     const testRun = dependencies({ queryLinearIssues: async () => [...linearIssues] });
 
-    const result = await runReleaseNotesPipeline(
-      { targetTag: 'cli-v0.3.5', outputDirectory: '/output' },
-      testRun.dependencies
-    );
+    const result = await runReleaseNotesPipeline(options, testRun.dependencies);
 
     expect(result.ok).toBe(false);
-    expect(testRun.calls.claude).toBe(0);
-    expect(testRun.files.get('/output/release-notes-audit.json')).toContain(_caseName);
-  });
-
-  test('reads the release line from the tag prefix', () => {
-    expect(releaseLine('cli-v0.1.730')).toBe('cli-');
-    expect(releaseLine('api-v0.1.0')).toBe('api-');
-    expect(releaseLine('v1.2.3')).toBe('');
-  });
-
-  test('picks the latest earlier release on the same release line', () => {
-    const release = (
-      tagName: string,
-      publishedAt: string | null,
-      flags: Partial<Release> = {}
-    ) => ({
-      tagName,
-      draft: false,
-      prerelease: false,
-      publishedAt,
-      ...flags,
-    });
-    const target = release('cli-v0.1.3', '2026-09-20T00:00:00Z');
-
-    const previous = pickPreviousRelease(target, [
-      release('cli-v0.1.1', '2026-09-10T00:00:00Z'),
-      release('cli-v0.1.2', '2026-09-15T00:00:00Z'),
-      release('api-v0.2.0', '2026-09-18T00:00:00Z'),
-      release('cli-v0.1.4-rc', '2026-09-19T00:00:00Z', { prerelease: true }),
-      target,
-      release('cli-v0.1.4', '2026-09-21T00:00:00Z'),
-    ]);
-
-    expect(previous.tagName).toBe('cli-v0.1.2');
-  });
-
-  test('fails when the release line has no earlier release', () => {
-    const target = {
-      tagName: 'web-v0.1.0',
-      draft: false,
-      prerelease: false,
-      publishedAt: '2026-09-20T00:00:00Z',
-    };
-
-    expect(() => pickPreviousRelease(target, [{ ...target, tagName: 'cli-v0.1.0' }])).toThrow(
-      'No previous published release exists before web-v0.1.0.'
-    );
+    expect(testRun.calls.claude).toHaveLength(0);
+    expect(testRun.files.get('/output/release-notes-audit.json')).toContain(caseName);
   });
 });

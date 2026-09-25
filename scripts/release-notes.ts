@@ -25,13 +25,34 @@ export type LinearIssue = {
   project: { name: string } | null;
   cycle: { name: string; number: number | null } | null;
 };
+export type ReleasablePackage = {
+  name: string;
+  tagPrefix: string;
+  manifest: string;
+  paths: string[];
+};
+export type ShippedPackage = ReleasablePackage & {
+  version: string;
+  previousVersion: string | null;
+};
+export type FallbackPullRequest = Pick<PullRequest, 'title' | 'body'>;
 export type ReleaseNotesAudit = {
   targetTag: string;
   previousTag?: string;
   status: 'failed' | 'generated';
   failure?: string;
+  packages: Array<{
+    name: string;
+    tag: string;
+    previousVersion: string | null;
+    pullRequests: number[];
+  }>;
   pullRequests: Array<
-    Omit<PullRequest, 'body'> & { identifiers: string[]; source: 'linear' | 'fallback' }
+    Omit<PullRequest, 'body'> & {
+      identifiers: string[];
+      packages: string[];
+      source: 'linear' | 'fallback' | 'excluded';
+    }
   >;
   issues: Array<{
     identifier: string;
@@ -43,24 +64,58 @@ export type ReleaseNotesAudit = {
 export type PipelineDependencies = {
   findPreviousRelease: (targetTag: string) => Promise<Release>;
   isAncestor: (previousTag: string, targetTag: string) => Promise<boolean>;
+  readFileAt: (ref: string, path: string) => Promise<string | null>;
   listRangeCommits: (previousTag: string, targetTag: string) => Promise<string[]>;
   listAssociatedPullRequests: (commit: string) => Promise<PullRequest[]>;
+  listPullRequestFiles: (pullRequestNumber: number) => Promise<string[]>;
   queryLinearIssues: (identifiers: string[]) => Promise<LinearIssue[]>;
   generateClaudeNotes: (
+    packageName: string,
     issues: LinearIssue[],
-    fallbackPullRequests: Array<Pick<PullRequest, 'title' | 'body'>>
+    fallbackPullRequests: FallbackPullRequest[]
   ) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<void>;
 };
 
 export type PipelineOptions = {
   targetTag: string;
+  previousTag?: string;
+  repository: string;
   outputDirectory: string;
 };
 
 export type PipelineResult =
   | { ok: true; audit: ReleaseNotesAudit; markdown: string }
   | { ok: false; audit: ReleaseNotesAudit };
+
+export const releasablePackages: ReleasablePackage[] = [
+  {
+    name: 'CLI',
+    tagPrefix: 'cli-v',
+    manifest: 'packages/cli/pyproject.toml',
+    paths: ['packages/cli/'],
+  },
+  {
+    name: 'Core',
+    tagPrefix: 'core-v',
+    manifest: 'packages/core/pyproject.toml',
+    paths: ['packages/core/'],
+  },
+  {
+    name: 'API',
+    tagPrefix: 'api-v',
+    manifest: 'packages/api/package.json',
+    paths: ['packages/api/'],
+  },
+  {
+    name: 'Web',
+    tagPrefix: 'web-v',
+    manifest: 'packages/web/package.json',
+    paths: ['packages/web/', 'packages/ui/'],
+  },
+];
+
+export const umbrellaTagPattern = /^v\d{4}\.\d{2}\.\d{2}(\.\d+)?$/;
 
 const identifierPattern = /\bCAN-(\d+)\b/gi;
 
@@ -127,116 +182,170 @@ export function pickPreviousRelease(target: Release, releases: Release[]): Relea
   return previous;
 }
 
+export function readManifestVersion(manifest: string, content: string): string {
+  const version = manifest.endsWith('.json')
+    ? (JSON.parse(content) as { version?: string }).version
+    : content.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+  if (!version) throw new Error(`${manifest} has no version.`);
+  return version;
+}
+
+export async function findShippedPackages(
+  previousTag: string,
+  targetTag: string,
+  readFileAt: PipelineDependencies['readFileAt']
+): Promise<ShippedPackage[]> {
+  const shipped = await Promise.all(
+    releasablePackages.map(async (releasable) => {
+      const [current, previous] = await Promise.all([
+        readFileAt(targetTag, releasable.manifest),
+        readFileAt(previousTag, releasable.manifest),
+      ]);
+      if (current === null) return null;
+      const version = readManifestVersion(releasable.manifest, current);
+      const previousVersion =
+        previous === null ? null : readManifestVersion(releasable.manifest, previous);
+      return version === previousVersion ? null : { ...releasable, version, previousVersion };
+    })
+  );
+  return shipped.filter((entry): entry is ShippedPackage => entry !== null);
+}
+
+export function packagesTouchedBy(files: string[], packages: ShippedPackage[]): ShippedPackage[] {
+  return packages.filter((shipped) =>
+    files.some((file) => shipped.paths.some((path) => file.startsWith(path)))
+  );
+}
+
+export function composeReleaseNotes(
+  targetTag: string,
+  repository: string,
+  sections: Array<{ shipped: ShippedPackage; markdown: string }>
+): string {
+  const body = sections
+    .map(({ shipped, markdown }) => {
+      const tag = `${shipped.tagPrefix}${shipped.version}`;
+      const link = `https://github.com/${repository}/releases/tag/${tag}`;
+      return `## ${shipped.name} [${tag}](${link})\n\n${markdown.trim()}\n`;
+    })
+    .join('\n');
+  return `# Release notes for ${targetTag}\n\n${body}`;
+}
+
 export async function runReleaseNotesPipeline(
   options: PipelineOptions,
   dependencies: PipelineDependencies
 ): Promise<PipelineResult> {
-  const pullRequests: ReleaseNotesAudit['pullRequests'] = [];
-  const audit = (status: ReleaseNotesAudit['status'], failure?: string): ReleaseNotesAudit => ({
+  const audit: ReleaseNotesAudit = {
     targetTag: options.targetTag,
-    status,
-    ...(failure ? { failure } : {}),
-    pullRequests,
+    status: 'failed',
+    packages: [],
+    pullRequests: [],
     issues: [],
-  });
-  const fail = async (failedAudit: ReleaseNotesAudit): Promise<PipelineResult> => {
-    await dependencies.writeFile(
-      join(options.outputDirectory, 'release-notes-audit.json'),
-      `${JSON.stringify(failedAudit, null, 2)}\n`
-    );
-    return { ok: false, audit: failedAudit };
   };
+  const writeAudit = () =>
+    dependencies.writeFile(
+      join(options.outputDirectory, 'release-notes-audit.json'),
+      `${JSON.stringify(audit, null, 2)}\n`
+    );
 
-  let previousRelease: Release;
   try {
-    previousRelease = await dependencies.findPreviousRelease(options.targetTag);
-  } catch (error) {
-    return fail(audit('failed', error instanceof Error ? error.message : String(error)));
-  }
-  const ancestorAudit = audit('failed');
-  ancestorAudit.previousTag = previousRelease.tagName;
-  if (!(await dependencies.isAncestor(previousRelease.tagName, options.targetTag))) {
-    ancestorAudit.failure = `${previousRelease.tagName} is not an ancestor of ${options.targetTag}.`;
-    return fail(ancestorAudit);
-  }
+    if (!umbrellaTagPattern.test(options.targetTag)) {
+      throw new Error(`${options.targetTag} is not a release tag like v2026.09.25.`);
+    }
+    const previousTag =
+      options.previousTag ?? (await dependencies.findPreviousRelease(options.targetTag)).tagName;
+    audit.previousTag = previousTag;
+    if (!(await dependencies.isAncestor(previousTag, options.targetTag))) {
+      throw new Error(`${previousTag} is not an ancestor of ${options.targetTag}.`);
+    }
 
-  let associatedPullRequests: PullRequest[];
-  try {
-    const commits = await dependencies.listRangeCommits(previousRelease.tagName, options.targetTag);
-    associatedPullRequests = deduplicatePullRequests(
+    const shippedPackages = await findShippedPackages(
+      previousTag,
+      options.targetTag,
+      dependencies.readFileAt
+    );
+    if (shippedPackages.length === 0) {
+      throw new Error(
+        `No package version changed between ${previousTag} and ${options.targetTag}.`
+      );
+    }
+
+    const commits = await dependencies.listRangeCommits(previousTag, options.targetTag);
+    const pullRequests = deduplicatePullRequests(
       (
         await Promise.all(commits.map((commit) => dependencies.listAssociatedPullRequests(commit)))
       ).flat()
     );
-  } catch (error) {
-    const failedAudit = audit('failed', error instanceof Error ? error.message : String(error));
-    failedAudit.previousTag = previousRelease.tagName;
-    return fail(failedAudit);
-  }
-  const pullRequestReferences = associatedPullRequests.map((pullRequest) => ({
-    pullRequest,
-    identifiers: extractCanIdentifiers(pullRequest),
-  }));
-  pullRequests.push(
-    ...pullRequestReferences.map(({ pullRequest, identifiers }) => ({
+    const references = await Promise.all(
+      pullRequests.map(async (pullRequest) => ({
+        pullRequest,
+        identifiers: extractCanIdentifiers(pullRequest),
+        packages: packagesTouchedBy(
+          await dependencies.listPullRequestFiles(pullRequest.number),
+          shippedPackages
+        ),
+      }))
+    );
+    audit.pullRequests = references.map(({ pullRequest, identifiers, packages }) => ({
       number: pullRequest.number,
       url: pullRequest.url,
       title: pullRequest.title,
       headRefName: pullRequest.headRefName,
       mergedAt: pullRequest.mergedAt,
       identifiers,
-      source: identifiers.length === 0 ? ('fallback' as const) : ('linear' as const),
-    }))
-  );
+      packages: packages.map((shipped) => shipped.name),
+      source: packages.length === 0 ? 'excluded' : identifiers.length === 0 ? 'fallback' : 'linear',
+    }));
+    audit.packages = shippedPackages.map((shipped) => ({
+      name: shipped.name,
+      tag: `${shipped.tagPrefix}${shipped.version}`,
+      previousVersion: shipped.previousVersion,
+      pullRequests: references
+        .filter(({ packages }) => packages.includes(shipped))
+        .map(({ pullRequest }) => pullRequest.number),
+    }));
 
-  const identifiers = [
-    ...new Set(pullRequests.flatMap((pullRequest) => pullRequest.identifiers)),
-  ].sort();
-  const fallbackPullRequests = pullRequestReferences
-    .filter(({ identifiers }) => identifiers.length === 0)
-    .map(({ pullRequest }) => ({ title: pullRequest.title, body: pullRequest.body }));
-  let linearIssues: LinearIssue[];
-  try {
-    linearIssues =
+    const included = references.filter(({ packages }) => packages.length > 0);
+    const identifiers = [...new Set(included.flatMap(({ identifiers }) => identifiers))].sort();
+    const linearIssues =
       identifiers.length === 0
         ? []
         : deduplicateIssues(await dependencies.queryLinearIssues(identifiers));
-  } catch (error) {
-    const failedAudit = audit('failed', error instanceof Error ? error.message : String(error));
-    failedAudit.previousTag = previousRelease.tagName;
-    return fail(failedAudit);
-  }
-  const issueValidation = validateLinearIssues(identifiers, linearIssues);
-  const failedIssues = issueValidation.filter((issue) => issue.status !== 'validated');
-  if (failedIssues.length > 0) {
-    const failedAudit = audit(
-      'failed',
-      `Linear issue validation failed: ${failedIssues.map((issue) => issue.identifier).join(', ')}.`
-    );
-    failedAudit.previousTag = previousRelease.tagName;
-    failedAudit.issues = issueValidation;
-    return fail(failedAudit);
-  }
+    audit.issues = validateLinearIssues(identifiers, linearIssues);
+    const failedIssues = audit.issues.filter((issue) => issue.status !== 'validated');
+    if (failedIssues.length > 0) {
+      throw new Error(
+        `Linear issue validation failed: ${failedIssues.map((issue) => issue.identifier).join(', ')}.`
+      );
+    }
 
-  let markdown: string;
-  try {
-    markdown = await dependencies.generateClaudeNotes(linearIssues, fallbackPullRequests);
+    const sections = await Promise.all(
+      shippedPackages.map(async (shipped) => {
+        const packageReferences = included.filter(({ packages }) => packages.includes(shipped));
+        const packageIdentifiers = new Set(
+          packageReferences.flatMap(({ identifiers }) => identifiers)
+        );
+        const markdown = await dependencies.generateClaudeNotes(
+          shipped.name,
+          linearIssues.filter((issue) => packageIdentifiers.has(issue.identifier.toUpperCase())),
+          packageReferences
+            .filter(({ identifiers }) => identifiers.length === 0)
+            .map(({ pullRequest }) => ({ title: pullRequest.title, body: pullRequest.body }))
+        );
+        return { shipped, markdown };
+      })
+    );
+    const markdown = composeReleaseNotes(options.targetTag, options.repository, sections);
+    audit.status = 'generated';
+    await writeAudit();
+    await dependencies.writeFile(join(options.outputDirectory, 'release-notes.md'), markdown);
+    return { ok: true, audit, markdown };
   } catch (error) {
-    const failedAudit = audit('failed', error instanceof Error ? error.message : String(error));
-    failedAudit.previousTag = previousRelease.tagName;
-    failedAudit.issues = issueValidation;
-    return fail(failedAudit);
+    audit.failure = error instanceof Error ? error.message : String(error);
+    await writeAudit();
+    return { ok: false, audit };
   }
-  const titledMarkdown = `# Release notes for ${options.targetTag}\n\n${markdown}`;
-  const completedAudit = audit('generated');
-  completedAudit.previousTag = previousRelease.tagName;
-  completedAudit.issues = issueValidation;
-  await dependencies.writeFile(
-    join(options.outputDirectory, 'release-notes-audit.json'),
-    `${JSON.stringify(completedAudit, null, 2)}\n`
-  );
-  await dependencies.writeFile(join(options.outputDirectory, 'release-notes.md'), titledMarkdown);
-  return { ok: true, audit: completedAudit, markdown: titledMarkdown };
 }
 
 type GitHubRelease = {
@@ -337,11 +446,12 @@ export async function queryLinearIssues(
 }
 
 async function generateClaudeNotes(
+  packageName: string,
   issues: LinearIssue[],
-  fallbackPullRequests: Array<Pick<PullRequest, 'title' | 'body'>>
+  fallbackPullRequests: FallbackPullRequest[]
 ): Promise<string> {
   let markdown: string | null = null;
-  const prompt = `Write concise user-facing Markdown release notes from validated Linear issues and fallback pull request context. Use exactly these headings, in this order: ## New, ## Improved, ## Fixed. Do not add other headings, an introduction, pull requests, or implementation details. Omit internal work. Do not invent facts.\n\n${JSON.stringify({ issues, fallbackPullRequests })}`;
+  const prompt = `Write concise user-facing Markdown release notes for the ${packageName} package from validated Linear issues and fallback pull request context. Use only these headings, in this order, and leave out a heading that has no entries: ### New, ### Improved, ### Fixed. Do not add other headings, an introduction, pull requests, or implementation details. Omit internal work. Do not invent facts. If nothing is user-facing, reply with exactly: No user-facing changes.\n\n${JSON.stringify({ issues, fallbackPullRequests })}`;
   for await (const message of query({
     prompt,
     options: {
@@ -366,10 +476,7 @@ async function generateClaudeNotes(
   return markdown;
 }
 
-async function createDependencies(): Promise<PipelineDependencies> {
-  const repository = (
-    await command('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
-  ).trim();
+async function createDependencies(repository: string): Promise<PipelineDependencies> {
   const releases = async (): Promise<Release[]> =>
     parseJsonLines<GitHubRelease>(
       await command('gh', [
@@ -396,6 +503,17 @@ async function createDependencies(): Promise<PipelineDependencies> {
       const process = Bun.spawn(['git', 'merge-base', '--is-ancestor', previousTag, targetTag]);
       return (await process.exited) === 0;
     },
+    readFileAt: async (ref, path) => {
+      const process = Bun.spawn(['git', 'show', `${ref}:${path}`], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const [stdout, exitCode] = await Promise.all([
+        new Response(process.stdout).text(),
+        process.exited,
+      ]);
+      return exitCode === 0 ? stdout : null;
+    },
     listRangeCommits: async (previousTag, targetTag) =>
       (await command('git', ['rev-list', `${previousTag}..${targetTag}`]))
         .trim()
@@ -410,6 +528,19 @@ async function createDependencies(): Promise<PipelineDependencies> {
       ]);
       return (JSON.parse(response) as GitHubPullRequest[]).map(pullRequestFromGitHub);
     },
+    listPullRequestFiles: async (pullRequestNumber) =>
+      (
+        await command('gh', [
+          'api',
+          '--paginate',
+          `repos/${repository}/pulls/${pullRequestNumber}/files?per_page=100`,
+          '--jq',
+          '.[].filename',
+        ])
+      )
+        .trim()
+        .split('\n')
+        .filter(Boolean),
     queryLinearIssues,
     generateClaudeNotes,
     writeFile: async (path, content) => {
@@ -419,11 +550,21 @@ async function createDependencies(): Promise<PipelineDependencies> {
 }
 
 if (import.meta.main) {
-  const targetTag = process.argv[2];
-  if (!targetTag) throw new Error('Usage: bun run scripts/release-notes.ts <target-tag>');
+  const [targetTag, previousTag] = process.argv.slice(2);
+  if (!targetTag) {
+    throw new Error('Usage: bun run scripts/release-notes.ts <release-tag> [previous-tag]');
+  }
+  const repository = (
+    await command('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
+  ).trim();
   const result = await runReleaseNotesPipeline(
-    { targetTag, outputDirectory: process.env.RELEASE_NOTES_OUTPUT_DIR ?? process.cwd() },
-    await createDependencies()
+    {
+      targetTag,
+      previousTag: previousTag || undefined,
+      repository,
+      outputDirectory: process.env.RELEASE_NOTES_OUTPUT_DIR ?? process.cwd(),
+    },
+    await createDependencies(repository)
   );
   if (!result.ok) {
     console.error(`[release-notes] ${result.audit.failure}`);

@@ -1,7 +1,8 @@
 name: Release notes
 
-# Writes human release notes for every published release, comparing it with the previous
-# published release that shares its tag prefix (cli-v, api-v, web-v).
+# Writes release notes for a dated release (v2026.09.25), with a section for each package
+# whose version changed since the previous dated release. Package releases (cli-v, core-v,
+# api-v, web-v) are still published on their own; this workflow skips them.
 
 on:
   release:
@@ -9,8 +10,12 @@ on:
   workflow_dispatch:
     inputs:
       target_tag:
-        description: Published GitHub release tag to validate.
+        description: Published dated release tag (e.g. v2026.09.25).
         required: true
+        type: string
+      previous_tag:
+        description: Tag or commit to compare against, when there is no earlier dated release.
+        required: false
         type: string
       publish:
         description: Update the GitHub release after successful generation.
@@ -27,6 +32,7 @@ permissions:
 
 jobs:
   generate:
+    if: startsWith(github.event.release.tag_name || inputs.target_tag, 'v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -58,8 +64,9 @@ jobs:
       - name: Generate release notes
         run: |
           mkdir -p "$RELEASE_NOTES_OUTPUT_DIR"
-          bun run scripts/release-notes.ts "$TARGET_TAG"
+          bun run scripts/release-notes.ts "$TARGET_TAG" "$PREVIOUS_TAG"
         env:
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
           RELEASE_NOTES_OUTPUT_DIR: ${{ runner.temp }}/release-notes
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
