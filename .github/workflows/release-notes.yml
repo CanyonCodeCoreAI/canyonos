@@ -153,9 +153,14 @@ jobs:
           name: release-notes-${{ github.run_id }}
           path: release-notes
 
+      # The tag is sent again because GitHub drops the tag of a draft whose tag doesn't exist
+      # yet when an update leaves it out.
       - name: Write the notes into the release
         env:
           RELEASE_ID: ${{ needs.resolve.outputs.id }}
+          TAG: ${{ github.event.release.tag_name || inputs.target_tag }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F body=@release-notes/release-notes.md --silent
+        run: |
+          gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" --silent \
+            -f tag_name="$TAG" -F body=@release-notes/release-notes.md
