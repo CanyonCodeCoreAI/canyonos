@@ -103,7 +103,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             "treating it as orphaned and recreating.",
             runtime_id,
         )
-        _require_controller()._run_cmd(["docker", "rm", "-f", runtime_id], host, user)
+        _require_controller()._run_cmd(["docker", "rm", "-fv", runtime_id], host, user)
 
     if ctrl_type == "workflow" and _port_check(host, spec.get("api_port", 8080)):
         raise RuntimeError(
@@ -184,6 +184,9 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 cmd.extend(["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"])
             for key, value in spec.get("env", {}).items():
                 cmd.extend(["-e", f"{key}={value}"])
+        if ctrl_type != "database":
+            # Agent images run their own Docker daemon; a database is a stock image.
+            cmd.extend(["--privileged", "-v", "/var/lib/docker"])
         if resources.get("cpu"):
             cmd.extend(["--cpus", str(resources["cpu"])])
         if resources.get("memory"):
@@ -208,7 +211,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             # retrying with a new port, or the retry hits a name conflict
             # instead of the port conflict we're trying to work around.
             _require_controller()._run_cmd(
-                ["docker", "rm", "-f", runtime_id], host, user
+                ["docker", "rm", "-fv", runtime_id], host, user
             )
             host_port += 1
             continue
@@ -268,7 +271,7 @@ def terminate_instance(instance):
         return
 
     result = _require_controller()._run_cmd(
-        ["docker", "rm", "-f", runtime_id],
+        ["docker", "rm", "-fv", runtime_id],
         instance.get("host", DEFAULT_HOST),
         instance.get("user"),
     )
