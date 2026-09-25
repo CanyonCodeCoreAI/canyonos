@@ -242,9 +242,11 @@ class LoadConfigParityTests(_ManifestCase):
         manifest = self.load({"agents": [_agent(resources={"gpu": 0})]})
         self.assertEqual(manifest.agents[0].resources.gpu, 0)
 
-        violation = self.one({"agents": [_agent(resources={"gpu": -1})]})
-        self.assertEqual(violation.field, "agents[0].resources.gpu")
-        self.assertIn("expected a finite number >= 0", violation.message)
+        for value in (-1, 0.5):
+            with self.subTest(value=value):
+                violation = self.one({"agents": [_agent(resources={"gpu": value})]})
+                self.assertEqual(violation.field, "agents[0].resources.gpu")
+                self.assertIn("expected an integer >= 0", violation.message)
 
 
 class LogsFlagTests(_ManifestCase):

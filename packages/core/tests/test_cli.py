@@ -238,8 +238,9 @@ class CliDeployTests(unittest.TestCase):
         config = load({"cpu": 1, "memory": 256, "gpu": 0})
         self.assertEqual(config["agents"][0]["resources"]["gpu"], 0)
 
-        with self.assertRaisesRegex(RuntimeError, "`gpu` must be 0 or more"):
-            load({"gpu": -1})
+        for gpu in (-1, 0.5):
+            with self.assertRaisesRegex(RuntimeError, "`gpu` must be a whole number"):
+                load({"gpu": gpu})
         with self.assertRaisesRegex(RuntimeError, "`cpu` must be a positive number"):
             load({"cpu": 0})
 

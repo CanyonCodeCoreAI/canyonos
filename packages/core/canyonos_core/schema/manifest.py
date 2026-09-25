@@ -126,7 +126,7 @@ _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
 class Resources:
     cpu: float = 1
     memory: float = 512
-    gpu: float | None = None
+    gpu: int | None = None
 
 
 @dataclass(frozen=True)
@@ -309,7 +309,7 @@ def _resources(collector, node, prefix):
     gpu = None
     if "gpu" in block:
         # 0 is "no GPU", which is what the CLI's resource picker writes by default.
-        gpu = _number(collector, block, "gpu", prefix, None, floor=0)
+        gpu = _integer(collector, block, "gpu", prefix, None, 0)
     return Resources(
         cpu=_number(collector, block, "cpu", prefix, 1, 0),
         memory=_number(collector, block, "memory", prefix, 512, 0),
