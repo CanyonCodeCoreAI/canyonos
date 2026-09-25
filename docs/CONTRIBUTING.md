@@ -23,7 +23,7 @@ uv sync        # Python workspace (core + cli), installed editable
 bun install    # TypeScript workspace
 ```
 
-For CLI development details, see [packages/cli/DEVELOPMENT.md](packages/cli/DEVELOPMENT.md).
+For CLI development details, see [packages/cli/DEVELOPMENT.md](../packages/cli/DEVELOPMENT.md).
 
 ## Making a change
 
@@ -68,4 +68,4 @@ vulnerabilities privately to the maintainers instead of in a public issue.
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-[GNU AGPL v3.0](LICENSE).
+[GNU AGPL v3.0](../LICENSE).

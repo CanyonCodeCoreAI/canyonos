@@ -261,7 +261,7 @@ If you find CanyonOS (Nalar) useful for your research, please cite our paper:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and the review process.
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup, checks and the review process.
 
 ## License
 
