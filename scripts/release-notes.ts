@@ -64,7 +64,7 @@ export type ReleaseNotesAudit = {
 };
 
 export type PipelineDependencies = {
-  findPreviousRelease: (targetTag: string) => Promise<Release>;
+  findPreviousRelease: (target: ReleaseTarget) => Promise<Release>;
   isAncestor: (previousTag: string, targetTag: string) => Promise<boolean>;
   readFileAt: (ref: string, path: string) => Promise<string | null>;
   listRangeCommits: (previousTag: string, targetTag: string) => Promise<string[]>;
@@ -79,8 +79,12 @@ export type PipelineDependencies = {
   writeFile: (path: string, content: string) => Promise<void>;
 };
 
+export type ReleaseTarget = Pick<Release, 'tagName' | 'publishedAt'>;
+
 export type PipelineOptions = {
   targetTag: string;
+  targetRef?: string;
+  targetPublishedAt?: string | null;
   previousTag?: string;
   repository: string;
   outputDirectory: string;
@@ -121,7 +125,7 @@ export const releasablePackages: ReleasablePackage[] = [
   },
 ];
 
-export const umbrellaTagPattern = /^v\d{4}\.\d{2}\.\d{2}(\.\d+)?$/;
+export const umbrellaTagPattern = /^canyonos-v\d+\.\d+\.\d+$/;
 
 const identifierPattern = /\bCAN-(\d+)\b/gi;
 
@@ -173,16 +177,13 @@ export function releaseLine(tagName: string): string {
   return tagName.replace(/v?\d[\w.+-]*$/, '');
 }
 
-export function pickPreviousRelease(target: Release, releases: Release[]): Release {
-  if (target.draft || target.prerelease || !target.publishedAt) {
-    throw new Error(`${target.tagName} must be a published, non-prerelease release.`);
-  }
+export function pickPreviousRelease(target: ReleaseTarget, releases: Release[]): Release {
   const line = releaseLine(target.tagName);
   const previous = releases
     .filter((release) => !release.draft && !release.prerelease && release.publishedAt)
     .filter((release) => release.tagName !== target.tagName)
     .filter((release) => releaseLine(release.tagName) === line)
-    .filter((release) => release.publishedAt! < target.publishedAt!)
+    .filter((release) => !target.publishedAt || release.publishedAt! < target.publishedAt)
     .sort((left, right) => right.publishedAt!.localeCompare(left.publishedAt!))[0];
   if (!previous) throw new Error(`No previous published release exists before ${target.tagName}.`);
   return previous;
@@ -311,21 +312,29 @@ export async function runReleaseNotesPipeline(
       `${JSON.stringify(audit, null, 2)}\n`
     );
 
+  const targetRef = options.targetRef ?? options.targetTag;
+
   try {
     const releasable = packageForTag(options.targetTag);
     if (!releasable && !umbrellaTagPattern.test(options.targetTag)) {
       throw new Error(
-        `${options.targetTag} is neither a package release tag nor a release tag like v2026.09.25.`
+        `${options.targetTag} is neither a package release tag nor a release tag like canyonos-v1.0.0.`
       );
     }
     const previousTag =
-      options.previousTag ?? (await dependencies.findPreviousRelease(options.targetTag)).tagName;
+      options.previousTag ??
+      (
+        await dependencies.findPreviousRelease({
+          tagName: options.targetTag,
+          publishedAt: options.targetPublishedAt ?? null,
+        })
+      ).tagName;
     audit.previousTag = previousTag;
-    if (!(await dependencies.isAncestor(previousTag, options.targetTag))) {
+    if (!(await dependencies.isAncestor(previousTag, targetRef))) {
       throw new Error(`${previousTag} is not an ancestor of ${options.targetTag}.`);
     }
 
-    const collected = await collectPullRequests(previousTag, options.targetTag, dependencies);
+    const collected = await collectPullRequests(previousTag, targetRef, dependencies);
     const markdown = releasable
       ? packageChangelog(releasable, previousTag, collected)
       : await datedReleaseNotes(previousTag, collected);
@@ -375,7 +384,7 @@ export async function runReleaseNotesPipeline(
   ): Promise<string> {
     const shippedPackages = await findShippedPackages(
       previousTag,
-      options.targetTag,
+      targetRef,
       dependencies.readFileAt
     );
     if (shippedPackages.length === 0) {
@@ -622,17 +631,7 @@ async function createDependencies(repository: string): Promise<PipelineDependenc
       ])
     ).map(releaseFromGitHub);
   return {
-    findPreviousRelease: async (targetTag) => {
-      const target = releaseFromGitHub(
-        JSON.parse(
-          await command('gh', [
-            'api',
-            `repos/${repository}/releases/tags/${encodeURIComponent(targetTag)}`,
-          ])
-        ) as GitHubRelease
-      );
-      return pickPreviousRelease(target, await releases());
-    },
+    findPreviousRelease: async (target) => pickPreviousRelease(target, await releases()),
     isAncestor: async (previousTag, targetTag) => {
       const process = Bun.spawn(['git', 'merge-base', '--is-ancestor', previousTag, targetTag]);
       return (await process.exited) === 0;
@@ -695,6 +694,8 @@ if (import.meta.main) {
     {
       targetTag,
       previousTag: previousTag || undefined,
+      targetRef: process.env.RELEASE_NOTES_TARGET_REF || undefined,
+      targetPublishedAt: process.env.RELEASE_NOTES_TARGET_PUBLISHED_AT || null,
       repository,
       outputDirectory: process.env.RELEASE_NOTES_OUTPUT_DIR ?? process.cwd(),
     },
