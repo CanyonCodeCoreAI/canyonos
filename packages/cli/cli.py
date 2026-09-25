@@ -7,7 +7,7 @@ import argparse
 import importlib.metadata
 import sys
 
-from canyonos import ui
+from canyonos import env, ui
 from canyonos.build import (
     AGENTS as BUILD_AGENTS,
     DEFAULT_AGENT,
@@ -50,7 +50,7 @@ def main():
         "-v",
         "--version",
         action="version",
-        version=f"canyonos {importlib.metadata.version('canyonos')}",
+        version=f"canyonos {importlib.metadata.version('canyonos') if env.is_production else env.environment}",
     )
     # Subparsers keep the stock argparse help, so `canyonos <cmd> -h` still
     # describes that command instead of reprinting the top-level screen.
