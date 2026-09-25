@@ -129,9 +129,22 @@ export const umbrellaTagPattern = /^canyonos-v\d+\.\d+\.\d+$/;
 
 const identifierPattern = /\bCAN-(\d+)\b/gi;
 
-export function extractCanIdentifiers(pullRequest: PullRequest): string[] {
+// Linear's closing keywords, each followed by one or more issues written as CAN-1, a Linear
+// issue URL, or a Markdown link to one, separated by commas or "and".
+const issueReference = String.raw`\[?(?:https?://linear\.app/[\w-]+/issue/)?CAN-\d+[^\s,]*`;
+const closingReferencePattern = new RegExp(
+  String.raw`\b(?:clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|complet(?:e|es|ed|ing))\b:?\s+(${issueReference}(?:\s*(?:,|\band\b)\s*${issueReference})*)`,
+  'gi'
+);
+
+export function extractCanIdentifiers(
+  pullRequest: Pick<PullRequest, 'title' | 'headRefName' | 'body'>
+): string[] {
+  const closingReferences = [...(pullRequest.body ?? '').matchAll(closingReferencePattern)].map(
+    (match) => match[1]!
+  );
   const identifiers = new Set<string>();
-  for (const value of [pullRequest.title, pullRequest.headRefName]) {
+  for (const value of [pullRequest.title, pullRequest.headRefName, ...closingReferences]) {
     for (const match of value.matchAll(identifierPattern)) {
       identifiers.add(`CAN-${match[1]}`);
     }

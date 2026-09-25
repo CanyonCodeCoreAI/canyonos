@@ -113,13 +113,31 @@ const options = {
 };
 
 describe('release-note validation', () => {
-  test('extracts identifiers from the title and head branch only', () => {
-    const withBody = {
-      ...pullRequest({ title: 'Improve CAN-12', headRefName: 'feature/cAn-34' }),
-      body: 'CAN-56 must be ignored',
-    } as PullRequest;
+  test('extracts identifiers from the title and head branch', () => {
+    expect(
+      extractCanIdentifiers(pullRequest({ title: 'Improve CAN-12', headRefName: 'feature/cAn-34' }))
+    ).toEqual(['CAN-12', 'CAN-34']);
+  });
 
-    expect(extractCanIdentifiers(withBody)).toEqual(['CAN-12', 'CAN-34']);
+  test('extracts body identifiers only after a closing keyword', () => {
+    const withBody = (body: string) =>
+      extractCanIdentifiers(pullRequest({ title: 'Improve', headRefName: 'feature/x', body }));
+
+    expect(withBody('Fixes CAN-419')).toEqual(['CAN-419']);
+    expect(withBody('closes: can-7\n\nResolved CAN-8, CAN-9 and CAN-10')).toEqual([
+      'CAN-10',
+      'CAN-7',
+      'CAN-8',
+      'CAN-9',
+    ]);
+    expect(
+      withBody('Fixes https://linear.app/canyon-code/issue/CAN-419/check-release-notes')
+    ).toEqual(['CAN-419']);
+    expect(withBody('Completes [CAN-5](https://linear.app/canyon-code/issue/CAN-5/x)')).toEqual([
+      'CAN-5',
+    ]);
+    expect(withBody('Related to CAN-56, follow-up of CAN-57. Prefix fixing nothing.')).toEqual([]);
+    expect(withBody('Hotfixes CAN-58')).toEqual([]);
   });
 
   test('deduplicates associated pull requests and Linear issues', () => {
