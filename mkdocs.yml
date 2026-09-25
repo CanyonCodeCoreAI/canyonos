@@ -1,0 +1,13 @@
+site_name: CanyonOS
+repo_url: https://github.com/CanyonCodeCoreAI/canyonos
+docs_dir: docs
+theme: readthedocs
+
+nav:
+  - Preparing an Agent App: CANYONIZATION-APP-READINESS.md
+
+plugins:
+  - search
+  - redirects:
+      redirect_maps:
+        index.md: CANYONIZATION-APP-READINESS.md

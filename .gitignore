@@ -66,3 +66,6 @@ packages/api/data/blobs/
 test-results/
 packages/web/src/routeTree.gen.ts
 playwright-report/
+
+# MkDocs build output
+site/
