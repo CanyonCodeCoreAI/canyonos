@@ -1,22 +1,28 @@
 # Local CanyonOS development
 
-For when  changing the CLI, API, or web dashboard locally. It keeps  
-the workflow/Core in Docker, but runs the dashboard API and Vite on the host  
-with watch mode and hot reload (dev mode).
+For when changing the CLI, Core, API, or web dashboard locally.
 
-## One-time setup
+## Run it
 
 ```bash
-cd /path/to/canyonos
-bun install
-uv sync
+bun install   # once
+bun run canyonos:dev
 ```
 
-Build the Core image whenever Core code changes:
+That builds the Core, API and web images from this checkout, runs `uv sync`,
+and opens a shell with the workspace `.venv` active. In that shell `canyonos`
+is the CLI from this checkout and uses those local images. Type `exit` to
+leave it. Rerun it after changing Core or dashboard code.
 
 ```bash
-docker build -f packages/core/Dockerfile -t canyonos-core:dev packages/core
+cd examples/portfolio
+canyonos deploy
 ```
+
+## Hot-reload dashboard
+
+To iterate on the API or web code without rebuilding images, run the dashboard
+on the host instead.
 
 In the workflow project, configure its OTEL destination in
 `.car/config/global_controller.yaml`. This is a base endpoint: do not add
@@ -31,21 +37,12 @@ otel:
       headers: {}
 ```
 
-## Run it
-
-Deploy the workflow without the image-based dashboard:
-
-```bash
-cd /path/to/workflow
-CANYONOS_ENV=development CANYONOS_CORE_IMAGE=local \
-  /path/to/canyonos/.venv/bin/canyonos deploy --serve false
-```
-
-Then, from the CanyonOS checkout, start the host dashboard:
+Inside the `bun run canyonos:dev` shell, deploy without the image-based
+dashboard, then start the host dashboard from the checkout:
 
 ```bash
-cd /path/to/canyonos
-bun run canyonos:dev
+cd /path/to/workflow && canyonos deploy --serve false
+cd /path/to/canyonos && bun run dashboard:dev
 ```
 
 That command ensures local Postgres and Mailpit are running, then starts the
@@ -54,7 +51,7 @@ local defaults: fixed-code auth, no deploy worker, and Redis at
 `127.0.0.1:6379`. Shell variables still win if you need different ports or
 services.
 
-`canyonos:dev` uses Compose defaults instead of the optional `.docker/.env`,
+`dashboard:dev` uses Compose defaults instead of the optional `.docker/.env`,
 so this loop does not need another local env file. Use `.docker/.env` with the
 `bun run docker:*` commands when you need custom backing-service ports or
 volumes.
@@ -73,12 +70,12 @@ send their traces to the host API, and the Vite dashboard shows them.
 ## A few quirks
 
 - The API reads the workflow identity from Redis during startup. After a new
-deploy, restart `bun run canyonos:dev` so it bootstraps the new project.
-- API and web edits reload while the command is running. Core edits need the
-Core image rebuild and a workflow redeploy.
+deploy, restart `bun run dashboard:dev` so it bootstraps the new project.
+- API and web edits reload while the command is running. Core edits need
+`bun run canyonos:dev` again and a workflow redeploy.
 - The default ports are API `3000`, web `5173`, Postgres `5432`, Mailpit `1025`
 and `8025`, workflow `8080`, and workflow Redis `6379`. Stop or reconfigure
 anything already using one of them.
-- This is the fast host-dashboard loop. It intentionally does not build the
-API or web images. Use the image build flow when testing container parity.
+- This is the fast host-dashboard loop. Use `canyonos deploy` with the image
+dashboard when testing container parity.
 
