@@ -27,8 +27,8 @@ from canyonos.constants import (
 from canyonos.port_utils import find_free_port
 
 COMPOSE_PROJECT = "canyonos-dashboard"
-API_VERSION = "0.1.0"
-WEB_VERSION = "0.1.0"
+API_VERSION = "0.1.1"
+WEB_VERSION = "0.1.1"
 # The images this repo publishes from its `api-v*` and `web-v*` releases, unless a
 # developer points the CLI at locally built ones. The two versions move independently.
 API_IMAGE = env.api_image(f"ghcr.io/canyoncodecoreai/canyonos-api:{API_VERSION}")
