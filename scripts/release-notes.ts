@@ -15,6 +15,7 @@ export type PullRequest = {
   body: string | null;
   headRefName: string;
   mergedAt: string | null;
+  author: string | null;
 };
 export type LinearIssue = {
   identifier: string;
@@ -51,7 +52,7 @@ export type ReleaseNotesAudit = {
     Omit<PullRequest, 'body'> & {
       identifiers: string[];
       packages: string[];
-      source: 'linear' | 'fallback' | 'excluded';
+      source: 'linear' | 'fallback' | 'changelog' | 'excluded';
     }
   >;
   issues: Array<{
@@ -211,10 +212,37 @@ export async function findShippedPackages(
   return shipped.filter((entry): entry is ShippedPackage => entry !== null);
 }
 
-export function packagesTouchedBy(files: string[], packages: ShippedPackage[]): ShippedPackage[] {
-  return packages.filter((shipped) =>
-    files.some((file) => shipped.paths.some((path) => file.startsWith(path)))
+export function packagesTouchedBy<T extends ReleasablePackage>(
+  files: string[],
+  packages: T[]
+): T[] {
+  return packages.filter((releasable) =>
+    files.some((file) => releasable.paths.some((path) => file.startsWith(path)))
   );
+}
+
+export function packageForTag(tagName: string): ReleasablePackage | undefined {
+  return releasablePackages.find(
+    (releasable) =>
+      tagName.startsWith(releasable.tagPrefix) &&
+      /^\d/.test(tagName.slice(releasable.tagPrefix.length))
+  );
+}
+
+export function composePackageChangelog(
+  targetTag: string,
+  previousTag: string,
+  repository: string,
+  pullRequests: PullRequest[]
+): string {
+  const entries =
+    pullRequests.length === 0
+      ? ['No pull requests changed this package.']
+      : pullRequests.map(
+          (pullRequest) =>
+            `* ${pullRequest.title}${pullRequest.author ? ` by @${pullRequest.author}` : ''} in ${pullRequest.url}`
+        );
+  return `## What's Changed\n\n${entries.join('\n')}\n\n**Full Changelog**: https://github.com/${repository}/compare/${previousTag}...${targetTag}\n`;
 }
 
 export function composeReleaseNotes(
@@ -250,8 +278,11 @@ export async function runReleaseNotesPipeline(
     );
 
   try {
-    if (!umbrellaTagPattern.test(options.targetTag)) {
-      throw new Error(`${options.targetTag} is not a release tag like v2026.09.25.`);
+    const releasable = packageForTag(options.targetTag);
+    if (!releasable && !umbrellaTagPattern.test(options.targetTag)) {
+      throw new Error(
+        `${options.targetTag} is neither a package release tag nor a release tag like v2026.09.25.`
+      );
     }
     const previousTag =
       options.previousTag ?? (await dependencies.findPreviousRelease(options.targetTag)).tagName;
@@ -260,6 +291,54 @@ export async function runReleaseNotesPipeline(
       throw new Error(`${previousTag} is not an ancestor of ${options.targetTag}.`);
     }
 
+    const collected = await collectPullRequests(previousTag, options.targetTag, dependencies);
+    const markdown = releasable
+      ? packageChangelog(releasable, previousTag, collected)
+      : await datedReleaseNotes(previousTag, collected);
+    audit.status = 'generated';
+    await writeAudit();
+    await dependencies.writeFile(join(options.outputDirectory, 'release-notes.md'), markdown);
+    return { ok: true, audit, markdown };
+  } catch (error) {
+    audit.failure = error instanceof Error ? error.message : String(error);
+    await writeAudit();
+    return { ok: false, audit };
+  }
+
+  function packageChangelog(
+    releasable: ReleasablePackage,
+    previousTag: string,
+    collected: CollectedPullRequest[]
+  ): string {
+    const references = collected.map(({ pullRequest, files }) => ({
+      pullRequest,
+      touched: packagesTouchedBy(files, [releasable]).length > 0,
+    }));
+    const included = references
+      .filter(({ touched }) => touched)
+      .map(({ pullRequest }) => pullRequest);
+    audit.pullRequests = references.map(({ pullRequest, touched }) => ({
+      ...auditPullRequest(pullRequest),
+      packages: touched ? [releasable.name] : [],
+      source: touched ? 'changelog' : 'excluded',
+    }));
+    audit.packages = [
+      {
+        name: releasable.name,
+        tag: options.targetTag,
+        previousVersion: previousTag.startsWith(releasable.tagPrefix)
+          ? previousTag.slice(releasable.tagPrefix.length)
+          : null,
+        pullRequests: included.map((pullRequest) => pullRequest.number),
+      },
+    ];
+    return composePackageChangelog(options.targetTag, previousTag, options.repository, included);
+  }
+
+  async function datedReleaseNotes(
+    previousTag: string,
+    collected: CollectedPullRequest[]
+  ): Promise<string> {
     const shippedPackages = await findShippedPackages(
       previousTag,
       options.targetTag,
@@ -271,28 +350,13 @@ export async function runReleaseNotesPipeline(
       );
     }
 
-    const commits = await dependencies.listRangeCommits(previousTag, options.targetTag);
-    const pullRequests = deduplicatePullRequests(
-      (
-        await Promise.all(commits.map((commit) => dependencies.listAssociatedPullRequests(commit)))
-      ).flat()
-    );
-    const references = await Promise.all(
-      pullRequests.map(async (pullRequest) => ({
-        pullRequest,
-        identifiers: extractCanIdentifiers(pullRequest),
-        packages: packagesTouchedBy(
-          await dependencies.listPullRequestFiles(pullRequest.number),
-          shippedPackages
-        ),
-      }))
-    );
+    const references = collected.map(({ pullRequest, files }) => ({
+      pullRequest,
+      identifiers: extractCanIdentifiers(pullRequest),
+      packages: packagesTouchedBy(files, shippedPackages),
+    }));
     audit.pullRequests = references.map(({ pullRequest, identifiers, packages }) => ({
-      number: pullRequest.number,
-      url: pullRequest.url,
-      title: pullRequest.title,
-      headRefName: pullRequest.headRefName,
-      mergedAt: pullRequest.mergedAt,
+      ...auditPullRequest(pullRequest),
       identifiers,
       packages: packages.map((shipped) => shipped.name),
       source: packages.length === 0 ? 'excluded' : identifiers.length === 0 ? 'fallback' : 'linear',
@@ -336,16 +400,41 @@ export async function runReleaseNotesPipeline(
         return { shipped, markdown };
       })
     );
-    const markdown = composeReleaseNotes(options.targetTag, options.repository, sections);
-    audit.status = 'generated';
-    await writeAudit();
-    await dependencies.writeFile(join(options.outputDirectory, 'release-notes.md'), markdown);
-    return { ok: true, audit, markdown };
-  } catch (error) {
-    audit.failure = error instanceof Error ? error.message : String(error);
-    await writeAudit();
-    return { ok: false, audit };
+    return composeReleaseNotes(options.targetTag, options.repository, sections);
   }
+}
+
+type CollectedPullRequest = { pullRequest: PullRequest; files: string[] };
+
+async function collectPullRequests(
+  previousTag: string,
+  targetTag: string,
+  dependencies: PipelineDependencies
+): Promise<CollectedPullRequest[]> {
+  const commits = await dependencies.listRangeCommits(previousTag, targetTag);
+  const pullRequests = deduplicatePullRequests(
+    (
+      await Promise.all(commits.map((commit) => dependencies.listAssociatedPullRequests(commit)))
+    ).flat()
+  );
+  return Promise.all(
+    pullRequests.map(async (pullRequest) => ({
+      pullRequest,
+      files: await dependencies.listPullRequestFiles(pullRequest.number),
+    }))
+  );
+}
+
+function auditPullRequest(pullRequest: PullRequest) {
+  return {
+    number: pullRequest.number,
+    url: pullRequest.url,
+    title: pullRequest.title,
+    headRefName: pullRequest.headRefName,
+    mergedAt: pullRequest.mergedAt,
+    author: pullRequest.author,
+    identifiers: extractCanIdentifiers(pullRequest),
+  };
 }
 
 type GitHubRelease = {
@@ -361,6 +450,7 @@ type GitHubPullRequest = {
   body: string | null;
   merged_at: string | null;
   head: { ref: string };
+  user: { login: string } | null;
 };
 
 async function command(command: string, args: string[]): Promise<string> {
@@ -399,6 +489,7 @@ function pullRequestFromGitHub(pullRequest: GitHubPullRequest): PullRequest {
     body: pullRequest.body,
     headRefName: pullRequest.head.ref,
     mergedAt: pullRequest.merged_at,
+    author: pullRequest.user?.login ?? null,
   };
 }
 

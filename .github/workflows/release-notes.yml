@@ -1,8 +1,10 @@
 name: Release notes
 
-# Writes release notes for a dated release (v2026.09.25), with a section for each package
-# whose version changed since the previous dated release. Package releases (cli-v, core-v,
-# api-v, web-v) are still published on their own; this workflow skips them.
+# Writes the body of every published release.
+# - Package releases (cli-v, core-v, api-v, web-v): a technical changelog of the pull requests
+#   that changed that package since its previous release.
+# - Dated releases (v2026.09.25): human notes from Linear, with a section for each package
+#   whose version changed since the previous dated release.
 
 on:
   release:
@@ -10,11 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       target_tag:
-        description: Published dated release tag (e.g. v2026.09.25).
+        description: Published release tag (e.g. v2026.09.25 or cli-v0.1.731).
         required: true
         type: string
       previous_tag:
-        description: Tag or commit to compare against, when there is no earlier dated release.
+        description: Tag or commit to compare against, when there is no earlier release of the same kind.
         required: false
         type: string
       publish:
@@ -32,7 +34,6 @@ permissions:
 
 jobs:
   generate:
-    if: startsWith(github.event.release.tag_name || inputs.target_tag, 'v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

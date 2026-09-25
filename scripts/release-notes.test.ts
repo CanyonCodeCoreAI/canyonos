@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  composePackageChangelog,
   deduplicateIssues,
   deduplicatePullRequests,
   extractCanIdentifiers,
   findShippedPackages,
+  packageForTag,
   packagesTouchedBy,
   pickPreviousRelease,
   queryLinearIssues,
@@ -27,6 +29,7 @@ const pullRequest = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   body: null,
   headRefName: 'felipea/can-42-deploy-output',
   mergedAt: '2026-09-10T00:00:00Z',
+  author: 'felipea',
   ...overrides,
 });
 
@@ -312,16 +315,18 @@ describe('release-notes pipeline', () => {
     expect(result.audit.previousTag).toBe('v2026.09.18');
   });
 
-  test('rejects tags that are not dated release tags', async () => {
+  test('rejects tags that are neither package nor dated release tags', async () => {
     const testRun = dependencies();
 
     const result = await runReleaseNotesPipeline(
-      { ...options, targetTag: 'cli-v0.1.731' },
+      { ...options, targetTag: 'nightly' },
       testRun.dependencies
     );
 
     expect(result.ok).toBe(false);
-    expect(result.audit.failure).toBe('cli-v0.1.731 is not a release tag like v2026.09.25.');
+    expect(result.audit.failure).toBe(
+      'nightly is neither a package release tag nor a release tag like v2026.09.25.'
+    );
   });
 
   test('fails when no package version changed', async () => {
@@ -350,5 +355,57 @@ describe('release-notes pipeline', () => {
     expect(result.ok).toBe(false);
     expect(testRun.calls.claude).toHaveLength(0);
     expect(testRun.files.get('/output/release-notes-audit.json')).toContain(caseName);
+  });
+});
+
+describe('package release changelog', () => {
+  const packageOptions = { ...options, targetTag: 'cli-v0.1.731' };
+
+  test('recognises package release tags', () => {
+    expect(packageForTag('cli-v0.1.731')?.name).toBe('CLI');
+    expect(packageForTag('core-v0.2.0')?.name).toBe('Core');
+    expect(packageForTag('v2026.09.25')).toBeUndefined();
+  });
+
+  test('lists only the pull requests that changed the package, without Linear or Claude', async () => {
+    const testRun = dependencies({
+      findPreviousRelease: async () => ({
+        tagName: 'cli-v0.1.730',
+        draft: false,
+        prerelease: false,
+        publishedAt: '2026-09-18T00:00:00Z',
+      }),
+      listAssociatedPullRequests: async () => [
+        pullRequest(),
+        pullRequest({ number: 43, title: 'Tune the API pool', author: 'someone' }),
+      ],
+      listPullRequestFiles: async (number) =>
+        number === 42 ? ['packages/cli/canyonos/deploy.py'] : ['packages/api/src/pool.ts'],
+    });
+
+    const result = await runReleaseNotesPipeline(packageOptions, testRun.dependencies);
+
+    expect(result.ok).toBe(true);
+    expect(testRun.calls.linear).toBe(0);
+    expect(testRun.calls.claude).toHaveLength(0);
+    expect(testRun.files.get('/output/release-notes.md')).toBe(
+      [
+        "## What's Changed",
+        '',
+        '* Improve deploy output CAN-42 by @felipea in https://github.com/CanyonCodeCoreAI/canyonos/pull/42',
+        '',
+        '**Full Changelog**: https://github.com/CanyonCodeCoreAI/canyonos/compare/cli-v0.1.730...cli-v0.1.731',
+        '',
+      ].join('\n')
+    );
+    expect(result.audit.packages).toEqual([
+      { name: 'CLI', tag: 'cli-v0.1.731', previousVersion: '0.1.730', pullRequests: [42] },
+    ]);
+  });
+
+  test('says so when no pull request changed the package', () => {
+    expect(
+      composePackageChangelog('web-v0.2.0', 'web-v0.1.0', 'CanyonCodeCoreAI/canyonos', [])
+    ).toContain('No pull requests changed this package.');
   });
 });
