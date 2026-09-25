@@ -88,7 +88,7 @@
     "@react-email/render": "^2.0.9",
     "diff": "^7.0.0",
     "drizzle-orm": "^0.45.2",
-    "elysia": "1.4.28",
+    "elysia": "1.4.29",
     "jose": "^6.2.3",
     "nodemailer": "^9.0.0",
     "pino": "^10.1.1",
