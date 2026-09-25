@@ -91,10 +91,23 @@ def _parse(path, as_text=False):
 def _parameter_names(node):
     """Every keyword-callable parameter, excluding `self`/`cls`."""
     args = node.args
-    positional = [arg.arg for arg in args.posonlyargs + args.args]
-    if positional and positional[0] in ("self", "cls"):
+    positional = [arg.arg for arg in args.args]
+    if not args.posonlyargs and positional and positional[0] in ("self", "cls"):
         positional = positional[1:]
     return positional + [arg.arg for arg in args.kwonlyargs]
+
+
+def _positional_only(node, sent):
+    """Parameters before `/` that a call passing `sent` by keyword breaks.
+
+    A required one is never filled. A sent name aimed at one raises TypeError,
+    or with `**kwargs` lands there instead and the parameter keeps its default.
+    """
+    names = [arg.arg for arg in node.args.posonlyargs]
+    if names and names[0] in ("self", "cls"):
+        names = names[1:]
+    required = _required_parameters(node)
+    return [name for name in names if name in required or name in sent]
 
 
 def _required_parameters(node):
@@ -356,11 +369,29 @@ def _check_method(report, class_path, class_name, function, methods, complete):
         )
 
     declared = [argument.name for argument in function.arguments]
+    positional_only = _positional_only(method, declared)
+    if positional_only:
+        report.add(
+            "CAR-ADAPTER-SIGNATURE",
+            path,
+            method.lineno,
+            f"`{class_name}.{function.name}` takes "
+            f"{', '.join(positional_only)} positional-only (before `/`)",
+            "The controller does method(**args), passing every argument by "
+            "keyword, so a parameter before `/` never receives it: TypeError at "
+            "request time, or with **kwargs the value lands there and the "
+            "parameter keeps its default. Move it after the `/`.",
+        )
+
     actual = _parameter_names(method)
     missing = (
         []
         if method.args.kwarg is not None
-        else [name for name in declared if name not in actual]
+        else [
+            name
+            for name in declared
+            if name not in actual and name not in positional_only
+        ]
     )
     if missing:
         report.add(
@@ -375,7 +406,11 @@ def _check_method(report, class_path, class_name, function, methods, complete):
             "request time.",
         )
 
-    unfilled = [name for name in _required_parameters(method) if name not in declared]
+    unfilled = [
+        name
+        for name in _required_parameters(method)
+        if name not in declared and name not in positional_only
+    ]
     if unfilled:
         report.add(
             "CAR-ADAPTER-SIGNATURE",
@@ -492,7 +527,22 @@ def _check_main_signature(report, workflow_path, main):
             "no await; the response body would be a coroutine repr.",
         )
 
+    positional_only = _positional_only(main, ["query"])
+    if positional_only:
+        report.add(
+            "CAR-WORKFLOW-SHAPE",
+            workflow_path,
+            main.lineno,
+            f"`main` takes {', '.join(positional_only)} positional-only (before `/`)",
+            'deploy() splats the posted {"query": "..."} in as kwargs, so a '
+            "parameter before `/` never receives it -- TypeError on every "
+            "request, or with **kwargs the query lands there and is ignored.",
+        )
+        return
+
     params = _parameter_names(main)
+    if not params and main.args.kwarg is not None:
+        return
     if not params:
         report.add(
             "CAR-WORKFLOW-SHAPE",

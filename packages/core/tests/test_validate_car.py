@@ -323,6 +323,69 @@ class ValidateCarTests(unittest.TestCase):
             [],
         )
 
+    def assertPositionalOnly(self, source, names):
+        findings = validate_car(self.car({"app/agents/echo_agent.py": source}))
+
+        self.assertEqual([f.code for f in findings], ["CAR-ADAPTER-SIGNATURE"])
+        self.assertIn(f"takes {names} positional-only", findings[0].summary)
+
+    def test_a_declared_argument_before_the_slash_is_reported(self):
+        """method(**args) cannot pass a keyword to a positional-only parameter."""
+        self.assertPositionalOnly(
+            "class EchoAgent:\n"
+            "    def echo(self, text, /, extra=1):\n"
+            "        return text\n",
+            "text",
+        )
+
+    def test_a_required_parameter_before_the_slash_is_reported_despite_var_keywords(
+        self,
+    ):
+        """The keyword lands in **kw and the positional-only one stays unfilled."""
+        self.assertPositionalOnly(
+            "class EchoAgent:\n"
+            "    def echo(self, text, /, **kw):\n"
+            "        return text\n",
+            "text",
+        )
+
+    def test_a_declared_argument_before_the_slash_is_reported_despite_var_keywords(
+        self,
+    ):
+        """The sent value lands in **kw; the parameter silently keeps its default."""
+        self.assertPositionalOnly(
+            "class EchoAgent:\n"
+            "    def echo(self, text='', /, **kw):\n"
+            "        return text\n",
+            "text",
+        )
+
+    def test_only_self_before_the_slash_is_fine(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "    def echo(self, /, text):\n"
+                    "        return text\n"
+                }
+            ),
+            [],
+        )
+
+    def test_a_defaulted_parameter_before_the_slash_is_fine_when_nothing_sends_it(
+        self,
+    ):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "    def echo(self, times=1, /, text=''):\n"
+                    "        return text * times\n"
+                }
+            ),
+            [],
+        )
+
     def test_a_method_taking_var_keywords_accepts_every_declared_argument(self):
         self.assertEqual(
             self.codes(
@@ -465,6 +528,39 @@ class ValidateCarTests(unittest.TestCase):
 
         self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
         self.assertIn("requires depth beyond `query`", findings[0].summary)
+
+    def test_a_query_before_the_slash_is_reported(self):
+        """deploy() passes `query` by keyword; even a defaulted one never gets it."""
+        for signature in (
+            "main(query, /)",
+            "main(query='', /)",
+            "main(query='', /, **body)",
+        ):
+            with self.subTest(signature):
+                findings = validate_car(
+                    self.car(
+                        {
+                            "app/workflow/echo_workflow.py": f"def {signature}:\n"
+                            "    return query\n\n\n"
+                            "deploy(main)\n"
+                        }
+                    )
+                )
+
+                self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
+                self.assertIn("`main` takes query positional-only", findings[0].summary)
+
+    def test_a_main_taking_var_keywords_receives_the_query(self):
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/workflow/echo_workflow.py": "def main(**body):\n"
+                    "    return body['query']\n\n\n"
+                    "deploy(main)\n"
+                }
+            ),
+            [],
+        )
 
     def test_a_workflow_that_never_deploys_is_reported(self):
         findings = validate_car(
