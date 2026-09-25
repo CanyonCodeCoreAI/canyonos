@@ -3,15 +3,18 @@
 **When:** after selecting service boundaries, before writing an adapter or
 workflow.
 
-**Output:** one loadable adapter per service and one workflow exposing
-`main(query: str)`.
+**Output:** one loadable adapter per service, one workflow exposing
+`main(query: str)`, and `.car/config/test_query.txt` holding one input that
+workflow accepts.
 
 Use this order:
 
 1. Choose a safe entrypoint module for each service.
 2. Write a no-argument synchronous adapter around source-owned behavior.
 3. Bridge async or session state only when the source requires it.
-4. Write the workflow and preserve parallel dispatch.
+4. Write the workflow, preserve parallel dispatch, and resolve final outputs
+   with `.value()` before returning.
+5. Write the workflow's test input.
 
 Complete `manifest.md`, then validate only the authored contracts that CanyonOS
 does not already guarantee.
@@ -22,9 +25,12 @@ only when a container loads.
 ## Contents
 
 - Adapter and workflow shape
+- Resolving workflow outputs
+- Workflow input and its test case
 - Choosing the entrypoint
 - Bridging async
 - Multi-turn and session state
+- Backing services default to the wrong host
 
 ## Adapter and workflow shape
 
@@ -46,6 +52,26 @@ writes there holds the LLM proxy alone, under an `__init__` that exports
 nothing. `from canyonos_core import deploy` builds green and raises ImportError
 at container start. V021.
 
+## Resolving workflow outputs
+
+Every remote service call returns a Future, not its computed value. In
+`main(query: str)`, explicitly call `.value()` on each Future contributing to
+the final output before returning it, including values nested in dictionaries,
+lists, or tuples. 
+
+```python
+def main(query: str) -> dict[str, str]:
+    answer = agent.work(query=query)
+    return {"answer": answer.value()}
+```
+
+Before returning from `main`, resolve any Future included in the final output
+with `.value()`. For example, if `answer` is a Future, use
+`return answer.value()`. Calling `str(...)` or `json.dumps(...)` does not resolve
+a Future. Decode the resolved value with `json.loads(...)` only when it is JSON
+text and the workflow needs the decoded structure. Return already concrete
+values unchanged.
+
 For parallel remote calls, dispatch all work before resolving any result:
 
 ```python
@@ -54,6 +80,25 @@ results = [json.loads(future.value()) for future in futures]
 ```
 
 Combining dispatch and `.value()` in one comprehension serializes the work.
+
+Before completing the workflow, trace every `return` in `main`, including
+early returns and conditional branches. Verify that every remote result in
+the returned payload passes through `.value()` before parsing, formatting, or
+serialization, and that no nested Future escapes. 
+
+## Workflow input and its test case
+
+`query` is always a `str`. Parse richer input out of it inside `main`
+(`int(query)`, `json.loads(query)`). Future arguments and `.value()` results
+are also text; the yaml `type` does not coerce them.
+
+Write one eligible input to `.car/config/test_query.txt`: the required input
+only, taken from the source, with no comments, quotes, or `{"query": ...}`
+wrapper. End-to-end testing sends it verbatim:
+
+```bash
+canyonos test "$(cat .car/config/test_query.txt)"
+```
 
 ## Choosing the entrypoint
 
@@ -126,3 +171,17 @@ in-process one -- read `routing_table:endpoints` from Redis
 (`CANYONOS_REDIS_HOST`/`CANYONOS_REDIS_PORT`, already in every container's env)
 for the database entry's name, the same way any other declared agent's address
 is resolved.
+
+## Backing services default to the wrong host
+
+A checkpointer, cache, or store the source constructs (e.g. a Redis- or
+Postgres-backed client) often defaults to `localhost` when no connection
+variable is set. Under CanyonOS's Local provider each agent and the workflow
+get their own container, so `localhost` there is that container's own
+loopback, not a shared service -- the client raises a connection error at
+startup instead of connecting. Local and EC2 both inject `CANYONOS_REDIS_HOST`
+and `CANYONOS_REDIS_PORT` into every container pointing at the real Redis
+instance; rebuild a Redis client's default from those instead of trusting the
+source's `localhost` default. Point a Postgres or other database client at its
+declared `type: database` entry's address, resolved as above. Either way, still
+honor an explicit override the source already reads (e.g. `REDIS_URL`).

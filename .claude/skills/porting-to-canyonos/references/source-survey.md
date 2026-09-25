@@ -5,8 +5,34 @@
 **Inspect:** `.car/app`, not a framework-based guess about the original tree.
 
 **Output:** a short survey record and the smallest useful service map. Do not
-start adapter or config work until each section is resolved or marked as a
-blocker.
+start adapter or config work until the readiness gate passes and each section
+is resolved. A blocker pauses the build, not just the survey checklist.
+
+## Application-readiness gate
+
+Read [Preparing an Agent App for CanyonOS](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/docs/CANYONIZATION-APP-READINESS.md)
+and check the selected serving path against its requirements before adapting
+it. Use the target image's dependency baseline rather than copying version
+numbers from the guide.
+
+Pause the build when a required source capability cannot run within CanyonOS:
+interactive or device-dependent serving, Docker inside the agent, unsupported
+required model routing, incompatible dependencies or resource requirements,
+unavailable required services/data, or a demonstrated source install, import,
+or request failure. Check the actual serving path: an unused demo or optional
+integration is not a blocker.
+
+Do not silently remove required behavior, switch providers, fabricate data,
+or repair source defects to make the port pass. Stop adapting when a blocker
+is found, even if static validation could pass. Use the blocked handoff in
+`validation-and-deploy.md`: identify the source evidence, the developer action
+needed to resume, and a link to the relevant section of the readiness guide.
+Do not report build success or recommend test/deploy while it remains blocked.
+
+Credentials that only need filling in before test/deploy belong in the final
+env reminder, not a build blocker. Record their names from source and
+`.env.example`; never read `.env` or request secret values. Pause if missing
+configuration, services, or data prevents determining or preparing the port.
 
 ## 1. Public behavior
 
@@ -61,7 +87,7 @@ import that only resolves from a nested root, an asset the sweep drops, a
 credential name.
 
 An existing syntax error on the selected import graph is a source defect;
-obtain approval before changing even the copied version. The final gap validator
+pause the build and identify the required source fix. The final gap validator
 checks authored runtime code and cross-file bindings after the port is
 complete.
 
