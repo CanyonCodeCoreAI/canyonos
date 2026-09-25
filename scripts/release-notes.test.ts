@@ -138,6 +138,9 @@ describe('release-note validation', () => {
     ]);
     expect(withBody('Related to CAN-56, follow-up of CAN-57. Prefix fixing nothing.')).toEqual([]);
     expect(withBody('Hotfixes CAN-58')).toEqual([]);
+    expect(withBody('Write `Fixes CAN-1` to link.\n\n```\nCloses CAN-2\n```\nFixes CAN-3')).toEqual(
+      ['CAN-3']
+    );
   });
 
   test('deduplicates associated pull requests and Linear issues', () => {
