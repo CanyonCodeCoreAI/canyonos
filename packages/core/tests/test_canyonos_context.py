@@ -1,7 +1,9 @@
 import contextvars
 import os
 import sys
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -42,6 +44,36 @@ class CanyonosContextTests(unittest.TestCase):
             canyonos_context.get_current_metrics_key(),
             "controller:localhost:50051:metrics",
         )
+
+    def _set_all(self):
+        canyonos_context.set_request_id("req-123")
+        canyonos_context.set_current_future_id("future-abc")
+        canyonos_context.set_current_metrics_key("controller:localhost:50051:metrics")
+
+    @staticmethod
+    def _get_all():
+        return (
+            canyonos_context.get_request_id(),
+            canyonos_context.get_current_future_id(),
+            canyonos_context.get_current_metrics_key(),
+        )
+
+    def test_values_reach_worker_run_in_copied_context(self):
+        self._set_all()
+        ctx = contextvars.copy_context()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            seen = pool.submit(ctx.run, self._get_all).result()
+        self.assertEqual(
+            seen, ("req-123", "future-abc", "controller:localhost:50051:metrics")
+        )
+
+    def test_values_do_not_reach_bare_thread(self):
+        self._set_all()
+        seen = []
+        worker = threading.Thread(target=lambda: seen.append(self._get_all()))
+        worker.start()
+        worker.join()
+        self.assertEqual(seen, [("", "", "")])
 
 
 if __name__ == "__main__":
