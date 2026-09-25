@@ -2,11 +2,14 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   composePackageChangelog,
+  conventionalScopes,
   deduplicateIssues,
   deduplicatePullRequests,
   extractCanIdentifiers,
   findShippedPackages,
+  isInternalPullRequest,
   packageForTag,
+  packagesForPullRequest,
   packagesTouchedBy,
   pickPreviousRelease,
   queryLinearIssues,
@@ -233,7 +236,63 @@ describe('shipped packages', () => {
   });
 });
 
+describe('pull request classification', () => {
+  test('treats CI, chore, build, test, docs, style and refactor pull requests as internal', () => {
+    expect(isInternalPullRequest({ title: 'ci(dashboard): release the images' })).toBe(true);
+    expect(isInternalPullRequest({ title: 'chore: point URLs at the renamed repo' })).toBe(true);
+    expect(isInternalPullRequest({ title: 'refactor!: move the loader' })).toBe(true);
+    expect(isInternalPullRequest({ title: 'feat(cli): add --version' })).toBe(false);
+    expect(isInternalPullRequest({ title: 'CLI fails to start' })).toBe(false);
+  });
+
+  test('reads conventional commit scopes', () => {
+    expect(conventionalScopes('feat(cli): add --version')).toEqual(['cli']);
+    expect(conventionalScopes('fix(core, api)!: guard the loop')).toEqual(['core', 'api']);
+    expect(conventionalScopes('Harden deploy')).toEqual([]);
+  });
+
+  test('assigns a scoped pull request to its scope instead of every touched package', async () => {
+    const shipped = await findShippedPackages('v2026.09.18', 'v2026.09.25', async (ref, path) =>
+      ref === 'v2026.09.25'
+        ? path.endsWith('.json')
+          ? packageJson('1.0.0')
+          : pyproject('1.0.0')
+        : null
+    );
+    const files = ['packages/cli/canyonos/deploy.py', 'packages/core/canyonos_core/cli.py'];
+    const names = (title: string) =>
+      packagesForPullRequest({ title }, files, shipped).map((entry) => entry.name);
+
+    expect(names('fix(core): fail the deploy on an agent that cannot start')).toEqual(['Core']);
+    expect(names('feat(dashboard): add a runs page')).toEqual(['API', 'Web']);
+    expect(names('feat(skill): tighten the proxy check')).toEqual(['CLI', 'Core']);
+    expect(names('Harden deploy')).toEqual(['CLI', 'Core']);
+  });
+});
+
 describe('release-notes pipeline', () => {
+  test('leaves internal pull requests out of the human notes', async () => {
+    const testRun = dependencies({
+      listAssociatedPullRequests: async () => [
+        pullRequest(),
+        pullRequest({
+          number: 44,
+          title: 'ci(cli): release from a GitHub release CAN-397',
+          headRefName: 'felipea/can-397-release',
+        }),
+      ],
+    });
+
+    const result = await runReleaseNotesPipeline(options, testRun.dependencies);
+
+    expect(result.ok).toBe(true);
+    expect(testRun.calls.claude.map((call) => call.issues)).toEqual([['CAN-42'], []]);
+    expect(result.audit.pullRequests).toEqual([
+      expect.objectContaining({ number: 42, source: 'linear' }),
+      expect.objectContaining({ number: 44, packages: [], source: 'internal' }),
+    ]);
+  });
+
   test('writes one section per shipped package with its release link', async () => {
     const testRun = dependencies({
       listAssociatedPullRequests: async () => [

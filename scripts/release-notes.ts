@@ -31,6 +31,7 @@ export type ReleasablePackage = {
   tagPrefix: string;
   manifest: string;
   paths: string[];
+  scopes: string[];
 };
 export type ShippedPackage = ReleasablePackage & {
   version: string;
@@ -52,7 +53,7 @@ export type ReleaseNotesAudit = {
     Omit<PullRequest, 'body'> & {
       identifiers: string[];
       packages: string[];
-      source: 'linear' | 'fallback' | 'changelog' | 'excluded';
+      source: 'linear' | 'fallback' | 'changelog' | 'internal' | 'excluded';
     }
   >;
   issues: Array<{
@@ -95,24 +96,28 @@ export const releasablePackages: ReleasablePackage[] = [
     tagPrefix: 'cli-v',
     manifest: 'packages/cli/pyproject.toml',
     paths: ['packages/cli/'],
+    scopes: ['cli'],
   },
   {
     name: 'Core',
     tagPrefix: 'core-v',
     manifest: 'packages/core/pyproject.toml',
     paths: ['packages/core/'],
+    scopes: ['core'],
   },
   {
     name: 'API',
     tagPrefix: 'api-v',
     manifest: 'packages/api/package.json',
     paths: ['packages/api/'],
+    scopes: ['api', 'dashboard'],
   },
   {
     name: 'Web',
     tagPrefix: 'web-v',
     manifest: 'packages/web/package.json',
     paths: ['packages/web/', 'packages/ui/'],
+    scopes: ['web', 'ui', 'dashboard'],
   },
 ];
 
@@ -219,6 +224,35 @@ export function packagesTouchedBy<T extends ReleasablePackage>(
   return packages.filter((releasable) =>
     files.some((file) => releasable.paths.some((path) => file.startsWith(path)))
   );
+}
+
+const internalTypePattern = /^(ci|chore|build|test|tests|docs|style|refactor)(\([^)]*\))?!?:/i;
+
+export function isInternalPullRequest(pullRequest: Pick<PullRequest, 'title'>): boolean {
+  return internalTypePattern.test(pullRequest.title.trim());
+}
+
+export function conventionalScopes(title: string): string[] {
+  const scope = title.trim().match(/^\w+\(([^)]+)\)!?:/)?.[1];
+  return scope
+    ? scope
+        .toLowerCase()
+        .split(/[\s,/]+/)
+        .filter(Boolean)
+    : [];
+}
+
+export function packagesForPullRequest<T extends ReleasablePackage>(
+  pullRequest: Pick<PullRequest, 'title'>,
+  files: string[],
+  packages: T[]
+): T[] {
+  const scopes = conventionalScopes(pullRequest.title);
+  const namesPackage = (releasable: ReleasablePackage) =>
+    releasable.scopes.some((scope) => scopes.includes(scope));
+  return releasablePackages.some(namesPackage)
+    ? packages.filter(namesPackage)
+    : packagesTouchedBy(files, packages);
 }
 
 export function packageForTag(tagName: string): ReleasablePackage | undefined {
@@ -352,14 +386,23 @@ export async function runReleaseNotesPipeline(
 
     const references = collected.map(({ pullRequest, files }) => ({
       pullRequest,
+      internal: isInternalPullRequest(pullRequest),
       identifiers: extractCanIdentifiers(pullRequest),
-      packages: packagesTouchedBy(files, shippedPackages),
+      packages: isInternalPullRequest(pullRequest)
+        ? []
+        : packagesForPullRequest(pullRequest, files, shippedPackages),
     }));
-    audit.pullRequests = references.map(({ pullRequest, identifiers, packages }) => ({
+    audit.pullRequests = references.map(({ pullRequest, internal, identifiers, packages }) => ({
       ...auditPullRequest(pullRequest),
       identifiers,
       packages: packages.map((shipped) => shipped.name),
-      source: packages.length === 0 ? 'excluded' : identifiers.length === 0 ? 'fallback' : 'linear',
+      source: internal
+        ? 'internal'
+        : packages.length === 0
+          ? 'excluded'
+          : identifiers.length === 0
+            ? 'fallback'
+            : 'linear',
     }));
     audit.packages = shippedPackages.map((shipped) => ({
       name: shipped.name,
@@ -542,7 +585,7 @@ async function generateClaudeNotes(
   fallbackPullRequests: FallbackPullRequest[]
 ): Promise<string> {
   let markdown: string | null = null;
-  const prompt = `Write concise user-facing Markdown release notes for the ${packageName} package from validated Linear issues and fallback pull request context. Use only these headings, in this order, and leave out a heading that has no entries: ### New, ### Improved, ### Fixed. Do not add other headings, an introduction, pull requests, or implementation details. Omit internal work. Do not invent facts. If nothing is user-facing, reply with exactly: No user-facing changes.\n\n${JSON.stringify({ issues, fallbackPullRequests })}`;
+  const prompt = `Write concise user-facing Markdown release notes for the ${packageName} package from validated Linear issues and fallback pull request context. Use only these headings, in this order, and leave out a heading that has no entries: ### New, ### Improved, ### Fixed. Do not add other headings, an introduction, pull requests, or implementation details. Include every change a user of the package would notice, including fixes to reliability, resource use, costs, validation, and dependency requirements. Omit only changes users cannot notice: CI, release process, version bumps, tests, and repository tooling. State only what the source says: do not add platforms, benefits, audiences, or other details it does not state. If nothing is user-facing, reply with exactly: No user-facing changes.\n\n${JSON.stringify({ issues, fallbackPullRequests })}`;
   for await (const message of query({
     prompt,
     options: {
