@@ -175,13 +175,30 @@ def test_the_container_gets_the_artifact_read_only_as_its_workdir(docker, tmp_pa
         f"{root}:/workspace:ro",
         "-w",
         "/workspace",
-        env.core_image,
+        "--entrypoint",
         "python",
+        env.core_image,
         "-m",
         "canyonos_core.validate",
         ".",
         "--json",
     ]
+
+
+def test_the_image_entrypoint_is_replaced_by_the_validator(docker, tmp_path):
+    """The core image's ENTRYPOINT is the server; left in place it would take
+    `python -m canyonos_core.validate` as its own arguments and never exit."""
+    calls = docker(json.dumps({"errors": 0, "findings": []}))
+    root = tmp_path / ".car"
+    root.mkdir()
+
+    validate_cmd.run_validate(str(root))
+
+    argv = calls["argv"]
+    image = argv.index(env.core_image)
+    assert argv[argv.index("--entrypoint") + 1] == "python"
+    assert argv.index("--entrypoint") < image
+    assert argv[image + 1 : image + 3] == ["-m", "canyonos_core.validate"]
 
 
 def test_a_config_is_passed_through_to_the_container(docker, tmp_path):

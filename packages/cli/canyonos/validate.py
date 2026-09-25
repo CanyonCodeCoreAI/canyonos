@@ -81,7 +81,7 @@ def _docker_argv(artifact_root, config):
 
     The `.car` is the mount, so the container sees no more of the host than the
     artifact being checked, and every path in the findings is already relative
-    to it.
+    to it. The image's own entrypoint starts the server, so it is replaced.
     """
     argv = [
         "docker",
@@ -91,8 +91,9 @@ def _docker_argv(artifact_root, config):
         f"{os.path.abspath(artifact_root)}:{WORKSPACE}:ro",
         "-w",
         WORKSPACE,
-        env.core_image,
+        "--entrypoint",
         "python",
+        env.core_image,
         "-m",
         CORE_MODULE,
         ".",
