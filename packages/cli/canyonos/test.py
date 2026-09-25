@@ -271,13 +271,9 @@ def _existing_deploy():
     return None
 
 
-def _run_test(run, llm_stub=DEFAULT_LLM_STUB, timeout=REQUEST_TIMEOUT, rebuild=False):
+def _run_test(run, llm_stub=DEFAULT_LLM_STUB, timeout=REQUEST_TIMEOUT):
     """Query the workflow, standing up our own local deploy first unless one is
-    already up. The config is restored whatever happens.
-
-    `rebuild` skips that reuse, so a run always builds and installs what it
-    queries -- the evidence a port is deployable, rather than a query answered
-    by whatever was already running."""
+    already up. The config is restored whatever happens."""
     config_path = workspace_relative(default_config_path())
     if config_path is None:
         raise RuntimeError("Config must be inside the project directory being synced.")
@@ -290,7 +286,7 @@ def _run_test(run, llm_stub=DEFAULT_LLM_STUB, timeout=REQUEST_TIMEOUT, rebuild=F
             f"No agent with `type: workflow` in {config_path}; nothing to test."
         )
 
-    existing = None if rebuild else _existing_deploy()
+    existing = _existing_deploy()
     if existing is not None:
         # A deploy is already up: query it exactly as it stands (its own
         # providers and LLM, no local flip, no stub) instead of tearing it down
@@ -384,11 +380,7 @@ def _payload(run):
 
 
 def run_test(
-    prompt=None,
-    as_json=False,
-    llm_stub=DEFAULT_LLM_STUB,
-    timeout=REQUEST_TIMEOUT,
-    rebuild=False,
+    prompt=None, as_json=False, llm_stub=DEFAULT_LLM_STUB, timeout=REQUEST_TIMEOUT
 ):
     run = _Run(prompt or DEFAULT_QUERY)
     ui.set_quiet(as_json)
@@ -396,7 +388,7 @@ def run_test(
     try:
         container_live = False
         try:
-            _run_test(run, llm_stub=llm_stub, timeout=timeout, rebuild=rebuild)
+            _run_test(run, llm_stub=llm_stub, timeout=timeout)
         except KeyboardInterrupt:
             run.error = "cancelled by user"
         except RuntimeError as e:
