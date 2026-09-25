@@ -3,11 +3,12 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
 import yaml
-from packaging.version import Version
+from packaging.requirements import Requirement
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -15,7 +16,8 @@ from canyonos_core import stub_generator
 from canyonos_core.stub_generator import (
     BASE_AGENT_REQUIREMENTS,
     BASE_WORKFLOW_REQUIREMENTS,
-    PLATFORM_PINS,
+    PROTOBUF_FLOOR,
+    TESTED_MAJOR_VERSIONS,
     _stub_destination,
     _sweep_project_files,
     generate_docker,
@@ -52,15 +54,9 @@ class GenerateDockerRequirementsTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "grpcio==1.83.1",
-                "grpcio-tools==1.76.0",
-                "protobuf==6.33.5",
-                "redis==8.1.0",
-                "pyyaml==6.0.3",
-                "psutil==7.2.2",
-                "boto3==1.43.91",
-                "flask==3.1.3",
-                "requests==2.34.2",
+                "grpcio>=1.76.0",
+                "protobuf>=6.31.1",
+                "redis>=3.5",
             ],
         )
         self.assertNotIn("yfinance", requirements)
@@ -149,6 +145,15 @@ class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
         self.assertIn("target=controller.run", launcher)
         self.assertIn('socket.create_connection(("127.0.0.1", 9123)', launcher)
         self.assertIn("controller.mark_ready()", launcher)
+        self.assertIn("WORKFLOW_READY_TIMEOUT_SECONDS = 120", launcher)
+        # The watcher gives up as failed, not silently: a port that never opens
+        # must not leave the deploy waiting on a status nobody wrote.
+        watcher = launcher[
+            launcher.index("def mark_ready_when_serving") : launcher.index(
+                "controller = LocalController("
+            )
+        ]
+        self.assertIn("controller.mark_failed()", watcher)
         self.assertIn("except Exception:", launcher)
         self.assertIn("controller.mark_failed()", launcher)
         self.assertIn("traceback.print_exc()", launcher)
@@ -483,7 +488,7 @@ class GenerateWorkflowDockerStubPlacementTests(unittest.TestCase):
 
 
 class PlatformPinTests(unittest.TestCase):
-    """Each forced package resolves to the higher of our pin and the app's ask."""
+    """Only protobuf is forced, intersected with whatever bound the app declares."""
 
     def _context(self, requirements, workflow=False):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -521,64 +526,223 @@ class PlatformPinTests(unittest.TestCase):
         ]
         return [entry.strip("'") for entry in written.split()], notes
 
-    def test_every_platform_pin_is_exact(self):
-        for pin in PLATFORM_PINS:
-            with self.subTest(pin=pin):
-                self.assertRegex(pin, r"^[a-z0-9-]+==[0-9][0-9a-z.]*$")
+    def test_base_requirements_are_ranges_not_exact_pins(self):
+        for requirement in BASE_AGENT_REQUIREMENTS:
+            with self.subTest(requirement=requirement):
+                self.assertNotIn("==", requirement)
 
-    def test_pins_come_from_the_base_requirements(self):
-        forced = {pin.split("==")[0] for pin in PLATFORM_PINS}
-        self.assertEqual(forced, set(stub_generator._FORCED_FROM_BASE))
-        for pin in PLATFORM_PINS:
-            with self.subTest(pin=pin):
-                self.assertIn(pin, BASE_AGENT_REQUIREMENTS)
+    def test_the_protobuf_floor_loads_host_compiled_gencode(self):
+        # The host's grpcio-tools 1.76.0 emits *_pb2.py that need protobuf>=6.31.1 at runtime.
+        self.assertIn("6.31.1", PROTOBUF_FLOOR.specifier)
+        self.assertNotIn("6.31.0", PROTOBUF_FLOOR.specifier)
 
-    def test_grpcio_tools_is_forced_wherever_protobuf_is(self):
-        # protoc stamps its own generation into the *_pb2.py it writes.
-        forced = {pin.split("==")[0] for pin in PLATFORM_PINS}
-        if "protobuf" in forced:
-            self.assertIn("grpcio-tools", forced)
-
-    def test_the_forced_protobuf_satisfies_the_grpcio_tools_bound(self):
-        # grpcio-tools carries the only upper bound on protobuf in the base set,
-        # so the two cannot be bumped independently: 1.65.5 required
-        # protobuf<6.0, which held the runtime below the gencode 6.x that
-        # transitively installed *_pb2.py modules are built with. 1.76.0
-        # requires >=6.31.1.
-        pins = {pin.split("==")[0]: pin.split("==")[1] for pin in PLATFORM_PINS}
-        self.assertGreaterEqual(Version(pins["protobuf"]), Version("6.31.1"))
-
-    def test_the_pin_holds_and_stays_quiet_when_nothing_newer_is_asked(self):
+    def test_only_protobuf_is_forced(self):
         for requirements in (
             [],
-            ["protobuf>=5.29.0"],
-            ["protobuf==6.33.5"],
             ["streamlit==1.31.1"],
+            ["requests==2.28.0", "flask==2.3.3", "grpcio==1.80.0"],
         ):
             with self.subTest(requirements=requirements):
                 overrides, notes = self._context(requirements)
-                self.assertEqual(overrides, list(PLATFORM_PINS))
+                self.assertEqual(overrides, [str(PROTOBUF_FLOOR)])
                 self.assertEqual(notes, [])
 
-    def test_an_app_asking_for_newer_wins(self):
-        overrides, notes = self._context(["protobuf>=7"])
-        self.assertIn("protobuf>=7", overrides)
-        self.assertNotIn("protobuf==6.33.5", overrides)
-        self.assertEqual(
-            notes, ["Note: 'protobuf>=7' outranks the platform pin protobuf==6.33.5"]
+    def test_an_app_protobuf_bound_is_intersected_with_the_floor(self):
+        overrides, _ = self._context(["protobuf>=6.32"])
+        self.assertEqual(len(overrides), 1)
+        forced = Requirement(overrides[0]).specifier
+        self.assertNotIn("6.31.5", forced)
+        self.assertIn("6.33.5", forced)
+
+    def test_other_base_packages_are_left_to_the_resolver(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workflow_file = _write(Path(tmpdir) / "workflow.py", "print('ok')\n")
+            output_dir = os.path.join(tmpdir, "out")
+            with redirect_stdout(io.StringIO()):
+                generate_workflow_docker(
+                    str(workflow_file),
+                    [],
+                    output_dir=output_dir,
+                    requirements=["flask==2.3.3"],
+                )
+            requirements = _read_requirements(output_dir)
+
+        self.assertIn("flask>=2.3.3", requirements)
+        self.assertIn("flask==2.3.3", requirements)
+
+    def test_base_requirements_carry_no_upper_bound(self):
+        for requirement in BASE_WORKFLOW_REQUIREMENTS:
+            with self.subTest(requirement=requirement):
+                self.assertNotIn("<", requirement)
+
+    def test_every_base_package_has_a_tested_major_version(self):
+        names = {Requirement(r).name for r in BASE_WORKFLOW_REQUIREMENTS}
+        self.assertEqual(names, set(TESTED_MAJOR_VERSIONS))
+
+    def _dockerfile(self, workflow, requirements=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            output_dir = os.path.join(tmpdir, "out")
+            with redirect_stdout(io.StringIO()):
+                if workflow:
+                    wf = _write(project / "workflow.py", "print('ok')\n")
+                    generate_workflow_docker(
+                        str(wf), [], output_dir=output_dir, requirements=requirements
+                    )
+                else:
+                    yaml_path = project / "ExampleAgent.yaml"
+                    yaml_path.write_text(
+                        yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
+                    )
+                    agent = _write(project / "agent.py", "print('ok')\n")
+                    generate_docker(
+                        str(yaml_path),
+                        str(agent),
+                        output_dir=output_dir,
+                        requirements=requirements,
+                    )
+            return _read_dockerfile(output_dir)
+
+    def test_the_proxy_gets_its_own_venv_after_the_app_install(self):
+        for workflow in (False, True):
+            with self.subTest(workflow=workflow):
+                dockerfile = self._dockerfile(workflow)
+                app_install = dockerfile.index("uv pip install --system")
+                proxy_install = dockerfile.index("uv venv /opt/canyonos-proxy")
+                self.assertLess(app_install, proxy_install)
+                proxy_stage = dockerfile[proxy_install:]
+                for pin in stub_generator.PROXY_REQUIREMENTS:
+                    self.assertIn(pin, proxy_stage)
+                self.assertIn(
+                    'if python -c "import boto3" 2>/dev/null; then uv pip install '
+                    f"--python /opt/canyonos-proxy/bin/python {stub_generator.PROXY_BEDROCK_REQUIREMENT}; fi",
+                    proxy_stage,
+                )
+
+    def test_installs_are_held_below_each_images_tested_majors(self):
+        for workflow, caps in (
+            (False, "'grpcio<2' 'protobuf<7' 'redis<9'"),
+            (True, "'grpcio<2' 'protobuf<7' 'redis<9' 'flask<4'"),
+        ):
+            with self.subTest(workflow=workflow):
+                dockerfile = self._dockerfile(workflow)
+                self.assertIn(f"printf '%s\\n' {caps} > /tmp/tested.txt", dockerfile)
+                self.assertIn(
+                    "uv pip install --system -r requirements.txt "
+                    "--overrides /tmp/overrides.txt -c /tmp/tested.txt",
+                    dockerfile,
+                )
+
+    def test_a_package_the_app_asks_newer_for_is_left_uncapped(self):
+        dockerfile = self._dockerfile(False, requirements=["protobuf>=7"])
+        self.assertIn(
+            "printf '%s\\n' 'grpcio<2' 'redis<9' > /tmp/tested.txt", dockerfile
         )
 
-    def test_an_app_asking_for_older_loses_and_is_told(self):
-        overrides, notes = self._context(["protobuf<5"])
-        self.assertIn("protobuf==6.33.5", overrides)
+    def test_requirements_above_the_tested_major_are_reported(self):
         self.assertEqual(
-            notes, ["Warning: the platform pin protobuf==6.33.5 breaks 'protobuf<5'"]
+            stub_generator.too_new_requirements(
+                [
+                    "protobuf>=7",
+                    "protobuf==7.1",
+                    "protobuf==7.*",
+                    "protobuf~=7.0",
+                    "flask>4",
+                    "grpcio>=2",
+                ],
+                BASE_WORKFLOW_REQUIREMENTS,
+            ),
+            [
+                ("protobuf>=7", "protobuf<7"),
+                ("protobuf==7.1", "protobuf<7"),
+                ("protobuf==7.*", "protobuf<7"),
+                ("protobuf~=7.0", "protobuf<7"),
+                ("flask>4", "flask<4"),
+                ("grpcio>=2", "grpcio<2"),
+            ],
         )
+
+    def test_requirements_that_still_allow_a_tested_version_are_not_reported(self):
+        self.assertEqual(
+            stub_generator.too_new_requirements(
+                ["protobuf>6.9", "protobuf>=6,<8", "redis", "yfinance>=9"],
+                BASE_WORKFLOW_REQUIREMENTS,
+            ),
+            [],
+        )
+
+    def test_an_agent_flask_pin_is_not_a_base_package_to_warn_about(self):
+        self.assertEqual(stub_generator.too_new_requirements(["flask>=4"]), [])
+
+    def test_agents_no_longer_carry_the_proxys_packages(self):
+        for name in ("flask", "requests", "boto3"):
+            with self.subTest(name=name):
+                self.assertFalse(
+                    any(Requirement(r).name == name for r in BASE_AGENT_REQUIREMENTS)
+                )
+
+    def test_requirements_below_a_floor_are_reported(self):
+        self.assertEqual(
+            stub_generator.too_old_requirements(
+                [
+                    "flask==1.9",
+                    "flask<2.3",
+                    "flask~=2.2.0",
+                    "flask==2.2.*",
+                    "protobuf<5",
+                ],
+                BASE_WORKFLOW_REQUIREMENTS,
+            ),
+            [
+                ("flask==1.9", "flask>=2.3.3"),
+                ("flask<2.3", "flask>=2.3.3"),
+                ("flask~=2.2.0", "flask>=2.3.3"),
+                ("flask==2.2.*", "flask>=2.3.3"),
+                ("protobuf<5", "protobuf>=6.31.1"),
+            ],
+        )
+
+    def test_requirements_that_reach_a_floor_are_not_reported(self):
+        self.assertEqual(
+            stub_generator.too_old_requirements(
+                [
+                    "flask~=2.2",
+                    "flask>=2",
+                    "flask!=2.3.3",
+                    "flask==2.3.3",
+                    "yfinance==0.1",
+                ],
+                BASE_WORKFLOW_REQUIREMENTS,
+            ),
+            [],
+        )
+
+    def test_an_agent_may_pin_any_flask_now_the_proxy_has_its_own(self):
+        self.assertEqual(stub_generator.too_old_requirements(["flask==1.0"]), [])
+
+    def test_a_repeated_package_is_still_written_line_for_line(self):
+        # Combining the bounds is only for the comparison; requirements.txt
+        # keeps exactly what the app asked for.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            yaml_path = project / "ExampleAgent.yaml"
+            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
+            agent_file = _write(project / "agent.py", "print('ok')\n")
+            output_dir = os.path.join(tmpdir, "out")
+            with redirect_stdout(io.StringIO()):
+                generate_docker(
+                    str(yaml_path),
+                    str(agent_file),
+                    output_dir=output_dir,
+                    requirements=["protobuf>=7", "Protobuf>=7.1"],
+                )
+            requirements = _read_requirements(output_dir)
+
+        self.assertEqual(requirements[-2:], ["protobuf>=7", "Protobuf>=7.1"])
 
     def test_the_workflow_context_decides_the_same_way(self):
-        overrides, notes = self._context(["protobuf>=7"], workflow=True)
-        self.assertIn("protobuf>=7", overrides)
-        self.assertEqual(len(notes), 1)
+        overrides, _ = self._context(["protobuf>=6.32"], workflow=True)
+        self.assertEqual(overrides, self._context(["protobuf>=6.32"])[0])
 
     def test_override_entries_are_quoted_for_the_shell(self):
         # An unquoted `protobuf>=7` would be a redirect, not an argument.
@@ -593,11 +757,11 @@ class PlatformPinTests(unittest.TestCase):
                     str(yaml_path),
                     str(agent_file),
                     output_dir=output_dir,
-                    requirements=["protobuf>=7"],
+                    requirements=["protobuf>=6.32"],
                 )
             dockerfile = _read_dockerfile(output_dir)
 
-        self.assertIn("'protobuf>=7'", dockerfile)
+        self.assertIn("'protobuf>=6.31.1,>=6.32'", dockerfile)
 
     def test_both_dockerfiles_install_with_the_overrides_and_report(self):
         for workflow in (False, True):
@@ -623,9 +787,51 @@ class PlatformPinTests(unittest.TestCase):
                 install = dockerfile.split("RUN uv pip check")[0]
                 self.assertIn("--overrides /tmp/overrides.txt", install)
                 self.assertIn("uv pip check --system", dockerfile)
-                for pin in PLATFORM_PINS:
-                    self.assertIn(pin, dockerfile.split("NOTE:")[1])
+                self.assertIn(str(PROTOBUF_FLOOR), dockerfile.split("NOTE:")[1])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenerateStubTests(unittest.TestCase):
+    """The stub is generated from the declaration the schema checked."""
+
+    def _generate(self, text, env=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_path = Path(tmpdir) / "hello.yaml"
+            yaml_path.write_text(text)
+            output_path = Path(tmpdir) / "stubs" / "hello.py"
+            with (
+                unittest.mock.patch.dict(os.environ, env or {}),
+                redirect_stdout(io.StringIO()),
+            ):
+                source = stub_generator.generate_stub(str(yaml_path), str(output_path))
+        compile(source, "hello.py", "exec")
+        return source
+
+    def test_a_blank_list_or_type_is_generated_as_absent(self):
+        for text in (
+            "agent:\n  name: Hello\n  functions:\n",
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n      arguments:\n",
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
+            "      arguments:\n        - name: a\n          type:\n",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("class Hello(object):", self._generate(text))
+
+    def test_env_references_are_expanded_into_the_stub(self):
+        source = self._generate(
+            "agent:\n  name: Hello\n  functions:\n    - name: ${STUB_FN_NAME}\n",
+            env={"STUB_FN_NAME": "hello"},
+        )
+
+        self.assertIn("def hello(self)", source)
+
+    def test_a_type_built_from_builtins_is_written_as_its_annotation(self):
+        source = self._generate(
+            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
+            "      arguments:\n        - name: a\n          type: dict[str, int] | None\n"
+        )
+
+        self.assertIn("def hello(self, a: dict[str, int] | None)", source)

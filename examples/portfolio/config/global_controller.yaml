@@ -108,9 +108,6 @@ env_file: .env
 poll_interval: 4
 logs: true
 
-# Secrets handed to every agent container (AWS_BEARER_TOKEN_BEDROCK for the LLM proxy).
-env_file: .env
-
 redis:
   host: localhost
   port: 6379

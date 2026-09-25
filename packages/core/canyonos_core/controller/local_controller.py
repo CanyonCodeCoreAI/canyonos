@@ -57,6 +57,7 @@ except ImportError:
 import local_controler_pb2
 import local_controler_pb2_grpc
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -182,6 +183,9 @@ class LocalController(object):
             self._metrics_thread.join(timeout=2)
             self.mark_failed()
             self.server.stop(0)
+            # Otherwise the proxy keeps the container alive, answering every
+            # request with "No agent loaded" long after the cause has scrolled by.
+            self._proxy_process.kill()
             raise RuntimeError(
                 f"Failed to load configured agent {self.agent_name or self.agent_file}."
             )
@@ -190,9 +194,12 @@ class LocalController(object):
             self.mark_ready()
 
         logger.info(
-            "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
+            "Local controller initialized at %s (max_agent_instances=%d); %s.",
             self._my_endpoint,
             max_instances,
+            "reported healthy to Redis"
+            if publish_ready
+            else "readiness left to the launcher",
         )
 
     def mark_ready(self):
@@ -205,6 +212,11 @@ class LocalController(object):
             self._ready.clear()
             self.redis.set(self._status_key, "failed")
 
+    def mark_stopped(self):
+        with self._status_lock:
+            self._ready.clear()
+            self.redis.set(self._status_key, "stopped")
+
     def _start_llm_proxy(self, redis_host, redis_port):
         """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
 
@@ -216,8 +228,7 @@ class LocalController(object):
         """
         import socket
         import subprocess
-
-        import requests
+        import urllib.request
 
         # An orphaned proxy on 8081 would answer the /healthz probe below and mask
         # one of ours that never bound, so prove the port free before spawning.
@@ -242,9 +253,13 @@ class LocalController(object):
                 "CANYONOS_REDIS_PORT": str(redis_port),
             }
         )
+        # The image gives the proxy its own venv so its packages never share versions with the agent's.
+        proxy_python = "/opt/canyonos-proxy/bin/python"
+        if not os.path.exists(proxy_python):
+            proxy_python = sys.executable
         try:
             proxy_process = subprocess.Popen(
-                [sys.executable, "-m", "canyonos_core.llm_proxy"],
+                [proxy_python, "-m", "canyonos_core.llm_proxy"],
                 env=proxy_env,
             )
         except Exception as e:
@@ -257,6 +272,7 @@ class LocalController(object):
         # Popen only raises if the process can't be spawned -- it returns a healthy
         # handle even if the proxy starts and dies immediately, so poll /healthz.
         deadline = time.time() + 10
+        last_error = None
         while time.time() < deadline:
             if proxy_process.poll() is not None:
                 raise RuntimeError(
@@ -265,15 +281,18 @@ class LocalController(object):
                     "otherwise fail silently."
                 )
             try:
-                if requests.get("http://127.0.0.1:8081/healthz", timeout=0.5).ok:
+                with urllib.request.urlopen(
+                    "http://127.0.0.1:8081/healthz", timeout=0.5
+                ):
                     break
-            except requests.exceptions.RequestException:
-                pass
+            except OSError as e:
+                last_error = e
             time.sleep(0.2)
         else:
             proxy_process.kill()
             raise RuntimeError(
-                "LLM proxy did not become healthy on 127.0.0.1:8081 within 10s; "
+                "LLM proxy did not become healthy on 127.0.0.1:8081 within 10s "
+                f"(last health check: {last_error}); "
                 "agent LLM calls are routed through it unconditionally and would "
                 "otherwise fail silently."
             )
@@ -357,7 +376,8 @@ class LocalController(object):
             )
             return agent_instance
         except Exception as e:
-            logger.error(
+            # The traceback is what names the import that actually failed.
+            logger.exception(
                 f"Failed to load agent {self.agent_name} from {agent_path}: {e}"
             )
             return None
@@ -1011,7 +1031,7 @@ class LocalController(object):
                     "Executor shutdown timed out with requests still running: %s",
                     ", ".join(future_ids),
                 )
-        self.redis.set(self._status_key, "stopped")
+        self.mark_stopped()
         if self._log_handler is not None:
             logging.getLogger().removeHandler(self._log_handler)
         self.server.stop(0)

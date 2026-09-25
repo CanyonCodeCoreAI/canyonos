@@ -106,3 +106,13 @@ redis:
   host: localhost
   port: 6379
   db: 0
+
+# EC2 defaults for the `provider: EC2` replicas above.
+ec2:
+  region: ${EC2_REGION}
+  ami_id: ${EC2_AMI_ID}
+  subnet_id: ${EC2_SUBNET_ID}
+  security_group_ids:
+    - ${EC2_SECURITY_GROUP_ID}
+  ssh_user: ${EC2_SSH_USER}
+  ssh_private_key_path: ${EC2_SSH_PRIVATE_KEY_PATH}

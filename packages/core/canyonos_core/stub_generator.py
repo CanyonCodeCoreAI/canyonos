@@ -14,41 +14,77 @@ import argparse
 import ast
 import os
 import shutil
-import yaml
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
-# Packages every agent container needs regardless of its specific business logic.
-#
-# protobuf and grpcio-tools move together: grpcio-tools carries the only upper
-# bound on protobuf here (1.65.5 capped it below 6.0), and a runtime older than
-# the gencode of any *_pb2.py in the image refuses to load. Transitively
-# installed packages ship gencode 6.x -- googleapis-common-protos, pulled in by
-# the OTLP gRPC exporter, is one -- so a 5.x runtime crashed on import with
-# "gencode 6.33.5 runtime 5.29.6". Neither uv nor pip can reject that pairing,
-# because the constraint lives in the generated module, not in any metadata.
+from canyonos_core.schema import load_agent_declaration
+
+# Lowest versions the image's own code runs on; an app asking for older fails the install.
 BASE_AGENT_REQUIREMENTS = [
-    "grpcio==1.83.1",
-    "grpcio-tools==1.76.0",
-    "protobuf==6.33.5",
-    "redis==8.1.0",
-    "pyyaml==6.0.3",
-    "psutil==7.2.2",
-    "boto3==1.43.91",
-    "flask==3.1.3",
-    "requests==2.34.2",
+    "grpcio>=1.76.0",
+    "protobuf>=6.31.1",
+    "redis>=3.5",
 ]
 
-# Workflow containers currently need nothing beyond the base agent requirements
-# (telemetry and session state moved to Redis/OTLP, so no SQL driver is required).
-BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + []
+# Newest major version of each base package CanyonOS is tested on; installs stay below the next major unless the app asks for newer, which only warns.
+TESTED_MAJOR_VERSIONS = {
+    "grpcio": 1,
+    "protobuf": 6,
+    "redis": 8,
+    "flask": 3,
+}
 
-# Packages the image's own code is built against, so an app cannot be left to
-# pick them alone.
-_FORCED_FROM_BASE = ("protobuf", "grpcio", "grpcio-tools", "requests", "boto3")
-PLATFORM_PINS = [
-    pin for pin in BASE_AGENT_REQUIREMENTS if pin.split("==")[0] in _FORCED_FROM_BASE
-]
+# deploy.py serves the workflow's HTTP API from the workflow's own process.
+BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["flask>=2.3.3"]
+
+# The LLM proxy runs from its own venv, so these exact pins never meet the app's.
+# These requirements are not pinned to a specific version because LLM-proxy is completely managed by CanyonOS, with no user code interacting with the internals
+PROXY_REQUIREMENTS = ["flask==3.1.3", "requests==2.34.2", "redis==8.1.0"]
+
+# Only images whose app can import boto3 can call Bedrock, so only they get the proxy's Bedrock route.
+PROXY_BEDROCK_REQUIREMENT = "boto3==1.43.91"
+
+# Every *_pb2.py checks this floor at import, which no package metadata carries,
+# so it is forced past transitive bounds rather than left to the resolver.
+PROTOBUF_FLOOR = Requirement(
+    next(pin for pin in BASE_AGENT_REQUIREMENTS if pin.startswith("protobuf"))
+)
+
+IMAGE_PYTHON_VERSION = "3.11"
+DEFAULT_DOCKER_PLATFORM = "linux/amd64"
+
+# The shared runtime copied flat into the context root, as destination module
+# name -> its path inside this package. The copy lists below are built from
+# these, so a module the image ships is a module `canyonos validate` knows can
+# be collided with.
+_AGENT_FLAT_SOURCES = {
+    "future.py": ("controller", "future.py"),
+    "canyonos_context.py": ("controller", "canyonos_context.py"),
+    "local_controller.py": ("controller", "local_controller.py"),
+    "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),
+    "redis_client.py": ("controller", "utils", "redis_client.py"),
+    "grpc_options.py": ("controller", "utils", "grpc_options.py"),
+    "log_entry.py": ("controller", "utils", "log_entry.py"),
+    "gpu_metrics.py": ("controller", "utils", "gpu_metrics.py"),
+    "log_handler.py": ("controller", "utils", "log_handler.py"),
+}
+
+# A workflow image serves HTTP, so it carries one more.
+_WORKFLOW_FLAT_SOURCES = {
+    **_AGENT_FLAT_SOURCES,
+    "deploy.py": ("controller", "deploy.py"),
+}
+
+AGENT_FLAT_MODULES = frozenset(_AGENT_FLAT_SOURCES)
+WORKFLOW_FLAT_MODULES = frozenset(_WORKFLOW_FLAT_SOURCES)
+
+
+def _flat_runtime_files(script_dir, sources):
+    """(source, destination) for each runtime module copied to the context root."""
+    return [
+        (os.path.join(script_dir, *parts), destination)
+        for destination, parts in sources.items()
+    ]
 
 
 def _build_import_nodes():
@@ -63,7 +99,7 @@ def _build_import_nodes():
     ]
 
 
-def _build_stub_method(func_config, agent_name):
+def _build_stub_method(function, agent_name):
     """
     Build an AST node for a single stub method.
 
@@ -83,16 +119,16 @@ def _build_stub_method(func_config, agent_name):
             return Future(parent=inspect.stack()[1].filename, service="FinanceAgent",
                           method="get_stock_price", args=args, grpc_stub=self.stub)
     """
-    func_name = func_config["name"]
-    description = func_config.get("description", "")
-    arguments = func_config.get("arguments", [])
+    func_name = function.name
+    description = function.description
+    arguments = function.arguments
 
     # Build argument nodes: self + declared args with type annotations
     args_list = [ast.arg(arg="self")]
     for arg in arguments:
         arg_node = ast.arg(
-            arg=arg["name"],
-            annotation=ast.Name(id=arg["type"]) if "type" in arg else None,
+            arg=arg.name,
+            annotation=ast.parse(arg.type, mode="eval").body if arg.type else None,
         )
         args_list.append(arg_node)
 
@@ -115,7 +151,7 @@ def _build_stub_method(func_config, agent_name):
 
     # Build the args dict with Future replacement:
     # args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker, ...}
-    arg_dict_keys = [ast.Constant(value=a["name"]) for a in arguments]
+    arg_dict_keys = [ast.Constant(value=a.name) for a in arguments]
     arg_dict_values = []
     for a in arguments:
         # value.id if isinstance(value, Future) else value
@@ -123,11 +159,11 @@ def _build_stub_method(func_config, agent_name):
             ast.IfExp(
                 test=ast.Call(
                     func=ast.Name(id="isinstance"),
-                    args=[ast.Name(id=a["name"]), ast.Name(id="Future")],
+                    args=[ast.Name(id=a.name), ast.Name(id="Future")],
                     keywords=[],
                 ),
-                body=ast.Attribute(value=ast.Name(id=a["name"]), attr="id"),
-                orelse=ast.Name(id=a["name"]),
+                body=ast.Attribute(value=ast.Name(id=a.name), attr="id"),
+                orelse=ast.Name(id=a.name),
             )
         )
 
@@ -193,7 +229,7 @@ def _build_stub_method(func_config, agent_name):
     return func_def
 
 
-def _build_stub_class(agent_config):
+def _build_stub_class(declaration):
     """
     Build an AST node for the entire stub class.
 
@@ -203,8 +239,8 @@ def _build_stub_class(agent_config):
                 pass
             ...stub methods...
     """
-    class_name = agent_config["name"]
-    functions = agent_config.get("functions", [])
+    class_name = declaration.name
+    functions = declaration.functions
 
     # __init__ method: simple pass, no gRPC setup needed.
     # Future handles its own gRPC connections via env vars.
@@ -226,8 +262,8 @@ def _build_stub_class(agent_config):
 
     # Build all stub methods
     methods = [init_method]
-    for func_config in functions:
-        methods.append(_build_stub_method(func_config, agent_config["name"]))
+    for function in functions:
+        methods.append(_build_stub_method(function, declaration.name))
 
     class_def = ast.ClassDef(
         name=class_name,
@@ -243,13 +279,11 @@ def _build_stub_class(agent_config):
 def generate_stub(yaml_path, output_path):
     """
     Read a YAML agent definition and generate an importable Python stub file.
+
+    Raises:
+        SchemaError: the declaration fails the agent schema.
     """
-    with open(yaml_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    agent_config = config["agent"]
-
-    class_def = _build_stub_class(agent_config)
+    class_def = _build_stub_class(load_agent_declaration(yaml_path))
 
     # Build the full module AST
     module = ast.Module(
@@ -309,11 +343,13 @@ _SKIPPED_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
 
 # The generator writes these into the context itself, requirements.txt before
 # the copy runs -- a project file of the same name at the root would win.
-_RESERVED_CONTEXT_NAMES = {
-    "Dockerfile",
-    "requirements.txt",
-    "workflow_launcher.py",
-}
+RESERVED_CONTEXT_NAMES = frozenset(
+    {
+        "Dockerfile",
+        "requirements.txt",
+        "workflow_launcher.py",
+    }
+)
 
 _SKIPPED_SUFFIXES = (".pyc", ".pyo", ".pyd")
 
@@ -447,7 +483,7 @@ def _sweep_project_files(project_dir, exclude_dir=None):
             if _looks_like_private_key(abs_src, fname):
                 private_keys.append(rel_dst)
                 continue
-            if at_root and fname in _RESERVED_CONTEXT_NAMES:
+            if at_root and fname in RESERVED_CONTEXT_NAMES:
                 reserved.append(rel_dst)
                 continue
             swept.append((abs_src, rel_dst))
@@ -547,50 +583,124 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
-def _platform_overrides(requirements):
-    """Take the higher of each platform pin and what the app asked for.
+def target_docker_platform():
+    """The platform every image is built for."""
+    return os.environ.get("CANYONOS_DOCKER_PLATFORM", DEFAULT_DOCKER_PLATFORM)
 
-    uv replaces a requirement rather than intersecting it, so the comparison
-    cannot be left to the resolver.
-    """
-    declared = {}
+
+def _platform_overrides(requirements):
+    """Defines the range of versions protobuf can take."""
+    specifier = PROTOBUF_FLOOR.specifier
     for requirement in requirements:
         try:
             parsed = Requirement(requirement)
         except InvalidRequirement:
             continue
-        declared[parsed.name.lower()] = parsed
+        if parsed.name.lower() == PROTOBUF_FLOOR.name:
+            specifier &= parsed.specifier
+    return [f"{PROTOBUF_FLOOR.name}{specifier}"]
 
-    overrides = []
-    for pin in PLATFORM_PINS:
-        name, pinned = pin.split("==")
-        asked = declared.get(name)
-        if asked is None or asked.specifier.contains(Version(pinned)):
-            overrides.append(pin)
+
+def _below_supported_version(spec, floor):
+    """Checks if a version specified in an agents requirements list is below the minimum required version CanyonOS requires."""
+    try:
+        if spec.operator == "==" and spec.version.endswith(".*"):
+            release = Version(spec.version[:-2]).release
+            return (
+                Version(".".join(map(str, (*release[:-1], release[-1] + 1)))) <= floor
+            )
+        version = Version(spec.version)
+    except InvalidVersion:
+        return False
+    if spec.operator in ("==", "==="):
+        return version < floor
+    if spec.operator == "<":
+        return version <= floor
+    if spec.operator == "<=":
+        return version < floor
+    if spec.operator == "~=":
+        release = version.release
+        return Version(".".join(map(str, (*release[:-2], release[-2] + 1)))) <= floor
+    return False
+
+
+def too_old_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+    """Return (requirement, our_floor) for each requirement that only allows versions older than CanyonOS supports."""
+    floors = {}
+    for base in base_requirements:
+        parsed = Requirement(base)
+        floors[parsed.name] = (Version(next(iter(parsed.specifier)).version), base)
+    unsupported = []
+    for requirement in requirements:
+        try:
+            parsed = Requirement(requirement)
+        except InvalidRequirement:
             continue
-        wanted = f"{asked.name}{asked.specifier}"
-        if any(
-            spec.operator in (">=", ">", "==", "~=")
-            and Version(spec.version.rstrip(".*")) > Version(pinned)
-            for spec in asked.specifier
+        floor = floors.get(parsed.name.lower())
+        if floor and any(
+            _below_supported_version(spec, floor[0]) for spec in parsed.specifier
         ):
-            overrides.append(wanted)
-            print(f"  Note: '{wanted}' outranks the platform pin {pin}")
-        else:
-            overrides.append(pin)
-            print(f"  Warning: the platform pin {pin} breaks '{wanted}'")
-    return overrides
+            unsupported.append((requirement, floor[1]))
+    return unsupported
 
 
-def _dependency_stage(overrides):
-    """Render the install stage. uv reads overrides from a file and takes no
-    inline form, so the image writes one; the entries are quoted because a bare
-    `>=` would be a redirect."""
+def _above_tested_version(spec, limit):
+    """Checks if a version specified in an agents requirements list is above the newest version CanyonOS has tested."""
+    try:
+        if spec.operator == "==" and spec.version.endswith(".*"):
+            return Version(spec.version[:-2]) >= limit
+        version = Version(spec.version)
+    except InvalidVersion:
+        return False
+    return spec.operator in ("==", "===", ">=", ">", "~=") and version >= limit
+
+
+def too_new_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+    """Return (requirement, tested_limit) for each requirement that only allows versions newer than CanyonOS has tested."""
+    limits = {
+        name: Version(str(major + 1))
+        for name, major in _tested_majors(base_requirements).items()
+    }
+    too_new = []
+    for requirement in requirements:
+        try:
+            parsed = Requirement(requirement)
+        except InvalidRequirement:
+            continue
+        limit = limits.get(parsed.name.lower())
+        if limit and any(
+            _above_tested_version(spec, limit) for spec in parsed.specifier
+        ):
+            too_new.append((requirement, f"{parsed.name.lower()}<{limit}"))
+    return too_new
+
+
+def _tested_majors(base_requirements):
+    """TESTED_MAJOR_VERSIONS narrowed to the packages this image's base list installs."""
+    names = {Requirement(r).name for r in base_requirements}
+    return {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
+
+
+def _dockerfile_install_steps(overrides, base_requirements, requirements):
+    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM proxy's own separate packages."""
     forced = " ".join(f"'{override}'" for override in overrides)
+    asked_newer = {
+        Requirement(requirement).name.lower()
+        for requirement, _ in too_new_requirements(requirements, base_requirements)
+    }
+    caps = " ".join(
+        f"'{name}<{major + 1}'"
+        for name, major in _tested_majors(base_requirements).items()
+        if name not in asked_newer
+    )
     return f"""COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
- && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt
+ && printf '%s\\n' {caps} > /tmp/tested.txt \\
+ && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
 RUN uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
+RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-proxy \\
+ && uv pip install --python /opt/canyonos-proxy/bin/python {" ".join(PROXY_REQUIREMENTS)} \\
+ && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-proxy/bin/python {PROXY_BEDROCK_REQUIREMENT}; fi
 """
 
 
@@ -620,10 +730,7 @@ def generate_docker(
         stub_entrypoints:  Optional {stub_basename: entrypoint} map for exact stub placement.
         requirements:   Optional list of extra pip packages this agent needs.
     """
-    with open(yaml_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    agent_name = config["agent"]["name"]
+    agent_name = load_agent_declaration(yaml_path).name
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.join(script_dir, "..")
 
@@ -650,42 +757,7 @@ def generate_docker(
         files_to_copy += _sweep_project_files(project_dir, exclude_dir=output_dir)
 
     # Copy general agent files
-    files_to_copy += [
-        # (source_path, destination_filename)
-        (os.path.join(script_dir, "controller", "future.py"), "future.py"),
-        (
-            os.path.join(script_dir, "controller", "canyonos_context.py"),
-            "canyonos_context.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller.py"),
-            "local_controller.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller_frontend.py"),
-            "local_controller_frontend.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "redis_client.py"),
-            "redis_client.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "grpc_options.py"),
-            "grpc_options.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_entry.py"),
-            "log_entry.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
-            "gpu_metrics.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_handler.py"),
-            "log_handler.py",
-        ),
-    ]
+    files_to_copy += _flat_runtime_files(script_dir, _AGENT_FLAT_SOURCES)
 
     # Copy provided agent stubs both flat (for `from price_agent import ...` style
     # peer imports) and at their entrypoint-mirrored path (overwriting the swept
@@ -723,14 +795,14 @@ def generate_docker(
     # ---- Dockerfile ------------------------------------------------------
     agent_basename = os.path.basename(agent_file)
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides)}
+{_dockerfile_install_steps(overrides, BASE_AGENT_REQUIREMENTS, requirements or [])}
 COPY . .
 
 ENV CANYONOS_AGENT_NAME={agent_name}
@@ -801,42 +873,7 @@ def generate_workflow_docker(
         _sweep_project_files(project_dir, exclude_dir=output_dir) if project_dir else []
     )
 
-    files_to_copy += [
-        (os.path.join(script_dir, "controller", "future.py"), "future.py"),
-        (
-            os.path.join(script_dir, "controller", "canyonos_context.py"),
-            "canyonos_context.py",
-        ),
-        (os.path.join(script_dir, "controller", "deploy.py"), "deploy.py"),
-        (
-            os.path.join(script_dir, "controller", "local_controller.py"),
-            "local_controller.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "local_controller_frontend.py"),
-            "local_controller_frontend.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "redis_client.py"),
-            "redis_client.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "grpc_options.py"),
-            "grpc_options.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "gpu_metrics.py"),
-            "gpu_metrics.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_handler.py"),
-            "log_handler.py",
-        ),
-        (
-            os.path.join(script_dir, "controller", "utils", "log_entry.py"),
-            "log_entry.py",
-        ),
-    ]
+    files_to_copy += _flat_runtime_files(script_dir, _WORKFLOW_FLAT_SOURCES)
 
     # Copy stub files both flat (for `from price_agent import ...` style imports
     # in the workflow) and at their entrypoint-mirrored path (overwriting the
@@ -872,7 +909,9 @@ import traceback
 
 from local_controller import LocalController
 
-WORKFLOW_READY_TIMEOUT_SECONDS = 30
+# Matches the global controller's CONTROLLER_READY_TIMEOUT_SECONDS: a shorter
+# deadline here would fail a slow but honest cold start before the deploy did.
+WORKFLOW_READY_TIMEOUT_SECONDS = 120
 
 
 def mark_ready_when_serving():
@@ -884,6 +923,9 @@ def mark_ready_when_serving():
                 return
         except OSError:
             time.sleep(0.1)
+    # Never ready, never failed left the container in limbo: the deploy waited
+    # out its whole timeout against a status nobody had written.
+    controller.mark_failed()
 
 
 controller = LocalController(port=50051, publish_ready=False)
@@ -906,14 +948,14 @@ except Exception:
 
     # ---- Dockerfile ------------------------------------------------------
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dependency_stage(overrides)}
+{_dockerfile_install_steps(overrides, BASE_WORKFLOW_REQUIREMENTS, requirements or [])}
 COPY . .
 
 EXPOSE 50051

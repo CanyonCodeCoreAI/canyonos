@@ -42,6 +42,7 @@ from canyonos.gc import GCError, deploy_status, post_deploy, workflow_endpoints
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import GC_CONTAINER_NAME, docker_env, load_state, run_init
 from canyonos.quit import run_quit
+from canyonos.resources import configure_resources
 from canyonos.serve import serve_dashboard
 from canyonos.sync import run_sync
 
@@ -72,6 +73,31 @@ _ERROR_MARKERS = (
 # recovers on its own once the dashboard comes up.
 _BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.",)
 
+# The global controller brackets each failed container's log with these
+# (`_dump_container_log`). What sits between them is another process's output
+# quoted verbatim -- its own ERROR lines and tracebacks -- so `_ERROR_MARKERS`
+# must not be applied to it: the deploy's verdict belongs to the summary that
+# follows the block, not to a line the block is quoting.
+_CONTAINER_LOG_BEGIN = "--- begin container log:"
+_CONTAINER_LOG_END = "--- end container log:"
+
+# The global controller logs this exactly once, as the last thing it does before
+# the polling loop: the workflow is up. Like the markers above, it counts only
+# outside a quoted container log.
+_UP_MARKER = "Global controller started, polling every"
+
+
+def _log_message(line):
+    """The message of a `LEVEL:logger:message` line, or "" for anything else.
+
+    Sentinels count only at the start of the message: every quoted payload line
+    is indented, so text that merely mentions one can never open or close a
+    block.
+    """
+    parts = line.split(":", 2)
+    return parts[2] if len(parts) == 3 else ""
+
+
 # (substring, spinner message, completed message). A None spinner message keeps
 # whatever the spinner already shows; a None completed message prints nothing.
 # Matched by substring against the raw line, so a phase that never runs is simply
@@ -101,6 +127,7 @@ class PhaseTracker:
         self.spinner = None
         self.replicas_total = 0
         self.replicas_ready = set()
+        self.in_container_log = False
 
     def _agent_progress(self):
         if self.replicas_total:
@@ -108,6 +135,19 @@ class PhaseTracker:
         return "Starting agents..."
 
     def feed(self, line):
+        # A quoted container log is data, not this deploy's own output: nothing
+        # inside the block decides anything. The caller still prints and buffers
+        # every line of it -- that block is the whole point of the dump.
+        message = _log_message(line)
+        if message.startswith(_CONTAINER_LOG_BEGIN):
+            self.in_container_log = True
+            return None, None, False
+        if message.startswith(_CONTAINER_LOG_END):
+            self.in_container_log = False
+            return None, None, False
+        if self.in_container_log:
+            return None, None, False
+
         if any(prefix in line for prefix in _BENIGN_ERROR_PREFIXES):
             return None, None, False
         if any(marker in line for marker in _ERROR_MARKERS):
@@ -143,8 +183,8 @@ class PhaseTracker:
         return None, None, False
 
     def agents_ready_message(self):
-        """(message, all_ready). `_wait_for_healthy` gives up after its timeout and
-        lets the controller start anyway, so the workflow can come up short.
+        """(message, all_ready). Stays partial-aware because the up-marker can
+        arrive with agents still unhealthy on runtimes that only warn about it.
         """
         ready = len(self.replicas_ready)
         if not self.replicas_total:
@@ -176,6 +216,11 @@ def run_deploy(
             raise RuntimeError(
                 "Config must be inside the project directory being synced."
             )
+
+    # `canyonos test` (quiet) deploys the config as-is, without the picker.
+    if not quiet and not configure_resources(config_path or default_config_path()):
+        ui.say("Deploy cancelled.")
+        return None
 
     run_init(banner=banner, extra_env=extra_env)
 
@@ -368,12 +413,26 @@ def _interrupted():
 
 
 def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
-    """Every log line, verbatim, until the workflow is up -- what `-v` restores."""
+    """Every log line, verbatim, until the workflow is up -- what `-v` restores.
+
+    Lines are echoed rather than summarized, but the same tracker decides what
+    is fatal, so whether a broken deploy fails cannot depend on `-v`.
+    """
+    tracker = PhaseTracker()
     deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
     for line in _drain(lines, state, deadline=deadline, hide_status_requests=False):
         print(line, end="")
-        # Logged exactly once, right after the workflow finishes coming up.
-        if "Global controller started, polling every" in line:
+        _, _, is_error = tracker.feed(line)
+        if is_error:
+            _echo_until_the_deploy_is_gone(lines, state)
+            raise RuntimeError(
+                f"Deploy failed: {line.strip()} "
+                "Automatic cleanup will be attempted; see the log above for the cause."
+            )
+        # Logged exactly once, right after the workflow finishes coming up --
+        # and only when this deploy is the one saying it. Inside a quoted
+        # container log the same words belong to the agent, not to us.
+        if _UP_MARKER in line and not tracker.in_container_log:
             return _deploy_summary(state, api_port, config_path, serve, on_ready)
 
     raise RuntimeError(
@@ -381,6 +440,23 @@ def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
         "Automatic cleanup will be attempted; rerun with `canyonos deploy -v` "
         "for full logs."
     )
+
+
+def _echo_until_the_deploy_is_gone(lines, state):
+    """Keep echoing after a fatal line until the container confirms the deploy
+    has stopped, or the reveal grace passes.
+
+    The global controller tears its agents down on the way out, which takes
+    seconds; quitting the moment the verdict lands kills it mid-teardown and
+    leaves the agent containers, Redis and the workflow's port behind.
+    """
+    for line in _drain(
+        lines,
+        state,
+        deadline=time.monotonic() + _REVEAL_GRACE_SECONDS,
+        hide_status_requests=False,
+    ):
+        print(line, end="")
 
 
 def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
@@ -391,9 +467,11 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
     dropped rather than allow-listed. `-v` and `canyonos logs` still have it all.
     """
     tracker = PhaseTracker()
-    # 200 is enough to hold a buildx failure block plus a Python traceback;
-    # 40 (what `canyonos test` tails) truncates both.
-    recent = deque(maxlen=200)
+    # Has to hold everything between the failure and the line that revealed it:
+    # a buildx failure block, a Python traceback, or the 40-line log the global
+    # controller dumps for *each* replica that never came up -- several failing
+    # replicas is the case that needs the room.
+    recent = deque(maxlen=400)
     reached_up_marker = False
 
     # The spinner is exited before the summary panel or the dashboard's own
@@ -412,8 +490,10 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
                 ui.ok(done)
             if message:
                 spinner.update(message)
-            # Logged exactly once, right after the workflow finishes coming up.
-            if "Global controller started, polling every" in line:
+            # Logged exactly once, right after the workflow finishes coming up --
+            # and only when this deploy is the one saying it. Inside a quoted
+            # container log the same words belong to the agent, not to us.
+            if _UP_MARKER in line and not tracker.in_container_log:
                 summary_line, all_ready = tracker.agents_ready_message()
                 (ui.ok if all_ready else ui.warn)(summary_line)
                 if not all_ready:
