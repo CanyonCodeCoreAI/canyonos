@@ -230,11 +230,23 @@ class LoadConfigParityTests(_ManifestCase):
         manifest = self.load({"agents": [_agent(resources={"cpu": 0.5})]})
         self.assertEqual(manifest.agents[0].resources.cpu, 0.5)
 
-        for field, value in (("gpu", 0), ("cpu", -1), ("memory", "512"), ("cpu", True)):
+        for field, value in (("cpu", 0), ("cpu", -1), ("memory", "512"), ("cpu", True)):
             with self.subTest(field=field, value=value):
                 violation = self.one({"agents": [_agent(resources={field: value})]})
                 self.assertEqual(violation.field, f"agents[0].resources.{field}")
                 self.assertIn("expected a finite number > 0", violation.message)
+
+    def test_gpu_zero_means_no_gpu(self):
+        """The CLI's resource picker writes `gpu: 0` by default, and the runtimes
+        already read a falsy gpu as "none"."""
+        manifest = self.load({"agents": [_agent(resources={"gpu": 0})]})
+        self.assertEqual(manifest.agents[0].resources.gpu, 0)
+
+        for value in (-1, 0.5):
+            with self.subTest(value=value):
+                violation = self.one({"agents": [_agent(resources={"gpu": value})]})
+                self.assertEqual(violation.field, "agents[0].resources.gpu")
+                self.assertIn("expected an integer >= 0", violation.message)
 
 
 class LogsFlagTests(_ManifestCase):

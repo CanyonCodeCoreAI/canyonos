@@ -52,21 +52,26 @@ def _set(agent, field, value):
         agent["resources"][field] = value
 
 
-DECIMAL_FIELDS = ("cpu", "gpu")
+DECIMAL_FIELDS = ("cpu",)
 
 
 def _cast(field, raw):
-    """Raises ValueError. cpu and gpu may be decimals; the rest are whole numbers."""
+    """Raises ValueError. cpu may be a decimal; the rest are whole numbers, none negative."""
     if field in DECIMAL_FIELDS:
         value = float(raw)
         if not math.isfinite(value):
             raise ValueError(raw)
-        return int(value) if value.is_integer() else value
-    return int(raw)
+        value = int(value) if value.is_integer() else value
+    else:
+        value = int(raw)
+    if value < 0:
+        raise ValueError(raw)
+    return value
 
 
 def _invalid_message(field, raw):
     kind = "a number" if field in DECIMAL_FIELDS else "a whole number"
+    kind += ", 0 or more"
     return f"{raw!r} is not valid: {_label(field)} must be {kind}"
 
 

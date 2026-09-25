@@ -81,7 +81,7 @@ def test_a_missing_config_is_left_to_the_deploy_to_report(tmp_path):
     [
         ("cpu", "0.5", 0.5),
         ("cpu", "2", 2),
-        ("gpu", "1.5", 1.5),
+        ("gpu", "2", 2),
         ("memory", "1024", 1024),
         ("replicas", "3", 3),
     ],
@@ -92,7 +92,15 @@ def test_valid_values_are_cast(field, raw, expected):
 
 @pytest.mark.parametrize(
     "field, raw",
-    [("memory", "1.5"), ("replicas", "abc"), ("cpu", "abc"), ("gpu", "inf")],
+    [
+        ("memory", "1.5"),
+        ("replicas", "abc"),
+        ("cpu", "abc"),
+        ("gpu", "inf"),
+        ("gpu", "1.5"),
+        ("gpu", "-1"),
+        ("cpu", "-0.5"),
+    ],
 )
 def test_invalid_values_raise(field, raw):
     with pytest.raises(ValueError):
