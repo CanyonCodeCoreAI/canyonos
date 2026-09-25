@@ -39,9 +39,9 @@ from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
 
 DEFAULT_QUERY = "hello"
-# `canyonos test` stubs the in-container LLM proxy by default so a smoke test
-# never calls a real LLM (no credentials, no token cost). Every model call
-# returns this text; pass --real-llm to use the actual provider instead.
+# `canyonos test` uses real LLM API calls by default.
+# Pass --stub-llm to stub the in-container LLM proxy instead.
+# Stubbed calls return this text; override it with --stub-text.
 DEFAULT_LLM_STUB = "test"
 READY_TIMEOUT = 60
 REQUEST_TIMEOUT = 300
@@ -201,7 +201,7 @@ class _Run:
         return round(time.monotonic() - self.started, 3)
 
 
-def _deploy_locally(run, config_path, api_port, llm_stub=DEFAULT_LLM_STUB):
+def _deploy_locally(run, config_path, api_port, llm_stub=None):
     run.begin("deploy", 1, "Deploy locally")
     # When stubbing, hand the flag to the GC container; the local runtime
     # forwards it into every agent so their LLM calls are replaced with canned
@@ -209,7 +209,7 @@ def _deploy_locally(run, config_path, api_port, llm_stub=DEFAULT_LLM_STUB):
     extra_env = {"CANYONOS_LLM_STUB_TEXT": llm_stub} if llm_stub else None
     if llm_stub:
         ui.say(
-            f"LLM stub on: every model call returns {llm_stub!r} (no real LLM). Pass --real-llm to disable."
+            f"LLM stub on: every model call returns {llm_stub!r} (no real LLM)."
         )
 
     # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI, we do our
@@ -271,7 +271,7 @@ def _existing_deploy():
     return None
 
 
-def _run_test(run, llm_stub=DEFAULT_LLM_STUB, timeout=REQUEST_TIMEOUT):
+def _run_test(run, llm_stub=None, timeout=REQUEST_TIMEOUT):
     """Query the workflow, standing up our own local deploy first unless one is
     already up. The config is restored whatever happens."""
     config_path = workspace_relative(default_config_path())
@@ -380,7 +380,7 @@ def _payload(run):
 
 
 def run_test(
-    prompt=None, as_json=False, llm_stub=DEFAULT_LLM_STUB, timeout=REQUEST_TIMEOUT
+    prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT
 ):
     run = _Run(prompt or DEFAULT_QUERY)
     ui.set_quiet(as_json)
