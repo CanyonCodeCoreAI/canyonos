@@ -33,6 +33,7 @@ The port lives entirely inside `.car/`, next to the application source:
 .car/config/global_controller.yaml   deployment manifest
 .car/config/policy.yaml              optional access restriction
 .car/config/<name>.yaml              one callable surface per service
+.car/config/test_query.txt           one eligible workflow input, verbatim
 .car/app/                            a copy of the application source
 .car/app/<dir>/<name>.py             adapter beside the code it wraps
 .car/app/<dir>/<name>_workflow.py    HTTP entry point; calls deploy()

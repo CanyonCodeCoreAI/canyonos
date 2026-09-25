@@ -26,6 +26,7 @@ from canyonos.serve import run_serve
 from canyonos.status import run_status
 from canyonos.stop import run_stop
 from canyonos.test import DEFAULT_LLM_STUB, DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
+from canyonos.validate import DEFAULT_ARTIFACT_ROOT, run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
 
 
@@ -181,6 +182,30 @@ def main():
         default=REQUEST_TIMEOUT,
         metavar="SECONDS",
         help=f"Seconds to wait for the workflow to finish (default: {REQUEST_TIMEOUT}).",
+    )
+
+    # Validate has args: artifact_root, -c/--config, --json.
+    validate = add(
+        "validate",
+        lambda args: sys.exit(
+            run_validate(args.artifact_root, config=args.config, as_json=args.json)
+        ),
+    )
+    validate.add_argument(
+        "artifact_root",
+        nargs="?",
+        default=DEFAULT_ARTIFACT_ROOT,
+        help=f"The .car directory to check (default: {DEFAULT_ARTIFACT_ROOT})",
+    )
+    validate.add_argument(
+        "-c",
+        "--config",
+        help="Path to the manifest, relative to the .car (default: config/global_controller.yaml)",
+    )
+    validate.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a single JSON result object and nothing else (for CI)",
     )
 
     args = parser.parse_args()
