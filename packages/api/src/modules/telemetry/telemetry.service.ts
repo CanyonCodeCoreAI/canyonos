@@ -34,8 +34,8 @@ const STATUS_CODE_NAMES = [STATUS_CODE.UNSET, STATUS_CODE.OK, STATUS_CODE.ERROR]
 
 // Ventis names the project attribute `project_id`; every dashboard query reads `canyon.project.id`.
 const PRODUCER_PROJECT_ID_ATTRIBUTE = 'project_id';
-const INPUT_ATTRIBUTE = 'langfuse.observation.input';
-const OUTPUT_ATTRIBUTE = 'langfuse.observation.output';
+const INPUT_ATTRIBUTE = 'gen_ai.prompt';
+const OUTPUT_ATTRIBUTE = 'gen_ai.completion';
 
 // Some producers send all-zero bytes instead of an empty field: for a root span's parent, and
 // for a log record written outside any span.

@@ -55,8 +55,8 @@ class OTelExporterFieldTests(unittest.TestCase):
 
         span = trace_convert.trace_row_to_span(row)
         self.assertEqual(span.name, "PriceAgent.get_history")
-        self.assertEqual(span.attributes["langfuse.observation.input"], raw["args"])
-        self.assertEqual(span.attributes["langfuse.observation.output"], row["output"])
+        self.assertEqual(span.attributes["gen_ai.prompt"], raw["args"])
+        self.assertEqual(span.attributes["gen_ai.completion"], row["output"])
 
     def test_error_message_is_wired_from_redis_error_field(self):
         schema.init_db(self.db_path)

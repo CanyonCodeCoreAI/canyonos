@@ -61,9 +61,9 @@ class OTelExporterFanoutTests(unittest.TestCase):
                 "timeout": 3.5,
             },
             {
-                "name": "langfuse",
+                "name": "collector",
                 "protocol": "http/protobuf",
-                "endpoint": "https://langfuse.example/api/public/otel",
+                "endpoint": "https://collector.example/otel",
                 "headers": {"authorization": "Basic secret"},
                 "timeout": 7,
             },
@@ -89,7 +89,7 @@ class OTelExporterFanoutTests(unittest.TestCase):
             exporters = otel_exporter._trace_build_exporters(json.dumps(destinations))
 
         self.assertEqual(
-            exporters, [("railway", grpc_exporter), ("langfuse", http_exporter)]
+            exporters, [("railway", grpc_exporter), ("collector", http_exporter)]
         )
         grpc_constructor.assert_called_once_with(
             endpoint="receiver.example:4317",
@@ -98,7 +98,7 @@ class OTelExporterFanoutTests(unittest.TestCase):
             insecure=True,
         )
         http_constructor.assert_called_once_with(
-            endpoint="https://langfuse.example/api/public/otel/v1/traces",
+            endpoint="https://collector.example/otel/v1/traces",
             headers={"authorization": "Basic secret"},
             timeout=7,
             session=unittest.mock.ANY,
@@ -141,16 +141,16 @@ class OTelExporterFanoutTests(unittest.TestCase):
 
         with patch.dict(
             os.environ,
-            {"LANGFUSE_BASE_URL": "https://us.cloud.langfuse.com"},
+            {"COLLECTOR_BASE_URL": "https://us.collector.example"},
             clear=True,
         ):
             destinations = GlobalController._otel_destinations(
                 {
                     "destinations": [
                         {
-                            "name": "langfuse",
+                            "name": "collector",
                             "protocol": "http/protobuf",
-                            "endpoint": "${LANGFUSE_BASE_URL}/api/public/otel/v1/traces",
+                            "endpoint": "${COLLECTOR_BASE_URL}/otel/v1/traces",
                         }
                     ]
                 }
@@ -158,7 +158,7 @@ class OTelExporterFanoutTests(unittest.TestCase):
 
         self.assertEqual(
             destinations[0]["endpoint"],
-            "https://us.cloud.langfuse.com/api/public/otel/v1/traces",
+            "https://us.collector.example/otel/v1/traces",
         )
 
     def test_controller_destinations_is_none_when_otel_not_configured(self):
@@ -212,7 +212,7 @@ class OTelExporterFanoutTests(unittest.TestCase):
                 otel_exporter.otel_reader, "trace_mark_sent_many"
             ) as trace_mark_sent_many,
         ):
-            otel_exporter._trace_exporters = [("railway", first), ("langfuse", second)]
+            otel_exporter._trace_exporters = [("railway", first), ("collector", second)]
             otel_exporter._trace_send_pending()
 
         first.export.assert_called_once()
@@ -247,7 +247,7 @@ class OTelExporterFanoutTests(unittest.TestCase):
         ):
             otel_exporter._trace_exporters = [
                 ("railway", failed),
-                ("langfuse", remaining),
+                ("collector", remaining),
             ]
             otel_exporter._trace_send_pending()
 
