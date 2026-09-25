@@ -259,6 +259,10 @@ If you find CanyonOS (Nalar) useful for your research, please cite our paper:
 }
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and the review process.
+
 ## License
 
 This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
