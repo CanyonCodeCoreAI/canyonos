@@ -60,6 +60,13 @@ class _Finding:
         return dict(self.fields)
 
 
+@pytest.fixture(autouse=True)
+def in_a_project(monkeypatch, tmp_path):
+    """Run from a project that holds an (empty) `.car`."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".car").mkdir(exist_ok=True)
+
+
 @pytest.fixture
 def no_core(monkeypatch):
     monkeypatch.setattr(validate_cmd, "_import_validate_car", lambda: None)
@@ -79,6 +86,7 @@ def test_a_clean_car_passes(in_process, capsys):
 
 def test_the_artifact_and_config_reach_the_validator(in_process):
     seen = in_process([])
+    os.makedirs("port/.car")
 
     validate_cmd.run_validate("port/.car", config="config/other.yaml")
 
@@ -110,6 +118,23 @@ def test_json_mode_prints_one_object_and_nothing_else(in_process, capsys):
     ]
 
 
+def test_a_missing_car_is_refused_before_anything_runs(in_process, capsys):
+    seen = in_process([])
+
+    assert validate_cmd.run_validate("missing/.car") == 1
+    assert "missing/.car is not a directory" in flat(capsys)
+    assert seen == {}
+
+
+def test_a_missing_car_is_not_mounted_into_docker(docker, capsys):
+    """`docker run -v` would create the path, root-owned on Linux."""
+    calls = docker(json.dumps({"errors": 0, "findings": []}))
+
+    assert validate_cmd.run_validate("missing/.car") == 1
+    assert "argv" not in calls
+    assert not os.path.exists("missing")
+
+
 def test_a_config_outside_the_artifact_is_refused(in_process, capsys):
     in_process([])
 
@@ -120,7 +145,6 @@ def test_a_config_outside_the_artifact_is_refused(in_process, capsys):
 def test_a_config_written_as_a_path_into_the_artifact_is_accepted(in_process, tmp_path):
     seen = in_process([])
     root = tmp_path / ".car"
-    root.mkdir()
 
     validate_cmd.run_validate(str(root), config=str(root / "config" / "other.yaml"))
 
@@ -164,7 +188,6 @@ def docker(monkeypatch, no_core):
 def test_the_container_gets_the_artifact_read_only_as_its_workdir(docker, tmp_path):
     calls = docker(json.dumps({"errors": 0, "findings": []}))
     root = tmp_path / ".car"
-    root.mkdir()
 
     assert validate_cmd.run_validate(str(root)) == 0
     assert calls["argv"] == [
@@ -190,7 +213,6 @@ def test_the_image_entrypoint_is_replaced_by_the_validator(docker, tmp_path):
     `python -m canyonos_core.validate` as its own arguments and never exit."""
     calls = docker(json.dumps({"errors": 0, "findings": []}))
     root = tmp_path / ".car"
-    root.mkdir()
 
     validate_cmd.run_validate(str(root))
 
@@ -204,7 +226,6 @@ def test_the_image_entrypoint_is_replaced_by_the_validator(docker, tmp_path):
 def test_a_config_is_passed_through_to_the_container(docker, tmp_path):
     calls = docker(json.dumps({"errors": 0, "findings": []}))
     root = tmp_path / ".car"
-    root.mkdir()
 
     validate_cmd.run_validate(str(root), config="config/other.yaml")
 
@@ -258,7 +279,6 @@ def test_a_finding_field_of_the_wrong_type_is_a_failure(docker, capsys):
 def test_json_mode_reports_a_failure_as_json(docker, capsys, tmp_path):
     docker("", returncode=125, stderr="Cannot connect to the Docker daemon")
     root = tmp_path / ".car"
-    root.mkdir()
 
     assert validate_cmd.run_validate(str(root), as_json=True) == 1
     payload = json.loads(capsys.readouterr().out)

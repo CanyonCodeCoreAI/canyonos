@@ -178,6 +178,12 @@ def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False
     ui.set_quiet(as_json)
     try:
         try:
+            if not os.path.isdir(artifact_root):
+                # Checked before either path: `docker run -v` would create it.
+                raise RuntimeError(
+                    f"{artifact_root} is not a directory. Run `canyonos build` to "
+                    "create the .car, or pass the path of the one to check."
+                )
             config = _relative_config(artifact_root, config)
             findings = _in_process(artifact_root, config)
             if findings is None:
