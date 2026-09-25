@@ -4,9 +4,10 @@
 
 **Inspect:** `.car/app`, not a framework-based guess about the original tree.
 
-**Output:** a short survey record and the smallest useful service map. Do not
-start adapter or config work until the readiness gate passes and each section
-is resolved. A blocker pauses the build, not just the survey checklist.
+**Output:** a short survey record and a service map with one service per
+agent. Do not start adapter or config work until the readiness gate passes and
+each section is resolved. A blocker pauses the build, not just the survey
+checklist.
 
 ## Application-readiness gate
 
@@ -93,23 +94,74 @@ complete.
 
 ## 5. Choose service boundaries
 
-**Output:** the smallest useful service map, including which framework edges
-cross services and which services require `replicas: 1`.
+**Output:** one service per agent, the graph edges that move into the workflow,
+and which services require `replicas: 1`.
 
-Start with one service. Split only when doing so creates independently parallel
-work or a genuinely distinct resource or replica profile.
+LangChain defines what an agent is; LangGraph defines how agents are
+orchestrated. Each LangChain agent becomes a service, and the LangGraph graph
+around them becomes the workflow. A plain Python source with no framework is
+split the same way; see "Plain Python sources" below.
 
-- Keep a ReAct loop together; each turn needs shared message history.
-- Hoist supervisor task lists and `Send`-style fan-out into the workflow.
-- Do not create a one-replica service with no distinct resource profile merely
-  to mirror every source graph node.
+### What counts as an agent
 
-Rewrite framework-owned edges as ordinary Python **only where they cross a
-service boundary**. If every graph node stays in one service, preserve
-`graph.compile().invoke(...)` and wrap it. Rewriting internal edges restates
-working source behavior without creating a deployment benefit. Where an edge
-must move into the workflow, import the connected source node functions
-unchanged.
+An agent is a LangChain agent: a model that calls tools in a loop until it
+produces an answer. Class and node names are not evidence: a
+`ChiefEditorAgent` that builds and runs a graph is orchestration, and a
+`PublisherAgent` that only formats and writes files is a plain step.
+
+Each of these is one agent, including its internal model/tools loop. Do not
+split its tools node.
+
+- An agent built by `create_agent`, or by the older `create_react_agent` or
+  `AgentExecutor`.
+- A hand-built equivalent: a model node bound to tools, a `ToolNode`, and a
+  `tools_condition` (or equivalent) edge looping between them.
+
+None of these is an agent:
+
+- A tool, including one that wraps another agent. A subagent called as a tool
+  stays inside the agent that calls it.
+- A model call outside an agent loop: `llm.invoke`, a chain such as
+  `prompt | llm | parser`, or `with_structured_output`, including a supervisor
+  or router that picks the next node. It runs in the workflow, which has its
+  own `llm_proxy`.
+- An edge router, a pure transform, formatting, or file I/O.
+
+A node that waits on a person or device during the request (`input()`, a
+websocket receive, `interrupt()`) is a readiness blocker, not a service; see
+the application-readiness gate above.
+
+### Services and the workflow
+
+The service method is the graph node that runs the agent: the compiled agent
+itself when it is added as a node, or the node function that invokes it.
+
+Everything else in the graph is orchestration and becomes the workflow:
+`StateGraph` construction, edges, conditional edges, `Command(goto=...)`
+handoffs, and `Send` fan-out. Re-express it as ordinary Python, and import the
+remaining node functions and routers from the source unchanged.
+
+If the graph holds no agent or a single agent, do not split it: preserve
+`graph.compile().invoke(...)` and wrap it as one service.
+
+### Plain Python sources
+
+A source that calls a model SDK directly, with no LangChain or LangGraph, is
+split by the same rules. Only the evidence changes:
+
+- **Agent:** a function or method that runs the model/tools loop itself. It
+  calls the model, executes the tool calls the model returns, feeds the results
+  back, and repeats until the model gives a final answer. That function or
+  method is the service method.
+- **Orchestration:** the Python code that calls agents in sequence, branches or
+  loops on their outputs, or fans them out with `asyncio.gather`, a thread
+  pool, or similar. It becomes the workflow.
+- **Not agents:** a single model call outside such a loop, tools, and pure
+  transforms. They run in the workflow or stay inside the agent that calls
+  them, exactly as above.
+
+If the source holds no agent or a single agent, wrap its entrypoint function as
+one service.
 
 Construct runtime-injected service objects from source configuration. Never
 invent models, embedding dimensions, stores, or defaults silently; report any
