@@ -681,6 +681,21 @@ def _tested_majors(base_requirements):
     return {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
 
 
+# Starts a private Docker daemon before the agent; a failed start (no --privileged) never blocks the agent.
+_DIND_STAGE = """COPY --from=docker:29-dind /usr/local/bin/ /usr/local/bin/
+COPY --from=docker:29-dind /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+RUN apt-get update && apt-get install -y --no-install-recommends iptables && rm -rf /var/lib/apt/lists/*
+COPY --chmod=755 <<'SH' /usr/local/bin/canyonos-dind
+#!/bin/sh
+dind dockerd > /var/log/dockerd.log 2>&1 &
+pid=$!
+for i in $(seq 30); do docker info > /dev/null 2>&1 && break; kill -0 $pid 2>/dev/null || break; sleep 1; done
+exec "$@"
+SH
+ENTRYPOINT ["/usr/local/bin/canyonos-dind"]
+"""
+
+
 def _dockerfile_install_steps(overrides, base_requirements, requirements):
     """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM proxy's own separate packages."""
     forced = " ".join(f"'{override}'" for override in overrides)
@@ -797,7 +812,7 @@ def generate_docker(
     dockerfile = f"""# syntax=docker/dockerfile:1
 FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
+{_DIND_STAGE}
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
@@ -950,7 +965,7 @@ except Exception:
     dockerfile = f"""# syntax=docker/dockerfile:1
 FROM python:{IMAGE_PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
+{_DIND_STAGE}
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1

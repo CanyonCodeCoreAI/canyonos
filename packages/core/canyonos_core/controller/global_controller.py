@@ -234,7 +234,7 @@ class GlobalController(ControllerContext):
                     )
                     if inspect.returncode == 0 and inspect.stdout.strip() == "true":
                         continue  # already running -- a live replica, not stale
-                    self._run_cmd(["docker", "rm", "-f", container_name], host, user)
+                    self._run_cmd(["docker", "rm", "-fv", container_name], host, user)
                 except Exception:
                     pass  # Container didn't exist, that's fine
 

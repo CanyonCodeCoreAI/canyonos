@@ -276,6 +276,9 @@ def _bootstrap_instance(
         volume_path = spec.get("volume_path")
         if volume_path:
             volume_args = ["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"]
+    else:
+        # Agent images run their own Docker daemon; a database is a stock image.
+        volume_args = ["--privileged", "-v", "/var/lib/docker"]
 
     logger.info("Transferring image %s to %s", image, host)
     result = subprocess.run(

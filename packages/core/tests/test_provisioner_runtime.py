@@ -26,7 +26,7 @@ def _fake_controller():
             )
         if cmd[:2] == ["docker", "run"]:
             running.add(cmd[cmd.index("--name") + 1])
-        elif cmd[:3] == ["docker", "rm", "-f"]:
+        elif cmd[:3] == ["docker", "rm", "-fv"]:
             running.discard(cmd[-1])
         return SimpleNamespace(returncode=0, stdout="")
 
@@ -83,7 +83,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
             [c[:3] for c in calls],
             [
                 ["docker", "inspect", "-f"],
-                ["docker", "rm", "-f"],
+                ["docker", "rm", "-fv"],
                 ["docker", "run", "-d"],
             ],
         )
@@ -177,6 +177,9 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                     "CANYONOS_LOGS_ENABLED=true",
                     "-e",
                     "CANYONOS_LLM_STUB_TEXT=",
+                    "--privileged",
+                    "-v",
+                    "/var/lib/docker",
                     "canyonos-alpha",
                 ],
                 "localhost",
@@ -346,6 +349,9 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                     "CANYONOS_LLM_STUB_TEXT=",
                     "-p",
                     "8080:8080",
+                    "--privileged",
+                    "-v",
+                    "/var/lib/docker",
                     "--cpus",
                     "2",
                     "--memory",
@@ -424,7 +430,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
             manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
 
         commands = [call.args[0] for call in controller._run_cmd.call_args_list]
-        self.assertIn(["docker", "rm", "-f", "canyonos-alpha-0"], commands)
+        self.assertIn(["docker", "rm", "-fv", "canyonos-alpha-0"], commands)
         self.assertEqual(controller.containers["Alpha"], [])
 
     def test_one_failed_replica_still_registers_and_routes_the_others(self):
@@ -498,7 +504,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
 
         self.assertEqual(
             controller._run_cmd.call_args.args,
-            (["docker", "rm", "-f", "canyonos-alpha-0"], "localhost", None),
+            (["docker", "rm", "-fv", "canyonos-alpha-0"], "localhost", None),
         )
         self.assertEqual(controller.redis.hgetall("agent_instance:local:Alpha:0"), {})
         self.assertEqual(controller.containers["Alpha"], [])
@@ -801,7 +807,7 @@ class ControllerStatusKeyTests(unittest.TestCase):
         run_cmd = controller._run_cmd.side_effect
 
         def observe(cmd, host, user=None):
-            if cmd[:3] == ["docker", "rm", "-f"]:
+            if cmd[:3] == ["docker", "rm", "-fv"]:
                 seen_at_rm.append(controller.redis.get(self.STATUS_KEY))
             return run_cmd(cmd, host, user)
 
