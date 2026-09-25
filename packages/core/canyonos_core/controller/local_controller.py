@@ -183,6 +183,9 @@ class LocalController(object):
             self._metrics_thread.join(timeout=2)
             self.mark_failed()
             self.server.stop(0)
+            # Otherwise the proxy keeps the container alive, answering every
+            # request with "No agent loaded" long after the cause has scrolled by.
+            self._proxy_process.kill()
             raise RuntimeError(
                 f"Failed to load configured agent {self.agent_name or self.agent_file}."
             )
@@ -191,9 +194,12 @@ class LocalController(object):
             self.mark_ready()
 
         logger.info(
-            "Local controller initialized at %s (max_agent_instances=%d), reported healthy to Redis.",
+            "Local controller initialized at %s (max_agent_instances=%d); %s.",
             self._my_endpoint,
             max_instances,
+            "reported healthy to Redis"
+            if publish_ready
+            else "readiness left to the launcher",
         )
 
     def mark_ready(self):
@@ -205,6 +211,11 @@ class LocalController(object):
         with self._status_lock:
             self._ready.clear()
             self.redis.set(self._status_key, "failed")
+
+    def mark_stopped(self):
+        with self._status_lock:
+            self._ready.clear()
+            self.redis.set(self._status_key, "stopped")
 
     def _start_llm_proxy(self, redis_host, redis_port):
         """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
@@ -365,7 +376,8 @@ class LocalController(object):
             )
             return agent_instance
         except Exception as e:
-            logger.error(
+            # The traceback is what names the import that actually failed.
+            logger.exception(
                 f"Failed to load agent {self.agent_name} from {agent_path}: {e}"
             )
             return None
@@ -1019,7 +1031,7 @@ class LocalController(object):
                     "Executor shutdown timed out with requests still running: %s",
                     ", ".join(future_ids),
                 )
-        self.redis.set(self._status_key, "stopped")
+        self.mark_stopped()
         if self._log_handler is not None:
             logging.getLogger().removeHandler(self._log_handler)
         self.server.stop(0)

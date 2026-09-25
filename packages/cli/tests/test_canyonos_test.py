@@ -147,8 +147,22 @@ def test_a_passing_run_tears_everything_down(deployable):
     assert deployable["quit"] == 1
 
 
-def test_llm_is_stubbed_by_default(monkeypatch, deployable):
-    """`canyonos test` hands the stub flag to `canyonos deploy` so no real LLM is hit."""
+def test_llm_is_stubbed_when_requested(monkeypatch, deployable):
+    """An explicit stub value enables the in-container LLM stub."""
+    seen = {}
+    monkeypatch.setattr(
+        test_cmd,
+        "run_deploy",
+        lambda *_a, **kwargs: (
+            seen.update(extra_env=kwargs.get("extra_env"))
+            or {"container_id": "abc", "port": 8000}
+        ),
+    )
+    assert test_cmd.run_test("hi", llm_stub=test_cmd.DEFAULT_LLM_STUB) == 0
+    assert seen["extra_env"] == {"CANYONOS_LLM_STUB_TEXT": test_cmd.DEFAULT_LLM_STUB}
+
+
+def test_real_llm_is_used_by_default(monkeypatch, deployable):
     seen = {}
     monkeypatch.setattr(
         test_cmd,
@@ -159,20 +173,6 @@ def test_llm_is_stubbed_by_default(monkeypatch, deployable):
         ),
     )
     assert test_cmd.run_test("hi") == 0
-    assert seen["extra_env"] == {"CANYONOS_LLM_STUB_TEXT": "test"}
-
-
-def test_real_llm_flag_disables_the_stub(monkeypatch, deployable):
-    seen = {}
-    monkeypatch.setattr(
-        test_cmd,
-        "run_deploy",
-        lambda *_a, **kwargs: (
-            seen.update(extra_env=kwargs.get("extra_env"))
-            or {"container_id": "abc", "port": 8000}
-        ),
-    )
-    assert test_cmd.run_test("hi", llm_stub=None) == 0
     assert seen["extra_env"] is None
 
 

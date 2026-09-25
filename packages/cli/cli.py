@@ -138,14 +138,14 @@ def main():
     add("serve", lambda args: sys.exit(run_serve()))
     add("status", lambda args: run_status())
 
-    # Test has args: prompt, --json, --real-llm, --stub-text, --timeout.
+    # Test has args: prompt, --json, --stub-llm, --stub-text, --timeout.
     test = add(
         "test",
         lambda args: sys.exit(
             run_test(
                 args.prompt,
                 as_json=args.json,
-                llm_stub=(None if args.real_llm else args.stub_text),
+                llm_stub=(args.stub_text if args.stub_llm else None),
                 timeout=args.timeout,
             )
         ),
@@ -166,14 +166,14 @@ def main():
         default=DEFAULT_LLM_STUB,
         metavar="TEXT",
         help=(
-            "Text the in-container LLM proxy returns for every model call so "
-            f"tests never hit a real LLM (default: {DEFAULT_LLM_STUB!r})."
+            "Text returned for every model call when --stub-llm is enabled "
+            f"(default: {DEFAULT_LLM_STUB!r})."
         ),
     )
     test.add_argument(
-        "--real-llm",
+        "--stub-llm",
         action="store_true",
-        help="Use the real LLM provider instead of the stub (requires credentials).",
+        help="Use stubbed LLM responses instead of real API Calls.",
     )
     test.add_argument(
         "--timeout",

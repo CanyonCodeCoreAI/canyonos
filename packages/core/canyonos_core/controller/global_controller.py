@@ -56,6 +56,20 @@ LOCAL_NETWORK = "canyonos-local"
 # silently running a stale image that need not hold the code this GC was built from.
 CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 
+# How long a replica may stay short of "healthy" before the deploy is called dead.
+# It has to cover the slowest honest cold start -- a container whose agent imports
+# a heavy adapter -- so the workflow launcher's own readiness deadline
+# (stub_generator.WORKFLOW_READY_TIMEOUT_SECONDS) must not undercut it.
+CONTROLLER_READY_TIMEOUT_SECONDS = 120
+
+# How much of a failed container's own log to show: enough for the traceback that
+# names the failed import, short enough not to bury the summary under it.
+_FAILURE_LOG_TAIL_LINES = 40
+
+# Statuses a container publishes on its way out. Nothing republishes over them, so
+# waiting on one can only ever time out.
+_TERMINAL_STATUSES = frozenset({"failed", "stopped"})
+
 
 class GlobalController(ControllerContext):
     """
@@ -707,9 +721,14 @@ class GlobalController(ControllerContext):
     #  Startup health check                                               #
     # ------------------------------------------------------------------ #
 
-    def _wait_for_healthy(self, timeout=30, interval=2):
+    def _wait_for_healthy(self, timeout=CONTROLLER_READY_TIMEOUT_SECONDS, interval=2):
         """
-        Block until all controllers report healthy in Redis, or until timeout.
+        Block until all controllers report healthy in Redis, or fail the deploy.
+
+        A replica that exists but never reports healthy is fatal, and one that
+        reports a terminal status ("failed", "stopped") is fatal at once: the
+        rest of the timeout would be dead time before a verdict already decided,
+        during which the reconciler may replace the container holding the cause.
 
         Args:
             timeout:  Maximum seconds to wait.
@@ -729,7 +748,8 @@ class GlobalController(ControllerContext):
             )
             return
 
-        deadline = time.time() + timeout
+        started = time.time()
+        deadline = started + timeout
         ready = set()
         any_instances_appeared = False
         pending = []
@@ -761,29 +781,36 @@ class GlobalController(ControllerContext):
                         self._last_status[(host, port)] = "healthy"
                         ready.add(instance_key)
                 else:
-                    pending.append(instance)
+                    pending.append((instance, status))
 
             if all(healthy.get(name, 0) >= want for name, want in expected.items()):
                 return
-            if time.time() >= deadline:
+            terminal = [
+                (instance, status)
+                for instance, status in pending
+                if status in _TERMINAL_STATUSES
+            ]
+            if terminal or time.time() >= deadline:
                 break
             time.sleep(interval)
 
+        waited = int(time.time() - started)
         if not any_instances_appeared:
             logger.critical(
                 "No controller instances appeared within %ds; the reconciler may "
                 "have failed to provision them.",
-                timeout,
+                waited,
             )
             return
 
-        for instance in pending:
+        for instance, status in pending:
             logger.warning(
-                "Controller %s (%s:%s) not ready after %ds.",
+                "Controller %s (%s:%s) is %s after %ds.",
                 instance["agent_name"],
                 instance["host"],
                 instance["host_port"],
-                timeout,
+                status or "not ready",
+                waited,
             )
 
         short = {
@@ -797,19 +824,109 @@ class GlobalController(ControllerContext):
                 name,
                 have,
                 want,
-                timeout,
+                waited,
             )
         # An existing unhealthy replica fails startup; a missing one may still be provisioning.
-        failing = {instance["agent_name"] for instance in pending}
+        failing = {instance["agent_name"] for instance, _ in pending}
         failed = {name: counts for name, counts in short.items() if name in failing}
         if not failed:
             return
+
+        # The cause exists only inside the container -- an adapter's
+        # ModuleNotFoundError, say -- and the teardown that follows removes it.
+        # After a terminal status the others were still starting when the wait
+        # ended, so their logs hold nothing yet; a timeout shows every laggard.
+        for instance, status in terminal or pending:
+            if instance["agent_name"] in failed:
+                self._dump_container_log(instance, status)
+
         summary = ", ".join(
             f"{name} {have}/{want}" for name, (have, want) in failed.items()
         )
         raise RuntimeError(
-            f"Agent replica(s) failed to become healthy within {timeout}s: {summary}"
+            f"Agent replica(s) failed to become healthy within {waited}s: {summary}"
         )
+
+    def _dump_container_log(self, instance, status):
+        """Log one failed container's own log, bracketed by sentinel lines.
+
+        Everything between `--- begin container log:` and `--- end container
+        log:` is another process's output quoted verbatim, ERROR lines and
+        tracebacks included. `canyonos deploy` decides the deploy has died from
+        exactly those words, so it keys on the sentinels to leave the quoted
+        block alone -- they must stay in step with PhaseTracker in
+        packages/cli/canyonos/deploy.py, which matches them only at the start
+        of a message. Every line inside is therefore indented, so quoted text
+        can never pose as a sentinel, and the block is emitted whole, whatever
+        goes wrong inside it.
+        """
+        name = instance["agent_name"]
+        logger.warning(
+            "--- begin container log: %s (%s:%s) status=%s ---",
+            name,
+            instance["host"],
+            instance["host_port"],
+            status or "unknown",
+        )
+        try:
+            self._log_container_output(instance)
+        except Exception as e:
+            # Never fatal: the summary that follows is what the deploy is here to say.
+            logger.warning("  could not read the log of %s: %s", name, e)
+        finally:
+            logger.warning("--- end container log: %s ---", name)
+
+    def _log_container_output(self, instance):
+        """Emit one container's log tail, or the one line saying why it is missing."""
+        name = instance["agent_name"]
+        container = self._docker_container_name(instance)
+        if not container:
+            logger.warning("  could not read the log of %s: no container", name)
+            return
+
+        result = self._run_cmd(
+            ["docker", "logs", "--tail", str(_FAILURE_LOG_TAIL_LINES), container],
+            instance["host"],
+            self._ssh_user_for(instance),
+        )
+        if result.returncode != 0:
+            # stderr here is docker's complaint, not the agent's output.
+            logger.warning(
+                "  could not read the log of %s: %s",
+                name,
+                (result.stderr or result.stdout or "").strip(),
+            )
+            return
+
+        lines = [
+            line
+            for stream in (result.stdout, result.stderr)
+            if stream
+            for line in stream.splitlines()
+        ]
+        for line in lines or ["(the container produced no output)"]:
+            logger.warning("  %s", line)
+
+    def _docker_container_name(self, instance):
+        """The name this instance's container answers to under `docker`.
+
+        Not interchangeable with its runtime id: EC2 appends the host's instance
+        id to that, so each provider says which part `docker` was given.
+        """
+        if instance.get("provider", "local").casefold() == "ec2":
+            from canyonos_core.reconciler.providers.EC2 import _runtime as runtime
+        else:
+            from canyonos_core.reconciler.providers.Local import _runtime as runtime
+        return runtime.docker_container_name(instance)
+
+    def _ssh_user_for(self, instance):
+        """The SSH user a command against this instance's host needs.
+
+        EC2 records carry none: that provider reads the user from the deploy
+        config on every call rather than storing it per replica.
+        """
+        # `or {}`, not a default: a bare `ec2:` key in the YAML parses to None.
+        return instance.get("user") or (self.config.get("ec2") or {}).get("ssh_user")
 
     # ------------------------------------------------------------------ #
     #  Polling loop                                                       #

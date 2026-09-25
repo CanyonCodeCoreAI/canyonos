@@ -54,6 +54,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
     def test_configured_agent_load_failure_never_reports_healthy(self):
         redis = _FakeRedis()
         server = MagicMock()
+        proxy = MagicMock()
         servicer = SimpleNamespace(request_queue=None, on_result=None)
         controllers = []
 
@@ -77,7 +78,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 "canyonos_core.controller.local_controller.RedisClient",
                 return_value=redis,
             ),
-            patch.object(LocalController, "_start_llm_proxy", return_value=None),
+            patch.object(LocalController, "_start_llm_proxy", return_value=proxy),
             patch.object(LocalController, "_load_agent", capture_heartbeat_then_fail),
         ):
             with self.assertRaisesRegex(
@@ -87,6 +88,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
 
         self.assertEqual(redis.get("controller:localhost:50051:status"), "failed")
         server.stop.assert_called_once_with(0)
+        proxy.kill.assert_called_once_with()
         self.assertFalse(controllers[0]._metrics_thread.is_alive())
 
     def test_heartbeat_is_running_while_the_agent_loads(self):

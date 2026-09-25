@@ -124,6 +124,9 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         host, spec.get("redis_port", 6379)
     )
 
+    # Last thing before `docker run`, after any orphan under this name is gone.
+    _clear_stale_status(host, f"{runtime_id}:{container_port}", runtime_id)
+
     for attempt in range(MAX_PORT_ATTEMPTS):
         cmd = [
             "docker",
@@ -239,6 +242,26 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
     return instance
 
 
+def _clear_stale_status(host, endpoint, runtime_id):
+    """Delete the status key the container about to start will own.
+
+    The key has no TTL and the endpoint is derived from the container name, so
+    whatever the last container at this endpoint said -- in this run or one
+    that crashed -- is still there, and the readiness wait would read it as the
+    new container's. Fails closed: a launch that cannot clear it must not
+    proceed, or a stale "healthy" passes for a container that never came up.
+    """
+    controller = _require_controller()
+    node_redis = controller.node_redis.get(host) or controller.redis
+    try:
+        node_redis.delete(f"controller:{endpoint}:status")
+    except Exception as e:
+        raise RuntimeError(
+            f"Cannot launch {runtime_id}: could not clear the stale readiness "
+            f"status at {endpoint} on {host}: {e}"
+        ) from e
+
+
 def terminate_instance(instance):
     runtime_id = instance.get("runtime_id")
     if not runtime_id:
@@ -256,3 +279,11 @@ def terminate_instance(instance):
                 f"Failed to remove runtime {runtime_id}: "
                 f"{detail or f'exit code {result.returncode}'}"
             )
+
+
+def docker_container_name(instance):
+    """The name this instance's container answers to under `docker`.
+
+    Here the runtime id is that name: `docker run --name` is given it verbatim.
+    """
+    return instance.get("runtime_id")
