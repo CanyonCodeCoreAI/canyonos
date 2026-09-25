@@ -111,6 +111,11 @@ def provision_instance(spec, replica_index, next_host_port=None):
         ],
     }
 
+    market_type = spec.get("market_type", "on-demand")
+    # AWS has no "on-demand" MarketType; omitting InstanceMarketOptions is how on-demand is requested.
+    if market_type != "on-demand":
+        request["InstanceMarketOptions"] = {"MarketType": market_type}
+
     response = client.run_instances(**request)
     instance_id = response["Instances"][0]["InstanceId"]
     runtime_id = f"{container_name(agent_name, replica_index)}--{instance_id}"
