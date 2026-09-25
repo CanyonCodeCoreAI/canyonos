@@ -65,17 +65,27 @@ class Finding(NamedTuple):
 # ------------------------------------------------------------------ #
 
 
-def _parse(path):
-    """`(AST, None)` or `(None, error)`, without importing the file."""
+def _parse(path, as_text=False):
+    """`(AST, None)` or `(None, error)`, without importing the file.
+
+    Decoded the way the runtime decodes it. An import honours the coding
+    cookie, so by default the bytes go to the parser. The workflow launcher
+    exec()s the file read as UTF-8 text, cookie ignored: `as_text` does that.
+    """
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, "rb") as handle:
             source = handle.read()
-    except OSError as exc:
+        if as_text:
+            source = source.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
         return None, str(exc)
     try:
         return ast.parse(source, filename=path), None
     except SyntaxError as exc:
         return None, f"{exc.msg} (line {exc.lineno})"
+    except ValueError as exc:
+        # A null byte, which Python 3.10 reports as ValueError.
+        return None, str(exc)
 
 
 def _parameter_names(node):
@@ -381,7 +391,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
 
 def _check_workflow(report, workflow_path, stub_modules):
     """The module the platform posts to, and how it reaches an agent."""
-    tree, error = _parse(workflow_path)
+    tree, error = _parse(workflow_path, as_text=True)
     if tree is None:
         report.add(
             "CAR-WORKFLOW-SHAPE",

@@ -79,7 +79,10 @@ class ValidateCarTests(unittest.TestCase):
         for relative, text in {**BASE, **(files or {})}.items():
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
+            if isinstance(text, bytes):
+                path.write_bytes(text)
+            else:
+                path.write_text(text)
         return str(root)
 
     def codes(self, files=None):
@@ -126,6 +129,45 @@ class ValidateCarTests(unittest.TestCase):
         )
 
         self.assertEqual([f.code for f in findings], ["CAR-ADAPTER-CLASS"])
+
+    def test_a_source_encoding_the_import_honours_is_fine(self):
+        """Python decodes a file by its coding cookie; so must the check."""
+        self.assertEqual(
+            self.codes(
+                {
+                    "app/agents/echo_agent.py": b"# -*- coding: latin-1 -*-\n"
+                    b"# caf\xe9\n"
+                    b"class EchoAgent:\n"
+                    b"    def echo(self, text):\n"
+                    b"        return text\n"
+                }
+            ),
+            [],
+        )
+
+    def test_a_source_the_import_cannot_decode_is_reported(self):
+        findings = validate_car(
+            self.car(
+                {
+                    "app/agents/echo_agent.py": b"NAME = 'caf\xe9'\n\n\n"
+                    b"class EchoAgent:\n"
+                    b"    def echo(self, text):\n"
+                    b"        return text\n"
+                }
+            )
+        )
+
+        self.assertEqual([f.code for f in findings], ["CAR-ADAPTER-CLASS"])
+        self.assertIn("does not parse", findings[0].summary)
+
+    def test_a_null_byte_in_the_source_is_reported(self):
+        """Python 3.10 raises ValueError for it rather than SyntaxError."""
+        findings = validate_car(
+            self.car({"app/agents/echo_agent.py": b"class EchoAgent:\n    x = 1\x00\n"})
+        )
+
+        self.assertEqual([f.code for f in findings], ["CAR-ADAPTER-CLASS"])
+        self.assertIn("does not parse", findings[0].summary)
 
     def test_a_constructor_that_needs_arguments_is_reported(self):
         findings = validate_car(
@@ -461,6 +503,20 @@ class ValidateCarTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_a_workflow_the_launcher_cannot_decode_is_reported(self):
+        """The launcher exec()s the file read as UTF-8 text; a cookie is ignored."""
+        findings = validate_car(
+            self.car(
+                {
+                    "app/workflow/echo_workflow.py": b"# -*- coding: latin-1 -*-\n"
+                    b"# caf\xe9\n" + WORKFLOW.encode()
+                }
+            )
+        )
+
+        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
+        self.assertIn("the workflow does not parse", findings[0].summary)
 
     def test_a_main_guard_is_reported(self):
         findings = validate_car(
