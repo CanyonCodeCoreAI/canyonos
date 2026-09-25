@@ -211,13 +211,45 @@ describe('release lines', () => {
   });
 
   test('compares a draft with the latest published release on its line', () => {
-    const previous = pickPreviousRelease({ tagName: 'canyonos-v1.1.0', publishedAt: null }, [
-      release('canyonos-v0.9.0', '2026-09-11T00:00:00Z'),
-      release('canyonos-v1.0.0', '2026-09-18T00:00:00Z'),
-      release('cli-v0.1.731', '2026-09-24T00:00:00Z'),
-    ]);
+    const previous = pickPreviousRelease(
+      { tagName: 'canyonos-v1.1.0', publishedAt: null, prerelease: false },
+      [
+        release('canyonos-v0.9.0', '2026-09-11T00:00:00Z'),
+        release('canyonos-v1.0.0', '2026-09-18T00:00:00Z'),
+        release('cli-v0.1.731', '2026-09-24T00:00:00Z'),
+      ]
+    );
 
     expect(previous.tagName).toBe('canyonos-v1.0.0');
+  });
+
+  test('compares a pre-release with the release right before it, of any kind', () => {
+    const earlier = [
+      release('api-v0.1.0', '2026-09-10T00:00:00Z'),
+      release('api-v0.1.1', '2026-09-18T00:00:00Z', { prerelease: true }),
+    ];
+
+    expect(
+      pickPreviousRelease(
+        { tagName: 'api-v0.1.2', publishedAt: '2026-09-25T00:00:00Z', prerelease: true },
+        earlier
+      ).tagName
+    ).toBe('api-v0.1.1');
+    expect(
+      pickPreviousRelease(
+        { tagName: 'api-v0.2.0', publishedAt: '2026-09-25T00:00:00Z', prerelease: false },
+        earlier
+      ).tagName
+    ).toBe('api-v0.1.0');
+  });
+
+  test('compares a normal release with a pre-release when no normal release came before', () => {
+    expect(
+      pickPreviousRelease(
+        { tagName: 'web-v0.2.0', publishedAt: '2026-09-25T00:00:00Z', prerelease: false },
+        [release('web-v0.1.1', '2026-09-18T00:00:00Z', { prerelease: true })]
+      ).tagName
+    ).toBe('web-v0.1.1');
   });
 
   test('fails when the release line has no earlier release', () => {

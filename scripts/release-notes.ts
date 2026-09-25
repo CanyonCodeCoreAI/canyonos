@@ -79,12 +79,13 @@ export type PipelineDependencies = {
   writeFile: (path: string, content: string) => Promise<void>;
 };
 
-export type ReleaseTarget = Pick<Release, 'tagName' | 'publishedAt'>;
+export type ReleaseTarget = Pick<Release, 'tagName' | 'publishedAt' | 'prerelease'>;
 
 export type PipelineOptions = {
   targetTag: string;
   targetRef?: string;
   targetPublishedAt?: string | null;
+  targetPrerelease?: boolean;
   previousTag?: string;
   repository: string;
   outputDirectory: string;
@@ -189,14 +190,18 @@ export function releaseLine(tagName: string): string {
   return tagName.replace(/v?\d[\w.+-]*$/, '');
 }
 
+// A pre-release compares with the release right before it. A normal release skips the
+// pre-releases in between, unless there is no earlier normal release to compare with.
 export function pickPreviousRelease(target: ReleaseTarget, releases: Release[]): Release {
   const line = releaseLine(target.tagName);
-  const previous = releases
-    .filter((release) => !release.draft && !release.prerelease && release.publishedAt)
+  const earlier = releases
+    .filter((release) => !release.draft && release.publishedAt)
     .filter((release) => release.tagName !== target.tagName)
     .filter((release) => releaseLine(release.tagName) === line)
     .filter((release) => !target.publishedAt || release.publishedAt! < target.publishedAt)
-    .sort((left, right) => right.publishedAt!.localeCompare(left.publishedAt!))[0];
+    .sort((left, right) => right.publishedAt!.localeCompare(left.publishedAt!));
+  const previous =
+    (target.prerelease ? undefined : earlier.find((release) => !release.prerelease)) ?? earlier[0];
   if (!previous) throw new Error(`No previous published release exists before ${target.tagName}.`);
   return previous;
 }
@@ -339,6 +344,7 @@ export async function runReleaseNotesPipeline(
         await dependencies.findPreviousRelease({
           tagName: options.targetTag,
           publishedAt: options.targetPublishedAt ?? null,
+          prerelease: options.targetPrerelease ?? false,
         })
       ).tagName;
     audit.previousTag = previousTag;
@@ -708,6 +714,7 @@ if (import.meta.main) {
       previousTag: previousTag || undefined,
       targetRef: process.env.RELEASE_NOTES_TARGET_REF || undefined,
       targetPublishedAt: process.env.RELEASE_NOTES_TARGET_PUBLISHED_AT || null,
+      targetPrerelease: process.env.RELEASE_NOTES_TARGET_PRERELEASE === 'true',
       repository,
       outputDirectory: process.env.RELEASE_NOTES_OUTPUT_DIR ?? process.cwd(),
     },

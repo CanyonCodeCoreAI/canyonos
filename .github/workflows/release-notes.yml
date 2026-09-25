@@ -8,7 +8,6 @@ name: Release notes
 #
 # Run it by hand on a draft to review the notes before publishing. On publish it only fills
 # an empty body, so notes written on the draft, or by hand, are never overwritten.
-# Pre-releases are skipped.
 
 on:
   release:
@@ -49,6 +48,7 @@ jobs:
       id: ${{ steps.release.outputs.id }}
       ref: ${{ steps.release.outputs.ref }}
       published_at: ${{ steps.release.outputs.published_at }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - id: release
         name: Find the release
@@ -66,10 +66,7 @@ jobs:
           fi
 
           run=true
-          if [ "$(jq -r '.prerelease' <<<"$release")" = "true" ]; then
-            echo "$TAG is a pre-release; skipping."
-            run=false
-          elif [ "$EVENT" = "release" ] && [ -n "$(jq -r '.body // "" | gsub("\\s"; "")' <<<"$release")" ]; then
+          if [ "$EVENT" = "release" ] && [ -n "$(jq -r '.body // "" | gsub("\\s"; "")' <<<"$release")" ]; then
             echo "$TAG already has release notes; leaving them as they are."
             run=false
           fi
@@ -84,6 +81,7 @@ jobs:
             echo "id=$(jq -r '.id' <<<"$release")"
             echo "ref=$ref"
             echo "published_at=$(jq -r '.published_at // ""' <<<"$release")"
+            echo "prerelease=$(jq -r '.prerelease' <<<"$release")"
           } >> "$GITHUB_OUTPUT"
 
   generate:
@@ -125,6 +123,7 @@ jobs:
           PREVIOUS_TAG: ${{ inputs.previous_tag }}
           RELEASE_NOTES_TARGET_REF: ${{ needs.resolve.outputs.ref }}
           RELEASE_NOTES_TARGET_PUBLISHED_AT: ${{ needs.resolve.outputs.published_at }}
+          RELEASE_NOTES_TARGET_PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
           RELEASE_NOTES_OUTPUT_DIR: ${{ runner.temp }}/release-notes
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
