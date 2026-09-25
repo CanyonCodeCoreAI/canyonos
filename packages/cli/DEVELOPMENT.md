@@ -13,10 +13,13 @@ are where the binary runs from and an optional `packages/cli/.env`:
 ## Setup
 
 ```bash
-cp packages/cli/.env.example packages/cli/.env  # once; the file is gitignored
-uv sync                                         # installs every workspace member editable
-uv run canyonos doctor
+bun run canyonos:dev
 ```
+
+That builds the Core, API and web images from this checkout, copies
+`packages/cli/.env.example` to `packages/cli/.env` if it is missing, runs
+`uv sync`, and opens a shell with the workspace `.venv` active, so `canyonos`
+there is this checkout's CLI using those images. `exit` leaves the shell.
 
 `uv run canyonos <command>` works for every command from anywhere in the
 workspace, because the root `.venv` holds both packages. There are no dev-only

@@ -2,6 +2,8 @@
 Logic for the pre-deploy resource picker: every agent's cpu, memory, gpu and
 replicas are shown (and filled with defaults when missing), the user can change
 any of them, and the result is written back to the global controller config.
+The picker displays zero GPUs as the no-GPU default; manifests express that by
+omitting `resources.gpu` rather than writing zero.
 """
 
 import math
@@ -50,6 +52,14 @@ def _set(agent, field, value):
         agent["replicas"] = value
     else:
         agent["resources"][field] = value
+
+
+def _omit_zero_gpu(agent):
+    """Use the manifest's omission form for the picker's no-GPU value."""
+    resources = agent.get("resources")
+    gpu = resources.get("gpu") if isinstance(resources, dict) else None
+    if isinstance(gpu, (int, float)) and not isinstance(gpu, bool) and gpu == 0:
+        del resources["gpu"]
 
 
 DECIMAL_FIELDS = ("cpu", "gpu")
@@ -207,6 +217,9 @@ def configure_resources(config_path):
 
     if sys.stdin.isatty() and not _pick(agents):
         return False
+
+    for agent in agents:
+        _omit_zero_gpu(agent)
 
     with open(config_path, "w") as f:
         yaml_rt.dump(data, f)

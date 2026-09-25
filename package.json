@@ -22,6 +22,8 @@
     "docker:down": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml down",
     "docker:rm": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml down --volumes",
     "docker:logs": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml logs -f",
+    "canyonos:dev": "bun run ./scripts/canyonos-dev.ts",
+    "dashboard:dev": "docker compose -f .docker/docker-compose.yml up -d --wait && APP_ENV=${APP_ENV:-development} AUTH_MODE=${AUTH_MODE:-fixed_code} CANYONOS_REDIS_HOST=${CANYONOS_REDIS_HOST:-127.0.0.1} CANYONOS_REDIS_PORT=${CANYONOS_REDIS_PORT:-6379} DEPLOY_WORKER=${DEPLOY_WORKER:-none} JWT_SECRET=${JWT_SECRET:-canyonos-local-development-only-secret} VITE_API_URL=${VITE_API_URL:-${API_URL:-http://localhost:${PORT:-3000}}} VITE_CANYONOS_LOCAL_MODE=${VITE_CANYONOS_LOCAL_MODE:-true} turbo run dev --filter=@canyonos/api --filter=web",
     "api:test:e2e": "bun run --filter @canyonos/api test:e2e",
     "ui:test:e2e": "bun run --filter web test:e2e",
     "canyonos:smoke": "bun run ./scripts/canyonos-smoke.ts",
