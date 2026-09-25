@@ -178,7 +178,7 @@ def check_requirements_coverage(
             f"something other than `{name}`, declare that name in "
             f"{report.rel(config_path)}."
         )
-        report.error(
+        report.warn(
             "W006",
             where,
             lineno,

@@ -31,14 +31,15 @@ From the application root, run:
 python3 <skill_dir>/validate.py .car
 ```
 
-Fix every `ERROR` and rerun until the command exits 0. Do not hide warnings:
-list each in the handoff and state whether it blocks this source.
+Fix every `ERROR` and rerun until the command exits 0. Review every warning;
+pause for blockers and surface required developer actions in the handoff.
+Keep non-actionable diagnostic details in progress updates.
 
 Confirm with `git status` that nothing outside `.car` changed except the two
 files the port is allowed to write: `.gitignore`, which `prepare.py` adds the
-artifact to, and `.env.example`, which proxy wiring appends to. Name both in
-the handoff. `.env` is written the same way but is normally ignored, so it does
-not show up there.
+artifact to, and `.env.example`, which proxy wiring appends to. Report these
+changes in progress updates. `.env` is written the same way but is normally
+ignored, so it does not show up there.
 
 ## What a clean run does not prove
 
@@ -49,28 +50,48 @@ into each image, anything reached only at runtime, or whether the first request
 returns an answer. A ModuleNotFoundError at container start and an
 AttributeError on the first call both survive an exit-0 run.
 
-Report it as what it is. "Gap validation exits 0" is accurate; "validation
-passed" claims a deployment nobody ran.
+## Final handoff
 
-Report:
+Keep the final message short and actionable. Do not repeat the progress
+checklist, file inventory, implementation details, or raw validator output.
+Use the developer's language. Do not ask whether to deploy or run additional
+commands as part of the handoff, in attended or unattended sessions.
 
-- that the `.car` port validated;
-- files created;
-- validator warnings;
-- unresolved runtime blockers;
-- intentionally omitted unreachable dependencies or source surfaces.
+**Success:** only after gap validation exits 0 and no readiness blocker
+remains, report that the porting work for `canyonos build` succeeded. This
+means `.car` was prepared and validated, not that images were built or a live
+request passed. When running inside the build's coding session, do not claim
+the parent CLI has exited successfully; it performs its final check after the
+session ends.
 
-In an attended porting session, stop and ask exactly one direct approval
-question:
+Name the required environment keys from the source and `.env.example`, and
+the configured `env_file` path (normally `.env`). Tell the developer to fill
+them before the operations that require them; never show secret values or
+claim their presence was verified. `canyonos test` stubs LLM calls by default;
+real model calls and deployment need provider credentials, and external tools
+may still need their own keys during testing.
 
-> Gap validation exits 0 -- static checks only; no image was built and no
-> request served. Run `canyonos deploy` now? This will build images and start
-> the deployment.
+Offer only these next steps: quit the coding session to return to the CLI,
+or run `canyonos test` / `canyonos deploy` from the application root. For example,
+substituting the actual required keys and env file:
 
-For an unattended `canyonos build -y`, instead report the validation result and
-stop without asking this question. The build command only creates and validates
-the port; it never deploys. Do not treat silence, an unattended run, or the
-original request to “port” as approval.
+> Porting for `canyonos build` succeeded; `.car` passed static validation.
+> Before deployment or real model calls, set `OPENAI_API_KEY` in `.env`.
+> Next: quit this coding session, or run `canyonos test` for a local check /
+> `canyonos deploy` to deploy.
+
+**Blocked:** say the build is paused and identify the concrete source problem
+with its file/call-path evidence. Give the developer the specific change
+needed before retrying `canyonos build`, and link the relevant section of
+[Preparing an Agent App for CanyonOS](https://github.com/CanyonCodeCoreAI/canyonos/blob/5cd4fa8c51082e414aad64e27283ba50c27c579f/docs/CANYONIZATION-APP-READINESS.md).
+Do not use the success message or suggest test/deploy. For example:
+
+> Build paused: `agent.py` starts Docker for required code execution. Move
+> execution to an external sandbox service, then rerun `canyonos build`.
+> See [readiness guide: Docker inside the application](https://github.com/CanyonCodeCoreAI/canyonos/blob/5cd4fa8c51082e414aad64e27283ba50c27c579f/docs/CANYONIZATION-APP-READINESS.md#2-do-not-require-docker-inside-the-application).
+
+The build command only creates and validates the port; it never deploys. Do
+not treat silence, an unattended run, or the request to port as deploy approval.
 
 ## Deploy only after approval
 
