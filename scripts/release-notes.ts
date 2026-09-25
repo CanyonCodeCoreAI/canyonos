@@ -140,9 +140,8 @@ const closingReferencePattern = new RegExp(
 export function extractCanIdentifiers(
   pullRequest: Pick<PullRequest, 'title' | 'headRefName' | 'body'>
 ): string[] {
-  const closingReferences = [...(pullRequest.body ?? '').matchAll(closingReferencePattern)].map(
-    (match) => match[1]!
-  );
+  const prose = (pullRequest.body ?? '').replace(/```[\s\S]*?```|`[^`\n]*`/g, ' ');
+  const closingReferences = [...prose.matchAll(closingReferencePattern)].map((match) => match[1]!);
   const identifiers = new Set<string>();
   for (const value of [pullRequest.title, pullRequest.headRefName, ...closingReferences]) {
     for (const match of value.matchAll(identifierPattern)) {
