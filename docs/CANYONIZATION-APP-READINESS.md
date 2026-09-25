@@ -43,7 +43,7 @@ on local absolute paths, a GPU, or a display.
 
 The CanyonOS-managed LLM path supports the providers routed by the in-container
 LLM proxy of the CanyonOS version you are deploying; see
-[`packages/core/canyonos_core/llm_proxy/config.py`](../packages/core/canyonos_core/llm_proxy/config.py).
+[`packages/core/canyonos_core/llm_proxy/config.py`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/packages/core/canyonos_core/llm_proxy/config.py).
 As of this guide, those are:
 
 - OpenAI;
@@ -85,7 +85,7 @@ dependencies on the Workflow entry in the same way. The application's own
 
 The base packages resolved into every image are `BASE_AGENT_REQUIREMENTS` and
 `BASE_WORKFLOW_REQUIREMENTS` in
-[`packages/core/canyonos_core/stub_generator.py`](../packages/core/canyonos_core/stub_generator.py).
+[`packages/core/canyonos_core/stub_generator.py`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/packages/core/canyonos_core/stub_generator.py).
 Use the lists from the CanyonOS version you are deploying as the compatibility
 baseline. Each agent or Workflow container resolves and installs them together
 with its YAML entry's `requirements` in the same Python environment. The

@@ -1,0 +1,12 @@
+site_name: CanyonOS
+repo_url: https://github.com/CanyonCodeCoreAI/canyonos
+docs_dir: docs
+theme: readthedocs
+
+nav:
+  - Home: index.md
+  - Preparing an Agent App: CANYONIZATION-APP-READINESS.md
+
+plugins:
+  - search
+  - include-markdown
