@@ -1,0 +1,166 @@
+name: Release notes
+
+# Writes the body of a release.
+# - Package releases (cli-v, core-v, api-v, web-v): a technical changelog of the pull requests
+#   that changed that package since its previous release.
+# - CanyonOS releases (canyonos-v): human notes from Linear, with a section for each package
+#   whose version changed since the previous canyonos-v release.
+#
+# Run it by hand on a draft to review the notes before publishing. On publish it only fills
+# an empty body, so notes written on the draft, or by hand, are never overwritten.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: Release tag, draft or published (e.g. canyonos-v1.0.0 or cli-v0.1.731).
+        required: true
+        type: string
+      previous_tag:
+        description: Tag or commit to compare against, when there is no earlier release of the same kind.
+        required: false
+        type: string
+      update_release:
+        description: Write the notes into the release. Off only generates the audit artifact.
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-notes-${{ github.event.release.tag_name || inputs.target_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Drafts are only visible with write access, so this job finds the release and its commit
+  # without checking out or running any repository code.
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      run: ${{ steps.release.outputs.run }}
+      id: ${{ steps.release.outputs.id }}
+      ref: ${{ steps.release.outputs.ref }}
+      published_at: ${{ steps.release.outputs.published_at }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - id: release
+        name: Find the release
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.target_tag }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          release=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[]' |
+            jq -s --arg tag "$TAG" 'map(select(.tag_name == $tag)) | first')
+          if [ "$release" = "null" ]; then
+            echo "No release, draft or published, has the tag $TAG." >&2
+            exit 1
+          fi
+
+          run=true
+          if [ "$EVENT" = "release" ] && [ -n "$(jq -r '.body // "" | gsub("\\s"; "")' <<<"$release")" ]; then
+            echo "$TAG already has release notes; leaving them as they are."
+            run=false
+          fi
+
+          # A draft's tag is only created on publish, so fall back to the commit it targets.
+          if ! ref=$(gh api "repos/$GH_REPO/commits/$TAG" --jq '.sha' 2>/dev/null); then
+            ref=$(gh api "repos/$GH_REPO/commits/$(jq -r '.target_commitish' <<<"$release")" --jq '.sha')
+          fi
+
+          {
+            echo "run=$run"
+            echo "id=$(jq -r '.id' <<<"$release")"
+            echo "ref=$ref"
+            echo "published_at=$(jq -r '.published_at // ""' <<<"$release")"
+            echo "prerelease=$(jq -r '.prerelease' <<<"$release")"
+          } >> "$GITHUB_OUTPUT"
+
+  generate:
+    needs: resolve
+    if: needs.resolve.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      TARGET_TAG: ${{ github.event.release.tag_name || inputs.target_tag }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Generate release notes
+        run: |
+          mkdir -p "$RELEASE_NOTES_OUTPUT_DIR"
+          bun run scripts/release-notes.ts "$TARGET_TAG" "$PREVIOUS_TAG"
+        env:
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          RELEASE_NOTES_TARGET_REF: ${{ needs.resolve.outputs.ref }}
+          RELEASE_NOTES_TARGET_PUBLISHED_AT: ${{ needs.resolve.outputs.published_at }}
+          RELEASE_NOTES_TARGET_PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
+          RELEASE_NOTES_OUTPUT_DIR: ${{ runner.temp }}/release-notes
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Upload release-note audit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-notes-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-notes/
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish:
+    needs: [resolve, generate]
+    if: >-
+      needs.generate.result == 'success' &&
+      (github.event_name == 'release' || inputs.update_release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download release notes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-notes-${{ github.run_id }}
+          path: release-notes
+
+      # The tag is sent again because GitHub drops the tag of a draft whose tag doesn't exist
+      # yet when an update leaves it out.
+      - name: Write the notes into the release
+        env:
+          RELEASE_ID: ${{ needs.resolve.outputs.id }}
+          TAG: ${{ github.event.release.tag_name || inputs.target_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" --silent \
+            -f tag_name="$TAG" -F body=@release-notes/release-notes.md
