@@ -15,13 +15,13 @@ without a question. Never deploy or ask whether to deploy from that flow.
 
 ## Progress
 
-Copy this checklist into the response and update it while working:
+Use this checklist for progress updates, not the final handoff:
 
 ```text
 Port progress:
 - [ ] 1. Prepare `.car`
 - [ ] 2. Survey the copy and choose service boundaries
-- [ ] 3. Write adapters, workflow, declarations, and reviewed configuration
+- [ ] 3. Write adapters, workflow, test input, declarations, and reviewed configuration
 - [ ] 4. Gap validation exits 0; report readiness and stop
 ```
 
@@ -35,7 +35,8 @@ import root from actual imports and use `prepare.py`; do not assemble or refresh
 
 Read [references/source-survey.md](references/source-survey.md) in full. Produce
 its survey record and choose the smallest useful service map before writing
-runtime code or configuration.
+runtime code or configuration. Apply its application-readiness gate; pause the
+build and cite the guide when the source has a blocking prerequisite.
 
 ## 3. Implement the port
 
@@ -63,7 +64,9 @@ Read these only when triggered:
 Read
 [references/validation-and-deploy.md](references/validation-and-deploy.md).
 Validate only authored contracts that CanyonOS tooling does not strongly
-guarantee. Fix every reported error, hand off warnings and blockers, then stop.
+guarantee. Fix every reported error, then use its concise success or blocked
+handoff and stop. Keep the final message limited to status, required developer
+actions, and next steps.
 Do not run `canyonos deploy` without explicit user approval.
 
 ## Diagnose an approved deployment
