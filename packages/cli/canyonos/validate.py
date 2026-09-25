@@ -18,8 +18,10 @@ import os
 import shutil
 import subprocess
 import textwrap
+import uuid
 
 from canyonos import env, ui
+from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
 from canyonos.init import active_docker_socket
 
 DEFAULT_ARTIFACT_ROOT = ".car"
@@ -76,17 +78,20 @@ def _in_process(artifact_root, config):
     return [dict(finding._asdict()) for finding in validate_car(artifact_root, config)]
 
 
-def _docker_argv(artifact_root, config):
+def _docker_argv(artifact_root, config, name):
     """The `docker run` that validates `artifact_root` inside the core image.
 
     The `.car` is the mount, so the container sees no more of the host than the
     artifact being checked, and every path in the findings is already relative
-    to it. The image's own entrypoint starts the server, so it is replaced.
+    to it. The image's own entrypoint starts the server, so it is replaced. The
+    name is what finds the container again if the run has to be abandoned.
     """
     argv = [
         "docker",
         "run",
         "--rm",
+        "--name",
+        name,
         "-v",
         f"{os.path.abspath(artifact_root)}:{WORKSPACE}:ro",
         "-w",
@@ -134,9 +139,27 @@ def _in_image(artifact_root, config):
             "core image."
         )
 
-    result = subprocess.run(
-        _docker_argv(artifact_root, config), capture_output=True, text=True
-    )
+    name = f"canyonos-validate-{uuid.uuid4().hex[:12]}"
+    try:
+        # Bounded by the pull timeout: `docker run` pulls a missing image first.
+        result = subprocess.run(
+            _docker_argv(artifact_root, config, name),
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_PULL_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        # Killing the client leaves the container running; this run started
+        # it, so this run removes it.
+        failure = cleanup_docker(
+            ["docker", "rm", "-f", name],
+            action=f"Removing validator container {name}",
+            missing_text="No such container",
+        )
+        raise RuntimeError(
+            f"The validator in {env.core_image} did not finish within "
+            f"{DOCKER_PULL_TIMEOUT}s." + (f" {failure}" if failure else "")
+        ) from None
     findings = _findings_from(result.stdout)
     if findings is None:
         detail = (result.stderr or result.stdout).strip().splitlines()

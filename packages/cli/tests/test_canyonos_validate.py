@@ -194,6 +194,8 @@ def test_the_container_gets_the_artifact_read_only_as_its_workdir(docker, tmp_pa
         "docker",
         "run",
         "--rm",
+        "--name",
+        calls["argv"][4],
         "-v",
         f"{root}:/workspace:ro",
         "-w",
@@ -259,6 +261,45 @@ def test_neither_core_nor_docker_is_one_line(monkeypatch, no_core, capsys):
 
     assert validate_cmd.run_validate(".car") == 1
     assert "neither is available" in flat(capsys)
+
+
+def test_the_container_is_named_after_this_run(docker):
+    calls = docker(json.dumps({"errors": 0, "findings": []}))
+
+    validate_cmd.run_validate(".car")
+    first = calls["argv"][calls["argv"].index("--name") + 1]
+    validate_cmd.run_validate(".car")
+    second = calls["argv"][calls["argv"].index("--name") + 1]
+
+    assert first.startswith("canyonos-validate-")
+    assert first != second
+
+
+def test_a_container_that_never_finishes_is_removed_and_reported(
+    monkeypatch, docker, capsys
+):
+    """A timeout kills the docker client, not the container it started."""
+    docker("")
+    argvs = []
+
+    class _Removed:
+        returncode = 0
+        stdout = stderr = ""
+
+    def run(argv, **kwargs):
+        argvs.append(argv)
+        if argv[:2] == ["docker", "run"]:
+            raise validate_cmd.subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return _Removed()
+
+    monkeypatch.setattr(validate_cmd.subprocess, "run", run)
+
+    assert validate_cmd.run_validate(".car", as_json=True) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    name = argvs[0][argvs[0].index("--name") + 1]
+    assert argvs[1] == ["docker", "rm", "-f", name]
+    assert "did not finish within 600s" in payload["error"]
 
 
 def test_a_reply_missing_a_finding_field_is_a_failure(docker, capsys):
