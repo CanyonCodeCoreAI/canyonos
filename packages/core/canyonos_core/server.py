@@ -62,6 +62,7 @@ def deploy():
         _gc_process = subprocess.Popen(
             [sys.executable, "-m", "canyonos_core.cli", "deploy", "-c", config_path],
             cwd=WORKSPACE_DIR,
+            env={**os.environ, "CANYONOS_PROJECT_NAME": data.get("project_name", "")},
         )
         _config_path = full_path
         return jsonify({"status": "started", "pid": _gc_process.pid}), 200
