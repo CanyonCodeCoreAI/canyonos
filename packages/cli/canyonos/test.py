@@ -208,9 +208,7 @@ def _deploy_locally(run, config_path, api_port, llm_stub=None):
     # text (see canyonos_core/llm_proxy/stub.py).
     extra_env = {"CANYONOS_LLM_STUB_TEXT": llm_stub} if llm_stub else None
     if llm_stub:
-        ui.say(
-            f"LLM stub on: every model call returns {llm_stub!r} (no real LLM)."
-        )
+        ui.say(f"LLM stub on: every model call returns {llm_stub!r} (no real LLM).")
 
     # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI, we do our
     # own HTTP readiness check below instead. serve=True still brings the
@@ -379,9 +377,7 @@ def _payload(run):
     }
 
 
-def run_test(
-    prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT
-):
+def run_test(prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT):
     run = _Run(prompt or DEFAULT_QUERY)
     ui.set_quiet(as_json)
 

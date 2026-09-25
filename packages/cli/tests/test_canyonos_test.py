@@ -159,9 +159,7 @@ def test_llm_is_stubbed_when_requested(monkeypatch, deployable):
         ),
     )
     assert test_cmd.run_test("hi", llm_stub=test_cmd.DEFAULT_LLM_STUB) == 0
-    assert seen["extra_env"] == {
-        "CANYONOS_LLM_STUB_TEXT": test_cmd.DEFAULT_LLM_STUB
-    }
+    assert seen["extra_env"] == {"CANYONOS_LLM_STUB_TEXT": test_cmd.DEFAULT_LLM_STUB}
 
 
 def test_real_llm_is_used_by_default(monkeypatch, deployable):
