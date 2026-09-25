@@ -166,7 +166,7 @@ def main():
         default=DEFAULT_LLM_STUB,
         metavar="TEXT",
         help=(
-            ""Text returned for every model call when --stub-llm is enabled "
+            "Text returned for every model call when --stub-llm is enabled "
             f"(default: {DEFAULT_LLM_STUB!r})."
         ),
     )
