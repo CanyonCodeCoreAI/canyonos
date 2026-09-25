@@ -4,10 +4,9 @@ docs_dir: docs
 theme: readthedocs
 
 nav:
+  - Home: index.md
   - Preparing an Agent App: CANYONIZATION-APP-READINESS.md
 
 plugins:
   - search
-  - redirects:
-      redirect_maps:
-        index.md: CANYONIZATION-APP-READINESS.md
+  - include-markdown
