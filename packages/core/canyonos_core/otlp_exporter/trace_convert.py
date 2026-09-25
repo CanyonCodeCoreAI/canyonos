@@ -75,7 +75,7 @@ def trace_row_to_span(row):
     # Model, token, agent, and cache-read usage use OTel GenAI semantic-convention
     # names (see https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/).
     # total_cost uses gen_ai.usage.cost. The remaining CanyonOS-specific values (project_id, server/token cost
-    # breakdown, cache_hit_ratio) have no GenAI or Langfuse equivalent, so they keep
+    # breakdown, cache_hit_ratio) have no GenAI equivalent, so they keep
     # plain names.
     attributes = {
         k: v
@@ -88,8 +88,8 @@ def trace_row_to_span(row):
             "gen_ai.usage.input_tokens": row.get("input_token_count"),
             "gen_ai.usage.output_tokens": row.get("output_token_count"),
             "token_count": row.get("token_count"),
-            "langfuse.observation.input": row.get("input"),
-            "langfuse.observation.output": row.get("output"),
+            "gen_ai.prompt": row.get("input"),
+            "gen_ai.completion": row.get("output"),
             "project_id": row.get("project_id"),
             "gen_ai.agent.id": row.get("agent_id"),
             "error_count": row.get("errors"),
