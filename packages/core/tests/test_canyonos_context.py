@@ -1,3 +1,4 @@
+import contextvars
 import os
 import sys
 import unittest
@@ -8,11 +9,9 @@ import canyonos_core.controller.canyonos_context as canyonos_context
 
 
 class CanyonosContextTests(unittest.TestCase):
-    def setUp(self):
-        canyonos_context._local = canyonos_context.threading.local()
-
-    def tearDown(self):
-        canyonos_context._local = canyonos_context.threading.local()
+    def run(self, result=None):
+        # Each test starts from an empty context, so values set in one never reach another.
+        return contextvars.Context().run(super().run, result)
 
     def test_request_id_defaults_to_empty_string(self):
         self.assertEqual(canyonos_context.get_request_id(), "")
