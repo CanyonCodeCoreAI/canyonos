@@ -34,7 +34,7 @@ class WriteIdentityTests(unittest.TestCase):
 
         self.assertEqual(
             controller.redis.hgetall(GlobalController.IDENTITY_KEY),
-            {"project_id": "11111111-1111-1111-1111-111111111111"},
+            {"project_id": "11111111-1111-1111-1111-111111111111", "project_name": ""},
         )
 
     def test_publishes_to_every_node_not_just_self_redis(self):
@@ -71,7 +71,7 @@ class WriteIdentityTests(unittest.TestCase):
 
         self.assertEqual(
             node.hgetall(GlobalController.IDENTITY_KEY),
-            {"project_id": "22222222-2222-2222-2222-222222222222"},
+            {"project_id": "22222222-2222-2222-2222-222222222222", "project_name": ""},
         )
 
 

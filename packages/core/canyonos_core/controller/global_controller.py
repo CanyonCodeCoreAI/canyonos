@@ -358,6 +358,7 @@ class GlobalController(ControllerContext):
         """Publish the current project identity to every node's Redis."""
         payload = {
             "project_id": str(self.config.get("project_id")),
+            "project_name": os.environ.get("CANYONOS_PROJECT_NAME", ""),
         }
         targets = list(self.node_redis.values()) or [self.redis]
         for redis_client in targets:

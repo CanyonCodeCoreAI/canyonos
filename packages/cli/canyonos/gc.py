@@ -4,6 +4,7 @@ that talk to it don't each restate the same routes, payloads and failure modes.
 """
 
 import json
+import os
 import urllib.error
 import urllib.request
 
@@ -76,7 +77,10 @@ def post_deploy(port, config_path=None):
 
     Omitting config_path lets canyonos resolve it against the synced workspace.
     """
-    body = json.dumps({"config_path": config_path} if config_path else {}).encode()
+    payload = {"project_name": os.path.basename(os.getcwd())}
+    if config_path:
+        payload["config_path"] = config_path
+    body = json.dumps(payload).encode()
     return _request(
         f"http://127.0.0.1:{port}/deploy", "Deploy", data=body, method="POST"
     )

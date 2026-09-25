@@ -54,7 +54,10 @@ export async function ensure_canyonos_admin(): Promise<AdminOwner> {
 }
 
 /** An existing project short-circuits: its name, company, creator, and timestamps are never rewritten. */
-export async function ensure_canyonos_project(project_id: string | null): Promise<boolean> {
+export async function ensure_canyonos_project(
+  project_id: string | null,
+  project_name?: string | null
+): Promise<boolean> {
   if (project_id === null || !UUID_RE.test(project_id)) {
     canyonos_logger.warn('CanyonOS identity is unusable, bootstrapping no project', { project_id });
     return false;
@@ -71,7 +74,12 @@ export async function ensure_canyonos_project(project_id: string | null): Promis
     const { user_id, company_id } = await ensure_admin_owner(tx);
     await tx
       .insert(projects)
-      .values({ id: project_id, company_id, created_by: user_id, name: DEFAULT_PROJECT_NAME })
+      .values({
+        id: project_id,
+        company_id,
+        created_by: user_id,
+        name: project_name || DEFAULT_PROJECT_NAME,
+      })
       .onConflictDoNothing();
   });
   return true;
@@ -88,14 +96,16 @@ export async function bootstrap_canyonos(): Promise<void> {
     connectionTimeout: 5000,
   });
   let project_id: string | null = null;
+  let project_name: string | null = null;
   try {
     // Required: with the offline queue disabled, a command sent before the socket is up rejects.
     await redis.connect();
     project_id = await redis.hget(IDENTITY_KEY, 'project_id');
+    project_name = await redis.hget(IDENTITY_KEY, 'project_name');
   } catch {
     // An unreachable controller is the same outcome as a missing id.
   } finally {
     redis.close();
   }
-  await ensure_canyonos_project(project_id);
+  await ensure_canyonos_project(project_id, project_name);
 }
