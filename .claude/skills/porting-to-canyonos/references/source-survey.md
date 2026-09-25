@@ -99,7 +99,8 @@ and which services require `replicas: 1`.
 
 LangChain defines what an agent is; LangGraph defines how agents are
 orchestrated. Each LangChain agent becomes a service, and the LangGraph graph
-around them becomes the workflow.
+around them becomes the workflow. A plain Python source with no framework is
+split the same way; see "Plain Python sources" below.
 
 ### What counts as an agent
 
@@ -142,6 +143,25 @@ remaining node functions and routers from the source unchanged.
 
 If the graph holds no agent or a single agent, do not split it: preserve
 `graph.compile().invoke(...)` and wrap it as one service.
+
+### Plain Python sources
+
+A source that calls a model SDK directly, with no LangChain or LangGraph, is
+split by the same rules. Only the evidence changes:
+
+- **Agent:** a function or method that runs the model/tools loop itself. It
+  calls the model, executes the tool calls the model returns, feeds the results
+  back, and repeats until the model gives a final answer. That function or
+  method is the service method.
+- **Orchestration:** the Python code that calls agents in sequence, branches or
+  loops on their outputs, or fans them out with `asyncio.gather`, a thread
+  pool, or similar. It becomes the workflow.
+- **Not agents:** a single model call outside such a loop, tools, and pure
+  transforms. They run in the workflow or stay inside the agent that calls
+  them, exactly as above.
+
+If the source holds no agent or a single agent, wrap its entrypoint function as
+one service.
 
 Construct runtime-injected service objects from source configuration. Never
 invent models, embedding dimensions, stores, or defaults silently; report any
