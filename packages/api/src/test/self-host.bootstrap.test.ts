@@ -115,6 +115,16 @@ describe('canyonos bootstrap', () => {
     expect(project?.created_by).toBe(admin!.id);
   });
 
+  test('the controller project takes the published project name, falling back when empty', async () => {
+    const named_id = '33333333-3333-4333-8333-333333333333';
+    expect(await ensure_canyonos_project(named_id, 'portfolio_agent')).toBe(true);
+    expect((await read_project(named_id))?.name).toBe('portfolio_agent');
+
+    const empty_id = '44444444-4444-4444-8444-444444444444';
+    expect(await ensure_canyonos_project(empty_id, '')).toBe(true);
+    expect((await read_project(empty_id))?.name).toBe('project_1');
+  });
+
   test('a rerun with the same id writes no rows', async () => {
     const project_id = '22222222-2222-4222-8222-222222222222';
     await ensure_canyonos_project(project_id);
