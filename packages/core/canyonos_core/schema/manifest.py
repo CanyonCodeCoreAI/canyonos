@@ -59,6 +59,7 @@ _COMMON_SERVICE_KEYS = frozenset(
         "resources",
         "stateful",
         "instance_type",
+        "market_type",
         "env",
         "host",
         "port",
@@ -174,6 +175,7 @@ class _Service:
     resources: Resources = field(default_factory=Resources)
     stateful: bool = False
     instance_type: str | None = None
+    market_type: str = "on-demand"
     env: dict = field(default_factory=dict)
     host: str | None = None
     port: int | None = None
@@ -379,6 +381,7 @@ def _service(collector, entries, index):
         "resources": _resources(collector, node, prefix),
         "stateful": _boolean(collector, node, "stateful", prefix, False),
         "instance_type": _string(collector, node, "instance_type", prefix),
+        "market_type": _string(collector, node, "market_type", prefix, "on-demand"),
         "env": _string_mapping(collector, node, "env", prefix),
         "host": _string(collector, node, "host", prefix),
         "port": _port(collector, node, "port", prefix, None),
