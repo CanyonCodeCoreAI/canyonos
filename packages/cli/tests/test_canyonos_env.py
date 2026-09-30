@@ -184,9 +184,7 @@ def test_a_local_skill_source_is_the_directory_in_the_checkout(environment):
     resolved = env_module._resolve_skill_source(environment, "local")
 
     assert resolved == env_module.LOCAL_SKILL_DIR
-    assert resolved == str(
-        env_module.REPO_ROOT / ".claude" / "skills" / "porting-to-canyonos"
-    )
+    assert resolved == str(env_module.REPO_ROOT / "skills" / "porting-to-canyonos")
     assert os.path.isdir(resolved)
 
 

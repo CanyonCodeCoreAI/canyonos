@@ -64,4 +64,4 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) (Conventional Commits, review gates), 
 
 ## Skills
 
-- [.claude/skills/porting-to-canyonos](.claude/skills/porting-to-canyonos/SKILL.md): porting an existing Python agent to CanyonOS.
+- [skills/porting-to-canyonos](skills/porting-to-canyonos/SKILL.md): porting an existing Python agent to CanyonOS.

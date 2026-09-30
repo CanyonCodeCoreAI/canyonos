@@ -25,7 +25,7 @@ SKILL_OWNER = "CanyonCodeCoreAI"
 SKILL_REPO = "canyonos"
 SKILL_REF = env.PROD_SKILL_REF
 SKILL_NAME = "porting-to-canyonos"
-SKILL_PATH = f".claude/skills/{SKILL_NAME}"
+SKILL_PATH = f"skills/{SKILL_NAME}"
 
 # Where the skill comes from: the ref above for a released CLI, or a directory
 # in a developer's checkout.
@@ -86,7 +86,7 @@ AGENTS = {
             "bypassPermissions",
         ],
         "skill_dirs": {
-            "local": SKILL_PATH,
+            "local": f".claude/skills/{SKILL_NAME}",
             "global": os.path.expanduser(f"~/.claude/skills/{SKILL_NAME}"),
         },
     },

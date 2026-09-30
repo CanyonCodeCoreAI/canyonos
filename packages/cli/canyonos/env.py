@@ -61,7 +61,7 @@ PROD_SKILL_REF = "main"
 
 # `local` artifacts, i.e. what this checkout builds or ships.
 LOCAL_CORE_IMAGE = "canyonos-core:dev"
-LOCAL_SKILL_DIR = str(REPO_ROOT / ".claude" / "skills" / "porting-to-canyonos")
+LOCAL_SKILL_DIR = str(REPO_ROOT / "skills" / "porting-to-canyonos")
 LOCAL_API_IMAGE = "canyonos-api:dev"
 LOCAL_WEB_IMAGE = "canyonos-web:dev"
 

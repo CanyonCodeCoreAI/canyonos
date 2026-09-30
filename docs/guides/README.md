@@ -21,7 +21,7 @@ Everything here is traced from the code in `packages/core` and `packages/cli`.
 If a page and the code disagree, the code is right. Open an issue or a PR
 against the page.
 
-The `porting-to-canyonos` skill in `.claude/skills/` is the procedure
+The `porting-to-canyonos` skill in `skills/` is the procedure
 `canyonos build` follows to turn an application into a `.car`. It works
 against this contract but is not part of it.
 

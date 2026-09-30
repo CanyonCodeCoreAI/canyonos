@@ -12,7 +12,7 @@ are where the binary runs from and an optional `packages/cli/.env`:
 | How it runs | `canyonos deploy` inside `bun run canyonos:dev`, or `uv run canyonos deploy` | `canyonos deploy` |
 | Environment | `development` via `packages/cli/.env` (copied once from `packages/cli/.env.example`, gitignored) | `production` by default, no `.env` |
 | Core image | `canyonos-core:dev` local | `ghcr.io/…/canyonos-core:<version>` |
-| Skill | `.claude/skills/porting-to-canyonos` from the checkout | downloaded from `main` |
+| Skill | `skills/porting-to-canyonos` from the checkout | downloaded from `main` |
 
 ## Set up your environment
 
@@ -56,7 +56,7 @@ talked into a dev artifact.
 | Variable | `local` resolves to |
 |---|---|
 | `CANYONOS_CORE_IMAGE` | `canyonos-core:dev` |
-| `CANYONOS_SKILL_SOURCE` | `<workspace root>/.claude/skills/porting-to-canyonos` |
+| `CANYONOS_SKILL_SOURCE` | `<workspace root>/skills/porting-to-canyonos` |
 | `CANYONOS_API_IMAGE` | `canyonos-api:dev` |
 | `CANYONOS_WEB_IMAGE` | `canyonos-web:dev` |
 

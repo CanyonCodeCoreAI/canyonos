@@ -1,9 +1,17 @@
 """`canyonos build`: where the skill comes from, how the agent is launched, and
 what verdict the port it leaves behind gets."""
 
+import shutil
+import subprocess
+import tarfile
+from functools import partial
+from pathlib import Path
+from typing import Literal
+
 import pytest
 
 from canyonos import build as build_cmd
+from canyonos import env
 from canyonos.validate import UNCHECKED
 
 CODELOAD = "https://codeload.github.com/CanyonCodeCoreAI/canyonos"
@@ -34,6 +42,74 @@ def test_a_local_skill_directory_is_copied_into_place(skill_dir, tmp_path):
     assert (dest / "SKILL.md").is_file()
     # Copied, not moved: the checkout it came from is still there.
     assert (skill_dir / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_build_installs_checkout_skill_in_agent_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, agent: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        build_cmd,
+        "_install_skill",
+        partial(build_cmd._install_skill, source=env.LOCAL_SKILL_DIR),
+    )
+    monkeypatch.setattr(build_cmd, "_launch_agent", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(build_cmd, "_report_port", lambda: True)
+
+    assert build_cmd.run_build(agent=agent, scope="local", yes=True)
+    destination = tmp_path / f".{agent}" / "skills" / "porting-to-canyonos"
+    for filename in ("SKILL.md", "prepare.py"):
+        assert (destination / filename).read_bytes() == (
+            Path(env.LOCAL_SKILL_DIR) / filename
+        ).read_bytes()
+
+
+@pytest.mark.parametrize("transport", ["git", "tarball"])
+def test_fetch_installs_skill_from_repository_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    transport: Literal["git", "tarball"],
+) -> None:
+    repository = tmp_path / "repository"
+    source = repository / "skills" / "porting-to-canyonos"
+    shutil.copytree(env.LOCAL_SKILL_DIR, source)
+    (repository / "README.md").write_text("Not part of the skill.\n")
+    destination = tmp_path / "installed"
+
+    if transport == "git":
+        if shutil.which("git") is None:
+            pytest.skip("git is not installed")
+        for arguments in (
+            ["init", "-b", "main"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "Add skill",
+            ],
+        ):
+            subprocess.run(
+                ["git", *arguments], cwd=repository, check=True, capture_output=True
+            )
+        monkeypatch.setattr(build_cmd, "REPO_URL", repository.as_uri())
+        assert build_cmd._fetch_with_git(str(destination), "main")
+    else:
+        archive = tmp_path / "repository.tar.gz"
+        with tarfile.open(archive, "w:gz") as bundle:
+            bundle.add(repository, arcname="canyonos-main")
+        monkeypatch.setattr(build_cmd, "_tarball_url", lambda _ref: archive.as_uri())
+        assert build_cmd._fetch_with_tarball(str(destination), "main")
+
+    assert {path.name for path in destination.iterdir()} == {"SKILL.md", "prepare.py"}
+    for filename in ("SKILL.md", "prepare.py"):
+        assert (destination / filename).read_bytes() == (source / filename).read_bytes()
 
 
 def test_a_failed_copy_is_an_install_failure_not_a_traceback(
