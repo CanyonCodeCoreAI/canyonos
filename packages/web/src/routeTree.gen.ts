@@ -18,6 +18,7 @@ import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authen
 import { Route as AuthenticatedProjectsProject_idRouteImport } from './routes/_authenticated/projects/$project_id'
 import { Route as AuthenticatedProjectsProject_idIndexRouteImport } from './routes/_authenticated/projects/$project_id/index'
 import { Route as AuthenticatedProjectsProject_idPromptsRouteImport } from './routes/_authenticated/projects/$project_id/prompts'
+import { Route as AuthenticatedProjectsProject_idScalingRouteImport } from './routes/_authenticated/projects/$project_id/scaling'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -66,6 +67,12 @@ const AuthenticatedProjectsProject_idPromptsRoute =
     path: '/prompts',
     getParentRoute: () => AuthenticatedProjectsProject_idRoute,
   } as any)
+const AuthenticatedProjectsProject_idScalingRoute =
+  AuthenticatedProjectsProject_idScalingRouteImport.update({
+    id: '/scaling',
+    path: '/scaling',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/projects/': typeof AuthenticatedProjectsIndexRoute
   '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
+  '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
   '/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRoutesByTo {
@@ -82,6 +90,7 @@ export interface FileRoutesByTo {
   '/onboarding': typeof BrandOnboardingRoute
   '/projects': typeof AuthenticatedProjectsIndexRoute
   '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
+  '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRoutesById {
@@ -94,6 +103,7 @@ export interface FileRoutesById {
   '/_authenticated/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
   '/_authenticated/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
+  '/_authenticated/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
   '/_authenticated/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRouteTypes {
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
     | '/projects/$project_id'
     | '/projects/'
     | '/projects/$project_id/prompts'
+    | '/projects/$project_id/scaling'
     | '/projects/$project_id/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -113,6 +124,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/projects'
     | '/projects/$project_id/prompts'
+    | '/projects/$project_id/scaling'
     | '/projects/$project_id'
   id:
     | '__root__'
@@ -124,6 +136,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects/$project_id'
     | '/_authenticated/projects/'
     | '/_authenticated/projects/$project_id/prompts'
+    | '/_authenticated/projects/$project_id/scaling'
     | '/_authenticated/projects/$project_id/'
   fileRoutesById: FileRoutesById
 }
@@ -197,11 +210,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProject_idPromptsRouteImport
       parentRoute: typeof AuthenticatedProjectsProject_idRoute
     }
+    '/_authenticated/projects/$project_id/scaling': {
+      id: '/_authenticated/projects/$project_id/scaling'
+      path: '/scaling'
+      fullPath: '/projects/$project_id/scaling'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idScalingRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
   }
 }
 
 interface AuthenticatedProjectsProject_idRouteChildren {
   AuthenticatedProjectsProject_idPromptsRoute: typeof AuthenticatedProjectsProject_idPromptsRoute
+  AuthenticatedProjectsProject_idScalingRoute: typeof AuthenticatedProjectsProject_idScalingRoute
   AuthenticatedProjectsProject_idIndexRoute: typeof AuthenticatedProjectsProject_idIndexRoute
 }
 
@@ -209,6 +230,8 @@ const AuthenticatedProjectsProject_idRouteChildren: AuthenticatedProjectsProject
   {
     AuthenticatedProjectsProject_idPromptsRoute:
       AuthenticatedProjectsProject_idPromptsRoute,
+    AuthenticatedProjectsProject_idScalingRoute:
+      AuthenticatedProjectsProject_idScalingRoute,
     AuthenticatedProjectsProject_idIndexRoute:
       AuthenticatedProjectsProject_idIndexRoute,
   }

@@ -143,6 +143,9 @@ class LocalController(object):
                 "observed_at": now,
                 "requests_served": 0,
                 "full_failures": 0,
+                "requests_completed": 0,
+                "queue_time_ms_total": 0,
+                "execution_ms_total": 0,
             },
         )
         self._metrics_stop_event = threading.Event()
@@ -853,6 +856,11 @@ class LocalController(object):
                 (cpu_seconds / wall_duration * 100.0) if wall_duration else 0.0
             )
             gpu_percent = read_gpu_percent()
+            queue_time = (
+                max(wall_start - submitted_at, 0.0)
+                if submitted_at is not None
+                else None
+            )
 
             self.redis.hset_multiple(
                 f"future:{future_id}",
@@ -861,13 +869,17 @@ class LocalController(object):
                     "cpu_resource": cpu_percent,
                     "gpu_resource": gpu_percent,
                     "agent": self.agent_id,
-                    **(
-                        {"queue_time": max(wall_start - submitted_at, 0.0)}
-                        if submitted_at is not None
-                        else {}
-                    ),
+                    **({"queue_time": queue_time} if queue_time is not None else {}),
                 },
             )
+            self.redis.hincrby(self._metrics_key, "requests_completed", 1)
+            self.redis.hincrby(
+                self._metrics_key, "execution_ms_total", round(wall_duration * 1000)
+            )
+            if queue_time is not None:
+                self.redis.hincrby(
+                    self._metrics_key, "queue_time_ms_total", round(queue_time * 1000)
+                )
 
             # Send the completion callback only now that every final metric
             # has been written, so the snapshot sent to origin is complete.

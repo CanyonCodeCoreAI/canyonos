@@ -5,10 +5,11 @@ import type { ProjectStats, ProjectSummary } from '@canyonos/api/projects';
 import type { PromptItem, PromptsResponse } from '@canyonos/api/prompts';
 import type { RequestList } from '@canyonos/api/requests';
 import type { FleetOverview } from '@canyonos/api/resources';
+import type { ScalingDeleteResponse, ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
-import { seed_running_project } from './redis-test.utils';
+import { seed_running_project, seed_scaling } from './redis-test.utils';
 
 setupE2ETests();
 
@@ -108,5 +109,45 @@ describe('SDK contract', () => {
     });
     expect(saved.version).toMatch(/^summarize-[0-9a-f]{8}-2$/);
     expect(typeof saved.updated_at).toBe('string');
+  });
+
+  test('scaling endpoints are typed at runtime', async () => {
+    const token = await authenticate('sdk-scaling-contract@canyonos.test');
+    const headers = bearer(token);
+    const { project_id } = await create_test_project(token, { name: 'SDK Scaling' });
+    const policy: ScalingPolicy = {
+      min_replicas: 1,
+      max_replicas: 3,
+      metric: 'queue_length_total',
+      scale_up_above: 4,
+      scale_down_below: 1,
+    };
+    await seed_running_project(project_id, { prompts: {} });
+    await seed_scaling(
+      ['PriceAgent', 'RiskAgent'],
+      JSON.stringify({ scaling: { PriceAgent: policy } })
+    );
+
+    const scaling: ScalingResponse = (
+      await api.projects[project_id]!.scaling.get({ $headers: headers })
+    ).data!;
+    const saved: ScalingPolicy = (
+      await api.projects[project_id]!.scaling.RiskAgent!.put(
+        { ...policy, metric: 'requests_per_minute_per_replica' },
+        { headers }
+      )
+    ).data!;
+
+    expect(scaling).toEqual({
+      agents: ['PriceAgent', 'RiskAgent'],
+      policies: { PriceAgent: policy },
+      invalid: [],
+    });
+    expect(saved).toEqual({ ...policy, metric: 'requests_per_minute_per_replica' });
+
+    const deleted: ScalingDeleteResponse = (
+      await api.projects[project_id]!.scaling.PriceAgent!.delete(undefined, { headers })
+    ).data!;
+    expect(deleted).toEqual({ agent_name: 'PriceAgent' });
   });
 });

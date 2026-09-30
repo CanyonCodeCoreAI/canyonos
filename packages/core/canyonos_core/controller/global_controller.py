@@ -21,9 +21,12 @@ from canyonos_core.controller.controller_context import (
     _is_local_host,
     _redis_connect_host,
     instance_id,
+    instance_id_from_record,
     list_instances,
     routing_endpoint_for,
 )
+from canyonos_core.controller import scaling
+from canyonos_core.scaling import contract
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.utils.container_names import redis_container_name
@@ -974,6 +977,10 @@ class GlobalController(ControllerContext):
                     self._sync_prompts()
                 except Exception as e:
                     logger.warning("Prompt sync encountered an error: %s", e)
+                try:
+                    self._apply_scaling()
+                except Exception as e:
+                    logger.warning("Scaling policy encountered an error: %s", e)
                 self._cleanup_ready.set()
                 time.sleep(self.poll_interval)
         except KeyboardInterrupt:
@@ -1002,14 +1009,18 @@ class GlobalController(ControllerContext):
         # Polled in parallel, one instance's slow Redis round-trip no longer
         # gates every other instance's poll.
         instances = list_instances(self.redis)
+        instance_samples = []
         if instances:
             with ThreadPoolExecutor(max_workers=len(instances)) as executor:
-                list(executor.map(self._poll_one_instance, instances))
+                instance_samples = list(
+                    executor.map(self._poll_one_instance, instances)
+                )
 
         # Machine-level metrics are per-host, so they're read once per host here rather
         # than inside the per-instance loop above (N replicas on a box would otherwise
         # re-read and re-write the same machine sample N times).
         self._poll_machine_metrics()
+        self._record_agent_samples([s for s in instance_samples if s])
 
     def _poll_machine_metrics(self):
         """Read each host's machine-level metrics hash (written by the per-machine
@@ -1059,7 +1070,7 @@ class GlobalController(ControllerContext):
                 )
 
     def _poll_one_instance(self, instance):
-        """Poll and persist one instance's runtime/metrics/health data; never raises."""
+        """Poll and persist one instance's runtime/metrics/health data and return its scaling sample; never raises."""
         try:
             name = instance["agent_name"]
             host = instance["private_host"]
@@ -1086,6 +1097,7 @@ class GlobalController(ControllerContext):
 
         # Getting metrics from local controllers
         # See LocalController._execute_locally
+        metrics = None
         try:
             metrics = node_redis.hgetall(metrics_key)
             if metrics:
@@ -1125,6 +1137,20 @@ class GlobalController(ControllerContext):
                 e,
             )
 
+        sample = None
+        if metrics:
+            try:
+                sample = self._record_instance_sample(instance, metrics)
+            except Exception as e:
+                logger.warning(
+                    "Failed to record scaling sample for instance %s (%s:%s) "
+                    "(non-fatal): %s",
+                    name,
+                    host,
+                    port,
+                    e,
+                )
+
         try:
             status = node_redis.get(status_key) or "unknown"
             prev = self._last_status.get((host, port))
@@ -1160,6 +1186,72 @@ class GlobalController(ControllerContext):
                 port,
                 e,
             )
+        return sample
+
+    def _record_instance_sample(self, instance, metrics):
+        """Record one replica's load for the scaling policy and return the sample."""
+        key = contract.instance_key(instance_id_from_record(instance))
+        previous = contract.latest(self.redis, key)
+        observed_at = contract.now()
+        counters = {
+            field: int(metrics.get(field, 0))
+            for field in (
+                "requests_served",
+                "full_failures",
+                "requests_completed",
+                "queue_time_ms_total",
+                "execution_ms_total",
+            )
+        }
+        sample = contract.instance_sample(
+            agent_name=instance["agent_name"],
+            queue_length=int(metrics.get("queue_length", 0)),
+            **counters,
+            requests_per_minute=contract.per_minute(
+                previous, "requests_served", counters["requests_served"], observed_at
+            ),
+            failures_per_minute=contract.per_minute(
+                previous, "full_failures", counters["full_failures"], observed_at
+            ),
+            avg_queue_time_ms=contract.mean_since(
+                previous, counters, "queue_time_ms_total", "requests_completed"
+            ),
+            avg_execution_ms=contract.mean_since(
+                previous, counters, "execution_ms_total", "requests_completed"
+            ),
+            observed_at=observed_at,
+        )
+        contract.push(self.redis, key, sample)
+        return sample
+
+    def _record_agent_samples(self, instance_samples):
+        """Roll this poll's replica samples up into one scaling sample per agent."""
+        by_agent = {agent_name: [] for agent_name in self.agent_specs}
+        for sample in instance_samples:
+            if sample["agent_name"] in by_agent:
+                by_agent[sample["agent_name"]].append(sample)
+
+        observed_at = contract.now()
+        for agent_name, samples in by_agent.items():
+            running = len(samples)
+            requests_per_minute = sum(s["requests_per_minute"] for s in samples)
+            contract.push(
+                self.redis,
+                contract.agent_key(agent_name),
+                contract.agent_sample(
+                    replicas_running=running,
+                    replicas_expected=state.get_desired(self.redis, agent_name),
+                    queue_length_total=sum(s["queue_length"] for s in samples),
+                    requests_per_minute_total=requests_per_minute,
+                    requests_per_minute_per_replica=(
+                        requests_per_minute / running if running else 0.0
+                    ),
+                    failures_per_minute=sum(s["failures_per_minute"] for s in samples),
+                    avg_queue_time_ms=contract.average(samples, "avg_queue_time_ms"),
+                    avg_execution_ms=contract.average(samples, "avg_execution_ms"),
+                    observed_at=observed_at,
+                ),
+            )
 
     def _set_replicas(self, agent_name, count):
         """Change one agent's replica count without touching the others; the entry point for scaling."""
@@ -1169,6 +1261,12 @@ class GlobalController(ControllerContext):
         desired = state.set_desired(self.redis, agent_name, count)
         self._request_reconcile(agent_name)
         return desired
+
+    def _apply_scaling(self):
+        """Apply the scaling policy's replica changes to each agent's desired count."""
+        for agent_name, delta in scaling.scale(self):
+            current = state.get_desired(self.redis, agent_name)
+            self.set_replicas(agent_name, current + delta)
 
     def _apply_configured_replicas(self):
         """Reset every agent's replica count to what the YAML says, at startup and on reload."""

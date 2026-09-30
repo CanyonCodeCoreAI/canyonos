@@ -47,6 +47,10 @@
     "./prompts": {
       "types": "./dist/prompts.d.ts",
       "import": "./dist/prompts.js"
+    },
+    "./scaling": {
+      "types": "./dist/scaling.d.ts",
+      "import": "./dist/scaling.js"
     }
   },
   "scripts": {

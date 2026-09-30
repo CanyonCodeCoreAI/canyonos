@@ -6,6 +6,7 @@ import { resolveProjectAccess } from '../auth/project-access';
 import { metricsRoutes } from '../metrics/metrics.routes';
 import { promptsRoutes } from '../prompts/prompts.routes';
 import { requestsRoutes } from '../requests/requests.routes';
+import { scalingRoutes } from '../scaling/scaling.routes';
 import { get_project, get_project_stats, list_projects } from './projects.service';
 import { ProjectIdParams, ProjectStatsSchema, ProjectSummarySchema } from './projects.types';
 
@@ -30,4 +31,5 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
   })
   .use(requestsRoutes)
   .use(metricsRoutes)
-  .use(promptsRoutes);
+  .use(promptsRoutes)
+  .use(scalingRoutes);

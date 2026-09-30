@@ -119,6 +119,19 @@ class RedisClient(object):
         """Get all members of a set."""
         return {self._decode(v) for v in self.client.smembers(name)}
 
+    # --- List operations ---
+
+    def push_capped(self, name, value, max_length):
+        """Prepend a value to a list and drop everything past max_length, in one round trip."""
+        pipe = self.client.pipeline()
+        pipe.lpush(name, value)
+        pipe.ltrim(name, 0, max_length - 1)
+        pipe.execute()
+
+    def lrange(self, name, start=0, end=-1):
+        """Get a range of list values, newest first for lists written by push_capped."""
+        return [self._decode(v) for v in self.client.lrange(name, start, end)]
+
     # --- Scan operations ---
 
     def scan_keys(self, pattern):

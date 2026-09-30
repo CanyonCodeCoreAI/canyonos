@@ -59,6 +59,14 @@ class _FakeRedis:
     def lpush(self, key, *values):
         self.lists.setdefault(key, [])[:0] = [str(value) for value in values]
 
+    def push_capped(self, key, value, max_length):
+        self.lpush(key, value)
+        del self.lists[key][max_length:]
+
+    def lrange(self, key, start=0, end=-1):
+        values = self.lists.get(key, [])
+        return values[start:] if end == -1 else values[start : end + 1]
+
     def rpop(self, key):
         values = self.lists.get(key)
         if not values:

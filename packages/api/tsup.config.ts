@@ -13,6 +13,7 @@ export default defineConfig((options) => ({
     requests: 'src/sdk/requests.ts',
     metrics: 'src/sdk/metrics.ts',
     prompts: 'src/sdk/prompts.ts',
+    scaling: 'src/sdk/scaling.ts',
   },
   format: ['esm'],
   dts: true,

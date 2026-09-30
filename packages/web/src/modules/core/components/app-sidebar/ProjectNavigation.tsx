@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useRouterState } from '@tanstack/react-router';
-import { ChevronRightIcon, FileTextIcon, FolderIcon, LayoutDashboardIcon } from 'lucide-react';
+import {
+  ChevronRightIcon,
+  FileTextIcon,
+  FolderIcon,
+  LayoutDashboardIcon,
+  ScalingIcon,
+} from 'lucide-react';
 import { useEffect, useReducer } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { CSSProperties } from 'react';
@@ -67,7 +73,10 @@ function ProjectRouteRow({
   is_active,
 }: {
   readonly project_id: string;
-  readonly to: '/projects/$project_id' | '/projects/$project_id/prompts';
+  readonly to:
+    | '/projects/$project_id'
+    | '/projects/$project_id/prompts'
+    | '/projects/$project_id/scaling';
   readonly label: string;
   readonly Icon: LucideIcon;
   readonly test_id: string;
@@ -110,6 +119,7 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
   const project_path = `/projects/${project.id}`;
   const is_manage_active = isPath(pathname, project_path);
   const is_prompts_active = isPath(pathname, `${project_path}/prompts`);
+  const is_scaling_active = isPath(pathname, `${project_path}/scaling`);
   const [expansion, dispatchExpansion] = useReducer(
     reduceProjectExpansion,
     is_active,
@@ -207,6 +217,14 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
             Icon={FileTextIcon}
             test_id="nav-project-prompts"
             is_active={is_prompts_active}
+          />
+          <ProjectRouteRow
+            project_id={project.id}
+            to="/projects/$project_id/scaling"
+            label="Scaling"
+            Icon={ScalingIcon}
+            test_id="nav-project-scaling"
+            is_active={is_scaling_active}
           />
         </div>
       </CollapsibleContent>

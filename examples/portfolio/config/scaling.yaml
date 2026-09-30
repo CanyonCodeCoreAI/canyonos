@@ -1,0 +1,33 @@
+# Autoscaling Policy — portfolio-analysis fan-out pipeline
+# Keyed by agent name, so an agent can carry at most one policy. An agent with no
+# entry here is never autoscaled and holds the replica count set in
+# global_controller.yaml. A policy naming an agent that no longer exists is
+# ignored with a warning.
+#
+# Thresholds are read on the controller's poll interval and act on a sustained
+# breach, not a single sample: an agent gains (or loses) one replica only when
+# every sample in the last 10 polls is above scale_up_above (or below
+# scale_down_below). min_replicas / max_replicas bound every decision;
+# min_replicas must be at least 1, since nothing is measured at zero replicas.
+# A policy that breaks these rules is skipped with a warning.
+
+scaling:
+  # Widest fan-out in the pipeline: one price fetch per ticker, network-bound.
+  PriceAgent:
+    min_replicas: 1
+    max_replicas: 6
+    metric: requests_per_minute_per_replica
+    scale_up_above: 10
+    scale_down_below: 1
+
+  # One call per holding, so load tracks portfolio size rather than request rate.
+  MetricsAgent:
+    min_replicas: 1
+    max_replicas: 4
+    metric: requests_per_minute_per_replica
+    scale_up_above: 12
+    scale_down_below: 2
+
+# IntentAgent, AdvisorAgent and Workflow are one call per request and are left
+# unscaled here. RiskAgent is deliberately excluded: it is the aggregation
+# barrier, and a second replica cannot start before every ticker's metrics land.
