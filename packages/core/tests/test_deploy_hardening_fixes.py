@@ -18,9 +18,9 @@ from canyonos_core.controller.local_controller import LocalController
 
 
 class AgentStartupOrderTests(unittest.TestCase):
-    def test_the_agent_is_constructed_after_the_llm_proxy_is_listening(self):
+    def test_the_agent_is_constructed_after_the_llm_gateway_is_listening(self):
         """An agent constructor may build an LLM client against the in-container
-        proxy, so the proxy has to exist first."""
+        gateway, so the gateway has to exist first."""
         order = []
 
         with (
@@ -38,8 +38,8 @@ class AgentStartupOrderTests(unittest.TestCase):
             ),
             patch.object(
                 LocalController,
-                "_start_llm_proxy",
-                lambda _self, *_a: order.append("proxy") or MagicMock(),
+                "_start_llm_gateway",
+                lambda _self, *_a: order.append("gateway") or MagicMock(),
             ),
             patch.object(
                 LocalController,
@@ -49,7 +49,7 @@ class AgentStartupOrderTests(unittest.TestCase):
         ):
             LocalController()
 
-        self.assertEqual(order, ["proxy", "agent"])
+        self.assertEqual(order, ["gateway", "agent"])
 
 
 class WorkflowPortPreflightTests(unittest.TestCase):

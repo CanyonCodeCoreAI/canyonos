@@ -67,7 +67,7 @@ LOCAL_WEB_IMAGE = "canyonos-web:dev"
 load_dotenv(ENV_PATH, override=False)
 
 
-def resolve_environment(value):
+def _resolve_environment(value):
     """The environment `value` selects. Unset or empty means production."""
     name = (value or "").strip()
     if not name:
@@ -80,7 +80,7 @@ def resolve_environment(value):
     return name
 
 
-environment = resolve_environment(os.environ.get(ENV_VAR))
+environment = _resolve_environment(os.environ.get(ENV_VAR))
 is_development = environment == DEVELOPMENT
 is_test = environment == TEST
 is_production = environment == PRODUCTION
@@ -102,33 +102,33 @@ def _resolve_artifact(environment, value, variable, prod_value, local_value):
     return setting
 
 
-def resolve_core_image(environment, value):
+def _resolve_core_image(environment, value):
     """Global Controller image: `local` is the one built from this checkout."""
     return _resolve_artifact(
         environment, value, CORE_IMAGE_VAR, PROD_CORE_IMAGE, LOCAL_CORE_IMAGE
     )
 
 
-def resolve_skill_source(environment, value):
+def _resolve_skill_source(environment, value):
     """Porting skill: a directory to copy, or a git ref to fetch."""
     return _resolve_artifact(
         environment, value, SKILL_SOURCE_VAR, PROD_SKILL_REF, LOCAL_SKILL_DIR
     )
 
 
-def resolve_dashboard_image(environment, value, prod_image, local_image, variable):
+def _resolve_dashboard_image(environment, value, prod_image, local_image, variable):
     """One dashboard image. The production tag is passed in, since it is versioned
     alongside the stack it belongs to rather than here."""
     return _resolve_artifact(environment, value, variable, prod_image, local_image)
 
 
-core_image = resolve_core_image(environment, os.environ.get(CORE_IMAGE_VAR))
-skill_source = resolve_skill_source(environment, os.environ.get(SKILL_SOURCE_VAR))
+core_image = _resolve_core_image(environment, os.environ.get(CORE_IMAGE_VAR))
+skill_source = _resolve_skill_source(environment, os.environ.get(SKILL_SOURCE_VAR))
 
 
 def api_image(prod_image):
     """Dashboard API image for this environment."""
-    return resolve_dashboard_image(
+    return _resolve_dashboard_image(
         environment,
         os.environ.get(API_IMAGE_VAR),
         prod_image,
@@ -139,7 +139,7 @@ def api_image(prod_image):
 
 def web_image(prod_image):
     """Dashboard web image for this environment."""
-    return resolve_dashboard_image(
+    return _resolve_dashboard_image(
         environment,
         os.environ.get(WEB_IMAGE_VAR),
         prod_image,

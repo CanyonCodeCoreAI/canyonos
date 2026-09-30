@@ -90,6 +90,8 @@ _MANIFEST_RECOVERY_HINT = "Move or remove that file, then run `canyonos deploy` 
 
 
 def _previous_entries(container_id):
+    """Return the project files the last sync copied into this container, from the list
+    saved under `~/.canyonos`; empty if it was never synced."""
     try:
         with open(SYNC_STATE_PATH, encoding="utf-8") as manifest_file:
             manifest = json.load(manifest_file)
@@ -136,6 +138,8 @@ def _stale_entries(previous, current):
 
 
 def _remove_stale_entries(container_id, stale_entries):
+    """Delete from the container's workspace the files synced before that are no longer
+    in the project."""
     if not stale_entries:
         return
 
@@ -185,6 +189,8 @@ def _remove_stale_entries(container_id, stale_entries):
 
 
 def _save_sync_state(container_id, entries):
+    """Save a list, in a file under `~/.canyonos`, of the project files just copied into
+    the container, so the next sync can tell which ones you've deleted since."""
     os.makedirs(os.path.dirname(SYNC_STATE_PATH), exist_ok=True)
     temporary_path = None
     try:

@@ -48,7 +48,7 @@ def env_flags(argv):
 
 
 def test_the_controller_image_is_passed_to_the_gc_container(docker):
-    init_cmd.run_container(image="canyonos-core:dev")
+    init_cmd._run_container(image="canyonos-core:dev")
 
     assert (
         env_flags(docker.run_argv)["CANYONOS_CONTROLLER_IMAGE"] == "canyonos-core:dev"
@@ -57,7 +57,7 @@ def test_the_controller_image_is_passed_to_the_gc_container(docker):
 
 def test_it_matches_the_image_the_gc_itself_runs(docker):
     # The collector must not drift onto a different image than the GC.
-    init_cmd.run_container(image="ghcr.io/example/canyonos-core:v9")
+    init_cmd._run_container(image="ghcr.io/example/canyonos-core:v9")
 
     argv = docker.run_argv
     assert argv[-1] == "ghcr.io/example/canyonos-core:v9"

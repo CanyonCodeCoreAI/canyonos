@@ -49,7 +49,7 @@ def expand_env_value(value):
     return value
 
 
-def project_root_for_config(config_path):
+def _project_root_for_config(config_path):
     """The project root a config file belongs to -- where its `.env` lives."""
     project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
     # Under the .car layout, config lives at <project>/.car/config, so the
@@ -62,7 +62,7 @@ def project_root_for_config(config_path):
 
 def load_root_dotenv(config_path):
     """Import the project `.env` that sits next to a config file's project root."""
-    load_dotenv(os.path.join(project_root_for_config(config_path), ".env"))
+    load_dotenv(os.path.join(_project_root_for_config(config_path), ".env"))
 
 
 def load_config(config_path):

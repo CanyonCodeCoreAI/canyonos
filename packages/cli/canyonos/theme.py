@@ -21,6 +21,8 @@ _GRADIENT_LIGHT = ["#2BD17E", "#1F9C61", "#177249", "#0F4E31", "#082A1A", "#0000
 
 
 def _is_light_background():
+    """Ask the terminal for its background color and return True if it is light; used
+    once at import to pick the CLI's color palette."""
     if not sys.stdin.isatty():
         return False
     fd = sys.stdin.fileno()

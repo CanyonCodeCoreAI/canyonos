@@ -119,7 +119,7 @@ _PHASES = (
 class PhaseTracker:
     """Turns the container's log lines into the handful of events worth showing.
 
-    `feed()` returns (spinner_message, completed_message, is_error) -- any of
+    `parse_line()` returns (spinner_message, completed_message, is_error) -- any of
     which may be None -- so the caller owns all printing.
     """
 
@@ -134,7 +134,9 @@ class PhaseTracker:
             return f"Starting agents ({len(self.replicas_ready)}/{self.replicas_total} ready)..."
         return "Starting agents..."
 
-    def feed(self, line):
+    def parse_line(self, line):
+        """Read one deploy log line and return the progress message `canyonos deploy`
+        should show in the terminal for it, if any."""
         # A quoted container log is data, not this deploy's own output: nothing
         # inside the block decides anything. The caller still prints and buffers
         # every line of it -- that block is the whole point of the dump.
@@ -251,7 +253,7 @@ def run_deploy(
 
         if quiet:
             # Still bring the dashboard up so anything reachable only through its
-            # LLM proxy (e.g. a guardrail calling the OpenAI SDK directly) works
+            # LLM gateway (e.g. a guardrail calling the OpenAI SDK directly) works
             # under `canyonos test` too -- just skip the log-tail/summary UI.
             if serve:
                 _start_dashboard()
@@ -367,7 +369,7 @@ def _summary_body(dashboard_url, targets, config_path):
     return body
 
 
-def print_deploy_summary(dashboard_url, targets, config_path):
+def _print_deploy_summary(dashboard_url, targets, config_path):
     """The one screen printed once everything is up: dashboard and workflow endpoints."""
     ui.blank()
     ui.panel(
@@ -399,7 +401,7 @@ def _deploy_summary(state, api_port, config_path, serve, on_ready):
         workflow_targets(state["port"], api_port),
         config_path,
     )
-    print_deploy_summary(*summary)
+    _print_deploy_summary(*summary)
     ui.hint(
         "Run `canyonos logs` to view logs, or `canyonos stop` to stop the workflow."
     )
@@ -422,7 +424,7 @@ def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
     deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
     for line in _drain(lines, state, deadline=deadline, hide_status_requests=False):
         print(line, end="")
-        _, _, is_error = tracker.feed(line)
+        _, _, is_error = tracker.parse_line(line)
         if is_error:
             _echo_until_the_deploy_is_gone(lines, state)
             raise RuntimeError(
@@ -482,7 +484,7 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
         deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
         for line in _drain(lines, state, deadline=deadline):
             recent.append(line)
-            message, done, is_error = tracker.feed(line)
+            message, done, is_error = tracker.parse_line(line)
             if is_error:
                 trigger_line = line
                 break

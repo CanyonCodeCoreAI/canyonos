@@ -29,6 +29,7 @@ class _Collector:
         self.violations = []
 
     def add(self, node, key, field_name, message):
+        """Record one violation, pointing at the line where `key` is written."""
         self.violations.append(
             SchemaViolation(self.path, line_of(node, key), field_name, message)
         )
@@ -110,6 +111,8 @@ def _mapping(collector, node, key, prefix, allowed):
 
 
 def _integer(collector, node, key, prefix, default, minimum=None, maximum=None):
+    """Read a whole-number setting from a config file, using the default when it's
+    missing; a wrong type or out-of-range value is reported as a violation."""
     if key not in node:
         return default
     raw = node[key]
@@ -186,6 +189,8 @@ def _unset_message(raw):
 
 
 def _string(collector, node, key, prefix, default=None, required=False):
+    """Read a text setting from a config file; a missing required setting or a value
+    that isn't text is reported as a violation."""
     if key not in node or node[key] is None:
         if required:
             collector.add(node, key, _field(prefix, key), "is required but missing")
@@ -223,6 +228,8 @@ def _boolean(collector, node, key, prefix, default):
 
 
 def _string_list(collector, node, key, prefix, required=False):
+    """Read a setting that must be a list of text values; anything else is reported as a
+    violation and read as empty."""
     if key not in node or node[key] is None:
         if required:
             collector.add(node, key, _field(prefix, key), "is required but missing")
@@ -261,6 +268,8 @@ def _string_list(collector, node, key, prefix, required=False):
 
 
 def _string_mapping(collector, node, key, prefix):
+    """Read a setting made of named values, converting each value to text; anything else
+    is reported as a violation."""
     if key not in node or node[key] is None:
         return {}
     value = node[key]

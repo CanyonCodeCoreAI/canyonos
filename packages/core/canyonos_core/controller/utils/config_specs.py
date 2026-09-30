@@ -6,7 +6,7 @@ import json
 ACTIVE_AGENTS_KEY = "agents:active"
 
 
-def spec_key(agent_name):
+def _spec_key(agent_name):
     return f"agent:{agent_name}:spec"
 
 
@@ -43,14 +43,14 @@ def write_config_specs(agents, redis_client):
             },
         )
         # Already env-expanded, so the reconciler never re-parses the YAML.
-        redis_client.set(spec_key(name), json.dumps(agent))
+        redis_client.set(_spec_key(name), json.dumps(agent))
 
     names = [agent["name"] for agent in agents]
     stale = set(_published_names(redis_client) or []) - set(names)
     redis_client.set(ACTIVE_AGENTS_KEY, json.dumps(names))
     # Deleted only once the list no longer names them.
     if stale:
-        redis_client.delete(*(spec_key(name) for name in stale))
+        redis_client.delete(*(_spec_key(name) for name in stale))
 
 
 def read_config_specs(redis_client):
@@ -63,7 +63,7 @@ def read_config_specs(redis_client):
 
     specs = []
     for name in names:
-        raw = redis_client.get(spec_key(name))
+        raw = redis_client.get(_spec_key(name))
         if raw is None:
             continue
         specs.append(json.loads(raw))

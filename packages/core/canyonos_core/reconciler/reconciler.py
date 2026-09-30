@@ -1,3 +1,5 @@
+"""The reconciler process: starts and removes replicas until each agent runs the count
+recorded in Redis."""
 # Level-triggered process converging running instances onto desired replica counts in Redis.
 
 import argparse
@@ -55,7 +57,7 @@ class Reconciler(object):
     #  Reconcile                                                         #
     # ------------------------------------------------------------------ #
 
-    def reconcile(self, agent_names=None):
+    def _reconcile(self, agent_names=None):
         """Converge the named agents, or every configured agent when agent_names is None."""
         if self.context.refresh_controllers_from_redis():
             logger.info(
@@ -172,6 +174,8 @@ class Reconciler(object):
 
     def _is_healthy(self, instance, instance_id):
         # A stock database image has no controller to write the metrics heartbeat.
+        """Return True if the replica answers on its port and reports fresh metrics, or
+        has not answered yet but may still be starting."""
         is_database = (
             self.context.agent_specs.get(instance["agent_name"], {}).get("type")
             == "database"
@@ -237,12 +241,14 @@ class Reconciler(object):
     # ------------------------------------------------------------------ #
 
     def run(self):
+        """Reconcile at startup, then whenever the Global Controller signals a change,
+        and on a fixed interval, until stopped."""
         logger.info(
             "Reconciler started for %d agent(s), sweeping every %ds.",
             len(self.context.agent_specs),
             self.sweep_interval,
         )
-        self.reconcile()
+        self._reconcile()
         last_sweep = time.time()
 
         while _running:
@@ -257,19 +263,19 @@ class Reconciler(object):
                 # A config reload wakes all; new replicas need the reloaded env file.
                 self.context.refresh_env_file()
                 try:
-                    self.reconcile()
+                    self._reconcile()
                 except Exception as e:
                     logger.warning("Failed to reconcile all agents: %s", e)
                 last_sweep = time.time()
             elif signals:
                 try:
-                    self.reconcile(sorted(signals))
+                    self._reconcile(sorted(signals))
                 except Exception as e:
                     logger.warning("Failed to reconcile %s: %s", sorted(signals), e)
 
             if time.time() - last_sweep >= self.sweep_interval:
                 try:
-                    self.reconcile()
+                    self._reconcile()
                 except Exception as e:
                     logger.warning("Failed to sweep all agents: %s", e)
                 last_sweep = time.time()
@@ -278,6 +284,8 @@ class Reconciler(object):
 
 
 def main(argv=None):
+    """Start the reconciler for the given config; it keeps each agent running its
+    desired number of replicas. Returns 1 if the config file is missing."""
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 

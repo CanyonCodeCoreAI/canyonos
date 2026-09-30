@@ -9,6 +9,8 @@ from canyonos import ui
 
 
 def run_new_app():
+    """Run `canyonos new-app`: create the empty folders and config files of a new
+    project in the current directory, which must be empty."""
     if os.listdir("."):
         ui.fail("Directory is not empty. Run `canyonos new-app` in an empty directory.")
         return

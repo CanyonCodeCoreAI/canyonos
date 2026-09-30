@@ -36,8 +36,8 @@ from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
     transfer_image,
 )
-from canyonos_core.reconciler.providers.shared_utils.llm_proxy_env import (
-    llm_proxy_docker_env_args,
+from canyonos_core.reconciler.providers.shared_utils.llm_gateway_env import (
+    llm_gateway_docker_env_args,
 )
 
 logger = logging.getLogger(__name__)
@@ -355,8 +355,8 @@ def _bootstrap_instance(
         f"CANYONOS_AGENT_PORT={CONTAINER_PORT}",
         "-e",
         f"CANYONOS_POLL_INTERVAL={_controller.config.get('poll_interval', 5)}",
-        # Route the agent's LLM SDK calls through the in-container proxy for telemetry.
-        *llm_proxy_docker_env_args(),
+        # Route the agent's LLM SDK calls through the in-container gateway for telemetry.
+        *llm_gateway_docker_env_args(),
         # The LLM stub is a local-only `canyonos test` control; it must never be
         # active on EC2. Pin it empty explicitly so a user's --env-file cannot
         # turn it on (docker: -e beats --env-file).

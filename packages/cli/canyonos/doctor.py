@@ -38,6 +38,7 @@ def _docker_daemon_fix():
 
 
 def _pre_deploy_checks():
+    """Return the checks `canyonos doctor` runs before any deploy, each with its fix."""
     return [
         (
             "Docker installed",

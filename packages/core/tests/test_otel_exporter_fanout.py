@@ -133,10 +133,8 @@ class OTelExporterFanoutTests(unittest.TestCase):
                     otel_exporter._configured_destinations(raw)
 
     def test_controller_expands_env_in_destinations(self):
-        # NOTE: the pre-existing Basic-auth-header-injection expectation this test
-        # once carried was already unimplemented/failing before the Redis-backed
-        # reload change (CANYONOS_OTEL_DESTINATIONS -> otel:destinations); out of
-        # scope here, so this only covers ${ENV_VAR} expansion, which does work.
+        # Only ${ENV_VAR} expansion is covered; the old Basic-auth-header expectation
+        # was already failing before the Redis-backed reload change and is out of scope.
         from canyonos_core.controller.global_controller import GlobalController
 
         with patch.dict(
@@ -447,7 +445,7 @@ class OTelExporterQuietFailureTests(unittest.TestCase):
         ):
             for index in range(3):
                 rows[0]["future_id"] = f"001122334455667{index}"
-                otel_writer.trace_write_rows(rows, None, "proj", db_path=self.db_path)
+                otel_writer._trace_write_rows(rows, None, "proj", db_path=self.db_path)
 
         self.assertEqual(
             len([m for m in captured.output if "Token cost lookup failed" in m]), 1
@@ -615,7 +613,7 @@ class OTelExporterConfigValidationTests(unittest.TestCase):
 class OTelExporterRowFidelityTests(unittest.TestCase):
     def test_missing_identifiers_are_logged_not_silently_dropped(self):
         with self.assertLogs(otel_writer.logger, level="WARNING") as captured:
-            otel_writer.trace_write_rows(
+            otel_writer._trace_write_rows(
                 [{"future_id": "0011223344556677", "request_id": ""}],
                 None,
                 "proj",

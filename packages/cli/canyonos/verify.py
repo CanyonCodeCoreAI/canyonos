@@ -52,6 +52,8 @@ def _running_containers():
 
 
 def _runtime_table(rows):
+    """Build a table of each agent's running state, shown in the terminal by `canyonos
+    doctor` and `canyonos test`, with failing agents in red."""
     table = Table(
         border_style=GREEN, header_style=f"bold {GREEN}", title_style=f"bold {GREEN}"
     )

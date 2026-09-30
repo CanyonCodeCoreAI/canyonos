@@ -16,7 +16,7 @@ from opentelemetry.trace.status import Status, StatusCode
 _SAMPLED = TraceFlags(TraceFlags.SAMPLED)
 
 
-def to_epoch_nanos(unix_seconds):
+def _to_epoch_nanos(unix_seconds):
     """Convert a unix-epoch-seconds float (as stored in traces_waiting) to OTel's ns int."""
     if unix_seconds is None:
         return None
@@ -67,16 +67,13 @@ def trace_row_to_span(row):
             Event(
                 name="exception",
                 attributes=exception_attributes,
-                timestamp=to_epoch_nanos(row.get("finished_at")),
+                timestamp=_to_epoch_nanos(row.get("finished_at")),
             )
         )
         status = Status(StatusCode.ERROR, description=row.get("error_message"))
 
-    # Model, token, agent, and cache-read usage use OTel GenAI semantic-convention
-    # names (see https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/).
-    # total_cost uses gen_ai.usage.cost. The remaining CanyonOS-specific values (project_id, server/token cost
-    # breakdown, cache_hit_ratio) have no GenAI equivalent, so they keep
-    # plain names.
+    # GenAI semantic-convention names where one exists (see the OTel gen-ai attribute
+    # registry); CanyonOS-only values with no GenAI equivalent keep plain names.
     attributes = {
         k: v
         for k, v in {
@@ -110,8 +107,8 @@ def trace_row_to_span(row):
         events=events,
         status=status,
         kind=SpanKind.INTERNAL,
-        start_time=to_epoch_nanos(row.get("started_at")),
-        end_time=to_epoch_nanos(row.get("finished_at")),
+        start_time=_to_epoch_nanos(row.get("started_at")),
+        end_time=_to_epoch_nanos(row.get("finished_at")),
     )
 
 
@@ -142,6 +139,6 @@ def invalid_row_placeholder_span(row, reason):
             StatusCode.ERROR, description=f"span could not be exported: {reason}"
         ),
         kind=SpanKind.INTERNAL,
-        start_time=to_epoch_nanos(row.get("started_at")),
-        end_time=to_epoch_nanos(row.get("finished_at")),
+        start_time=_to_epoch_nanos(row.get("started_at")),
+        end_time=_to_epoch_nanos(row.get("finished_at")),
     )

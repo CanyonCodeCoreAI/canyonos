@@ -188,7 +188,7 @@ class ScalingEntryPointTests(unittest.TestCase):
     def test_the_desired_count_is_written_and_the_reconciler_woken(self):
         controller = self._controller()
 
-        self.assertEqual(controller.set_replicas("Alpha", 4), 4)
+        self.assertEqual(controller._set_replicas("Alpha", 4), 4)
 
         self.assertEqual(state.get_desired(controller.redis, "Alpha", 1), 4)
         self.assertEqual(controller.redis.lists[state.WAKE_QUEUE_KEY], ["Alpha"])
@@ -197,7 +197,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller = self._controller(specs={})
 
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
-            self.assertIsNone(controller.set_replicas("Nope", 3))
+            self.assertIsNone(controller._set_replicas("Nope", 3))
 
         self.assertEqual(controller.redis.strings, {})
 
@@ -289,7 +289,7 @@ class ScalingEntryPointTests(unittest.TestCase):
     def test_the_named_replica_is_queued_for_replacement_and_the_reconciler_woken(self):
         controller = self._controller()
 
-        target = controller.replace_replica("Alpha", 1)
+        target = controller._replace_replica("Alpha", 1)
 
         self.assertEqual(target, "local:Alpha:1")
         self.assertEqual(
@@ -301,7 +301,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller = self._controller(specs={})
 
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
-            self.assertIsNone(controller.replace_replica("Nope", 0))
+            self.assertIsNone(controller._replace_replica("Nope", 0))
 
         self.assertEqual(controller.redis.smembers(state.REPLACE_SET_KEY), set())
 
@@ -323,7 +323,7 @@ class ReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(3)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        reconciler.reconcile(["Alpha"])
+        reconciler._reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, ["local:Alpha:1", "local:Alpha:2"])
 
@@ -339,7 +339,7 @@ class ReconcileTests(unittest.TestCase):
             with self.subTest(target=target):
                 manager.ensure_calls.clear()
                 manager.ensure_only.clear()
-                reconciler.reconcile(target)
+                reconciler._reconcile(target)
 
                 # One call per pass, not one per agent: each republishes routing.
                 self.assertEqual(len(manager.ensure_calls), 1)
@@ -383,7 +383,7 @@ class ReconcileTests(unittest.TestCase):
                     patch.object(Reconciler, "_port_is_open", return_value=accepts),
                     patch.object(Reconciler, "_reports_are_fresh", return_value=fresh),
                 ):
-                    reconciler.reconcile(["Alpha"])
+                    reconciler._reconcile(["Alpha"])
 
                 self.assertEqual(manager.removed, expected)
                 self.assertNotIn("local:Alpha:0", reconciler._seen_healthy)
@@ -404,7 +404,7 @@ class ReconcileTests(unittest.TestCase):
                     patch.object(Reconciler, "_port_is_open", return_value=accepts),
                     patch.object(Reconciler, "_reports_are_fresh", return_value=False),
                 ):
-                    reconciler.reconcile(["Db"])
+                    reconciler._reconcile(["Db"])
 
                 self.assertEqual(manager.removed, expected)
 
@@ -439,7 +439,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler = _bare_reconciler(context, manager)
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile(["Placed"])
+            reconciler._reconcile(["Placed"])
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(manager.ensure_calls, [])
@@ -449,7 +449,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler = _bare_reconciler(_fake_context(), manager)
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile(["Nope"])
+            reconciler._reconcile(["Nope"])
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(manager.ensure_calls, [])
@@ -461,7 +461,7 @@ class ReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(2)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        reconciler.reconcile(["Alpha"])
+        reconciler._reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, ["local:Alpha:1"])
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
@@ -476,7 +476,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile(["Alpha"])
+            reconciler._reconcile(["Alpha"])
 
         self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
 
@@ -487,7 +487,7 @@ class ReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        reconciler.reconcile(["Alpha"])
+        reconciler._reconcile(["Alpha"])
 
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
@@ -500,10 +500,10 @@ class ReconcileTests(unittest.TestCase):
         context = _fake_context(redis, agents=[{**ALPHA_SPEC, "replicas": 1}])
         reconciler = self._healthy(_bare_reconciler(context, manager))
 
-        reconciler.reconcile(["Alpha"])
+        reconciler._reconcile(["Alpha"])
         self.assertEqual(manager.removed, [])
 
-        reconciler.reconcile()
+        reconciler._reconcile()
         self.assertEqual(manager.removed, ["local:Gone:0"])
 
     def test_full_pass_keeps_going_when_one_agent_raises(self):
@@ -514,7 +514,7 @@ class ReconcileTests(unittest.TestCase):
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile()
+            reconciler._reconcile()
 
         self.assertEqual(len(manager.ensure_calls), 1)
 
@@ -637,7 +637,7 @@ class DrainReconcileTests(unittest.TestCase):
         state.set_draining(redis)
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(3)]})
 
-        self._reconciler(redis, manager).reconcile(["Alpha"])
+        self._reconciler(redis, manager)._reconcile(["Alpha"])
 
         self.assertEqual(
             manager.removed, ["local:Alpha:0", "local:Alpha:1", "local:Alpha:2"]
@@ -652,7 +652,7 @@ class DrainReconcileTests(unittest.TestCase):
             {"Alpha": [_instance("Alpha", 0)], "Beta": [_instance("Beta", 0)]}
         )
 
-        self._reconciler(redis, manager).reconcile()
+        self._reconciler(redis, manager)._reconcile()
 
         self.assertEqual(sorted(manager.removed), ["local:Alpha:0", "local:Beta:0"])
         self.assertEqual(manager.ensure_calls, [])
@@ -665,7 +665,7 @@ class DrainReconcileTests(unittest.TestCase):
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
         reconciler = _bare_reconciler(_fake_context(redis, agents=agents), manager)
 
-        reconciler.reconcile()
+        reconciler._reconcile()
 
         self.assertEqual(manager.removed, ["local:Alpha:0"])
 
@@ -676,7 +676,7 @@ class DrainReconcileTests(unittest.TestCase):
         state.clear_draining(redis)
         manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
 
-        self._reconciler(redis, manager).reconcile(["Alpha"])
+        self._reconciler(redis, manager)._reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(len(manager.ensure_calls), 1)

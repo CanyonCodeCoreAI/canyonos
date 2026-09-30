@@ -31,6 +31,7 @@ class Provisioner(object):
 
     @property
     def redis(self):
+        """The Global Controller's Redis client."""
         return self.controller.redis
 
     def _provider_runtime(self, provider):
@@ -146,6 +147,8 @@ class Provisioner(object):
         return instances
 
     def _provision_one(self, job):
+        """Create and start one replica, then save its record; on failure, remove the
+        container and the partial record."""
         runtime = job["runtime"]
         agent_spec = job["agent_spec"]
         replica_index = job["replica_index"]
@@ -197,6 +200,8 @@ class Provisioner(object):
             raise
 
     def _write_instance(self, instance):
+        """Save a new replica's record to Redis, plus the keys that route requests to it
+        and price its runtime."""
         key = _instance_key(
             instance["provider"], instance["agent_name"], int(instance["replica_index"])
         )
@@ -240,6 +245,8 @@ class Provisioner(object):
         self.redis.sadd(f"agent:{agent_name}:instances", instance_id)
 
     def remove_instance(self, instance_id):
+        """Stop a replica's container, delete its record, and republish the routing
+        table without it."""
         key = f"agent_instance:{instance_id}"
         instance = self.redis.hgetall(key)
         if not instance:
@@ -301,6 +308,8 @@ class Provisioner(object):
         ]
 
     def _runtime_is_running(self, instance):
+        """Return True if the replica's container is running; an unreachable host counts
+        as not running."""
         runtime_id = instance.get("runtime_id")
         host = instance.get("private_host")
         if not runtime_id or not host:

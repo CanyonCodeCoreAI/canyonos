@@ -11,7 +11,7 @@ from canyonos_core.controller.controller_context import ControllerContext
 from canyonos_core.controller.utils.config_specs import (
     ACTIVE_AGENTS_KEY,
     read_config_specs,
-    spec_key,
+    _spec_key,
     write_config_specs,
 )
 from canyonos_core.reconciler.reconciler import Reconciler
@@ -42,8 +42,8 @@ class WriteAndReadTests(unittest.TestCase):
         write_config_specs([ALPHA, BETA], redis)
 
         listed_at = order.index(("set", ACTIVE_AGENTS_KEY))
-        self.assertLess(order.index(("set", spec_key("Alpha"))), listed_at)
-        self.assertLess(order.index(("set", spec_key("Beta"))), listed_at)
+        self.assertLess(order.index(("set", _spec_key("Alpha"))), listed_at)
+        self.assertLess(order.index(("set", _spec_key("Beta"))), listed_at)
 
     def test_an_empty_published_list_reads_as_empty_not_none(self):
         redis = _FakeRedis()
@@ -76,7 +76,7 @@ class WriteAndReadTests(unittest.TestCase):
 
         self.assertEqual(read_config_specs(redis), [ALPHA])
         self.assertEqual(redis.get(ACTIVE_AGENTS_KEY), '["Alpha"]')
-        self.assertIsNone(redis.get(spec_key("Beta")))
+        self.assertIsNone(redis.get(_spec_key("Beta")))
 
 
 class RefreshTests(unittest.TestCase):
@@ -147,8 +147,8 @@ class ReloadPropagationTests(unittest.TestCase):
 
         write_config_specs([ALPHA, BETA], redis)
         with self.assertNoLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            reconciler.reconcile(["Beta"])
-            reconciler.reconcile()
+            reconciler._reconcile(["Beta"])
+            reconciler._reconcile()
 
         self.assertEqual(
             [spec["name"] for spec in provisioner.ensure_calls[-1]], ["Alpha", "Beta"]

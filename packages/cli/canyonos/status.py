@@ -11,6 +11,8 @@ from canyonos.gc import deploy_status, require_state
 
 
 def run_status():
+    """Run `canyonos status`: show in the terminal whether a deploy is running, where to
+    reach it, and how to query it."""
     state = require_state()
     if state is None:
         return

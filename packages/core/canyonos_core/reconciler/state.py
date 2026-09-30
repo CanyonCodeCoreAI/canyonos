@@ -1,3 +1,5 @@
+"""The reconciler's state in Redis: what each agent should be running, and the signals
+that drive it."""
 # The durable reconciliation schema in Redis: plain functions over a RedisClient.
 
 import logging
@@ -22,6 +24,7 @@ DRAINING_TTL_SECONDS = 60
 
 
 def desired_key(agent_name):
+    """Return the Redis key holding an agent's desired replica count."""
     return f"agent:{agent_name}:desired_replicas"
 
 
@@ -134,4 +137,6 @@ def clear_draining(redis_client):
 
 
 def is_draining(redis_client):
+    """Return True while the Global Controller is tearing the fleet down, during which
+    every agent is held at zero replicas."""
     return redis_client.get(DRAINING_KEY) is not None

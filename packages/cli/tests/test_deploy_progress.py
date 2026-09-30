@@ -10,7 +10,7 @@ def drive(lines):
     spinners, done = [], []
     errored = False
     for line in lines:
-        message, completed, is_error = tracker.feed(line)
+        message, completed, is_error = tracker.parse_line(line)
         if is_error:
             errored = True
         if message:

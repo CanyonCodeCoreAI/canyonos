@@ -24,7 +24,7 @@ dependencies = [
 
 # Import-only: the core runtime ships no console script. The user-facing `canyonos`
 # executable lives in the separate `packages/cli` distribution. In-container entrypoints
-# are invoked as `python -m canyonos_core.server` / `.cli` / `.llm_proxy`.
+# are invoked as `python -m canyonos_core.server` / `.cli` / `.llm_gateway`.
 
 [build-system]
 requires = ["setuptools>=64"]

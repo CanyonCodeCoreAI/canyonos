@@ -29,6 +29,9 @@ class LineList(list):
 
 
 class LineLoader(yaml.SafeLoader):
+    """YAML loader that returns `LineDict`/`LineList`, recording the line of every key
+    and item so violations can name it."""
+
     pass
 
 

@@ -1,7 +1,7 @@
 """Machine metrics poller.
 
 A standalone, best-effort process spawned per host (mirroring
-the LLM proxy) that samples true machine-level metrics -- CPU, GPU, disk, memory, and
+the LLM gateway) that samples true machine-level metrics -- CPU, GPU, disk, memory, and
 uptime -- and writes them to this machine's Redis metrics hash on a fixed interval.
 GlobalController reads that hash on its own poll tick.
 

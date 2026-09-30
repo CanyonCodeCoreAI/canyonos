@@ -144,10 +144,9 @@ class DeployHandleWorkflowTests(unittest.TestCase):
             self.assertIn("request_id", resp.get_json())
 
     def test_a_workflow_returning_a_future_stores_the_resolved_value(self):
-        # A workflow is meant to call .value() itself, but when it returns the
-        # future instead, this module is the root holder that resolves it --
-        # json.dumps on the reference used to fail a request whose work had
-        # already completed.
+        # When a workflow returns the future instead of calling .value(), this module
+        # resolves it; json.dumps on the reference used to fail an already-finished
+        # request.
         future = _FakeFuture("the real answer")
 
         def returns_future(x=1):

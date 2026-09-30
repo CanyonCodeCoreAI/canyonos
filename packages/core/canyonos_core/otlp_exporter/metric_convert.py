@@ -82,6 +82,7 @@ def _coerce_number(raw):
 
 
 def _gauge(name, unit, value, time_nanos, attributes):
+    """Return an OTLP gauge metric holding one value."""
     return Metric(
         name=name,
         description="",
@@ -100,6 +101,7 @@ def _gauge(name, unit, value, time_nanos, attributes):
 
 
 def _sum(name, unit, value, start_nanos, time_nanos, attributes):
+    """Return an OTLP cumulative, always-increasing counter holding one value."""
     return Metric(
         name=name,
         description="",

@@ -96,8 +96,8 @@ def _normalize_json_text(value):
     return value
 
 
-def trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH):
-    """Upsert future rows (as returned by ``pull_telemetry``) into the traces_waiting
+def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH):
+    """Upsert future rows (as returned by ``_pull_telemetry``) into the traces_waiting
     table. Rows without finished_at are kept (not skipped) -- that's what "waiting" means
     here. `redis_client` is only used to look up the executing agent's instance type for
     server-cost pricing; pass None to skip cost lookups (server_cost stays 0)."""
@@ -317,7 +317,7 @@ _LOGS_UPSERT = """
 """
 
 
-def log_write_rows(rows, project_id=None, db_path=DB_PATH):
+def _log_write_rows(rows, project_id=None, db_path=DB_PATH):
     """Upsert future rows' `logs` JSON arrays into the logs_waiting table, one row per log
     record. `log_id = {future_id}:{index}` so a GC re-poll of the same future upserts
     instead of duplicating, the same rationale as metrics_waiting.sample_id."""
@@ -364,7 +364,7 @@ def log_write_rows(rows, project_id=None, db_path=DB_PATH):
         conn.close()
 
 
-def pull_telemetry(redis_client):
+def _pull_telemetry(redis_client):
     """Scan a node's Redis for per-execution future rows; each future's identity and
     execution metrics both live at future:{future_id}.
     """
@@ -384,6 +384,6 @@ def send_telemetry(redis_client, project_id=None, db_path=DB_PATH):
     and ``logs_waiting`` tables for OTLP export. GC's ``_poll_one_instance`` calls this once
     per poll.
     """
-    rows = pull_telemetry(redis_client)
-    trace_write_rows(rows, redis_client, project_id, db_path)
-    log_write_rows(rows, project_id, db_path)
+    rows = _pull_telemetry(redis_client)
+    _trace_write_rows(rows, redis_client, project_id, db_path)
+    _log_write_rows(rows, project_id, db_path)

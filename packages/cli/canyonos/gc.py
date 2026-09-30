@@ -35,6 +35,8 @@ def _error_detail(e):
 
 
 def _request(url, action, data=None, method="GET"):
+    """Call the Global Controller container's HTTP API and return its JSON reply; any
+    failure is raised as `GCError`."""
     headers = {"Content-Type": "application/json"} if data is not None else {}
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:

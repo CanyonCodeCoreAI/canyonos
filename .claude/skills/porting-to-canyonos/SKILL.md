@@ -17,8 +17,8 @@ description: Port a Python agent project to CanyonOS by preparing and validating
 
 ## 1. Prepare
 
-Choose the import root using [The `.car` artifact](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/build-artifact.md)
-and [Images and dependencies](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/images-and-dependencies.md), then run:
+Choose the import root using [The `.car` artifact](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/BUILD_ARTIFACT.md)
+and [Images and dependencies](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/IMAGES_AND_DEPENDENCIES.md), then run:
 
 ```bash
 python3 <skill_dir>/prepare.py <import-root> .car
@@ -40,38 +40,38 @@ looking for a model/tools loop. Expose its existing callable through the
 service adapter.
 
 Move orchestration between agents into the workflow, preserving the source
-behavior. The workflow uses its own `llm_proxy` for model calls. If the source has no agent, wrap its existing entrypoint as one service.
+behavior. The workflow uses its own `llm_gateway` for model calls. If the source has no agent, wrap its existing entrypoint as one service.
 
 Use `replicas: 1` for in-process state shared across requests. Preserve existing
 external stores and concurrency controls; follow the
-[adapter contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/runtime-contract.md#adapter-shape).
+[adapter contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/RUNTIME_CONTRACT.md#adapter-shape).
 
 ## 3. Implement
 
-- Write adapters and the workflow against the [Runtime contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/runtime-contract.md).
+- Write adapters and the workflow against the [Runtime contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/RUNTIME_CONTRACT.md).
   Put adapters beside the code they wrap; reuse compatible classes directly.
 - Write one representative input from the source to `.car/config/test_query.txt`
   as raw query text, without labels or Markdown fences.
 - Derive declarations, paths and requirements from the source. Write
-  configuration using the [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/manifest-reference.md).
+  configuration using the [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md).
   Preserve existing choices; batch unresolved deployment questions and use
   schema defaults when unanswered or unattended. Leave `resources` at schema
   defaults without asking.
 - Check each image's dependency set with `uv pip compile`, using the target
-  Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/manifest-reference.md#per-image-requirements).
+  Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.
 - Use `env_file: .env` unless another location was chosen. For local dashboard
-  tracing, use the [OTel configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/manifest-reference.md#oteldestinations)
+  tracing, use the [OTel configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#oteldestinations)
   unless disabled or another destination was chosen.
-- For model calls, follow [LLM proxy](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/llm-proxy.md).
-- For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/ec2.md#configuration)
+- For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
+- For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
   using developer-supplied identifiers. If unavailable, leave `provider: local`
   and report that EC2 is not configured.
 
 ## 4. Validate and stop
 
 Run `canyonos validate` from the application root. Resolve
-[validation findings](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/images-and-dependencies.md#what-canyonos-validate-checks)
+[validation findings](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks)
 until exit 0, or report the blocker. Check changes against the allowed scope.
 
 `canyonos build` ends at static validation. Do not run `canyonos deploy` or

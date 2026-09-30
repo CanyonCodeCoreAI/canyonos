@@ -1,5 +1,5 @@
 """Tests for the OTel *logs* pipeline: log_convert.log_row_to_log_records,
-otel_writer.log_write_rows, otel_reader.log_mark_sent(_many), the log exporter build,
+otel_writer._log_write_rows, otel_reader.log_mark_sent(_many), the log exporter build,
 _log_send_pending, and the logs-specific empty-queue/prune/flush paths. (The trace side is
 covered by test_otel_exporter_fanout.py; the metrics side by test_otel_metrics.py.)
 """
@@ -164,7 +164,7 @@ class LogRowToLogRecordsTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# otel_writer.log_write_rows
+# otel_writer._log_write_rows
 # ---------------------------------------------------------------------------
 
 
@@ -211,7 +211,7 @@ class WriteLogRowsTests(unittest.TestCase):
         row = _future_row(
             logs=json.dumps([_log_entry(body="first"), _log_entry(body="second")])
         )
-        otel_writer.log_write_rows([row], db_path=self.tmp)
+        otel_writer._log_write_rows([row], db_path=self.tmp)
         rows = self._rows()
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows["f1:0"]["body"], "first")
@@ -219,13 +219,13 @@ class WriteLogRowsTests(unittest.TestCase):
 
     def test_log_id_is_future_id_colon_index(self):
         row = _future_row(future_id="futX", logs=json.dumps([_log_entry()]))
-        otel_writer.log_write_rows([row], db_path=self.tmp)
+        otel_writer._log_write_rows([row], db_path=self.tmp)
         self.assertIn("futX:0", self._rows())
 
     def test_repolling_the_same_future_upserts_instead_of_duplicating(self):
         row = _future_row(logs=json.dumps([_log_entry(body="first")]))
-        otel_writer.log_write_rows([row], db_path=self.tmp)
-        otel_writer.log_write_rows([row], db_path=self.tmp)
+        otel_writer._log_write_rows([row], db_path=self.tmp)
+        otel_writer._log_write_rows([row], db_path=self.tmp)
         with sqlite3.connect(self.tmp) as conn:
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM logs_waiting").fetchone()[0], 1
@@ -233,29 +233,29 @@ class WriteLogRowsTests(unittest.TestCase):
 
     def test_sent_is_never_reset_by_a_rewrite(self):
         row = _future_row(logs=json.dumps([_log_entry()]))
-        otel_writer.log_write_rows([row], db_path=self.tmp)
+        otel_writer._log_write_rows([row], db_path=self.tmp)
         otel_reader.log_mark_sent("f1:0", self.tmp)
-        otel_writer.log_write_rows([row], db_path=self.tmp)
+        otel_writer._log_write_rows([row], db_path=self.tmp)
         self.assertEqual(self._rows()["f1:0"]["sent"], 1)
 
     def test_non_dict_entries_are_skipped_but_others_kept(self):
         entries = [_log_entry(body="good"), "not-a-dict"]
         row = _future_row(logs=json.dumps(entries))
-        otel_writer.log_write_rows([row], db_path=self.tmp)
+        otel_writer._log_write_rows([row], db_path=self.tmp)
         rows = self._rows()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows["f1:0"]["body"], "good")
 
     def test_row_missing_future_id_or_logs_is_skipped(self):
-        otel_writer.log_write_rows(
+        otel_writer._log_write_rows(
             [_future_row(future_id=None, logs=json.dumps([_log_entry()]))],
             db_path=self.tmp,
         )
-        otel_writer.log_write_rows([_future_row(logs=None)], db_path=self.tmp)
+        otel_writer._log_write_rows([_future_row(logs=None)], db_path=self.tmp)
         self.assertEqual(len(self._rows()), 0)
 
     def test_unparseable_logs_field_is_dropped(self):
-        otel_writer.log_write_rows([_future_row(logs="not-json")], db_path=self.tmp)
+        otel_writer._log_write_rows([_future_row(logs="not-json")], db_path=self.tmp)
         self.assertEqual(len(self._rows()), 0)
 
 
@@ -269,7 +269,7 @@ class MarkSentTests(unittest.TestCase):
         fd, self.tmp = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         schema.init_db(self.tmp)
-        otel_writer.log_write_rows(
+        otel_writer._log_write_rows(
             [
                 _future_row(
                     logs=json.dumps([_log_entry(body="a"), _log_entry(body="b")])
@@ -321,7 +321,7 @@ class SendPendingLogsTests(unittest.TestCase):
             os.remove(self.tmp)
 
     def _seed(self, entries=None, future_id="f1"):
-        otel_writer.log_write_rows(
+        otel_writer._log_write_rows(
             [
                 _future_row(
                     future_id=future_id, logs=json.dumps(entries or [_log_entry()])

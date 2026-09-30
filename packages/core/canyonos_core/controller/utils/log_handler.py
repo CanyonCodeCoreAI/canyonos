@@ -33,6 +33,8 @@ class LogHandler(logging.Handler):
 
     def emit(self, record):
         # Skips logging if log is above a warning as its considered an error and handled elsewhere, this prevents duplicate error logging
+        """Append an info/debug record to the log of the future running on this thread;
+        warnings and errors are skipped, as failures are recorded elsewhere."""
         if record.levelno >= logging.WARNING:
             return
         future_id = canyonos_context.get_current_future_id()

@@ -1,7 +1,7 @@
 """Converts a ``logs_waiting`` row into OTel ReadableLogRecord objects.
 
 Each row is one log record exploded from a future's `logs` JSON array by
-canyonos_core.controller.utils.otel_writer.log_write_rows, originally built by
+canyonos_core.controller.utils.otel_writer._log_write_rows, originally built by
 canyonos_core.controller.utils.log_entry (OTel Log Data Model shape). Trace attribution
 reuses the same future=span mapping from trace_convert: session_id→trace_id (128-bit),
 future_id→span_id (64-bit).

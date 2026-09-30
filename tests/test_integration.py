@@ -10,7 +10,7 @@ def run_integration_test():
     base_url = "http://localhost:8080"
     print(f"Submitting query to {base_url}/main...")
 
-    response = requests.post(f"{base_url}/main", json={"query": "MSFT"})
+    response = requests.post(f"{base_url}/main", json={"query": "World"})
 
     if response.status_code != 202:
         print(f"Error submitting request: HTTP {response.status_code}")
@@ -33,14 +33,8 @@ def run_integration_test():
             print(f"\nWorkflow Completed! Result: {result}")
 
             # Validation assertions
-            assert "MSFT" in result.get("company_name", ""), (
-                "Missing expected company name."
-            )
-            assert "This is an LLM generated response to" in result.get(
-                "competitors", ""
-            ), "VllmAgent response formatting missing."
-            assert result.get("stock_price") == 100.0, (
-                "FinanceAgent did not return 100.0"
+            assert result.get("greeting") == "Hello, World! I'm the ExampleAgent.", (
+                "ExampleAgent did not return the expected greeting."
             )
 
             print("\nIntegration test passed. All validations successful.")
@@ -71,11 +65,7 @@ class IntegrationScriptTests(unittest.TestCase):
         status_response = SimpleNamespace(
             json=lambda: {
                 "status": "done",
-                "result": {
-                    "company_name": "MSFT Corp",
-                    "competitors": "This is an LLM generated response to competitors",
-                    "stock_price": 100.0,
-                },
+                "result": {"greeting": "Hello, World! I'm the ExampleAgent."},
             }
         )
 

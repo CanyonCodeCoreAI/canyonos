@@ -53,14 +53,17 @@ def is_ec2(service):
 
 
 def instance_id(provider, agent_name, replica_index):
+    """Return one agent replica's ID (e.g. `local:Alpha:0`), used to key it in Redis."""
     return f"{provider}:{agent_name}:{replica_index}"
 
 
 def instance_key(provider, agent_name, replica_index):
+    """Return the Redis key of one replica's record."""
     return f"agent_instance:{instance_id(provider, agent_name, replica_index)}"
 
 
 def instance_id_from_record(instance):
+    """Return the replica ID for a record read back from Redis."""
     return instance_id(
         instance["provider"], instance["agent_name"], int(instance["replica_index"])
     )

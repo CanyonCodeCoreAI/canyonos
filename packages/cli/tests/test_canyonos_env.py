@@ -64,19 +64,19 @@ def reloaded(monkeypatch):
 
 @pytest.mark.parametrize("value", [None, "", "   "])
 def test_an_unset_environment_is_production(value):
-    assert env_module.resolve_environment(value) == PROD
+    assert env_module._resolve_environment(value) == PROD
 
 
 @pytest.mark.parametrize("name", [DEV, TEST, PROD])
 def test_every_accepted_environment_resolves_to_itself(name):
-    assert env_module.resolve_environment(name) == name
-    assert env_module.resolve_environment(f"  {name}  ") == name
+    assert env_module._resolve_environment(name) == name
+    assert env_module._resolve_environment(f"  {name}  ") == name
 
 
 @pytest.mark.parametrize("value", ["staging", "dev", "Development", "prod", "true"])
 def test_an_unknown_environment_is_refused(value):
     with pytest.raises(RuntimeError, match="not a CanyonOS environment"):
-        env_module.resolve_environment(value)
+        env_module._resolve_environment(value)
 
 
 @pytest.mark.parametrize("name", [DEV, TEST, PROD])
@@ -129,14 +129,14 @@ def test_importing_env_touches_neither_docker_nor_the_network(reloaded, monkeypa
 @pytest.mark.parametrize("value", [None, "", "prod"])
 def test_an_unset_core_image_is_the_production_image(environment, value):
     assert (
-        env_module.resolve_core_image(environment, value) == env_module.PROD_CORE_IMAGE
+        env_module._resolve_core_image(environment, value) == env_module.PROD_CORE_IMAGE
     )
 
 
 @pytest.mark.parametrize("environment", OVERRIDABLE)
 def test_a_local_core_image_is_the_one_built_from_the_checkout(environment):
     assert (
-        env_module.resolve_core_image(environment, "local")
+        env_module._resolve_core_image(environment, "local")
         == env_module.LOCAL_CORE_IMAGE
         == "canyonos-core:dev"
     )
@@ -144,7 +144,7 @@ def test_a_local_core_image_is_the_one_built_from_the_checkout(environment):
 
 @pytest.mark.parametrize("environment", OVERRIDABLE)
 def test_any_other_core_image_is_taken_literally(environment):
-    assert env_module.resolve_core_image(environment, "canyonos-core:wip") == (
+    assert env_module._resolve_core_image(environment, "canyonos-core:wip") == (
         "canyonos-core:wip"
     )
 
@@ -152,7 +152,7 @@ def test_any_other_core_image_is_taken_literally(environment):
 @pytest.mark.parametrize("value", ["local", "canyonos-core:wip"])
 def test_a_core_image_override_is_refused_in_production(value):
     with pytest.raises(RuntimeError, match=env_module.CORE_IMAGE_VAR):
-        env_module.resolve_core_image(PROD, value)
+        env_module._resolve_core_image(PROD, value)
 
 
 def test_the_resolved_core_image_comes_from_the_variable(reloaded):
@@ -172,7 +172,7 @@ def test_the_resolved_core_image_comes_from_the_variable(reloaded):
 @pytest.mark.parametrize("value", [None, "", "prod"])
 def test_an_unset_skill_source_is_the_production_ref(environment, value):
     assert (
-        env_module.resolve_skill_source(environment, value)
+        env_module._resolve_skill_source(environment, value)
         == env_module.PROD_SKILL_REF
         == "main"
     )
@@ -180,7 +180,7 @@ def test_an_unset_skill_source_is_the_production_ref(environment, value):
 
 @pytest.mark.parametrize("environment", OVERRIDABLE)
 def test_a_local_skill_source_is_the_directory_in_the_checkout(environment):
-    resolved = env_module.resolve_skill_source(environment, "local")
+    resolved = env_module._resolve_skill_source(environment, "local")
 
     assert resolved == env_module.LOCAL_SKILL_DIR
     assert resolved == str(
@@ -191,13 +191,13 @@ def test_a_local_skill_source_is_the_directory_in_the_checkout(environment):
 
 @pytest.mark.parametrize("value", ["some-branch", "/tmp/porting-to-canyonos"])
 def test_any_other_skill_source_is_taken_literally(value):
-    assert env_module.resolve_skill_source(DEV, value) == value
+    assert env_module._resolve_skill_source(DEV, value) == value
 
 
 @pytest.mark.parametrize("value", ["local", "some-branch"])
 def test_a_skill_source_override_is_refused_in_production(value):
     with pytest.raises(RuntimeError, match=env_module.SKILL_SOURCE_VAR):
-        env_module.resolve_skill_source(PROD, value)
+        env_module._resolve_skill_source(PROD, value)
 
 
 def test_the_resolved_skill_source_comes_from_the_variable(reloaded):
@@ -214,7 +214,7 @@ def test_the_resolved_skill_source_comes_from_the_variable(reloaded):
 
 
 def resolve_api_image(environment, value):
-    return env_module.resolve_dashboard_image(
+    return env_module._resolve_dashboard_image(
         environment,
         value,
         API_PROD_IMAGE,

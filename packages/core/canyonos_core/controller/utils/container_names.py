@@ -7,6 +7,8 @@ cleanup cannot drift apart.
 
 
 def container_name(agent_name, replica_index):
+    """Return the Docker container name for one agent replica,
+    `canyonos-<agent>-<replica>`."""
     return f"canyonos-{agent_name.lower()}-{replica_index}"
 
 

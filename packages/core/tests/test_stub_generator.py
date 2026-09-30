@@ -618,20 +618,20 @@ class PlatformPinTests(unittest.TestCase):
                     )
             return _read_dockerfile(output_dir)
 
-    def test_the_proxy_gets_its_own_venv_after_the_app_install(self):
+    def test_the_gateway_gets_its_own_venv_after_the_app_install(self):
         for workflow in (False, True):
             with self.subTest(workflow=workflow):
                 dockerfile = self._dockerfile(workflow)
                 app_install = dockerfile.index("uv pip install --system")
-                proxy_install = dockerfile.index("uv venv /opt/canyonos-proxy")
-                self.assertLess(app_install, proxy_install)
-                proxy_stage = dockerfile[proxy_install:]
-                for pin in stub_generator.PROXY_REQUIREMENTS:
-                    self.assertIn(pin, proxy_stage)
+                gateway_install = dockerfile.index("uv venv /opt/canyonos-gateway")
+                self.assertLess(app_install, gateway_install)
+                gateway_stage = dockerfile[gateway_install:]
+                for pin in stub_generator.GATEWAY_REQUIREMENTS:
+                    self.assertIn(pin, gateway_stage)
                 self.assertIn(
                     'if python -c "import boto3" 2>/dev/null; then uv pip install '
-                    f"--python /opt/canyonos-proxy/bin/python {stub_generator.PROXY_BEDROCK_REQUIREMENT}; fi",
-                    proxy_stage,
+                    f"--python /opt/canyonos-gateway/bin/python {stub_generator.GATEWAY_BEDROCK_REQUIREMENT}; fi",
+                    gateway_stage,
                 )
 
     def test_installs_are_held_below_each_images_tested_majors(self):
@@ -689,7 +689,7 @@ class PlatformPinTests(unittest.TestCase):
     def test_an_agent_flask_pin_is_not_a_base_package_to_warn_about(self):
         self.assertEqual(stub_generator.too_new_requirements(["flask>=4"]), [])
 
-    def test_agents_no_longer_carry_the_proxys_packages(self):
+    def test_agents_no_longer_carry_the_gateways_packages(self):
         for name in ("flask", "requests", "boto3"):
             with self.subTest(name=name):
                 self.assertFalse(
@@ -732,7 +732,7 @@ class PlatformPinTests(unittest.TestCase):
             [],
         )
 
-    def test_an_agent_may_pin_any_flask_now_the_proxy_has_its_own(self):
+    def test_an_agent_may_pin_any_flask_now_the_gateway_has_its_own(self):
         self.assertEqual(stub_generator.too_old_requirements(["flask==1.0"]), [])
 
     def test_a_repeated_package_is_still_written_line_for_line(self):

@@ -5,12 +5,11 @@ This directory contains an automated end-to-end testing suite for CanyonOS. It i
 ## 1. Automated Test Runner (`run_tests.sh`)
 This script automates the entire testing lifecycle by interacting with the `canyonos` CLI:
 0. Runs the package test suites and the tests in this `tests/` directory.
-1. Scaffolds a new temporary project using `canyonos new-project`.
-2. Compiles the project using `canyonos build`.
-3. Launches the project using `canyonos deploy` in the background.
-4. Waits for the deployed workflow endpoint to become reachable, then gives the agents a few extra seconds to register.
-5. Runs the Python integration and performance scripts.
-6. **Cleanup:** Automatically terminates the deployment and cleans up the temporary directory upon success or failure.
+1. Copies the `examples/helloworld` project into a temporary directory.
+2. Builds and launches it using `canyonos deploy` in the background.
+3. Waits for the deployed workflow endpoint to become reachable, then gives the agents a few extra seconds to register.
+4. Runs the Python integration and performance scripts.
+5. **Cleanup:** Automatically terminates the deployment and cleans up the temporary directory upon success or failure.
 
 To run the complete suite:
 ```bash
@@ -18,10 +17,10 @@ To run the complete suite:
 ```
 
 ## 2. Functional Integration Validation (`test_integration.py`)
-Verifies that CanyonOS correctly passes data and dependencies between chained agents. 
+Verifies that a query sent to the deployed helloworld workflow reaches its agent and comes back.
 - Dispatches a single query to the deployed `/main` endpoint.
 - Polls the `/status/<request_id>` endpoint until completion.
-- Validates the output payload structure and ensures that data successfully flowed through `FinanceAgent`, `MarketResearchAgent`, and `VllmAgent`.
+- Checks that the result holds the greeting from `ExampleAgent`.
 
 To run manually against an already-deployed CanyonOS instance:
 ```bash

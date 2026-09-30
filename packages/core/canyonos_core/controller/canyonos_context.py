@@ -1,3 +1,6 @@
+"""Per-thread context the controllers set before running agent code, so futures and the
+LLM gateway can tag their work."""
+
 import threading
 
 # Thread-local storage for request context

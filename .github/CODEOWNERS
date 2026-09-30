@@ -1,0 +1,8 @@
+# Keep in sync with MAINTAINERS.md: a change to one must be made in the other.
+# Needs to be more filled out, just put high level teams for now.
+* @CanyonCodeCoreAI/canyon-code
+
+/packages/cli/ @CanyonCodeCoreAI/cli
+/packages/core/ @CanyonCodeCoreAI/core
+/packages/ui/ @CanyonCodeCoreAI/ui
+/packages/web/ @CanyonCodeCoreAI/ui

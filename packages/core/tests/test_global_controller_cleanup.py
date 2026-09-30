@@ -103,11 +103,9 @@ class TriggerCleanupTests(unittest.TestCase):
         self.assertEqual(redis.smembers("request:completed"), set())
 
     def test_one_instance_failing_leaves_the_batch_queued_for_retry(self):
-        # CAN-391: a batch is only ever removed from "request:completed" once
-        # every instance has confirmed receipt. If even one Cleanup RPC fails
-        # (e.g. an unreachable endpoint), the whole batch must stay queued --
-        # dropping it here is how cleanup entries went missing and Redis grew
-        # unbounded.
+        # CAN-391: a batch leaves "request:completed" only once every instance confirms.
+        # If one Cleanup RPC fails the whole batch must stay queued; dropping it is how
+        # entries went missing and Redis grew unbounded.
         completed = {"reqA", "reqB"}
         expected = set(completed)  # snapshot -- see note in the test above
         redis = _FakeRedis(sets={"request:completed": completed})

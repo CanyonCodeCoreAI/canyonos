@@ -38,6 +38,8 @@ def serve_dashboard() -> ServeResult:
 
 
 def run_serve() -> int:
+    """Run `canyonos serve`: start the dashboard and show its URL in the terminal.
+    Returns 0 or 1."""
     result = serve_dashboard()
     if not result.ok:
         return 1

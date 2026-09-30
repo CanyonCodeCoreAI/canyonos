@@ -12,6 +12,7 @@ IMAGE_REFERENCE = "canyonos-*"
 
 
 def _remove_canyon_images():
+    """Removes all the images prefixed with IMAGE_REFERENCE from machine."""
     try:
         result = subprocess.run(
             ["docker", "images", "--filter", f"reference={IMAGE_REFERENCE}", "-q"],
@@ -53,6 +54,7 @@ def _remove_canyon_images():
 
 
 def run_clean():
+    """Remove the current project's `.car` folder and all `canyonos-*` Docker images."""
     car_dir = os.path.join(os.getcwd(), ".car")
 
     if os.path.isdir(car_dir):

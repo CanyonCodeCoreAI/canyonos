@@ -43,7 +43,7 @@ class OTelExporterFieldTests(unittest.TestCase):
         }
 
         with patch.object(otel_writer.pricing, "compute_token_cost", return_value=0.0):
-            otel_writer.trace_write_rows([raw], db_path=self.db_path)
+            otel_writer._trace_write_rows([raw], db_path=self.db_path)
 
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -74,7 +74,7 @@ class OTelExporterFieldTests(unittest.TestCase):
         }
 
         with patch.object(otel_writer.pricing, "compute_token_cost", return_value=0.0):
-            otel_writer.trace_write_rows([raw], db_path=self.db_path)
+            otel_writer._trace_write_rows([raw], db_path=self.db_path)
 
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row

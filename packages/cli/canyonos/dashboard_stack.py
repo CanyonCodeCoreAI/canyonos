@@ -39,6 +39,8 @@ REDIS_HOST = HOST_GATEWAY
 
 @dataclass(frozen=True)
 class ServeResult:
+    """How far starting the dashboard got, and whether it succeeded."""
+
     ok: bool
     phase: str
     message: str
@@ -47,6 +49,8 @@ class ServeResult:
 
 
 class PhaseFailure(Exception):
+    """Raised when a step of starting the dashboard fails, naming the step."""
+
     def __init__(self, phase: str, message: str):
         super().__init__(message)
         self.phase = phase
@@ -55,12 +59,16 @@ class PhaseFailure(Exception):
 
 @dataclass(frozen=True)
 class DashboardStack:
+    """Where the dashboard's files live on this machine and the port it serves on."""
+
     state_dir: Path
     project_dir: Path
     web_port: int = DEFAULT_DASHBOARD_PORT
 
     @property
     def env_path(self) -> Path:
+        """Path to the project's `.env` file, where `canyonos serve` writes the
+        dashboard's settings and JWT secret."""
         return self.project_dir / ".env"
 
 
@@ -116,7 +124,7 @@ def _existing_dashboard_port() -> int | None:
     return None
 
 
-def validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
+def _validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     """Checks docker is usable and the state dir is writable, then returns a DashboardStack with the port the dashboard should run on."""
     if shutil.which("docker") is None:
         raise PhaseFailure("validate", "docker is not on PATH")
@@ -219,7 +227,7 @@ def _write_project_env(env_path: Path, managed_env: dict[str, str]) -> None:
     _write_private_file(env_path, "".join(updated_lines))
 
 
-def prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
+def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
     try:
         stack.state_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(stack.state_dir, 0o700)
@@ -262,10 +270,10 @@ def _command_failure_message(
     )
     if detail is None:
         return message
-    return f"{message}: {redact_logs(detail, managed_env['CANYONOS_JWT_SECRET'])}"
+    return f"{message}: {_redact_logs(detail, managed_env['CANYONOS_JWT_SECRET'])}"
 
 
-def pull(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> str:
+def _pull(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> str:
     try:
         result = _run([*_compose_argv(stack, manifest), "pull", "--policy", "missing"])
     except OSError:
@@ -286,7 +294,7 @@ def _project_has_running_containers(stack: DashboardStack, manifest: Path) -> bo
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def start(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> None:
+def _start(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> None:
     # The api reads the controller's Redis identity once at startup to create
     # its project row, so a surviving container keeps serving whichever project
     # was deployed before it. Replace it every serve rather than reuse it.
@@ -333,7 +341,7 @@ def _container_health(name: str) -> str | None:
     return status if status and status != "<no value>" else None
 
 
-def verify(port: int) -> str:
+def _verify(port: int) -> str:
     dashboard_url = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + 30
     endpoints = (f"{dashboard_url}/healthz", f"{dashboard_url}/api/healthz")
@@ -347,7 +355,7 @@ def verify(port: int) -> str:
     )
 
 
-def redact_logs(logs: str, jwt_secret: str) -> str:
+def _redact_logs(logs: str, jwt_secret: str) -> str:
     redacted = logs.replace(jwt_secret, "[redacted]")
     return re.sub(r"://[^/\s@]+@", "://[redacted]@", redacted)
 
@@ -355,6 +363,7 @@ def redact_logs(logs: str, jwt_secret: str) -> str:
 def _capture_failure_logs(
     stack: DashboardStack, manifest: Path, managed_env: dict[str, str]
 ) -> Path:
+    """Save the dashboard's recent logs, secrets removed, and return the file's path."""
     try:
         result = _run(
             [*_compose_argv(stack, manifest), "logs", "--no-color", "--tail", "200"]
@@ -369,7 +378,7 @@ def _capture_failure_logs(
     log_path = log_dir / f"serve-{timestamp}.log"
     _write_private_file(
         log_path,
-        redact_logs(logs, managed_env["CANYONOS_JWT_SECRET"]),
+        _redact_logs(logs, managed_env["CANYONOS_JWT_SECRET"]),
     )
     return log_path
 
@@ -415,6 +424,9 @@ def run_dashboard(
     phase_reporter: Callable[[str, str], None] | None = None,
     preferred_port: int = DEFAULT_DASHBOARD_PORT,
 ) -> ServeResult:
+    """Start the local dashboard for `canyonos serve` and `canyonos deploy`, reporting
+    each step; on failure, save the logs and remove what this run started."""
+
     def report(result: ServeResult) -> None:
         if phase_reporter is not None:
             phase_reporter(result.phase, result.message)
@@ -427,10 +439,10 @@ def run_dashboard(
     had_containers = False
     with ExitStack() as resources:
         try:
-            stack = validate(preferred_port)
+            stack = _validate(preferred_port)
             report(ServeResult(True, "validate", "dashboard prerequisites validated"))
 
-            managed_env, prepare_message = prepare(stack)
+            managed_env, prepare_message = _prepare(stack)
             report(ServeResult(True, "prepare", prepare_message))
 
             manifest_resource = importlib.resources.files("canyonos").joinpath(
@@ -441,12 +453,12 @@ def run_dashboard(
             )
             had_containers = _project_has_running_containers(stack, manifest)
 
-            report(ServeResult(True, "pull", pull(stack, manifest, managed_env)))
+            report(ServeResult(True, "pull", _pull(stack, manifest, managed_env)))
 
-            start(stack, manifest, managed_env)
+            _start(stack, manifest, managed_env)
             report(ServeResult(True, "start", "dashboard stack started"))
 
-            url = verify(stack.web_port)
+            url = _verify(stack.web_port)
             report(ServeResult(True, "verify", "dashboard health checks passed", url))
             return ServeResult(True, "verify", "dashboard health checks passed", url)
         except PhaseFailure as failure:

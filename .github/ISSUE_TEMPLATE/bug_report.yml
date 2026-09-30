@@ -1,0 +1,28 @@
+name: Bug report
+description: Report something that isn't working.
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: Describe the bug
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment
+      description: OS, CanyonOS version, and any other relevant versions.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional context

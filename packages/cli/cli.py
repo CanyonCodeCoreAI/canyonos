@@ -42,10 +42,13 @@ class _RootParser(argparse.ArgumentParser):
     """Routes the top-level -h/--help through the custom help screen."""
 
     def print_help(self, file=None):
+        """Show the CanyonOS help screen in the terminal for `canyonos -h`."""
         print_custom_help()
 
 
 def main():
+    """Run the `canyonos` command you typed, showing the help screen if there is none
+    and any error in the terminal."""
     parser = _RootParser(prog="canyonos")
     parser.add_argument(
         "-v",

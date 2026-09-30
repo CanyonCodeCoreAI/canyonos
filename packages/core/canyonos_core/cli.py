@@ -174,7 +174,7 @@ def _reject(violations, summary):
     sys.exit(1)
 
 
-def validate_or_exit(config_path, declarations_dir, source_dir=None):
+def _validate_or_exit(config_path, declarations_dir, source_dir=None):
     """Reject the config before anything is generated; return the parsed manifest."""
     manifest, violations = check_project(config_path, declarations_dir, source_dir)
     if violations:
@@ -203,6 +203,8 @@ def _docker_build_cmd(*args):
 
 
 def _docker_available(probe_cmd=("docker", "info")):
+    """Return True if Docker is installed and its daemon answers; checked before
+    building images and before an EC2 deploy."""
     if not shutil.which("docker"):
         return False
 
@@ -281,7 +283,7 @@ def _preflight_ec2_deploy(config, project_dir):
 # ------------------------------------------------------------------ #
 
 
-def cmd_new_project(args):
+def _cmd_new_project(args):
     """Scaffold a new CanyonOS project."""
     project_name = args.name
     project_dir = os.path.abspath(project_name)
@@ -346,12 +348,10 @@ def _run_build(config_path):
 
     artifact_root, source_root, declarations_dir = _project_layout()
 
-    # Nothing below this line runs against a config the schema rejects: no
-    # stubs, no protoc, no Docker context, no image. It comes before the load
-    # so a file that is not YAML at all is rendered as a violation too, and it
-    # is handed source_root so a service whose code is missing fails here
-    # rather than being skipped out of a deploy that then reports success.
-    validate_or_exit(config_path, declarations_dir, source_root)
+    # Nothing below runs against a config the schema rejects. Validate before loading so
+    # non-YAML files render as violations too, and pass source_root so a service with
+    # missing code fails here instead of being skipped from a "successful" deploy.
+    _validate_or_exit(config_path, declarations_dir, source_root)
 
     config = _load_config(config_path)
     agents = config.get("agents", [])
@@ -582,7 +582,7 @@ def _run_build(config_path):
 # ------------------------------------------------------------------ #
 
 
-def cmd_deploy(args):
+def _cmd_deploy(args):
     """
     Launch the Global Controller, which starts Redis containers,
     agent containers, and enters the health-monitoring loop.
@@ -659,7 +659,7 @@ def cmd_deploy(args):
 # ------------------------------------------------------------------ #
 
 
-def cmd_clean(args):
+def _cmd_clean(args):
     """
     Remove generated stubs, gRPC files, and Docker build contexts.
     """
@@ -692,6 +692,8 @@ def cmd_clean(args):
 
 
 def main():
+    """Run the core command given on the command line. The container's server uses it to
+    build and deploy the project when the CLI asks."""
     default_config_path = os.path.join(
         _artifact_prefix(os.getcwd()), "config", "global_controller.yaml"
     )
@@ -707,7 +709,7 @@ def main():
         help="Scaffold a new CanyonOS project",
     )
     new_proj.add_argument("name", help="Name of the project directory to create")
-    new_proj.set_defaults(func=cmd_new_project)
+    new_proj.set_defaults(func=_cmd_new_project)
 
     # canyonos deploy
     deploy = subparsers.add_parser(
@@ -720,14 +722,14 @@ def main():
         default=default_config_path,
         help=f"Path to global controller config (default: {default_config_path})",
     )
-    deploy.set_defaults(func=cmd_deploy)
+    deploy.set_defaults(func=_cmd_deploy)
 
     # canyonos clean
     clean = subparsers.add_parser(
         "clean",
         help="Remove generated stubs, compiled protos, and Docker contexts",
     )
-    clean.set_defaults(func=cmd_clean)
+    clean.set_defaults(func=_cmd_clean)
 
     args = parser.parse_args()
     if not args.command:

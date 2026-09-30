@@ -124,13 +124,9 @@ def deploy(workflow_fn, port=8080, host="0.0.0.0", redis_host=None, redis_port=N
     @app.route(f"/{fn_name}", methods=["POST"])
     def handle_workflow():
         """Accept a workflow request, dispatch async, return request ID."""
-        # An empty body is a valid no-args call (workflows may have all-default
-        # params). A non-empty body that isn't a valid JSON object is rejected
-        # here with the real parse error, instead of being coerced to {} and
-        # surfacing later as a misleading "missing argument" error from the
-        # workflow function itself. Parsed with the stdlib json module
-        # directly (not request.get_json) because Flask/Werkzeug replaces the
-        # actual decode error with a generic "Bad Request" message.
+        # An empty body is a valid no-args call; a malformed one is rejected with the
+        # real parse error. Parsed with stdlib json because Flask replaces decode errors
+        # with a generic "Bad Request".
         raw_body = request.get_data(cache=True)
         if raw_body:
             try:

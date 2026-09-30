@@ -66,6 +66,7 @@ DOCKER_START_TIMEOUT = 60
 
 
 def docker_running():
+    """Return True if the Docker daemon answers `docker info`."""
     try:
         return (
             run_docker(
@@ -99,7 +100,7 @@ def docker_start_command():
     return None
 
 
-def ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
+def _ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
     if docker_running():
         return
 
@@ -178,7 +179,7 @@ def _image_present(image):
     )
 
 
-def pull_image(image=GC_IMAGE):
+def _pull_image(image=GC_IMAGE):
     # The production image always comes from the registry. A dev image is
     # usually built locally and may not be in any registry at all, so use
     # whatever the daemon already holds before trying to pull it.
@@ -262,7 +263,7 @@ def _free_container_name():
         raise RuntimeError(failure)
 
 
-def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
+def _run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
     port = GC_CONTAINER_PORT
     # The real socket behind whatever's active right now, not the
     # /var/run/docker.sock alias -- some other app can hold that alias and
@@ -355,7 +356,7 @@ def run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
     )
 
 
-def save_state(container_id, port, docker_socket=None):
+def _save_state(container_id, port, docker_socket=None):
     """Atomically write GC state so interruption cannot truncate the old record."""
     os.makedirs(STATE_DIR, exist_ok=True)
     temporary_path = None
@@ -427,21 +428,23 @@ def quit_existing():
 
 
 def run_init(banner=True, extra_env=None, image=GC_IMAGE):
+    """Replace any existing Global Controller with a fresh container from `image` and
+    save its ID and port for later commands; run at the start of `canyonos deploy`."""
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
     # Before quit_existing(), which shells out to docker itself.
-    ensure_docker_running()
+    _ensure_docker_running()
     quit_existing()
 
     with ui.status("Pulling Global Controller image..."):
-        pull_image(image)
+        _pull_image(image)
     with ui.status("Starting Global Controller container..."):
-        container_id, port, docker_socket = run_container(
+        container_id, port, docker_socket = _run_container(
             image=image, extra_env=extra_env
         )
     try:
-        save_state(container_id, port, docker_socket)
+        _save_state(container_id, port, docker_socket)
     except OSError as e:
         cleanup_failure = cleanup_docker(
             ["docker", "rm", "-f", container_id],

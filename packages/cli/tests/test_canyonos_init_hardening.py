@@ -20,7 +20,7 @@ def test_docker_runtime_start_uses_bounded_translated_command(monkeypatch):
     with pytest.raises(
         RuntimeError, match="Starting the Docker runtime failed: launch failed"
     ):
-        init_cmd.ensure_docker_running()
+        init_cmd._ensure_docker_running()
 
     assert calls == [
         (
@@ -47,7 +47,7 @@ def test_failed_state_write_preserves_the_previous_state(monkeypatch, tmp_path):
     )
 
     with pytest.raises(OSError, match="disk full"):
-        init_cmd.save_state("new", 8001)
+        init_cmd._save_state("new", 8001)
 
     assert json.loads(state_path.read_text()) == original
     assert list(tmp_path.glob("state.*.tmp")) == []
@@ -55,16 +55,16 @@ def test_failed_state_write_preserves_the_previous_state(monkeypatch, tmp_path):
 
 def test_state_save_failure_removes_the_new_container(monkeypatch):
     calls = []
-    monkeypatch.setattr(init_cmd, "ensure_docker_running", lambda: None)
+    monkeypatch.setattr(init_cmd, "_ensure_docker_running", lambda: None)
     monkeypatch.setattr(init_cmd, "quit_existing", lambda: None)
-    monkeypatch.setattr(init_cmd, "pull_image", lambda _image: None)
+    monkeypatch.setattr(init_cmd, "_pull_image", lambda _image: None)
     monkeypatch.setattr(
         init_cmd,
-        "run_container",
+        "_run_container",
         lambda image=None, extra_env=None: ("abcdef123456", 8000, None),
     )
     monkeypatch.setattr(
-        init_cmd, "save_state", lambda *_a: (_ for _ in ()).throw(OSError("disk full"))
+        init_cmd, "_save_state", lambda *_a: (_ for _ in ()).throw(OSError("disk full"))
     )
     monkeypatch.setattr(
         init_cmd.subprocess,

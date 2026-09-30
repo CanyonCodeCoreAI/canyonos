@@ -164,11 +164,9 @@ def _bare_servicer(redis):
 
 class CleanupRequestTests(unittest.TestCase):
     def test_cleanup_expires_consolidated_future_hashes_and_bookkeeping(self):
-        # CAN-391 follow-up: GlobalController's poll loop reads future:{id} to
-        # build an OTel span (see telemetry_logging.pull_runtime_information).
-        # Deleting it immediately here races that read and silently drops the
-        # span. Expiring with a grace period keeps memory bounded without
-        # deleting out from under the poll loop.
+        # CAN-391 follow-up: GlobalController's poll loop reads future:{id} to build an
+        # OTel span, so deleting it here races that read. Expiring with a grace period
+        # keeps memory bounded without dropping the span.
         redis = _FakeRedis(
             sets={"request:req1:futures": {"fut1", "fut2"}},
             strings={

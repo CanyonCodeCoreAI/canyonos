@@ -46,7 +46,7 @@ docker_container/
 .env
 .env.*
 !.env.example
-# The CLI's development-only environment file; see packages/cli/DEVELOPMENT.md.
+# The CLI's development-only environment file; see docs/contributing/DEVELOPMENT.md.
 packages/cli/.env
 AWSCLIV2.pkg
 .python-version

@@ -1,21 +1,39 @@
 site_name: CanyonOS
 repo_url: https://github.com/CanyonCodeCoreAI/canyonos
 docs_dir: docs
+exclude_docs: |
+  /README.md
 theme: readthedocs
 
 nav:
   - Home: index.md
-  - Preparing an Agent App: CANYONIZATION-APP-READINESS.md
-  - Contract reference:
-      - Overview: contract-reference.md
-      - The .car artifact: build-artifact.md
-      - Manifest reference: manifest-reference.md
-      - Runtime contract: runtime-contract.md
-      - Images and dependencies: images-and-dependencies.md
-      - LLM proxy: llm-proxy.md
-      - EC2 deployment: ec2.md
-      - Troubleshooting: troubleshooting.md
-  - Contributing: CONTRIBUTING.md
+  - Guides:
+      - Overview: guides/README.md
+      - Workflow design: guides/WORKFLOW_DESIGN.md
+      - Limitations: guides/LIMITATIONS.md
+      - Prompt management: guides/PROMPTS.md
+      - Autoscaling: guides/SCALING.md
+      - The .car artifact: guides/BUILD_ARTIFACT.md
+      - global_controller.yaml: guides/GLOBAL_CONTROLLER.md
+      - Runtime contract: guides/RUNTIME_CONTRACT.md
+      - Images and dependencies: guides/IMAGES_AND_DEPENDENCIES.md
+      - LLM gateway: guides/LLM_GATEWAY.md
+      - EC2 deployment: guides/EC2.md
+      - Troubleshooting: guides/TROUBLESHOOTING.md
+  - Architecture:
+      - Overview: architecture/README.md
+      - CLI: architecture/CLI.md
+      - Controller: architecture/CONTROLLER.md
+      - LLM gateway: architecture/LLM_GATEWAY.md
+      - Machine metrics poller: architecture/MACHINE_METRICS_POLLER.md
+      - OTLP exporter: architecture/OTLP_EXPORTER.md
+      - Reconciler: architecture/RECONCILER.md
+  - Contributing:
+      - Development: contributing/DEVELOPMENT.md
+      - Style: contributing/STYLE.md
+      - Config: contributing/CONFIG.md
+      - AI policy: contributing/AI_POLICY.md
+  - Roadmap: ROADMAP.md
 
 plugins:
   - search

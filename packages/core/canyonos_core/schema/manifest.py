@@ -126,6 +126,8 @@ _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
 
 @dataclass(frozen=True)
 class Resources:
+    """The compute resources requested for a service in `global_controller.yaml`."""
+
     cpu: float = 1
     memory: float = 512
     gpu: int | None = None
@@ -133,6 +135,8 @@ class Resources:
 
 @dataclass(frozen=True)
 class RedisSpec:
+    """The `redis` section of `global_controller.yaml`: where the project Redis runs."""
+
     host: str = "localhost"
     port: int = 6379
     db: int = 0
@@ -140,6 +144,8 @@ class RedisSpec:
 
 @dataclass(frozen=True)
 class OtelDestination:
+    """One `otel` destination in `global_controller.yaml`: where to send telemetry."""
+
     name: str
     protocol: str
     endpoint: str
@@ -150,11 +156,15 @@ class OtelDestination:
 
 @dataclass(frozen=True)
 class OtelSpec:
+    """The `otel` section of `global_controller.yaml`."""
+
     destinations: tuple = ()
 
 
 @dataclass(frozen=True)
 class Ec2Spec:
+    """The `ec2` section of `global_controller.yaml`: how to launch EC2 replicas."""
+
     region: str
     subnet_id: str
     security_group_ids: tuple
@@ -188,6 +198,8 @@ class _Service:
 
 @dataclass(frozen=True)
 class AgentService(_Service):
+    """An `agents:` entry of type `agent`: a Python agent class."""
+
     entrypoint: str = ""
     requirements: tuple = ()
     requirement_lines: tuple = field(default=(), compare=False, repr=False)
@@ -197,6 +209,8 @@ class AgentService(_Service):
 
 @dataclass(frozen=True)
 class WorkflowService(_Service):
+    """An `agents:` entry of type `workflow`: a workflow file served as an HTTP API."""
+
     workflow_file: str = ""
     requirements: tuple = ()
     requirement_lines: tuple = field(default=(), compare=False, repr=False)
@@ -208,6 +222,8 @@ class WorkflowService(_Service):
 
 @dataclass(frozen=True)
 class DatabaseService(_Service):
+    """An `agents:` entry of type `database`: a stock database image."""
+
     image: str = ""
     db_port: int = 5432
     volume_path: str | None = None
@@ -217,6 +233,8 @@ class DatabaseService(_Service):
 
 @dataclass(frozen=True)
 class Manifest:
+    """The project's `global_controller.yaml`, checked and parsed by `load_manifest`."""
+
     agents: tuple
     poll_interval: float = 5
     cleanup_interval: float = 10
@@ -460,6 +478,8 @@ def _check_service_keys(collector, node, prefix, service_type):
 
 
 def _services(collector, node):
+    """Parse the `agents` list in `global_controller.yaml`; two names that differ only
+    in case are a violation, since both would get the same image and container name."""
     if "agents" not in node or node["agents"] is None:
         collector.add(node, "agents", "agents", "is required but missing")
         return ()
@@ -498,6 +518,8 @@ def _services(collector, node):
 
 
 def _otel(collector, node):
+    """Parse the `otel` section of `global_controller.yaml`, recording violations for
+    bad or duplicate destinations."""
     block = _mapping(collector, node, "otel", "", _OTEL_KEYS)
     if block is None:
         return None
@@ -552,6 +574,8 @@ def _otel(collector, node):
 
 
 def _ec2(collector, node, services):
+    """Parse the `ec2` section of `global_controller.yaml`; it is required, and checked,
+    only when a service uses the EC2 provider."""
     block = _mapping(collector, node, "ec2", "", _EC2_KEYS)
     if not any(service.provider == "EC2" for service in services):
         # Only an EC2 deploy reads the block; a local project may carry one

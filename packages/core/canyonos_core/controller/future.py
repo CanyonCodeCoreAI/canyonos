@@ -1,3 +1,5 @@
+"""The Future that every agent function call returns in place of its result."""
+
 import time
 import json
 import secrets
@@ -43,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 # defines the future object which will be returned by each function call
 class Future(object):
+    """Handle to an agent call running in the background; `value()` blocks until its
+    result is in Redis. Pass it to another agent call and that call waits for it."""
+
     redis = RedisClient(
         host=os.environ.get("CANYONOS_REDIS_HOST", "localhost"),
         port=int(os.environ.get("CANYONOS_REDIS_PORT", 6379)),
@@ -72,10 +77,8 @@ class Future(object):
         args: arguments to be passed to the method
         """
 
-        # initial value of future object. 64-bit (8 bytes / 16 hex chars) --
-        # this doubles as the OTel span_id (trace_convert.py), which is defined as
-        # 64-bit, so it's generated at that width directly instead of a
-        # 128-bit uuid4 that would need truncating later.
+        # 64-bit because this id doubles as the OTel span_id, which is defined as
+        # 64-bit, so there's no 128-bit uuid4 to truncate later.
         self.id = secrets.token_hex(8)
 
         # Grab the request_id from the thread-local context (set by deploy)

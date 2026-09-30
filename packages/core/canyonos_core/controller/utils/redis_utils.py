@@ -1,3 +1,5 @@
+"""Helpers for connecting to Redis."""
+
 import time
 
 

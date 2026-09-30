@@ -19,19 +19,19 @@ Fields currently written into `future:{future_id}`, and where:
 | `created_at`                | `future.py` only (origin submission time) |
 | `result`                    | `future.py`, `local_controller.py` |
 | `failed`                    | `future.py`, `local_controller.py` |
-| `error`                     | `future.py` (`_submit_request`), `local_controller.py` (`_mark_future_failed`) -- the sole failure-message field; the LLM proxy deliberately never writes it |
+| `error`                     | `future.py` (`_submit_request`), `local_controller.py` (`_mark_future_failed`) -- the sole failure-message field; the LLM gateway deliberately never writes it |
 | `finished_at`               | `local_controller.py` (`_execute_locally` finally block) |
 | `cpu_resource`              | `local_controller.py` |
 | `gpu_resource`              | `local_controller.py` |
 | `agent`                     | `local_controller.py` (agent_id that executed this step) |
 | `queue_time`                | `local_controller.py` (only when `submitted_at` is known) |
-| `model`                     | `llm_proxy/hooks.py` (on_response) |
-| `input_token_count`         | `llm_proxy/hooks.py` |
-| `output_token_count`        | `llm_proxy/hooks.py` |
-| `token_count`               | `llm_proxy/hooks.py` |
-| `errors`                    | `llm_proxy/hooks.py` (Bedrock call error flag) |
-| `input_cache_tokens`        | `llm_proxy/hooks.py` |
-| `input_cache_write_tokens`  | `llm_proxy/hooks.py` |
+| `model`                     | `llm_gateway/hooks.py` (on_response) |
+| `input_token_count`         | `llm_gateway/hooks.py` |
+| `output_token_count`        | `llm_gateway/hooks.py` |
+| `token_count`               | `llm_gateway/hooks.py` |
+| `errors`                    | `llm_gateway/hooks.py` (Bedrock call error flag) |
+| `input_cache_tokens`        | `llm_gateway/hooks.py` |
+| `input_cache_write_tokens`  | `llm_gateway/hooks.py` |
 | `logs`                      | `future.py`, `local_controller.py` (`_mark_future_failed`), `log_handler.py` (`LogHandler`) -- JSON-encoded array of OTel Log Data Model entries; see below |
 
 ## The `logs` field

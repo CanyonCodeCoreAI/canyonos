@@ -27,11 +27,9 @@ trap cleanup EXIT
 mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
 
-echo ">> 1. Generating new project..."
-canyonos new-project $PROJECT_NAME
+echo ">> 1. Copying the helloworld example..."
+cp -R "$SCRIPT_DIR/../examples/helloworld" $PROJECT_NAME
 cd $PROJECT_NAME
-grep -v 'gpu:' .car/config/global_controller.yaml > .car/config/global_controller.yaml.tmp
-mv .car/config/global_controller.yaml.tmp .car/config/global_controller.yaml
 
 echo ">> 2. Building and deploying workflow (canyonos deploy)..."
 canyonos deploy &

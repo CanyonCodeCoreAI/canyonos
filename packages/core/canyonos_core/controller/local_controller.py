@@ -1,3 +1,5 @@
+"""The Local Controller: runs inside each agent replica's container, takes requests from
+the queue, and runs them on the agent or forwards them to another controller."""
 # Local Controller
 # Starts the gRPC frontend server and polls the request queue for incoming requests.
 # Routes requests to the correct agent — either locally or by forwarding to another controller.
@@ -43,16 +45,16 @@ try:
 except ImportError:
     import canyonos_context
 
-# Auto-inject X-Canyonos-Future-ID into all boto3 Bedrock calls so the LLM proxy
+# Auto-inject X-Canyonos-Future-ID into all boto3 Bedrock calls so the LLM gateway
 # can attribute token/cost telemetry to the executing future. Import for its
-# global boto3 event-hook side effect; safe no-op if the proxy isn't present.
+# global boto3 event-hook side effect; safe no-op if the gateway isn't present.
 try:
-    from canyonos_core.llm_proxy import proxy as _llm_proxy_autoinject  # noqa: F401
+    from canyonos_core.llm_gateway import proxy as _llm_gateway_autoinject  # noqa: F401
 except ImportError:
     try:
-        from llm_proxy import proxy as _llm_proxy_autoinject  # noqa: F401
+        from llm_gateway import proxy as _llm_gateway_autoinject  # noqa: F401
     except ImportError:
-        pass  # No proxy available; agents call Bedrock directly.
+        pass  # No gateway available; agents call Bedrock directly.
 
 import local_controler_pb2
 import local_controler_pb2_grpc
@@ -95,11 +97,11 @@ class LocalController(object):
         self.redis = RedisClient(host=redis_host, port=redis_port)
         self._status_key = f"controller:{self.agent_host}:{self.public_port}:status"
 
-        # Every LLM call in this container is routed through the proxy, so it must be
+        # Every LLM call in this container is routed through the gateway, so it must be
         # up before we report ready. The status key has no TTL: pin it to "failed" or
         # a stale "healthy" keeps GlobalController seeing a container that has died.
         try:
-            self._proxy_process = self._start_llm_proxy(redis_host, redis_port)
+            self._gateway_process = self._start_llm_gateway(redis_host, redis_port)
         except Exception:
             self.redis.set(self._status_key, "failed")
             self.server.stop(0)
@@ -166,16 +168,12 @@ class LocalController(object):
         # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
         self._metrics_thread.start()
 
-        # Machine-level metrics (cpu/gpu/disk/memory/uptime) are sampled by a separate
-        # one-per-machine process launched by GlobalController (see
-        # GlobalController._launch_metrics_collectors), NOT here -- a container-scoped
-        # process couldn't see the host (esp. the GPU). LocalController keeps only the
-        # in-process metrics a sibling process can't observe (queue length, counters,
-        # health heartbeat).
+        # Machine-level metrics come from a per-machine collector GlobalController
+        # launches, since a container can't see the host (esp. the GPU). This keeps only
+        # in-process metrics: queue length, counters, and health heartbeat.
 
-        # After the proxy, because an agent constructor may build an LLM client
-        # against it. Workflow containers intentionally run a routing-only local
-        # controller without these variables; agent containers set both, and
+        # After the gateway, since an agent constructor may build an LLM client against
+        # it. Workflow containers run routing-only with neither set; agent containers
         # must not advertise readiness if constructing the agent failed.
         self.agent = self._load_agent()
         if (self.agent_name or self.agent_file) and self.agent is None:
@@ -183,9 +181,9 @@ class LocalController(object):
             self._metrics_thread.join(timeout=2)
             self.mark_failed()
             self.server.stop(0)
-            # Otherwise the proxy keeps the container alive, answering every
+            # Otherwise the gateway keeps the container alive, answering every
             # request with "No agent loaded" long after the cause has scrolled by.
-            self._proxy_process.kill()
+            self._gateway_process.kill()
             raise RuntimeError(
                 f"Failed to load configured agent {self.agent_name or self.agent_file}."
             )
@@ -203,11 +201,15 @@ class LocalController(object):
         )
 
     def mark_ready(self):
+        """Set this replica's status in Redis to `healthy`, which the Global Controller
+        waits for before routing to it."""
         with self._status_lock:
             self._ready.set()
             self.redis.set(self._status_key, "healthy")
 
     def mark_failed(self):
+        """Set this replica's status in Redis to `failed`, so the Global Controller no
+        longer counts it as healthy."""
         with self._status_lock:
             self._ready.clear()
             self.redis.set(self._status_key, "failed")
@@ -217,20 +219,20 @@ class LocalController(object):
             self._ready.clear()
             self.redis.set(self._status_key, "stopped")
 
-    def _start_llm_proxy(self, redis_host, redis_port):
-        """Start the LLM proxy as a subprocess in this container (127.0.0.1:8081).
+    def _start_llm_gateway(self, redis_host, redis_port):
+        """Start the LLM gateway as a subprocess in this container (127.0.0.1:8081).
 
         Fatal: the runtime force-injects LLM base-URL env vars that point every
-        Bedrock/OpenAI/Anthropic SDK call at this proxy (`docker run -e` beats
+        Bedrock/OpenAI/Anthropic SDK call at this gateway (`docker run -e` beats
         `--env-file`, so nothing can opt back out). If it fails to start, every
         LLM call in this container would silently fail or hang, not just lose
-        telemetry -- so raise instead of limping on with no proxy listening.
+        telemetry -- so raise instead of limping on with no gateway listening.
         """
         import socket
         import subprocess
         import urllib.request
 
-        # An orphaned proxy on 8081 would answer the /healthz probe below and mask
+        # An orphaned gateway on 8081 would answer the /healthz probe below and mask
         # one of ours that never bound, so prove the port free before spawning.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_probe:
             port_probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -239,44 +241,44 @@ class LocalController(object):
             except OSError as e:
                 logger.error("127.0.0.1:8081 is already in use: %s", e)
                 raise RuntimeError(
-                    "127.0.0.1:8081 is already in use, so the LLM proxy cannot bind "
+                    "127.0.0.1:8081 is already in use, so the LLM gateway cannot bind "
                     "it; agent LLM calls are routed through it unconditionally and "
                     "would otherwise fail silently."
                 ) from e
 
-        proxy_env = os.environ.copy()
-        proxy_env.update(
+        gateway_env = os.environ.copy()
+        gateway_env.update(
             {
-                "PROXY_HOST": "127.0.0.1",
-                "PROXY_PORT": "8081",
+                "GATEWAY_HOST": "127.0.0.1",
+                "GATEWAY_PORT": "8081",
                 "CANYONOS_REDIS_HOST": redis_host,
                 "CANYONOS_REDIS_PORT": str(redis_port),
             }
         )
-        # The image gives the proxy its own venv so its packages never share versions with the agent's.
-        proxy_python = "/opt/canyonos-proxy/bin/python"
-        if not os.path.exists(proxy_python):
-            proxy_python = sys.executable
+        # The image gives the gateway its own venv so its packages never share versions with the agent's.
+        gateway_python = "/opt/canyonos-gateway/bin/python"
+        if not os.path.exists(gateway_python):
+            gateway_python = sys.executable
         try:
-            proxy_process = subprocess.Popen(
-                [proxy_python, "-m", "canyonos_core.llm_proxy"],
-                env=proxy_env,
+            gateway_process = subprocess.Popen(
+                [gateway_python, "-m", "canyonos_core.llm_gateway"],
+                env=gateway_env,
             )
         except Exception as e:
-            logger.error("Failed to start LLM proxy: %s", e)
+            logger.error("Failed to start LLM gateway: %s", e)
             raise RuntimeError(
-                "LLM proxy failed to start; agent LLM calls are routed through it "
+                "LLM gateway failed to start; agent LLM calls are routed through it "
                 "unconditionally and would otherwise fail silently."
             ) from e
 
         # Popen only raises if the process can't be spawned -- it returns a healthy
-        # handle even if the proxy starts and dies immediately, so poll /healthz.
+        # handle even if the gateway starts and dies immediately, so poll /healthz.
         deadline = time.time() + 10
         last_error = None
         while time.time() < deadline:
-            if proxy_process.poll() is not None:
+            if gateway_process.poll() is not None:
                 raise RuntimeError(
-                    f"LLM proxy exited immediately (code {proxy_process.returncode}); "
+                    f"LLM gateway exited immediately (code {gateway_process.returncode}); "
                     "agent LLM calls are routed through it unconditionally and would "
                     "otherwise fail silently."
                 )
@@ -289,16 +291,18 @@ class LocalController(object):
                 last_error = e
             time.sleep(0.2)
         else:
-            proxy_process.kill()
+            gateway_process.kill()
             raise RuntimeError(
-                "LLM proxy did not become healthy on 127.0.0.1:8081 within 10s "
+                "LLM gateway did not become healthy on 127.0.0.1:8081 within 10s "
                 f"(last health check: {last_error}); "
                 "agent LLM calls are routed through it unconditionally and would "
                 "otherwise fail silently."
             )
 
-        logger.info("Started LLM proxy on 127.0.0.1:8081 (PID: %d)", proxy_process.pid)
-        return proxy_process
+        logger.info(
+            "Started LLM gateway on 127.0.0.1:8081 (PID: %d)", gateway_process.pid
+        )
+        return gateway_process
 
     def _collect_metrics(self):
         """Snapshot the in-process instance metrics LocalController owns.
@@ -605,12 +609,8 @@ class LocalController(object):
             )
             return
 
-        # Resolve which endpoint to route to.
-        # If the request was already routed to a specific node (route_to set by
-        # the forwarding controller), honor that decision instead of resolving
-        # again. Re-resolving at every hop lets stateless requests ping-pong
-        # between replicas — the routing decision is made once, at the entry
-        # node, and pinned for the rest of the request's journey.
+        # Honor a route_to pinned by the forwarding controller instead of re-resolving;
+        # re-resolving at every hop lets stateless requests ping-pong between replicas.
         route_to = data.get("route_to")
         if route_to:
             endpoint = route_to
@@ -664,10 +664,9 @@ class LocalController(object):
                             key,
                         )
 
-                        # If the result is already available, push it immediately.
-                        # This handles the race where the producer resolved the
-                        # future before this consumer registered (and thus before
-                        # _fan_out_to_consumers could see it).
+                        # Push the result now if the producer resolved the future before
+                        # this consumer registered, since _fan_out_to_consumers couldn't
+                        # have seen it.
                         existing_result = self.redis.hget(future_key, "result")
                         if existing_result is not None and existing_result != "":
                             logger.info(

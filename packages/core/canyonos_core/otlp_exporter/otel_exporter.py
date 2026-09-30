@@ -92,6 +92,8 @@ DestinationProtocol = Literal["grpc", "http", "http/protobuf"]
 
 
 class Destination(TypedDict):
+    """One OpenTelemetry destination as the Global Controller writes it to Redis."""
+
     name: str
     protocol: DestinationProtocol
     endpoint: str
@@ -145,6 +147,7 @@ class _PartialSuccessRecorder:
         self._unparseable_logged = False
 
     def reset(self):
+        """Clear the rejection count and message before the next export."""
         self.rejected_spans = 0
         self.error_message = ""
 
@@ -381,6 +384,8 @@ def _handle_shutdown(signum, frame):
 def _reload_destinations_if_changed():
     # Invalid Redis values are logged and ignored -- keep the previous exporters
     # running rather than tearing down a working config over a bad update.
+    """Rebuild the exporters when the destinations in Redis change (after a config
+    reload); a bad update is logged and the current exporters are kept."""
     global _trace_exporters, _metric_exporters, _log_exporters, _last_destinations_raw
     if _redis is None:
         logger.error("Cannot reload OTel destinations before Redis is initialized.")
@@ -911,6 +916,8 @@ def _log_send_pending():
 
 
 def main():
+    """Run the OTel exporter until stopped: send queued telemetry to every destination,
+    or drop it when none are configured."""
     global \
         _trace_exporters, \
         _metric_exporters, \

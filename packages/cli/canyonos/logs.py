@@ -10,6 +10,7 @@ from canyonos.init import GC_CONTAINER_NAME, docker_env
 
 
 def run_logs():
+    """Run `canyonos logs`: stream the deploy's Global Controller logs until Ctrl-C."""
     state = require_state()
     if state is None:
         raise RuntimeError("No Global Controller container is available for logs.")

@@ -55,7 +55,7 @@ allowed-unresolved-imports = [
     "log_entry",
     "log_handler",
     "log_convert",
-    "llm_proxy",
+    "llm_gateway",
     "local_controler_pb2",
     "local_controler_pb2_grpc",
     "local_controller_frontend",

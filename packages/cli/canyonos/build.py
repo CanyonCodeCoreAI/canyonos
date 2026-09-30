@@ -103,12 +103,12 @@ AGENTS = {
 }
 
 
-def prompt_agent():
+def _prompt_agent():
     options = [(key, spec["label"]) for key, spec in AGENTS.items()]
     return select_menu(options, title="Which coding agent do you want to build on?")
 
 
-def prompt_scope(agent):
+def _prompt_scope(agent):
     dirs = AGENTS[agent]["skill_dirs"]
     options = [
         ("local", f"This project only ({dirs['local']})"),
@@ -223,7 +223,7 @@ FETCH_STRATEGIES = (
 )
 
 
-def install_skill(dest, source=SKILL_SOURCE):
+def _install_skill(dest, source=SKILL_SOURCE):
     """Install the skill into `dest` from `source` -- an existing directory to
     copy, otherwise a git ref to fetch. Returns True on success."""
     # `isdir` alone would read the production ref as a path in any project that
@@ -254,7 +254,7 @@ def install_skill(dest, source=SKILL_SOURCE):
     return False
 
 
-def launch_agent(agent: str, prompt: str, unattended: bool) -> int | None:
+def _launch_agent(agent: str, prompt: str, unattended: bool) -> int | None:
     """Run the agent over `prompt`. Returns its exit status, or None if
     there was no agent to run.
 
@@ -279,7 +279,7 @@ def launch_agent(agent: str, prompt: str, unattended: bool) -> int | None:
     return subprocess.run(argv, check=False).returncode
 
 
-def report_port() -> bool:
+def _report_port() -> bool:
     """Say whether the port landed, and answer True only when it did.
 
     The verdict is the skill's own step 4 -- `canyonos validate` exiting 0 over
@@ -326,13 +326,13 @@ def run_build(
         return False
 
     if agent is None:
-        agent = DEFAULT_AGENT if yes else prompt_agent()
+        agent = DEFAULT_AGENT if yes else _prompt_agent()
         if agent is None:
             ui.say("Cancelled.")
             return False
 
     if scope is None:
-        scope = DEFAULT_SCOPE if yes else prompt_scope(agent)
+        scope = DEFAULT_SCOPE if yes else _prompt_scope(agent)
         if scope is None:
             ui.say("Cancelled.")
             return False
@@ -340,14 +340,14 @@ def run_build(
     spec = AGENTS[agent]
     dest = spec["skill_dirs"][scope]
     ui.say(f"Installing CanyonOS skill for {spec['label']} into {dest}...")
-    if not install_skill(dest):
+    if not _install_skill(dest):
         return False
 
     ui.say(f"Launching {spec['label']}...")
-    status = launch_agent(agent, BUILD_PROMPT, unattended=yes)
+    status = _launch_agent(agent, BUILD_PROMPT, unattended=yes)
     if status is None:
         return False
     if status != 0:
         ui.fail(f"Port incomplete: {spec['label']} exited with status {status}.")
         return False
-    return report_port()
+    return _report_port()

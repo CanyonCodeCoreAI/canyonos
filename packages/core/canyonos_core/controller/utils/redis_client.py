@@ -1,3 +1,5 @@
+"""Redis client used across the runtime: wraps redis-py and returns decoded strings."""
+
 import socket
 
 import redis

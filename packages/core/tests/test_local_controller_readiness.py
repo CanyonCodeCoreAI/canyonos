@@ -48,7 +48,7 @@ def _build_controller(redis, publish_ready=False):
             return_value=redis,
         ),
         patch("canyonos_core.controller.local_controller.threading.Thread"),
-        patch.object(LocalController, "_start_llm_proxy", return_value=None),
+        patch.object(LocalController, "_start_llm_gateway", return_value=None),
         patch.object(LocalController, "_load_agent", return_value=None),
     ):
         return LocalController(port=50051, publish_ready=publish_ready)

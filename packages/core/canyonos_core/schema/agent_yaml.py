@@ -69,17 +69,23 @@ _RETURNS_KEYS = frozenset({"type"})
 
 @dataclass(frozen=True)
 class ArgumentDecl:
+    """One argument of a function declared in an agent's YAML."""
+
     name: str
     type: str | None = None
 
 
 @dataclass(frozen=True)
 class ReturnsDecl:
+    """The optional return type of a function declared in an agent's YAML."""
+
     type: str | None = None
 
 
 @dataclass(frozen=True)
 class FunctionDecl:
+    """One function declared in an agent's YAML; becomes a method on its stub."""
+
     name: str
     description: str = ""
     arguments: tuple = ()
@@ -88,12 +94,14 @@ class FunctionDecl:
 
 @dataclass(frozen=True)
 class AgentDeclaration:
+    """A parsed agent YAML file: the agent's name and the functions it exposes."""
+
     name: str
     functions: tuple = ()
     path: str = ""
 
 
-def is_builtin_annotation(type_name):
+def _is_builtin_annotation(type_name):
     """True when `type_name` evaluates with nothing imported."""
     try:
         tree = ast.parse(type_name, mode="eval")
@@ -143,6 +151,7 @@ def _identifier(collector, node, key, prefix, required=False, reserved=()):
 
 
 def _returns(collector, node, prefix):
+    """Parse a function's `returns` block, recording violations if malformed."""
     if node.get("returns") is None:
         return None
     block = node["returns"]
@@ -161,6 +170,8 @@ def _returns(collector, node, prefix):
 
 
 def _arguments(collector, node, prefix):
+    """Parse a function's `arguments`, recording violations for duplicate names and
+    types the generated stub can't use."""
     raw = node.get("arguments")
     if raw is None:
         return ()
@@ -203,7 +214,7 @@ def _arguments(collector, node, prefix):
             )
             name = None
         type_name = _string(collector, entry, "type", argument_prefix)
-        if type_name is not None and not is_builtin_annotation(type_name):
+        if type_name is not None and not _is_builtin_annotation(type_name):
             collector.add(
                 entry,
                 "type",
@@ -220,6 +231,8 @@ def _arguments(collector, node, prefix):
 
 
 def _functions(collector, node):
+    """Parse the agent's `functions` list, recording violations and skipping any entry
+    that can't be read."""
     raw = node.get("functions")
     if raw is None:
         return ()

@@ -90,8 +90,8 @@ def test_user_jwt_secret_is_untouched_while_canyonos_secret_is_stable(project):
     Path.cwd().joinpath(".env").write_text(source_line)
     stack = dashboard_stack.DashboardStack(dashboard_stack._state_dir(), Path.cwd())
 
-    first_env, _ = dashboard_stack.prepare(stack)
-    second_env, _ = dashboard_stack.prepare(stack)
+    first_env, _ = dashboard_stack._prepare(stack)
+    second_env, _ = dashboard_stack._prepare(stack)
 
     env_contents = stack.env_path.read_text()
     assert env_contents.startswith(source_line)
@@ -139,7 +139,7 @@ def test_prepare_preserves_unrelated_env_lines_and_mode(project):
     )
     stack = dashboard_stack.DashboardStack(dashboard_stack._state_dir(), Path.cwd())
 
-    managed_env, message = dashboard_stack.prepare(stack)
+    managed_env, message = dashboard_stack._prepare(stack)
 
     assert message == "dashboard state prepared"
     env_lines = stack.env_path.read_text().splitlines()
@@ -167,7 +167,7 @@ def test_redaction_removes_urls_secrets_and_credentials():
     secret = "secret-value"
     logs = f"{database_url}\n{secret}\nredis://other:credential@cache:6379/0"
 
-    redacted = dashboard_stack.redact_logs(logs, secret)
+    redacted = dashboard_stack._redact_logs(logs, secret)
 
     assert (
         database_url not in redacted

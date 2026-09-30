@@ -1,3 +1,5 @@
+"""The Global Controller: deploys a project's agents, runs the reconciler and OTel
+exporter beside it, and tracks controller health in Redis."""
 # Global Controller
 # Daemon process that maintains a routing table in Redis for multiple local controllers.
 # Periodically polls Redis to check controller health and updates the routing table.
@@ -56,10 +58,9 @@ LOCAL_NETWORK = "canyonos-local"
 # silently running a stale image that need not hold the code this GC was built from.
 CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 
-# How long a replica may stay short of "healthy" before the deploy is called dead.
-# It has to cover the slowest honest cold start -- a container whose agent imports
-# a heavy adapter -- so the workflow launcher's own readiness deadline
-# (stub_generator.WORKFLOW_READY_TIMEOUT_SECONDS) must not undercut it.
+# How long a replica may stay short of "healthy" before the deploy is called dead. It
+# must cover the slowest honest cold start, so the workflow launcher's
+# stub_generator.WORKFLOW_READY_TIMEOUT_SECONDS must not undercut it.
 CONTROLLER_READY_TIMEOUT_SECONDS = 120
 
 # How much of a failed container's own log to show: enough for the traceback that
@@ -857,10 +858,9 @@ class GlobalController(ControllerContext):
         if not failed:
             return
 
-        # The cause exists only inside the container -- an adapter's
-        # ModuleNotFoundError, say -- and the teardown that follows removes it.
-        # After a terminal status the others were still starting when the wait
-        # ended, so their logs hold nothing yet; a timeout shows every laggard.
+        # The cause (e.g. an adapter's ModuleNotFoundError) exists only inside the
+        # container, which teardown removes. After a terminal status the others' logs
+        # hold nothing yet; a timeout shows every laggard.
         for instance, status in terminal or pending:
             if instance["agent_name"] in failed:
                 self._dump_container_log(instance, status)
@@ -1089,10 +1089,9 @@ class GlobalController(ControllerContext):
         try:
             metrics = node_redis.hgetall(metrics_key)
             if metrics:
-                # New OTel path: just poll the instance's hash and persist it verbatim --
-                # no per-metric logic here (counter interpretation, rates, etc. all live in
-                # the exporter's metric_convert). Counters are cumulative and never reset,
-                # so the exporter can emit them as monotonic Sums.
+                # Persist the instance's hash verbatim; all per-metric logic lives in
+                # metric_convert. Counters are cumulative and never reset, so they
+                # export as monotonic Sums.
                 try:
                     otel_writer.metric_write_rows(
                         [
@@ -1162,7 +1161,7 @@ class GlobalController(ControllerContext):
                 e,
             )
 
-    def set_replicas(self, agent_name, count):
+    def _set_replicas(self, agent_name, count):
         """Change one agent's replica count without touching the others; the entry point for scaling."""
         if agent_name not in self.agent_specs:
             logger.warning("Cannot scale unknown agent %s", agent_name)
@@ -1183,9 +1182,9 @@ class GlobalController(ControllerContext):
                     spec.get("replicas"),
                 )
                 continue
-            self.set_replicas(spec["name"], count)
+            self._set_replicas(spec["name"], count)
 
-    def replace_replica(self, agent_name, replica_index):
+    def _replace_replica(self, agent_name, replica_index):
         """Destroy one replica; the desired count is unchanged, so the slot is refilled."""
         if agent_name not in self.agent_specs:
             logger.warning("Cannot replace an instance of unknown agent %s", agent_name)

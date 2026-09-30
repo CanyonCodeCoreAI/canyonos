@@ -28,26 +28,32 @@ def _emit(message, style, symbol=None):
 
 
 def say(message):
+    """Show a plain message in the terminal."""
     _emit(message, WHITE)
 
 
 def ok(message):
+    """Show a success message in the terminal, marked with a green ✓."""
     _emit(message, GREEN, "✓")
 
 
 def fail(message):
+    """Show an error message in the terminal, marked with a red ✗."""
     _emit(message, "bold red", "✗")
 
 
 def warn(message):
+    """Show a warning in the terminal, marked with a yellow !."""
     _emit(message, "yellow", "!")
 
 
 def hint(message):
+    """Show a dimmed hint in the terminal, such as the next command to run."""
     _emit(message, "dim")
 
 
 def blank():
+    """Show an empty line in the terminal."""
     console.print()
 
 
@@ -58,10 +64,12 @@ def gradient(text):
 
 
 def panel(renderable):
+    """Show a Rich panel or table in the terminal; hidden when `--json` output is on."""
     console.print(renderable)
 
 
 @contextmanager
 def status(message):
+    """Show a spinner and `message` in the terminal while the `with` block runs."""
     with console.status(message) as spinner:
         yield spinner

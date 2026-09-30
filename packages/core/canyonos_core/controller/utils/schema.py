@@ -51,10 +51,9 @@ _CREATE_TRACES_WAITING = """
 """
 
 
-# There are two types of metrics being taken: machine and agent metrics.
-# Machine-level metrics are a time series; the metric *values* live in a single JSON `metrics`
-# blob so new gauges can be added without an ALTER. The two types of metrics are split via the `kind` identifier
-# metric_convert branches on `kind` to build the right OTel resource + instruments.
+# Machine and agent metrics share one time-series table split by `kind`, which
+# metric_convert branches on. Values live in one JSON `metrics` blob so new gauges need
+# no ALTER.
 _CREATE_METRICS_WAITING = """
     CREATE TABLE IF NOT EXISTS metrics_waiting (
         sample_id TEXT PRIMARY KEY,

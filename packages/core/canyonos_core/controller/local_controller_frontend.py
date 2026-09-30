@@ -1,3 +1,5 @@
+"""The Local Controller's gRPC server: accepts Execute requests and results from other
+controllers and hands them to the Local Controller."""
 # Local Controller Frontend - gRPC Server
 # Accepts incoming Execute requests and pushes them into a Python queue for processing.
 

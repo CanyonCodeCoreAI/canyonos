@@ -31,12 +31,9 @@ DEFAULT_POLL_INTERVAL = 1.0
 # Sleep in small slices between polls so SIGTERM stays responsive.
 _SLEEP_SLICE_SECONDS = 0.5
 
-# The collector runs as a container with the host root bind-mounted at /host (see
-# GlobalController._launch_metrics_collectors' `-v /:/host:ro`), so path-based disk usage
-# is read from there to reflect the real machine rather than the container overlay fs.
-# Falls back to "/" when that mount isn't present (e.g. running the poller directly).
-# cpu/mem/net/disk-io counters come from host-global /proc via --pid=host/--network=host
-# and need no remap; only disk_usage does.
+# The collector container mounts the host root at /host, so disk usage reads the real
+# machine, not the overlay fs ("/" when run directly). Other counters come from
+# host-global /proc via --pid=host/--network=host and need no remap.
 HOST_ROOT = "/host" if os.path.isdir("/host") else "/"
 
 
@@ -57,7 +54,7 @@ class MachineMetricsPoller:
         if psutil is not None:
             psutil.cpu_percent(interval=None)
 
-    def collect(self):
+    def _collect(self):
         """Snapshot this machine's metrics.
 
         This process is one-per-machine, so it only reports machine-level signals plus
@@ -112,6 +109,7 @@ class MachineMetricsPoller:
         }
 
     def _disk(self):
+        """Return the host's disk metrics, ready to store in Redis."""
         usage = psutil.disk_usage(HOST_ROOT)
         fields = {
             "disk_percent": str(usage.percent),
@@ -196,13 +194,14 @@ class MachineMetricsPoller:
         )
 
     def _write_once(self):
-        self.redis.hset_multiple(self.metrics_key, self.collect())
+        self.redis.hset_multiple(self.metrics_key, self._collect())
 
     def stop(self, *_):
         """Signal the run loop to exit (SIGTERM/SIGINT handler)."""
         self._running = False
 
     def run(self):
+        """Write this machine's metrics to Redis every interval until stopped."""
         if psutil is None:
             logger.error("psutil is unavailable; machine metrics poller cannot run.")
             return
@@ -234,6 +233,8 @@ def _metrics_key_from_env():
 
 
 def main():
+    """Start recording this machine's resource usage to Redis every few seconds until
+    stopped. The Global Controller runs one on each host."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

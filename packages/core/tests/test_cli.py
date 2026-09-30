@@ -43,13 +43,13 @@ class CliDeployTests(unittest.TestCase):
             patch("canyonos_core.cli.os.path.isfile", return_value=True),
             patch("canyonos_core.cli._load_config", return_value=config),
             patch("canyonos_core.cli.resolve_env_file", return_value=None),
-            patch("canyonos_core.cli.validate_or_exit"),
+            patch("canyonos_core.cli._validate_or_exit"),
             patch.dict(
                 sys.modules,
                 {"canyonos_core.controller.global_controller": controller_module},
             ),
         ):
-            cli.cmd_deploy(args)
+            cli._cmd_deploy(args)
 
         preflight.assert_not_called()
         ensure_grpc.assert_called_once_with(os.getcwd())
@@ -78,13 +78,13 @@ class CliDeployTests(unittest.TestCase):
             patch("canyonos_core.cli.os.path.isfile", return_value=True),
             patch("canyonos_core.cli._load_config", return_value=config),
             patch("canyonos_core.cli.resolve_env_file", return_value=None),
-            patch("canyonos_core.cli.validate_or_exit"),
+            patch("canyonos_core.cli._validate_or_exit"),
             patch.dict(
                 sys.modules,
                 {"canyonos_core.controller.global_controller": controller_module},
             ),
         ):
-            cli.cmd_deploy(args)
+            cli._cmd_deploy(args)
 
         ensure_grpc.assert_called_once_with(os.getcwd())
         preflight.assert_called_once_with(config, os.getcwd())
@@ -115,7 +115,7 @@ class CliDeployTests(unittest.TestCase):
             patch("canyonos_core.cli.os.path.isfile", return_value=True),
             patch("canyonos_core.cli._load_config", return_value=config),
             patch("canyonos_core.cli.resolve_env_file", return_value=None),
-            patch("canyonos_core.cli.validate_or_exit"),
+            patch("canyonos_core.cli._validate_or_exit"),
             patch.dict(
                 sys.modules,
                 {"canyonos_core.controller.global_controller": controller_module},
@@ -123,7 +123,7 @@ class CliDeployTests(unittest.TestCase):
             self.assertLogs("canyonos_core", level="CRITICAL") as logs,
             self.assertRaises(SystemExit) as exit_info,
         ):
-            cli.cmd_deploy(args)
+            cli._cmd_deploy(args)
 
         self.assertEqual(exit_info.exception.code, 1)
         self.assertIn("Broken 0/1", "\n".join(logs.output))
@@ -146,7 +146,7 @@ class CliDeployTests(unittest.TestCase):
             patch("canyonos_core.cli.os.path.isfile", return_value=True),
             patch("canyonos_core.cli._load_config", return_value={"agents": []}),
             patch("canyonos_core.cli.resolve_env_file", return_value=None),
-            patch("canyonos_core.cli.validate_or_exit"),
+            patch("canyonos_core.cli._validate_or_exit"),
             patch.dict(
                 sys.modules,
                 {"canyonos_core.controller.global_controller": controller_module},
@@ -156,7 +156,7 @@ class CliDeployTests(unittest.TestCase):
             cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                cli.cmd_deploy(args)
+                cli._cmd_deploy(args)
             finally:
                 os.chdir(cwd)
 
@@ -203,7 +203,7 @@ class CliDeployTests(unittest.TestCase):
                 try:
                     with self.assertLogs("canyonos_core", level="ERROR") as log:
                         with self.assertRaises(SystemExit) as raised:
-                            cli.cmd_deploy(SimpleNamespace(config=str(config_path)))
+                            cli._cmd_deploy(SimpleNamespace(config=str(config_path)))
                 finally:
                     os.chdir(cwd)
 
@@ -884,7 +884,7 @@ class CliCleanTests(unittest.TestCase):
             cwd = os.getcwd()
             os.chdir(project_dir)
             try:
-                cli.cmd_clean(SimpleNamespace())
+                cli._cmd_clean(SimpleNamespace())
             finally:
                 os.chdir(cwd)
 
@@ -899,7 +899,7 @@ if __name__ == "__main__":
 class ValidateOrExitTests(unittest.TestCase):
     def test_the_manifest_is_parsed_once(self):
         from canyonos_core import schema
-        from canyonos_core.cli import validate_or_exit
+        from canyonos_core.cli import _validate_or_exit
 
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest_path = os.path.join(tmpdir, "global_controller.yaml")
@@ -911,7 +911,7 @@ class ValidateOrExitTests(unittest.TestCase):
             with patch.object(
                 schema, "load_manifest", wraps=schema.load_manifest
             ) as load_manifest:
-                manifest = validate_or_exit(manifest_path, tmpdir)
+                manifest = _validate_or_exit(manifest_path, tmpdir)
 
         self.assertEqual(load_manifest.call_count, 1)
         self.assertEqual(manifest.agents[0].name, "Workflow")

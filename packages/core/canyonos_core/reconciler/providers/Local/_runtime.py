@@ -18,8 +18,8 @@ from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
     transfer_image,
 )
-from canyonos_core.reconciler.providers.shared_utils.llm_proxy_env import (
-    llm_proxy_docker_env_args,
+from canyonos_core.reconciler.providers.shared_utils.llm_gateway_env import (
+    llm_gateway_docker_env_args,
 )
 from canyonos_core.controller.utils.port_utils import is_port_conflict
 
@@ -58,6 +58,7 @@ def _port_bound(port):
 
 
 def validate_config():
+    """Check `global_controller.yaml` for settings this provider needs; it has none."""
     return None
 
 
@@ -72,6 +73,7 @@ def _port_check(host, port):
 
 
 def provision_instance(spec, replica_index, next_host_port):
+    """Choose where a new local replica runs and its name, without starting it."""
     host = spec.get("host", DEFAULT_HOST)
     host_port = int(spec.get("host_port", spec.get("port", next_host_port(host))))
     agent_name = spec["name"]
@@ -91,6 +93,8 @@ def provision_instance(spec, replica_index, next_host_port):
 
 
 def bootstrap_instance(provisioned, spec, replica_index, agent_id):
+    """Start a local replica's Docker container (replacing a leftover one with the same
+    name) and return its instance record."""
     agent_name = spec["name"]
     resources = spec.get("resources", {})
     ctrl_type = spec.get("type", "agent")
@@ -167,19 +171,15 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             f"CANYONOS_REDIS_PORT={redis_port}",
             "-e",
             f"CANYONOS_POLL_INTERVAL={_require_controller().config.get('poll_interval', 5)}",
-            # Route the agent's LLM SDK calls through the in-container proxy for telemetry.
-            *llm_proxy_docker_env_args(),
+            # Route the agent's LLM SDK calls through the in-container gateway for telemetry.
+            *llm_gateway_docker_env_args(),
             "-e",
             f"CANYONOS_LOGS_ENABLED={str(bool(_require_controller().config.get('logs', True))).lower()}",
         ]
 
-        # LLM stub is a `canyonos test`-only control. `canyonos test` injects
-        # CANYONOS_LLM_STUB_TEXT into THIS controller's (GC container) env; a
-        # normal `canyonos deploy` never does (run_container only sets it from
-        # canyonos test's extra_env). Set it explicitly on every agent -- to that
-        # value, or empty -- so it ALWAYS wins over --env-file (docker: -e beats
-        # --env-file). A user's .env can therefore neither enable the stub nor
-        # change it; it is reachable only through `canyonos test`.
+        # The LLM stub is `canyonos test`-only. Set it on every agent (to the GC's
+        # value, or empty) so it beats --env-file: a user's .env can neither enable nor
+        # change it.
         cmd.extend(
             [
                 "-e",
@@ -218,10 +218,8 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         if result.returncode == 0:
             break
         if is_port_conflict(result.stderr):
-            # `docker run` leaves a `Created`-but-never-started container behind
-            # under this name when the port bind fails. Remove it before
-            # retrying with a new port, or the retry hits a name conflict
-            # instead of the port conflict we're trying to work around.
+            # A failed port bind leaves a `Created` container under this name; remove it
+            # so the retry doesn't hit a name conflict instead of the port conflict.
             _require_controller()._run_cmd(
                 ["docker", "rm", "-f", runtime_id], host, user
             )
@@ -280,6 +278,8 @@ def _clear_stale_status(host, endpoint, runtime_id):
 
 
 def terminate_instance(instance):
+    """Remove a local replica's Docker container; a container that is already gone is
+    not an error."""
     runtime_id = instance.get("runtime_id")
     if not runtime_id:
         return

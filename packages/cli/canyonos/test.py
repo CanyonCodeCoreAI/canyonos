@@ -40,7 +40,7 @@ from canyonos.verify import verify_runtime
 
 DEFAULT_QUERY = "hello"
 # `canyonos test` uses real LLM API calls by default.
-# Pass --stub-llm to stub the in-container LLM proxy instead.
+# Pass --stub-llm to stub the in-container LLM gateway instead.
 # Stubbed calls return this text; override it with --stub-text.
 DEFAULT_LLM_STUB = "test"
 READY_TIMEOUT = 60
@@ -122,6 +122,7 @@ def _query_route_and_body(config_path, query):
 
 
 def _send_query(host, port, route, body):
+    """POST the test query to the workflow and return the request ID it assigns."""
     url = f"http://{host}:{port}/{route}"
     data = json.dumps(body).encode()
     req = urllib.request.Request(
@@ -139,6 +140,8 @@ def _send_query(host, port, route, body):
 
 
 def _await_result(host, port, request_id, timeout):
+    """Poll the workflow for the request's result until it is done or errors, or return
+    `{"status": "timeout"}`."""
     url = f"http://{host}:{port}/status/{request_id}"
     deadline = time.time() + timeout
     with ui.status("Running query..."):
@@ -191,28 +194,33 @@ class _Run:
         ui.say(f"[{number}/{total}] {title}")
 
     def done(self, detail=None):
+        """Mark the current phase passed, with a short detail for the summary."""
         self.phases[-1].update(ok=True, detail=detail)
 
     def failed(self, detail):
+        """Record the error on the current phase."""
         if self.phases:
             self.phases[-1]["detail"] = detail
 
     def elapsed(self):
+        """Return seconds since the test started."""
         return round(time.monotonic() - self.started, 3)
 
 
 def _deploy_locally(run, config_path, api_port, llm_stub=None):
+    """Deploy the project locally for `canyonos test`, with LLM calls stubbed when
+    `llm_stub` is given, and wait until the workflow answers."""
     run.begin("deploy", 1, "Deploy locally")
     # When stubbing, hand the flag to the GC container; the local runtime
     # forwards it into every agent so their LLM calls are replaced with canned
-    # text (see canyonos_core/llm_proxy/stub.py).
+    # text (see canyonos_core/llm_gateway/stub.py).
     extra_env = {"CANYONOS_LLM_STUB_TEXT": llm_stub} if llm_stub else None
     if llm_stub:
         ui.say(f"LLM stub on: every model call returns {llm_stub!r} (no real LLM).")
 
     # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI, we do our
     # own HTTP readiness check below instead. serve=True still brings the
-    # dashboard's LLM proxy up, quietly, for code that calls it directly.
+    # dashboard's LLM gateway up, quietly, for code that calls it directly.
     state = run_deploy(
         config_path, serve=True, quiet=True, extra_env=extra_env, banner=False
     )
@@ -230,6 +238,8 @@ def _verify_runtime(run, config_path, gc_port):
 
 
 def _query(run, gc_port, api_port, config_path, timeout, number=3, total=3):
+    """Send the test query to the deployed workflow and store its result on the run;
+    raises if it errors or times out."""
     run.begin("query", number, "Query the workflow", total=total)
     targets = workflow_targets(gc_port, api_port)
     if not targets:
@@ -312,6 +322,7 @@ def _run_test(run, llm_stub=None, timeout=REQUEST_TIMEOUT):
 
 
 def _summary_body(run):
+    """Build the text of the `canyonos test` results panel: what ran, and the result."""
     body = Text()
     body.append("Input      ", "dim")
     body.append(run.query, WHITE)
@@ -339,6 +350,7 @@ def _summary_body(run):
 
 
 def _print_summary(run):
+    """Show the pass/fail results panel in the terminal when `canyonos test` ends."""
     passed = run.error is None
     ui.blank()
     ui.panel(
@@ -378,6 +390,8 @@ def _payload(run):
 
 
 def run_test(prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT):
+    """Run `canyonos test`: deploy the project, send one query, report the result, and
+    return the exit code. A failed deploy is left running for debugging."""
     run = _Run(prompt or DEFAULT_QUERY)
     ui.set_quiet(as_json)
 

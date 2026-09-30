@@ -1,5 +1,5 @@
 /**
- * Runs the dashboard on the host for the hot-reload loop in DEV.md: local Postgres and Mailpit
+ * Runs the dashboard on the host for the hot-reload loop: local Postgres and Mailpit
  * through Compose, then the API and Vite in watch mode. A variable set in the shell wins over each
  * default below.
  */

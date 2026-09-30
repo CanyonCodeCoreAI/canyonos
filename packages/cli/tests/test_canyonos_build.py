@@ -30,7 +30,7 @@ def skill_dir(tmp_path):
 def test_a_local_skill_directory_is_copied_into_place(skill_dir, tmp_path):
     dest = tmp_path / "skills" / "porting-to-canyonos"
 
-    assert build_cmd.install_skill(str(dest), str(skill_dir)) is True
+    assert build_cmd._install_skill(str(dest), str(skill_dir)) is True
     assert (dest / "SKILL.md").is_file()
     # Copied, not moved: the checkout it came from is still there.
     assert (skill_dir / "SKILL.md").is_file()
@@ -53,7 +53,7 @@ def test_a_failed_copy_is_an_install_failure_not_a_traceback(
 
     monkeypatch.setattr(build_cmd, "FETCH_STRATEGIES", (("git", never),))
 
-    assert build_cmd.install_skill(str(dest), str(skill_dir)) is False
+    assert build_cmd._install_skill(str(dest), str(skill_dir)) is False
     # Nothing was torn down on the way out.
     assert (dest / "SKILL.md").read_text() == "previous install\n"
 
@@ -75,15 +75,15 @@ def test_the_production_ref_is_never_read_as_a_directory(monkeypatch, tmp_path):
         lambda *_a, **_k: pytest.fail("the ref was read as a path"),
     )
 
-    assert build_cmd.install_skill(str(tmp_path / "dest"), build_cmd.SKILL_REF) is True
+    assert build_cmd._install_skill(str(tmp_path / "dest"), build_cmd.SKILL_REF) is True
     assert fetched == [build_cmd.SKILL_REF]
 
 
 @pytest.fixture
 def buildable(monkeypatch):
     """Everything run_build drives before the agent succeeds."""
-    monkeypatch.setattr(build_cmd, "install_skill", lambda *_a, **_k: True)
-    monkeypatch.setattr(build_cmd, "report_port", lambda: True)
+    monkeypatch.setattr(build_cmd, "_install_skill", lambda *_a, **_k: True)
+    monkeypatch.setattr(build_cmd, "_report_port", lambda: True)
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def _set_tty(monkeypatch, attached):
 def test_an_attended_launch_passes_no_unattended_flags(monkeypatch, agent_on_path):
     _set_tty(monkeypatch, True)
 
-    assert build_cmd.launch_agent("claude", "port it", unattended=False) == 0
+    assert build_cmd._launch_agent("claude", "port it", unattended=False) == 0
     assert agent_on_path[0] == ["claude", "port it"]
 
 
@@ -119,8 +119,8 @@ def test_codex_has_network_in_both_modes(monkeypatch, agent_on_path):
     _set_tty(monkeypatch, True)
     network = ["-c", "sandbox_workspace_write.network_access=true"]
 
-    build_cmd.launch_agent("codex", "port it", unattended=False)
-    build_cmd.launch_agent("codex", "port it", unattended=True)
+    build_cmd._launch_agent("codex", "port it", unattended=False)
+    build_cmd._launch_agent("codex", "port it", unattended=True)
 
     attended, unattended = agent_on_path
     assert attended == ["codex", *network, "port it"]
@@ -131,7 +131,7 @@ def test_codex_has_network_in_both_modes(monkeypatch, agent_on_path):
 def test_an_unattended_launch_keeps_its_flags_on_a_tty(monkeypatch, agent_on_path):
     _set_tty(monkeypatch, True)
 
-    build_cmd.launch_agent("claude", "port it", unattended=True)
+    build_cmd._launch_agent("claude", "port it", unattended=True)
 
     argv = agent_on_path[0]
     assert argv[1:-1] == build_cmd.AGENTS["claude"]["unattended"]
@@ -141,7 +141,7 @@ def test_an_unattended_launch_keeps_its_flags_on_a_tty(monkeypatch, agent_on_pat
 def test_a_launch_without_a_tty_is_unattended(monkeypatch, agent_on_path):
     _set_tty(monkeypatch, False)
 
-    build_cmd.launch_agent("claude", "port it", unattended=False)
+    build_cmd._launch_agent("claude", "port it", unattended=False)
 
     argv = agent_on_path[0]
     assert argv[1:-1] == build_cmd.AGENTS["claude"]["unattended"]
@@ -151,7 +151,7 @@ def test_a_launch_without_a_tty_is_unattended(monkeypatch, agent_on_path):
 def test_a_missing_agent_cli_reports_no_status(monkeypatch):
     monkeypatch.setattr(build_cmd.shutil, "which", lambda _cli: None)
 
-    assert build_cmd.launch_agent("claude", "port it", unattended=True) is None
+    assert build_cmd._launch_agent("claude", "port it", unattended=True) is None
 
 
 def test_yes_runs_the_agent_unattended(monkeypatch, buildable, agent_on_path):
@@ -162,10 +162,10 @@ def test_yes_runs_the_agent_unattended(monkeypatch, buildable, agent_on_path):
 
 
 def test_a_failed_agent_never_consults_an_earlier_port(monkeypatch, buildable):
-    monkeypatch.setattr(build_cmd, "launch_agent", lambda *_a, **_k: 1)
+    monkeypatch.setattr(build_cmd, "_launch_agent", lambda *_a, **_k: 1)
     monkeypatch.setattr(
         build_cmd,
-        "report_port",
+        "_report_port",
         lambda: pytest.fail("a dead session is no evidence about .car"),
     )
 
@@ -173,7 +173,7 @@ def test_a_failed_agent_never_consults_an_earlier_port(monkeypatch, buildable):
 
 
 def test_a_missing_agent_cli_fails_the_build(monkeypatch, buildable):
-    monkeypatch.setattr(build_cmd, "launch_agent", lambda *_a, **_k: None)
+    monkeypatch.setattr(build_cmd, "_launch_agent", lambda *_a, **_k: None)
 
     assert build_cmd.run_build(yes=True) is False
 
@@ -186,14 +186,14 @@ def test_a_port_with_no_car_fails(monkeypatch, tmp_path):
         lambda *_a, **_k: pytest.fail("nothing to validate without a .car"),
     )
 
-    assert build_cmd.report_port() is False
+    assert build_cmd._report_port() is False
 
 
 def test_a_port_is_validated_where_it_was_produced(monkeypatch, tmp_path):
     """The verdict comes from `canyonos validate` over `.car`, in this process.
 
     No file is looked for in the skill directory: the skill ships no validator
-    to shell out to, and report_port is not told where the skill landed.
+    to shell out to, and _report_port is not told where the skill landed.
     """
     monkeypatch.chdir(tmp_path)
     (tmp_path / build_cmd.CAR_DIR).mkdir()
@@ -202,7 +202,7 @@ def test_a_port_is_validated_where_it_was_produced(monkeypatch, tmp_path):
         build_cmd, "run_validate", lambda root: validated.append(root) or 0
     )
 
-    assert build_cmd.report_port() is True
+    assert build_cmd._report_port() is True
     assert validated == [build_cmd.CAR_DIR]
 
 
@@ -216,7 +216,7 @@ def test_a_port_takes_its_verdict_from_the_validator(
     (tmp_path / build_cmd.CAR_DIR).mkdir()
     monkeypatch.setattr(build_cmd, "run_validate", lambda _root: status)
 
-    assert build_cmd.report_port() is passed
+    assert build_cmd._report_port() is passed
 
 
 def _flat(capsys):
@@ -228,7 +228,7 @@ def test_a_port_with_findings_did_not_pass(monkeypatch, tmp_path, capsys):
     (tmp_path / build_cmd.CAR_DIR).mkdir()
     monkeypatch.setattr(build_cmd, "run_validate", lambda _root: 1)
 
-    assert build_cmd.report_port() is False
+    assert build_cmd._report_port() is False
     assert "did not pass validation" in _flat(capsys)
 
 
@@ -242,7 +242,7 @@ def test_a_port_nobody_could_check_is_unverified_not_failed(
     (tmp_path / build_cmd.CAR_DIR).mkdir()
     monkeypatch.setattr(build_cmd, "run_validate", lambda _root: UNCHECKED)
 
-    assert build_cmd.report_port() is False
+    assert build_cmd._report_port() is False
     out = _flat(capsys)
     assert "could not be validated" in out
     assert "did not pass" not in out

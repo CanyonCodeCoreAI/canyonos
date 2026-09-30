@@ -13,7 +13,7 @@ DESTINATION_KEYS = frozenset(
 )
 
 
-def normalize_protocol(protocol):
+def _normalize_protocol(protocol):
     """Protocols are matched in any casing."""
     return protocol.lower() if isinstance(protocol, str) else protocol
 
@@ -35,7 +35,7 @@ def destination_problems(destination):
         yield "name", "name must be a non-empty string"
 
     protocol = destination.get("protocol")
-    if normalize_protocol(protocol) not in SUPPORTED_PROTOCOLS:
+    if _normalize_protocol(protocol) not in SUPPORTED_PROTOCOLS:
         yield (
             "protocol",
             f"protocol must be one of {list(SUPPORTED_PROTOCOLS)}; got {protocol!r}",
@@ -80,7 +80,7 @@ def normalize_destination(destination):
     timeout = destination.get("timeout")
     return {
         "name": destination["name"].strip(),
-        "protocol": normalize_protocol(destination["protocol"]),
+        "protocol": _normalize_protocol(destination["protocol"]),
         "endpoint": destination["endpoint"].strip(),
         "headers": dict(headers) if headers is not None else None,
         "insecure": destination.get("insecure"),
@@ -89,4 +89,6 @@ def normalize_destination(destination):
 
 
 def duplicate_name_message(name):
+    """Return the error message for an OTel destination name used twice, shared by the
+    config checks and the exporter."""
     return f"destination names must be unique; duplicate {name!r}"

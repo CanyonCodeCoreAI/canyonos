@@ -1,3 +1,6 @@
+"""HTTP server that runs in the Global Controller container; the CLI calls it to start,
+stop, and check a deploy."""
+
 import os
 import signal
 import subprocess
@@ -30,11 +33,14 @@ def _gc_running():
 
 @app.route("/new-project", methods=["POST"])
 def new_project():
+    """Always returns 400: new projects are created locally with `canyonos new-app`."""
     return jsonify({"error": "new-project runs locally via the CLI"}), 400
 
 
 @app.route("/deploy", methods=["POST"])
 def deploy():
+    """Start building and deploying the project synced into `/workspace` in a background
+    process; 409 if a deploy is already running."""
     global _gc_process, _config_path
 
     data = request.get_json(force=True, silent=True) or {}
@@ -52,10 +58,9 @@ def deploy():
     if not os.path.isfile(full_path):
         return jsonify({"error": f"config file not found: {full_path}"}), 400
 
-    # `canyonos deploy` builds (stubs/protos/images) then launches the Global
-    # Controller. cwd is the workspace so build outputs land alongside the
-    # project files and the controller finds them. Build+deploy output streams
-    # to the container logs, which `canyonos deploy` tails.
+    # Build then launch the Global Controller, with cwd as the workspace so build
+    # outputs land beside the project files. Output streams to the container logs, which
+    # `canyonos deploy` tails.
     project_name = data.get("project_name", "")
     if not isinstance(project_name, str):
         return jsonify({"error": "project_name must be a string"}), 400
@@ -74,6 +79,7 @@ def deploy():
 
 @app.route("/clean", methods=["POST"])
 def clean():
+    """Stop the running deploy and wait for it to exit; 409 if none is running."""
     global _gc_process
 
     with _gc_lock:
@@ -104,6 +110,7 @@ def clean():
 
 @app.route("/status", methods=["GET"])
 def status():
+    """Report, as JSON, whether a deploy is running."""
     return jsonify({"running": _gc_running()}), 200
 
 

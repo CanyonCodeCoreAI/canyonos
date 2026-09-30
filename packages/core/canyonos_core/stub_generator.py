@@ -37,12 +37,12 @@ TESTED_MAJOR_VERSIONS = {
 # deploy.py serves the workflow's HTTP API from the workflow's own process.
 BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["flask>=2.3.3"]
 
-# The LLM proxy runs from its own venv, so these exact pins never meet the app's.
-# These requirements are not pinned to a specific version because LLM-proxy is completely managed by CanyonOS, with no user code interacting with the internals
-PROXY_REQUIREMENTS = ["flask==3.1.3", "requests==2.34.2", "redis==8.1.0"]
+# The LLM gateway runs from its own venv, so these exact pins never meet the app's.
+# These requirements are not pinned to a specific version because LLM-gateway is completely managed by CanyonOS, with no user code interacting with the internals
+GATEWAY_REQUIREMENTS = ["flask==3.1.3", "requests==2.34.2", "redis==8.1.0"]
 
-# Only images whose app can import boto3 can call Bedrock, so only they get the proxy's Bedrock route.
-PROXY_BEDROCK_REQUIREMENT = "boto3==1.43.91"
+# Only images whose app can import boto3 can call Bedrock, so only they get the gateway's Bedrock route.
+GATEWAY_BEDROCK_REQUIREMENT = "boto3==1.43.91"
 
 # Every *_pb2.py checks this floor at import, which no package metadata carries,
 # so it is forced past transitive bounds rather than left to the resolver.
@@ -53,10 +53,9 @@ PROTOBUF_FLOOR = Requirement(
 IMAGE_PYTHON_VERSION = "3.11"
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 
-# The shared runtime copied flat into the context root, as destination module
-# name -> its path inside this package. The copy lists below are built from
-# these, so a module the image ships is a module `canyonos validate` knows can
-# be collided with.
+# Shared runtime modules copied flat into the context root (name -> package path). The
+# copy lists below derive from these, so `canyonos validate` knows every module the
+# image ships can be collided with.
 _AGENT_FLAT_SOURCES = {
     "future.py": ("controller", "future.py"),
     "canyonos_context.py": ("controller", "canyonos_context.py"),
@@ -363,10 +362,8 @@ _KEY_ARMOR_SCAN_BYTES = 4096
 # name _SKIPPED_DIRS does not know.
 _LARGE_CONTEXT_BYTES = 100 * 1024 * 1024
 
-# Hidden paths every repo has. Held back like all hidden paths, but not worth
-# saying so on every build: a note that always fires is wallpaper, and it takes
-# the one that matters down with it. Guessing wrong here costs a line of output,
-# not a missing file -- which is why the guess lives here and not above.
+# Hidden paths every repo has: held back like all hidden paths, but not announced on
+# every build, since a note that always fires buries the one that matters.
 _UNREMARKABLE_HIDDEN = {
     ".git",
     ".gitignore",
@@ -550,14 +547,14 @@ def _stub_destination(stub_file, stub_entrypoints):
     return normalized
 
 
-def _copy_llm_proxy(output_dir, script_dir):
-    """Copy the canyonos_core.llm_proxy package into the build context as an importable
-    `canyonos_core` package so the in-container proxy can run via `python -m canyonos_core.llm_proxy`.
+def _copy_llm_gateway(output_dir, script_dir):
+    """Copy the canyonos_core.llm_gateway package into the build context as an importable
+    `canyonos_core` package so the in-container gateway can run via `python -m canyonos_core.llm_gateway`.
     Its cross-package imports (redis_client, canyonos_context) fall back to the flat
     copies already placed at the context root."""
     shutil.copytree(
-        os.path.join(script_dir, "llm_proxy"),
-        os.path.join(output_dir, "canyonos_core", "llm_proxy"),
+        os.path.join(script_dir, "llm_gateway"),
+        os.path.join(output_dir, "canyonos_core", "llm_gateway"),
         dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
@@ -682,7 +679,7 @@ def _tested_majors(base_requirements):
 
 
 def _dockerfile_install_steps(overrides, base_requirements, requirements):
-    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM proxy's own separate packages."""
+    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM gateway's own separate packages."""
     forced = " ".join(f"'{override}'" for override in overrides)
     asked_newer = {
         Requirement(requirement).name.lower()
@@ -698,9 +695,9 @@ RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/ove
  && printf '%s\\n' {caps} > /tmp/tested.txt \\
  && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
 RUN uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
-RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-proxy \\
- && uv pip install --python /opt/canyonos-proxy/bin/python {" ".join(PROXY_REQUIREMENTS)} \\
- && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-proxy/bin/python {PROXY_BEDROCK_REQUIREMENT}; fi
+RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-gateway \\
+ && uv pip install --python /opt/canyonos-gateway/bin/python {" ".join(GATEWAY_REQUIREMENTS)} \\
+ && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
 """
 
 
@@ -777,7 +774,7 @@ def generate_docker(
                 files_to_copy.append((os.path.join(grpc_stubs_dir, fname), fname))
 
     _copy_files(output_dir, files_to_copy)
-    _copy_llm_proxy(output_dir, script_dir)
+    _copy_llm_gateway(output_dir, script_dir)
 
     # Copy the real agent entrypoint to the context root (after _copy_files so it
     # wins over any swept copy of the same file from the project directory).
@@ -894,7 +891,7 @@ def generate_workflow_docker(
                 files_to_copy.append((os.path.join(grpc_stubs_dir, fname), fname))
 
     _copy_files(output_dir, files_to_copy)
-    _copy_llm_proxy(output_dir, script_dir)
+    _copy_llm_gateway(output_dir, script_dir)
 
     # Copy the real workflow entrypoint to the context root.
     shutil.copy2(

@@ -11,11 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessSupervisor:
+    """Runs the Global Controller's background processes and restarts any that exit."""
+
     def __init__(self):
         self._specs = {}  # name -> (argv, env) tuple
         self._procs = {}  # name -> subprocess.Popen
 
     def is_registered(self, name):
+        """Return True if a process with this name is already registered."""
         return name in self._specs
 
     def register(self, name, argv, env=None):
@@ -26,6 +29,7 @@ class ProcessSupervisor:
         self._specs[name] = (argv, env)
 
     def start_all(self):
+        """Start every registered process."""
         for name, (argv, env) in self._specs.items():
             self._start(name, argv, env)
 

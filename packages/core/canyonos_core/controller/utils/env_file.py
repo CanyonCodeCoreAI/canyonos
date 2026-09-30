@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SECRETS_FILE = "/var/run/canyonos/secrets.env"
 
 
-def platform_secrets_file():
+def _platform_secrets_file():
     """
     The path a managed deployment leaves the user's secrets at.
 
@@ -33,7 +33,7 @@ def resolve_env_file(config, base_dir=None):
     """
     Return the absolute path of the env file to hand containers, or None.
 
-    A file at `platform_secrets_file()` wins over `env_file`. A convention
+    A file at `_platform_secrets_file()` wins over `env_file`. A convention
     beating an explicit setting only makes sense because the two describe
     different machines: `env_file: .env` describes the user's own, and
     carrying that config to a managed deployment does not make the `.env`
@@ -46,7 +46,7 @@ def resolve_env_file(config, base_dir=None):
         ValueError: the file is configured but unusable. Deploy should fail
             here rather than start a fleet of agents with no API keys.
     """
-    platform_path = platform_secrets_file()
+    platform_path = _platform_secrets_file()
     if os.path.isfile(platform_path):
         if not os.access(platform_path, os.R_OK):
             raise ValueError(f"platform secrets file is not readable: {platform_path}")

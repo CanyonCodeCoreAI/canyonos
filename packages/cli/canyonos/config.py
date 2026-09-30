@@ -43,6 +43,8 @@ def _fmt(value):
 
 
 def _agents_table(agents):
+    """Build a read-only table of agent settings, shown in the terminal when you choose
+    View in `canyonos config`."""
     table = Table(
         title="Agents", border_style=BORDER, header_style=HEADER, title_style=HEADER
     )
@@ -78,6 +80,8 @@ def _agents_table(agents):
 
 
 def _otel_table(otel):
+    """Build a read-only table of OTel destinations, shown in the terminal when you
+    choose View in `canyonos config`."""
     destinations = (otel or {}).get("destinations") or []
     table = Table(
         title="OTel Destinations",
@@ -101,7 +105,8 @@ def _otel_table(otel):
 
 
 def _kv_table(title, data):
-    """A two-column Setting/Value table from a flat-ish dict (or single value)."""
+    """Build a Setting/Value table for one section of the config, shown in the terminal
+    when you choose View in `canyonos config`. A single value gets a one-row table."""
     table = Table(
         title=title, border_style=BORDER, header_style=HEADER, title_style=HEADER
     )
@@ -117,7 +122,8 @@ def _kv_table(title, data):
 
 
 def _require_config(config_path):
-    """Resolved config path, or None after reporting that it's missing."""
+    """Find the config file `canyonos config` opens: the given path, or the project's
+    default. If it doesn't exist, show an error in the terminal and return None."""
     config_path = config_path or default_config_path()
     if not os.path.isfile(config_path):
         ui.fail(f"Config file not found: {config_path}")
@@ -125,7 +131,7 @@ def _require_config(config_path):
     return config_path
 
 
-def run_view_config(config_path=None):
+def _run_view_config(config_path=None):
     config_path = _require_config(config_path)
     if config_path is None:
         return
@@ -212,6 +218,8 @@ class _Screen:
         self.status = ""
 
     def render(self, breadcrumb):
+        """Clear the terminal and redraw the header of the Change screen in `canyonos
+        config`: where you are in the config, plus any status message."""
         self.console.clear()
         path = (
             " \u203a ".join(str(part) for part in breadcrumb)
@@ -322,7 +330,7 @@ def _navigate(screen, node, breadcrumb):
             # backed out of the child: stay on this menu
 
 
-def run_change_config(config_path=None):
+def _run_change_config(config_path=None):
     config_path = _require_config(config_path)
     if config_path is None:
         return
@@ -360,12 +368,13 @@ def run_change_config(config_path=None):
 
 
 def run_config():
+    """Run `canyonos config`: ask whether to view or change the config, then open it."""
     choice = select_menu(OPTIONS, title="What do you want to do?")
     if choice is None:
         ui.say("Cancelled.")
         return
 
     if choice == "view":
-        run_view_config()
+        _run_view_config()
     elif choice == "change":
-        run_change_config()
+        _run_change_config()

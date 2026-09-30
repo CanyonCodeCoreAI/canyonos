@@ -57,7 +57,7 @@ def run_performance_test(concurrent_users, total_requests):
         max_workers=concurrent_users
     ) as executor:
         futures = [
-            executor.submit(dispatch_request, session, base_url, {"ticker": f"TICK{i}"})
+            executor.submit(dispatch_request, session, base_url, {"query": f"User{i}"})
             for i in range(total_requests)
         ]
         for future in concurrent.futures.as_completed(futures):

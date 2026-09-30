@@ -11,7 +11,7 @@ _token_cost_by_model_id = None
 _hourly_cost_by_instance_type = None
 
 
-def load_pricing_data(prices_path=DEFAULT_PRICES_PATH):
+def _load_pricing_data(prices_path=DEFAULT_PRICES_PATH):
     """Read llm_prices.yaml and return (token costs by model id, hourly costs by instance type)."""
     with open(prices_path, "r") as f:
         prices = yaml.safe_load(f) or {}
@@ -30,7 +30,7 @@ def load_pricing_data(prices_path=DEFAULT_PRICES_PATH):
 def _load_cache():
     global _token_cost_by_model_id, _hourly_cost_by_instance_type
     if _token_cost_by_model_id is None or _hourly_cost_by_instance_type is None:
-        _token_cost_by_model_id, _hourly_cost_by_instance_type = load_pricing_data()
+        _token_cost_by_model_id, _hourly_cost_by_instance_type = _load_pricing_data()
     return _token_cost_by_model_id, _hourly_cost_by_instance_type
 
 

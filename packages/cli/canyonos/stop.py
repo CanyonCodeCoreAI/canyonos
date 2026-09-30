@@ -9,6 +9,9 @@ from canyonos.gc import GCError, post_clean, require_state
 
 
 def run_stop():
+    """Run `canyonos stop`: shut down the running agents and the dashboard, but leave
+    CanyonOS's own container and files in place for the next deploy. `canyonos quit`
+    removes those too."""
     state = require_state()
     if state is None:
         return
