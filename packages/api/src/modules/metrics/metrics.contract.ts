@@ -21,4 +21,5 @@ export const RUNTIME_ATTRIBUTES = {
   TOKEN_COST: 'token_cost',
   SERVER_COST: 'server_cost',
   ERROR_COUNT: 'error_count',
+  CPU_PERCENT: 'cpu',
 } as const;

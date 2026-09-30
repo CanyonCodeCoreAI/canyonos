@@ -21,6 +21,38 @@ export function ProjectDeployBreadcrumbs() {
   );
 }
 
+function ProjectSectionBreadcrumbs({ id, label }: { readonly id: string; readonly label: string }) {
+  const project = project_route.useLoaderData();
+  return (
+    <BreadcrumbTrail
+      segments={[
+        { id: 'project', label: project?.name ?? 'Project' },
+        { id, label },
+      ]}
+    />
+  );
+}
+
+export function ProjectMonitoringBreadcrumbs() {
+  return <ProjectSectionBreadcrumbs id="monitoring" label="Traces" />;
+}
+
+export function ProjectLogsBreadcrumbs() {
+  return <ProjectSectionBreadcrumbs id="logs" label="Logs" />;
+}
+
+export function ProjectErrorsBreadcrumbs() {
+  return <ProjectSectionBreadcrumbs id="errors" label="Errors" />;
+}
+
+export function ProjectMetricsBreadcrumbs() {
+  return <ProjectSectionBreadcrumbs id="metrics" label="Metrics" />;
+}
+
+export function ProjectLlmBreadcrumbs() {
+  return <ProjectSectionBreadcrumbs id="llm" label="LLM" />;
+}
+
 export function ProjectDeploymentConfigBreadcrumbs() {
   const project = project_route.useLoaderData();
   return (

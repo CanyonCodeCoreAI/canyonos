@@ -17,6 +17,11 @@ import { Route as BrandOnboardingRouteImport } from './routes/_brand/onboarding'
 import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authenticated/projects/index'
 import { Route as AuthenticatedProjectsProject_idRouteImport } from './routes/_authenticated/projects/$project_id'
 import { Route as AuthenticatedProjectsProject_idIndexRouteImport } from './routes/_authenticated/projects/$project_id/index'
+import { Route as AuthenticatedProjectsProject_idErrorsRouteImport } from './routes/_authenticated/projects/$project_id/errors'
+import { Route as AuthenticatedProjectsProject_idLlmRouteImport } from './routes/_authenticated/projects/$project_id/llm'
+import { Route as AuthenticatedProjectsProject_idLogsRouteImport } from './routes/_authenticated/projects/$project_id/logs'
+import { Route as AuthenticatedProjectsProject_idMetricsRouteImport } from './routes/_authenticated/projects/$project_id/metrics'
+import { Route as AuthenticatedProjectsProject_idMonitoringRouteImport } from './routes/_authenticated/projects/$project_id/monitoring'
 import { Route as AuthenticatedProjectsProject_idPromptsRouteImport } from './routes/_authenticated/projects/$project_id/prompts'
 import { Route as AuthenticatedProjectsProject_idScalingRouteImport } from './routes/_authenticated/projects/$project_id/scaling'
 
@@ -61,6 +66,36 @@ const AuthenticatedProjectsProject_idIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedProjectsProject_idRoute,
   } as any)
+const AuthenticatedProjectsProject_idErrorsRoute =
+  AuthenticatedProjectsProject_idErrorsRouteImport.update({
+    id: '/errors',
+    path: '/errors',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
+const AuthenticatedProjectsProject_idLlmRoute =
+  AuthenticatedProjectsProject_idLlmRouteImport.update({
+    id: '/llm',
+    path: '/llm',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
+const AuthenticatedProjectsProject_idLogsRoute =
+  AuthenticatedProjectsProject_idLogsRouteImport.update({
+    id: '/logs',
+    path: '/logs',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
+const AuthenticatedProjectsProject_idMetricsRoute =
+  AuthenticatedProjectsProject_idMetricsRouteImport.update({
+    id: '/metrics',
+    path: '/metrics',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
+const AuthenticatedProjectsProject_idMonitoringRoute =
+  AuthenticatedProjectsProject_idMonitoringRouteImport.update({
+    id: '/monitoring',
+    path: '/monitoring',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
 const AuthenticatedProjectsProject_idPromptsRoute =
   AuthenticatedProjectsProject_idPromptsRouteImport.update({
     id: '/prompts',
@@ -80,6 +115,11 @@ export interface FileRoutesByFullPath {
   '/onboarding': typeof BrandOnboardingRoute
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/projects/': typeof AuthenticatedProjectsIndexRoute
+  '/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
+  '/projects/$project_id/llm': typeof AuthenticatedProjectsProject_idLlmRoute
+  '/projects/$project_id/logs': typeof AuthenticatedProjectsProject_idLogsRoute
+  '/projects/$project_id/metrics': typeof AuthenticatedProjectsProject_idMetricsRoute
+  '/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
   '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
   '/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
@@ -89,6 +129,11 @@ export interface FileRoutesByTo {
   '/login': typeof BrandLoginRoute
   '/onboarding': typeof BrandOnboardingRoute
   '/projects': typeof AuthenticatedProjectsIndexRoute
+  '/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
+  '/projects/$project_id/llm': typeof AuthenticatedProjectsProject_idLlmRoute
+  '/projects/$project_id/logs': typeof AuthenticatedProjectsProject_idLogsRoute
+  '/projects/$project_id/metrics': typeof AuthenticatedProjectsProject_idMetricsRoute
+  '/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
   '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idIndexRoute
@@ -102,6 +147,11 @@ export interface FileRoutesById {
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
+  '/_authenticated/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
+  '/_authenticated/projects/$project_id/llm': typeof AuthenticatedProjectsProject_idLlmRoute
+  '/_authenticated/projects/$project_id/logs': typeof AuthenticatedProjectsProject_idLogsRoute
+  '/_authenticated/projects/$project_id/metrics': typeof AuthenticatedProjectsProject_idMetricsRoute
+  '/_authenticated/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
   '/_authenticated/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/_authenticated/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
   '/_authenticated/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
@@ -114,6 +164,11 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/projects/$project_id'
     | '/projects/'
+    | '/projects/$project_id/errors'
+    | '/projects/$project_id/llm'
+    | '/projects/$project_id/logs'
+    | '/projects/$project_id/metrics'
+    | '/projects/$project_id/monitoring'
     | '/projects/$project_id/prompts'
     | '/projects/$project_id/scaling'
     | '/projects/$project_id/'
@@ -123,6 +178,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/onboarding'
     | '/projects'
+    | '/projects/$project_id/errors'
+    | '/projects/$project_id/llm'
+    | '/projects/$project_id/logs'
+    | '/projects/$project_id/metrics'
+    | '/projects/$project_id/monitoring'
     | '/projects/$project_id/prompts'
     | '/projects/$project_id/scaling'
     | '/projects/$project_id'
@@ -135,6 +195,11 @@ export interface FileRouteTypes {
     | '/_authenticated/'
     | '/_authenticated/projects/$project_id'
     | '/_authenticated/projects/'
+    | '/_authenticated/projects/$project_id/errors'
+    | '/_authenticated/projects/$project_id/llm'
+    | '/_authenticated/projects/$project_id/logs'
+    | '/_authenticated/projects/$project_id/metrics'
+    | '/_authenticated/projects/$project_id/monitoring'
     | '/_authenticated/projects/$project_id/prompts'
     | '/_authenticated/projects/$project_id/scaling'
     | '/_authenticated/projects/$project_id/'
@@ -203,6 +268,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProject_idIndexRouteImport
       parentRoute: typeof AuthenticatedProjectsProject_idRoute
     }
+    '/_authenticated/projects/$project_id/errors': {
+      id: '/_authenticated/projects/$project_id/errors'
+      path: '/errors'
+      fullPath: '/projects/$project_id/errors'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idErrorsRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
+    '/_authenticated/projects/$project_id/llm': {
+      id: '/_authenticated/projects/$project_id/llm'
+      path: '/llm'
+      fullPath: '/projects/$project_id/llm'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idLlmRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
+    '/_authenticated/projects/$project_id/logs': {
+      id: '/_authenticated/projects/$project_id/logs'
+      path: '/logs'
+      fullPath: '/projects/$project_id/logs'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idLogsRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
+    '/_authenticated/projects/$project_id/metrics': {
+      id: '/_authenticated/projects/$project_id/metrics'
+      path: '/metrics'
+      fullPath: '/projects/$project_id/metrics'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idMetricsRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
+    '/_authenticated/projects/$project_id/monitoring': {
+      id: '/_authenticated/projects/$project_id/monitoring'
+      path: '/monitoring'
+      fullPath: '/projects/$project_id/monitoring'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idMonitoringRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
     '/_authenticated/projects/$project_id/prompts': {
       id: '/_authenticated/projects/$project_id/prompts'
       path: '/prompts'
@@ -221,6 +321,11 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedProjectsProject_idRouteChildren {
+  AuthenticatedProjectsProject_idErrorsRoute: typeof AuthenticatedProjectsProject_idErrorsRoute
+  AuthenticatedProjectsProject_idLlmRoute: typeof AuthenticatedProjectsProject_idLlmRoute
+  AuthenticatedProjectsProject_idLogsRoute: typeof AuthenticatedProjectsProject_idLogsRoute
+  AuthenticatedProjectsProject_idMetricsRoute: typeof AuthenticatedProjectsProject_idMetricsRoute
+  AuthenticatedProjectsProject_idMonitoringRoute: typeof AuthenticatedProjectsProject_idMonitoringRoute
   AuthenticatedProjectsProject_idPromptsRoute: typeof AuthenticatedProjectsProject_idPromptsRoute
   AuthenticatedProjectsProject_idScalingRoute: typeof AuthenticatedProjectsProject_idScalingRoute
   AuthenticatedProjectsProject_idIndexRoute: typeof AuthenticatedProjectsProject_idIndexRoute
@@ -228,6 +333,16 @@ interface AuthenticatedProjectsProject_idRouteChildren {
 
 const AuthenticatedProjectsProject_idRouteChildren: AuthenticatedProjectsProject_idRouteChildren =
   {
+    AuthenticatedProjectsProject_idErrorsRoute:
+      AuthenticatedProjectsProject_idErrorsRoute,
+    AuthenticatedProjectsProject_idLlmRoute:
+      AuthenticatedProjectsProject_idLlmRoute,
+    AuthenticatedProjectsProject_idLogsRoute:
+      AuthenticatedProjectsProject_idLogsRoute,
+    AuthenticatedProjectsProject_idMetricsRoute:
+      AuthenticatedProjectsProject_idMetricsRoute,
+    AuthenticatedProjectsProject_idMonitoringRoute:
+      AuthenticatedProjectsProject_idMonitoringRoute,
     AuthenticatedProjectsProject_idPromptsRoute:
       AuthenticatedProjectsProject_idPromptsRoute,
     AuthenticatedProjectsProject_idScalingRoute:

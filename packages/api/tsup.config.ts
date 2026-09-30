@@ -12,6 +12,7 @@ export default defineConfig((options) => ({
     projects: 'src/sdk/projects.ts',
     requests: 'src/sdk/requests.ts',
     metrics: 'src/sdk/metrics.ts',
+    monitoring: 'src/sdk/monitoring.ts',
     prompts: 'src/sdk/prompts.ts',
     scaling: 'src/sdk/scaling.ts',
   },

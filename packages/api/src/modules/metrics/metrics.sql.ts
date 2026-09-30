@@ -64,6 +64,9 @@ export const spanCacheHitRatio = (alias: string): string => {
     end)`;
 };
 
+export const spanCpuPercent = (alias: string): string =>
+  attrNumber(alias, RUNTIME_ATTRIBUTES.CPU_PERCENT);
+
 export const spanCost = (alias: string): string => attrNumber(alias, GEN_AI.USAGE_COST);
 
 export const spanTokenCost = (alias: string): string =>

@@ -1,15 +1,15 @@
 import * as React from 'react';
-import { Area, Bar, CartesianGrid, ComposedChart, XAxis, YAxis } from 'recharts';
+import { Area, Bar, CartesianGrid, ComposedChart, Label, Line, XAxis, YAxis } from 'recharts';
+import type { LabelProps } from 'recharts';
 
 import { cn } from '../../lib/utils';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '../../shadcn/chart';
 import type { ChartConfig } from '../../shadcn/chart';
 
-// A point carries one number per series plus its x position, so `series` selects which keys are
-// drawn. Single-series callers keep passing `{ index, value }`.
+// Null values are unmeasured buckets, so Recharts leaves gaps instead of inventing zeroes.
 export interface SeriesPoint {
   readonly index: number;
-  readonly [dataKey: string]: number;
+  readonly [dataKey: string]: number | null;
 }
 
 const SINGLE_SERIES = ['value'] as const;
@@ -34,6 +34,37 @@ const Y_AXIS_WIDTH = 56;
  */
 const BAR_TICK_ANGLE = -45;
 
+const AXIS_LABEL_SPACE = 22;
+
+const AXIS_LINE = { stroke: 'var(--border)', strokeWidth: 2 } as const;
+
+const AXIS_LABEL_STYLE = {
+  fontSize: 11,
+  fontWeight: 600,
+  fill: 'var(--foreground)',
+  textAnchor: 'middle',
+} as const;
+
+const Y_TITLE_INSET = 11;
+
+const renderYAxisTitle = (value: string) =>
+  function YAxisTitle({ viewBox }: LabelProps) {
+    const box = viewBox && 'height' in viewBox ? viewBox : undefined;
+    const x = (box?.x ?? 0) + Y_TITLE_INSET;
+    const y = (box?.y ?? 0) + (box?.height ?? 0) / 2;
+    return (
+      <text
+        x={x}
+        y={y}
+        transform={`rotate(-90, ${x}, ${y})`}
+        textAnchor="middle"
+        style={AXIS_LABEL_STYLE}
+      >
+        {value}
+      </text>
+    );
+  };
+
 /**
  * Room under the axis line for a tilted label to fall into. A 45° label drops by roughly 0.7× its
  * own width, so this is sized for the longest one a bucket axis carries — a two-date range.
@@ -49,14 +80,19 @@ export interface TimeseriesChartProps extends Omit<React.ComponentProps<'div'>, 
   /**
    * `area` reads as one continuous movement, at the cost of interpolating between two points.
    * `bar` keeps every bucket a separate column, so nothing is drawn that was not measured.
+   * `line` is the unstacked form: several series that share a scale but not a total.
    */
-  readonly mark?: 'area' | 'bar';
+  readonly mark?: 'area' | 'bar' | 'line';
   readonly axisFormatter?: (value: number) => string;
   readonly valueFormatter?: (value: number) => string;
   /** Renders x-axis ticks. Receives the point's `index`; omit to keep the axis hidden. */
   readonly xTickFormatter?: (index: number) => string;
   /** Tooltip heading for the hovered point. Omit to leave the tooltip unlabelled. */
   readonly labelFormatter?: (point: SeriesPoint) => string;
+  /** Ticks to skip between labels, or recharts' own thinning. Bars always label every bucket. */
+  readonly xTickInterval?: number | 'preserveEnd' | 'preserveStart';
+  readonly xAxisLabel?: string;
+  readonly yAxisLabel?: string;
 }
 
 function TimeseriesChart({
@@ -69,18 +105,25 @@ function TimeseriesChart({
   valueFormatter,
   xTickFormatter,
   labelFormatter,
+  xTickInterval,
+  xAxisLabel,
+  yAxisLabel,
   className,
   ...props
 }: TimeseriesChartProps) {
   const gradientId = React.useId().replace(/:/g, '');
-  const formatValue = valueFormatter ?? ((value: number) => value.toLocaleString());
-  const stacked = series.length > 1;
+  const format = valueFormatter ?? ((value: number) => value.toLocaleString());
+  const formatValue = (value: unknown) =>
+    value === null || value === undefined ? '—' : format(Number(value));
+  const lines = mark === 'line';
+  const multi = series.length > 1;
+  const stacked = multi && !lines;
   const bars = mark === 'bar';
 
   return (
     <ChartContainer config={config} className={cn('aspect-auto size-full', className)} {...props}>
       <ComposedChart data={data as SeriesPoint[]} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
-        {bars ? null : (
+        {bars || lines ? null : (
           <defs>
             {series.map((dataKey) => (
               <linearGradient
@@ -109,29 +152,35 @@ function TimeseriesChart({
         <YAxis
           domain={[0, maxValue]}
           tickLine={false}
-          axisLine={false}
-          width={bars ? Y_AXIS_WIDTH : 40}
+          axisLine={AXIS_LINE}
+          width={(bars ? Y_AXIS_WIDTH : 40) + (yAxisLabel ? AXIS_LABEL_SPACE : 0)}
           tickMargin={bars ? 6 : undefined}
           tickCount={4}
           tickFormatter={axisFormatter}
           tick={{ fontSize: 10 }}
-        />
+        >
+          {yAxisLabel ? <Label content={renderYAxisTitle(yAxisLabel)} /> : null}
+        </YAxis>
         {xTickFormatter ? (
           <XAxis
             dataKey="index"
             tickLine={false}
-            axisLine={false}
+            axisLine={AXIS_LINE}
             tickMargin={8}
             // A numeric interval draws every tick and ignores `minTickGap`; an area interpolates
             // between its points, so it keeps dropping labels that would crowd their neighbours.
-            interval={bars ? 0 : 'preserveEnd'}
+            interval={bars ? 0 : (xTickInterval ?? 'preserveEnd')}
             minTickGap={28}
             angle={bars ? BAR_TICK_ANGLE : 0}
             textAnchor={bars ? 'end' : 'middle'}
-            height={bars ? BAR_AXIS_HEIGHT : 24}
+            height={(bars ? BAR_AXIS_HEIGHT : 24) + (xAxisLabel ? AXIS_LABEL_SPACE : 0)}
             tickFormatter={(value) => xTickFormatter(Number(value))}
             tick={{ fontSize: 10 }}
-          />
+          >
+            {xAxisLabel ? (
+              <Label value={xAxisLabel} position="insideBottom" style={AXIS_LABEL_STYLE} />
+            ) : null}
+          </XAxis>
         ) : (
           <XAxis dataKey="index" hide />
         )}
@@ -148,18 +197,18 @@ function TimeseriesChart({
                   : undefined
               }
               formatter={(value, name) =>
-                stacked ? (
+                multi ? (
                   <div className="flex flex-1 items-center justify-between gap-3">
                     <span className="text-muted-foreground">
                       {config[String(name)]?.label ?? name}
                     </span>
                     <span className="text-foreground font-mono font-medium tabular-nums">
-                      {formatValue(Number(value))}
+                      {formatValue(value)}
                     </span>
                   </div>
                 ) : (
                   <span className="text-foreground font-mono font-medium tabular-nums">
-                    {formatValue(Number(value))}
+                    {formatValue(value)}
                   </span>
                 )
               }
@@ -167,7 +216,18 @@ function TimeseriesChart({
           }
         />
         {series.map((dataKey, index) =>
-          bars ? (
+          lines ? (
+            <Line
+              key={dataKey}
+              dataKey={dataKey}
+              type="monotone"
+              stroke={`var(--color-${dataKey})`}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 3.5 }}
+              connectNulls={false}
+            />
+          ) : bars ? (
             <Bar
               key={dataKey}
               dataKey={dataKey}

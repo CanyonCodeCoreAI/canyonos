@@ -1,11 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useRouterState } from '@tanstack/react-router';
 import {
+  ChartColumnIcon,
   ChevronRightIcon,
   FileTextIcon,
   FolderIcon,
+  GaugeIcon,
   LayoutDashboardIcon,
   ScalingIcon,
+  ScrollTextIcon,
+  SparklesIcon,
+  TriangleAlertIcon,
 } from 'lucide-react';
 import { useEffect, useReducer } from 'react';
 import type { LucideIcon } from 'lucide-react';
@@ -25,10 +30,6 @@ import {
 import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
 
 const PROJECT_COLORS = Object.values(PALETTE);
-
-function isPath(pathname: string, path: string): boolean {
-  return pathname === path || pathname === `${path}/`;
-}
 
 function projectColor(project_id: string): string {
   let total = 0;
@@ -62,8 +63,33 @@ function ChildQueryError({
 const ROUTE_ROW_CLASS =
   'hover:bg-foreground/[0.03] flex items-center gap-[0.4375rem] rounded-[0.4375rem] py-[0.3125rem] pr-2.5 transition-colors';
 
-// Manage names what the project dashboard is for — reading what is already running — rather than
-// naming its position in a list.
+const PROJECT_ROUTE_ROWS = [
+  { to: '/projects/$project_id/prompts', slug: 'prompts', label: 'Prompts', Icon: FileTextIcon },
+  { to: '/projects/$project_id/scaling', slug: 'scaling', label: 'Scaling', Icon: ScalingIcon },
+  {
+    to: '/projects/$project_id/monitoring',
+    slug: 'monitoring',
+    label: 'Traces',
+    Icon: GaugeIcon,
+  },
+  { to: '/projects/$project_id/logs', slug: 'logs', label: 'Logs', Icon: ScrollTextIcon },
+  {
+    to: '/projects/$project_id/errors',
+    slug: 'errors',
+    label: 'Errors',
+    Icon: TriangleAlertIcon,
+  },
+  {
+    to: '/projects/$project_id/metrics',
+    slug: 'metrics',
+    label: 'Metrics',
+    Icon: ChartColumnIcon,
+  },
+  { to: '/projects/$project_id/llm', slug: 'llm', label: 'LLM', Icon: SparklesIcon },
+] as const;
+
+type ProjectRoute = '/projects/$project_id' | (typeof PROJECT_ROUTE_ROWS)[number]['to'];
+
 function ProjectRouteRow({
   project_id,
   to,
@@ -73,10 +99,7 @@ function ProjectRouteRow({
   is_active,
 }: {
   readonly project_id: string;
-  readonly to:
-    | '/projects/$project_id'
-    | '/projects/$project_id/prompts'
-    | '/projects/$project_id/scaling';
+  readonly to: ProjectRoute;
   readonly label: string;
   readonly Icon: LucideIcon;
   readonly test_id: string;
@@ -88,9 +111,8 @@ function ProjectRouteRow({
       params={{ project_id }}
       // The router marks a prefix match active, which would keep Manage current on /prompts.
       activeOptions={{ exact: true }}
-      data-testid={`${test_id}-${project_id}`}
+      data-testid={test_id}
       aria-current={is_active ? 'page' : undefined}
-      // Indented past where the project's chevron sits, so the row lines up on its icon.
       className={cn(ROUTE_ROW_CLASS, 'pl-[1.875rem]', is_active && 'bg-background shadow-xs')}
     >
       <Icon
@@ -117,9 +139,7 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const is_active = params.project_id === project.id;
   const project_path = `/projects/${project.id}`;
-  const is_manage_active = isPath(pathname, project_path);
-  const is_prompts_active = isPath(pathname, `${project_path}/prompts`);
-  const is_scaling_active = isPath(pathname, `${project_path}/scaling`);
+  const is_manage_active = pathname === project_path || pathname === `${project_path}/`;
   const [expansion, dispatchExpansion] = useReducer(
     reduceProjectExpansion,
     is_active,
@@ -207,25 +227,20 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
             to="/projects/$project_id"
             label="Manage"
             Icon={LayoutDashboardIcon}
-            test_id="nav-project-manage"
+            test_id={`nav-project-manage-${project.id}`}
             is_active={is_manage_active}
           />
-          <ProjectRouteRow
-            project_id={project.id}
-            to="/projects/$project_id/prompts"
-            label="Prompts"
-            Icon={FileTextIcon}
-            test_id="nav-project-prompts"
-            is_active={is_prompts_active}
-          />
-          <ProjectRouteRow
-            project_id={project.id}
-            to="/projects/$project_id/scaling"
-            label="Scaling"
-            Icon={ScalingIcon}
-            test_id="nav-project-scaling"
-            is_active={is_scaling_active}
-          />
+          {PROJECT_ROUTE_ROWS.map((route) => (
+            <ProjectRouteRow
+              key={route.to}
+              project_id={project.id}
+              to={route.to}
+              label={route.label}
+              Icon={route.Icon}
+              test_id={`nav-project-${route.slug}-${project.id}`}
+              is_active={pathname === `${project_path}/${route.slug}`}
+            />
+          ))}
         </div>
       </CollapsibleContent>
     </Collapsible>

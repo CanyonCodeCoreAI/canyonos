@@ -44,6 +44,10 @@
       "types": "./dist/metrics.d.ts",
       "import": "./dist/metrics.js"
     },
+    "./monitoring": {
+      "types": "./dist/monitoring.d.ts",
+      "import": "./dist/monitoring.js"
+    },
     "./prompts": {
       "types": "./dist/prompts.d.ts",
       "import": "./dist/prompts.js"
