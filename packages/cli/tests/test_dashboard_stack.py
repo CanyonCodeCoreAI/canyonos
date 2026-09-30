@@ -160,6 +160,11 @@ def test_prepare_preserves_unrelated_env_lines_and_mode(project):
     assert stack.env_path.stat().st_mode & 0o777 == 0o600
     assert stack.state_dir.stat().st_mode & 0o777 == 0o700
     assert sorted(path.name for path in stack.state_dir.iterdir()) == ["stack.json"]
+    assert json.loads((stack.state_dir / "stack.json").read_text()) == {
+        "schema_version": 3,
+        "version": dashboard_stack.env.VERSION,
+        "compose_project": "canyonos-dashboard",
+    }
 
 
 def test_redaction_removes_urls_secrets_and_credentials():

@@ -27,12 +27,8 @@ from canyonos.constants import (
 from canyonos.port_utils import find_free_port
 
 COMPOSE_PROJECT = "canyonos-dashboard"
-API_VERSION = "0.1.2"
-WEB_VERSION = "0.1.2"
-# The images this repo publishes from its `api-v*` and `web-v*` releases, unless a
-# developer points the CLI at locally built ones. The two versions move independently.
-API_IMAGE = env.api_image(f"ghcr.io/canyoncodecoreai/canyonos-api:{API_VERSION}")
-WEB_IMAGE = env.web_image(f"ghcr.io/canyoncodecoreai/canyonos-web:{WEB_VERSION}")
+API_IMAGE = env.api_image
+WEB_IMAGE = env.web_image
 HOST_GATEWAY = "host.docker.internal"
 REDIS_HOST = HOST_GATEWAY
 
@@ -244,9 +240,8 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
         (stack.state_dir / "stack.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
-                    "api_version": API_VERSION,
-                    "web_version": WEB_VERSION,
+                    "schema_version": 3,
+                    "version": env.VERSION,
                     "compose_project": COMPOSE_PROJECT,
                 }
             )

@@ -2,6 +2,7 @@
 per dev-only knob."""
 
 import importlib
+import importlib.metadata
 import os
 import subprocess
 import urllib.request
@@ -248,7 +249,25 @@ def test_a_dashboard_image_override_is_refused_in_production(value):
 def test_the_dashboard_images_come_from_their_own_variables(reloaded):
     env = reloaded(CANYONOS_ENV=DEV, CANYONOS_WEB_IMAGE="local")
 
-    assert env.api_image(API_PROD_IMAGE) == API_PROD_IMAGE
-    assert env.web_image("ghcr.io/canyoncodecoreai/canyonos-web:v9.9.9") == (
-        env.LOCAL_WEB_IMAGE
+    assert env.api_image == env.PROD_API_IMAGE
+    assert env.web_image == env.LOCAL_WEB_IMAGE
+
+
+def test_every_production_image_carries_the_cli_version():
+    version = importlib.metadata.version("canyonos")
+
+    assert env_module.VERSION == version
+    assert (
+        env_module.PROD_CORE_IMAGE
+        == f"ghcr.io/canyoncodecoreai/canyonos-core:{version}"
     )
+    assert (
+        env_module.PROD_API_IMAGE == f"ghcr.io/canyoncodecoreai/canyonos-api:{version}"
+    )
+    assert (
+        env_module.PROD_WEB_IMAGE == f"ghcr.io/canyoncodecoreai/canyonos-web:{version}"
+    )
+
+
+def test_the_production_images_are_never_latest():
+    assert not env_module.PROD_CORE_IMAGE.endswith(":latest")

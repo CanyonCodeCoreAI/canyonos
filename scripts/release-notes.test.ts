@@ -1,20 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  composePackageChangelog,
+  composeReleaseNotes,
   conventionalScopes,
   deduplicateIssues,
   deduplicatePullRequests,
   extractCanIdentifiers,
-  findShippedPackages,
   isInternalPullRequest,
-  packageForTag,
   packagesForPullRequest,
   packagesTouchedBy,
   pickPreviousRelease,
   queryLinearIssues,
-  readManifestVersion,
+  releasablePackages,
   releaseLine,
+  releaseTagPattern,
   runReleaseNotesPipeline,
 } from './release-notes';
 import type {
@@ -47,24 +46,6 @@ const issue = (overrides: Partial<LinearIssue> = {}): LinearIssue => ({
   ...overrides,
 });
 
-const pyproject = (version: string) => `[project]\nname = "canyonos"\nversion = "${version}"\n`;
-const packageJson = (version: string) => JSON.stringify({ name: 'web', version });
-
-const manifests: Record<string, Record<string, string>> = {
-  'canyonos-v1.0.0': {
-    'packages/cli/pyproject.toml': pyproject('0.1.730'),
-    'packages/core/pyproject.toml': pyproject('0.1.0'),
-    'packages/api/package.json': packageJson('0.1.0'),
-    'packages/web/package.json': packageJson('0.1.0'),
-  },
-  'canyonos-v1.1.0': {
-    'packages/cli/pyproject.toml': pyproject('0.1.731'),
-    'packages/core/pyproject.toml': pyproject('0.2.0'),
-    'packages/api/package.json': packageJson('0.1.0'),
-    'packages/web/package.json': packageJson('0.1.0'),
-  },
-};
-
 function dependencies(overrides: Partial<PipelineDependencies> = {}) {
   const files = new Map<string, string>();
   const calls: {
@@ -77,13 +58,12 @@ function dependencies(overrides: Partial<PipelineDependencies> = {}) {
   } = { linear: 0, claude: [] };
   const base: PipelineDependencies = {
     findPreviousRelease: async () => ({
-      tagName: 'canyonos-v1.0.0',
+      tagName: 'v0.1.732',
       draft: false,
       prerelease: false,
       publishedAt: '2026-09-18T00:00:00Z',
     }),
     isAncestor: async () => true,
-    readFileAt: async (ref, path) => manifests[ref]?.[path] ?? null,
     listRangeCommits: async () => ['commit-a'],
     listAssociatedPullRequests: async () => [pullRequest()],
     listPullRequestFiles: async () => ['packages/cli/src/canyonos/deploy.py'],
@@ -107,7 +87,7 @@ function dependencies(overrides: Partial<PipelineDependencies> = {}) {
 }
 
 const options = {
-  targetTag: 'canyonos-v1.1.0',
+  targetTag: 'v0.1.733',
   repository: 'CanyonCodeCoreAI/canyonos',
   outputDirectory: '/output',
 };
@@ -192,35 +172,35 @@ describe('release lines', () => {
 
   test('reads the release line from the tag prefix', () => {
     expect(releaseLine('cli-v0.1.730')).toBe('cli-');
-    expect(releaseLine('canyonos-v1.1.0')).toBe('canyonos-');
+    expect(releaseLine('v1.1.0')).toBe('');
   });
 
   test('picks the latest earlier release on the same release line', () => {
-    const target = release('canyonos-v1.1.0', '2026-09-25T00:00:00Z');
+    const target = release('v1.1.0', '2026-09-25T00:00:00Z');
 
     const previous = pickPreviousRelease(target, [
-      release('canyonos-v0.9.0', '2026-09-11T00:00:00Z'),
-      release('canyonos-v1.0.0', '2026-09-18T00:00:00Z'),
+      release('v0.9.0', '2026-09-11T00:00:00Z'),
+      release('v1.0.0', '2026-09-18T00:00:00Z'),
       release('cli-v0.1.731', '2026-09-24T00:00:00Z'),
-      release('canyonos-v1.1.0-rc.1', '2026-09-24T00:00:00Z', { prerelease: true }),
+      release('v1.1.0-rc.1', '2026-09-24T00:00:00Z', { prerelease: true }),
       target,
-      release('canyonos-v1.2.0', '2026-10-02T00:00:00Z'),
+      release('v1.2.0', '2026-10-02T00:00:00Z'),
     ]);
 
-    expect(previous.tagName).toBe('canyonos-v1.0.0');
+    expect(previous.tagName).toBe('v1.0.0');
   });
 
   test('compares a draft with the latest published release on its line', () => {
     const previous = pickPreviousRelease(
-      { tagName: 'canyonos-v1.1.0', publishedAt: null, prerelease: false },
+      { tagName: 'v1.1.0', publishedAt: null, prerelease: false },
       [
-        release('canyonos-v0.9.0', '2026-09-11T00:00:00Z'),
-        release('canyonos-v1.0.0', '2026-09-18T00:00:00Z'),
+        release('v0.9.0', '2026-09-11T00:00:00Z'),
+        release('v1.0.0', '2026-09-18T00:00:00Z'),
         release('cli-v0.1.731', '2026-09-24T00:00:00Z'),
       ]
     );
 
-    expect(previous.tagName).toBe('canyonos-v1.0.0');
+    expect(previous.tagName).toBe('v1.0.0');
   });
 
   test('compares a pre-release with the release right before it, of any kind', () => {
@@ -253,49 +233,37 @@ describe('release lines', () => {
   });
 
   test('fails when the release line has no earlier release', () => {
-    const target = release('canyonos-v1.1.0', '2026-09-25T00:00:00Z');
+    const target = release('v1.1.0', '2026-09-25T00:00:00Z');
 
     expect(() =>
       pickPreviousRelease(target, [release('cli-v0.1.0', '2026-09-01T00:00:00Z')])
-    ).toThrow('No previous published release exists before canyonos-v1.1.0.');
+    ).toThrow('No previous published release exists before v1.1.0.');
+  });
+
+  test('keeps legacy package tags on their own lines', () => {
+    const target = release('v0.1.732', '2026-09-30T00:00:00Z');
+    const releases = [
+      release('cli-v0.1.731', '2026-09-29T00:00:00Z'),
+      release('core-v0.3.0', '2026-09-29T00:00:00Z'),
+    ];
+
+    expect(() => pickPreviousRelease(target, releases)).toThrow(
+      'No previous published release exists before v0.1.732.'
+    );
   });
 });
 
-describe('shipped packages', () => {
-  test('reads versions from pyproject and package.json manifests', () => {
-    expect(readManifestVersion('packages/cli/pyproject.toml', pyproject('0.1.731'))).toBe(
-      '0.1.731'
-    );
-    expect(readManifestVersion('packages/web/package.json', packageJson('0.2.0'))).toBe('0.2.0');
+describe('release tags', () => {
+  test('accepts v tags and nothing else', () => {
+    expect(releaseTagPattern.test('v0.1.732')).toBe(true);
+    expect(releaseTagPattern.test('cli-v0.1.732')).toBe(false);
+    expect(releaseTagPattern.test('canyonos-v1.0.0')).toBe(false);
+    expect(releaseTagPattern.test('v0.1.732-rc.1')).toBe(false);
   });
 
-  test('ships only the packages whose version changed', async () => {
-    const shipped = await findShippedPackages(
-      'canyonos-v1.0.0',
-      'canyonos-v1.1.0',
-      async (ref, path) => manifests[ref]?.[path] ?? null
-    );
-
+  test('assigns shared UI changes to the web package', () => {
     expect(
-      shipped.map(({ name, version, previousVersion }) => [name, version, previousVersion])
-    ).toEqual([
-      ['CLI', '0.1.731', '0.1.730'],
-      ['Core', '0.2.0', '0.1.0'],
-    ]);
-  });
-
-  test('assigns shared UI changes to the web package', async () => {
-    const shipped = await findShippedPackages(
-      'canyonos-v1.0.0',
-      'canyonos-v1.1.0',
-      async (ref, path) =>
-        path === 'packages/web/package.json' && ref === 'canyonos-v1.1.0'
-          ? packageJson('0.2.0')
-          : (manifests[ref]?.[path] ?? null)
-    );
-
-    expect(
-      packagesTouchedBy(['packages/ui/src/button.tsx', 'README.md'], shipped).map(
+      packagesTouchedBy(['packages/ui/src/button.tsx', 'README.md'], releasablePackages).map(
         (entry) => entry.name
       )
     ).toEqual(['Web']);
@@ -317,20 +285,10 @@ describe('pull request classification', () => {
     expect(conventionalScopes('Harden deploy')).toEqual([]);
   });
 
-  test('assigns a scoped pull request to its scope instead of every touched package', async () => {
-    const shipped = await findShippedPackages(
-      'canyonos-v1.0.0',
-      'canyonos-v1.1.0',
-      async (ref, path) =>
-        ref === 'canyonos-v1.1.0'
-          ? path.endsWith('.json')
-            ? packageJson('1.0.0')
-            : pyproject('1.0.0')
-          : null
-    );
+  test('assigns a scoped pull request to its scope instead of every touched package', () => {
     const files = ['packages/cli/canyonos/deploy.py', 'packages/core/canyonos_core/cli.py'];
     const names = (title: string) =>
-      packagesForPullRequest({ title }, files, shipped).map((entry) => entry.name);
+      packagesForPullRequest({ title }, files, releasablePackages).map((entry) => entry.name);
 
     expect(names('fix(core): fail the deploy on an agent that cannot start')).toEqual(['Core']);
     expect(names('feat(dashboard): add a runs page')).toEqual(['API', 'Web']);
@@ -355,14 +313,14 @@ describe('release-notes pipeline', () => {
     const result = await runReleaseNotesPipeline(options, testRun.dependencies);
 
     expect(result.ok).toBe(true);
-    expect(testRun.calls.claude.map((call) => call.issues)).toEqual([['CAN-42'], []]);
+    expect(testRun.calls.claude.map((call) => call.issues)).toEqual([['CAN-42']]);
     expect(result.audit.pullRequests).toEqual([
       expect.objectContaining({ number: 42, source: 'linear' }),
       expect.objectContaining({ number: 44, packages: [], source: 'internal' }),
     ]);
   });
 
-  test('writes one section per shipped package with its release link', async () => {
+  test('writes one section per package that pull requests changed', async () => {
     const testRun = dependencies({
       listAssociatedPullRequests: async () => [
         pullRequest(),
@@ -392,15 +350,15 @@ describe('release-notes pipeline', () => {
     ]);
     expect(testRun.files.get('/output/release-notes.md')).toBe(
       [
-        '# Release notes for canyonos-v1.1.0',
+        '# Release notes for v0.1.733',
         '',
-        '## CLI [cli-v0.1.731](https://github.com/CanyonCodeCoreAI/canyonos/releases/tag/cli-v0.1.731)',
+        '## CLI',
         '',
         '### Improved',
         '',
         '- CLI change.',
         '',
-        '## Core [core-v0.2.0](https://github.com/CanyonCodeCoreAI/canyonos/releases/tag/core-v0.2.0)',
+        '## Core',
         '',
         '### Improved',
         '',
@@ -410,12 +368,19 @@ describe('release-notes pipeline', () => {
     );
   });
 
-  test('excludes pull requests that touch no shipped package', async () => {
+  test('excludes pull requests that touch no package', async () => {
     const testRun = dependencies({
       listAssociatedPullRequests: async () => [
         pullRequest({ title: 'Tweak web copy CAN-99', headRefName: 'feature/web' }),
+        pullRequest({
+          number: 43,
+          title: 'Faster agent startup',
+          body: 'Agents boot twice as fast.',
+          headRefName: 'feature/startup',
+        }),
       ],
-      listPullRequestFiles: async () => ['packages/web/src/app.tsx'],
+      listPullRequestFiles: async (number) =>
+        number === 42 ? ['README.md'] : ['packages/cli/src/canyonos/deploy.py'],
     });
 
     const result = await runReleaseNotesPipeline(options, testRun.dependencies);
@@ -424,6 +389,7 @@ describe('release-notes pipeline', () => {
     expect(testRun.calls.linear).toBe(0);
     expect(result.audit.pullRequests).toEqual([
       expect.objectContaining({ number: 42, packages: [], source: 'excluded' }),
+      expect.objectContaining({ number: 43, source: 'fallback' }),
     ]);
   });
 
@@ -435,12 +401,12 @@ describe('release-notes pipeline', () => {
     });
 
     const result = await runReleaseNotesPipeline(
-      { ...options, previousTag: 'canyonos-v1.0.0' },
+      { ...options, previousTag: 'v0.1.732' },
       testRun.dependencies
     );
 
     expect(result.ok).toBe(true);
-    expect(result.audit.previousTag).toBe('canyonos-v1.0.0');
+    expect(result.audit.previousTag).toBe('v0.1.732');
   });
 
   test('reads git history from the target ref when the draft has no tag yet', async () => {
@@ -449,10 +415,6 @@ describe('release-notes pipeline', () => {
       isAncestor: async (_previous, target) => {
         refs.push(target);
         return true;
-      },
-      readFileAt: async (ref, path) => {
-        refs.push(ref);
-        return manifests[ref === 'abc123' ? 'canyonos-v1.1.0' : ref]?.[path] ?? null;
       },
       listRangeCommits: async (_previous, target) => {
         refs.push(target);
@@ -466,13 +428,13 @@ describe('release-notes pipeline', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(refs).not.toContain('canyonos-v1.1.0');
+    expect(refs).not.toContain('v0.1.733');
     expect(testRun.files.get('/output/release-notes.md')).toStartWith(
-      '# Release notes for canyonos-v1.1.0'
+      '# Release notes for v0.1.733'
     );
   });
 
-  test('rejects tags that are neither package nor canyonos release tags', async () => {
+  test('rejects tags that are not release tags', async () => {
     const testRun = dependencies();
 
     const result = await runReleaseNotesPipeline(
@@ -481,23 +443,41 @@ describe('release-notes pipeline', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.audit.failure).toBe(
-      'nightly is neither a package release tag nor a release tag like canyonos-v1.0.0.'
-    );
+    expect(result.audit.failure).toBe('nightly is not a release tag like v0.1.732.');
   });
 
-  test('fails when no package version changed', async () => {
-    const testRun = dependencies({
-      readFileAt: async (_ref, path) => manifests['canyonos-v1.0.0']![path] ?? null,
-    });
+  test('fails when no pull request changed a package', async () => {
+    const testRun = dependencies({ listPullRequestFiles: async () => ['README.md'] });
 
     const result = await runReleaseNotesPipeline(options, testRun.dependencies);
 
     expect(result.ok).toBe(false);
     expect(testRun.calls.claude).toHaveLength(0);
-    expect(testRun.files.get('/output/release-notes-audit.json')).toContain(
-      'No package version changed'
+    expect(result.audit.failure).toBe(
+      'No pull request changed a package between v0.1.732 and v0.1.733.'
     );
+  });
+
+  test('leaves out a package with no pull requests', async () => {
+    const testRun = dependencies({
+      listAssociatedPullRequests: async () => [
+        pullRequest(),
+        pullRequest({
+          number: 44,
+          title: 'ci(core): pin the image workflow',
+          headRefName: 'felipea/core-ci',
+        }),
+      ],
+      listPullRequestFiles: async (number) =>
+        number === 42 ? ['packages/cli/src/canyonos/deploy.py'] : ['packages/core/Dockerfile'],
+    });
+
+    const result = await runReleaseNotesPipeline(options, testRun.dependencies);
+
+    expect(result.ok).toBe(true);
+    expect(testRun.calls.claude.map((call) => call.packageName)).toEqual(['CLI']);
+    expect(testRun.files.get('/output/release-notes.md')).not.toContain('## Core');
+    expect(result.audit.packages).toEqual([{ name: 'CLI', pullRequests: [42] }]);
   });
 
   test.each([
@@ -515,54 +495,15 @@ describe('release-notes pipeline', () => {
   });
 });
 
-describe('package release changelog', () => {
-  const packageOptions = { ...options, targetTag: 'cli-v0.1.731' };
-
-  test('recognises package release tags', () => {
-    expect(packageForTag('cli-v0.1.731')?.name).toBe('CLI');
-    expect(packageForTag('core-v0.2.0')?.name).toBe('Core');
-    expect(packageForTag('canyonos-v1.1.0')).toBeUndefined();
-  });
-
-  test('lists only the pull requests that changed the package, without Linear or Claude', async () => {
-    const testRun = dependencies({
-      findPreviousRelease: async () => ({
-        tagName: 'cli-v0.1.730',
-        draft: false,
-        prerelease: false,
-        publishedAt: '2026-09-18T00:00:00Z',
-      }),
-      listAssociatedPullRequests: async () => [
-        pullRequest(),
-        pullRequest({ number: 43, title: 'Tune the API pool', author: 'someone' }),
-      ],
-      listPullRequestFiles: async (number) =>
-        number === 42 ? ['packages/cli/canyonos/deploy.py'] : ['packages/api/src/pool.ts'],
-    });
-
-    const result = await runReleaseNotesPipeline(packageOptions, testRun.dependencies);
-
-    expect(result.ok).toBe(true);
-    expect(testRun.calls.linear).toBe(0);
-    expect(testRun.calls.claude).toHaveLength(0);
-    expect(testRun.files.get('/output/release-notes.md')).toBe(
-      [
-        "## What's Changed",
-        '',
-        '* Improve deploy output CAN-42 by @felipea in https://github.com/CanyonCodeCoreAI/canyonos/pull/42',
-        '',
-        '**Full Changelog**: https://github.com/CanyonCodeCoreAI/canyonos/compare/cli-v0.1.730...cli-v0.1.731',
-        '',
-      ].join('\n')
-    );
-    expect(result.audit.packages).toEqual([
-      { name: 'CLI', tag: 'cli-v0.1.731', previousVersion: '0.1.730', pullRequests: [42] },
-    ]);
-  });
-
-  test('says so when no pull request changed the package', () => {
+describe('composing notes', () => {
+  test('writes a heading per section without tag links', () => {
     expect(
-      composePackageChangelog('web-v0.2.0', 'web-v0.1.0', 'CanyonCodeCoreAI/canyonos', [])
-    ).toContain('No pull requests changed this package.');
+      composeReleaseNotes('v0.1.733', [
+        { name: 'CLI', markdown: '### New\n\n- Thing.\n' },
+        { name: 'Web', markdown: 'No user-facing changes.' },
+      ])
+    ).toBe(
+      '# Release notes for v0.1.733\n\n## CLI\n\n### New\n\n- Thing.\n\n## Web\n\nNo user-facing changes.\n'
+    );
   });
 });

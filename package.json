@@ -27,6 +27,9 @@
     "api:test:e2e": "bun run --filter @canyonos/api test:e2e",
     "ui:test:e2e": "bun run --filter web test:e2e",
     "canyonos:smoke": "bun run ./scripts/canyonos-smoke.ts",
+    "version:check": "bun run ./scripts/release-version.ts check",
+    "version:set": "bun run ./scripts/release-version.ts set",
+    "formula:write": "bun run ./scripts/homebrew-formula.ts",
     "dev:emails": "bun run --filter @canyonos/api dev:emails"
   },
   "devDependencies": {

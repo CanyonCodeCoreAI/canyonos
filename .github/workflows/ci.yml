@@ -58,6 +58,12 @@ jobs:
       - name: Run tests
         run: bun run test
 
+      - name: Check that every manifest carries the same version
+        run: bun run version:check
+
+      - name: Run the repository script tests
+        run: bun test scripts
+
 # If you want to run this locally, install act and run "act pull_request"
 # For the same checks without act: bun run check && bun run test
 # For reporting Ruff lint errors: bun run lint

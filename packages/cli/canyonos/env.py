@@ -20,6 +20,7 @@ shell variables win over that file, and no `.env` at all means production.
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
 from pathlib import Path
 
@@ -51,7 +52,11 @@ REPO_ROOT = CLI_DIR.parent.parent
 ENV_PATH = CLI_DIR / ".env"
 
 # Production artifacts: what a released CLI uses, unchanged by anything here.
-PROD_CORE_IMAGE = "ghcr.io/canyoncodecoreai/canyonos-core:latest"
+# Every image is published from the same release as this CLI, under its version.
+VERSION = importlib.metadata.version("canyonos")
+PROD_CORE_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-core:{VERSION}"
+PROD_API_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-api:{VERSION}"
+PROD_WEB_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-web:{VERSION}"
 PROD_SKILL_REF = "main"
 
 # `local` artifacts, i.e. what this checkout builds or ships.
@@ -117,32 +122,23 @@ def _resolve_skill_source(environment, value):
 
 
 def _resolve_dashboard_image(environment, value, prod_image, local_image, variable):
-    """One dashboard image. The production tag is passed in, since it is versioned
-    alongside the stack it belongs to rather than here."""
+    """One dashboard image."""
     return _resolve_artifact(environment, value, variable, prod_image, local_image)
 
 
 core_image = _resolve_core_image(environment, os.environ.get(CORE_IMAGE_VAR))
 skill_source = _resolve_skill_source(environment, os.environ.get(SKILL_SOURCE_VAR))
-
-
-def api_image(prod_image):
-    """Dashboard API image for this environment."""
-    return _resolve_dashboard_image(
-        environment,
-        os.environ.get(API_IMAGE_VAR),
-        prod_image,
-        LOCAL_API_IMAGE,
-        API_IMAGE_VAR,
-    )
-
-
-def web_image(prod_image):
-    """Dashboard web image for this environment."""
-    return _resolve_dashboard_image(
-        environment,
-        os.environ.get(WEB_IMAGE_VAR),
-        prod_image,
-        LOCAL_WEB_IMAGE,
-        WEB_IMAGE_VAR,
-    )
+api_image = _resolve_dashboard_image(
+    environment,
+    os.environ.get(API_IMAGE_VAR),
+    PROD_API_IMAGE,
+    LOCAL_API_IMAGE,
+    API_IMAGE_VAR,
+)
+web_image = _resolve_dashboard_image(
+    environment,
+    os.environ.get(WEB_IMAGE_VAR),
+    PROD_WEB_IMAGE,
+    LOCAL_WEB_IMAGE,
+    WEB_IMAGE_VAR,
+)

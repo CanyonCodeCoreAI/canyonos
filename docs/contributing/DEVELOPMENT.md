@@ -11,7 +11,7 @@ are where the binary runs from and an optional `packages/cli/.env`:
 | --- | --- | --- |
 | How it runs | `canyonos deploy` inside `bun run canyonos:dev`, or `uv run canyonos deploy` | `canyonos deploy` |
 | Environment | `development` via `packages/cli/.env` (copied once from `packages/cli/.env.example`, gitignored) | `production` by default, no `.env` |
-| Core image | `canyonos-core:dev` local | `ghcr.io/…/canyonos-core:latest` |
+| Core image | `canyonos-core:dev` local | `ghcr.io/…/canyonos-core:<version>` |
 | Skill | `.claude/skills/porting-to-canyonos` from the checkout | downloaded from `main` |
 
 ## Set up your environment
@@ -72,7 +72,11 @@ docker build -f packages/core/Dockerfile -t canyonos-core:dev packages/core
 ```
 
 A literal image tag is pulled if the daemon doesn't have it; `deploy` never
-builds images. The production image is always pulled fresh.
+builds images. The production images are always pulled, exactly as a released
+CLI does: every release publishes the core, api, and web images under the CLI's
+own version, and `canyonos/env.py` derives their references from it. A checkout
+whose version was bumped but not released yet points at images that do not
+exist, so use `local` while developing.
 
 ## Hot-reload dashboard
 
