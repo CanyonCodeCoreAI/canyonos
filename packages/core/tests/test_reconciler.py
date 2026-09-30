@@ -9,6 +9,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import yaml
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
@@ -227,10 +229,12 @@ class ScalingEntryPointTests(unittest.TestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
 
     def test_a_reload_applies_a_changed_replicas_count(self):
+        config_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, config_dir)
         controller = GlobalController.__new__(GlobalController)
         controller.redis = _FakeRedis()
         controller.node_redis = {}
-        controller.config_path = "/nonexistent/config/global_controller.yaml"
+        controller.config_path = os.path.join(config_dir, "global_controller.yaml")
         controller._set_controllers([ALPHA_SPEC])
         controller._apply_configured_replicas()
         controller._load_config = lambda path: {
@@ -240,6 +244,28 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller.reload_config()
 
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 5)
+
+    def test_a_broken_config_file_fails_the_reload_before_any_write(self):
+        config_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, config_dir)
+        with open(os.path.join(config_dir, "broken.yaml"), "w") as f:
+            f.write("a: [1, 2\n")
+        controller = GlobalController.__new__(GlobalController)
+        controller.redis = _FakeRedis()
+        controller.node_redis = {}
+        controller.config_path = os.path.join(config_dir, "global_controller.yaml")
+        controller._set_controllers([ALPHA_SPEC])
+        controller._apply_configured_replicas()
+        controller._load_config = lambda path: {
+            "agents": [{**ALPHA_SPEC, "replicas": 5}]
+        }
+
+        with self.assertRaises(yaml.YAMLError):
+            controller.reload_config()
+
+        self.assertEqual(
+            state.get_desired(controller.redis, "Alpha"), ALPHA_SPEC["replicas"]
+        )
 
     def test_a_reload_republishes_policy_rules(self):
         config_dir = tempfile.mkdtemp()

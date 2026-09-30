@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useRouterState } from '@tanstack/react-router';
-import { ChevronRightIcon, FolderIcon, LayoutDashboardIcon } from 'lucide-react';
+import { ChevronRightIcon, FileTextIcon, FolderIcon, LayoutDashboardIcon } from 'lucide-react';
 import { useEffect, useReducer } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
 import type { ProjectSummary } from '@canyonos/api/projects';
@@ -18,6 +19,10 @@ import {
 import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
 
 const PROJECT_COLORS = Object.values(PALETTE);
+
+function isPath(pathname: string, path: string): boolean {
+  return pathname === path || pathname === `${path}/`;
+}
 
 function projectColor(project_id: string): string {
   let total = 0;
@@ -53,23 +58,33 @@ const ROUTE_ROW_CLASS =
 
 // Manage names what the project dashboard is for — reading what is already running — rather than
 // naming its position in a list.
-function ProjectManageRow({
+function ProjectRouteRow({
   project_id,
+  to,
+  label,
+  Icon,
+  test_id,
   is_active,
 }: {
   readonly project_id: string;
+  readonly to: '/projects/$project_id' | '/projects/$project_id/prompts';
+  readonly label: string;
+  readonly Icon: LucideIcon;
+  readonly test_id: string;
   readonly is_active: boolean;
 }) {
   return (
     <Link
-      to="/projects/$project_id"
+      to={to}
       params={{ project_id }}
-      data-testid={`nav-project-manage-${project_id}`}
+      // The router marks a prefix match active, which would keep Manage current on /prompts.
+      activeOptions={{ exact: true }}
+      data-testid={`${test_id}-${project_id}`}
       aria-current={is_active ? 'page' : undefined}
       // Indented past where the project's chevron sits, so the row lines up on its icon.
       className={cn(ROUTE_ROW_CLASS, 'pl-[1.875rem]', is_active && 'bg-background shadow-xs')}
     >
-      <LayoutDashboardIcon
+      <Icon
         className={cn(
           'size-[0.8125rem] shrink-0',
           is_active ? 'text-primary' : 'text-muted-foreground'
@@ -82,7 +97,7 @@ function ProjectManageRow({
           is_active ? 'text-primary' : 'text-sidebar-foreground'
         )}
       >
-        Manage
+        {label}
       </span>
     </Link>
   );
@@ -93,7 +108,8 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const is_active = params.project_id === project.id;
   const project_path = `/projects/${project.id}`;
-  const is_manage_active = pathname === project_path || pathname === `${project_path}/`;
+  const is_manage_active = isPath(pathname, project_path);
+  const is_prompts_active = isPath(pathname, `${project_path}/prompts`);
   const [expansion, dispatchExpansion] = useReducer(
     reduceProjectExpansion,
     is_active,
@@ -176,7 +192,22 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
 
       <CollapsibleContent className="app-sidebar-hide-when-collapsed data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down overflow-hidden">
         <div className="flex flex-col gap-[0.1875rem]">
-          <ProjectManageRow project_id={project.id} is_active={is_manage_active} />
+          <ProjectRouteRow
+            project_id={project.id}
+            to="/projects/$project_id"
+            label="Manage"
+            Icon={LayoutDashboardIcon}
+            test_id="nav-project-manage"
+            is_active={is_manage_active}
+          />
+          <ProjectRouteRow
+            project_id={project.id}
+            to="/projects/$project_id/prompts"
+            label="Prompts"
+            Icon={FileTextIcon}
+            test_id="nav-project-prompts"
+            is_active={is_prompts_active}
+          />
         </div>
       </CollapsibleContent>
     </Collapsible>

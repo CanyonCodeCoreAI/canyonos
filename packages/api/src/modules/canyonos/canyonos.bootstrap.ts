@@ -1,16 +1,14 @@
-import { RedisClient } from 'bun';
 import { eq } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { companies, projects, users } from '@api/db/schema';
-import { config } from '@core/env';
 import { internalError } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
 import { UUID_RE } from '../auth/project-access';
 import { UserStatusEnum } from '../auth/types';
+import { CONTROLLER_IDENTITY_KEY, with_redis } from './canyonos.redis';
 
-const IDENTITY_KEY = 'controller:identity';
 const ADMIN_NAME = 'admin';
 // `.invalid` is reserved by RFC 2606, so this placeholder address can never route.
 export const ADMIN_EMAIL = 'admin@canyonos.invalid';
@@ -88,24 +86,10 @@ export async function ensure_canyonos_project(
 export async function bootstrap_canyonos(): Promise<void> {
   await ensure_canyonos_admin();
 
-  const { redisHost, redisPort } = config.canyonos;
-  const redis = new RedisClient(`redis://${redisHost}:${redisPort}`, {
-    autoReconnect: false,
-    maxRetries: 0,
-    enableOfflineQueue: false,
-    connectionTimeout: 5000,
-  });
-  let project_id: string | null = null;
-  let project_name: string | null = null;
-  try {
-    // Required: with the offline queue disabled, a command sent before the socket is up rejects.
-    await redis.connect();
-    project_id = await redis.hget(IDENTITY_KEY, 'project_id');
-    project_name = await redis.hget(IDENTITY_KEY, 'project_name');
-  } catch {
-    // An unreachable controller is the same outcome as a missing id.
-  } finally {
-    redis.close();
-  }
-  await ensure_canyonos_project(project_id, project_name);
+  // An unreachable controller is the same outcome as a missing id.
+  const identity = await with_redis(async (redis) => ({
+    project_id: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_id'),
+    project_name: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_name'),
+  })).catch(() => ({ project_id: null, project_name: null }));
+  await ensure_canyonos_project(identity.project_id, identity.project_name);
 }

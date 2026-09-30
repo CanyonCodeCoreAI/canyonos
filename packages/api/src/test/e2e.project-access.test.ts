@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { seed_running_project } from './redis-test.utils';
 
 setupE2ETests();
 
@@ -20,11 +21,12 @@ describe('project access across the /projects tree', () => {
     expect(detail.data?.id).toBe(project_id);
   });
 
-  // The resolver is wired per plugin (projects / requests / metrics), so
+  // The resolver is wired per plugin (projects / requests / metrics / prompts), so
   // reaching every sub-resource proves the new rule fires in each composed plugin.
   test('a user from another company reaches every project sub-resource', async () => {
     const owner = await authenticate('access-owner2@canyonos.test');
     const project_id = await create_project(owner);
+    await seed_running_project(project_id, { prompts: {} });
 
     const other = await authenticate('access-other@canyonos.test');
     const read = { $headers: bearer(other) };
@@ -34,6 +36,7 @@ describe('project access across the /projects tree', () => {
       api.projects[project_id]!.stats.get(read),
       api.projects[project_id]!.requests.get({ ...read, $query: { limit: 20, offset: 0 } }),
       api.projects[project_id]!.metrics.kpis.get(read),
+      api.projects[project_id]!.prompts.get(read),
     ]);
 
     for (const res of responses) {
@@ -58,6 +61,7 @@ describe('project access across the /projects tree', () => {
     const project_id = await create_project(owner);
 
     expect((await api.projects[project_id]!.get()).error?.status as number).toBe(401);
+    expect((await api.projects[project_id]!.prompts.get()).error?.status as number).toBe(401);
     expect((await api.projects.get()).error?.status as number).toBe(401);
   });
 });

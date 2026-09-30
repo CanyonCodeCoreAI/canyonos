@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { resolveAuth as resolve_auth } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { metricsRoutes } from '../metrics/metrics.routes';
+import { promptsRoutes } from '../prompts/prompts.routes';
 import { requestsRoutes } from '../requests/requests.routes';
 import { get_project, get_project_stats, list_projects } from './projects.service';
 import { ProjectIdParams, ProjectStatsSchema, ProjectSummarySchema } from './projects.types';
@@ -28,4 +29,5 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
     detail: { ...doc, summary: 'Get project statistics' },
   })
   .use(requestsRoutes)
-  .use(metricsRoutes);
+  .use(metricsRoutes)
+  .use(promptsRoutes);

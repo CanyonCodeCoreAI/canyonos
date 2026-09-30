@@ -43,6 +43,10 @@
     "./metrics": {
       "types": "./dist/metrics.d.ts",
       "import": "./dist/metrics.js"
+    },
+    "./prompts": {
+      "types": "./dist/prompts.d.ts",
+      "import": "./dist/prompts.js"
     }
   },
   "scripts": {
@@ -56,9 +60,9 @@
     "db:migrate": "bun run src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "dev:emails": "email dev -d ./src/emails/templates -p 8888",
-    "test": "bun test --env-file .env.example src/modules",
+    "test": "bun test --isolate --env-file .env.example src/modules",
     "test:all": "bun test --env-file .env --preload ./src/test/setup.ts",
-    "test:unit": "bun test --env-file .env src/modules",
+    "test:unit": "bun test --isolate --env-file .env src/modules",
     "test:e2e": "bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/e2e.*.test.ts",
     "test:canyonos": "AUTH_MODE=fixed_code SMTP_HOST= SMTP_PORT= CANYONOS_REDIS_HOST=127.0.0.1 CANYONOS_REDIS_PORT=1 PORT=3002 API_URL=http://localhost:3002 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/self-host.bootstrap.test.ts",
     "test:auth-email": "AUTH_MODE=email_otp SMTP_HOST=localhost SMTP_PORT=1025 CANYONOS_REDIS_HOST=127.0.0.1 CANYONOS_REDIS_PORT=1 PORT=3003 API_URL=http://localhost:3003 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/auth-email.test.ts",

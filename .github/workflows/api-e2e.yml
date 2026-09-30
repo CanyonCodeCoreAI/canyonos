@@ -39,6 +39,16 @@ jobs:
           - 1025:1025
           - 8025:8025
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -68,6 +78,8 @@ jobs:
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
           JWT_SECRET: test-jwt-secret-not-for-production
           AUTH_EMAIL_FROM: noreply@canyonos.test
+          CANYONOS_REDIS_HOST: 127.0.0.1
+          CANYONOS_REDIS_PORT: '6379'
 
       - name: Run API unit tests
         run: cd packages/api && bun run test:unit

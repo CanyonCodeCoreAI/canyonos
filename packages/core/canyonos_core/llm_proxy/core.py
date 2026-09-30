@@ -9,6 +9,7 @@ from typing import Optional
 from flask import Response, stream_with_context
 
 from canyonos_core.llm_proxy.hooks import Ctx
+from canyonos_core.llm_proxy.routing import route, denied_response
 
 
 def _guess_model(body: bytes) -> Optional[str]:
@@ -39,6 +40,8 @@ def proxy_request(provider, subpath, flask_request):
         model=_guess_model(body),
     )
     hooks.on_request(ctx)
+    # Policy/routing call; all routing and policy logic lives in routing.py.
+    denied = route(hooks._extract_model_id(ctx), body)
 
     # Test mode: if CANYONOS_LLM_STUB_TEXT is set, return canned text instead of
     # calling the real upstream. Telemetry hooks still fire so the whole pipeline
@@ -48,16 +51,19 @@ def proxy_request(provider, subpath, flask_request):
     # Empty string (the runtime's explicit "disabled" value) is falsy, so only a
     # non-empty stub text -- which only `canyonos test` sets -- enables stubbing.
     _stub = stub_text()
-    if _stub:
+    if denied:
+        pr = denied_response(denied)
+    elif _stub:
         pr = build_stub(provider.name, subpath, _stub, body=body)
     else:
         pr = provider.forward(flask_request, subpath, body)
 
-    if pr.stream is not None:
+    stream = pr.stream
+    if stream is not None:
         # Streamed responses: relay chunks as they arrive, and only take telemetry when the whole response is done.
         def relay():
             try:
-                yield from pr.stream
+                yield from stream
             finally:
                 hooks.on_response(ctx, pr)
 

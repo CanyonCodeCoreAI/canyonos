@@ -17,6 +17,7 @@ import { Route as BrandOnboardingRouteImport } from './routes/_brand/onboarding'
 import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authenticated/projects/index'
 import { Route as AuthenticatedProjectsProject_idRouteImport } from './routes/_authenticated/projects/$project_id'
 import { Route as AuthenticatedProjectsProject_idIndexRouteImport } from './routes/_authenticated/projects/$project_id/index'
+import { Route as AuthenticatedProjectsProject_idPromptsRouteImport } from './routes/_authenticated/projects/$project_id/prompts'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -59,6 +60,12 @@ const AuthenticatedProjectsProject_idIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedProjectsProject_idRoute,
   } as any)
+const AuthenticatedProjectsProject_idPromptsRoute =
+  AuthenticatedProjectsProject_idPromptsRouteImport.update({
+    id: '/prompts',
+    path: '/prompts',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -66,6 +73,7 @@ export interface FileRoutesByFullPath {
   '/onboarding': typeof BrandOnboardingRoute
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/projects/': typeof AuthenticatedProjectsIndexRoute
+  '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRoutesByTo {
@@ -73,6 +81,7 @@ export interface FileRoutesByTo {
   '/login': typeof BrandLoginRoute
   '/onboarding': typeof BrandOnboardingRoute
   '/projects': typeof AuthenticatedProjectsIndexRoute
+  '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRoutesById {
@@ -84,6 +93,7 @@ export interface FileRoutesById {
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
+  '/_authenticated/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/_authenticated/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRouteTypes {
@@ -94,9 +104,16 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/projects/$project_id'
     | '/projects/'
+    | '/projects/$project_id/prompts'
     | '/projects/$project_id/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/onboarding' | '/projects' | '/projects/$project_id'
+  to:
+    | '/'
+    | '/login'
+    | '/onboarding'
+    | '/projects'
+    | '/projects/$project_id/prompts'
+    | '/projects/$project_id'
   id:
     | '__root__'
     | '/_authenticated'
@@ -106,6 +123,7 @@ export interface FileRouteTypes {
     | '/_authenticated/'
     | '/_authenticated/projects/$project_id'
     | '/_authenticated/projects/'
+    | '/_authenticated/projects/$project_id/prompts'
     | '/_authenticated/projects/$project_id/'
   fileRoutesById: FileRoutesById
 }
@@ -172,15 +190,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProject_idIndexRouteImport
       parentRoute: typeof AuthenticatedProjectsProject_idRoute
     }
+    '/_authenticated/projects/$project_id/prompts': {
+      id: '/_authenticated/projects/$project_id/prompts'
+      path: '/prompts'
+      fullPath: '/projects/$project_id/prompts'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idPromptsRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
   }
 }
 
 interface AuthenticatedProjectsProject_idRouteChildren {
+  AuthenticatedProjectsProject_idPromptsRoute: typeof AuthenticatedProjectsProject_idPromptsRoute
   AuthenticatedProjectsProject_idIndexRoute: typeof AuthenticatedProjectsProject_idIndexRoute
 }
 
 const AuthenticatedProjectsProject_idRouteChildren: AuthenticatedProjectsProject_idRouteChildren =
   {
+    AuthenticatedProjectsProject_idPromptsRoute:
+      AuthenticatedProjectsProject_idPromptsRoute,
     AuthenticatedProjectsProject_idIndexRoute:
       AuthenticatedProjectsProject_idIndexRoute,
   }

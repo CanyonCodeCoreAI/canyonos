@@ -85,6 +85,8 @@ class GlobalController(ControllerContext):
     POLICY_RULES_KEY = "policy:rules"
     IDENTITY_KEY = "controller:identity"  # has the controller's current project_id
     OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
+    # Names of the config files last published as `<name>:config`, so a removed file's key is cleared.
+    CONFIG_FILES_KEY = "config:files"
 
     def __init__(self, config_path):
         super().__init__(config_path)
@@ -112,7 +114,7 @@ class GlobalController(ControllerContext):
             self._launch_redis_containers()
             # One machine-level metrics collector per host (best-effort, local hosts only).
             self._launch_metrics_collectors()
-            self._apply_config()
+            self._apply_config(self._read_config_folder())
             # A teardown killed mid-drain leaves the flag set; clear it or the fleet stays at zero.
             state.clear_draining(self.redis)
             logger.info(
@@ -293,6 +295,8 @@ class GlobalController(ControllerContext):
     def reload_config(self):
         """Re-read the config, republish the spec, and let the reconciler converge."""
         logger.info("Reloading config from %s", self.config_path)
+        # Parse every file before writing anything, so a broken one leaves Redis untouched.
+        config_files = self._read_config_folder()
         self.config = self._load_config(self.config_path)
         self.env_file_path = resolve_env_file(self.config)
         previous = set(self.agent_specs)
@@ -300,7 +304,7 @@ class GlobalController(ControllerContext):
         for name in previous - set(self.agent_specs):
             self.redis.delete(state.desired_key(name))
         self.poll_interval = self.config.get("poll_interval", 5)
-        self._apply_config()
+        self._apply_config(config_files)
         self._request_reconcile(state.WAKE_ALL)
 
         # Only meaningful if the exporter was already running.
@@ -310,12 +314,13 @@ class GlobalController(ControllerContext):
         ):
             self._write_otel_destinations(destinations)
 
-    def _apply_config(self):
+    def _apply_config(self, config_files):
         """Publish the loaded config to Redis: agent specs, replica counts, policies, identity."""
         write_config_specs(self.controllers, self.redis)
         # The YAML is authoritative, so this overwrites any runtime scale.
         self._apply_configured_replicas()
-        self._load_and_write_policies()
+        # Overwrites any dashboard edits: the file is the source of truth on startup and reload.
+        self._write_policies(*config_files)
         self._write_identity()
 
     def _load_policy_rules(self):
@@ -339,16 +344,37 @@ class GlobalController(ControllerContext):
         rules.sort(key=lambda r: len(r.get("match", {})), reverse=True)
         return rules
 
-    def _load_and_write_policies(self):
-        """Load policy rules and publish them to every host Redis."""
+    def _read_config_folder(self):
+        """Parse policy rules and every YAML file in the config folder; returns (rules, payloads by name)."""
         rules = self._load_policy_rules()
+        config_dir = os.path.dirname(os.path.abspath(self.config_path))
+        payloads = {}
+        for filename in sorted(os.listdir(config_dir)):
+            name, extension = os.path.splitext(filename)
+            if extension in (".yaml", ".yml"):
+                with open(os.path.join(config_dir, filename), "r") as f:
+                    payloads[name] = json.dumps(yaml.safe_load(f) or {}, default=str)
+        return rules, payloads
+
+    def _write_policies(self, rules, payloads):
+        """Publish policy rules, and each config file as `<name>:config`, to every host Redis."""
         targets = list(self.node_redis.values()) or [self.redis]
         rules_json = json.dumps(rules)
         for redis_client in targets:
-            redis_client.set("policy:rules", rules_json)
+            redis_client.set(self.POLICY_RULES_KEY, rules_json)
+            # A file removed since the last publish must not leave its old config behind.
+            for stale in set(redis_client.smembers(self.CONFIG_FILES_KEY)) - set(
+                payloads
+            ):
+                redis_client.delete(f"{stale}:config")
+            for name, payload in payloads.items():
+                redis_client.set(f"{name}:config", payload)
+            redis_client.delete(self.CONFIG_FILES_KEY)
+            redis_client.sadd(self.CONFIG_FILES_KEY, *payloads)
 
         logger.info(
-            "Policy rules written to %d Redis instance(s): %d rule(s)",
+            "Policy rules and %d config file(s) written to %d Redis instance(s): %d rule(s)",
+            len(payloads),
             len(targets),
             len(rules),
         )
@@ -944,10 +970,25 @@ class GlobalController(ControllerContext):
                     self._poll_controllers()
                 except Exception as e:
                     logger.warning("Polling loop encountered an error: %s", e)
+                try:
+                    self._sync_prompts()
+                except Exception as e:
+                    logger.warning("Prompt sync encountered an error: %s", e)
                 self._cleanup_ready.set()
                 time.sleep(self.poll_interval)
         except KeyboardInterrupt:
             self.stop()
+
+    def _sync_prompts(self):
+        """Copy dashboard edits to prompts:config from this Redis to the other nodes' Redis."""
+        payload = self.redis.get("prompts:config")
+        if payload is None:
+            return
+        for redis_client in self.node_redis.values():
+            # Writing the snapshot back to its source would clobber an edit saved since the read.
+            if redis_client is self.redis:
+                continue
+            redis_client.set("prompts:config", payload)
 
     def _poll_controllers(self):
         """
@@ -1380,7 +1421,9 @@ if __name__ == "__main__":
         try:
             controller.reload_config()
         except Exception as e:
-            logger.error("Reload failed: %s", e)
+            logger.warning(
+                "Reload Failed, A configuration file change is invalid: %s", e
+            )
 
     signal.signal(signal.SIGHUP, _reload_handler)
     atexit.register(controller.cleanup)

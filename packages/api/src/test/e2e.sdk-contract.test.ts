@@ -2,11 +2,13 @@ import { describe, expect, test } from 'bun:test';
 
 import type { MetricsBlocks, MetricsKpis } from '@canyonos/api/metrics';
 import type { ProjectStats, ProjectSummary } from '@canyonos/api/projects';
+import type { PromptItem, PromptsResponse } from '@canyonos/api/prompts';
 import type { RequestList } from '@canyonos/api/requests';
 import type { FleetOverview } from '@canyonos/api/resources';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { seed_running_project } from './redis-test.utils';
 
 setupE2ETests();
 
@@ -60,5 +62,51 @@ describe('SDK contract', () => {
     expect(kpis.project_id).toBe(project_id);
     expect(blocks.project_id).toBe(project_id);
     expect(overview.projects.some(({ id }) => id === project_id)).toBe(true);
+  });
+
+  test('prompt endpoints are typed at runtime', async () => {
+    const token = await authenticate('sdk-prompts-contract@canyonos.test');
+    const headers = bearer(token);
+    const { project_id } = await create_test_project(token, { name: 'SDK Prompts' });
+    await seed_running_project(project_id, {
+      prompts: {
+        summarize: [
+          {
+            version: 'summarize-abcdef01-1',
+            system: 'Summarize the input.',
+            user: '{text}',
+            updated_at: '2026-09-01T00:00:00Z',
+          },
+        ],
+      },
+    });
+
+    const prompts: PromptsResponse = (
+      await api.projects[project_id]!.prompts.get({ $headers: headers })
+    ).data!;
+    const saved: PromptItem = (
+      await api.projects[project_id]!.prompts.summarize!.put(
+        { system: 'Summarize briefly.', user: '{text}' },
+        { headers }
+      )
+    ).data!;
+
+    expect(prompts.project_id).toBe(project_id);
+    expect(prompts.items).toEqual([
+      {
+        name: 'summarize',
+        version: 'summarize-abcdef01-1',
+        system: 'Summarize the input.',
+        user: '{text}',
+        updated_at: '2026-09-01T00:00:00Z',
+      },
+    ]);
+    expect(saved).toMatchObject({
+      name: 'summarize',
+      system: 'Summarize briefly.',
+      user: '{text}',
+    });
+    expect(saved.version).toMatch(/^summarize-[0-9a-f]{8}-2$/);
+    expect(typeof saved.updated_at).toBe('string');
   });
 });

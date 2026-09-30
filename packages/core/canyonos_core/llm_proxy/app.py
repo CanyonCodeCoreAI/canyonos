@@ -8,6 +8,7 @@ import logging
 from flask import Flask, jsonify, request
 
 from canyonos_core.llm_proxy.config import Config
+from canyonos_core.llm_proxy import routing
 from canyonos_core.llm_proxy.core import proxy_request
 from canyonos_core.llm_proxy.providers import build_registry
 
@@ -25,6 +26,8 @@ def create_app(cfg: Config | None = None) -> Flask:
     from canyonos_core.llm_proxy import hooks as hooks_module
 
     hooks_module.hooks = hooks_module.Hooks(cfg)
+    # Load llms.yaml rules from Redis and refresh them every few seconds in the background.
+    routing.start_refresh(hooks_module.hooks._redis)
 
     @app.route("/healthz", methods=["GET"])
     def healthz():

@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from botocore.eventstream import EventStreamBuffer
 
+from canyonos_core.llm_proxy import routing
 from canyonos_core.llm_proxy.app import create_app
 from canyonos_core.llm_proxy.config import Config, ProviderConfig
 
@@ -35,6 +36,10 @@ class ConverseStreamStubE2ETests(unittest.TestCase):
             redis_port=6379,
         )
         self.app = create_app(cfg)
+        # No Redis here, so mark llms.yaml as loaded and empty.
+        patcher = patch.object(routing, "_llms_by_model_id", {})
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.client = self.app.test_client()
 
     @patch.dict(os.environ, {"CANYONOS_LLM_STUB_TEXT": "hello from stub"})

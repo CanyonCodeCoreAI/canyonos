@@ -27,6 +27,9 @@ models:
   amazon.nova-pro-v1:0:
     input_cost_per_million_tokens: 0.8
     output_cost_per_million_tokens: 3.2
+  us.amazon.nova-2-lite-v1:0:
+    input_cost_per_million_tokens: 0.33
+    output_cost_per_million_tokens: 2.75
   meta.llama3-3-70b-instruct-v1:0:
     input_cost_per_million_tokens: 0.72
     output_cost_per_million_tokens: 0.72
@@ -87,6 +90,766 @@ models:
   gpt-4o-mini:
     input_cost_per_million_tokens: 0.15
     output_cost_per_million_tokens: 0.6
+  ai21.j2-mid-v1:
+    input_cost_per_million_tokens: 12.5
+    output_cost_per_million_tokens: 12.5
+  ai21.j2-ultra-v1:
+    input_cost_per_million_tokens: 18.8
+    output_cost_per_million_tokens: 18.8
+  ai21.jamba-1-5-large-v1:0:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 8.0
+  ai21.jamba-1-5-mini-v1:0:
+    input_cost_per_million_tokens: 0.2
+    output_cost_per_million_tokens: 0.4
+  ai21.jamba-instruct-v1:0:
+    input_cost_per_million_tokens: 0.5
+    output_cost_per_million_tokens: 0.7
+  amazon.nova-2-lite-v1:0:
+    input_cost_per_million_tokens: 0.3
+    output_cost_per_million_tokens: 2.5
+  amazon.nova-2-multimodal-embeddings-v1:0:
+    input_cost_per_million_tokens: 0.135
+    output_cost_per_million_tokens: 0.0
+  amazon.nova-2-pro-preview-20251202-v1:0:
+    input_cost_per_million_tokens: 2.1875
+    output_cost_per_million_tokens: 17.5
+  amazon.titan-embed-g1-text-02:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.0
+  amazon.titan-embed-image-v1:
+    input_cost_per_million_tokens: 0.8
+    output_cost_per_million_tokens: 0.0
+  amazon.titan-embed-text-v1:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.0
+  amazon.titan-embed-text-v2:0:
+    input_cost_per_million_tokens: 0.02
+    output_cost_per_million_tokens: 0.0
+  amazon.titan-text-express-v1:
+    input_cost_per_million_tokens: 1.3
+    output_cost_per_million_tokens: 1.7
+  amazon.titan-text-lite-v1:
+    input_cost_per_million_tokens: 0.3
+    output_cost_per_million_tokens: 0.4
+  amazon.titan-text-premier-v1:0:
+    input_cost_per_million_tokens: 0.5
+    output_cost_per_million_tokens: 1.5
+  anthropic.claude-3-5-sonnet-20240620-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  anthropic.claude-3-5-sonnet-20241022-v2:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  anthropic.claude-3-7-sonnet-20240620-v1:0:
+    input_cost_per_million_tokens: 3.6
+    output_cost_per_million_tokens: 18.0
+  anthropic.claude-3-7-sonnet-20250219-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  anthropic.claude-3-opus-20240229-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  anthropic.claude-fable-5:
+    input_cost_per_million_tokens: 10.0
+    output_cost_per_million_tokens: 50.0
+  anthropic.claude-fable-5-1:
+    input_cost_per_million_tokens: 10.0
+    output_cost_per_million_tokens: 50.0
+  anthropic.claude-haiku-4-5-20251001-v1:0:
+    input_cost_per_million_tokens: 1.0
+    output_cost_per_million_tokens: 5.0
+  anthropic.claude-haiku-4-5@20251001:
+    input_cost_per_million_tokens: 1.0
+    output_cost_per_million_tokens: 5.0
+  anthropic.claude-instant-v1:
+    input_cost_per_million_tokens: 0.8
+    output_cost_per_million_tokens: 2.4
+  anthropic.claude-mythos-5-1:
+    input_cost_per_million_tokens: 10.0
+    output_cost_per_million_tokens: 50.0
+  anthropic.claude-mythos-preview:
+    input_cost_per_million_tokens: 0.0
+    output_cost_per_million_tokens: 0.0
+  anthropic.claude-opus-4-20250514-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  anthropic.claude-opus-4-5-20251101-v1:0:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  anthropic.claude-opus-4-6-v1:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  anthropic.claude-opus-4-7:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.0
+    output_cost_per_million_tokens: 20.0
+  anthropic.claude-sonnet-4-20250514-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  anthropic.claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  anthropic.claude-sonnet-4-6:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 10.0
+  anthropic.claude-v1:
+    input_cost_per_million_tokens: 8.0
+    output_cost_per_million_tokens: 24.0
+  anthropic.claude-v2:1:
+    input_cost_per_million_tokens: 8.0
+    output_cost_per_million_tokens: 24.0
+  apac.amazon.nova-2-lite-v1:0:
+    input_cost_per_million_tokens: 0.33
+    output_cost_per_million_tokens: 2.75
+  apac.amazon.nova-2-pro-preview-20251202-v1:0:
+    input_cost_per_million_tokens: 2.1875
+    output_cost_per_million_tokens: 17.5
+  apac.amazon.nova-lite-v1:0:
+    input_cost_per_million_tokens: 0.063
+    output_cost_per_million_tokens: 0.252
+  apac.amazon.nova-micro-v1:0:
+    input_cost_per_million_tokens: 0.037
+    output_cost_per_million_tokens: 0.148
+  apac.amazon.nova-pro-v1:0:
+    input_cost_per_million_tokens: 0.84
+    output_cost_per_million_tokens: 3.36
+  apac.anthropic.claude-fable-5:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  apac.anthropic.claude-haiku-4-5-20251001-v1:0:
+    input_cost_per_million_tokens: 1.1
+    output_cost_per_million_tokens: 5.5
+  apac.anthropic.claude-mythos-preview:
+    input_cost_per_million_tokens: 27.5
+    output_cost_per_million_tokens: 137.5
+  apac.anthropic.claude-opus-4-7:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  apac.anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  apac.anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  apac.anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.4
+    output_cost_per_million_tokens: 22.0
+  apac.anthropic.claude-sonnet-4-20250514-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  apac.anthropic.claude-sonnet-4-6:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  apac.anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 11.0
+  au.anthropic.claude-fable-5:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  au.anthropic.claude-haiku-4-5-20251001-v1:0:
+    input_cost_per_million_tokens: 1.1
+    output_cost_per_million_tokens: 5.5
+  au.anthropic.claude-mythos-preview:
+    input_cost_per_million_tokens: 27.5
+    output_cost_per_million_tokens: 137.5
+  au.anthropic.claude-opus-4-6-v1:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  au.anthropic.claude-opus-4-7:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  au.anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  au.anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  au.anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.4
+    output_cost_per_million_tokens: 22.0
+  au.anthropic.claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  au.anthropic.claude-sonnet-4-6:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  au.anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 11.0
+  claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  cohere.command-light-text-v14:
+    input_cost_per_million_tokens: 0.3
+    output_cost_per_million_tokens: 0.6
+  cohere.embed-english-v3:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.0
+  cohere.embed-multilingual-v3:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.0
+  cohere.embed-v4:0:
+    input_cost_per_million_tokens: 0.12
+    output_cost_per_million_tokens: 0.0
+  deepseek.r1-v1:0:
+    input_cost_per_million_tokens: 1.35
+    output_cost_per_million_tokens: 5.4
+  deepseek.v3-v1:0:
+    input_cost_per_million_tokens: 0.58
+    output_cost_per_million_tokens: 1.68
+  deepseek.v3.2:
+    input_cost_per_million_tokens: 0.62
+    output_cost_per_million_tokens: 1.85
+  eu.amazon.nova-2-lite-v1:0:
+    input_cost_per_million_tokens: 0.33
+    output_cost_per_million_tokens: 2.75
+  eu.amazon.nova-2-pro-preview-20251202-v1:0:
+    input_cost_per_million_tokens: 2.1875
+    output_cost_per_million_tokens: 17.5
+  eu.amazon.nova-lite-v1:0:
+    input_cost_per_million_tokens: 0.078
+    output_cost_per_million_tokens: 0.312
+  eu.amazon.nova-micro-v1:0:
+    input_cost_per_million_tokens: 0.046
+    output_cost_per_million_tokens: 0.184
+  eu.amazon.nova-pro-v1:0:
+    input_cost_per_million_tokens: 1.05
+    output_cost_per_million_tokens: 4.2
+  eu.anthropic.claude-3-5-haiku-20241022-v1:0:
+    input_cost_per_million_tokens: 0.8
+    output_cost_per_million_tokens: 4.0
+  eu.anthropic.claude-3-5-sonnet-20240620-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  eu.anthropic.claude-3-5-sonnet-20241022-v2:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  eu.anthropic.claude-3-7-sonnet-20250219-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  eu.anthropic.claude-3-opus-20240229-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  eu.anthropic.claude-fable-5:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  eu.anthropic.claude-fable-5-1:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  eu.anthropic.claude-haiku-4-5-20251001-v1:0:
+    input_cost_per_million_tokens: 1.1
+    output_cost_per_million_tokens: 5.5
+  eu.anthropic.claude-opus-4-1-20250805-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  eu.anthropic.claude-opus-4-20250514-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  eu.anthropic.claude-opus-4-5-20251101-v1:0:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  eu.anthropic.claude-opus-4-6-v1:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  eu.anthropic.claude-opus-4-7:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  eu.anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  eu.anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  eu.anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.4
+    output_cost_per_million_tokens: 22.0
+  eu.anthropic.claude-sonnet-4-20250514-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  eu.anthropic.claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  eu.anthropic.claude-sonnet-4-6:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  eu.anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 11.0
+  eu.deepseek.v3.2:
+    input_cost_per_million_tokens: 0.74
+    output_cost_per_million_tokens: 2.22
+  eu.meta.llama3-2-1b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.13
+    output_cost_per_million_tokens: 0.13
+  eu.meta.llama3-2-3b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.19
+    output_cost_per_million_tokens: 0.19
+  eu.mistral.pixtral-large-2502-v1:0:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 6.0
+  global.amazon.nova-2-lite-v1:0:
+    input_cost_per_million_tokens: 0.3
+    output_cost_per_million_tokens: 2.5
+  global.anthropic.claude-fable-5:
+    input_cost_per_million_tokens: 10.0
+    output_cost_per_million_tokens: 50.0
+  global.anthropic.claude-fable-5-1:
+    input_cost_per_million_tokens: 10.0
+    output_cost_per_million_tokens: 50.0
+  global.anthropic.claude-haiku-4-5-20251001-v1:0:
+    input_cost_per_million_tokens: 1.0
+    output_cost_per_million_tokens: 5.0
+  global.anthropic.claude-mythos-5-1:
+    input_cost_per_million_tokens: 10.0
+    output_cost_per_million_tokens: 50.0
+  global.anthropic.claude-opus-4-5-20251101-v1:0:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  global.anthropic.claude-opus-4-6-v1:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  global.anthropic.claude-opus-4-7:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  global.anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  global.anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 25.0
+  global.anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.0
+    output_cost_per_million_tokens: 20.0
+  global.anthropic.claude-sonnet-4-20250514-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  global.anthropic.claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  global.anthropic.claude-sonnet-4-6:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  global.anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 10.0
+  global.cohere.embed-v4:0:
+    input_cost_per_million_tokens: 0.12
+    output_cost_per_million_tokens: 0.0
+  global.moonshotai.kimi-k3:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  global.openai.gpt-5.4:
+    input_cost_per_million_tokens: 2.5
+    output_cost_per_million_tokens: 15.0
+  global.openai.gpt-5.5:
+    input_cost_per_million_tokens: 5.0
+    output_cost_per_million_tokens: 30.0
+  global.openai.gpt-5.6-luna:
+    input_cost_per_million_tokens: 0.2
+    output_cost_per_million_tokens: 1.2
+  global.openai.gpt-5.6-sol:
+    input_cost_per_million_tokens: 4.0
+    output_cost_per_million_tokens: 20.0
+  global.openai.gpt-5.6-terra:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 12.0
+  global.openai.gpt-6-astra:
+    input_cost_per_million_tokens: 10.0
+    output_cost_per_million_tokens: 50.0
+  global.openai.gpt-6-luna:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.5
+  global.openai.gpt-6-sol:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 10.0
+  global.xai.grok-4.6:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 6.0
+  google.gemma-3-12b-it:
+    input_cost_per_million_tokens: 0.09
+    output_cost_per_million_tokens: 0.29
+  google.gemma-3-27b-it:
+    input_cost_per_million_tokens: 0.23
+    output_cost_per_million_tokens: 0.38
+  google.gemma-3-4b-it:
+    input_cost_per_million_tokens: 0.04
+    output_cost_per_million_tokens: 0.08
+  jp.anthropic.claude-haiku-4-5-20251001-v1:0:
+    input_cost_per_million_tokens: 1.1
+    output_cost_per_million_tokens: 5.5
+  jp.anthropic.claude-opus-4-7:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  jp.anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  jp.anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  jp.anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.4
+    output_cost_per_million_tokens: 22.0
+  jp.anthropic.claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  jp.anthropic.claude-sonnet-4-6:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  jp.anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 11.0
+  meta.llama2-13b-chat-v1:
+    input_cost_per_million_tokens: 0.75
+    output_cost_per_million_tokens: 1.0
+  meta.llama2-70b-chat-v1:
+    input_cost_per_million_tokens: 1.95
+    output_cost_per_million_tokens: 2.56
+  meta.llama3-1-70b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.99
+    output_cost_per_million_tokens: 0.99
+  meta.llama3-70b-instruct-v1:0:
+    input_cost_per_million_tokens: 2.65
+    output_cost_per_million_tokens: 3.5
+  meta.llama4-maverick-17b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.24
+    output_cost_per_million_tokens: 0.97
+  meta.llama4-scout-17b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.17
+    output_cost_per_million_tokens: 0.66
+  minimax.minimax-m2:
+    input_cost_per_million_tokens: 0.3
+    output_cost_per_million_tokens: 1.2
+  minimax.minimax-m2.1:
+    input_cost_per_million_tokens: 0.3
+    output_cost_per_million_tokens: 1.2
+  minimax.minimax-m2.5:
+    input_cost_per_million_tokens: 0.3
+    output_cost_per_million_tokens: 1.2
+  mistral.devstral-2-123b:
+    input_cost_per_million_tokens: 0.4
+    output_cost_per_million_tokens: 2.0
+  mistral.magistral-small-2509:
+    input_cost_per_million_tokens: 0.5
+    output_cost_per_million_tokens: 1.5
+  mistral.ministral-3-14b-instruct:
+    input_cost_per_million_tokens: 0.2
+    output_cost_per_million_tokens: 0.2
+  mistral.ministral-3-3b-instruct:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.1
+  mistral.ministral-3-8b-instruct:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.15
+  mistral.mistral-7b-instruct-v0:2:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.2
+  mistral.mistral-large-2407-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 9.0
+  mistral.mistral-large-3-675b-instruct:
+    input_cost_per_million_tokens: 0.5
+    output_cost_per_million_tokens: 1.5
+  mistral.mixtral-8x7b-instruct-v0:1:
+    input_cost_per_million_tokens: 0.45
+    output_cost_per_million_tokens: 0.7
+  mistral.pixtral-large-2502-v1:0:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 6.0
+  mistral.voxtral-mini-3b-2507:
+    input_cost_per_million_tokens: 0.04
+    output_cost_per_million_tokens: 0.04
+  mistral.voxtral-small-24b-2507:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.3
+  moonshot.kimi-k2-thinking:
+    input_cost_per_million_tokens: 0.6
+    output_cost_per_million_tokens: 2.5
+  moonshotai.kimi-k2.5:
+    input_cost_per_million_tokens: 0.6
+    output_cost_per_million_tokens: 3.0
+  moonshotai.kimi-k3:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  nvidia.nemotron-nano-12b-v2:
+    input_cost_per_million_tokens: 0.2
+    output_cost_per_million_tokens: 0.6
+  nvidia.nemotron-nano-3-30b:
+    input_cost_per_million_tokens: 0.06
+    output_cost_per_million_tokens: 0.24
+  nvidia.nemotron-nano-9b-v2:
+    input_cost_per_million_tokens: 0.06
+    output_cost_per_million_tokens: 0.23
+  nvidia.nemotron-super-3-120b:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.65
+  openai.gpt-6-luna:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.5
+  openai.gpt-6-sol:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 10.0
+  openai.gpt-oss-120b-1:0:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.6
+  openai.gpt-oss-20b-1:0:
+    input_cost_per_million_tokens: 0.07
+    output_cost_per_million_tokens: 0.3
+  openai.gpt-oss-safeguard-120b:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.6
+  openai.gpt-oss-safeguard-20b:
+    input_cost_per_million_tokens: 0.07
+    output_cost_per_million_tokens: 0.2
+  qwen.qwen3-235b-a22b-2507-v1:0:
+    input_cost_per_million_tokens: 0.22
+    output_cost_per_million_tokens: 0.88
+  qwen.qwen3-32b-v1:0:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.6
+  qwen.qwen3-coder-30b-a3b-v1:0:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.6
+  qwen.qwen3-coder-480b-a35b-v1:0:
+    input_cost_per_million_tokens: 0.45
+    output_cost_per_million_tokens: 1.8
+  qwen.qwen3-coder-next:
+    input_cost_per_million_tokens: 0.5
+    output_cost_per_million_tokens: 1.2
+  qwen.qwen3-next-80b-a3b:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 1.2
+  qwen.qwen3-vl-235b-a22b:
+    input_cost_per_million_tokens: 0.53
+    output_cost_per_million_tokens: 2.66
+  us-gov.anthropic.claude-fable-5-1:
+    input_cost_per_million_tokens: 12.0
+    output_cost_per_million_tokens: 60.0
+  us-gov.anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 6.0
+    output_cost_per_million_tokens: 30.0
+  us-gov.anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 6.0
+    output_cost_per_million_tokens: 30.0
+  us-gov.anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.8
+    output_cost_per_million_tokens: 24.0
+  us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.6
+    output_cost_per_million_tokens: 18.0
+  us-gov.anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.4
+    output_cost_per_million_tokens: 12.0
+  us-gov.nvidia.nemotron-nano-12b-v2:
+    input_cost_per_million_tokens: 0.24
+    output_cost_per_million_tokens: 0.72
+  us-gov.nvidia.nemotron-nano-3-30b:
+    input_cost_per_million_tokens: 0.072
+    output_cost_per_million_tokens: 0.288
+  us-gov.nvidia.nemotron-nano-9b-v2:
+    input_cost_per_million_tokens: 0.072
+    output_cost_per_million_tokens: 0.276
+  us-gov.nvidia.nemotron-super-3-120b:
+    input_cost_per_million_tokens: 0.18
+    output_cost_per_million_tokens: 0.78
+  us-gov.openai.gpt-oss-120b-1:0:
+    input_cost_per_million_tokens: 0.18
+    output_cost_per_million_tokens: 0.72
+  us-gov.openai.gpt-oss-20b-1:0:
+    input_cost_per_million_tokens: 0.084
+    output_cost_per_million_tokens: 0.36
+  us-gov.xai.grok-4.6:
+    input_cost_per_million_tokens: 2.64
+    output_cost_per_million_tokens: 7.92
+  us.amazon.nova-2-pro-preview-20251202-v1:0:
+    input_cost_per_million_tokens: 2.1875
+    output_cost_per_million_tokens: 17.5
+  us.amazon.nova-lite-v1:0:
+    input_cost_per_million_tokens: 0.06
+    output_cost_per_million_tokens: 0.24
+  us.amazon.nova-micro-v1:0:
+    input_cost_per_million_tokens: 0.035
+    output_cost_per_million_tokens: 0.14
+  us.amazon.nova-pro-v1:0:
+    input_cost_per_million_tokens: 0.8
+    output_cost_per_million_tokens: 3.2
+  us.anthropic.claude-3-5-haiku-20241022-v1:0:
+    input_cost_per_million_tokens: 0.8
+    output_cost_per_million_tokens: 4.0
+  us.anthropic.claude-3-5-sonnet-20240620-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  us.anthropic.claude-3-5-sonnet-20241022-v2:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  us.anthropic.claude-3-7-sonnet-20250219-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  us.anthropic.claude-3-opus-20240229-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  us.anthropic.claude-fable-5:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  us.anthropic.claude-fable-5-1:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  us.anthropic.claude-haiku-4-5-20251001-v1:0:
+    input_cost_per_million_tokens: 1.1
+    output_cost_per_million_tokens: 5.5
+  us.anthropic.claude-mythos-5:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  us.anthropic.claude-mythos-5-1:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  us.anthropic.claude-mythos-preview:
+    input_cost_per_million_tokens: 27.5
+    output_cost_per_million_tokens: 137.5
+  us.anthropic.claude-opus-4-1-20250805-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  us.anthropic.claude-opus-4-20250514-v1:0:
+    input_cost_per_million_tokens: 15.0
+    output_cost_per_million_tokens: 75.0
+  us.anthropic.claude-opus-4-5-20251101-v1:0:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  us.anthropic.claude-opus-4-6-v1:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  us.anthropic.claude-opus-4-7:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  us.anthropic.claude-opus-4-8:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  us.anthropic.claude-opus-5:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 27.5
+  us.anthropic.claude-opus-5-5:
+    input_cost_per_million_tokens: 4.4
+    output_cost_per_million_tokens: 22.0
+  us.anthropic.claude-sonnet-4-20250514-v1:0:
+    input_cost_per_million_tokens: 3.0
+    output_cost_per_million_tokens: 15.0
+  us.anthropic.claude-sonnet-4-5-20250929-v1:0:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  us.anthropic.claude-sonnet-4-6:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  us.anthropic.claude-sonnet-5:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 11.0
+  us.cohere.embed-v4:0:
+    input_cost_per_million_tokens: 0.12
+    output_cost_per_million_tokens: 0.0
+  us.deepseek.r1-v1:0:
+    input_cost_per_million_tokens: 1.35
+    output_cost_per_million_tokens: 5.4
+  us.deepseek.v3.2:
+    input_cost_per_million_tokens: 0.62
+    output_cost_per_million_tokens: 1.85
+  us.meta.llama3-1-405b-instruct-v1:0:
+    input_cost_per_million_tokens: 5.32
+    output_cost_per_million_tokens: 16.0
+  us.meta.llama3-1-70b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.99
+    output_cost_per_million_tokens: 0.99
+  us.meta.llama3-1-8b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.22
+    output_cost_per_million_tokens: 0.22
+  us.meta.llama3-2-11b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.35
+    output_cost_per_million_tokens: 0.35
+  us.meta.llama3-2-1b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.1
+    output_cost_per_million_tokens: 0.1
+  us.meta.llama3-2-3b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.15
+  us.meta.llama3-2-90b-instruct-v1:0:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 2.0
+  us.meta.llama3-3-70b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.72
+    output_cost_per_million_tokens: 0.72
+  us.meta.llama4-maverick-17b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.24
+    output_cost_per_million_tokens: 0.97
+  us.meta.llama4-scout-17b-instruct-v1:0:
+    input_cost_per_million_tokens: 0.17
+    output_cost_per_million_tokens: 0.66
+  us.mistral.pixtral-large-2502-v1:0:
+    input_cost_per_million_tokens: 2.0
+    output_cost_per_million_tokens: 6.0
+  us.moonshotai.kimi-k3:
+    input_cost_per_million_tokens: 3.3
+    output_cost_per_million_tokens: 16.5
+  us.openai.gpt-5.4:
+    input_cost_per_million_tokens: 2.75
+    output_cost_per_million_tokens: 16.5
+  us.openai.gpt-5.5:
+    input_cost_per_million_tokens: 5.5
+    output_cost_per_million_tokens: 33.0
+  us.openai.gpt-5.6-luna:
+    input_cost_per_million_tokens: 0.22
+    output_cost_per_million_tokens: 1.32
+  us.openai.gpt-5.6-sol:
+    input_cost_per_million_tokens: 4.4
+    output_cost_per_million_tokens: 22.0
+  us.openai.gpt-5.6-terra:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 13.2
+  us.openai.gpt-6-astra:
+    input_cost_per_million_tokens: 11.0
+    output_cost_per_million_tokens: 55.0
+  us.openai.gpt-6-luna:
+    input_cost_per_million_tokens: 0.11
+    output_cost_per_million_tokens: 0.55
+  us.openai.gpt-6-sol:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 11.0
+  us.writer.palmyra-x4-v1:0:
+    input_cost_per_million_tokens: 2.5
+    output_cost_per_million_tokens: 10.0
+  us.writer.palmyra-x5-v1:0:
+    input_cost_per_million_tokens: 0.6
+    output_cost_per_million_tokens: 6.0
+  us.xai.grok-4.6:
+    input_cost_per_million_tokens: 2.2
+    output_cost_per_million_tokens: 6.6
+  writer.palmyra-vision-7b:
+    input_cost_per_million_tokens: 0.15
+    output_cost_per_million_tokens: 0.6
+  writer.palmyra-x4-v1:0:
+    input_cost_per_million_tokens: 2.5
+    output_cost_per_million_tokens: 10.0
+  writer.palmyra-x5-v1:0:
+    input_cost_per_million_tokens: 0.6
+    output_cost_per_million_tokens: 6.0
+  zai.glm-4.7:
+    input_cost_per_million_tokens: 0.6
+    output_cost_per_million_tokens: 2.2
+  zai.glm-4.7-flash:
+    input_cost_per_million_tokens: 0.07
+    output_cost_per_million_tokens: 0.4
+  zai.glm-5:
+    input_cost_per_million_tokens: 1.0
+    output_cost_per_million_tokens: 3.2
+
 instances:
   t3.nano: 0.0052
   t3.micro: 0.0104
