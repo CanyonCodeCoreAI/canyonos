@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Optional
 
+from canyonos_core.llm_gateway import pricing
 from canyonos_core.llm_gateway.providers.base import GatewayResponse
 
 log = logging.getLogger("llm_gateway")
@@ -79,11 +80,15 @@ def _validate_priced_entry(name: str, llm: dict) -> None:
     caps = (llm.get("agents") or {}).items()
     if all(cap is None for _, cap in caps):
         return
-    for field in ("input_cost_per_1m", "output_cost_per_1m", "max_tokens"):
-        if not _is_number(llm.get(field)):
-            raise ValueError(
-                f"llms.yaml entry {name}: {field} must be a number to enforce a cap"
-            )
+    if not _is_number(llm.get("max_tokens")):
+        raise ValueError(
+            f"llms.yaml entry {name}: max_tokens must be a number to enforce a cap"
+        )
+    if pricing.token_prices(normalize_model_id(llm["model_id"])) is None:
+        raise ValueError(
+            f"llms.yaml entry {name}: {llm['model_id']} has no price in llm_prices.json "
+            "to enforce a cap"
+        )
     for agent, cap in caps:
         if cap is not None and not _is_number(cap):
             raise ValueError(
@@ -135,10 +140,9 @@ def worst_case_cost(body: bytes, llm: dict) -> float:
     output_tokens = (_requested_max_tokens(payload) or llm["max_tokens"]) * (
         payload.get("n") or 1
     )
-    return (
-        input_tokens * llm["input_cost_per_1m"]
-        + output_tokens * llm["output_cost_per_1m"]
-    ) / 1_000_000
+    return pricing.compute_token_cost(
+        normalize_model_id(llm["model_id"]), input_tokens, output_tokens
+    )
 
 
 def _requested_max_tokens(payload: dict) -> Optional[int]:

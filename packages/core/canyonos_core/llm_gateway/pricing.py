@@ -1,20 +1,19 @@
-"""Lazily-cached lookups over llm_prices.yaml's LLM/instance pricing reference data."""
+"""Lazily-cached lookups over llm_prices.json's LLM/instance pricing reference data."""
 
+import json
 import os
 import re
 
-import yaml
-
-DEFAULT_PRICES_PATH = os.path.join(os.path.dirname(__file__), "llm_prices.yaml")
+DEFAULT_PRICES_PATH = os.path.join(os.path.dirname(__file__), "llm_prices.json")
 
 _token_cost_by_model_id = None
 _hourly_cost_by_instance_type = None
 
 
 def _load_pricing_data(prices_path=DEFAULT_PRICES_PATH):
-    """Read llm_prices.yaml and return (token costs by model id, hourly costs by instance type)."""
+    """Read llm_prices.json and return (token costs by model id, hourly costs by instance type)."""
     with open(prices_path, "r") as f:
-        prices = yaml.safe_load(f) or {}
+        prices = json.load(f)
 
     token_costs = {
         model_id: (
@@ -49,16 +48,20 @@ def _candidate_model_ids(model_id):
         yield f"anthropic.{undated}-v1:0"
 
 
+def token_prices(model_id):
+    """(input, output) USD per million tokens for model_id, or None if it has no price."""
+    if not model_id:
+        return None
+    token_costs, _ = _load_cache()
+    for candidate in _candidate_model_ids(model_id):
+        if candidate in token_costs:
+            return token_costs[candidate]
+    return None
+
+
 def compute_token_cost(model_id, input_token_count, output_token_count):
     """Return the USD cost of an LLM call, or 0.0 if the model_id is unknown."""
-    if not model_id:
-        return 0.0
-    token_costs, _ = _load_cache()
-    costs = None
-    for candidate in _candidate_model_ids(model_id):
-        costs = token_costs.get(candidate)
-        if costs is not None:
-            break
+    costs = token_prices(model_id)
     if costs is None:
         return 0.0
     input_cost_per_million, output_cost_per_million = costs

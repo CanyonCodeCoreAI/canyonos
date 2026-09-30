@@ -18,8 +18,6 @@ and lists the agents allowed to use it:
 haiku:
   model_id: us.anthropic.claude-haiku-4-5-20251001-v1:0
   max_tokens: 1024
-  input_cost_per_1m: 1.0
-  output_cost_per_1m: 5.0
   agents:
     IntentAgent: 0.01
     AdvisorAgent:
@@ -27,8 +25,6 @@ haiku:
 
 - **Name** (`haiku`): your own label for the model. It shows in refusal messages.
 - **model_id**: the model ID the agent sends to the provider.
-- **input_cost_per_1m** and **output_cost_per_1m**: the model's price in US dollars per
-  million tokens. Both are needed to check cost caps.
 - **max_tokens**: the most output tokens to assume when a call doesn't set its own
   limit.
 - **agents**: the agents allowed to call this model, each with the most one call may
@@ -68,10 +64,10 @@ call.
 
 ## Model prices
 
-CanyonOS also keeps its own price list, in
-`packages/core/canyonos_core/controller/utils/llm_prices.yaml`, which covers the
-Bedrock models. It is used to report spend on the dashboard, not to check
-caps. Caps use only the prices you put in `llms.yaml`.
+Prices come from CanyonOS's own price list,
+`packages/core/canyonos_core/llm_gateway/llm_prices.json`. The same list is used to
+check caps and to report spend on the dashboard. A model with a cap must have a price
+there, or the gateway rejects `llms.yaml`.
 
 ## Where it runs
 

@@ -46,6 +46,7 @@ exclude = [
 [tool.ty.analysis]
 allowed-unresolved-imports = [
     # These names are the deliberate flat-module fallbacks used in container images.
+    "gateway_headers",
     "gpu_metrics",
     "metric_convert",
     "otel_reader",

@@ -59,6 +59,7 @@ DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 _AGENT_FLAT_SOURCES = {
     "future.py": ("controller", "future.py"),
     "canyonos_context.py": ("controller", "canyonos_context.py"),
+    "gateway_headers.py": ("controller", "gateway_headers.py"),
     "local_controller.py": ("controller", "local_controller.py"),
     "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),
     "redis_client.py": ("controller", "utils", "redis_client.py"),
@@ -549,9 +550,7 @@ def _stub_destination(stub_file, stub_entrypoints):
 
 def _copy_llm_gateway(output_dir, script_dir):
     """Copy the canyonos_core.llm_gateway package into the build context as an importable
-    `canyonos_core` package so the in-container gateway can run via `python -m canyonos_core.llm_gateway`.
-    Its cross-package imports (redis_client, canyonos_context) fall back to the flat
-    copies already placed at the context root."""
+    `canyonos_core` package so the in-container gateway can run via `python -m canyonos_core.llm_gateway`."""
     shutil.copytree(
         os.path.join(script_dir, "llm_gateway"),
         os.path.join(output_dir, "canyonos_core", "llm_gateway"),

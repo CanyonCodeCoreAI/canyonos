@@ -29,6 +29,9 @@ class OpenAIProvider(HttpProvider):
 
     def merge_stream_usage(self, payload, usage):
         """Copy the token counts from a streamed OpenAI event into the running usage for
-        the response."""
-        if payload.get("usage"):
-            usage.update(payload["usage"])
+        the response. The Responses API carries them on the `response.completed` event's
+        `response` object rather than at the top level."""
+        response = payload.get("response") or {}
+        event_usage = payload.get("usage") or response.get("usage")
+        if event_usage:
+            usage.update(event_usage)

@@ -1,23 +1,16 @@
-"""Best-effort refresh of llm_prices.yaml's per-model token costs from an external catalog."""
+"""Best-effort refresh of llm_prices.json's per-model token costs from an external catalog."""
 
+import json
 import logging
 
 import requests
-import yaml
 
-from canyonos_core.controller.utils import pricing
+from canyonos_core.llm_gateway import pricing
 
 logger = logging.getLogger(__name__)
 
 LITELLM_PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 REQUEST_TIMEOUT_SECONDS = 5
-
-_YAML_HEADER = (
-    "# LLM token pricing (USD per 1M tokens) and EC2 instance hourly pricing (USD/hr).\n"
-    "# Loaded in-memory by canyonos_core.controller.utils.pricing wherever it's imported.\n"
-    "# The `models:` section is refreshed automatically at global controller startup from\n"
-    f"# {LITELLM_PRICING_URL} -- edits to those entries may be overwritten.\n"
-)
 
 
 def refresh_llm_prices(
@@ -36,7 +29,7 @@ def refresh_llm_prices(
         remote_prices = response.json()
 
         with open(prices_path, "r") as f:
-            local_prices = yaml.safe_load(f) or {}
+            local_prices = json.load(f)
         models = local_prices.get("models") or {}
 
         updated = []
@@ -63,8 +56,7 @@ def refresh_llm_prices(
             return False
 
         with open(prices_path, "w") as f:
-            f.write(_YAML_HEADER)
-            yaml.safe_dump(local_prices, f, sort_keys=False)
+            f.write(json.dumps(local_prices, indent=2) + "\n")
 
         logger.info(
             "LLM price refresh: updated %d/%d model(s) in %s from %s.",

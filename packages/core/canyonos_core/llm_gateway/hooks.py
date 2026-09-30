@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+import redis
+
 log = logging.getLogger("llm_gateway")
 
 FUTURE_ID_HEADER = "x-canyonos-future-id"
@@ -65,14 +67,10 @@ class Hooks:
 
         if config:
             try:
-                try:
-                    from canyonos_core.controller.utils.redis_client import RedisClient
-                except ImportError:
-                    # In-container the framework files are copied flat to /app.
-                    from redis_client import RedisClient
-                self._redis = RedisClient(
+                self._redis = redis.Redis(
                     host=config.redis_host,
                     port=config.redis_port,
+                    decode_responses=True,
                 )
                 log.info(
                     "Redis telemetry enabled: %s:%s",
@@ -98,6 +96,12 @@ class Hooks:
         on that future in Redis."""
         usage = self._extract_usage(ctx, resp)
         is_stream = getattr(resp, "stream", None) is not None
+        if usage is None and getattr(resp, "status", None) == 200:
+            log.warning(
+                "No token usage found in the %s response to /%s; this call is recorded with 0 tokens",
+                ctx.provider,
+                ctx.subpath,
+            )
 
         status = getattr(resp, "status", "?")
         if is_stream and getattr(resp, "stream_error", False):
@@ -113,46 +117,47 @@ class Hooks:
             usage or "no usage",
         )
 
-        # Write to Redis if we have context
-        log.info("Checking telemetry write: redis=%s", "yes" if self._redis else "no")
-        if self._redis:
-            future_id = ctx.headers.get(FUTURE_ID_HEADER)
-            log.info("Future ID from headers: %s", future_id)
-            if future_id:
-                try:
-                    # Extract model ID
-                    model_id = self._extract_model_id(ctx)
+        future_id = ctx.headers.get(FUTURE_ID_HEADER)
+        model_id = self._extract_model_id(ctx)
+        if not self._redis:
+            log.warning(
+                "Redis is not connected, so the tokens of this %s call to %s are not recorded",
+                ctx.provider,
+                model_id,
+            )
+        elif not future_id:
+            log.warning(
+                "The %s call to %s has no %s header, so its tokens are not recorded",
+                ctx.provider,
+                model_id,
+                FUTURE_ID_HEADER,
+            )
+        else:
+            try:
+                is_error = resp.status >= 400 or (
+                    is_stream and getattr(resp, "stream_error", False)
+                )
 
-                    is_error = resp.status >= 400 or (
-                        is_stream and getattr(resp, "stream_error", False)
+                counts = {"errors": 1 if is_error else 0}
+                if usage:
+                    counts.update(
+                        {
+                            "input_token_count": usage.input_tokens,
+                            "output_token_count": usage.output_tokens,
+                            "token_count": usage.total_tokens,
+                            "input_cache_tokens": usage.input_cache_tokens,
+                            "input_cache_write_tokens": usage.input_cache_write_tokens,
+                        }
                     )
 
-                    # Build telemetry data
-                    data = {
-                        "model": model_id,
-                        "errors": "1" if is_error else "0",
-                    }
-
-                    # Add token data if available
-                    if usage:
-                        data.update(
-                            {
-                                "input_token_count": str(usage.input_tokens),
-                                "output_token_count": str(usage.output_tokens),
-                                "token_count": str(usage.total_tokens),
-                                "input_cache_tokens": str(usage.input_cache_tokens),
-                                "input_cache_write_tokens": str(
-                                    usage.input_cache_write_tokens
-                                ),
-                            }
-                        )
-
-                    self._redis.hset_multiple(f"future:{future_id}", data)
-                    log.info(
-                        "Wrote telemetry to future:%s with data: %s", future_id, data
-                    )
-                except Exception as e:
-                    log.error("Failed to write telemetry: %s", e)
+                # A future can make several LLM calls, so each call adds to its totals.
+                key = f"future:{future_id}"
+                self._redis.hset(key, "model", model_id)
+                for field, count in counts.items():
+                    self._redis.hincrby(key, field, count)
+                log.info("Added telemetry to %s: model=%s %s", key, model_id, counts)
+            except Exception as e:
+                log.error("Failed to write telemetry: %s", e)
 
     def _extract_model_id(self, ctx: Ctx) -> str:
         """Extract model ID from context or subpath."""
@@ -244,14 +249,14 @@ class Hooks:
     def _usage_from_openai_dict(
         usage: Optional[Dict[str, Any]],
     ) -> Optional[TokenUsage]:
-        """OpenAI's native usage schema."""
+        """OpenAI's native usage schema: Chat Completions counts prompt/completion tokens,
+        the Responses API input/output tokens."""
         if not usage:
             return None
+        input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0))
+        output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
         return TokenUsage(
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
-            total_tokens=usage.get("total_tokens", 0),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=usage.get("total_tokens", input_tokens + output_tokens),
         )
-
-
-hooks = Hooks()

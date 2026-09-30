@@ -1,9 +1,9 @@
 """Unit tests for automatic future-id injection into httpx requests."""
 
-import importlib.util
 import os
 import sys
 import unittest
+from unittest import mock
 
 import pytest
 
@@ -12,11 +12,15 @@ httpx = pytest.importorskip("httpx")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import canyonos_core.controller.canyonos_context as canyonos_context
-import canyonos_core.llm_gateway.proxy as proxy
+from canyonos_core.controller import gateway_headers
 from canyonos_core.llm_gateway.hooks import FUTURE_ID_HEADER
 
 
 class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        gateway_headers.install(canyonos_context.get_current_future_id)
+
     def setUp(self):
         canyonos_context._local = canyonos_context.threading.local()
 
@@ -74,18 +78,31 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(FUTURE_ID_HEADER, seen_headers)
 
-    def test_second_module_import_does_not_double_patch(self):
+    def test_second_install_does_not_double_patch(self):
         sync_send = httpx.Client.send
         async_send = httpx.AsyncClient.send
-        spec = importlib.util.spec_from_file_location(
-            "flat_llm_gateway", proxy.__file__
-        )
-        duplicate = importlib.util.module_from_spec(spec)
 
-        spec.loader.exec_module(duplicate)
+        gateway_headers.install(canyonos_context.get_current_future_id)
 
         self.assertIs(httpx.Client.send, sync_send)
         self.assertIs(httpx.AsyncClient.send, async_send)
+
+    def test_httpx_patched_when_boto3_is_missing(self):
+        patched_sync = httpx.Client.send
+        patched_async = httpx.AsyncClient.send
+        httpx.Client.send = patched_sync.__wrapped__
+        httpx.AsyncClient.send = patched_async.__wrapped__
+        try:
+            with mock.patch.dict(sys.modules, {"boto3": None}):
+                gateway_headers.install(canyonos_context.get_current_future_id)
+
+            self.assertTrue(getattr(httpx.Client.send, gateway_headers._PATCH_MARKER))
+            self.assertTrue(
+                getattr(httpx.AsyncClient.send, gateway_headers._PATCH_MARKER)
+            )
+        finally:
+            httpx.Client.send = patched_sync
+            httpx.AsyncClient.send = patched_async
 
 
 if __name__ == "__main__":

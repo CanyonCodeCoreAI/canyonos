@@ -7,8 +7,9 @@ import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.llm_gateway.hooks import Ctx, Hooks
+from canyonos_core.llm_gateway.hooks import FUTURE_ID_HEADER, Ctx, Hooks
 from canyonos_core.llm_gateway.providers.base import GatewayResponse
+from fakes import _FakeRedis
 
 
 def _ctx(provider, subpath):
@@ -94,12 +95,69 @@ class ExtractUsageTests(unittest.TestCase):
             (usage.input_tokens, usage.output_tokens, usage.total_tokens), (7, 9, 16)
         )
 
+    def test_direct_openai_responses_api_uses_input_output_schema(self):
+        resp = _json_response(
+            {"usage": {"input_tokens": 12, "output_tokens": 5, "total_tokens": 17}}
+        )
+        usage = self.hooks._extract_usage(_ctx("openai", "v1/responses"), resp)
+        self.assertEqual(
+            (usage.input_tokens, usage.output_tokens, usage.total_tokens), (12, 5, 17)
+        )
+
     def test_non_200_status_yields_no_usage(self):
         resp = _json_response(
             {"usage": {"input_tokens": 1, "output_tokens": 1}}, status=400
         )
         usage = self.hooks._extract_usage(_ctx("anthropic", "v1/messages"), resp)
         self.assertIsNone(usage)
+
+
+class RecordUsageTests(unittest.TestCase):
+    def test_every_call_on_a_future_adds_to_its_totals(self):
+        hooks = Hooks()
+        hooks._redis = _FakeRedis()
+        ctx = _ctx("openai", "v1/responses")
+        ctx.headers = {FUTURE_ID_HEADER: "f1"}
+
+        hooks.on_response(
+            ctx, _json_response({"usage": {"input_tokens": 3, "output_tokens": 2}})
+        )
+        hooks.on_response(ctx, _json_response({}, status=500))
+        hooks.on_response(
+            ctx, _json_response({"usage": {"input_tokens": 4, "output_tokens": 1}})
+        )
+
+        future = hooks._redis.hgetall("future:f1")
+        self.assertEqual(future["input_token_count"], 7)
+        self.assertEqual(future["output_token_count"], 3)
+        self.assertEqual(future["token_count"], 10)
+        self.assertEqual(future["errors"], 1)
+
+    def test_a_successful_call_without_usage_logs_a_warning(self):
+        with self.assertLogs("llm_gateway", level="WARNING") as logs:
+            Hooks().on_response(_ctx("openai", "v1/responses"), _json_response({}))
+
+        self.assertIn("No token usage found", logs.output[0])
+
+    def test_a_call_without_a_future_id_logs_a_warning(self):
+        hooks = Hooks()
+        hooks._redis = _FakeRedis()
+        response = _json_response({"usage": {"input_tokens": 3, "output_tokens": 2}})
+
+        with self.assertLogs("llm_gateway", level="WARNING") as logs:
+            hooks.on_response(_ctx("openai", "v1/responses"), response)
+
+        self.assertIn(FUTURE_ID_HEADER, logs.output[0])
+
+    def test_a_call_without_redis_logs_a_warning(self):
+        ctx = _ctx("openai", "v1/responses")
+        ctx.headers = {FUTURE_ID_HEADER: "f1"}
+        response = _json_response({"usage": {"input_tokens": 3, "output_tokens": 2}})
+
+        with self.assertLogs("llm_gateway", level="WARNING") as logs:
+            Hooks().on_response(ctx, response)
+
+        self.assertIn("Redis is not connected", logs.output[0])
 
 
 if __name__ == "__main__":

@@ -133,6 +133,31 @@ class HttpProviderStreamingTests(unittest.TestCase):
             (usage.input_tokens, usage.output_tokens, usage.total_tokens), (13, 8, 21)
         )
 
+    def test_openai_responses_stream_captures_completed_event_usage(self):
+        chunks = [
+            _llm_stream_event({"type": "response.output_text.delta", "delta": "hi"}),
+            _llm_stream_event(
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "r1",
+                        "usage": {
+                            "input_tokens": 21,
+                            "output_tokens": 4,
+                            "total_tokens": 25,
+                        },
+                    },
+                }
+            ),
+        ]
+        pr = self._forward(OpenAIProvider(_Cfg()), _upstream(chunks))
+
+        self.assertEqual(b"".join(pr.stream), b"".join(chunks))
+        usage = Hooks()._extract_usage(_ctx("openai"), pr)
+        self.assertEqual(
+            (usage.input_tokens, usage.output_tokens, usage.total_tokens), (21, 4, 25)
+        )
+
     def test_openai_stream_without_usage_chunk_reports_none(self):
         chunks = [
             _llm_stream_event({"id": "c1", "choices": [{"delta": {"content": "hi"}}]}),

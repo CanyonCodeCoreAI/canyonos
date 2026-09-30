@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 import grpc
 
 try:
+    from canyonos_core.controller import gateway_headers
     from canyonos_core.controller.local_controller_frontend import start_server
     from canyonos_core.controller.utils.gpu_metrics import read_gpu_percent
     from canyonos_core.controller.utils.redis_client import RedisClient
@@ -28,6 +29,7 @@ try:
         error_type_name,
     )
 except ImportError:
+    import gateway_headers
     from gpu_metrics import read_gpu_percent
     from local_controller_frontend import start_server
     from log_handler import LogHandler
@@ -45,16 +47,7 @@ try:
 except ImportError:
     import canyonos_context
 
-# Auto-inject X-Canyonos-Future-ID into all boto3 Bedrock calls so the LLM gateway
-# can attribute token/cost telemetry to the executing future. Import for its
-# global boto3 event-hook side effect; safe no-op if the gateway isn't present.
-try:
-    from canyonos_core.llm_gateway import proxy as _llm_gateway_autoinject  # noqa: F401
-except ImportError:
-    try:
-        from llm_gateway import proxy as _llm_gateway_autoinject  # noqa: F401
-    except ImportError:
-        pass  # No gateway available; agents call Bedrock directly.
+gateway_headers.install(canyonos_context.get_current_future_id)
 
 import local_controler_pb2
 import local_controler_pb2_grpc

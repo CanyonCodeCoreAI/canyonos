@@ -107,7 +107,7 @@ Telemetry is written to Redis under `future:<future_id>` keys, keyed off an
 
 ### How it works
 
-1. **Auto-injection:** `proxy.py` injects the `X-Canyonos-Future-ID` header from thread-local context for all three providers -- a boto3 event hook for Bedrock, and an `httpx.Client.send` patch for the OpenAI/Anthropic SDKs, gated to gateway-bound paths.
+1. **Auto-injection:** `controller/gateway_headers.py` (installed by the Local Controller) injects the `X-Canyonos-Future-ID` header from thread-local context for all three providers -- a boto3 event hook for Bedrock, and an `httpx.Client.send` patch for the OpenAI/Anthropic SDKs, gated to gateway-bound paths.
 2. **Usage extraction:** `hooks.py`'s `_extract_usage` parses the response `usage` field with the schema matching that provider/op/model (table above) -- this part works for all three providers whenever the header is present.
 3. **Redis write:** All metrics written to `future:<future_id>` hash.
 

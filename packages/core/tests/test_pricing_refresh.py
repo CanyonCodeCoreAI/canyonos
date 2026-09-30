@@ -1,16 +1,16 @@
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
 import requests
-import yaml
 
 from canyonos_core.controller.utils import pricing_refresh
 
 
-def _fixture_yaml_path(tmp_path):
-    path = tmp_path / "llm_prices.yaml"
+def _fixture_json_path(tmp_path):
+    path = tmp_path / "llm_prices.json"
     path.write_text(
-        yaml.safe_dump(
+        json.dumps(
             {
                 "models": {
                     "gpt-4o-mini": {
@@ -27,8 +27,7 @@ def _fixture_yaml_path(tmp_path):
                     },
                 },
                 "instances": {"m5.large": 0.096},
-            },
-            sort_keys=False,
+            }
         )
     )
     return path
@@ -53,10 +52,10 @@ class PricingRefreshTests(unittest.TestCase):
 
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
-        self.prices_path = _fixture_yaml_path(pathlib.Path(self._tmpdir.name))
+        self.prices_path = _fixture_json_path(pathlib.Path(self._tmpdir.name))
 
     def _read(self):
-        return yaml.safe_load(self.prices_path.read_text())
+        return json.loads(self.prices_path.read_text())
 
     @patch.object(pricing_refresh.requests, "get")
     def test_successful_refresh_updates_matched_models_only(self, mock_get):

@@ -1,6 +1,6 @@
 import unittest
 
-from canyonos_core.controller.utils import pricing
+from canyonos_core.llm_gateway import pricing
 
 
 class PricingModelResolutionTests(unittest.TestCase):
@@ -33,6 +33,12 @@ class PricingModelResolutionTests(unittest.TestCase):
     def test_openai_id_prices_non_zero(self):
         self.assertAlmostEqual(
             pricing.compute_token_cost("gpt-4o-mini", 1_000_000, 1_000_000), 0.75
+        )
+
+    def test_dated_direct_openai_gpt6_id_resolves_to_undated_row(self):
+        self.assertAlmostEqual(
+            pricing.compute_token_cost("gpt-6-sol-2026-09-22", 1_000_000, 1_000_000),
+            12.0,
         )
 
     def test_unknown_model_still_returns_zero(self):

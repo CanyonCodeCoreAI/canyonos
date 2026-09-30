@@ -15,8 +15,6 @@ from canyonos_core.llm_gateway import core, routing
 HAIKU = {
     "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     "max_tokens": 1024,
-    "input_cost_per_1m": 1.0,
-    "output_cost_per_1m": 5.0,
     "agents": {"IntentAgent": 0.01},
 }
 
@@ -138,12 +136,16 @@ class ValidationTests(unittest.TestCase):
         for fragment in fragments:
             self.assertIn(fragment, str(ctx.exception))
 
-    def test_capped_entry_needs_numeric_prices_and_max_tokens(self):
-        for field in ("input_cost_per_1m", "output_cost_per_1m", "max_tokens"):
-            missing = {k: v for k, v in HAIKU.items() if k != field}
-            self._assert_invalid(missing, "haiku", field)
-            self._assert_invalid({**HAIKU, field: "1.0"}, "haiku", field)
-            self._assert_invalid({**HAIKU, field: True}, "haiku", field)
+    def test_capped_entry_needs_numeric_max_tokens(self):
+        missing = {k: v for k, v in HAIKU.items() if k != "max_tokens"}
+        self._assert_invalid(missing, "haiku", "max_tokens")
+        self._assert_invalid({**HAIKU, "max_tokens": "1024"}, "haiku", "max_tokens")
+        self._assert_invalid({**HAIKU, "max_tokens": True}, "haiku", "max_tokens")
+
+    def test_capped_entry_needs_a_price_in_llm_prices(self):
+        self._assert_invalid(
+            {**HAIKU, "model_id": "no-such-model"}, "haiku", "llm_prices.json"
+        )
 
     def test_cap_must_be_numeric(self):
         self._assert_invalid(
@@ -172,18 +174,18 @@ class RefreshTests(unittest.TestCase):
 
     def test_invalid_refresh_keeps_the_last_good_config(self):
         routing._llms_by_model_id = routing.index_llms({"haiku": HAIKU})
-        bad = {"haiku": {**HAIKU, "input_cost_per_1m": None}}
+        bad = {"haiku": {**HAIKU, "max_tokens": None}}
         routing._refresh(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
         self.assertIn("haiku", _loaded_names())
 
     def test_first_load_failure_is_named_in_the_denial(self):
-        bad = {"haiku": {**HAIKU, "input_cost_per_1m": None}}
+        bad = {"haiku": {**HAIKU, "max_tokens": None}}
         with mock.patch.object(routing, "_llms_by_model_id", None):
             routing._refresh(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
             reason = routing.route(HAIKU["model_id"], _body(1))
         self.assertTrue(reason.startswith("canyonos denied: "))
         self.assertIn("haiku", reason)
-        self.assertIn("input_cost_per_1m", reason)
+        self.assertIn("max_tokens", reason)
 
     def test_redis_failure_keeps_the_last_config(self):
         routing._llms_by_model_id = routing.index_llms({"haiku": HAIKU})
@@ -200,14 +202,13 @@ class ProxyRequestTests(unittest.TestCase):
         with (
             _use(HAIKU),
             _as("IntentAgent"),
-            mock.patch("canyonos_core.llm_gateway.hooks.hooks", hooks, create=True),
         ):
             app = Flask(__name__)
             with app.test_request_context(method="POST", data=_body(4000)):
                 from flask import request
 
                 resp = core.proxy_request(
-                    provider, f"model/{HAIKU['model_id']}/converse", request
+                    hooks, provider, f"model/{HAIKU['model_id']}/converse", request
                 )
 
         provider.forward.assert_not_called()

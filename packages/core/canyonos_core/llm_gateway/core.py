@@ -25,12 +25,9 @@ def _guess_model(body: bytes) -> Optional[str]:
         return None
 
 
-def proxy_request(provider, subpath, flask_request):
-    # Import hooks here to get the instance created by create_app
+def proxy_request(hooks, provider, subpath, flask_request):
     """Forward one agent request to its LLM provider (or return canned text when
     `canyonos test` stubs LLMs) and record its token usage on the calling future."""
-    from canyonos_core.llm_gateway.hooks import hooks
-
     body = flask_request.get_data()
     ctx = Ctx(
         provider=provider.name,

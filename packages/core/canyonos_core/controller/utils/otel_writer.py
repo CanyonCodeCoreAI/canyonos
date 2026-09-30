@@ -13,7 +13,7 @@ import sqlite3
 import time
 
 from canyonos_core.controller.utils.schema import DB_PATH
-from canyonos_core.controller.utils import pricing
+from canyonos_core.llm_gateway import pricing
 # pricing enriches trace rows with server cost at write time; a candidate to move
 # receiver-side later so the producer stays a pure queue writer.
 
@@ -148,7 +148,7 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
             # computing them until then rather than recomputing on every poll.
             if finished_at is not None:
                 # Cost lookups can fail independently of the telemetry itself (e.g.
-                # a malformed llm_prices.yaml) -- don't let that drop the whole row,
+                # a malformed llm_prices.json) -- don't let that drop the whole row,
                 # just cost it at 0.
                 try:
                     token_cost = (
