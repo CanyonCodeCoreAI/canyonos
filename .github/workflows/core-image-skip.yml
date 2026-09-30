@@ -1,0 +1,36 @@
+name: Core image (skipped)
+
+# Reports the required "build" check on PRs that core-image.yml skips, so they
+# can merge. See "Handling skipped but required checks" in the GitHub docs.
+#
+# The pull_request paths list below must stay the inverse of the pull_request
+# paths list in core-image.yml: a PR runs this workflow exactly when it changes
+# a file that core-image.yml does not watch. It uses paths with negation rather
+# than paths-ignore because GitHub documents the "!" prefix only for paths.
+# core-image.yml does not watch this file, so a PR that edits only this file
+# runs this workflow and validates it.
+
+on:
+  pull_request:
+    paths:
+      - '**'
+      - '!packages/core/**'
+      - 'packages/core/tests/**'
+      - 'packages/core/**.md'
+      - '!.github/workflows/core-image.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - run: echo "No Global Controller image inputs changed; nothing to build."

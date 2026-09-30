@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link id="theme-favicon" rel="icon" type="image/svg+xml" href="/cc-favicon-light.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter+Tight:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Canyon Code</title>
+    <script>
+      (function () {
+        var link = document.getElementById('theme-favicon');
+        var dark = window.matchMedia('(prefers-color-scheme: dark)');
+        var paint = function () {
+          link.href = dark.matches ? '/cc-favicon.svg' : '/cc-favicon-light.svg';
+        };
+        paint();
+        dark.addEventListener('change', paint);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,44 @@
+# CanyonOS local-mode dashboard. Selected by the `canyonos` stage in Dockerfile.web.
+
+:{$PORT:8080}
+
+root * /srv
+
+header {
+	Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	X-Content-Type-Options "nosniff"
+	X-Frame-Options "DENY"
+	Referrer-Policy "strict-origin-when-cross-origin"
+	-Server
+}
+
+# Vite fingerprints assets, so they can be cached forever.
+header /assets/* Cache-Control "public, max-age=31536000, immutable"
+
+# Caddy sorts `handle` ahead of `handle_path`, so a broad `handle` added above would take
+# these paths before the proxy sees them. Keep the catch-all last and keep it the only one.
+handle /healthz {
+	respond "ok" 200
+}
+
+# The dashboard and the API share one origin, so the bundle carries no host. `handle_path`
+# strips `/api` before forwarding, which is why the API keeps serving its unprefixed routes.
+handle_path /api/* {
+	reverse_proxy {$CANYONOS_API_UPSTREAM:api:3000}
+}
+
+handle {
+	# Production builds emit hidden sourcemaps; never serve them.
+	@sourcemaps path *.map
+	route @sourcemaps {
+		respond 404
+	}
+
+	# SPA routing: serve real files, fall back to index.html for client routes.
+	route {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+encode zstd gzip

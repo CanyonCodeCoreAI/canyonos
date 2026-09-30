@@ -1,0 +1,68 @@
+# Global Controller Configuration
+# Lists all agents/controllers that the global controller manages.
+
+agents:
+  - name: FinanceAgent
+    replicas: 2
+    redis_port: 6379 # Redis port on this node
+    stateful: true
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/finance_agent.py
+    provider: local
+
+  - name: MarketResearchAgent
+    replicas: 1
+    redis_port: 6379
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/market_agent.py
+    provider: local
+
+  - name: VllmAgent
+    replicas: 1
+    redis_port: 6379
+    resources:
+      cpu: 2
+      memory: 2048
+    entrypoint: agents/vllm_agent.py
+    provider: local
+
+  - name: Workflow
+    replicas: 1
+    type: workflow
+    redis_port: 6379
+    workflow_file: workflow/example_workflow.py
+    provider: local
+
+poll_interval: 5
+
+# Stream failure/log detail into each future's `logs` field; off by default to avoid clogging bandwidth (see FUTURE_SCHEMA.md).
+logs: false
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+
+# EC2 defaults for `provider: EC2` replicas.
+# Security group must allow inbound TCP 22, 50051, and 6379 from the
+# global controller host's source IP.
+#
+# ec2:
+#   region: us-east-1
+#   ami_id: ami-0123456789abcdef0
+#   subnet_id: subnet-0123456789abcdef0
+#   security_group_ids:
+#     - sg-0123456789abcdef0
+#   ssh_user: ubuntu
+
+
+# Docker image registry (legacy; no longer used).
+# Remote nodes are expected to already have the image before `canyonos deploy`.
+#
+# registry:
+#   url: myregistry.example.com:5000
+#   user: sagarwal

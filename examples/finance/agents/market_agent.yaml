@@ -1,0 +1,34 @@
+agent:
+  name: MarketResearchAgent
+  functions:
+    - name: get_market_trend
+      description: Get the market trend for a given sector.
+      arguments:
+        - name: sector
+          type: str
+      returns:
+        type: dict
+
+    - name: get_sector_analysis
+      description: Get a detailed analysis for a given sector.
+      arguments:
+        - name: sector
+          type: str
+      returns:
+        type: str
+
+    - name: get_competitor_list
+      description: Get a list of competitors for a given company.
+      arguments:
+        - name: company
+          type: str
+      returns:
+        type: list
+
+    - name: run
+      description: Run the market research agent with a query.
+      arguments:
+        - name: query
+          type: str
+      returns:
+        type: str

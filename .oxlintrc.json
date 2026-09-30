@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "import"],
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/*.config.*",
+    "**/scripts/**",
+    "**/*.gen.ts",
+    "**/*.d.ts",
+    "**/global.d.ts",
+    "**/vite-env.d.ts"
+  ],
+  "rules": {
+    "typescript/consistent-type-imports": [
+      "error",
+      {
+        "prefer": "type-imports",
+        "fixStyle": "separate-type-imports",
+        "disallowTypeAnnotations": true
+      }
+    ],
+    "sort-imports": "off",
+    "import/no-duplicates": ["error", { "preferInline": false }],
+    "import/consistent-type-specifier-style": ["error", "prefer-top-level"],
+    "import/namespace": "off"
+  }
+}

@@ -1,0 +1,22 @@
+site_name: CanyonOS
+repo_url: https://github.com/CanyonCodeCoreAI/canyonos
+docs_dir: docs
+theme: readthedocs
+
+nav:
+  - Home: index.md
+  - Preparing an Agent App: CANYONIZATION-APP-READINESS.md
+  - Contract reference:
+      - Overview: contract-reference.md
+      - The .car artifact: build-artifact.md
+      - Manifest reference: manifest-reference.md
+      - Runtime contract: runtime-contract.md
+      - Images and dependencies: images-and-dependencies.md
+      - LLM proxy: llm-proxy.md
+      - EC2 deployment: ec2.md
+      - Troubleshooting: troubleshooting.md
+  - Contributing: CONTRIBUTING.md
+
+plugins:
+  - search
+  - include-markdown

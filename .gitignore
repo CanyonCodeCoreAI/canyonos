@@ -1,0 +1,70 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Node / Turborepo
+node_modules/
+.turbo/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE / editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+._*
+
+# Canyon artifacts. `.car` is generated from the application source by the
+# porting skill and `canyonos build`; it is never committed.
+.car/
+
+# Generated stubs
+stubs/
+grpc_stubs/
+docker_container/
+
+# Logs
+*.log
+
+# Local env / machine artifacts
+.env
+.env.*
+!.env.example
+# The CLI's development-only environment file; see packages/cli/DEVELOPMENT.md.
+packages/cli/.env
+AWSCLIV2.pkg
+.python-version
+
+Agent Artifacts
+# testing-porting-to-canyonos working tree: clones, artifacts, results db
+.canyonos-tests/
+.harness/
+.playwright-mcp/
+
+
+# Committed example env files stay tracked despite the .env.* rule above.
+!.env.*.example
+packages/api/data/*.db
+packages/api/data/*.db-*
+test-results/
+packages/web/src/routeTree.gen.ts
+playwright-report/
+
+# MkDocs build output
+site/

@@ -1,0 +1,69 @@
+[tool.turbo]
+name = "canyonos-python"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+# TypeScript-only workspace packages; the glob above matches them, uv must not.
+exclude = ["packages/api", "packages/tsconfig", "packages/ui", "packages/web"]
+
+[tool.uv]
+required-version = ">=0.12.15"
+
+[tool.uv.sources]
+canyonos-core = { workspace = true }
+canyonos = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff==0.16.7",
+    "ty==0.0.81",
+    "canyonos-core",
+    "canyonos",
+]
+
+[tool.ruff]
+required-version = "==0.16.7"
+# Ruff 0.16.7 formats fenced examples too; CI checks Python sources, not docs.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Preserve the documented Ruff default baseline; broader rules need an
+# intentional adoption pass rather than becoming CI requirements on upgrade.
+select = ["E4", "E7", "E9", "F"]
+# The controller modules and the tests that load them put generated grpc
+# stubs on sys.path before importing them.
+ignore = ["E402"]
+
+[tool.ty.environment]
+python = ".venv"
+
+[tool.ty.src]
+include = ["packages/core/canyonos_core"]
+exclude = [
+    "packages/core/canyonos_core/stub_generator.py",
+]
+
+[tool.ty.analysis]
+allowed-unresolved-imports = [
+    # These names are the deliberate flat-module fallbacks used in container images.
+    "gpu_metrics",
+    "metric_convert",
+    "otel_reader",
+    "trace_convert",
+    "utils.otlp_utils",
+    "grpc_options",
+    "log_entry",
+    "log_handler",
+    "log_convert",
+    "llm_proxy",
+    "local_controler_pb2",
+    "local_controler_pb2_grpc",
+    "local_controller_frontend",
+    "redis_client",
+    "canyonos_context",
+    "deploy",
+    "future",
+    "poller",
+    "*_stub",
+    "*_agent_stub",
+]

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package global_controller;
+
+service GlobalController {
+    rpc Execute(JsonResponse) returns (JsonResponse) {}
+}
+
+message JsonResponse{
+    string resonse = 1;
+}

@@ -1,0 +1,62 @@
+#!/bin/bash
+set -e
+
+echo "==========================================="
+echo "   CanyonOS Integration & Performance Tests"
+echo "==========================================="
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+
+echo ">> 0. Running small pytest suite..."
+python3 -m pytest "$SCRIPT_DIR" "$SCRIPT_DIR/../packages"
+
+TEST_DIR="/tmp/canyonos_test_env_$$"
+PROJECT_NAME="canyonos_test"
+
+# Cleanup function ensures we kill the deployed Flask/GlobalController on exit
+function cleanup {
+    echo ">> Cleaning up test environment..."
+    if [ -n "$DEPLOY_PID" ]; then
+        kill -9 $DEPLOY_PID 2>/dev/null || true
+    fi
+    rm -rf "$TEST_DIR"
+    echo ">> Cleanup complete."
+}
+trap cleanup EXIT
+
+mkdir -p "$TEST_DIR"
+cd "$TEST_DIR"
+
+echo ">> 1. Generating new project..."
+canyonos new-project $PROJECT_NAME
+cd $PROJECT_NAME
+grep -v 'gpu:' .car/config/global_controller.yaml > .car/config/global_controller.yaml.tmp
+mv .car/config/global_controller.yaml.tmp .car/config/global_controller.yaml
+
+echo ">> 2. Building and deploying workflow (canyonos deploy)..."
+canyonos deploy &
+DEPLOY_PID=$!
+
+# Wait for the workflow flask app to become reachable
+echo ">> Waiting for deployment to become healthy on port 8080..."
+until curl -s http://localhost:8080/main > /dev/null 2>&1 || [ "$?" -eq "4" ] || [ "$?" -eq "0" ] || [ "$?" -eq "52" ]; do
+    sleep 2
+done
+
+# Wait an additional few seconds for agents to register to redis properly
+sleep 5
+echo ">> Deployment healthy! Running test suite."
+
+ORIG_CWD=$(pwd)
+
+echo "-------------------------------------------"
+echo ">> Running Integration Tests..."
+python3 "$SCRIPT_DIR/test_integration.py" || exit 1
+
+echo "-------------------------------------------"
+echo ">> Running Performance/Load Tests..."
+python3 "$SCRIPT_DIR/test_performance.py" --concurrent 5 --total 20 || exit 1
+
+echo "==========================================="
+echo "   All Tests Passed Successfully!"
+echo "==========================================="

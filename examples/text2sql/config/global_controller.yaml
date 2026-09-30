@@ -1,0 +1,117 @@
+# Global Controller Configuration — NL-to-SQL staged-validation pipeline
+# Lists all agents and the workflow that CanyonOS manages.
+#
+# Each agent declares a distinct resource class so the scheduler has real
+# placement / batching / admission decisions to make (see the `resources`,
+# `stateful`, and `replicas` fields below).
+
+agents:
+  # Stage 1: schema retrieval. GPU-bound embedding + vector search.
+  # Embeddings are batchable, so this agent benefits from cross-request
+  # coalescing before the GPU. Multiple replicas share the embedding load.
+  - name: SchemaRetrievalAgent
+    redis_port: 6379
+    replicas: 2
+    resources:
+      cpu: 2
+      memory: 2048
+      gpu: 1
+    entrypoint: agents/schema_agent.py
+    provider: EC2
+    instance_type: t3.micro
+
+  # Stage 2: candidate generation. LLM-bound; calls VllmAgent remotely.
+  # Sits on the request's critical path.
+  - name: SQLGeneratorAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/sql_generator_agent.py
+    provider: EC2
+    instance_type: t3.micro
+
+  # Stage 3: static validation. Cheap CPU, high fan-out (one call per
+  # candidate). Produces the EXPLAIN cost signal used for admission control.
+  - name: SQLValidatorAgent
+    redis_port: 6379
+    replicas: 2
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/sql_validator_agent.py
+    provider: EC2
+    instance_type: t3.micro
+
+  # Stage 4: sandbox execution against a small sampled replica.
+  # `stateful: true` => all calls within one request_id route to the same
+  # instance (session affinity), keeping the seeded sample warm. `replicas: 2`
+  # models the warm sample-DB pool the scheduler manages.
+  - name: SandboxExecutorAgent
+    redis_port: 6379
+    stateful: true
+    replicas: 2
+    resources:
+      cpu: 2
+      memory: 1024
+    entrypoint: agents/sandbox_agent.py
+    provider: EC2
+    instance_type: t3.micro
+
+  # Stage 5: production execution. Scarce, expensive warehouse slots — kept to
+  # a single replica so the cost-gated admission control has something to
+  # protect. This is the resource the whole staged pipeline exists to guard.
+  - name: ProductionExecutorAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/production_agent.py
+    provider: EC2
+    instance_type: t3.micro
+
+  # Stage: LLM backend via Bedrock (Converse API), called remotely by
+  # SQLGeneratorAgent — same pattern as portfolio's AdvisorAgent.
+  - name: VllmAgent
+    redis_port: 6379
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/vllm_agent.py
+    provider: EC2
+    instance_type: t3.micro
+
+  # The workflow, exposed as a REST API.
+  - name: Workflow
+    type: workflow
+    api_port: 8080         # Flask REST API port
+    dashboard_port: 8081   # Local dashboard's preferred port
+    redis_port: 6379
+    replicas: 1
+    workflow_file: workflow/text2sql_workflow.py
+    provider: EC2
+    instance_type: t3.micro
+
+# Polling interval in seconds
+poll_interval: 5
+
+# Stream failure/log detail into each future's `logs` field; off by default to avoid clogging bandwidth (see FUTURE_SCHEMA.md).
+logs: false
+
+# Redis connection
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+
+# EC2 defaults for the `provider: EC2` replicas above.
+ec2:
+  region: ${EC2_REGION}
+  ami_id: ${EC2_AMI_ID}
+  subnet_id: ${EC2_SUBNET_ID}
+  security_group_ids:
+    - ${EC2_SECURITY_GROUP_ID}
+  ssh_user: ${EC2_SSH_USER}

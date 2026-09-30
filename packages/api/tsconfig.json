@@ -1,0 +1,14 @@
+{
+  "extends": "@canyonos/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "jsx": "react-jsx",
+    "paths": {
+      "@api/*": ["./src/*"],
+      "@core/*": ["./src/modules/core/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

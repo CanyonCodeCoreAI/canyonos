@@ -1,0 +1,36 @@
+name: canyonos
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: canyonos-postgres
+    restart: unless-stopped
+    ports:
+      - '${POSTGRES_HOST_PORT:-5432}:5432'
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-canyonos}
+      POSTGRES_USER: ${POSTGRES_USER:-canyonos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canyonos}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: canyonos-mailpit
+    restart: unless-stopped
+    ports:
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+      - '${MAILPIT_UI_PORT:-8025}:8025'
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+volumes:
+  postgres-data:
+    name: ${POSTGRES_VOLUME:-canyonos-postgres-data}
