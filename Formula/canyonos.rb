@@ -1,25 +1,25 @@
 class Canyonos < Formula
   desc "CLI for CanyonOS"
   homepage "https://github.com/CanyonCodeCoreAI/canyonos"
-  version "0.1.5"
+  version "0.1.732"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/cli-v#{version}/canyonos-macos-arm64"
-      sha256 "068136e3e69ea502b8651cb2ab889ee53a7efc5d35723dce85f91b04817bef76"
+      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/v#{version}/canyonos-macos-arm64"
+      sha256 "cc701314367937aa9de39c46671d45a84a653e4cd89dbdff7417391b2597324f"
     else
-      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/cli-v#{version}/canyonos-macos-x86_64"
-      sha256 "c3f5e9adefc27f1cbfc2682138fde779b1865b3b66abba8b0d9dbd17d021526f"
+      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/v#{version}/canyonos-macos-x86_64"
+      sha256 "c32e5bfc005704e2836a1df022897eb342fd54185743deedee23ce7cee43d4f7"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/cli-v#{version}/canyonos-linux-arm64"
-      sha256 "378d4a0a022e27396c531980c7a0808cb5a1d624ff0884f4ae5de0586533be4a"
+      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/v#{version}/canyonos-linux-arm64"
+      sha256 "ab0396504525e11b59da1dbfb26ee31d021fe7532fc5aca4f6ae501bda5ad23b"
     else
-      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/cli-v#{version}/canyonos-linux-x86_64"
-      sha256 "1b5add3432079d06b2ec055f4a0da8a65961a33a0fd2f57ca79787ff01ca243f"
+      url "https://github.com/CanyonCodeCoreAI/canyonos/releases/download/v#{version}/canyonos-linux-x86_64"
+      sha256 "d31a805448140e9c4fcab4bfc0ef6dc2b3a4a486ddf1e956b29dfd970d11acbe"
     end
   end
 
