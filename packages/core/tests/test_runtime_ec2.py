@@ -244,6 +244,7 @@ class EC2RuntimeTests(unittest.TestCase):
 
         request = self.fake_client.run_requests[0]
         self.assertEqual(request["ImageId"], "ami-123456")
+        self.assertNotIn("InstanceMarketOptions", request)
         self.assertRegex(request["KeyName"], r"^canyonos-ec2-default-[0-9a-f]{8}$")
         self.assertEqual(
             request["NetworkInterfaces"],
@@ -273,6 +274,21 @@ class EC2RuntimeTests(unittest.TestCase):
         self.assertEqual(
             self.client_calls,
             [{"service_name": "ec2", "region_name": "us-east-1"}],
+        )
+
+    def test_provision_requests_spot_market_type(self):
+        spec = {
+            "name": "Spot",
+            "provider": "EC2",
+            "instance_type": "t3.small",
+            "market_type": "spot",
+        }
+
+        ec2_runtime.provision_instance(spec, 0)
+
+        self.assertEqual(
+            self.fake_client.run_requests[0]["InstanceMarketOptions"],
+            {"MarketType": "spot"},
         )
 
     def test_provision_fails_when_no_public_ip_arrives(self):

@@ -1266,7 +1266,7 @@ class GlobalController(ControllerContext):
         """Apply the scaling policy's replica changes to each agent's desired count."""
         for agent_name, delta in scaling.scale(self):
             current = state.get_desired(self.redis, agent_name)
-            self.set_replicas(agent_name, current + delta)
+            self._set_replicas(agent_name, current + delta)
 
     def _apply_configured_replicas(self):
         """Reset every agent's replica count to what the YAML says, at startup and on reload."""
