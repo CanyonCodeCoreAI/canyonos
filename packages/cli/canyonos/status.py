@@ -5,7 +5,7 @@ and if so, where the workflow (and, if up, the dashboard) answer.
 
 from canyonos import ui
 from canyonos.constants import WORKFLOW_ROUTE, default_config_path, workflow_api_port
-from canyonos.dashboard_stack import _existing_dashboard_port
+from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
 from canyonos.deploy import workflow_targets
 from canyonos.gc import deploy_status, require_state
 
@@ -34,7 +34,7 @@ def run_status():
 
     dashboard_port = _existing_dashboard_port()
     if dashboard_port:
-        ui.say(f"Dashboard: 127.0.0.1:{dashboard_port}")
+        ui.say(f"Dashboard: {dashboard_url(dashboard_port)}")
     else:
         ui.hint("Dashboard is not running. Run `canyonos serve` to start it.")
 

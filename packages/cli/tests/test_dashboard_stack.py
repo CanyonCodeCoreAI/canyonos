@@ -289,6 +289,7 @@ def test_success_pulls_starts_and_verifies(monkeypatch, project):
         return Response()
 
     monkeypatch.setattr(dashboard_stack.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(dashboard_stack, "public_ip", lambda: None)
     result = dashboard_stack.run_dashboard()
 
     assert result == dashboard_stack.ServeResult(
@@ -373,6 +374,7 @@ def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
             "Response", (), {"status": 200, "close": lambda self: None}
         )(),
     )
+    monkeypatch.setattr(dashboard_stack, "public_ip", lambda: None)
 
     result = dashboard_stack.run_dashboard()
 
@@ -397,3 +399,21 @@ def test_manifest_gives_the_api_its_self_hosted_environment():
         "CANYONOS_REDIS_PORT",
         "LOG_LEVEL",
     }
+
+
+def test_manifest_publishes_the_web_on_every_interface():
+    ports = _shipped_manifest()["services"]["web"]["ports"]
+
+    assert ports == ["${CANYONOS_WEB_PORT}:8080"]
+
+
+def test_dashboard_url_uses_the_public_ip_on_ec2(monkeypatch):
+    monkeypatch.setattr(dashboard_stack, "public_ip", lambda: "54.85.117.239")
+
+    assert dashboard_stack.dashboard_url(8081) == "http://54.85.117.239:8081"
+
+
+def test_dashboard_url_falls_back_to_loopback_off_ec2(monkeypatch):
+    monkeypatch.setattr(dashboard_stack, "public_ip", lambda: None)
+
+    assert dashboard_stack.dashboard_url(8081) == "http://127.0.0.1:8081"

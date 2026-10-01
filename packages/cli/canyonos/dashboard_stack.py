@@ -23,6 +23,7 @@ from canyonos.constants import (
     DEFAULT_DASHBOARD_PORT,
     default_config_path,
     local_redis_port,
+    public_ip,
 )
 from canyonos.port_utils import find_free_port
 
@@ -336,13 +337,18 @@ def _container_health(name: str) -> str | None:
     return status if status and status != "<no value>" else None
 
 
+def dashboard_url(port: int) -> str:
+    """Where people open the dashboard: this machine's public IP on EC2, else loopback."""
+    return f"http://{public_ip() or '127.0.0.1'}:{port}"
+
+
 def _verify(port: int) -> str:
-    dashboard_url = f"http://127.0.0.1:{port}"
+    local_url = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + 30
-    endpoints = (f"{dashboard_url}/healthz", f"{dashboard_url}/api/healthz")
+    endpoints = (f"{local_url}/healthz", f"{local_url}/api/healthz")
     while time.monotonic() < deadline:
         if all(_endpoint_healthy(endpoint) for endpoint in endpoints):
-            return dashboard_url
+            return dashboard_url(port)
         if time.monotonic() < deadline:
             time.sleep(1)
     raise PhaseFailure(
