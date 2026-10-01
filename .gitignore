@@ -31,8 +31,10 @@ Thumbs.db
 ._*
 
 # Canyon artifacts. `.car` is generated from the application source by the
-# porting skill and `canyonos build`; it is never committed.
+# porting skill and `canyonos build`; it is never committed, except the ports
+# verified by hand that the e2e workflow runs against.
 .car/
+!tests/e2e/*/.car/
 
 # Generated stubs
 stubs/
