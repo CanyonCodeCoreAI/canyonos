@@ -10,7 +10,7 @@ class StartLlmGatewayTests(unittest.TestCase):
         gateway_process = MagicMock()
         gateway_process.poll.return_value = None
         fake_time = MagicMock()
-        fake_time.time.side_effect = [0, 0, 11]
+        fake_time.time.side_effect = [0, 0, 61]
         with (
             patch("socket.socket"),
             patch("subprocess.Popen", return_value=gateway_process),
@@ -26,7 +26,7 @@ class StartLlmGatewayTests(unittest.TestCase):
         message = self._start_with_health_check_failing(
             urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
         )
-        self.assertIn("did not become healthy on 127.0.0.1:8081 within 10s", message)
+        self.assertIn("did not become healthy on 127.0.0.1:8081 within 60s", message)
         self.assertIn(
             "(last health check: <urlopen error [Errno 111] Connection refused>)",
             message,

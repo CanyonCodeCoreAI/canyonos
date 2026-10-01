@@ -64,7 +64,7 @@ CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 # How long a replica may stay short of "healthy" before the deploy is called dead. It
 # must cover the slowest honest cold start, so the workflow launcher's
 # stub_generator.WORKFLOW_READY_TIMEOUT_SECONDS must not undercut it.
-CONTROLLER_READY_TIMEOUT_SECONDS = 120
+CONTROLLER_READY_TIMEOUT_SECONDS = 180
 
 # How much of a failed container's own log to show: enough for the traceback that
 # names the failed import, short enough not to bury the summary under it.

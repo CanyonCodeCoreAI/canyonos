@@ -909,7 +909,7 @@ from local_controller import LocalController
 
 # Matches the global controller's CONTROLLER_READY_TIMEOUT_SECONDS: a shorter
 # deadline here would fail a slow but honest cold start before the deploy did.
-WORKFLOW_READY_TIMEOUT_SECONDS = 120
+WORKFLOW_READY_TIMEOUT_SECONDS = 180
 
 
 def mark_ready_when_serving():

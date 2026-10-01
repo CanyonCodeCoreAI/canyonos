@@ -269,7 +269,7 @@ class LocalController(object):
 
         # Popen only raises if the process can't be spawned -- it returns a healthy
         # handle even if the gateway starts and dies immediately, so poll /healthz.
-        deadline = time.time() + 10
+        deadline = time.time() + 60
         last_error = None
         while time.time() < deadline:
             if gateway_process.poll() is not None:
@@ -289,7 +289,7 @@ class LocalController(object):
         else:
             gateway_process.kill()
             raise RuntimeError(
-                "LLM gateway did not become healthy on 127.0.0.1:8081 within 10s "
+                "LLM gateway did not become healthy on 127.0.0.1:8081 within 60s "
                 f"(last health check: {last_error}); "
                 "agent LLM calls are routed through it unconditionally and would "
                 "otherwise fail silently."
