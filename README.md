@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/canyonos-banner.gif" alt="CanyonOS" width="720" height="123">
+  <img src="https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/.github/canyonos-banner.gif" alt="CanyonOS" width="720" height="123">
 </p>
 
 <p align="center">
