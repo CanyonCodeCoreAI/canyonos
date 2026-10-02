@@ -2,4 +2,4 @@
 the Global Controller container."""
 
 # CanyonOS - Distributed Agent Framework
-__version__ = "0.1.733"
+__version__ = "0.1.734"
