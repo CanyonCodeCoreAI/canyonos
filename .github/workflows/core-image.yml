@@ -1,6 +1,6 @@
 name: Core image
 
-# Builds the Global Controller image on every change. release.yml publishes it.
+# Builds the Global Controller image on every change.
 
 on:
   # Paths are duplicated because Actions does not resolve YAML anchors.
