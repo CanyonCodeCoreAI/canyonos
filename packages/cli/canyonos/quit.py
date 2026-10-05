@@ -2,7 +2,7 @@
 Logic for `canyonos quit`: full teardown. Stops and removes the Global
 Controller container AND deletes the /workspace named volume, so the project
 files copied into it are discarded too. Also tears down the local dashboard
-stack (web/api/db), if one was started from this project. (Use `canyonos stop`
+stack (web/api/db), from whichever directory it is run. (Use `canyonos stop`
 to only halt a running deploy while keeping the containers and files around.)
 """
 
@@ -112,6 +112,7 @@ def run_quit():
             failures.append("Removing the dashboard stack failed")
 
         if not failures:
+            # The controller's gone, so this file would just point commands at a ghost.
             try:
                 os.remove(STATE_PATH)
             except FileNotFoundError:

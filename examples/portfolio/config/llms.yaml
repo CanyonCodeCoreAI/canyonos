@@ -1,0 +1,15 @@
+# Model access — portfolio-analysis pipeline
+# Keyed by a label for each model. An agent missing from a model's agents list is
+# refused; a model not listed here is open to every agent. A cap is the most one
+# call may cost in US dollars, checked against its worst case before sending.
+#
+# IntentAgent and AdvisorAgent call Bedrock with BEDROCK_MODEL_ID, which defaults
+# to this model. Neither is capped, so the list restricts access without refusing
+# any call the pipeline makes today.
+
+llama3-8b:
+  model_id: meta.llama3-8b-instruct-v1:0
+  max_tokens: 400
+  agents:
+    IntentAgent:
+    AdvisorAgent:

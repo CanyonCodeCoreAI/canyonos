@@ -65,3 +65,5 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) (Conventional Commits, review gates), 
 ## Skills
 
 - [skills/porting-to-canyonos](skills/porting-to-canyonos/SKILL.md): porting an existing Python agent to CanyonOS.
+- [skills/prompt-management](skills/prompt-management/SKILL.md): extracting source prompts into versioned `prompts.yaml`.
+- [skills/scaling-agents](skills/scaling-agents/SKILL.md): agent memory, `llms.yaml` model access and caps, and `scaling.yaml` policies.

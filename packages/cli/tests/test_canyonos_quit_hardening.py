@@ -1,6 +1,6 @@
 import subprocess
 
-from canyonos import docker_cmd, quit as quit_cmd
+from canyonos import dashboard_stack, docker_cmd, quit as quit_cmd
 from canyonos.gc import GCError
 
 
@@ -112,5 +112,30 @@ def test_dashboard_teardown_failure_preserves_state(monkeypatch, tmp_path):
 
     failures = quit_cmd.run_quit()
 
+    assert any("dashboard stack failed" in failure for failure in failures)
+    assert state_path.exists()
+
+
+def test_quit_outside_the_project_fails_while_dashboard_containers_remain(
+    monkeypatch, tmp_path
+):
+    state_path = _state(monkeypatch, tmp_path)
+    monkeypatch.setattr(quit_cmd, "post_clean", lambda _port: None)
+    monkeypatch.setattr(
+        quit_cmd, "teardown_dashboard", dashboard_stack.teardown_dashboard
+    )
+    monkeypatch.chdir(tmp_path)
+    docker_calls = []
+
+    def docker(argv, **_kwargs):
+        docker_calls.append(argv)
+        leftover = "9f1c2d3e4b5a\n" if argv[-3:] == ["ps", "-q", "--all"] else ""
+        return subprocess.CompletedProcess(argv, 0, leftover, "")
+
+    monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
+
+    failures = quit_cmd.run_quit()
+
+    assert ["docker", "compose", "-p", "canyonos-dashboard", "down"] in docker_calls
     assert any("dashboard stack failed" in failure for failure in failures)
     assert state_path.exists()

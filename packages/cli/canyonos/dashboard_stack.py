@@ -77,12 +77,14 @@ def _state_dir() -> Path:
     return Path.home() / ".canyonos" / "dashboard"
 
 
+def _project_argv() -> list[str]:
+    """`docker compose` for the dashboard project, found by name from any directory."""
+    return ["docker", "compose", "-p", COMPOSE_PROJECT]
+
+
 def _compose_argv(stack: DashboardStack, manifest: Path) -> list[str]:
     return [
-        "docker",
-        "compose",
-        "-p",
-        COMPOSE_PROJECT,
+        *_project_argv(),
         "--env-file",
         str(stack.env_path),
         "-f",
@@ -391,24 +393,21 @@ def _cleanup(stack: DashboardStack, manifest: Path) -> None:
         return
 
 
-def _dashboard_compose_command(*args: str) -> bool:
-    """Run a `docker compose` subcommand against the dashboard stack from the current project.
+def _dashboard_compose_command(command: str, *leftover_flags: str) -> bool:
+    """Run `docker compose <command>` on the dashboard project, then confirm it worked.
 
-    A missing dashboard is already the desired end state and returns True.
-    False is reserved for a Compose command that actually failed.
+    Compose finds the project's containers by their labels, so this needs
+    neither the project's `.env` nor the manifest. True only when `ps` with
+    `leftover_flags` lists none of them afterward; a missing dashboard is
+    already the desired end state.
     """
-    stack = DashboardStack(state_dir=_state_dir(), project_dir=Path.cwd())
-    if not stack.env_path.is_file():
-        return True
-    manifest_resource = importlib.resources.files("canyonos").joinpath(
-        "dashboard.compose.yml"
-    )
     try:
-        with importlib.resources.as_file(manifest_resource) as manifest:
-            result = _run([*_compose_argv(stack, manifest), *args])
+        if _run([*_project_argv(), command]).returncode != 0:
+            return False
+        leftover = _run([*_project_argv(), "ps", "-q", *leftover_flags])
     except OSError:
         return False
-    return result.returncode == 0
+    return leftover.returncode == 0 and not leftover.stdout.strip()
 
 
 def stop_dashboard() -> bool:
@@ -418,7 +417,7 @@ def stop_dashboard() -> bool:
 
 def teardown_dashboard() -> bool:
     """`docker compose down` -- removes the dashboard's web/api/db containers entirely."""
-    return _dashboard_compose_command("down")
+    return _dashboard_compose_command("down", "--all")
 
 
 def run_dashboard(

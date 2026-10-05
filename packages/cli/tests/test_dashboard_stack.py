@@ -306,32 +306,55 @@ def test_success_pulls_starts_and_verifies(monkeypatch, project):
     ]
 
 
-def test_stop_and_teardown_are_a_noop_without_an_env_file(monkeypatch, project):
+DASHBOARD_PROJECT = ["docker", "compose", "-p", "canyonos-dashboard"]
+STOP_AND_TEARDOWN = pytest.mark.parametrize(
+    ("dashboard_command", "compose_command", "leftover_query"),
+    [
+        (dashboard_stack.stop_dashboard, "stop", ["ps", "-q"]),
+        (dashboard_stack.teardown_dashboard, "down", ["ps", "-q", "--all"]),
+    ],
+)
+
+
+@STOP_AND_TEARDOWN
+def test_stop_and_teardown_reach_the_dashboard_outside_the_project(
+    monkeypatch, project, dashboard_command, compose_command, leftover_query
+):
     calls = []
     install_docker(monkeypatch, calls)
 
-    assert dashboard_stack.stop_dashboard() is True
-    assert dashboard_stack.teardown_dashboard() is True
-    assert calls == []
+    assert not (project / ".env").exists()
+    assert dashboard_command() is True
+    assert calls == [
+        [*DASHBOARD_PROJECT, compose_command],
+        [*DASHBOARD_PROJECT, *leftover_query],
+    ]
 
 
-def test_stop_dashboard_runs_compose_stop(monkeypatch, project):
-    calls = []
-    install_docker(monkeypatch, calls)
-    Path.cwd().joinpath(".env").write_text("CANYONOS_JWT_SECRET=x\n")
+@STOP_AND_TEARDOWN
+def test_stop_and_teardown_fail_while_dashboard_containers_remain(
+    monkeypatch, project, dashboard_command, compose_command, leftover_query
+):
+    install_docker(
+        monkeypatch,
+        [],
+        lambda argv: completed(argv, stdout="9f1c2d3e4b5a\n" if "ps" in argv else ""),
+    )
 
-    assert dashboard_stack.stop_dashboard() is True
-    assert calls[-1][-1] == "stop"
-    assert calls[-1][4:6] == ["--env-file", str(project / ".env")]
+    assert dashboard_command() is False
 
 
-def test_teardown_dashboard_runs_compose_down(monkeypatch, project):
-    calls = []
-    install_docker(monkeypatch, calls)
-    Path.cwd().joinpath(".env").write_text("CANYONOS_JWT_SECRET=x\n")
+@STOP_AND_TEARDOWN
+def test_stop_and_teardown_fail_when_compose_fails(
+    monkeypatch, project, dashboard_command, compose_command, leftover_query
+):
+    install_docker(
+        monkeypatch,
+        [],
+        lambda argv: completed(argv, returncode=int(compose_command in argv)),
+    )
 
-    assert dashboard_stack.teardown_dashboard() is True
-    assert calls[-1][-1] == "down"
+    assert dashboard_command() is False
 
 
 def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
