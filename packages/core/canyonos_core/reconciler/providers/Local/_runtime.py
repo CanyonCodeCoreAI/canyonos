@@ -21,6 +21,9 @@ from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
 from canyonos_core.reconciler.providers.shared_utils.llm_gateway_env import (
     llm_gateway_docker_env_args,
 )
+from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
+    resource_limit_args,
+)
 from canyonos_core.controller.utils.port_utils import is_port_conflict
 
 logger = logging.getLogger(__name__)
@@ -96,7 +99,6 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
     """Start a local replica's Docker container (replacing a leftover one with the same
     name) and return its instance record."""
     agent_name = spec["name"]
-    resources = spec.get("resources", {})
     ctrl_type = spec.get("type", "agent")
     image = f"canyonos-{agent_name.lower()}"
     host = provisioned["private_host"]
@@ -199,12 +201,12 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 cmd.extend(["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"])
             for key, value in spec.get("env", {}).items():
                 cmd.extend(["-e", f"{key}={value}"])
-        if resources.get("cpu"):
-            cmd.extend(["--cpus", str(resources["cpu"])])
-        if resources.get("memory"):
-            cmd.extend(["--memory", f"{resources['memory']}m"])
-        if resources.get("gpu"):
-            cmd.extend(["--gpus", str(resources["gpu"])])
+        # A stock database image capped at the agent defaults gets OOM-killed under load.
+        cmd.extend(
+            resource_limit_args(
+                spec.get("resources"), apply_defaults=ctrl_type != "database"
+            )
+        )
 
         # User secrets from `env_file`. Explicit -e flags above still win, so a
         # stray CANYONOS_* line in someone's .env cannot break agent wiring.

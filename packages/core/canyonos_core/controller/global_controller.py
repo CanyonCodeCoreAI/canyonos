@@ -36,6 +36,9 @@ from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
 from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
+from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
+    resource_limit_args,
+)
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 from canyonos_core.schema.yaml_lines import load_yaml_lines
@@ -524,6 +527,7 @@ class GlobalController(ControllerContext):
                     "--name",
                     container_name,
                     *network_args,
+                    *resource_limit_args(),
                     "-p",
                     f"{redis_port}:{redis_port}",
                     "redis:alpine",
