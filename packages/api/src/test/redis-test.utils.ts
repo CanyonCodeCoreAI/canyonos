@@ -5,8 +5,26 @@ import { config } from '@core/env';
 export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
 export const PROMPTS_CONFIG_KEY = 'prompts:config';
 export const PROMPTS_YAML_KEY = 'prompts:yaml';
-export const ACTIVE_AGENTS_KEY = 'agents:active';
 export const SCALING_CONFIG_KEY = 'scaling:config';
+export const ACTIVE_AGENTS_KEY = 'agents:active';
+
+/** An agent as the controller publishes it: its spec, desired count and newest load sample. */
+export interface SeededAgent {
+  readonly name: string;
+  readonly type?: 'agent' | 'workflow' | 'database';
+  readonly replicas?: number;
+  readonly desired?: number;
+  /** Written as-is instead of the spec, to stand in for a controller that wrote junk. */
+  readonly raw_spec?: string;
+  readonly raw_sample?: string;
+  readonly sample?: {
+    readonly replicas_running: number;
+    readonly replicas_expected: number;
+    readonly queue_length_total: number;
+    readonly requests_per_minute_per_replica: number;
+    readonly observed_at: number;
+  };
+}
 
 export interface StoredSystemPrompt {
   readonly version: string;
@@ -57,20 +75,40 @@ export async function reset_controller(): Promise<void> {
     await redis.del(CONTROLLER_IDENTITY_KEY);
     await redis.del(PROMPTS_CONFIG_KEY);
     await redis.del(PROMPTS_YAML_KEY);
-    await redis.del(ACTIVE_AGENTS_KEY);
     await redis.del(SCALING_CONFIG_KEY);
+    const agent_keys = (await redis.send('KEYS', ['agent:*'])) as string[];
+    for (const key of agent_keys) await redis.del(key);
+    await redis.del(ACTIVE_AGENTS_KEY);
   });
 }
 
-/** Publishes the running controller's agents and, unless null, the raw scaling:config payload. */
-export async function seed_scaling(
-  active_agents: readonly string[],
-  scaling_config: string | null
-): Promise<void> {
+/** Publishes agents the way write_config_specs and the poll loop do, newest sample first. */
+export async function seed_scaling_agents(agents: readonly SeededAgent[]): Promise<void> {
   await with_test_redis(async (redis) => {
-    await redis.set(ACTIVE_AGENTS_KEY, JSON.stringify(active_agents));
-    if (scaling_config !== null) await redis.set(SCALING_CONFIG_KEY, scaling_config);
+    for (const agent of agents) {
+      await redis.set(
+        `agent:${agent.name}:spec`,
+        agent.raw_spec ??
+          JSON.stringify({ name: agent.name, type: agent.type, replicas: agent.replicas ?? 1 })
+      );
+      if (agent.desired !== undefined) {
+        await redis.set(`agent:${agent.name}:desired_replicas`, String(agent.desired));
+      }
+      const sample = agent.raw_sample ?? (agent.sample ? JSON.stringify(agent.sample) : null);
+      if (sample !== null) await redis.send('LPUSH', [`agent:${agent.name}:samples`, sample]);
+    }
+    await redis.set(ACTIVE_AGENTS_KEY, JSON.stringify(agents.map((agent) => agent.name)));
   });
+}
+
+/** Overwrites the published agent list with a raw payload. */
+export async function seed_active_agents(raw: string): Promise<void> {
+  await with_test_redis((redis) => redis.set(ACTIVE_AGENTS_KEY, raw));
+}
+
+/** Publishes scaling_config as the running controller's raw scaling:config payload. */
+export async function seed_scaling(scaling_config: string): Promise<void> {
+  await with_test_redis((redis) => redis.set(SCALING_CONFIG_KEY, scaling_config));
 }
 
 export async function read_scaling_config(): Promise<unknown> {

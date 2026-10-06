@@ -1,35 +1,33 @@
 # Autoscaling
 
-CanyonOS can add and remove replicas of an agent based on its load. An agent without
-a scaling policy always runs the replica count set in `global_controller.yaml`.
+CanyonOS can add and remove replicas of each agent based on its load. Without a
+scaling policy, every agent runs the replica count set in `global_controller.yaml`.
 
-## Defining policies
+## Defining the policy
 
-Create a `scaling.yaml` file in the project's config folder. Each agent can have at most
-one policy, keyed by the agent's name:
+Create a `scaling.yaml` file in the project's config folder. A workflow has one policy,
+and it applies to every agent separately: each agent is measured on its own load and
+gains or loses its own replicas. The workflow container itself is never scaled.
 
 ```yaml
 scaling:
-  PriceAgent:
-    min_replicas: 1
-    max_replicas: 6
-    metric: requests_per_minute_per_replica
-    scale_up_above: 10
-    scale_down_below: 1
+  min_replicas: 1
+  max_replicas: 6
+  metric: requests_per_minute_per_replica
+  scale_up_above: 10
+  scale_down_below: 1
 ```
 
-- **min_replicas** and **max_replicas**: the fewest and most replicas the agent can
+- **min_replicas** and **max_replicas**: the fewest and most replicas each agent can
   run. `min_replicas` can't be more than `max_replicas`.
 - **metric**: the load the policy watches. It must be one of these:
-  - `requests_per_minute_per_replica`: requests per minute, divided by the number of
-    running replicas. Shown as **Throughput** on the dashboard.
+  - `requests_per_minute_per_replica`: requests completed per minute, divided by the
+    number of running replicas. Shown as **Throughput** on the dashboard.
   - `queue_length_total`: requests waiting across all of the agent's replicas. Shown
     as **Queue length** on the dashboard.
 - **scale_up_above**: add a replica when the metric stays above this value.
 - **scale_down_below**: remove a replica when the metric stays below this value. It
   must be lower than `scale_up_above`.
-
-A policy for an agent that isn't in the project is ignored.
 
 `examples/portfolio/config/scaling.yaml` has a full example.
 
@@ -53,8 +51,8 @@ With the default poll interval, an agent changes by at most one replica about ev
 
 ## Editing on the dashboard
 
-Open the project's **Scaling** page. It shows each agent's policy, and **Add policy**
-creates a new one for any running agent. Changes apply on the next poll. The page only
+Open the project's **Scaling** page. It shows the workflow's policy, and **Add policy**
+creates one when there is none. Changes apply on the next poll. The page only
 works while the project is running.
 
 ## Limits

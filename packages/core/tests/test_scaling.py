@@ -28,19 +28,21 @@ INSTANCE = {
 }
 
 
-def _controller(policies):
+def _controller(policy, agent_specs=None):
     controller = GlobalController.__new__(GlobalController)
     controller.redis = _FakeRedis()
-    controller.agent_specs = {"Alpha": {"name": "Alpha"}}
-    controller.redis.set("scaling:config", json.dumps({"scaling": policies}))
+    controller.agent_specs = agent_specs or {"Alpha": {"name": "Alpha"}}
+    controller.redis.set("scaling:config", json.dumps({"scaling": policy}))
     return controller
 
 
-def _fill_window(controller, replicas, requests_per_minute_per_replica, count=None):
+def _fill_window(
+    controller, replicas, requests_per_minute_per_replica, count=None, agent="Alpha"
+):
     for _ in range(count or contract.WINDOW_LENGTH):
         contract.push(
             controller.redis,
-            contract.agent_key("Alpha"),
+            contract.agent_key(agent),
             {
                 "replicas_expected": replicas,
                 "replicas_running": replicas,
@@ -65,14 +67,9 @@ def _poll(controller, polls):
     return counts
 
 
-class _ScalingTestCase(unittest.TestCase):
-    def setUp(self):
-        scaling._warned.clear()
-
-
-class ApplyScalingTests(_ScalingTestCase):
+class ApplyScalingTests(unittest.TestCase):
     def test_a_sustained_breach_adds_one_replica(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 1)
         _fill_window(controller, 1, 20)
 
@@ -81,7 +78,7 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
 
     def test_sustained_idle_removes_one_replica(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 3)
         _fill_window(controller, 3, 0)
 
@@ -90,7 +87,7 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
 
     def test_a_partial_window_waits(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 1)
         _fill_window(controller, 1, 20, count=contract.WINDOW_LENGTH - 1)
 
@@ -99,7 +96,7 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 1)
 
     def test_a_count_outside_the_bounds_is_pulled_back_at_once(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 6)
         _fill_window(controller, 6, 5, count=1)
 
@@ -108,7 +105,7 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 3)
 
     def test_a_single_spike_in_an_idle_window_waits(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 1)
         _push_history(controller, 1, [0, 0, 0, 0, 200, 0, 0, 0, 0, 0])
 
@@ -117,7 +114,7 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 1)
 
     def test_load_that_stopped_in_the_newest_samples_does_not_scale_up(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 1)
         _push_history(controller, 1, [40] * 8 + [0, 0])
 
@@ -126,7 +123,7 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 1)
 
     def test_a_single_busy_sample_in_an_idle_window_does_not_scale_down(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 3)
         _push_history(controller, 3, [0] * 9 + [5])
 
@@ -135,7 +132,7 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 3)
 
     def test_a_window_between_the_thresholds_holds(self):
-        controller = _controller({"Alpha": POLICY})
+        controller = _controller(POLICY)
         state.set_desired(controller.redis, "Alpha", 2)
         _push_history(controller, 2, [30, 2, 30, 2, 30, 2, 30, 2, 30, 2])
 
@@ -143,18 +140,33 @@ class ApplyScalingTests(_ScalingTestCase):
 
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
 
-    def test_a_sample_missing_the_metric_holds(self):
-        controller = _controller({"Alpha": POLICY})
+    def test_one_policy_scales_each_agent_on_its_own_load(self):
+        controller = _controller(
+            POLICY, {"Alpha": {"name": "Alpha"}, "Beta": {"name": "Beta"}}
+        )
         state.set_desired(controller.redis, "Alpha", 1)
-        _fill_window(controller, 1, 20, count=contract.WINDOW_LENGTH - 1)
-        _fill_window(controller, 1, None, count=1)
+        state.set_desired(controller.redis, "Beta", 1)
+        _fill_window(controller, 1, 20)
+        _fill_window(controller, 1, 5, agent="Beta")
 
         controller._apply_scaling()
 
-        self.assertEqual(state.get_desired(controller.redis, "Alpha"), 1)
+        self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
+        self.assertEqual(state.get_desired(controller.redis, "Beta"), 1)
+
+    def test_the_workflow_is_not_scaled(self):
+        controller = _controller(
+            POLICY, {"Workflow": {"name": "Workflow", "type": "workflow"}}
+        )
+        state.set_desired(controller.redis, "Workflow", 1)
+        _fill_window(controller, 1, 20, agent="Workflow")
+
+        controller._apply_scaling()
+
+        self.assertEqual(state.get_desired(controller.redis, "Workflow"), 1)
 
     def test_an_agent_without_a_policy_is_left_alone(self):
-        controller = _controller({})
+        controller = _controller(None)
         state.set_desired(controller.redis, "Alpha", 1)
         _fill_window(controller, 1, 20)
 
@@ -163,10 +175,10 @@ class ApplyScalingTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 1)
 
 
-class InvalidPolicyTests(_ScalingTestCase):
+class InvalidPolicyTests(unittest.TestCase):
     def _assert_skipped(self, policy):
         """Above every max in these policies and idle, so neither the clamp nor a step may fire."""
-        controller = _controller({"Alpha": policy})
+        controller = _controller(policy)
         state.set_desired(controller.redis, "Alpha", 5)
         _fill_window(controller, 5, 0)
 
@@ -175,15 +187,13 @@ class InvalidPolicyTests(_ScalingTestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 5)
 
     def test_a_policy_with_min_above_max_is_skipped_across_polls(self):
-        controller = _controller(
-            {"Alpha": {**POLICY, "min_replicas": 4, "max_replicas": 2}}
-        )
+        controller = _controller({**POLICY, "min_replicas": 4, "max_replicas": 2})
         state.set_desired(controller.redis, "Alpha", 3)
 
         self.assertEqual(_poll(controller, 4), [3, 3, 3, 3])
 
     def test_a_policy_with_min_zero_never_scales_to_zero(self):
-        controller = _controller({"Alpha": {**POLICY, "min_replicas": 0}})
+        controller = _controller({**POLICY, "min_replicas": 0})
         state.set_desired(controller.redis, "Alpha", 1)
         _fill_window(controller, 1, 0)
 
@@ -219,7 +229,7 @@ class InvalidPolicyTests(_ScalingTestCase):
     def test_whole_float_replica_counts_are_valid_and_stay_integers(self):
         with self.subTest("1.0 and 3.0 step an int count"):
             controller = _controller(
-                {"Alpha": {**POLICY, "min_replicas": 1.0, "max_replicas": 3.0}}
+                {**POLICY, "min_replicas": 1.0, "max_replicas": 3.0}
             )
             state.set_desired(controller.redis, "Alpha", 1)
             _fill_window(controller, 1, 20)
@@ -230,7 +240,7 @@ class InvalidPolicyTests(_ScalingTestCase):
             self.assertEqual(desired, 2)
             self.assertIsInstance(desired, int)
         with self.subTest("clamp to 3.0 stays int"):
-            controller = _controller({"Alpha": {**POLICY, "max_replicas": 3.0}})
+            controller = _controller({**POLICY, "max_replicas": 3.0})
             state.set_desired(controller.redis, "Alpha", 6)
             _fill_window(controller, 6, 5, count=1)
 
@@ -251,7 +261,7 @@ class InvalidPolicyTests(_ScalingTestCase):
     def test_a_scaling_value_that_is_not_a_mapping_is_ignored(self):
         for document in ({"scaling": ["Alpha"]}, {"scaling": "Alpha"}, ["Alpha"]):
             with self.subTest(document=document):
-                controller = _controller({})
+                controller = _controller(None)
                 controller.redis.set("scaling:config", json.dumps(document))
                 state.set_desired(controller.redis, "Alpha", 2)
                 _fill_window(controller, 2, 0)
@@ -261,7 +271,7 @@ class InvalidPolicyTests(_ScalingTestCase):
                 self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
 
     def test_a_config_that_is_not_json_is_ignored(self):
-        controller = _controller({})
+        controller = _controller(None)
         controller.redis.set("scaling:config", "{not json")
         state.set_desired(controller.redis, "Alpha", 2)
 
@@ -269,38 +279,20 @@ class InvalidPolicyTests(_ScalingTestCase):
 
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
 
-    def test_an_invalid_policy_is_warned_once_until_it_changes(self):
-        controller = _controller(
-            {"Alpha": {**POLICY, "min_replicas": 4, "max_replicas": 2}}
-        )
+    def test_an_invalid_policy_is_warned_on_every_poll(self):
+        controller = _controller({**POLICY, "min_replicas": 4, "max_replicas": 2})
         state.set_desired(controller.redis, "Alpha", 3)
 
         with self.assertLogs(scaling.logger, "WARNING") as logs:
             _poll(controller, 3)
-            controller.redis.set(
-                "scaling:config",
-                json.dumps({"scaling": {"Alpha": {**POLICY, "metric": "cpu"}}}),
-            )
-            _poll(controller, 3)
 
-        self.assertEqual(len(logs.records), 2)
+        self.assertEqual(len(logs.records), 3)
         self.assertIn("min_replicas", logs.records[0].getMessage())
-        self.assertIn("metric", logs.records[1].getMessage())
-
-    def test_a_bad_scaling_value_is_warned_once(self):
-        controller = _controller({})
-        controller.redis.set("scaling:config", json.dumps({"scaling": ["Alpha"]}))
-        state.set_desired(controller.redis, "Alpha", 2)
-
-        with self.assertLogs(scaling.logger, "WARNING") as logs:
-            _poll(controller, 3)
-
-        self.assertEqual(len(logs.records), 1)
 
 
-class RecordSamplesTests(_ScalingTestCase):
+class RecordSamplesTests(unittest.TestCase):
     def test_counters_become_per_minute_rates_and_means(self):
-        controller = _controller({})
+        controller = _controller(None)
         first = {
             "requests_served": "10",
             "requests_completed": "10",
@@ -319,11 +311,11 @@ class RecordSamplesTests(_ScalingTestCase):
 
         sample = controller._record_instance_sample(INSTANCE, second)
 
-        self.assertAlmostEqual(sample["requests_per_minute"], 30, places=0)
+        self.assertAlmostEqual(sample["requests_per_minute"], 10, places=0)
         self.assertEqual(sample["avg_execution_ms"], 200)
 
     def test_replicas_roll_up_into_one_agent_sample(self):
-        controller = _controller({})
+        controller = _controller(None)
         state.set_desired(controller.redis, "Alpha", 2)
         replica = {
             "agent_name": "Alpha",

@@ -12,33 +12,16 @@ CONFIG_KEY = "scaling:config"
 
 METRICS = ("queue_length_total", "requests_per_minute_per_replica")
 
-# Last invalid content warned about, by agent name (CONFIG_KEY for the document itself),
-# so a bad policy is reported once instead of on every poll.
-_warned = {}
 
-
-def read_policies(redis_client):
-    """Every scaling policy by agent name; empty when the document is missing or malformed."""
+def read_policy(redis_client):
+    """The workflow's scaling policy, or None when the document is missing or has none."""
     raw = redis_client.get(CONFIG_KEY) or "{}"
     try:
         document = json.loads(raw)
     except ValueError as e:
-        _warn_once(CONFIG_KEY, raw, "Ignoring %s: not valid JSON (%s)", CONFIG_KEY, e)
-        return {}
-    policies = document.get("scaling") if isinstance(document, dict) else document
-    if policies is None:
-        policies = {}
-    if not isinstance(policies, dict):
-        _warn_once(
-            CONFIG_KEY,
-            policies,
-            "Ignoring %s: `scaling` must map agent names to policies, got %r",
-            CONFIG_KEY,
-            policies,
-        )
-        return {}
-    _warned.pop(CONFIG_KEY, None)
-    return policies
+        logger.warning("Ignoring %s: not valid JSON (%s)", CONFIG_KEY, e)
+        return None
+    return document.get("scaling") if isinstance(document, dict) else document
 
 
 def policy_error(policy):
@@ -63,37 +46,27 @@ def policy_error(policy):
 
 
 def scale(controller):
-    """List (agent_name, delta) pairs; a positive delta adds replicas, a negative one removes them."""
+    """List (agent_name, delta) pairs; one policy applies to every agent, each scaled on its own load."""
+    policy = read_policy(controller.redis)
+    if policy is None:
+        return []
+    error = policy_error(policy)
+    if error:
+        logger.warning("Skipping invalid scaling policy: %s", error)
+        return []
+    policy = {
+        **policy,
+        "min_replicas": int(policy["min_replicas"]),
+        "max_replicas": int(policy["max_replicas"]),
+    }
     decisions = []
-    for agent_name, policy in read_policies(controller.redis).items():
-        if agent_name not in controller.agent_specs:
+    for agent_name, spec in controller.agent_specs.items():
+        if spec.get("type", "agent") != "agent":
             continue
-        error = policy_error(policy)
-        if error:
-            _warn_once(
-                agent_name,
-                policy,
-                "Skipping invalid scaling policy for %s: %s",
-                agent_name,
-                error,
-            )
-            continue
-        _warned.pop(agent_name, None)
-        policy = {
-            **policy,
-            "min_replicas": int(policy["min_replicas"]),
-            "max_replicas": int(policy["max_replicas"]),
-        }
         samples = contract.read(controller.redis, contract.agent_key(agent_name))
         if not samples:
             continue
-        try:
-            delta, reason = _decide(policy, samples)
-        except (KeyError, TypeError) as e:
-            logger.warning(
-                "Skipping malformed scaling samples for %s: %s", agent_name, e
-            )
-            continue
+        delta, reason = _decide(policy, samples)
         if delta:
             current = samples[0]["replicas_expected"]
             logger.info(
@@ -149,11 +122,3 @@ def _is_int(value):
 
 def _is_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _warn_once(key, content, message, *args):
-    fingerprint = json.dumps(content, sort_keys=True, default=repr)
-    if _warned.get(key) == fingerprint:
-        return
-    _warned[key] = fingerprint
-    logger.warning(message, *args)

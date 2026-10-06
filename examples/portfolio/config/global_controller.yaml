@@ -82,6 +82,10 @@ agents:
     dashboard_port: 8081   # Local dashboard's preferred port
     redis_port: 6379
     replicas: 1
+    resources:
+      cpu: 1
+      memory: 512
+      gpu: 0
     workflow_file: workflow/portfolio_workflow.py
     provider: local
     instance_type: t3.micro
@@ -99,10 +103,6 @@ agents:
   #   provider: local
 
 
-    resources:
-      cpu: 1
-      memory: 512
-      gpu: 0
 otel:
   # The dashboard api's own OTLP ingest. Base url only -- the exporter appends the
   # per-signal path (/v1/traces, /v1/metrics, /v1/logs) to whatever is set here.

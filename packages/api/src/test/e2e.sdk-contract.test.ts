@@ -5,12 +5,17 @@ import type { ProjectStats, ProjectSummary } from '@canyonos/api/projects';
 import type { Prompt, PromptListItem, SystemPrompt } from '@canyonos/api/prompts';
 import type { RequestList } from '@canyonos/api/requests';
 import type { FleetOverview } from '@canyonos/api/resources';
-import type { ScalingDeleteResponse, ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
+import type {
+  ScalingAgentsResponse,
+  ScalingDeleteResponse,
+  ScalingPolicy,
+  ScalingStatus,
+} from '@canyonos/api/scaling';
 
 import { load_prompts } from '../modules/prompts/prompts.service';
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
-import { seed_running_project, seed_scaling } from './redis-test.utils';
+import { seed_running_project, seed_scaling, seed_scaling_agents } from './redis-test.utils';
 
 setupE2ETests();
 
@@ -121,37 +126,37 @@ describe('SDK contract', () => {
     const { project_id } = await create_test_project(token, { name: 'SDK Scaling' });
     const policy: ScalingPolicy = {
       min_replicas: 1,
-      max_replicas: 3,
+      max_replicas: 4,
       metric: 'queue_length_total',
-      scale_up_above: 4,
+      scale_up_above: 3,
       scale_down_below: 1,
     };
     await seed_running_project(project_id, { prompts: {} });
-    await seed_scaling(
-      ['PriceAgent', 'RiskAgent'],
-      JSON.stringify({ scaling: { PriceAgent: policy } })
-    );
+    await seed_scaling(JSON.stringify({ scaling: policy }));
+    await seed_scaling_agents([{ name: 'PriceAgent', replicas: 1 }]);
 
-    const scaling: ScalingResponse = (
+    const scaling: ScalingStatus = (
       await api.projects[project_id]!.scaling.get({ $headers: headers })
     ).data!;
+    const agents: ScalingAgentsResponse = (
+      await api.projects[project_id]!.scaling.agents.get({ $headers: headers })
+    ).data!;
     const saved: ScalingPolicy = (
-      await api.projects[project_id]!.scaling.RiskAgent!.put(
+      await api.projects[project_id]!.scaling.put(
         { ...policy, metric: 'requests_per_minute_per_replica' },
         { headers }
       )
     ).data!;
 
-    expect(scaling).toEqual({
-      agents: ['PriceAgent', 'RiskAgent'],
-      policies: { PriceAgent: policy },
-      invalid: [],
+    expect(scaling).toEqual({ status: 'applied', policy });
+    expect(agents).toEqual({
+      agents: [{ name: 'PriceAgent', replicas_expected: 1, replicas_running: 0, load: null }],
     });
     expect(saved).toEqual({ ...policy, metric: 'requests_per_minute_per_replica' });
 
     const deleted: ScalingDeleteResponse = (
-      await api.projects[project_id]!.scaling.PriceAgent!.delete(undefined, { headers })
+      await api.projects[project_id]!.scaling.delete(undefined, { headers })
     ).data!;
-    expect(deleted).toEqual({ agent_name: 'PriceAgent' });
+    expect(deleted).toEqual({ status: 'none' });
   });
 });

@@ -1251,7 +1251,10 @@ class GlobalController(ControllerContext):
             queue_length=int(metrics.get("queue_length", 0)),
             **counters,
             requests_per_minute=contract.per_minute(
-                previous, "requests_served", counters["requests_served"], observed_at
+                previous,
+                "requests_completed",
+                counters["requests_completed"],
+                observed_at,
             ),
             failures_per_minute=contract.per_minute(
                 previous, "full_failures", counters["full_failures"], observed_at

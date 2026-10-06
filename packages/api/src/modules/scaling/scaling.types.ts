@@ -33,16 +33,40 @@ export const ScalingPolicySchema = z
     }
   });
 
-export const ScalingResponseSchema = z.object({
-  agents: z.array(z.string()),
-  policies: z.record(z.string(), ScalingPolicySchema),
-  /** Agents whose stored policy is invalid; the controller ignores them until they are replaced. */
-  invalid: z.array(z.string()),
+/**
+ * The workflow's one policy as the controller sees it. `applied` is what the controller enforces
+ * on every agent; `invalid` is a stored policy it skips, with the first rule it breaks.
+ */
+export const ScalingStatusSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('none') }),
+  z.object({ status: z.literal('applied'), policy: ScalingPolicySchema }),
+  z.object({ status: z.literal('invalid'), reason: z.string() }),
+]);
+
+export const ScalingDeleteResponseSchema = z.object({ status: z.literal('none') });
+
+/** One agent's newest load sample, the figures the policy's metrics are read from. */
+export const ScalingAgentLoadSchema = z.object({
+  queue_length_total: z.number().nonnegative(),
+  requests_per_minute_per_replica: z.number().nonnegative(),
+  observed_at: z.string().datetime(),
 });
 
-export const ScalingDeleteResponseSchema = z.object({ agent_name: z.string() });
+export const ScalingAgentSchema = z.object({
+  name: z.string(),
+  /** The count the controller is converging to: the configured one until a policy moves it. */
+  replicas_expected: z.number().int().nonnegative(),
+  replicas_running: z.number().int().nonnegative(),
+  /** Null until the controller has polled the agent once. */
+  load: ScalingAgentLoadSchema.nullable(),
+});
+
+export const ScalingAgentsResponseSchema = z.object({ agents: z.array(ScalingAgentSchema) });
 
 export type ScalingMetric = z.infer<typeof ScalingMetricSchema>;
 export type ScalingPolicy = z.infer<typeof ScalingPolicySchema>;
-export type ScalingResponse = z.infer<typeof ScalingResponseSchema>;
+export type ScalingStatus = z.infer<typeof ScalingStatusSchema>;
 export type ScalingDeleteResponse = z.infer<typeof ScalingDeleteResponseSchema>;
+export type ScalingAgentLoad = z.infer<typeof ScalingAgentLoadSchema>;
+export type ScalingAgent = z.infer<typeof ScalingAgentSchema>;
+export type ScalingAgentsResponse = z.infer<typeof ScalingAgentsResponseSchema>;

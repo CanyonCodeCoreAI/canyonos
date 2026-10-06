@@ -1,458 +1,636 @@
-import { MinusIcon, PlusIcon, TriangleAlertIcon } from 'lucide-react';
-import { useState } from 'react';
-import type { Dispatch, ReactNode } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { MinusIcon, PencilIcon, PlusIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import type { ReactNode } from 'react';
+import type { UseFormReturn } from 'react-hook-form';
 
-import { MIN_REPLICAS_FLOOR } from '@canyonos/api/scaling';
-import type { ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
+import { MIN_REPLICAS_FLOOR, ScalingPolicySchema } from '@canyonos/api/scaling';
+import type { ScalingMetric, ScalingPolicy, ScalingStatus } from '@canyonos/api/scaling';
 
 import { Button } from '@repo/ui/shadcn/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/shadcn/collapsible';
+import { ToggleGroup, ToggleGroupItem } from '@repo/ui/shadcn/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@repo/ui/shadcn/tooltip';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@repo/ui/shadcn/select';
-import { freeAgents } from '@/modules/scaling/scaling-drafts';
-import { useDeleteScalingPolicy, useSaveScalingPolicy } from '@/modules/scaling/scaling.queries';
-import type {
-  ScalingDraft,
-  ScalingDraftsAction,
-  ScalingPolicyKind,
-} from '@/modules/scaling/scaling-drafts';
+  scalingErrorMessage,
+  useDeleteScalingPolicy,
+  useSaveScalingPolicy,
+} from '@/modules/scaling/scaling.queries';
 
-type PolicyValues = Omit<ScalingPolicy, 'metric'>;
+const GROW =
+  'data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down overflow-hidden';
+const WHEN_VIEWING = 'group-data-[state=open]/card:hidden';
 
-export const POLICY_KINDS = {
+type ScalingPolicyKind = 'throughput' | 'queue_length';
+type Threshold = 'scale_up_above' | 'scale_down_below';
+
+/** The two loads a policy can watch, in the words the screen uses for them. */
+const POLICY_KINDS = {
   throughput: {
     label: 'Throughput',
-    comparison: 'when throughput is',
     metric: 'requests_per_minute_per_replica',
-    unit: 'requests / min per replica',
-    defaults: { scale_up_above: 10, scale_down_below: 1, min_replicas: 1, max_replicas: 5 },
+    noun: 'throughput',
+    unit: 'requests a minute per replica',
+    defaults: { scale_up_above: 10, scale_down_below: 1 },
   },
   queue_length: {
     label: 'Queue length',
-    comparison: 'when queue length is',
     metric: 'queue_length_total',
-    unit: 'queued requests',
-    defaults: { scale_up_above: 3, scale_down_below: 1, min_replicas: 1, max_replicas: 5 },
+    noun: 'queue',
+    unit: 'waiting requests',
+    defaults: { scale_up_above: 3, scale_down_below: 1 },
   },
 } as const satisfies Record<
   ScalingPolicyKind,
   {
     readonly label: string;
-    readonly comparison: string;
-    readonly metric: ScalingPolicy['metric'];
+    readonly metric: ScalingMetric;
+    readonly noun: string;
     readonly unit: string;
-    readonly defaults: PolicyValues;
+    readonly defaults: Record<Threshold, number>;
   }
 >;
 
-function kindOf(policy: ScalingPolicy): ScalingPolicyKind {
-  return policy.metric === 'requests_per_minute_per_replica' ? 'throughput' : 'queue_length';
+const KINDS = Object.keys(POLICY_KINDS) as ScalingPolicyKind[];
+
+function kindOf(metric: ScalingMetric): ScalingPolicyKind {
+  return metric === 'requests_per_minute_per_replica' ? 'throughput' : 'queue_length';
 }
 
-export function DraftPolicyCard({
+const NEW_POLICY: ScalingPolicy = {
+  min_replicas: 1,
+  max_replicas: 5,
+  metric: POLICY_KINDS.throughput.metric,
+  ...POLICY_KINDS.throughput.defaults,
+};
+
+/**
+ * The workflow's one policy. The server says whether one is stored and whether the controller
+ * accepts it; the card opens into an editor that mounts fresh each time, and the screen keys the
+ * card on the stored policy so a save closes it.
+ */
+export function ScalingPolicyCard({
   project_id,
-  draft,
-  response,
-  drafts,
-  dispatch,
-}: {
-  readonly project_id: string;
-  readonly draft: ScalingDraft;
-  readonly response: ScalingResponse;
-  readonly drafts: readonly ScalingDraft[];
-  readonly dispatch: Dispatch<ScalingDraftsAction>;
-}) {
-  const definition = POLICY_KINDS[draft.kind];
-  const [values, setValues] = useState<PolicyValues>(definition.defaults);
-  const save = useSaveScalingPolicy(project_id);
-  const agent_options = freeAgents(response, drafts, draft.id);
-  const agent_name =
-    draft.agent_name !== null && agent_options.includes(draft.agent_name)
-      ? draft.agent_name
-      : undefined;
-
-  const submit = () => {
-    if (!agent_name) return;
-    save.mutate(
-      { agent_name, policy: { ...values, metric: definition.metric } },
-      { onSuccess: () => dispatch({ type: 'saved', id: draft.id }) }
-    );
-  };
-
-  return (
-    <PolicyCardFrame
-      state="draft"
-      kind={draft.kind}
-      agent_name={agent_name}
-      aria_label={`New ${definition.label.toLowerCase()} policy`}
-    >
-      <PolicyCardHeader title={definition.label}>
-        <Select
-          value={agent_name ?? ''}
-          onValueChange={(picked) =>
-            dispatch({ type: 'pick_agent', id: draft.id, agent_name: picked })
-          }
-          disabled={save.isPending}
-        >
-          <SelectTrigger
-            className="h-8 w-44 text-xs"
-            aria-label="Agent this policy applies to"
-            data-testid="policy-agent"
-          >
-            <SelectValue placeholder="Select an agent" />
-          </SelectTrigger>
-          <SelectContent align="end">
-            {agent_options.map((option) => (
-              <SelectItem key={option} value={option}>
-                {option}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </PolicyCardHeader>
-      <PolicyValuesEditor
-        kind={draft.kind}
-        values={values}
-        onChange={setValues}
-        disabled={save.isPending}
-      >
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={save.isPending}
-          data-testid="policy-discard"
-          onClick={() => dispatch({ type: 'discard', id: draft.id })}
-        >
-          Discard
-        </Button>
-        <Button
-          size="sm"
-          disabled={!agent_name || save.isPending}
-          data-testid="policy-save"
-          onClick={submit}
-        >
-          {save.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </PolicyValuesEditor>
-      <PolicyCardError error={save.error} />
-    </PolicyCardFrame>
-  );
-}
-
-export function SavedPolicyCard({
-  project_id,
-  agent_name,
   policy,
 }: {
   readonly project_id: string;
-  readonly agent_name: string;
-  readonly policy: ScalingPolicy;
-}) {
-  const kind = kindOf(policy);
-  const definition = POLICY_KINDS[kind];
-  const [values, setValues] = useState<PolicyValues>(policy);
-  const save = useSaveScalingPolicy(project_id);
-  const remove = useDeleteScalingPolicy(project_id);
-  const is_busy = save.isPending || remove.isPending;
-
-  const submit = () => {
-    remove.reset();
-    save.mutate({ agent_name, policy: { ...values, metric: definition.metric } });
-  };
-  const deletePolicy = () => {
-    save.reset();
-    remove.mutate(agent_name);
-  };
-
-  return (
-    <PolicyCardFrame
-      state="saved"
-      kind={kind}
-      agent_name={agent_name}
-      aria_label={`${definition.label} policy for ${agent_name}`}
-    >
-      <PolicyCardHeader title={definition.label}>
-        <span
-          className="border-border/70 text-foreground flex h-8 w-44 items-center rounded-md border px-3 font-mono text-xs"
-          data-testid="policy-agent"
-        >
-          {agent_name}
-        </span>
-      </PolicyCardHeader>
-      <PolicyValuesEditor kind={kind} values={values} onChange={setValues} disabled={is_busy}>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={is_busy}
-          data-testid="policy-delete"
-          onClick={deletePolicy}
-        >
-          {remove.isPending ? 'Deleting…' : 'Delete'}
-        </Button>
-        <Button size="sm" disabled={is_busy} data-testid="policy-save" onClick={submit}>
-          {save.isPending ? 'Saving…' : 'Save'}
-        </Button>
-      </PolicyValuesEditor>
-      <PolicyCardError error={save.error ?? remove.error} />
-    </PolicyCardFrame>
-  );
-}
-
-export function InvalidPolicyCard({
-  project_id,
-  agent_name,
-}: {
-  readonly project_id: string;
-  readonly agent_name: string;
+  readonly policy: ScalingStatus;
 }) {
   const remove = useDeleteScalingPolicy(project_id);
+  const destroy = () => remove.mutate();
+  const error = remove.error
+    ? scalingErrorMessage(remove.error, 'Could not delete the policy.')
+    : null;
 
   return (
-    <PolicyCardFrame
-      state="invalid"
-      agent_name={agent_name}
-      aria_label={`Invalid policy for ${agent_name}`}
-    >
-      <PolicyCardHeader title="Invalid policy">
-        <span className="text-foreground font-mono text-xs" data-testid="policy-agent">
-          {agent_name}
-        </span>
-      </PolicyCardHeader>
-      <p
-        className="text-muted-foreground flex items-start gap-2 text-xs"
-        data-testid="policy-invalid"
+    <Collapsible asChild>
+      <section
+        className="group/card border-border/70 bg-card flex flex-col rounded-[1.125rem] border shadow-xs"
+        aria-label="Scaling policy"
+        data-testid="scaling-policy"
+        data-policy={policy.status}
       >
-        <TriangleAlertIcon className="text-destructive mt-px size-3.5 shrink-0" aria-hidden />
-        The stored policy for this agent is invalid, so the controller ignores it. Delete it to
-        configure a new policy.
-      </p>
-      <div className="border-border/70 flex justify-end border-t pt-3">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={remove.isPending}
-          data-testid="policy-delete"
-          onClick={() => remove.mutate(agent_name)}
-        >
-          {remove.isPending ? 'Deleting…' : 'Delete'}
-        </Button>
-      </div>
-      <PolicyCardError error={remove.error} />
-    </PolicyCardFrame>
+        <StoredPolicy
+          policy={policy}
+          deleting={remove.isPending}
+          error={error}
+          onDelete={destroy}
+        />
+        <CollapsibleContent className={GROW}>
+          <PolicyEditor project_id={project_id} policy={policy} />
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
   );
 }
 
-function PolicyCardFrame({
-  state,
-  kind,
-  agent_name,
-  aria_label,
-  children,
+function StoredPolicy({
+  policy,
+  deleting,
+  error,
+  onDelete,
 }: {
-  readonly state: 'draft' | 'saved' | 'invalid';
-  readonly kind?: ScalingPolicyKind;
-  readonly agent_name?: string;
-  readonly aria_label: string;
-  readonly children: ReactNode;
+  readonly policy: ScalingStatus;
+  readonly deleting: boolean;
+  readonly error: string | null;
+  readonly onDelete: () => void;
 }) {
+  switch (policy.status) {
+    case 'none':
+      return <NoPolicy error={error} />;
+    case 'applied':
+      return (
+        <AppliedPolicy
+          policy={policy.policy}
+          deleting={deleting}
+          error={error}
+          onDelete={onDelete}
+        />
+      );
+    case 'invalid':
+      return (
+        <InvalidPolicy
+          reason={policy.reason}
+          deleting={deleting}
+          error={error}
+          onDelete={onDelete}
+        />
+      );
+  }
+}
+
+function NoPolicy({ error }: { readonly error: string | null }) {
   return (
-    <section
-      className="border-border/70 bg-card flex flex-col gap-3 rounded-[1.125rem] border p-4 shadow-xs"
-      aria-label={aria_label}
-      data-testid={`scaling-policy-${state}`}
-      data-kind={kind}
-      data-agent={agent_name}
+    <div
+      className={`flex flex-col gap-4 p-5 ${WHEN_VIEWING}`}
+      data-testid="scaling-policy-none"
+      data-state="viewing"
     >
-      {children}
-    </section>
-  );
-}
-
-function PolicyCardHeader({
-  title,
-  children,
-}: {
-  readonly title: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-      <h2 className="text-foreground text-sm font-semibold">{title}</h2>
-      {children}
+      <CardHeading title="No scaling policy">
+        <CollapsibleTrigger asChild>
+          <Button size="sm" className="text-xs" data-testid="policy-add">
+            <PlusIcon aria-hidden />
+            Add policy
+          </Button>
+        </CollapsibleTrigger>
+      </CardHeading>
+      <p className="text-muted-foreground text-sm">
+        Every agent keeps its current replica count until the next reload, then the count set in
+        global_controller.yaml. Add a policy to let each agent grow and shrink with its own load.
+      </p>
+      <CardError error={error} />
     </div>
   );
 }
 
-function PolicyCardError({ error }: { readonly error: Error | null }) {
-  if (!error) return null;
+function AppliedPolicy({
+  policy,
+  deleting,
+  error,
+  onDelete,
+}: {
+  readonly policy: ScalingPolicy;
+  readonly deleting: boolean;
+  readonly error: string | null;
+  readonly onDelete: () => void;
+}) {
+  const kind = kindOf(policy.metric);
+  return (
+    <div
+      className={`flex flex-col gap-4 p-5 ${WHEN_VIEWING}`}
+      data-testid="scaling-policy-applied"
+      data-state={deleting ? 'deleting' : 'viewing'}
+      data-kind={kind}
+    >
+      <CardHeading title={`${POLICY_KINDS[kind].label} policy`} live>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <CollapsibleTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-muted-foreground hover:text-foreground size-8"
+                aria-label="Edit policy"
+                disabled={deleting}
+                data-testid="policy-edit"
+              >
+                <PencilIcon aria-hidden />
+              </Button>
+            </CollapsibleTrigger>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={4}>Edit policy</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground size-8 disabled:animate-pulse"
+              aria-label={deleting ? 'Deleting…' : 'Delete policy'}
+              disabled={deleting}
+              onClick={onDelete}
+              data-testid="policy-delete"
+            >
+              <Trash2Icon aria-hidden />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={4}>Delete policy</TooltipContent>
+        </Tooltip>
+      </CardHeading>
+      <PolicyRules
+        kind={kind}
+        values={policy}
+        render={(value, name) => <Figure value={value} name={name} />}
+      />
+      <CardError error={error} />
+    </div>
+  );
+}
+
+function InvalidPolicy({
+  reason,
+  deleting,
+  error,
+  onDelete,
+}: {
+  readonly reason: string;
+  readonly deleting: boolean;
+  readonly error: string | null;
+  readonly onDelete: () => void;
+}) {
+  return (
+    <div
+      className={`flex flex-col gap-4 p-5 ${WHEN_VIEWING}`}
+      data-testid="scaling-policy-invalid"
+      data-state={deleting ? 'deleting' : 'viewing'}
+    >
+      <CardHeading title="Invalid policy">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="text-xs"
+          disabled={deleting}
+          onClick={onDelete}
+          data-testid="policy-delete"
+        >
+          {deleting ? 'Deleting…' : 'Delete policy'}
+        </Button>
+        <CollapsibleTrigger asChild>
+          <Button size="sm" className="text-xs" disabled={deleting} data-testid="policy-replace">
+            Replace policy
+          </Button>
+        </CollapsibleTrigger>
+      </CardHeading>
+      <p className="text-foreground flex items-start gap-2 text-sm" data-testid="policy-invalid">
+        <TriangleAlertIcon className="text-destructive mt-0.5 size-4 shrink-0" aria-hidden />
+        <span>
+          The stored policy breaks a rule, so the controller ignores it and every agent keeps its
+          current replica count: <span className="font-mono text-xs">{reason}</span>. Replace it
+          with a new policy, or delete it.
+        </span>
+      </p>
+      <CardError error={error} />
+    </div>
+  );
+}
+
+type PolicyForm = UseFormReturn<ScalingPolicy>;
+
+/** Mounts when the card opens, so every edit starts from what is stored right now. */
+function PolicyEditor({
+  project_id,
+  policy,
+}: {
+  readonly project_id: string;
+  readonly policy: ScalingStatus;
+}) {
+  const save = useSaveScalingPolicy(project_id);
+  const is_new = policy.status !== 'applied';
+  const form = useForm<ScalingPolicy>({
+    resolver: zodResolver(ScalingPolicySchema),
+    defaultValues: is_new ? NEW_POLICY : policy.policy,
+    mode: 'onChange',
+  });
+  const values = form.watch();
+  const kind = kindOf(values.metric);
+  const submit = form.handleSubmit((body) => save.mutate(body));
+  // Thresholds mean something else on the other load, so they restart from its defaults.
+  const setKind = (next: ScalingPolicyKind) => {
+    form.setValue('metric', POLICY_KINDS[next].metric, { shouldValidate: true });
+    for (const field of ['scale_up_above', 'scale_down_below'] as const) {
+      form.setValue(field, POLICY_KINDS[next].defaults[field], { shouldValidate: true });
+    }
+  };
+
+  return (
+    <form
+      className="flex flex-col gap-4 p-5"
+      aria-label={is_new ? 'New scaling policy' : 'Edit scaling policy'}
+      data-testid="scaling-policy-editor"
+      data-state={save.isPending ? 'saving' : 'editing'}
+      data-kind={kind}
+      onSubmit={submit}
+    >
+      <CardHeading title={is_new ? 'New policy' : 'Edit policy'}>
+        <KindToggle kind={kind} disabled={save.isPending} onChange={setKind} />
+      </CardHeading>
+      <PolicyRules
+        kind={kind}
+        values={values}
+        render={(value, name, bounds) => (
+          <Stepper
+            form={form}
+            value={value}
+            name={name}
+            bounds={bounds}
+            disabled={save.isPending}
+          />
+        )}
+      />
+      <CardError
+        error={save.error ? scalingErrorMessage(save.error, 'Could not save the policy.') : null}
+      />
+      <div className="border-border/60 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+        <p className="text-muted-foreground text-xs">
+          Agents pick up the change on the controller&apos;s next poll.
+        </p>
+        <div className="flex items-center gap-2">
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="text-xs"
+              disabled={save.isPending}
+              data-testid="policy-cancel"
+            >
+              Cancel
+            </Button>
+          </CollapsibleTrigger>
+          <Button
+            type="submit"
+            size="sm"
+            className="text-xs"
+            disabled={save.isPending || !form.formState.isValid}
+            data-testid="policy-save"
+          >
+            {save.isPending ? 'Saving…' : 'Save policy'}
+          </Button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function CardHeading({
+  title,
+  live = false,
+  children,
+}: {
+  readonly title: string;
+  readonly live?: boolean;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <h2 className="text-foreground flex items-center gap-2 text-sm font-semibold">
+        <LiveDot live={live} />
+        {title}
+      </h2>
+      <div className="flex items-center gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+function LiveDot({ live }: { readonly live: boolean }) {
+  if (!live) return null;
+  return <span className="bg-primary size-1.5 rounded-full" aria-hidden />;
+}
+
+function CardError({ error }: { readonly error: string | null }) {
+  if (error === null) return null;
   return (
     <p className="text-destructive text-xs" role="alert" data-testid="policy-error">
-      {error.message}
+      {error}
     </p>
   );
 }
 
-function PolicyValuesEditor({
+/** Where a value may go, and the rule to quote when a typed value is pulled back inside. */
+interface ValueBounds {
+  readonly field: keyof Omit<ScalingPolicy, 'metric'>;
+  readonly min: number;
+  readonly min_reason: string;
+  readonly max?: number;
+  readonly max_reason?: string;
+}
+
+/** The policy as three plain rules; `render` draws each number, as a figure or a stepper. */
+function PolicyRules({
   kind,
   values,
-  onChange,
-  disabled,
-  children,
+  render,
 }: {
   readonly kind: ScalingPolicyKind;
-  readonly values: PolicyValues;
-  readonly onChange: (next: PolicyValues) => void;
-  readonly disabled: boolean;
-  readonly children: ReactNode;
+  readonly values: Omit<ScalingPolicy, 'metric'>;
+  readonly render: (value: number, name: string, bounds: ValueBounds) => ReactNode;
 }) {
-  const definition = POLICY_KINDS[kind];
-  const set = (field: keyof PolicyValues) => (next: number) =>
-    onChange({ ...values, [field]: next });
-
+  const { noun, unit } = POLICY_KINDS[kind];
   return (
-    <>
-      <div className="flex flex-col gap-2">
-        <Rule label="Scale up" comparison={`${definition.comparison} above`} unit={definition.unit}>
-          <Stepper
-            name="scale-up threshold"
-            value={values.scale_up_above}
-            onChange={set('scale_up_above')}
-            min={values.scale_down_below + 1}
-            disabled={disabled}
-            test_id="policy-scale-up"
-          />
-        </Rule>
-        <Rule
-          label="Scale down"
-          comparison={`${definition.comparison} below`}
-          unit={definition.unit}
-        >
-          <Stepper
-            name="scale-down threshold"
-            value={values.scale_down_below}
-            onChange={set('scale_down_below')}
-            min={0}
-            max={values.scale_up_above - 1}
-            disabled={disabled}
-            test_id="policy-scale-down"
-          />
-        </Rule>
-      </div>
-
-      <div className="border-border/70 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-        <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
-          <Stepper
-            name="min replicas"
-            label="Min replicas"
-            value={values.min_replicas}
-            onChange={set('min_replicas')}
-            min={MIN_REPLICAS_FLOOR}
-            max={values.max_replicas}
-            disabled={disabled}
-            test_id="policy-min-replicas"
-          />
-          <Stepper
-            name="max replicas"
-            label="Max replicas"
-            value={values.max_replicas}
-            onChange={set('max_replicas')}
-            min={values.min_replicas}
-            disabled={disabled}
-            test_id="policy-max-replicas"
-          />
-        </div>
-        <div className="flex items-center gap-2">{children}</div>
-      </div>
-    </>
+    <dl className="flex flex-col gap-2.5 text-sm" data-testid="policy-rules">
+      <Rule label="Scale up">
+        Add a replica when its {noun} stays above{' '}
+        <Measure unit={unit}>
+          {render(values.scale_up_above, 'scale-up threshold', {
+            field: 'scale_up_above',
+            min: values.scale_down_below + 1,
+            min_reason: 'scale up must stay above scale down',
+          })}
+        </Measure>
+      </Rule>
+      <Rule label="Scale down">
+        Remove one when it stays below{' '}
+        <Measure unit={unit}>
+          {render(values.scale_down_below, 'scale-down threshold', {
+            field: 'scale_down_below',
+            min: 0,
+            min_reason: 'a threshold cannot be negative',
+            max: values.scale_up_above - 1,
+            max_reason: 'scale down must stay below scale up',
+          })}
+        </Measure>
+      </Rule>
+      <Rule label="Replicas">
+        Keep each agent between{' '}
+        {render(values.min_replicas, 'min replicas', {
+          field: 'min_replicas',
+          min: MIN_REPLICAS_FLOOR,
+          min_reason: `each agent needs at least ${MIN_REPLICAS_FLOOR} replica`,
+          max: values.max_replicas,
+          max_reason: 'min replicas cannot pass max replicas',
+        })}{' '}
+        and{' '}
+        {render(values.max_replicas, 'max replicas', {
+          field: 'max_replicas',
+          min: values.min_replicas,
+          min_reason: 'max replicas cannot drop below min replicas',
+        })}{' '}
+        replicas
+      </Rule>
+    </dl>
   );
 }
 
-function Rule({
-  label,
-  comparison,
-  unit,
-  children,
+function Rule({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 items-baseline gap-x-4 gap-y-1 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
+      <dt className="text-muted-foreground text-[0.6875rem] font-semibold tracking-wide uppercase">
+        {label}
+      </dt>
+      <dd className="text-foreground flex flex-wrap items-center gap-x-1.5 gap-y-1.5 leading-7">
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+/** A number and its unit stay on one line together, so a wrap never strands the unit. */
+function Measure({ unit, children }: { readonly unit: string; readonly children: ReactNode }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1.5">
+      {children}
+      <span className="whitespace-nowrap">{unit}</span>
+    </span>
+  );
+}
+
+function Figure({ value, name }: { readonly value: number; readonly name: string }) {
+  return (
+    <span
+      className="bg-foreground/[0.05] text-foreground inline-flex h-7 min-w-9 items-center justify-center rounded-md px-2 font-mono text-sm font-semibold tabular-nums"
+      data-testid={`policy-${name.replaceAll(' ', '-')}-value`}
+    >
+      {value}
+    </span>
+  );
+}
+
+function KindToggle({
+  kind,
+  disabled,
+  onChange,
 }: {
-  readonly label: string;
-  readonly comparison: string;
-  readonly unit: string;
-  readonly children: ReactNode;
+  readonly kind: ScalingPolicyKind;
+  readonly disabled: boolean;
+  readonly onChange: (kind: ScalingPolicyKind) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
-      <span className="text-foreground w-24 font-semibold">{label}</span>
-      <span className="text-muted-foreground">{comparison}</span>
-      {children}
-      <span className="text-muted-foreground">{unit}</span>
-    </div>
+    <ToggleGroup
+      type="single"
+      size="sm"
+      value={kind}
+      disabled={disabled}
+      onValueChange={(next) => {
+        if (next) onChange(next as ScalingPolicyKind);
+      }}
+      className="bg-foreground/[0.05] gap-0.5 rounded-lg p-0.5"
+      aria-label="Load to watch"
+      data-testid="policy-kind"
+    >
+      {KINDS.map((option) => (
+        <ToggleGroupItem
+          key={option}
+          value={option}
+          className="text-muted-foreground data-[state=on]:text-foreground h-7 rounded-md px-2.5 text-xs font-semibold data-[state=on]:shadow-xs"
+          data-testid={`policy-kind-${option}`}
+        >
+          {POLICY_KINDS[option].label}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
   );
 }
 
 const STEP_BUTTON_CLASS =
-  'border-border/70 text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground flex size-6 items-center justify-center rounded-[0.375rem] border transition-colors disabled:cursor-not-allowed disabled:opacity-40';
+  'border-border/70 text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground ease-snappy flex size-7 items-center justify-center rounded-md border transition-[color,background-color,transform] duration-150 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100';
 
+/**
+ * One policy number. The buttons step inside the bounds; a typed value is pulled back inside
+ * them on commit and the form error says which rule did it, until the field is typed in again.
+ * The input is keyed on the value so a step rewrites what it shows.
+ */
 function Stepper({
-  name,
-  label,
+  form,
   value,
-  onChange,
-  min,
-  max,
+  name,
+  bounds,
   disabled,
-  test_id,
 }: {
-  readonly name: string;
-  readonly label?: string;
+  readonly form: PolicyForm;
   readonly value: number;
-  readonly onChange: (next: number) => void;
-  readonly min: number;
-  readonly max?: number;
+  readonly name: string;
+  readonly bounds: ValueBounds;
   readonly disabled: boolean;
-  readonly test_id: string;
 }) {
+  const { field, min, max } = bounds;
+  const test_id = `policy-${name.replaceAll(' ', '-')}`;
+  const notice = form.formState.errors[field]?.message ?? null;
   const at_min = value <= min;
   const at_max = max !== undefined && value >= max;
+  const set = (next: number) => form.setValue(field, next, { shouldValidate: true });
+  const keep = (next: number, message: string) => {
+    form.setValue(field, next);
+    form.setError(field, { type: 'kept', message });
+  };
+
+  const commit = (input: HTMLInputElement) => {
+    const raw = input.value.trim();
+    input.value = String(value);
+    if (raw === '') return;
+    const next = Number(raw);
+    if (!Number.isInteger(next)) return keep(value, 'Whole numbers only');
+    if (next < min) return keep(min, `Kept at ${min}: ${bounds.min_reason}`);
+    if (max !== undefined && next > max) return keep(max, `Kept at ${max}: ${bounds.max_reason}`);
+    set(next);
+  };
 
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <StepperLabel label={label} />
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          className={STEP_BUTTON_CLASS}
-          aria-label={`Decrease ${name}`}
-          data-testid={`${test_id}-decrease`}
-          disabled={disabled || at_min}
-          onClick={() => onChange(value - 1)}
+    <span className="inline-flex items-center gap-1" role="group" aria-label={name}>
+      <button
+        type="button"
+        className={STEP_BUTTON_CLASS}
+        aria-label={`Decrease ${name}`}
+        disabled={disabled || at_min}
+        onClick={() => set(value - 1)}
+        data-testid={`${test_id}-decrease`}
+      >
+        <MinusIcon className="size-3.5" strokeWidth={2.2} aria-hidden />
+      </button>
+      <Tooltip open={notice !== null}>
+        <TooltipTrigger asChild>
+          <input
+            key={value}
+            type="text"
+            inputMode="numeric"
+            className="border-border/70 bg-background text-foreground focus-visible:border-foreground/40 aria-[invalid=true]:border-destructive/60 h-7 w-12 rounded-md border text-center font-mono text-sm font-semibold tabular-nums transition-[border-color] duration-150 focus-visible:outline-none disabled:opacity-50"
+            aria-label={name}
+            aria-invalid={notice !== null ? true : undefined}
+            defaultValue={value}
+            disabled={disabled}
+            onChange={() => form.clearErrors(field)}
+            onBlur={(event) => commit(event.currentTarget)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                commit(event.currentTarget);
+              }
+            }}
+            data-testid={`${test_id}-value`}
+          />
+        </TooltipTrigger>
+        <TooltipContent
+          side="top"
+          sideOffset={6}
+          className="bg-destructive text-destructive-foreground"
+          arrowClassName="bg-destructive fill-destructive"
+          role="alert"
+          data-testid={`${test_id}-notice`}
         >
-          <MinusIcon className="size-3" strokeWidth={2.2} />
-        </button>
-        <span
-          className="text-foreground w-8 text-center font-mono font-semibold"
-          data-testid={`${test_id}-value`}
-        >
-          {value}
-        </span>
-        <button
-          type="button"
-          className={STEP_BUTTON_CLASS}
-          aria-label={`Increase ${name}`}
-          data-testid={`${test_id}-increase`}
-          disabled={disabled || at_max}
-          onClick={() => onChange(value + 1)}
-        >
-          <PlusIcon className="size-3" strokeWidth={2.2} />
-        </button>
-      </div>
-    </div>
+          {notice}
+        </TooltipContent>
+      </Tooltip>
+      <button
+        type="button"
+        className={STEP_BUTTON_CLASS}
+        aria-label={`Increase ${name}`}
+        disabled={disabled || at_max}
+        onClick={() => set(value + 1)}
+        data-testid={`${test_id}-increase`}
+      >
+        <PlusIcon className="size-3.5" strokeWidth={2.2} aria-hidden />
+      </button>
+    </span>
   );
-}
-
-function StepperLabel({ label }: { readonly label?: string }) {
-  if (!label) return null;
-  return <span className="text-muted-foreground">{label}</span>;
 }

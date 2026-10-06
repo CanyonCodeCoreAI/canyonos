@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page, Route } from '@playwright/test';
 
-import type { ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
+import type { ScalingAgent, ScalingPolicy, ScalingStatus } from '@canyonos/api/scaling';
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/projects';
@@ -15,9 +15,13 @@ import {
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const SCALING_PATH = `/projects/${PROJECT.id}/scaling`;
+const AGENTS_PATH = `${SCALING_PATH}/agents`;
 const UNREACHABLE = 'The running controller could not be reached';
+const SAVED_TOAST = "Scaling policy saved. Agents pick it up on the controller's next poll.";
+const DELETED_TOAST =
+  'Scaling policy deleted. Agents keep their current replicas until the next reload.';
 
-const SUMMARIZER_POLICY: ScalingPolicy = {
+const THROUGHPUT_POLICY: ScalingPolicy = {
   min_replicas: 2,
   max_replicas: 8,
   metric: 'requests_per_minute_per_replica',
@@ -25,7 +29,7 @@ const SUMMARIZER_POLICY: ScalingPolicy = {
   scale_down_below: 5,
 };
 
-const ENRICHER_POLICY: ScalingPolicy = {
+const QUEUE_POLICY: ScalingPolicy = {
   min_replicas: 1,
   max_replicas: 3,
   metric: 'queue_length_total',
@@ -33,14 +37,26 @@ const ENRICHER_POLICY: ScalingPolicy = {
   scale_down_below: 2,
 };
 
-// Inserted out of name order so the screen, not the fixture, is what puts enricher first.
-const CONFIGURED: ScalingResponse = {
-  agents: ['classifier', 'enricher', 'router', 'summarizer'],
-  policies: { summarizer: SUMMARIZER_POLICY, enricher: ENRICHER_POLICY },
-  invalid: [],
+const APPLIED: ScalingStatus = { status: 'applied', policy: THROUGHPUT_POLICY };
+const NONE: ScalingStatus = { status: 'none' };
+const INVALID: ScalingStatus = {
+  status: 'invalid',
+  reason: 'max_replicas: max_replicas must be greater than or equal to min_replicas',
 };
 
-const EMPTY: ScalingResponse = { agents: ['classifier', 'router'], policies: {}, invalid: [] };
+const AGENTS: ScalingAgent[] = [
+  {
+    name: 'PriceAgent',
+    replicas_expected: 2,
+    replicas_running: 1,
+    load: {
+      queue_length_total: 3,
+      requests_per_minute_per_replica: 12.5,
+      observed_at: '2026-10-06T12:00:00.000Z',
+    },
+  },
+  { name: 'RiskAgent', replicas_expected: 1, replicas_running: 1, load: null },
+];
 
 type Respond = (route: Route) => Promise<void>;
 
@@ -57,59 +73,69 @@ function deferred() {
 // next call answers mid-flow.
 interface ScalingStub {
   reads: number;
-  config: ScalingResponse;
+  policy: ScalingStatus;
   read_hold: Promise<void> | null;
   read_failure: Respond | null;
   writes: WriteRequest[];
   write_hold: Promise<void> | null;
   write_failure: Respond | null;
+  agent_reads: number;
+  agents: ScalingAgent[];
+  agents_failure: Respond | null;
 }
 
 interface WriteRequest {
   readonly method: string;
-  readonly path: string;
   readonly body: unknown;
 }
 
-async function stubScaling(page: Page, config: ScalingResponse): Promise<ScalingStub> {
+async function stubScaling(
+  page: Page,
+  policy: ScalingStatus,
+  agents: ScalingAgent[] = AGENTS
+): Promise<ScalingStub> {
   const stub: ScalingStub = {
     reads: 0,
-    config: structuredClone(config),
+    policy: structuredClone(policy),
     read_hold: null,
     read_failure: null,
     writes: [],
     write_hold: null,
     write_failure: null,
+    agent_reads: 0,
+    agents: structuredClone(agents),
+    agents_failure: null,
   };
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === SCALING_PATH,
+    (url) => url.origin === apiOrigin && url.pathname === AGENTS_PATH,
     async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
-      stub.reads += 1;
-      if (stub.read_hold) await stub.read_hold;
-      if (stub.read_failure) return stub.read_failure(route);
-      return fulfillJson(route, stub.config);
+      stub.agent_reads += 1;
+      if (stub.agents_failure) return stub.agents_failure(route);
+      return fulfillJson(route, { agents: stub.agents });
     }
   );
   // Writes behave like the controller config: a PUT stores the policy, a DELETE drops it.
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname.startsWith(`${SCALING_PATH}/`),
+    (url) => url.origin === apiOrigin && url.pathname === SCALING_PATH,
     async (route) => {
       const request = route.request();
-      const path = new URL(request.url()).pathname;
-      const agent_name = decodeURIComponent(path.slice(`${SCALING_PATH}/`.length));
-      stub.writes.push({ method: request.method(), path, body: request.postDataJSON() });
+      if (request.method() === 'GET') {
+        stub.reads += 1;
+        if (stub.read_hold) await stub.read_hold;
+        if (stub.read_failure) return stub.read_failure(route);
+        return fulfillJson(route, stub.policy);
+      }
+      if (request.method() !== 'PUT' && request.method() !== 'DELETE') return route.continue();
+      stub.writes.push({ method: request.method(), body: request.postDataJSON() });
       if (stub.write_hold) await stub.write_hold;
       if (stub.write_failure) return stub.write_failure(route);
-      const policies = { ...stub.config.policies };
-      const invalid = stub.config.invalid.filter((name) => name !== agent_name);
       if (request.method() === 'DELETE') {
-        delete policies[agent_name];
-        stub.config = { ...stub.config, policies, invalid };
-        return fulfillJson(route, { agent_name });
+        stub.policy = NONE;
+        return fulfillJson(route, NONE);
       }
       const policy = request.postDataJSON() as ScalingPolicy;
-      stub.config = { ...stub.config, policies: { ...policies, [agent_name]: policy }, invalid };
+      stub.policy = { status: 'applied', policy };
       return fulfillJson(route, policy);
     }
   );
@@ -123,77 +149,79 @@ async function openSession(page: Page): Promise<void> {
   await stubFleetSpend(page);
 }
 
-async function openScaling(page: Page, config: ScalingResponse): Promise<ScalingStub> {
+async function openScaling(
+  page: Page,
+  policy: ScalingStatus,
+  agents: ScalingAgent[] = AGENTS
+): Promise<ScalingStub> {
   await openSession(page);
-  const stub = await stubScaling(page, config);
+  const stub = await stubScaling(page, policy, agents);
   await page.goto(SCALING_PATH);
+  await expect(screen(page)).toHaveAttribute('data-state', 'ready');
   return stub;
 }
 
 const screen = (page: Page) => page.getByTestId('scaling-screen');
-const allCards = (page: Page) => screen(page).locator('[data-testid^="scaling-policy-"]');
-const draftCards = (page: Page) => page.getByTestId('scaling-policy-draft');
-const savedCard = (page: Page, agent_name: string) =>
-  page.locator(`[data-testid="scaling-policy-saved"][data-agent="${agent_name}"]`);
-const invalidCard = (page: Page, agent_name: string) =>
-  page.locator(`[data-testid="scaling-policy-invalid"][data-agent="${agent_name}"]`);
-const addButton = (page: Page) => page.getByTestId('scaling-add-policy');
+const policyCard = (page: Page) => page.getByTestId('scaling-policy');
+const noneCard = (page: Page) => page.getByTestId('scaling-policy-none');
+const appliedCard = (page: Page) => page.getByTestId('scaling-policy-applied');
+const invalidCard = (page: Page) => page.getByTestId('scaling-policy-invalid');
+const editorCard = (page: Page) => page.getByTestId('scaling-policy-editor');
+const agentsPanel = (page: Page) => page.getByTestId('scaling-agents');
 const toast = (page: Page) => page.getByTestId('app-toast');
 
-async function addDraft(page: Page, kind: 'throughput' | 'queue_length'): Promise<void> {
-  await addButton(page).click();
-  await page.getByTestId(`scaling-add-${kind}`).click();
-  await expect(page.getByRole('menu')).toHaveCount(0);
-}
-
-async function pickAgent(card: PolicyCard, agent_name: string): Promise<void> {
-  await card.agent.click();
-  await card.root.page().getByRole('option', { name: agent_name, exact: true }).click();
-  await expect(card.agent).toHaveText(agent_name);
-}
-
-async function agentOptions(card: PolicyCard): Promise<Locator> {
-  await card.agent.click();
-  return card.root.page().getByRole('option');
-}
-
-function stepper(card: Locator, test_id: string) {
+function stepper(root: Locator, test_id: string) {
   return {
-    value: card.getByTestId(`${test_id}-value`),
-    increase: card.getByTestId(`${test_id}-increase`),
-    decrease: card.getByTestId(`${test_id}-decrease`),
+    value: root.getByTestId(`${test_id}-value`),
+    increase: root.getByTestId(`${test_id}-increase`),
+    decrease: root.getByTestId(`${test_id}-decrease`),
   };
 }
 
-function policyCard(root: Locator) {
+function editor(page: Page) {
+  const root = editorCard(page);
   return {
     root,
-    agent: root.getByTestId('policy-agent'),
     save: root.getByTestId('policy-save'),
-    discard: root.getByTestId('policy-discard'),
-    delete: root.getByTestId('policy-delete'),
+    cancel: root.getByTestId('policy-cancel'),
+    kind: (kind: 'throughput' | 'queue_length') => root.getByTestId(`policy-kind-${kind}`),
     error: root.getByRole('alert'),
-    scale_up: stepper(root, 'policy-scale-up'),
-    scale_down: stepper(root, 'policy-scale-down'),
+    scale_up: stepper(root, 'policy-scale-up-threshold'),
+    scale_down: stepper(root, 'policy-scale-down-threshold'),
     min_replicas: stepper(root, 'policy-min-replicas'),
     max_replicas: stepper(root, 'policy-max-replicas'),
   };
 }
 
-type PolicyCard = ReturnType<typeof policyCard>;
+type Editor = ReturnType<typeof editor>;
 
-async function expectValues(card: PolicyCard, policy: Omit<ScalingPolicy, 'metric'>) {
-  await expect(card.scale_up.value).toHaveText(String(policy.scale_up_above));
-  await expect(card.scale_down.value).toHaveText(String(policy.scale_down_below));
-  await expect(card.min_replicas.value).toHaveText(String(policy.min_replicas));
-  await expect(card.max_replicas.value).toHaveText(String(policy.max_replicas));
+async function expectEditorValues(form: Editor, values: Omit<ScalingPolicy, 'metric'>) {
+  await expect(form.scale_up.value).toHaveValue(String(values.scale_up_above));
+  await expect(form.scale_down.value).toHaveValue(String(values.scale_down_below));
+  await expect(form.min_replicas.value).toHaveValue(String(values.min_replicas));
+  await expect(form.max_replicas.value).toHaveValue(String(values.max_replicas));
+}
+
+async function expectAppliedValues(card: Locator, values: Omit<ScalingPolicy, 'metric'>) {
+  await expect(card.getByTestId('policy-scale-up-threshold-value')).toHaveText(
+    String(values.scale_up_above)
+  );
+  await expect(card.getByTestId('policy-scale-down-threshold-value')).toHaveText(
+    String(values.scale_down_below)
+  );
+  await expect(card.getByTestId('policy-min-replicas-value')).toHaveText(
+    String(values.min_replicas)
+  );
+  await expect(card.getByTestId('policy-max-replicas-value')).toHaveText(
+    String(values.max_replicas)
+  );
 }
 
 test('@smoke the Scaling row opens the scaling screen and is the row marked current', async ({
   page,
 }) => {
   await openSession(page);
-  await stubScaling(page, CONFIGURED);
+  await stubScaling(page, APPLIED);
   const scaling = page.getByTestId(`nav-project-scaling-${PROJECT.id}`);
   const manage = page.getByTestId(`nav-project-manage-${PROJECT.id}`);
   const prompts = page.getByTestId(`nav-project-prompts-${PROJECT.id}`);
@@ -209,19 +237,17 @@ test('@smoke the Scaling row opens the scaling screen and is the row marked curr
   await scaling.click();
   await expectPath(page, SCALING_PATH);
   await expect(screen(page).getByRole('heading', { name: 'Scaling', level: 1 })).toBeVisible();
-  await expect(screen(page)).toHaveAttribute('data-state', 'list');
-  await expect(allCards(page)).toHaveCount(2);
+  await expect(screen(page)).toHaveAttribute('data-state', 'ready');
+  await expect(appliedCard(page)).toBeVisible();
   await expect(scaling).toHaveAttribute('aria-current', 'page');
   await expect(manage).not.toHaveAttribute('aria-current', 'page');
   await expect(prompts).not.toHaveAttribute('aria-current', 'page');
 });
 
 test.describe('screen states', () => {
-  test('loading: a pending read shows the loading state, never the empty state', async ({
-    page,
-  }) => {
+  test('loading: a pending read shows the loading state and no card', async ({ page }) => {
     await openSession(page);
-    const stub = await stubScaling(page, CONFIGURED);
+    const stub = await stubScaling(page, NONE);
     const hold = deferred();
     stub.read_hold = hold.promise;
     await page.goto(SCALING_PATH);
@@ -230,45 +256,46 @@ test.describe('screen states', () => {
       await expect.poll(() => stub.reads).toBe(1);
       await expect(screen(page)).toHaveAttribute('data-state', 'loading');
       await expect(page.getByTestId('scaling-loading')).toBeVisible();
-      await expect(page.getByTestId('scaling-empty')).toHaveCount(0);
-      await expect(addButton(page)).toBeDisabled();
+      await expect(policyCard(page)).toHaveCount(0);
+      await expect(agentsPanel(page)).toHaveCount(0);
     } finally {
       hold.release();
     }
 
-    await expect(screen(page)).toHaveAttribute('data-state', 'list');
+    await expect(screen(page)).toHaveAttribute('data-state', 'ready');
     await expect(page.getByTestId('scaling-loading')).toHaveCount(0);
-    await expect(allCards(page)).toHaveCount(2);
-    await expect(addButton(page)).toBeEnabled();
+    await expect(noneCard(page)).toBeVisible();
   });
 
   for (const failure of [
-    { status: 404, message: 'Project is not running in the controller' },
-    { status: 502, message: UNREACHABLE },
+    {
+      status: 404,
+      code: 'canyonos.project_not_running',
+      message: 'This project is not running, so its scaling policy cannot be read.',
+    },
+    { status: 502, code: 'canyonos.controller_unreachable', message: UNREACHABLE },
+    { status: 500, code: 'test.failure', message: 'Controlled test failure' },
   ]) {
-    test(`error: a failed read (${failure.status}) shows only the error, and Add is disabled`, async ({
-      page,
-    }) => {
+    test(`error: a failed read (${failure.status}) shows only the error`, async ({ page }) => {
       await openSession(page);
-      const stub = await stubScaling(page, CONFIGURED);
+      const stub = await stubScaling(page, NONE);
       stub.read_failure = (route) =>
-        fulfillJson(route, { error: 'test.failure', message: failure.message }, failure.status);
+        fulfillJson(route, { error: failure.code, message: failure.message }, failure.status);
       await page.goto(SCALING_PATH);
 
       await expect(page.getByTestId('scaling-error')).toContainText(failure.message);
       await expect(screen(page)).toHaveAttribute('data-state', 'error');
-      await expect(page.getByTestId('scaling-empty')).toHaveCount(0);
-      await expect(allCards(page)).toHaveCount(0);
-      await expect(addButton(page)).toBeDisabled();
+      await expect(policyCard(page)).toHaveCount(0);
+      await expect(agentsPanel(page)).toHaveCount(0);
       expect(stub.reads).toBe(1);
     });
   }
 
-  test('error -> Retry -> ready: Retry re-reads and replaces the error with the policies', async ({
+  test('error -> Retry -> ready: Retry re-reads and replaces the error with the policy', async ({
     page,
   }) => {
     await openSession(page);
-    const stub = await stubScaling(page, CONFIGURED);
+    const stub = await stubScaling(page, APPLIED);
     stub.read_failure = (route) => failJson(route, UNREACHABLE);
     await page.goto(SCALING_PATH);
     await expect(page.getByTestId('scaling-error')).toContainText(UNREACHABLE);
@@ -286,142 +313,151 @@ test.describe('screen states', () => {
       hold.release();
     }
 
-    await expect(screen(page)).toHaveAttribute('data-state', 'list');
-    await expect(allCards(page)).toHaveCount(2);
-    await expect(addButton(page)).toBeEnabled();
+    await expect(screen(page)).toHaveAttribute('data-state', 'ready');
+    await expect(appliedCard(page)).toBeVisible();
     expect(stub.reads).toBe(2);
   });
 
-  test('empty -> list: no policies shows the empty state until a draft is added', async ({
-    page,
-  }) => {
-    await openScaling(page, EMPTY);
+  test('none: no stored policy shows the empty card with Add policy', async ({ page }) => {
+    await openScaling(page, NONE);
 
-    await expect(page.getByTestId('scaling-empty')).toHaveText('No scaling policies yet.');
-    await expect(screen(page)).toHaveAttribute('data-state', 'empty');
-    await expect(allCards(page)).toHaveCount(0);
+    await expect(policyCard(page)).toHaveAttribute('data-policy', 'none');
+    await expect(policyCard(page)).toHaveAttribute('data-state', 'closed');
+    await expect(noneCard(page)).toContainText(
+      'keeps its current replica count until the next reload'
+    );
+    await expect(noneCard(page).getByTestId('policy-add')).toBeEnabled();
+    await expect(editorCard(page)).toHaveCount(0);
     await expect(screen(page).getByRole('alert')).toHaveCount(0);
-
-    await addDraft(page, 'throughput');
-    await expect(screen(page)).toHaveAttribute('data-state', 'list');
-    await expect(page.getByTestId('scaling-empty')).toHaveCount(0);
-    await expect(draftCards(page)).toHaveCount(1);
   });
 
-  test('list: saved cards render locked to their agent, sorted by agent name', async ({ page }) => {
-    await openScaling(page, CONFIGURED);
+  for (const { kind, heading, policy } of [
+    { kind: 'throughput', heading: 'Throughput policy', policy: THROUGHPUT_POLICY },
+    { kind: 'queue_length', heading: 'Queue length policy', policy: QUEUE_POLICY },
+  ]) {
+    test(`applied: a stored ${kind} policy reads as three plain rules`, async ({ page }) => {
+      await openScaling(page, { status: 'applied', policy });
 
-    await expect(allCards(page)).toHaveCount(2);
-    await expect(allCards(page).nth(0)).toHaveAttribute('data-agent', 'enricher');
-    await expect(allCards(page).nth(1)).toHaveAttribute('data-agent', 'summarizer');
+      const card = appliedCard(page);
+      await expect(card).toHaveAttribute('data-kind', kind);
+      await expect(card).toHaveAttribute('data-state', 'viewing');
+      await expect(card.getByRole('heading', { name: heading })).toBeVisible();
+      await expectAppliedValues(card, policy);
+      await expect(card.getByTestId('policy-edit')).toBeEnabled();
+      await expect(card.getByTestId('policy-delete')).toBeEnabled();
+      await expect(page.getByTestId('scaling-scope')).toContainText(
+        'One policy for the whole workflow'
+      );
+    });
+  }
 
-    const enricher = policyCard(savedCard(page, 'enricher'));
-    await expect(enricher.root).toHaveAttribute('data-kind', 'queue_length');
-    await expect(enricher.root.getByRole('heading', { name: 'Queue length' })).toBeVisible();
-    await expect(enricher.agent).toHaveText('enricher');
-    await expect(enricher.root.getByRole('combobox')).toHaveCount(0);
-    await expect(enricher.discard).toHaveCount(0);
-    await expectValues(enricher, ENRICHER_POLICY);
+  test('invalid: a stored policy the controller skips shows its reason and only Delete', async ({
+    page,
+  }) => {
+    await openScaling(page, INVALID);
 
-    const summarizer = policyCard(savedCard(page, 'summarizer'));
-    await expect(summarizer.root).toHaveAttribute('data-kind', 'throughput');
-    await expect(summarizer.root.getByRole('heading', { name: 'Throughput' })).toBeVisible();
-    await expectValues(summarizer, SUMMARIZER_POLICY);
+    const card = invalidCard(page);
+    await expect(card).toHaveAttribute('data-state', 'viewing');
+    await expect(card.getByTestId('policy-invalid')).toContainText(INVALID.reason);
+    await expect(card.getByTestId('policy-invalid')).toContainText('the controller ignores it');
+    await expect(card.getByTestId('policy-delete')).toBeEnabled();
+    await expect(card.getByTestId('policy-replace')).toBeEnabled();
+    await expect(card.getByTestId('policy-edit')).toHaveCount(0);
+    await expect(noneCard(page)).toHaveCount(0);
   });
 });
 
-test.describe('drafts', () => {
-  test('a new draft starts unpicked with the kind defaults and cannot save yet', async ({
-    page,
-  }) => {
-    await openScaling(page, CONFIGURED);
-    await addDraft(page, 'queue_length');
+test.describe('adding a policy', () => {
+  test('Add policy opens the editor on the throughput defaults', async ({ page }) => {
+    const stub = await openScaling(page, NONE);
 
-    const draft = policyCard(draftCards(page));
-    await expect(draft.root).toHaveAttribute('data-kind', 'queue_length');
-    await expect(draft.agent).toHaveText('Select an agent');
-    await expect(draft.save).toBeDisabled();
-    await expect(draft.delete).toHaveCount(0);
-    await expectValues(draft, {
-      scale_up_above: 3,
+    await noneCard(page).getByTestId('policy-add').click();
+
+    const form = editor(page);
+    await expect(form.root).toHaveAttribute('data-state', 'editing');
+    await expect(form.root).toHaveAttribute('data-kind', 'throughput');
+    await expect(form.root).toHaveAccessibleName('New scaling policy');
+    await expect(form.kind('throughput')).toHaveAttribute('aria-checked', 'true');
+    await expectEditorValues(form, {
+      scale_up_above: 10,
       scale_down_below: 1,
       min_replicas: 1,
       max_replicas: 5,
     });
-    await expect(await agentOptions(draft)).toHaveText(['classifier', 'router']);
+    await expect(form.save).toBeEnabled();
+    await expect(policyCard(page)).toHaveAttribute('data-state', 'open');
+    await expect(noneCard(page)).toBeHidden();
+    expect(stub.writes).toEqual([]);
   });
 
-  test('an agent claimed by one draft is not offered in another, and Add disables when none is free', async ({
+  test('switching to queue length resets the thresholds and keeps the replicas', async ({
     page,
   }) => {
-    await openScaling(page, EMPTY);
-    await addDraft(page, 'throughput');
-    await addDraft(page, 'queue_length');
-    const first = policyCard(draftCards(page).and(page.locator('[data-kind="throughput"]')));
-    const second = policyCard(draftCards(page).and(page.locator('[data-kind="queue_length"]')));
+    await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
+    await form.max_replicas.increase.click();
 
-    await pickAgent(first, 'classifier');
-    await expect(await agentOptions(second)).toHaveText(['router']);
-    await page.getByRole('option', { name: 'router', exact: true }).click();
-    await expect(second.agent).toHaveText('router');
-    await expect(addButton(page)).toBeDisabled();
+    await form.kind('queue_length').click();
 
-    await expect(await agentOptions(first)).toHaveText(['classifier']);
-    await page.keyboard.press('Escape');
-
-    await first.discard.click();
-    await expect(draftCards(page)).toHaveCount(1);
-    await expect(second.agent).toHaveText('router');
-    await expect(addButton(page)).toBeEnabled();
+    await expect(form.root).toHaveAttribute('data-kind', 'queue_length');
+    await expect(form.kind('queue_length')).toHaveAttribute('aria-checked', 'true');
+    await expect(form.root).toContainText('waiting requests');
+    await expectEditorValues(form, {
+      scale_up_above: 3,
+      scale_down_below: 1,
+      min_replicas: 1,
+      max_replicas: 6,
+    });
   });
 
-  test('Discard removes the draft without a request and returns to the empty state', async ({
+  test('Cancel drops the draft without a request and returns to the empty card', async ({
     page,
   }) => {
-    const stub = await openScaling(page, EMPTY);
-    await addDraft(page, 'throughput');
-    const draft = policyCard(draftCards(page));
-    await pickAgent(draft, 'router');
+    const stub = await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
+    await form.scale_up.increase.click();
 
-    await draft.discard.click();
-    await expect(draftCards(page)).toHaveCount(0);
-    await expect(page.getByTestId('scaling-empty')).toBeVisible();
+    await form.cancel.click();
+
+    await expect(editorCard(page)).toHaveCount(0);
+    await expect(noneCard(page)).toBeVisible();
+    await expect(policyCard(page)).toHaveAttribute('data-state', 'closed');
     expect(stub.writes).toEqual([]);
     expect(stub.reads).toBe(1);
   });
 
-  test('saving a draft PUTs it, toasts, re-reads, and turns the draft into a saved card', async ({
+  test('Save policy PUTs the values, shows saving, toasts, re-reads, and shows the applied card', async ({
     page,
   }) => {
-    const stub = await openScaling(page, CONFIGURED);
-    await expect(allCards(page)).toHaveCount(2);
-    await addDraft(page, 'throughput');
-    const draft = policyCard(draftCards(page));
-    await pickAgent(draft, 'router');
-    await draft.scale_up.increase.click();
-    await draft.scale_up.increase.click();
-    await draft.scale_down.increase.click();
-    await draft.max_replicas.increase.click();
-    await draft.min_replicas.increase.click();
+    const stub = await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
+    await form.scale_up.increase.click();
+    await form.scale_up.increase.click();
+    await form.scale_down.increase.click();
+    await form.max_replicas.increase.click();
+    await form.min_replicas.increase.click();
     expect(stub.writes).toEqual([]);
 
     const hold = deferred();
     stub.write_hold = hold.promise;
-    await draft.save.click();
+    await form.save.click();
     try {
-      await expect(draft.save).toHaveText('Saving…');
-      await expect(draft.save).toBeDisabled();
-      await expect(draft.discard).toBeDisabled();
-      await expect(draft.agent).toBeDisabled();
+      await expect(form.root).toHaveAttribute('data-state', 'saving');
+      await expect(form.save).toHaveText('Saving…');
+      await expect(form.save).toBeDisabled();
+      await expect(form.cancel).toBeDisabled();
+      await expect(form.scale_up.increase).toBeDisabled();
     } finally {
       hold.release();
     }
 
-    await expect(toast(page)).toContainText('Scaling policy saved for router');
+    await expect(toast(page)).toContainText(SAVED_TOAST);
     expect(stub.writes).toEqual([
       {
         method: 'PUT',
-        path: `${SCALING_PATH}/router`,
         body: {
           min_replicas: 2,
           max_replicas: 6,
@@ -432,38 +468,34 @@ test.describe('drafts', () => {
       },
     ]);
     await expect.poll(() => stub.reads).toBe(2);
-    await expect(draftCards(page)).toHaveCount(0);
-    await expect(allCards(page)).toHaveCount(3);
-    await expect(allCards(page).nth(1)).toHaveAttribute('data-agent', 'router');
-    const router = policyCard(savedCard(page, 'router'));
-    await expect(router.root).toHaveAttribute('data-kind', 'throughput');
-    await expectValues(router, {
+    await expect(editorCard(page)).toHaveCount(0);
+    const card = appliedCard(page);
+    await expect(card).toHaveAttribute('data-kind', 'throughput');
+    await expectAppliedValues(card, {
       scale_up_above: 12,
       scale_down_below: 2,
       min_replicas: 2,
       max_replicas: 6,
     });
-
-    await addDraft(page, 'queue_length');
-    await expect(await agentOptions(policyCard(draftCards(page)))).toHaveText(['classifier']);
+    await expect.poll(() => stub.agent_reads).toBeGreaterThan(1);
   });
 
-  test('a failed draft save alerts in the card, keeps the draft and its values, and does not re-read', async ({
+  test('a failed save alerts in the editor, keeps the values, and does not re-read', async ({
     page,
   }) => {
-    const stub = await openScaling(page, EMPTY);
+    const stub = await openScaling(page, NONE);
     stub.write_failure = (route) => failJson(route, UNREACHABLE);
-    await addDraft(page, 'throughput');
-    const draft = policyCard(draftCards(page));
-    await pickAgent(draft, 'classifier');
-    await draft.scale_up.increase.click();
-    await draft.save.click();
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
+    await form.scale_up.increase.click();
 
-    await expect(draft.error).toHaveText(UNREACHABLE);
+    await form.save.click();
+
+    await expect(form.error).toHaveText(UNREACHABLE);
+    await expect(form.root).toHaveAttribute('data-state', 'editing');
     expect(stub.writes).toEqual([
       {
         method: 'PUT',
-        path: `${SCALING_PATH}/classifier`,
         body: {
           min_replicas: 1,
           max_replicas: 5,
@@ -473,35 +505,84 @@ test.describe('drafts', () => {
         },
       },
     ]);
-    await expect(draft.agent).toHaveText('classifier');
-    await expect(draft.agent).toBeEnabled();
-    await expectValues(draft, {
+    await expectEditorValues(form, {
       scale_up_above: 11,
       scale_down_below: 1,
       min_replicas: 1,
       max_replicas: 5,
     });
-    await expect(draft.save).toBeEnabled();
-    await expect(draftCards(page)).toHaveCount(1);
+    await expect(form.save).toBeEnabled();
     await expect(toast(page)).toHaveCount(0);
     expect(stub.reads).toBe(1);
   });
+
+  test('a 422 from the API is shown with its message', async ({ page }) => {
+    const stub = await openScaling(page, NONE);
+    stub.write_failure = (route) =>
+      fulfillJson(
+        route,
+        {
+          error: 'validation.failed',
+          message: 'Validation failed',
+          details: [
+            {
+              summary: 'scale_down_below must be less than scale_up_above',
+              message: 'scale_down_below must be less than scale_up_above',
+              path: 'scale_down_below',
+            },
+          ],
+        },
+        422
+      );
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
+
+    await form.save.click();
+
+    await expect(form.error).toHaveText('scale_down_below must be less than scale_up_above');
+    await expect(form.root).toHaveAttribute('data-state', 'editing');
+  });
 });
 
-test.describe('saved cards', () => {
-  test('editing a saved policy PUTs the exact values, toasts, and re-reads', async ({ page }) => {
-    const stub = await openScaling(page, CONFIGURED);
-    const summarizer = policyCard(savedCard(page, 'summarizer'));
-    await summarizer.max_replicas.decrease.click();
-    await summarizer.min_replicas.decrease.click();
-    await summarizer.scale_down.decrease.click();
+test.describe('editing the applied policy', () => {
+  test('Edit opens the editor on the stored values and its kind', async ({ page }) => {
+    await openScaling(page, { status: 'applied', policy: QUEUE_POLICY });
 
-    await summarizer.save.click();
-    await expect(toast(page)).toContainText('Scaling policy saved for summarizer');
+    await appliedCard(page).getByTestId('policy-edit').click();
+
+    const form = editor(page);
+    await expect(form.root).toHaveAttribute('data-kind', 'queue_length');
+    await expect(form.root).toHaveAccessibleName('Edit scaling policy');
+    await expectEditorValues(form, QUEUE_POLICY);
+    await expect(appliedCard(page)).toBeHidden();
+  });
+
+  test('Cancel returns to the applied card unchanged', async ({ page }) => {
+    const stub = await openScaling(page, APPLIED);
+    await appliedCard(page).getByTestId('policy-edit').click();
+    const form = editor(page);
+    await form.max_replicas.decrease.click();
+
+    await form.cancel.click();
+
+    await expectAppliedValues(appliedCard(page), THROUGHPUT_POLICY);
+    expect(stub.writes).toEqual([]);
+  });
+
+  test('Save policy PUTs the exact values, toasts, and re-reads', async ({ page }) => {
+    const stub = await openScaling(page, APPLIED);
+    await appliedCard(page).getByTestId('policy-edit').click();
+    const form = editor(page);
+    await form.max_replicas.decrease.click();
+    await form.min_replicas.decrease.click();
+    await form.scale_down.decrease.click();
+
+    await form.save.click();
+
+    await expect(toast(page)).toContainText(SAVED_TOAST);
     expect(stub.writes).toEqual([
       {
         method: 'PUT',
-        path: `${SCALING_PATH}/summarizer`,
         body: {
           min_replicas: 1,
           max_replicas: 7,
@@ -512,184 +593,360 @@ test.describe('saved cards', () => {
       },
     ]);
     await expect.poll(() => stub.reads).toBe(2);
-    await expectValues(summarizer, {
+    await expectAppliedValues(appliedCard(page), {
       scale_up_above: 40,
       scale_down_below: 4,
       min_replicas: 1,
       max_replicas: 7,
     });
-    await expect(summarizer.error).toHaveCount(0);
+    await expect(screen(page).getByRole('alert')).toHaveCount(0);
   });
 
-  test('Delete sends DELETE for that agent, and the card is gone after the re-read', async ({
+  test('Delete policy sends DELETE, shows deleting, toasts, and the empty card returns', async ({
     page,
   }) => {
-    const stub = await openScaling(page, CONFIGURED);
-    const enricher = policyCard(savedCard(page, 'enricher'));
+    const stub = await openScaling(page, APPLIED);
+    const card = appliedCard(page);
 
     const hold = deferred();
     stub.write_hold = hold.promise;
-    await enricher.delete.click();
+    await card.getByTestId('policy-delete').click();
     try {
-      await expect(enricher.delete).toHaveText('Deleting…');
-      await expect(enricher.delete).toBeDisabled();
-      await expect(enricher.save).toBeDisabled();
+      await expect(card).toHaveAttribute('data-state', 'deleting');
+      await expect(card.getByTestId('policy-delete')).toBeDisabled();
+      await expect(card.getByTestId('policy-edit')).toBeDisabled();
     } finally {
       hold.release();
     }
 
-    await expect(toast(page)).toContainText('Scaling policy deleted for enricher');
-    expect(stub.writes).toEqual([
-      { method: 'DELETE', path: `${SCALING_PATH}/enricher`, body: null },
-    ]);
+    await expect(toast(page)).toContainText(DELETED_TOAST);
+    expect(stub.writes).toEqual([{ method: 'DELETE', body: null }]);
     await expect.poll(() => stub.reads).toBe(2);
-    await expect(savedCard(page, 'enricher')).toHaveCount(0);
-    await expect(allCards(page)).toHaveCount(1);
-
-    await addDraft(page, 'throughput');
-    await expect(await agentOptions(policyCard(draftCards(page)))).toHaveText([
-      'classifier',
-      'enricher',
-      'router',
-    ]);
+    await expect(appliedCard(page)).toHaveCount(0);
+    await expect(noneCard(page)).toBeVisible();
   });
 
-  test('deleting the last policy returns to the empty state', async ({ page }) => {
-    await openScaling(page, { ...EMPTY, policies: { router: ENRICHER_POLICY } });
-    await policyCard(savedCard(page, 'router')).delete.click();
-
-    await expect(page.getByTestId('scaling-empty')).toBeVisible();
-    await expect(allCards(page)).toHaveCount(0);
-  });
-
-  test('a failed delete alerts in the card and keeps it', async ({ page }) => {
-    const stub = await openScaling(page, CONFIGURED);
+  test('a failed delete alerts in the card and keeps it editable', async ({ page }) => {
+    const stub = await openScaling(page, APPLIED);
     stub.write_failure = (route) =>
       fulfillJson(
         route,
-        { error: 'scaling.policy_not_found', message: 'No scaling policy for enricher' },
+        { error: 'scaling.policy_not_found', message: 'No scaling policy is stored' },
         404
       );
-    const enricher = policyCard(savedCard(page, 'enricher'));
-    await enricher.delete.click();
+    const card = appliedCard(page);
 
-    await expect(enricher.error).toHaveText('No scaling policy for enricher');
-    await expect(enricher.delete).toHaveText('Delete');
-    await expect(enricher.delete).toBeEnabled();
-    await expectValues(enricher, ENRICHER_POLICY);
+    await card.getByTestId('policy-delete').click();
+
+    await expect(card.getByRole('alert')).toHaveText('No scaling policy is stored');
+    await expect(card).toHaveAttribute('data-state', 'viewing');
+    await expect(card.getByTestId('policy-delete')).toBeEnabled();
+    await expect(card.getByTestId('policy-edit')).toBeEnabled();
+    await expectAppliedValues(card, THROUGHPUT_POLICY);
     await expect(toast(page)).toHaveCount(0);
     expect(stub.reads).toBe(1);
   });
 });
 
-test.describe('invalid cards', () => {
-  const WITH_INVALID: ScalingResponse = { ...CONFIGURED, invalid: ['classifier'] };
+test.describe('invalid policy', () => {
+  test('Delete policy clears it and the empty card returns', async ({ page }) => {
+    const stub = await openScaling(page, INVALID);
 
-  test('an invalid stored policy gets its own card, is not offered to drafts, and can be deleted', async ({
+    await invalidCard(page).getByTestId('policy-delete').click();
+
+    await expect(toast(page)).toContainText(DELETED_TOAST);
+    expect(stub.writes).toEqual([{ method: 'DELETE', body: null }]);
+    await expect(invalidCard(page)).toHaveCount(0);
+    await expect(noneCard(page)).toBeVisible();
+  });
+
+  test('a failed delete alerts in the card', async ({ page }) => {
+    const stub = await openScaling(page, INVALID);
+    stub.write_failure = (route) => failJson(route, UNREACHABLE);
+
+    await invalidCard(page).getByTestId('policy-delete').click();
+
+    await expect(invalidCard(page).getByRole('alert')).toHaveText(UNREACHABLE);
+    await expect(invalidCard(page)).toHaveAttribute('data-state', 'viewing');
+    await expect(invalidCard(page).getByTestId('policy-delete')).toBeEnabled();
+  });
+
+  test('Replace policy opens a new draft and saving it overwrites the invalid one', async ({
     page,
   }) => {
-    const stub = await openScaling(page, WITH_INVALID);
-    const classifier = invalidCard(page, 'classifier');
-    await expect(classifier).toBeVisible();
-    await expect(classifier.getByTestId('policy-invalid')).toContainText(
-      'the controller ignores it'
-    );
-    await expect(classifier.getByTestId('policy-save')).toHaveCount(0);
-    await expect(allCards(page)).toHaveCount(3);
+    const stub = await openScaling(page, INVALID);
 
-    await addDraft(page, 'throughput');
-    await expect(await agentOptions(policyCard(draftCards(page)))).toHaveText(['router']);
-    await page.keyboard.press('Escape');
+    await invalidCard(page).getByTestId('policy-replace').click();
 
-    await classifier.getByTestId('policy-delete').click();
-    await expect(toast(page)).toContainText('Scaling policy deleted for classifier');
+    const form = editor(page);
+    await expect(form.root).toHaveAccessibleName('New scaling policy');
+    await expect(invalidCard(page)).toBeHidden();
+    await form.save.click();
+    await expect(toast(page)).toContainText(SAVED_TOAST);
     expect(stub.writes).toEqual([
-      { method: 'DELETE', path: `${SCALING_PATH}/classifier`, body: null },
+      {
+        method: 'PUT',
+        body: {
+          min_replicas: 1,
+          max_replicas: 5,
+          metric: 'requests_per_minute_per_replica',
+          scale_up_above: 10,
+          scale_down_below: 1,
+        },
+      },
     ]);
-    await expect(invalidCard(page, 'classifier')).toHaveCount(0);
-    await expect(await agentOptions(policyCard(draftCards(page)))).toHaveText([
-      'classifier',
-      'router',
-    ]);
-  });
-
-  test('only invalid policies still count as a list, not the empty state', async ({ page }) => {
-    await openScaling(page, { ...EMPTY, invalid: ['router'] });
-    await expect(invalidCard(page, 'router')).toBeVisible();
-    await expect(page.getByTestId('scaling-empty')).toHaveCount(0);
+    await expect(appliedCard(page)).toBeVisible();
   });
 });
 
-test('Add is disabled when every running agent already has a policy', async ({ page }) => {
-  await openScaling(page, {
-    agents: ['enricher', 'summarizer', 'router'],
-    policies: { summarizer: SUMMARIZER_POLICY, enricher: ENRICHER_POLICY },
-    invalid: ['router'],
-  });
-  await expect(allCards(page)).toHaveCount(3);
-  await expect(addButton(page)).toBeDisabled();
-});
+test.describe('editor values', () => {
+  test('replica counts can be typed and are clamped to their bounds on commit', async ({
+    page,
+  }) => {
+    await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
 
-test.describe('steppers', () => {
+    await form.max_replicas.value.fill('12');
+    await form.max_replicas.value.press('Enter');
+    await expect(form.max_replicas.value).toHaveValue('12');
+    await expect(form.root).toHaveAttribute('data-state', 'editing');
+
+    await form.min_replicas.value.fill('20');
+    await form.min_replicas.value.blur();
+    await expect(form.min_replicas.value).toHaveValue('12');
+
+    await form.min_replicas.value.fill('abc');
+    await form.min_replicas.value.blur();
+    await expect(form.min_replicas.value).toHaveValue('12');
+
+    await form.min_replicas.value.fill('0');
+    await form.min_replicas.value.blur();
+    await expect(form.min_replicas.value).toHaveValue('1');
+  });
+
+  test('a typed value pulled back inside its bounds says which rule did it, briefly', async ({
+    page,
+  }) => {
+    await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
+    const notice = page.getByTestId('policy-scale-down-threshold-notice');
+
+    await form.scale_down.value.fill('50');
+    await form.scale_down.value.press('Tab');
+
+    await expect(form.scale_down.value).toHaveValue('9');
+    await expect(form.scale_down.value).toHaveAttribute('aria-invalid', 'true');
+    await expect(notice).toHaveText('Kept at 9: scale down must stay below scale up');
+    await form.scale_down.value.fill('3');
+    await expect(notice).toHaveCount(0);
+    await expect(form.scale_down.value).not.toHaveAttribute('aria-invalid', 'true');
+    await form.scale_down.value.press('Tab');
+    await expect(form.scale_down.value).toHaveValue('3');
+
+    await form.min_replicas.value.fill('abc');
+    await form.min_replicas.value.press('Tab');
+    await expect(form.min_replicas.value).toHaveValue('1');
+    await expect(page.getByTestId('policy-min-replicas-notice')).toHaveText('Whole numbers only');
+
+    await form.max_replicas.value.fill('0');
+    await form.max_replicas.value.press('Tab');
+    await expect(form.max_replicas.value).toHaveValue('1');
+    await expect(page.getByTestId('policy-max-replicas-notice')).toHaveText(
+      'Kept at 1: max replicas cannot drop below min replicas'
+    );
+  });
+
   test('min replicas never goes below 1', async ({ page }) => {
-    await openScaling(page, CONFIGURED);
-    const summarizer = policyCard(savedCard(page, 'summarizer'));
-    await expect(summarizer.min_replicas.decrease).toBeEnabled();
-    await summarizer.min_replicas.decrease.click();
-    await expect(summarizer.min_replicas.value).toHaveText('1');
-    await expect(summarizer.min_replicas.decrease).toBeDisabled();
+    await openScaling(page, APPLIED);
+    await appliedCard(page).getByTestId('policy-edit').click();
+    const form = editor(page);
+    await expect(form.min_replicas.decrease).toBeEnabled();
 
-    await addDraft(page, 'throughput');
-    const draft = policyCard(draftCards(page));
-    await expect(draft.min_replicas.value).toHaveText('1');
-    await expect(draft.min_replicas.decrease).toBeDisabled();
+    await form.min_replicas.decrease.click();
+
+    await expect(form.min_replicas.value).toHaveValue('1');
+    await expect(form.min_replicas.decrease).toBeDisabled();
   });
 
   test('min replicas stays at or below max, and scale-down below scale-up', async ({ page }) => {
-    await openScaling(page, EMPTY);
-    await addDraft(page, 'queue_length');
-    const draft = policyCard(draftCards(page));
+    await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').click();
+    await editor(page).kind('queue_length').click();
+    const form = editor(page);
+    await expect(form.min_replicas.value).toHaveValue('1');
+    await expect(form.min_replicas.decrease).toBeDisabled();
 
-    for (let step = 0; step < 4; step += 1) await draft.min_replicas.increase.click();
-    await expect(draft.min_replicas.value).toHaveText('5');
-    await expect(draft.min_replicas.increase).toBeDisabled();
-    await expect(draft.max_replicas.decrease).toBeDisabled();
+    for (let step = 0; step < 4; step += 1) await form.min_replicas.increase.click();
+    await expect(form.min_replicas.value).toHaveValue('5');
+    await expect(form.min_replicas.increase).toBeDisabled();
+    await expect(form.max_replicas.decrease).toBeDisabled();
 
-    await draft.max_replicas.increase.click();
-    await expect(draft.max_replicas.value).toHaveText('6');
-    await expect(draft.min_replicas.increase).toBeEnabled();
-    await expect(draft.max_replicas.decrease).toBeEnabled();
+    await form.max_replicas.increase.click();
+    await expect(form.max_replicas.value).toHaveValue('6');
+    await expect(form.min_replicas.increase).toBeEnabled();
+    await expect(form.max_replicas.decrease).toBeEnabled();
 
-    await draft.scale_down.increase.click();
-    await expect(draft.scale_down.value).toHaveText('2');
-    await expect(draft.scale_down.increase).toBeDisabled();
-    await expect(draft.scale_up.decrease).toBeDisabled();
+    await form.scale_down.increase.click();
+    await expect(form.scale_down.value).toHaveValue('2');
+    await expect(form.scale_down.increase).toBeDisabled();
+    await expect(form.scale_up.decrease).toBeDisabled();
 
-    await draft.scale_up.increase.click();
-    await expect(draft.scale_up.value).toHaveText('4');
-    await expect(draft.scale_down.increase).toBeEnabled();
-    await expect(draft.scale_up.decrease).toBeEnabled();
+    await form.scale_up.increase.click();
+    await expect(form.scale_up.value).toHaveValue('4');
+    await expect(form.scale_down.increase).toBeEnabled();
+    await expect(form.scale_up.decrease).toBeEnabled();
+  });
+
+  test('Enter in a value commits it and does not save the policy', async ({ page }) => {
+    const stub = await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').click();
+    const form = editor(page);
+
+    await form.scale_up.value.fill('15');
+    await form.scale_up.value.press('Enter');
+
+    await expect(form.scale_up.value).toHaveValue('15');
+    expect(stub.writes).toEqual([]);
+    await expect(form.root).toHaveAttribute('data-state', 'editing');
+  });
+
+  test('the editor is fully keyboard operable', async ({ page }) => {
+    const stub = await openScaling(page, NONE);
+    await noneCard(page).getByTestId('policy-add').focus();
+    await page.keyboard.press('Enter');
+    const form = editor(page);
+    await expect(form.root).toBeVisible();
+
+    await form.kind('queue_length').focus();
+    await page.keyboard.press('Enter');
+    await expect(form.kind('queue_length')).toHaveAttribute('aria-checked', 'true');
+    await form.kind('throughput').focus();
+    await page.keyboard.press('Enter');
+    await expect(form.kind('throughput')).toHaveAttribute('aria-checked', 'true');
+    await form.scale_up.increase.focus();
+    await page.keyboard.press('Enter');
+    await expect(form.scale_up.value).toHaveValue('11');
+    await form.save.focus();
+    await page.keyboard.press('Enter');
+
+    await expect(toast(page)).toContainText(SAVED_TOAST);
+    expect(stub.writes).toHaveLength(1);
   });
 });
 
-test('cards and stepper buttons have accessible names', async ({ page }) => {
-  await openScaling(page, { ...CONFIGURED, invalid: ['classifier'] });
-  await addDraft(page, 'queue_length');
+test.describe('agents', () => {
+  test('lists each agent with its replicas, the count it is heading to, and its load', async ({
+    page,
+  }) => {
+    await openScaling(page, APPLIED);
 
-  const summarizer = page.getByRole('region', { name: 'Throughput policy for summarizer' });
-  await expect(summarizer).toHaveAttribute('data-testid', 'scaling-policy-saved');
-  await expect(
-    page.getByRole('region', { name: 'Queue length policy for enricher' })
-  ).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Invalid policy for classifier' })).toHaveAttribute(
+    const panel = agentsPanel(page);
+    await expect(panel).toHaveAttribute('data-state', 'list');
+    const rows = panel.getByTestId('scaling-agent');
+    await expect(rows).toHaveCount(2);
+    const price = rows.filter({ has: page.getByText('PriceAgent') });
+    await expect(price.getByTestId('scaling-agent-replicas')).toHaveText('1heading to 2');
+    await expect(price.getByTestId('scaling-agent-replicas')).toHaveAttribute(
+      'data-moving',
+      'true'
+    );
+    await expect(price).toContainText('12.5');
+    await expect(price).toContainText('3');
+    const risk = rows.filter({ has: page.getByText('RiskAgent') });
+    await expect(risk.getByTestId('scaling-agent-replicas')).toHaveText('1');
+    await expect(risk.getByTestId('scaling-agent-replicas')).toHaveAttribute(
+      'data-moving',
+      'false'
+    );
+    await expect(risk).toContainText('–');
+    await expect(
+      panel.getByTestId('scaling-agents-column-requests_per_minute_per_replica')
+    ).toHaveAttribute('data-watched', 'true');
+    await expect(panel.getByTestId('scaling-agents-column-queue_length_total')).toHaveAttribute(
+      'data-watched',
+      'false'
+    );
+  });
+
+  test('marks the queue column when a queue policy is applied, and none without a policy', async ({
+    page,
+  }) => {
+    await openScaling(page, { status: 'applied', policy: QUEUE_POLICY });
+    const panel = agentsPanel(page);
+    await expect(panel.getByTestId('scaling-agents-column-queue_length_total')).toHaveAttribute(
+      'data-watched',
+      'true'
+    );
+
+    await openScaling(page, NONE);
+    await expect(
+      agentsPanel(page).getByTestId('scaling-agents-column-queue_length_total')
+    ).toHaveAttribute('data-watched', 'false');
+    await expect(
+      agentsPanel(page).getByTestId('scaling-agents-column-requests_per_minute_per_replica')
+    ).toHaveAttribute('data-watched', 'false');
+  });
+
+  test('polls, so a replica change shows up without a reload', async ({ page }) => {
+    const stub = await openScaling(page, APPLIED);
+    const price = agentsPanel(page)
+      .getByTestId('scaling-agent')
+      .filter({ has: page.getByText('PriceAgent') });
+    await expect(price.getByTestId('scaling-agent-replicas')).toHaveText('1heading to 2');
+
+    stub.agents = [{ ...AGENTS[0]!, replicas_running: 2 }, AGENTS[1]!];
+
+    await expect(price.getByTestId('scaling-agent-replicas')).toHaveText('2', { timeout: 15_000 });
+    expect(stub.agent_reads).toBeGreaterThan(1);
+  });
+
+  test('empty: a controller with no agents yet says so', async ({ page }) => {
+    await openScaling(page, NONE, []);
+
+    await expect(agentsPanel(page)).toHaveAttribute('data-state', 'empty');
+    await expect(page.getByTestId('scaling-agents-empty')).toContainText(
+      'has not published any agents'
+    );
+  });
+
+  test('error -> Retry: a failed agents read shows its own error and retries alone', async ({
+    page,
+  }) => {
+    await openSession(page);
+    const stub = await stubScaling(page, APPLIED);
+    stub.agents_failure = (route) => failJson(route, UNREACHABLE);
+    await page.goto(SCALING_PATH);
+
+    await expect(agentsPanel(page)).toHaveAttribute('data-state', 'error');
+    await expect(page.getByTestId('scaling-agents-error')).toContainText(UNREACHABLE);
+    await expect(appliedCard(page)).toBeVisible();
+    const policy_reads = stub.reads;
+
+    stub.agents_failure = null;
+    await page.getByTestId('scaling-agents-retry').click();
+
+    await expect(agentsPanel(page)).toHaveAttribute('data-state', 'list');
+    expect(stub.reads).toBe(policy_reads);
+  });
+});
+
+test('cards, controls and steppers have accessible names', async ({ page }) => {
+  await openScaling(page, APPLIED);
+
+  const card = page.getByRole('region', { name: 'Scaling policy' });
+  await expect(card).toHaveAttribute('data-testid', 'scaling-policy');
+  await expect(card.getByRole('button', { name: 'Edit policy', exact: true })).toHaveCount(1);
+  await expect(card.getByRole('button', { name: 'Delete policy', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('region', { name: 'Agents' })).toHaveAttribute(
     'data-testid',
-    'scaling-policy-invalid'
-  );
-  await expect(page.getByRole('region', { name: 'New queue length policy' })).toHaveAttribute(
-    'data-testid',
-    'scaling-policy-draft'
+    'scaling-agents'
   );
 
+  await card.getByRole('button', { name: 'Edit policy', exact: true }).click();
+  const form = page.getByRole('form', { name: 'Edit scaling policy' });
+  await expect(form.getByRole('radiogroup', { name: 'Load to watch' })).toBeVisible();
   for (const name of [
     'Increase scale-up threshold',
     'Decrease scale-up threshold',
@@ -700,8 +957,16 @@ test('cards and stepper buttons have accessible names', async ({ page }) => {
     'Increase max replicas',
     'Decrease max replicas',
   ]) {
-    await expect(summarizer.getByRole('button', { name, exact: true })).toHaveCount(1);
+    await expect(form.getByRole('button', { name, exact: true })).toHaveCount(1);
   }
-  await summarizer.getByRole('button', { name: 'Increase max replicas' }).click();
-  await expect(summarizer.getByTestId('policy-max-replicas-value')).toHaveText('9');
+  for (const name of [
+    'scale-up threshold',
+    'scale-down threshold',
+    'min replicas',
+    'max replicas',
+  ]) {
+    await expect(form.getByRole('textbox', { name, exact: true })).toHaveCount(1);
+  }
+  await form.getByRole('button', { name: 'Increase max replicas' }).click();
+  await expect(form.getByRole('textbox', { name: 'max replicas', exact: true })).toHaveValue('9');
 });
