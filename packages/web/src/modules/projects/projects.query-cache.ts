@@ -9,6 +9,7 @@ export const projectQueryKeys = {
   detail: (project_id: string) => ['projects', project_id] as const,
   stats: (project_id: string) => ['projects', project_id, 'stats'] as const,
   prompts: (project_id: string) => ['projects', project_id, 'prompts'] as const,
+  prompt: (project_id: string, name: string) => ['projects', project_id, 'prompts', name] as const,
   scaling: (project_id: string) => ['projects', project_id, 'scaling'] as const,
   // KPIs are keyed without a window: one response carries every window, so the range toggle
   // re-reads the same cache entry instead of refetching.

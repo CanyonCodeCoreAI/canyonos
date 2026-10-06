@@ -89,6 +89,7 @@ def _filter_response_headers(headers) -> List[Tuple[str, str]]:
     ]
 
 
+# TODO: a provider missing forward or set_system only errors on its first LLM call; make Python enforce both so it errors at startup.
 class Provider:
     """Base class for an LLM provider the gateway forwards to; subclasses add forward."""
 
@@ -99,6 +100,10 @@ class Provider:
 
     def forward(self, req, subpath: str, body: bytes) -> GatewayResponse:
         """Send the agent's request to the provider and return its response."""
+        raise NotImplementedError
+
+    def set_system(self, params: dict, subpath: str, text: str) -> bool:
+        """Put text into the request as its system prompt; False when this call has no place for one."""
         raise NotImplementedError
 
 

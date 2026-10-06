@@ -81,18 +81,29 @@ class PublishConfigFilesTests(unittest.TestCase):
 
             controller._write_policies(*controller._read_config_folder())
 
-        self.assertIsNone(node.get("prompts:config"))
+        self.assertIsNone(node.get("prompts:yaml"))
+
+    def test_prompts_yaml_is_published_without_touching_prompts_config(self):
+        with tempfile.TemporaryDirectory() as config_dir:
+            _write(config_dir, "prompts.yaml", "prompts: {}\n")
+            node = _FakeRedis(strings={"prompts:config": "dashboard"})
+
+            controller = _controller(config_dir, {"localhost": node})
+            controller._write_policies(*controller._read_config_folder())
+
+        self.assertEqual(json.loads(node.get("prompts:yaml")), {"prompts": {}})
+        self.assertEqual(node.get("prompts:config"), "dashboard")
 
     def test_falls_back_to_its_own_redis_without_nodes(self):
         with tempfile.TemporaryDirectory() as config_dir:
-            _write(config_dir, "prompts.yaml", "prompts:\n  database: StateDB\n")
+            _write(config_dir, "notes.yaml", "database: StateDB\n")
             controller = _controller(config_dir, {})
 
             controller._write_policies(*controller._read_config_folder())
 
         self.assertEqual(
-            json.loads(controller.redis.get("prompts:config")),
-            {"prompts": {"database": "StateDB"}},
+            json.loads(controller.redis.get("notes:config")),
+            {"database": "StateDB"},
         )
 
 
@@ -104,6 +115,66 @@ class _WriteCountingRedis(_FakeRedis):
     def set(self, key, value, **kwargs):
         self.writes += 1
         return super().set(key, value, **kwargs)
+
+
+_PROMPTS_YAML = {
+    "prompts": {
+        "a": [
+            {"version": "a-v1", "content": "one", "live": True},
+            {"version": "a-v2", "content": "two"},
+        ],
+        "b": [
+            {"version": "b-v1", "content": "one"},
+            {"version": "b-v2", "content": "two"},
+        ],
+    }
+}
+
+
+def _seed(controller, config_dir, text):
+    _write(config_dir, "prompts.yaml", text)
+    controller._write_policies(*controller._read_config_folder())
+
+
+class SeedPromptsTests(unittest.TestCase):
+    def test_publishes_each_live_version_when_nothing_is_published(self):
+        with tempfile.TemporaryDirectory() as config_dir:
+            controller = _controller(config_dir, {})
+            _seed(controller, config_dir, json.dumps(_PROMPTS_YAML))
+
+        self.assertEqual(
+            json.loads(controller.redis.get("prompts:config")),
+            {
+                "prompts": {
+                    "a": {"version": "a-v1", "content": "one", "live": True},
+                    "b": {"version": "b-v2", "content": "two"},
+                }
+            },
+        )
+
+    def test_keeps_prompts_the_dashboard_published(self):
+        with tempfile.TemporaryDirectory() as config_dir:
+            controller = _controller(config_dir, {})
+            controller.redis = _FakeRedis(strings={"prompts:config": "dashboard"})
+            _seed(controller, config_dir, json.dumps(_PROMPTS_YAML))
+
+        self.assertEqual(controller.redis.get("prompts:config"), "dashboard")
+
+    def test_a_prompt_that_is_not_a_list_of_versions_names_the_prompt(self):
+        with tempfile.TemporaryDirectory() as config_dir:
+            controller = _controller(config_dir, {})
+            with self.assertRaisesRegex(
+                ValueError, "prompt 'a' must be a list of versions"
+            ):
+                _seed(controller, config_dir, "prompts:\n  a: some text\n")
+
+        self.assertIsNone(controller.redis.get("prompts:config"))
+
+    def test_a_file_without_a_prompts_mapping_is_rejected(self):
+        with tempfile.TemporaryDirectory() as config_dir:
+            controller = _controller(config_dir, {})
+            with self.assertRaisesRegex(ValueError, "must have a `prompts:` mapping"):
+                _seed(controller, config_dir, "- a\n")
 
 
 class SyncPromptsTests(unittest.TestCase):

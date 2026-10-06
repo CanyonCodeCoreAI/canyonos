@@ -455,8 +455,18 @@ function TraceTimelineRow({
 
   return (
     <div className="border-border/40 grid min-h-[2.125rem] grid-cols-[7.375rem_minmax(0,1fr)_4.625rem] items-center border-b last:border-b-0">
-      <span className="text-foreground min-w-0 truncate pr-2.5 font-mono text-[0.71875rem] font-medium">
-        {block.label}
+      <span className="text-foreground flex min-w-0 flex-col pr-2.5 font-mono text-[0.71875rem] font-medium">
+        <span className="truncate">{block.label}</span>
+        <span
+          className={cn(
+            'text-muted-foreground truncate text-[0.625rem] font-normal',
+            block.prompt_version === null && 'hidden'
+          )}
+          title={block.prompt_version ?? undefined}
+          data-testid="trace-block-prompt-version"
+        >
+          {block.prompt_version}
+        </span>
       </span>
       <div className="relative h-full min-h-[2.125rem]">
         <div

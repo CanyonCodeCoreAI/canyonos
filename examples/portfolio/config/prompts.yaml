@@ -1,24 +1,15 @@
 prompts:
   IntentAgent.parse:
-    - version: IntentAgent-parse-864d7cea-1
-      system: ''
-      user: |-
+    - version: IntentAgent-parse-7f24ec2e-v1
+      updated_at: "2026-10-03T00:00:00Z"
+      content: |-
         You convert a plain-English portfolio request into JSON. Return ONLY a JSON object, no prose, with exactly two keys:
           "holdings": an object mapping stock TICKER symbols (uppercase) to their weight as a decimal fraction (weights should sum to about 1.0), and
           "lookback_days": an integer number of calendar days for the analysis window (default 365 if unspecified; 1 month = 30 days, 1 year = 365 days).
         Resolve company names to their ticker (Apple->AAPL, Microsoft->MSFT, Nvidia->NVDA, etc.). If weights are given as percentages, convert to fractions. If a holding has no explicit weight, split the remainder equally among the unweighted holdings.
 
-        Request: "{query}"
-
-        JSON:
   AdvisorAgent.summarize:
-    - version: AdvisorAgent-summarize-59838962-1
-      system: ''
-      user: |-
+    - version: AdvisorAgent-summarize-1736a3de-v1
+      updated_at: "2026-10-03T00:00:00Z"
+      content: |-
         You are a portfolio analyst. Given the figures below, write a concise 3-4 sentence briefing covering return, risk, diversification, and concentration. Be specific and neutral.
-
-        Holdings (weights): {holdings_text}
-
-        Per-ticker metrics:{metrics_rows}
-
-        Portfolio: {portfolio_text}

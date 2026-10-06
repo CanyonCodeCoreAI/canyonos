@@ -19,6 +19,9 @@
 # there is no fallback, the request fails loudly rather than guessing at the
 # holdings. Weights are renormalized to 1.0.
 #
+# The instructions are the IntentAgent.parse system prompt in config/prompts.yaml, which the
+# LLM gateway adds to every Converse call.
+#
 # Resource profile: cheap CPU, single call per request, on the critical path
 # before the fan-out.
 
@@ -67,21 +70,7 @@ class IntentAgent(object):
         return result
 
     def _build_prompt(self, query: str) -> str:
-        return (
-            "You convert a plain-English portfolio request into JSON. Return ONLY "
-            "a JSON object, no prose, with exactly two keys:\n"
-            '  "holdings": an object mapping stock TICKER symbols (uppercase) to '
-            "their weight as a decimal fraction (weights should sum to about 1.0), and\n"
-            '  "lookback_days": an integer number of calendar days for the analysis '
-            f"window (default {DEFAULT_LOOKBACK_DAYS} if unspecified; 1 month = 30 "
-            "days, 1 year = 365 days).\n"
-            "Resolve company names to their ticker (Apple->AAPL, Microsoft->MSFT, "
-            "Nvidia->NVDA, etc.). If weights are given as percentages, convert to "
-            "fractions. If a holding has no explicit weight, split the remainder "
-            "equally among the unweighted holdings.\n\n"
-            f'Request: "{query}"\n\n'
-            "JSON:"
-        )
+        return f'Request: "{query}"\n\nJSON:'
 
     def _extract_json(self, text: str):
         """Pull the first JSON object out of the model's response text."""

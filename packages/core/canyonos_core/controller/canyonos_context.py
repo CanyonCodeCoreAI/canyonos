@@ -27,6 +27,16 @@ def get_current_future_id() -> str:
     return getattr(_local, "current_future_id", "")
 
 
+def set_current_function(function: str):
+    """Set the agent function currently executing on this thread."""
+    _local.current_function = function
+
+
+def get_current_function() -> str:
+    """Get the agent function currently executing on this thread, or an empty string if not set."""
+    return getattr(_local, "current_function", "")
+
+
 def set_current_metrics_key(metrics_key: str):
     """Set the Redis metrics-hash key of the controller instance currently executing on this thread."""
     _local.current_metrics_key = metrics_key

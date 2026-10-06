@@ -1,16 +1,42 @@
 import { createHash } from 'node:crypto';
 
-import { badGateway, conflict, notFound } from '@core/errors';
+import { z } from 'zod';
+import type { RedisClient } from 'bun';
+
+import { db } from '@api/db/client';
+import { badGateway, notFound } from '@core/errors';
 
 import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
-import { PromptItemSchema, PromptsConfigSchema } from './prompts.types';
-import type { PromptEdit, PromptItem, PromptsConfig, PromptsResponse } from './prompts.types';
+import {
+  insert_system_prompts,
+  list_system_prompts,
+  lock_project,
+  set_live_system_prompt,
+} from './prompts.repo';
+import { next_revision, SystemPromptSchema, version_parts } from './prompts.types';
+import type { Tx } from './prompts.repo';
+import type {
+  Prompt,
+  PromptListItem,
+  PromptLive,
+  SystemPrompt,
+  SystemPromptCreate,
+} from './prompts.types';
 
 const CONFIG_KEY = 'prompts:config';
-const SAVE_ATTEMPTS = 5;
+const YAML_KEY = 'prompts:yaml';
+
+/** A system prompt as prompts.yaml and the stored rows carry it; `live` marks the one agents get. */
+const StoredSystemPromptSchema = SystemPromptSchema.extend({ live: z.boolean().optional() });
+
+/** The prompts.yaml document; entries that are not version lists are kept but expose no prompt. */
+const PromptsConfigSchema = z
+  .object({ prompts: z.record(z.string(), z.unknown()).default({}) })
+  .passthrough();
+type PromptsConfig = z.infer<typeof PromptsConfigSchema>;
 
 function config_invalid(reason: string, cause: unknown) {
-  return badGateway('prompts.config_invalid', `The running controller's ${CONFIG_KEY} ${reason}`, {
+  return badGateway('prompts.config_invalid', `The running controller's ${YAML_KEY} ${reason}`, {
     cause,
   });
 }
@@ -31,82 +57,180 @@ function versions_of(entry: unknown): unknown[] {
   return Array.isArray(entry) ? entry : [];
 }
 
-/** The trailing n of `<agent>-<function>-<text hash>-<n>`, or 0 when the version has none. */
-function revision(version: string): number {
-  const suffix = version.split('-').at(-1) ?? '';
-  return /^\d+$/.test(suffix) ? Number(suffix) : 0;
-}
-
-/** Each prompt's current version: the one with the highest n, the newer on a tie. */
-function parse_prompts(config: PromptsConfig): PromptItem[] {
-  return Object.entries(config.prompts).flatMap(([name, entry]) => {
-    const items = versions_of(entry).flatMap((spec) => {
-      const result = PromptItemSchema.safeParse({ ...(spec as object), name });
+/** The prompt's valid versions newest first (highest n, the newer on a tie); live is the one
+ * flagged `live`, else the newest. */
+function parse_prompt(name: string, entry: unknown): Prompt | null {
+  const stored = versions_of(entry)
+    .flatMap((spec) => {
+      const result = StoredSystemPromptSchema.safeParse(spec);
       return result.success ? [result.data] : [];
-    });
-    const [current] = items.sort(
+    })
+    .sort(
       (a, b) =>
-        revision(b.version) - revision(a.version) ||
+        version_parts(b.version).revision - version_parts(a.version).revision ||
         (b.updated_at ?? '').localeCompare(a.updated_at ?? '')
     );
-    return current ? [current] : [];
+  const [newest] = stored;
+  if (!newest) return null;
+  const versions = stored.map(({ live: _, ...version }) => version);
+  const live_index = stored.findIndex((version) => version.live);
+  return { name, live: versions[live_index === -1 ? 0 : live_index]!, versions };
+}
+
+function parse_prompts({ prompts }: PromptsConfig): Prompt[] {
+  return Object.entries(prompts).flatMap(([name, entry]) => {
+    const item = parse_prompt(name, entry);
+    return item ? [item] : [];
   });
 }
 
-/** `<agent>-<function>-<text hash>-<n>`, where n counts the saves of this prompt. */
-function next_version(name: string, previous: string, edit: PromptEdit): string {
-  const hash = createHash('sha256')
-    .update(`${edit.system}\n${edit.user}`)
-    .digest('hex')
-    .slice(0, 8);
-  return `${name.replaceAll('.', '-')}-${hash}-${revision(previous) + 1}`;
+function find_prompt({ prompts }: PromptsConfig, name: string): Prompt {
+  const item = parse_prompt(name, prompts[name]);
+  if (!item) throw notFound('prompts.prompt_not_found', `Prompt "${name}" was not found`);
+  return item;
 }
 
-export async function get_prompts(project_id: string): Promise<PromptsResponse> {
+/** `<agent>-<function>-<text hash>-v<n>`, where n counts the saves of this prompt. */
+function next_version(prompt: Prompt, content: string): string {
+  const hash = createHash('sha256').update(content).digest('hex').slice(0, 8);
+  return `${prompt.name.replaceAll('.', '-')}-${hash}-v${next_revision(prompt)}`;
+}
+
+function list_item({ name, live }: Prompt): PromptListItem {
+  return { name, live };
+}
+
+/** The project's stored prompts, shaped like prompts.yaml with `live` on each version. */
+async function stored_config(
+  reader: Pick<typeof db, 'select'>,
+  project_id: string
+): Promise<PromptsConfig> {
+  const prompts: Record<string, unknown[]> = {};
+  for (const { name, version, content, live, created_at } of await list_system_prompts(
+    reader,
+    project_id
+  )) {
+    (prompts[name] ??= []).push({
+      version,
+      content,
+      updated_at: created_at.toISOString(),
+      live,
+    });
+  }
+  return { prompts };
+}
+
+/**
+ * Apply `change` to the project's stored prompts, then publish each one's live version to
+ * prompts:config. The project row is locked so writes to one project land in commit order; it
+ * exists because every caller resolved the project first (the routes) or created it (the boot).
+ */
+async function write_prompts(
+  redis: RedisClient,
+  project_id: string,
+  change: (tx: Tx, stored: PromptsConfig) => Promise<unknown>
+): Promise<PromptsConfig> {
+  return db.transaction(async (tx) => {
+    await lock_project(tx, project_id);
+    await change(tx, await stored_config(tx, project_id));
+    const config = await stored_config(tx, project_id);
+    const live = parse_prompts(config).map(({ name, live }) => [name, live]);
+    await redis.set(CONFIG_KEY, JSON.stringify({ prompts: Object.fromEntries(live) }));
+    return config;
+  });
+}
+
+/** The prompts.yaml prompts that `stored` does not have, every version of each. */
+function new_yaml_prompts(yaml: PromptsConfig, stored: PromptsConfig): Prompt[] {
+  return parse_prompts(yaml).filter((item) => !stored.prompts[item.name]);
+}
+
+async function store_new_yaml_prompts(
+  tx: Tx,
+  project_id: string,
+  yaml: PromptsConfig,
+  stored: PromptsConfig
+): Promise<void> {
+  await insert_system_prompts(
+    tx,
+    new_yaml_prompts(yaml, stored).flatMap((item) =>
+      item.versions.map(({ version, content, updated_at }) => ({
+        project_id,
+        name: item.name,
+        version,
+        content,
+        live: version === item.live.version,
+        created_at: updated_at ? new Date(updated_at) : undefined,
+      }))
+    )
+  );
+}
+
+/** At startup, store prompts.yaml's prompts not stored yet, then publish every live version. */
+export async function load_prompts(project_id: string): Promise<void> {
+  await with_redis(async (redis) => {
+    const yaml = parse_config(await redis.get(YAML_KEY));
+    await write_prompts(redis, project_id, (tx, stored) =>
+      store_new_yaml_prompts(tx, project_id, yaml, stored)
+    );
+  });
+}
+
+/** A prompt added to prompts.yaml since startup is stored on the next listing, so it shows up. */
+async function store_prompts_added_to_yaml(redis: RedisClient, project_id: string): Promise<void> {
+  const yaml = parse_config(await redis.get(YAML_KEY));
+  if (new_yaml_prompts(yaml, await stored_config(db, project_id)).length === 0) return;
+  await write_prompts(redis, project_id, (tx, stored) =>
+    store_new_yaml_prompts(tx, project_id, yaml, stored)
+  );
+}
+
+export async function list_prompts(project_id: string): Promise<PromptListItem[]> {
   return with_redis(async (redis) => {
     await assert_project_running(redis, project_id);
-    return { project_id, items: parse_prompts(parse_config(await redis.get(CONFIG_KEY))) };
+    await store_prompts_added_to_yaml(redis, project_id);
+    return parse_prompts(await stored_config(db, project_id)).map(list_item);
   });
 }
 
-export async function save_prompt(
+export async function get_prompt(project_id: string, name: string): Promise<Prompt> {
+  return with_redis(async (redis) => {
+    await assert_project_running(redis, project_id);
+    return find_prompt(await stored_config(db, project_id), name);
+  });
+}
+
+/** Store the text as the prompt's next system prompt; the live one stays live. */
+export async function create_system_prompt(
   project_id: string,
   name: string,
-  edit: PromptEdit
-): Promise<PromptItem> {
+  { content }: SystemPromptCreate
+): Promise<SystemPrompt> {
   return with_redis(async (redis) => {
     await assert_project_running(redis, project_id);
+    let version = '';
+    const config = await write_prompts(redis, project_id, (tx, stored) => {
+      version = next_version(find_prompt(stored, name), content);
+      return insert_system_prompts(tx, [{ project_id, name, version, content }]);
+    });
+    return find_prompt(config, name).versions.find((stored) => stored.version === version)!;
+  });
+}
 
-    // WATCH makes EXEC a no-op (null) when another writer touched the key after our read.
-    for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt += 1) {
-      await redis.send('WATCH', [CONFIG_KEY]);
-      const config = parse_config(await redis.get(CONFIG_KEY));
-      const current = parse_prompts(config).find((prompt) => prompt.name === name);
-      if (!current) {
-        throw notFound(
-          'prompts.prompt_not_found',
-          `Prompt "${name}" was not found in the running config`
-        );
+/** Make one of the prompt's stored system prompts the one agents are sent. */
+export async function set_live(
+  project_id: string,
+  name: string,
+  { version }: PromptLive
+): Promise<PromptListItem> {
+  return with_redis(async (redis) => {
+    await assert_project_running(redis, project_id);
+    const config = await write_prompts(redis, project_id, (tx, stored) => {
+      if (!find_prompt(stored, name).versions.some((stored) => stored.version === version)) {
+        throw notFound('prompts.version_not_found', `Prompt "${name}" has no version "${version}"`);
       }
-
-      const saved = {
-        version: next_version(name, current.version, edit),
-        ...edit,
-        updated_at: new Date().toISOString(),
-      };
-      const next = {
-        ...config,
-        prompts: { ...config.prompts, [name]: [...versions_of(config.prompts[name]), saved] },
-      };
-      await redis.send('MULTI', []);
-      await redis.send('SET', [CONFIG_KEY, JSON.stringify(next)]);
-      const committed = await redis.send('EXEC', []);
-      if (committed !== null) return { name, ...saved };
-    }
-
-    throw conflict(
-      'prompts.save_conflict',
-      `Prompt "${name}" kept changing while it was being saved, try again`
-    );
+      return set_live_system_prompt(tx, project_id, name, version);
+    });
+    return list_item(find_prompt(config, name));
   });
 }

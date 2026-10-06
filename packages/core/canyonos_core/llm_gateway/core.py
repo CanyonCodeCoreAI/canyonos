@@ -8,8 +8,9 @@ from typing import Optional
 
 from flask import Response, stream_with_context
 
-from canyonos_core.llm_gateway.hooks import Ctx
-from canyonos_core.llm_gateway.routing import route, denied_response
+from canyonos_core.llm_gateway import prompts
+from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, Ctx
+from canyonos_core.llm_gateway.routing import AGENT_NAME, route, denied_response
 
 
 def _guess_model(body: bytes) -> Optional[str]:
@@ -28,7 +29,10 @@ def _guess_model(body: bytes) -> Optional[str]:
 def proxy_request(hooks, provider, subpath, flask_request):
     """Forward one agent request to its LLM provider (or return canned text when
     `canyonos test` stubs LLMs) and record its token usage on the calling future."""
-    body = flask_request.get_data()
+    prompt_name = f"{AGENT_NAME}.{flask_request.headers.get(FUNCTION_HEADER)}"
+    body, prompt_version = prompts.apply(
+        provider, prompt_name, subpath, flask_request.get_data()
+    )
     ctx = Ctx(
         provider=provider.name,
         method=flask_request.method,
@@ -37,6 +41,8 @@ def proxy_request(hooks, provider, subpath, flask_request):
         headers={k.lower(): v for k, v in flask_request.headers.items()},
         t0=time.monotonic(),
         model=_guess_model(body),
+        prompt_name=prompt_name if prompt_version else None,
+        prompt_version=prompt_version,
     )
     hooks.on_request(ctx)
     # Policy/routing call; all routing and policy logic lives in routing.py.

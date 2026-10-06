@@ -40,6 +40,8 @@ class OTelExporterFieldTests(unittest.TestCase):
             "created_at": "1.0",
             "finished_at": "2.0",
             "failed": "0",
+            "prompt_name": "PriceAgent.get_history",
+            "prompt_version": "PriceAgent-get_history-0a1b2c3d-v2",
         }
 
         with patch.object(otel_writer.pricing, "compute_token_cost", return_value=0.0):
@@ -57,6 +59,8 @@ class OTelExporterFieldTests(unittest.TestCase):
         self.assertEqual(span.name, "PriceAgent.get_history")
         self.assertEqual(span.attributes["gen_ai.prompt"], raw["args"])
         self.assertEqual(span.attributes["gen_ai.completion"], row["output"])
+        self.assertEqual(span.attributes["prompt_name"], raw["prompt_name"])
+        self.assertEqual(span.attributes["prompt_version"], raw["prompt_version"])
 
     def test_error_message_is_wired_from_redis_error_field(self):
         schema.init_db(self.db_path)

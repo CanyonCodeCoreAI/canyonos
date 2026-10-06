@@ -25,6 +25,8 @@ _CREATE_TRACES_WAITING = """
         project_id TEXT,
         agent_id TEXT,
         model TEXT,
+        prompt_name TEXT,
+        prompt_version TEXT,
         cpu REAL,
         gpu REAL,
         started_at TIMESTAMP,

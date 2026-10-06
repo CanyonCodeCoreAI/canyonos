@@ -2,11 +2,12 @@ import { describe, expect, test } from 'bun:test';
 
 import type { MetricsBlocks, MetricsKpis } from '@canyonos/api/metrics';
 import type { ProjectStats, ProjectSummary } from '@canyonos/api/projects';
-import type { PromptItem, PromptsResponse } from '@canyonos/api/prompts';
+import type { Prompt, PromptListItem, SystemPrompt } from '@canyonos/api/prompts';
 import type { RequestList } from '@canyonos/api/requests';
 import type { FleetOverview } from '@canyonos/api/resources';
 import type { ScalingDeleteResponse, ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
 
+import { load_prompts } from '../modules/prompts/prompts.service';
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
 import { seed_running_project, seed_scaling } from './redis-test.utils';
@@ -73,42 +74,45 @@ describe('SDK contract', () => {
       prompts: {
         summarize: [
           {
-            version: 'summarize-abcdef01-1',
-            system: 'Summarize the input.',
-            user: '{text}',
-            updated_at: '2026-09-01T00:00:00Z',
+            version: 'summarize-abcdef01-v1',
+            content: 'Summarize the input.',
+            updated_at: '2026-09-01T00:00:00.000Z',
           },
         ],
       },
     });
+    await load_prompts(project_id);
 
-    const prompts: PromptsResponse = (
+    const v1: SystemPrompt = {
+      version: 'summarize-abcdef01-v1',
+      content: 'Summarize the input.',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    };
+    const prompts: PromptListItem[] = (
       await api.projects[project_id]!.prompts.get({ $headers: headers })
     ).data!;
-    const saved: PromptItem = (
-      await api.projects[project_id]!.prompts.summarize!.put(
-        { system: 'Summarize briefly.', user: '{text}' },
+    const created: SystemPrompt = (
+      await api.projects[project_id]!.prompts.summarize!.versions.post(
+        { content: 'Summarize briefly.' },
+        { headers }
+      )
+    ).data!;
+    const prompt: Prompt = (
+      await api.projects[project_id]!.prompts.summarize!.get({ $headers: headers })
+    ).data!;
+    const live: PromptListItem = (
+      await api.projects[project_id]!.prompts.summarize!.live.put(
+        { version: created.version },
         { headers }
       )
     ).data!;
 
-    expect(prompts.project_id).toBe(project_id);
-    expect(prompts.items).toEqual([
-      {
-        name: 'summarize',
-        version: 'summarize-abcdef01-1',
-        system: 'Summarize the input.',
-        user: '{text}',
-        updated_at: '2026-09-01T00:00:00Z',
-      },
-    ]);
-    expect(saved).toMatchObject({
-      name: 'summarize',
-      system: 'Summarize briefly.',
-      user: '{text}',
-    });
-    expect(saved.version).toMatch(/^summarize-[0-9a-f]{8}-2$/);
-    expect(typeof saved.updated_at).toBe('string');
+    expect(prompts).toEqual([{ name: 'summarize', live: v1 }]);
+    expect(created.version).toMatch(/^summarize-[0-9a-f]{8}-v2$/);
+    expect(created).toMatchObject({ content: 'Summarize briefly.' });
+    expect(typeof created.updated_at).toBe('string');
+    expect(prompt).toEqual({ name: 'summarize', live: v1, versions: [created, v1] });
+    expect(live).toEqual({ name: 'summarize', live: created });
   });
 
   test('scaling endpoints are typed at runtime', async () => {

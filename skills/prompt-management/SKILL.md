@@ -25,35 +25,34 @@ Preserve prompt content and application behavior; do not invent or improve promp
 - Name each prompt `<agent>.<function>` using the agent name and the function
   making the LLM call, rather than an internal string builder. Keep existing
   prompt names when refreshing a file.
-- Preserve wording, message roles, whitespace, punctuation, examples, and literal
-  braces. Combine adjacent string literals as the source does. Do not move
-  instructions from a user message into a system message.
-- Keep runtime input as named placeholders. Record each placeholder's source
-  expression and formatting in the completion report; never insert a real
-  request, retrieved content, conversation, or secret into the YAML.
-- Resolve literal constants from source. Preserve runtime-dependent values as
-  placeholders. For joins, loops, and conditional sections, retain their builder
-  in code and represent its output with a named placeholder. Verify that filling
-  those placeholders reproduces the original message.
-- Include both `system` and `user` strings. Use `""` for an absent role. The
-  dashboard can display these entries, but its edit API currently requires both
-  strings to be nonempty; report that limit instead of adding filler text.
-- Do not flatten multiple messages, assistant/tool messages, multimodal content,
-  or framework-specific templates into two strings when that changes semantics.
-  Report those call paths as unrepresented rather than claiming full coverage.
+- A prompt is the call's system prompt: the instructions, without the runtime
+  input. The gateway sends the live version as the system prompt of every call
+  the function makes, replacing any the code set, so the code keeps sending only
+  its own message (the request, the figures, the conversation).
+- Preserve wording, whitespace, punctuation, examples, and literal braces.
+  Combine adjacent string literals as the source does. When the instructions
+  live in the user message, split them out as the system prompt and leave the
+  runtime input in the code; report the split.
+- Never insert a real request, retrieved content, conversation, or secret into
+  the YAML. Runtime values stay in the code's own message, not as placeholders
+  in the prompt.
+- Do not flatten multiple system messages, assistant/tool messages, multimodal
+  content, or framework-specific templates into one string when that changes
+  semantics. Report those call paths as unrepresented rather than claiming full
+  coverage.
 
 ## 3. Write versioned YAML
 
 The top-level `prompts` mapping contains a list of versions for each prompt name.
-Every version has `version`, `system`, and `user`; `updated_at` is an optional,
-quoted UTC ISO 8601 timestamp.
+Every version has `version` and `content`; `updated_at` is an optional, quoted UTC
+ISO 8601 timestamp, and `live: true` marks the version agents are sent.
 
 - Compute the hash exactly as the dashboard does: the first eight lowercase hex
-  characters of SHA-256 over UTF-8 `system + "\n" + user`.
-- Use `<agent>-<function>-<hash>-<n>` for `version`, replacing every dot in the
+  characters of SHA-256 over the UTF-8 `content` text.
+- Use `<agent>-<function>-<hash>-v<n>` for `version`, replacing every dot in the
   prompt name with a hyphen. Start `n` at 1; on a changed prompt, append a version
-  with one more than the highest trailing numeric revision. The highest `n` is
-  current, regardless of list order or timestamps.
+  with one more than the highest trailing `v<n>`. With no `live: true`, the
+  highest `n` is live, regardless of list order or timestamps.
 - Leave unchanged prompts unchanged. Preserve old versions, unrelated prompts,
   and other configuration fields; do not overwrite the file with a fresh list.
 - Use YAML quoting or literal block scalars that preserve the extracted text.
@@ -72,9 +71,9 @@ quoted UTC ISO 8601 timestamp.
   bindings, unrepresented call paths, and validation results.
 
 Creating the file makes prompts available to the running project's dashboard
-after controller startup or reload. Agents receive dashboard edits only if their
-code reads the JSON document at `prompts:config` from their machine's Redis and
-selects the current version. Creating YAML does not add that reader. Change agent
-loading only when requested, preserving its rendering and message structure.
-Dashboard edits are not persisted to YAML and are lost on controller reload;
-copy edits that must survive into `prompts.yaml` before reloading.
+after controller startup. The gateway sends each function's live version as the
+system prompt of its LLM calls, so the code must stop sending those instructions
+itself; remove them from the code only when requested, and keep the runtime
+message it sends. Once a prompt is stored by the dashboard, later changes to it
+in `prompts.yaml` are ignored; a prompt new to the file is stored the next time
+the dashboard reads prompts. Dashboard edits are not written back to the YAML.

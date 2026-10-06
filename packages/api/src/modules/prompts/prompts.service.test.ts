@@ -1,52 +1,31 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const store = new Map<string, string>();
-let writes = 0;
-let watched_at: number | null = null;
-let queued: [string, string][] = [];
-let on_read: (() => void) | null = null;
+const redis = { get: async (key: string) => store.get(key) ?? null };
 
-/** Another client's write; it bumps the counter WATCH snapshots so EXEC sees the conflict. */
-function write(key: string, value: string) {
-  store.set(key, value);
-  writes += 1;
+interface Row {
+  readonly name: string;
+  readonly version: string;
+  readonly content: string;
+  readonly live: boolean;
+  readonly created_at: Date;
 }
 
-const redis = {
-  get: async (key: string) => {
-    const value = store.get(key) ?? null;
-    on_read?.();
-    return value;
-  },
-  send: async (command: string, args: string[]) => {
-    switch (command) {
-      case 'WATCH':
-        watched_at = writes;
-        return 'OK';
-      case 'MULTI':
-        queued = [];
-        return 'OK';
-      case 'SET':
-        queued.push([args[0]!, args[1]!]);
-        return 'QUEUED';
-      case 'EXEC': {
-        const clean = watched_at === writes;
-        if (clean) queued.forEach(([key, value]) => write(key, value));
-        watched_at = null;
-        return clean ? ['OK'] : null;
-      }
-      default:
-        throw new Error(`Unexpected command ${command}`);
-    }
-  },
-};
+/** The system_prompts table. */
+let table: Row[] = [];
+await mock.module('./prompts.repo', () => ({
+  list_system_prompts: async () => table,
+  lock_project: async () => {},
+  insert_system_prompts: async () => {},
+  set_live_system_prompt: async () => {},
+}));
 
 await mock.module('../canyonos/canyonos.redis', () => ({
   with_redis: (operation: (client: typeof redis) => Promise<unknown>) => operation(redis),
   assert_project_running: async () => {},
 }));
 
-const { get_prompts, save_prompt } = await import('./prompts.service');
+const { get_prompt, list_prompts, load_prompts } = await import('./prompts.service');
 
 const rejection = (promise: Promise<unknown>) =>
   promise.then(
@@ -54,140 +33,82 @@ const rejection = (promise: Promise<unknown>) =>
     (error: unknown) => error
   );
 
-const version = (n: number, updated_at: string, system = `system ${n}`) => ({
-  version: `intent-parse-0000000${n}-${n}`,
-  updated_at,
-  system,
-  user: '{query}',
+const row = (
+  n: number,
+  created_at: string,
+  live = false,
+  version = `intent-parse-0000000${n}-v${n}`
+) => ({
+  name: 'intent-parse',
+  version,
+  content: `system ${n}`,
+  live,
+  created_at: new Date(created_at),
 });
 
-const stored_versions = () =>
-  JSON.parse(store.get('prompts:config')!).prompts['intent-parse'].map(
-    (entry: { version: string }) => entry.version
-  );
-
-describe('prompt versions', () => {
+describe('stored prompt versions', () => {
   beforeEach(() => {
-    on_read = null;
-    store.set(
-      'prompts:config',
-      JSON.stringify({
-        prompts: {
-          'intent-parse': [version(3, '2026-09-20T00:00:00Z'), version(2, '2026-09-25T00:00:00Z')],
-        },
-      })
-    );
+    table = [row(2, '2026-09-25T00:00:00Z'), row(3, '2026-09-20T00:00:00Z')];
   });
 
-  test('the highest n is current, even when an older n is dated later', async () => {
-    const { items } = await get_prompts('p');
-    expect(items.map((item) => item.version)).toEqual(['intent-parse-00000003-3']);
-  });
-
-  test('saving appends the next version and it becomes current', async () => {
-    const saved = await save_prompt('p', 'intent-parse', { system: 'edited', user: '{query}' });
-
-    expect(saved.version).toMatch(/^intent-parse-[0-9a-f]{8}-4$/);
-    expect(stored_versions()).toEqual([
-      'intent-parse-00000003-3',
-      'intent-parse-00000002-2',
-      saved.version,
+  test('with no live flag the highest n is live, even when an older n is dated later', async () => {
+    const prompt = await get_prompt('p', 'intent-parse');
+    expect(prompt.live.version).toBe('intent-parse-00000003-v3');
+    expect(prompt.versions.map((stored) => stored.version)).toEqual([
+      'intent-parse-00000003-v3',
+      'intent-parse-00000002-v2',
     ]);
-    const { items } = await get_prompts('p');
-    expect(items[0]?.system).toBe('edited');
+  });
+
+  test('the version flagged live is live, and the listing carries it', async () => {
+    table = [row(2, '2026-09-25T00:00:00Z', true), row(3, '2026-09-20T00:00:00Z')];
+
+    expect(await list_prompts('p')).toEqual([
+      {
+        name: 'intent-parse',
+        live: {
+          version: 'intent-parse-00000002-v2',
+          content: 'system 2',
+          updated_at: '2026-09-25T00:00:00.000Z',
+        },
+      },
+    ]);
   });
 
   test('a hash-like trailing segment is not a revision number', async () => {
-    store.set(
-      'prompts:config',
-      JSON.stringify({
-        prompts: {
-          'intent-parse': [
-            { ...version(3, '2026-09-20T00:00:00Z'), version: 'intent-parse-a1b2c3d4-3' },
-            { ...version(9, '2026-09-25T00:00:00Z'), version: 'intent-parse-9abc0000' },
-          ],
-        },
-      })
-    );
+    table = [
+      row(3, '2026-09-20T00:00:00Z', false, 'intent-parse-a1b2c3d4-v3'),
+      row(9, '2026-09-25T00:00:00Z', false, 'intent-parse-9abc0000'),
+    ];
 
-    const { items } = await get_prompts('p');
-    expect(items.map((item) => item.version)).toEqual(['intent-parse-a1b2c3d4-3']);
-
-    const saved = await save_prompt('p', 'intent-parse', { system: 'edited', user: '{query}' });
-    expect(saved.version).toMatch(/^intent-parse-[0-9a-f]{8}-4$/);
+    expect((await get_prompt('p', 'intent-parse')).live.version).toBe('intent-parse-a1b2c3d4-v3');
   });
 
-  test('a write that lands between the read and the commit is retried on top of it', async () => {
-    let interfered = false;
-    on_read = () => {
-      if (interfered) return;
-      interfered = true;
-      const config = JSON.parse(store.get('prompts:config')!);
-      config.prompts['intent-parse'].push(version(4, '2026-09-26T00:00:00Z'));
-      write('prompts:config', JSON.stringify(config));
-    };
+  test('no rows means no prompts, and a name with no rows is not found', async () => {
+    table = [];
 
-    const saved = await save_prompt('p', 'intent-parse', { system: 'edited', user: '{query}' });
-
-    expect(saved.version).toMatch(/-5$/);
-    expect(stored_versions()).toEqual([
-      'intent-parse-00000003-3',
-      'intent-parse-00000002-2',
-      'intent-parse-00000004-4',
-      saved.version,
-    ]);
-  });
-
-  test('a key that keeps changing is reported as a conflict', async () => {
-    on_read = () => write('prompts:config', store.get('prompts:config')!);
-
-    expect(
-      await rejection(save_prompt('p', 'intent-parse', { system: 'edited', user: '{query}' }))
-    ).toMatchObject({ status: 409, code: 'prompts.save_conflict' });
-    expect(stored_versions()).toEqual(['intent-parse-00000003-3', 'intent-parse-00000002-2']);
-  });
-
-  test('an unknown prompt is not found', async () => {
-    expect(await rejection(save_prompt('p', 'missing', { system: 's', user: 'u' }))).toMatchObject({
+    expect(await list_prompts('p')).toEqual([]);
+    expect(await rejection(get_prompt('p', 'intent-parse'))).toMatchObject({
       status: 404,
       code: 'prompts.prompt_not_found',
     });
   });
 });
 
-describe('prompts config shapes', () => {
-  test('entries that are not version lists expose no prompt', async () => {
-    store.set(
-      'prompts:config',
-      JSON.stringify({
-        prompts: { database: 'StateDB', a: {}, 'intent-parse': [version(1, null as never)] },
-      })
-    );
-
-    const { items } = await get_prompts('p');
-    expect(items.map((item) => item.name)).toEqual(['intent-parse']);
-  });
-
-  test('a missing key means no prompts', async () => {
-    store.delete('prompts:config');
-
-    const { items } = await get_prompts('p');
-    expect(items).toEqual([]);
-  });
-
+describe('prompts.yaml shapes', () => {
   test('malformed JSON is an invalid config, not an unreachable controller', async () => {
-    store.set('prompts:config', '{"prompts": ');
+    store.set('prompts:yaml', '{"prompts": ');
 
-    expect(await rejection(get_prompts('p'))).toMatchObject({
+    expect(await rejection(load_prompts('p'))).toMatchObject({
       status: 502,
       code: 'prompts.config_invalid',
     });
   });
 
   test('a prompts entry that is not a mapping is an invalid config', async () => {
-    store.set('prompts:config', JSON.stringify({ prompts: ['intent-parse'] }));
+    store.set('prompts:yaml', JSON.stringify({ prompts: ['intent-parse'] }));
 
-    expect(await rejection(get_prompts('p'))).toMatchObject({
+    expect(await rejection(load_prompts('p'))).toMatchObject({
       status: 502,
       code: 'prompts.config_invalid',
     });

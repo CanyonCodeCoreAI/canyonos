@@ -47,7 +47,9 @@ try:
 except ImportError:
     import canyonos_context
 
-gateway_headers.install(canyonos_context.get_current_future_id)
+gateway_headers.install(
+    canyonos_context.get_current_future_id, canyonos_context.get_current_function
+)
 
 import local_controler_pb2
 import local_controler_pb2_grpc
@@ -783,6 +785,7 @@ class LocalController(object):
             self.redis.sadd(f"request:{request_id}:futures", future_id)
             canyonos_context.set_request_id(request_id)
         canyonos_context.set_current_future_id(future_id)
+        canyonos_context.set_current_function(function)
         canyonos_context.set_current_metrics_key(self._metrics_key)
         if self.agent is None:
             logger.error("No agent loaded, cannot execute %s.%s", service, function)

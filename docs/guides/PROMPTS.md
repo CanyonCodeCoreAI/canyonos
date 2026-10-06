@@ -1,8 +1,16 @@
 # Prompt Management
 
-We allow basic prompt management. In our UI, you are able to view all prompts that you use with agents.
+A prompt is the system prompt of one agent function. CanyonOS keeps every version of it and sends
+the one marked **live** to the model on every call that function makes, so you can change what an
+agent is told without touching its code or redeploying.
 
-You are able to run your existing code without explicit prompt management, but to get support for prompts, follow the steps below to set up prompt management (You don't change anything, you merely move the prompts around)
+The loop is:
+
+1. Write the first version of each prompt in `config/prompts.yaml` and take it out of the agent code.
+2. On the dashboard's **Prompts** page, read what is live, edit it, and save the edit as a new version.
+3. Make that version live. Running agents switch to it within about 10 seconds.
+4. Check the request trace: every LLM call records the prompt version it used.
+5. If the new version is worse, make the previous one live again.
 
 ## Defining prompts
 
@@ -10,51 +18,67 @@ Create a `prompts.yaml` file in the project's config folder. Each prompt has a n
 
 ```yaml
 prompts:
-  intent.parse:
-    - version: intent-parse-1a2b3c4d-1
-      updated_at: "2026-09-20T00:00:00Z"
-      system: You extract the user's intent from their message.
-      user: "{query}"
+  IntentAgent.parse:
+    - version: IntentAgent-parse-1a2b3c4d-v1
+      updated_at: '2026-09-20T00:00:00Z'
+      content: You extract the user's intent from their message.
 ```
 
-- **Name**: `<agent>.<function>`, the agent and the function that uses the prompt.
-- **version**: `<agent>-<function>-<hash>-<n>`
-  -  `hash` is a short hash of the prompt
-  -  `n` is the version number of the prompt.
-- **system** and **user**: the prompt text. Both are required.
-- **updated_at**: optional. It shows as the date on the dashboard.
+- **Name**: `<Agent>.<function>`, the agent class and the function that calls the model. The
+  gateway matches calls to prompts by this name, so it has to be the real function name.
+- **version**: `<Agent>-<function>-<hash>-v<n>`
+  - `hash` is a short hash of the prompt
+  - `n` is the version number of the prompt.
+- **content**: the prompt text. Required.
+- **updated_at**: optional. It shows as the version's date on the dashboard.
+- **live**: optional, `true` on the one version agents are sent.
 
-The current version of a prompt is newest one (the one with the highest `n`).
+The live version is the one marked `live: true`. If none is marked, it is the newest one
+(the one with the highest `n`).
 
-You will also need to have our OTel Database configured for prompt storage. This is automatically done by us though.
+Take the instructions out of your agent code. Each time the agent's `<function>` calls the
+model, CanyonOS sends the live version as the system prompt, replacing any the agent set,
+and the agent only sends its own message.
 
-## Viewing and editing
+## The Prompts page
 
-When you are on the dashboard, you have the ability to edit any of your current prompts, and have that change propagate out to all agents.
+Open the project's **Prompts** page. Each prompt is a card named after its function. The card
+header shows which version is live and the first line of its text.
 
-Open the project's **Prompts** page. It lists every prompt at its current version,
-with its agent, function, date, version number, and hash. Expand a prompt to read or
-edit its system and user text.
+Open a card to read the live version, with the version history on the left. Pick any version to
+read it. A version that is not live has a **Make live** button, which switches agents to it: that
+is how you roll forward and how you roll back.
 
-Saving an edit adds a new version with the next `n` and a new hash. Older versions are
-kept. The page only works while the project is running; otherwise it shows an error.
+**Edit** opens the version you are reading in an editor. Saving adds it as the next version,
+`v<n+1>`, and shows it. It is not live until you make it live, so agents keep what they have while
+you review the text. Older versions are kept.
 
-## How edits reach the agents
+The page only works while the project is running; otherwise it says so.
 
-1. When the Global Controller starts or reloads, it publishes every YAML file in the
-   config folder to each machine's Redis. `prompts.yaml` becomes the `prompts:config`
-   key.
-2. A dashboard edit is saved to the `prompts:config` key in the Global Controller's
-   Redis.
-3. Every poll interval, the Global Controller copies that key to every machine's Redis.
+## Saved prompts
 
-CanyonOS does not put prompts into agents for you. An agent sees an edit only if its
-code reads `prompts:config` from its own machine's Redis.
+Prompts are stored in the dashboard's Postgres, and agents are sent what is stored there.
+`prompts.yaml` only supplies a prompt's first versions: a prompt in `prompts.yaml` that Postgres
+does not have yet is stored when the dashboard API starts, and when the Prompts page is read.
+
+Without the dashboard, agents are sent the live versions in `prompts.yaml`.
+
+Prompts are stored per project id, so they carry over only when the project keeps its
+`project_id`.
+
+## Prompt versions in traces
+
+Each agent call that used a prompt records which one on its span: `prompt_name`
+(`<Agent>.<function>`) and `prompt_version` (for example `IntentAgent-parse-7f24ec2e-v1`).
+The request view shows the version under each block. When one call makes several
+LLM calls, the last one's version is kept.
 
 ## Limits
 
-- Edits are not written back to `prompts.yaml`. When the Global Controller reloads, it
-  publishes the file again and dashboard edits are lost. Copy any edit you want to keep
-  into `prompts.yaml`.
+- Edits are not written back to `prompts.yaml`. Once a prompt is stored in Postgres,
+  later changes to it in `prompts.yaml` are ignored.
+- Prompts are sent on OpenAI, Anthropic and AWS Bedrock calls. A call with no place for a
+  system prompt, such as an embeddings call, is sent unchanged.
+- A model call made from a thread or event loop your agent starts itself gets no prompt.
 - You can only edit prompts that are already in `prompts.yaml`. The dashboard cannot
   add or delete a prompt.

@@ -23,6 +23,8 @@ export interface SpanFixture {
   readonly end_time_unix_nano?: bigint;
   readonly failed?: boolean;
   readonly model?: string;
+  readonly prompt_name?: string;
+  readonly prompt_version?: string;
   readonly input_tokens?: AttributeValue;
   readonly output_tokens?: AttributeValue;
   readonly cost?: AttributeValue;
@@ -38,6 +40,8 @@ const DEFAULT_START_UNIX_NANO = 1_788_000_000_000_000_000n;
 const attribute_entries = (span: SpanFixture): [string, unknown][] => {
   const optional: [string, AttributeValue | undefined][] = [
     [GEN_AI.REQUEST_MODEL, span.model],
+    [RUNTIME_ATTRIBUTES.PROMPT_NAME, span.prompt_name],
+    [RUNTIME_ATTRIBUTES.PROMPT_VERSION, span.prompt_version],
     [GEN_AI.INPUT_TOKENS, span.input_tokens],
     [GEN_AI.OUTPUT_TOKENS, span.output_tokens],
     [GEN_AI.USAGE_COST, span.cost],

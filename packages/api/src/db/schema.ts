@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   doublePrecision,
   foreignKey,
@@ -98,6 +99,36 @@ export const projects = pgTable(
       .defaultNow(),
   },
   (table) => [index('idx_projects_company').on(table.company_id)]
+);
+
+// One row per stored version of an agent function's system prompt. The first versions come from
+// the project's prompts.yaml; dashboard saves add the rest. `live` marks the version agents are sent.
+export const systemPrompts = pgTable(
+  'system_prompts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    project_id: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    // `<Agent>.<function>`: the function whose LLM calls get this prompt.
+    name: text('name').notNull(),
+    // `<Agent>-<function>-<content hash>-v<n>`. Kept as the one string instead of normalized
+    // columns because it is the identifier the gateway records on every LLM call's span.
+    version: text('version').notNull(),
+    content: text('content').notNull(),
+    live: boolean('live').notNull().default(false),
+    created_at: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_system_prompts_project_name').on(table.project_id, table.name),
+    uniqueIndex('uq_system_prompts_project_name_version').on(
+      table.project_id,
+      table.name,
+      table.version
+    ),
+  ]
 );
 
 // Content-addressed blob registry: `content_hash` is the sha256 of the bytes, which live in the

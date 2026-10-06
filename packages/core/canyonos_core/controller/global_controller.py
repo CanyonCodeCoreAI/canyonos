@@ -8,6 +8,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -78,6 +79,34 @@ _FAILURE_LOG_TAIL_LINES = 40
 _TERMINAL_STATUSES = frozenset({"failed", "stopped"})
 
 
+def _live_first(version):
+    """Decides which version of a prompt agents get: the one marked `live: true`, otherwise the one with the highest `-v<n>`, and if those tie, the most recently updated."""
+    n = re.search(r"-v(\d+)$", str(version.get("version", "")))
+    return (
+        version.get("live") is True,
+        int(n.group(1)) if n else 0,
+        version.get("updated_at") or "",
+    )
+
+
+def _live_prompts(document):
+    """Checks that prompts.yaml is well formed and returns the version agents should get for each prompt, raising an error that names the problem if the file is malformed."""
+    prompts = (document.get("prompts") or {}) if isinstance(document, dict) else None
+    if not isinstance(prompts, dict):
+        raise ValueError("prompts.yaml must have a `prompts:` mapping of prompt names")
+    live = {}
+    for name, versions in prompts.items():
+        if not isinstance(versions, list) or not all(
+            isinstance(version, dict) for version in versions
+        ):
+            raise ValueError(
+                f"prompts.yaml: prompt {name!r} must be a list of versions, each with `version` and `content`"
+            )
+        if versions:
+            live[name] = max(versions, key=_live_first)
+    return live
+
+
 class GlobalController(ControllerContext):
     """
     Daemon that manages a routing table across multiple local controller instances.
@@ -92,7 +121,7 @@ class GlobalController(ControllerContext):
     POLICY_RULES_KEY = "policy:rules"
     IDENTITY_KEY = "controller:identity"  # has the controller's current project_id
     OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
-    # Names of the config files last published as `<name>:config`, so a removed file's key is cleared.
+    # Redis keys of the config files last published, so a removed file's key is cleared.
     CONFIG_FILES_KEY = "config:files"
 
     def __init__(self, config_path):
@@ -326,7 +355,7 @@ class GlobalController(ControllerContext):
         write_config_specs(self.controllers, self.redis)
         # The YAML is authoritative, so this overwrites any runtime scale.
         self._apply_configured_replicas()
-        # Overwrites any dashboard edits: the file is the source of truth on startup and reload.
+        # Overwrites any dashboard edits, except prompts: the dashboard API owns prompts:config.
         self._write_policies(*config_files)
         self._write_identity()
 
@@ -352,19 +381,24 @@ class GlobalController(ControllerContext):
         return rules
 
     def _read_config_folder(self):
-        """Parse policy rules and every YAML file in the config folder; returns (rules, payloads by name)."""
+        """Parse policy rules and every YAML file in the config folder; returns (rules, payloads by Redis key, prompts.yaml's live versions or None)."""
         rules = self._load_policy_rules()
         config_dir = os.path.dirname(os.path.abspath(self.config_path))
         payloads = {}
+        live_prompts = None
         for filename in sorted(os.listdir(config_dir)):
             name, extension = os.path.splitext(filename)
             if extension in (".yaml", ".yml"):
                 with open(os.path.join(config_dir, filename), "r") as f:
-                    payloads[name] = json.dumps(yaml.safe_load(f) or {}, default=str)
-        return rules, payloads
+                    # prompts.yaml only seeds the prompts the dashboard API stores and publishes.
+                    key = "prompts:yaml" if name == "prompts" else f"{name}:config"
+                    payloads[key] = json.dumps(yaml.safe_load(f) or {}, default=str)
+                if name == "prompts":
+                    live_prompts = _live_prompts(json.loads(payloads[key]))
+        return rules, payloads, live_prompts
 
-    def _write_policies(self, rules, payloads):
-        """Publish policy rules, and each config file as `<name>:config`, to every host Redis."""
+    def _write_policies(self, rules, payloads, live_prompts):
+        """Publish policy rules, and each config file under its key, to every host Redis."""
         targets = list(self.node_redis.values()) or [self.redis]
         rules_json = json.dumps(rules)
         for redis_client in targets:
@@ -373,11 +407,16 @@ class GlobalController(ControllerContext):
             for stale in set(redis_client.smembers(self.CONFIG_FILES_KEY)) - set(
                 payloads
             ):
-                redis_client.delete(f"{stale}:config")
-            for name, payload in payloads.items():
-                redis_client.set(f"{name}:config", payload)
+                redis_client.delete(stale)
+            for key, payload in payloads.items():
+                redis_client.set(key, payload)
             redis_client.delete(self.CONFIG_FILES_KEY)
             redis_client.sadd(self.CONFIG_FILES_KEY, *payloads)
+        # Only an empty prompts:config: once the dashboard has published, its prompts are kept.
+        if live_prompts is not None:
+            self.redis.set(
+                "prompts:config", json.dumps({"prompts": live_prompts}), nx=True
+            )
 
         logger.info(
             "Policy rules and %d config file(s) written to %d Redis instance(s): %d rule(s)",

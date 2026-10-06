@@ -197,4 +197,95 @@ llm_gateway/llm_prices.json ──▶ pricing.token_prices / compute_token_cost 
         │                                   │
  GC startup: pricing_refresh          routing.worst_case_cost   (cost cap, agent image copy)
  (LiteLLM) rewrites the GC's copy     otel_writer               (dashboard cost, GC copy)
+## Prompts
+
+```
+ config/prompts.yaml ── GC start or reload ──▶ GC Redis  prompts:yaml
+                       └─ live versions, only if prompts:config is empty ─▶ prompts:config
+                                                     │ API start: store prompts not in Postgres
+                                                     ▼
+ Dashboard  Save / Set live ──────────────▶ Postgres  system_prompts
+                                                     │ after every write: publish each live version
+                                                     ▼
+ ┌──────────────────────────────────────────────────────┐
+ │  GC Redis   prompts:config                           │
+ └──────────────────────────┬───────────────────────────┘
+                            │ every GC poll: copy to each node
+                            ▼
+ ┌──────────────────────────────────────────────────────┐
+ │  node Redis   prompts:config                         │
+ └──────────────────────────┬───────────────────────────┘
+                            │ prompts.refresh_prompts, every 5s (routing.start_refresh loop)
+                            ▼
+ ┌──────────────────────────────────────────────────────┐
+ │  LLM gateway memory: live version per <agent>.<fn>   │
+ └──────────────────────────┬───────────────────────────┘
+                            │
+Local Controller            │
+  set_current_function(fn)  │
+        │                   │
+        ▼                   │
+agent fn ── LLM call ───────┼──▶ core.proxy_request
+  gateway_headers adds      │         │
+  x-canyonos-function: fn   │         ▼
+                            └──▶ prompts.apply(<agent>.<fn>)
+                                      │  provider.set_system: puts the live
+                                      │  version's text where that call takes it
+                                      ▼
+                                provider.forward ──▶ OpenAI / Anthropic / Bedrock
+                                      │
+                                      ▼
+                         hooks.on_response: HSET future:<id>
+                                            prompt_name, prompt_version
+```
+
+### Prompt lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Y as config/prompts.yaml
+    participant GC as Global Controller
+    participant R as Redis<br/>prompts:yaml, prompts:config
+    participant API as Dashboard API
+    participant PG as Postgres<br/>system_prompts
+    participant UI as Dashboard UI
+    participant GW as LLM gateway<br/>(per agent)
+
+    rect rgb(235, 245, 255)
+    Note over Y,GW: First deploy
+    GC->>Y: read config folder
+    GC->>R: SET prompts:yaml
+    API->>R: GET prompts:yaml (at API startup)
+    API->>PG: INSERT yaml versions of prompts with no rows (live flag kept)
+    API->>R: SET prompts:config: live version per prompt
+    end
+
+    rect rgb(240, 255, 240)
+    Note over Y,GW: Edit on the dashboard
+    UI->>API: POST /prompts/:name/versions (save) or PUT /prompts/:name/live
+    API->>PG: lock project row, INSERT version or UPDATE live flags
+    API->>R: SET prompts:config: live version per prompt, then commit
+    API-->>UI: { name, live, versions }
+    end
+
+    rect rgb(255, 250, 235)
+    Note over Y,GW: Sync and reload (continuous)
+    loop every GC poll
+        GC->>R: copy prompts:config to every node Redis
+    end
+    loop every 5s
+        GW->>R: GET prompts:config
+        GW->>GW: keep live version per <agent>.<function> in memory
+    end
+    Note over R,GW: each LLM call: system prompt = live version
+    end
+
+    rect rgb(255, 240, 240)
+    Note over Y,GW: Redeploy (same project_id)
+    GC->>Y: read config folder
+    GC->>R: SET prompts:yaml (prompts:config untouched)
+    API->>PG: INSERT yaml versions of prompts with no rows (at API startup)
+    API->>R: SET prompts:config: live version per prompt
+    end
 ```

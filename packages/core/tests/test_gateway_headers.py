@@ -13,13 +13,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import canyonos_core.controller.canyonos_context as canyonos_context
 from canyonos_core.controller import gateway_headers
-from canyonos_core.llm_gateway.hooks import FUTURE_ID_HEADER
+from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, FUTURE_ID_HEADER
 
 
 class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        gateway_headers.install(canyonos_context.get_current_future_id)
+        gateway_headers.install(
+            canyonos_context.get_current_future_id,
+            canyonos_context.get_current_function,
+        )
 
     def setUp(self):
         canyonos_context._local = canyonos_context.threading.local()
@@ -29,6 +32,7 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
 
     def test_header_injected_for_openai_gateway_path(self):
         canyonos_context.set_current_future_id("future-sync")
+        canyonos_context.set_current_function("summarize")
         seen_headers = {}
 
         def handler(request):
@@ -39,6 +43,7 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
             client.get("http://proxy.test/openai/v1/chat/completions")
 
         self.assertEqual(seen_headers[FUTURE_ID_HEADER], "future-sync")
+        self.assertEqual(seen_headers["x-canyonos-function"], "summarize")
 
     async def test_header_injected_for_anthropic_gateway_path_async(self):
         canyonos_context.set_current_future_id("future-async")
@@ -52,6 +57,20 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
             await client.get("http://proxy.test/anthropic/v1/messages")
 
         self.assertEqual(seen_headers[FUTURE_ID_HEADER], "future-async")
+
+    def test_function_header_rides_along_when_a_function_is_running(self):
+        canyonos_context.set_current_future_id("future-fn")
+        canyonos_context.set_current_function("parse")
+        seen_headers = {}
+
+        def handler(request):
+            seen_headers.update(request.headers)
+            return httpx.Response(200)
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            client.get("http://proxy.test/openai/v1/chat/completions")
+
+        self.assertEqual(seen_headers[FUNCTION_HEADER], "parse")
 
     def test_header_not_injected_for_non_gateway_path(self):
         canyonos_context.set_current_future_id("future-direct")
@@ -82,7 +101,10 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
         sync_send = httpx.Client.send
         async_send = httpx.AsyncClient.send
 
-        gateway_headers.install(canyonos_context.get_current_future_id)
+        gateway_headers.install(
+            canyonos_context.get_current_future_id,
+            canyonos_context.get_current_function,
+        )
 
         self.assertIs(httpx.Client.send, sync_send)
         self.assertIs(httpx.AsyncClient.send, async_send)
@@ -94,7 +116,10 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
         httpx.AsyncClient.send = patched_async.__wrapped__
         try:
             with mock.patch.dict(sys.modules, {"boto3": None}):
-                gateway_headers.install(canyonos_context.get_current_future_id)
+                gateway_headers.install(
+                    canyonos_context.get_current_future_id,
+                    canyonos_context.get_current_function,
+                )
 
             self.assertTrue(getattr(httpx.Client.send, gateway_headers._PATCH_MARKER))
             self.assertTrue(

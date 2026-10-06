@@ -224,6 +224,26 @@ class BedrockProvider(Provider):
             pr.stream_error = True
             yield _exception_frame(type(exc).__name__, str(exc))
 
+    def set_system(self, params, subpath, text):
+        """Converse takes `system`; an invoke body takes it wherever that model family expects."""
+        model_id, op = self._parse(subpath)
+        if op in ("converse", "converse-stream") or "amazon.nova" in model_id:
+            params["system"] = [{"text": text}]
+        elif "anthropic." in model_id:
+            params["system"] = text
+        elif "cohere.command-r" in model_id:
+            params["preamble"] = text
+        elif "messages" in params:
+            rest = [m for m in params["messages"] if m.get("role") != "system"]
+            params["messages"] = [{"role": "system", "content": text}, *rest]
+        elif "prompt" in params:
+            params["prompt"] = f"{text}\n\n{params['prompt']}"
+        elif "inputText" in params:
+            params["inputText"] = f"{text}\n\n{params['inputText']}"
+        else:
+            return False
+        return True
+
     @staticmethod
     def _parse(subpath):
         # subpath looks like "model/<modelId>/<op>"; the modelId may itself

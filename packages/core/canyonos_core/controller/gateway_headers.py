@@ -1,27 +1,32 @@
-"""Adds the running future's ID to every LLM call an agent sends through the LLM gateway,
-so the gateway can record that call's tokens on the future. The Local Controller calls
-`install` once at startup."""
+"""Adds the running future's ID and the agent function making the call to every LLM call
+an agent sends through the LLM gateway, so the gateway can record that call's tokens on the
+future and send the function's live prompt. The Local Controller calls `install` once at
+startup."""
 
 import importlib
 import logging
 import os
 from functools import wraps
 
-from canyonos_core.llm_gateway.hooks import FUTURE_ID_HEADER
+from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, FUTURE_ID_HEADER
 
 log = logging.getLogger(__name__)
 
 _PATCH_MARKER = "_canyonos_future_id_header_injection"
 
 
-def install(get_future_id):
-    """Add the future-id header, read from `get_future_id()`, to Bedrock calls when boto3
-    is installed and to OpenAI/Anthropic SDK calls bound for the gateway."""
+def install(get_future_id, get_function=lambda: ""):
+    """Add the future-id and function headers, read from `get_future_id()` and
+    `get_function()`, to Bedrock calls when boto3 is installed and to OpenAI/Anthropic SDK
+    calls bound for the gateway."""
 
     def add_header(headers):
         future_id = get_future_id()
         if future_id:
             headers[FUTURE_ID_HEADER] = future_id
+        function = get_function()
+        if function:
+            headers[FUNCTION_HEADER] = function
 
     # Stub mode never calls AWS, but boto3 still needs some credentials to sign requests to
     # the local gateway, so supply throwaway ones. They never leave this machine.

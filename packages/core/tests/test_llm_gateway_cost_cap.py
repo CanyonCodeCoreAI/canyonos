@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from flask import Flask
 
-from canyonos_core.llm_gateway import core, routing
+from canyonos_core.llm_gateway import core, llms, routing
 
 HAIKU = {
     "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -24,13 +24,11 @@ def _body(max_tokens):
 
 
 def _use(llm):
-    return mock.patch.object(
-        routing, "_llms_by_model_id", routing.index_llms({"haiku": llm})
-    )
+    return mock.patch.object(llms, "llms_by_model_id", llms.index_llms({"haiku": llm}))
 
 
 def _loaded_names():
-    return [llm["name"] for llm in routing._llms_by_model_id.values()]
+    return [llm["name"] for llm in llms.llms_by_model_id.values()]
 
 
 def _as(agent_name):
@@ -69,7 +67,7 @@ class CostCapTests(unittest.TestCase):
             self.assertIsNone(routing.route("other", _body(100000)))
 
     def test_calls_are_refused_until_the_config_loads(self):
-        with mock.patch.object(routing, "_llms_by_model_id", None):
+        with mock.patch.object(llms, "llms_by_model_id", None):
             self.assertIsNotNone(routing.route(HAIKU["model_id"], _body(1)))
 
     def test_bedrock_foundation_model_arn_is_matched(self):
@@ -132,7 +130,7 @@ class CostCapTests(unittest.TestCase):
 class ValidationTests(unittest.TestCase):
     def _assert_invalid(self, llm, *fragments):
         with self.assertRaises(ValueError) as ctx:
-            routing.index_llms({"haiku": llm})
+            llms.index_llms({"haiku": llm})
         for fragment in fragments:
             self.assertIn(fragment, str(ctx.exception))
 
@@ -153,43 +151,43 @@ class ValidationTests(unittest.TestCase):
         )
 
     def test_uncapped_entry_needs_no_prices(self):
-        routing.index_llms({"a": {"model_id": "m", "agents": {"IntentAgent": None}}})
-        routing.index_llms({"b": {"model_id": "m"}})
+        llms.index_llms({"a": {"model_id": "m", "agents": {"IntentAgent": None}}})
+        llms.index_llms({"b": {"model_id": "m"}})
 
 
 class RefreshTests(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.object(routing, "_llms_by_model_id", {})
+        patcher = mock.patch.object(llms, "llms_by_model_id", {})
         patcher.start()
         self.addCleanup(patcher.stop)
-        error_patcher = mock.patch.object(routing, "_load_error", None)
+        error_patcher = mock.patch.object(llms, "load_error", None)
         error_patcher.start()
         self.addCleanup(error_patcher.stop)
 
     def test_refresh_loads_the_published_config(self):
-        routing._refresh(
+        llms.refresh_llms(
             mock.Mock(get=mock.Mock(return_value=json.dumps({"haiku": HAIKU})))
         )
         self.assertIn("haiku", _loaded_names())
 
     def test_invalid_refresh_keeps_the_last_good_config(self):
-        routing._llms_by_model_id = routing.index_llms({"haiku": HAIKU})
+        llms.llms_by_model_id = llms.index_llms({"haiku": HAIKU})
         bad = {"haiku": {**HAIKU, "max_tokens": None}}
-        routing._refresh(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
+        llms.refresh_llms(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
         self.assertIn("haiku", _loaded_names())
 
     def test_first_load_failure_is_named_in_the_denial(self):
         bad = {"haiku": {**HAIKU, "max_tokens": None}}
-        with mock.patch.object(routing, "_llms_by_model_id", None):
-            routing._refresh(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
+        with mock.patch.object(llms, "llms_by_model_id", None):
+            llms.refresh_llms(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
             reason = routing.route(HAIKU["model_id"], _body(1))
         self.assertTrue(reason.startswith("canyonos denied: "))
         self.assertIn("haiku", reason)
         self.assertIn("max_tokens", reason)
 
     def test_redis_failure_keeps_the_last_config(self):
-        routing._llms_by_model_id = routing.index_llms({"haiku": HAIKU})
-        routing._refresh(mock.Mock(get=mock.Mock(side_effect=ConnectionError)))
+        llms.llms_by_model_id = llms.index_llms({"haiku": HAIKU})
+        llms.refresh_llms(mock.Mock(get=mock.Mock(side_effect=ConnectionError)))
         self.assertIn("haiku", _loaded_names())
 
 

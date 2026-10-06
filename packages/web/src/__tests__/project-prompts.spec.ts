@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
-import type { PromptEdit, PromptItem, PromptsResponse } from '@canyonos/api/prompts';
+import type {
+  Prompt,
+  PromptListItem,
+  SystemPrompt,
+  SystemPromptCreate,
+} from '@canyonos/api/prompts';
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/projects';
@@ -16,83 +21,140 @@ import {
 const apiOrigin = new URL(apiBaseUrl).origin;
 const PROMPTS_PATH = `/projects/${PROJECT.id}/prompts`;
 
-const INTENT: PromptItem = {
-  name: 'intent.parse',
-  version: 'intent-parse-0a1b2c3d-3',
-  system: 'Classify the user intent.',
-  user: 'Query: {query}',
+const INTENT_V2: SystemPrompt = {
+  version: 'IntentAgent-parse-11223344-v2',
+  content: 'Classify intent.',
+  updated_at: '2026-09-10T10:00:00.000Z',
+};
+const INTENT_V3: SystemPrompt = {
+  version: 'IntentAgent-parse-0a1b2c3d-v3',
+  content: 'Classify the user intent.\nAnswer with JSON.',
   updated_at: '2026-09-20T10:00:00.000Z',
 };
+const INTENT: Prompt = {
+  name: 'IntentAgent.parse',
+  live: INTENT_V3,
+  versions: [INTENT_V3, INTENT_V2],
+};
 
-const SUMMARIZE: PromptItem = {
-  name: 'summarize',
-  version: 'summarize-9f8e7d6c-1',
-  system: 'Summarize the input.',
-  user: '{text}',
+const SUMMARIZE_V1: SystemPrompt = {
+  version: 'summarize-9f8e7d6c-v1',
+  content: 'Summarize the input.',
   updated_at: null,
 };
+const SUMMARIZE: Prompt = { name: 'summarize', live: SUMMARIZE_V1, versions: [SUMMARIZE_V1] };
 
-const EDIT: PromptEdit = { system: 'Classify the intent strictly.', user: 'Q: {query}' };
-const SAVED: PromptItem = {
-  ...INTENT,
+const EDIT: SystemPromptCreate = { content: 'Classify the intent strictly.' };
+const INTENT_V4: SystemPrompt = {
+  version: 'IntentAgent-parse-5e6f7a8b-v4',
   ...EDIT,
-  version: 'intent-parse-5e6f7a8b-4',
   updated_at: '2026-09-29T12:00:00.000Z',
 };
+
+const summaryOf = ({ name, live }: Prompt): PromptListItem => ({ name, live });
 
 // Stubbed rather than seeded: the web e2e job runs the API with no controller Redis behind it, so
 // every prompt call would otherwise answer 502.
 interface PromptsStub {
-  /** How many times the screen read the list, so a spec can prove a retry or a refetch happened. */
-  reads: number;
-  /** What the next read answers; a save stub rewrites it the way the controller config would. */
-  items: PromptItem[];
+  /** How many times the screen read the listing, so a spec can prove a retry or a refetch. */
+  list_reads: number;
+  /** How many times a card read its prompt's history. */
+  prompt_reads: number;
+  /** What reads answer; a write stub rewrites it the way the API would. */
+  prompts: Prompt[];
 }
+
+type FirstRead = 'ok' | 'fails' | 'not_running';
 
 async function stubPrompts(
   page: Page,
-  items: readonly PromptItem[],
-  { fail_first = false }: { readonly fail_first?: boolean } = {}
+  prompts: readonly Prompt[],
+  {
+    first = 'ok',
+    first_prompt = 'ok',
+  }: { readonly first?: FirstRead; readonly first_prompt?: 'ok' | 'fails' } = {}
 ): Promise<PromptsStub> {
-  const stub: PromptsStub = { reads: 0, items: [...items] };
+  const stub: PromptsStub = { list_reads: 0, prompt_reads: 0, prompts: [...prompts] };
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname === PROMPTS_PATH,
     (route) => {
       if (route.request().method() !== 'GET') return route.continue();
-      stub.reads += 1;
-      if (fail_first && stub.reads === 1) return failJson(route, 'Could not read prompts');
-      const body: PromptsResponse = { project_id: PROJECT.id, items: stub.items };
+      stub.list_reads += 1;
+      if (stub.list_reads === 1 && first === 'fails')
+        return failJson(route, 'Could not read prompts');
+      if (stub.list_reads === 1 && first === 'not_running') {
+        return fulfillJson(
+          route,
+          { error: 'canyonos.project_not_running', message: 'No running controller' },
+          404
+        );
+      }
+      const body: PromptListItem[] = stub.prompts.map(summaryOf);
       return fulfillJson(route, body);
+    }
+  );
+  await page.route(
+    (url) =>
+      url.origin === apiOrigin &&
+      url.pathname.startsWith(`${PROMPTS_PATH}/`) &&
+      !url.pathname.endsWith('/versions') &&
+      !url.pathname.endsWith('/live'),
+    (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      stub.prompt_reads += 1;
+      if (stub.prompt_reads === 1 && first_prompt === 'fails') {
+        return failJson(route, 'Could not read the prompt');
+      }
+      const name = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop()!);
+      const prompt = stub.prompts.find((stored) => stored.name === name);
+      return prompt
+        ? fulfillJson(route, prompt)
+        : fulfillJson(route, { error: 'prompts.prompt_not_found', message: 'No such prompt' }, 404);
     }
   );
   return stub;
 }
 
-interface SaveRequest {
+interface WriteRequest {
   readonly method: string;
   readonly path: string;
   readonly body: unknown;
 }
 
-/** Captures every save under the prompts path and answers each with `saved`, or a failure. */
-async function stubPromptSave(
+/** Captures every write under the prompts path and answers it the way the API would, or fails. */
+async function stubPromptWrites(
   page: Page,
   stub: PromptsStub,
-  { saved = SAVED, fails = false }: { readonly saved?: PromptItem; readonly fails?: boolean } = {}
-): Promise<SaveRequest[]> {
-  const requests: SaveRequest[] = [];
+  {
+    created = INTENT_V4,
+    fails = false,
+  }: { readonly created?: SystemPrompt; readonly fails?: boolean } = {}
+): Promise<WriteRequest[]> {
+  const requests: WriteRequest[] = [];
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname.startsWith(`${PROMPTS_PATH}/`),
+    (url) =>
+      url.origin === apiOrigin &&
+      (url.pathname.endsWith('/versions') || url.pathname.endsWith('/live')) &&
+      url.pathname.startsWith(`${PROMPTS_PATH}/`),
     (route) => {
       const request = route.request();
-      requests.push({
-        method: request.method(),
-        path: new URL(request.url()).pathname,
-        body: request.postDataJSON(),
-      });
+      const path = new URL(request.url()).pathname;
+      const body = request.postDataJSON() as { content?: string; version?: string };
+      requests.push({ method: request.method(), path, body });
       if (fails) return failJson(route, 'The running controller could not be reached');
-      stub.items = stub.items.map((item) => (item.name === saved.name ? saved : item));
-      return fulfillJson(route, saved);
+      const name = decodeURIComponent(path.split('/').at(-2)!);
+      const prompt = stub.prompts.find((stored) => stored.name === name)!;
+      if (path.endsWith('/versions')) {
+        stub.prompts = stub.prompts.map((stored) =>
+          stored === prompt ? { ...stored, versions: [created, ...stored.versions] } : stored
+        );
+        return fulfillJson(route, created, 201);
+      }
+      const live = prompt.versions.find((stored) => stored.version === body.version)!;
+      stub.prompts = stub.prompts.map((stored) =>
+        stored === prompt ? { ...stored, live } : stored
+      );
+      return fulfillJson(route, { name, live });
     }
   );
   return requests;
@@ -105,18 +167,28 @@ async function openSession(page: Page): Promise<void> {
   await stubFleetSpend(page);
 }
 
-const panel = (page: Page) => page.getByTestId('project-prompt-management');
-const promptRow = (page: Page, name: string) =>
-  panel(page).getByRole('button', { name, exact: true });
+const screen = (page: Page) => page.getByTestId('project-prompts-screen');
+const card = (page: Page, name: string) =>
+  screen(page).locator(`[data-testid="prompt-card"][data-name="${name}"]`);
+const toggle = (card: Locator) => card.getByTestId('prompt-toggle');
+const versionRow = (card: Locator, version: string) =>
+  card.locator(`[data-testid="prompt-version"][data-version="${version}"]`);
+
+async function openCard(page: Page, name: string): Promise<Locator> {
+  const opened = card(page, name);
+  await toggle(opened).click();
+  await expect(opened.getByTestId('prompt-body')).toBeVisible();
+  return opened;
+}
 
 async function openEditor(page: Page, name: string) {
-  await promptRow(page, name).click();
-  await page.getByTestId('prompt-edit').click();
+  const opened = await openCard(page, name);
+  await opened.getByTestId('prompt-edit').click();
   return {
-    system: panel(page).getByRole('textbox', { name: 'System', exact: true }),
-    user: panel(page).getByRole('textbox', { name: 'User', exact: true }),
-    save: page.getByTestId('prompt-save'),
-    cancel: panel(page).getByRole('button', { name: 'Cancel', exact: true }),
+    card: opened,
+    content: opened.getByRole('textbox', { name: 'System prompt' }),
+    save: opened.getByTestId('prompt-save'),
+    cancel: opened.getByRole('button', { name: 'Cancel', exact: true }),
   };
 }
 
@@ -138,132 +210,305 @@ test('@smoke the Prompts row opens the prompt screen and is the row marked curre
 
   await prompts.click();
   await expectPath(page, PROMPTS_PATH);
-  await expect(page.getByTestId('project-prompts-screen')).toBeVisible();
-  await expect(promptRow(page, 'intent.parse')).toBeVisible();
+  await expect(screen(page)).toHaveAttribute('data-state', 'list');
+  await expect(card(page, 'IntentAgent.parse')).toBeVisible();
   await expect(prompts).toHaveAttribute('aria-current', 'page');
   await expect(manage).not.toHaveAttribute('aria-current', 'page');
 });
 
-test('lists the current version of each prompt and opens it to its text', async ({ page }) => {
-  await openSession(page);
-  await stubPrompts(page, [INTENT, SUMMARIZE]);
-  await page.goto(PROMPTS_PATH);
-
-  const intent = promptRow(page, 'intent.parse');
-  const summarize = promptRow(page, 'summarize');
-  await expect(intent).toHaveAttribute('aria-expanded', 'false');
-  await expect(summarize).toHaveAttribute('aria-expanded', 'false');
-  // The header row is the version, split into its parts.
-  await expect(intent).toContainText('intent');
-  await expect(intent).toContainText('parse');
-  await expect(intent).toContainText('0a1b2c3d');
-  await expect(intent).toContainText('3');
-  await expect(panel(page).getByText(INTENT.system)).toHaveCount(0);
-
-  await intent.click();
-  await expect(intent).toHaveAttribute('aria-expanded', 'true');
-  await expect(panel(page).getByText(INTENT.system)).toBeVisible();
-  await expect(panel(page).getByText(INTENT.user)).toBeVisible();
-  await expect(page.getByTestId('prompt-edit')).toBeVisible();
-  await expect(panel(page).getByText(SUMMARIZE.system)).toHaveCount(0);
-});
-
-test('saving an edit sends it as a new version, toasts it, and re-reads the list', async ({
+test('a closed card names the function, its live version and the first line of its text, reading nothing else', async ({
   page,
 }) => {
   await openSession(page);
   const stub = await stubPrompts(page, [INTENT, SUMMARIZE]);
-  const saves = await stubPromptSave(page, stub);
   await page.goto(PROMPTS_PATH);
 
-  const editor = await openEditor(page, 'intent.parse');
-  await expect(editor.system).toHaveValue(INTENT.system);
-  await expect(editor.user).toHaveValue(INTENT.user);
-  await expect(editor.save).toBeEnabled();
+  const intent = card(page, 'IntentAgent.parse');
+  await expect(intent).toHaveAttribute('data-state', 'closed');
+  await expect(toggle(intent)).toContainText('IntentAgent.parse');
+  await expect(intent.getByTestId('prompt-live')).toHaveText('v3 live');
+  await expect(intent.getByTestId('prompt-preview')).toHaveText('Classify the user intent.');
+  await expect(toggle(intent)).not.toContainText('versions');
+  await expect(intent.getByTestId('prompt-body')).toHaveCount(0);
 
-  await editor.system.fill('');
+  const summarize = card(page, 'summarize');
+  await expect(summarize.getByTestId('prompt-live')).toHaveText('v1 live');
+  expect(stub.list_reads).toBe(1);
+  expect(stub.prompt_reads).toBe(0);
+});
+
+test('opening a card reads its history and shows the live version over every version, and closing hides it', async ({
+  page,
+}) => {
+  await openSession(page);
+  const stub = await stubPrompts(page, [INTENT, SUMMARIZE]);
+  await page.goto(PROMPTS_PATH);
+
+  const intent = await openCard(page, 'IntentAgent.parse');
+  expect(stub.prompt_reads).toBe(1);
+  await expect(intent).toHaveAttribute('data-state', 'open');
+  await expect(intent.getByTestId('prompt-preview')).toBeHidden();
+  const panel = intent.getByTestId('prompt-live-panel');
+  await expect(panel).toContainText('v3');
+  await expect(panel.getByText('Live', { exact: true })).toBeVisible();
+  await expect(intent.getByTestId('prompt-text')).toHaveText(INTENT_V3.content);
+  await expect(intent.getByTestId('prompt-hint')).toHaveText(
+    'Agents get this version on every call.'
+  );
+  await intent.getByTestId('prompt-edit').hover();
+  await expect(page.getByRole('tooltip', { name: 'Edit prompt' })).toBeVisible();
+
+  const versions = intent.getByRole('navigation', { name: 'Versions of IntentAgent.parse' });
+  await expect(versions.getByTestId('prompt-version')).toHaveCount(2);
+  await expect(versionRow(intent, INTENT_V3.version)).toHaveAttribute('data-active', 'true');
+  await expect(versionRow(intent, INTENT_V3.version)).toContainText('live');
+  await expect(versionRow(intent, INTENT_V2.version)).toHaveAttribute('data-active', 'false');
+  await expect(intent.getByTestId('prompt-version-text')).toHaveCount(0);
+  await expect(card(page, 'summarize')).toHaveAttribute('data-state', 'closed');
+
+  await toggle(intent).click();
+  await expect(intent).toHaveAttribute('data-state', 'closed');
+  await expect(intent.getByTestId('prompt-body')).toHaveCount(0);
+});
+
+test('a history that fails to read shows the error in the card and Retry reads it again', async ({
+  page,
+}) => {
+  await openSession(page);
+  const stub = await stubPrompts(page, [INTENT], { first_prompt: 'fails' });
+  await page.goto(PROMPTS_PATH);
+
+  const intent = card(page, 'IntentAgent.parse');
+  await toggle(intent).click();
+  const error = intent.getByTestId('prompt-body-error');
+  await expect(error).toContainText('Could not load its versions.');
+  await expect(intent.getByTestId('prompt-body')).toHaveCount(0);
+  expect(stub.prompt_reads).toBe(1);
+
+  await intent.getByTestId('prompt-body-retry').click();
+  await expect(intent.getByTestId('prompt-body')).toBeVisible();
+  await expect(error).toHaveCount(0);
+  await expect(intent.getByTestId('prompt-text')).toHaveText(INTENT_V3.content);
+  expect(stub.prompt_reads).toBe(2);
+});
+
+test('an older version opens to its text, and Make live switches agents to it', async ({
+  page,
+}) => {
+  await openSession(page);
+  const stub = await stubPrompts(page, [INTENT, SUMMARIZE]);
+  const writes = await stubPromptWrites(page, stub);
+  await page.goto(PROMPTS_PATH);
+
+  const intent = await openCard(page, 'IntentAgent.parse');
+  const row = versionRow(intent, INTENT_V2.version);
+  await row.getByRole('button').first().click();
+  await expect(row.getByTestId('prompt-version-text')).toHaveText(INTENT_V2.content);
+  await expect(row).toContainText('Agents get v3. Make v2 live to switch them.');
+  // The live version on screen does not move while an older one is being read.
+  await expect(intent.getByTestId('prompt-text')).toHaveText(INTENT_V3.content);
+  await expect(intent.getByTestId('prompt-live')).toHaveText('v3 live');
+
+  await row.getByTestId('prompt-make-live').click();
+  await expect(page.getByTestId('app-toast')).toContainText(
+    'v2 of IntentAgent.parse is live. Running agents switch within 10 seconds.'
+  );
+  expect(writes).toEqual([
+    {
+      method: 'PUT',
+      path: `${PROMPTS_PATH}/IntentAgent.parse/live`,
+      body: { version: INTENT_V2.version },
+    },
+  ]);
+
+  // Both the listing (header marker) and the history (rows, panel) re-read after the switch.
+  await expect.poll(() => stub.list_reads).toBe(2);
+  await expect.poll(() => stub.prompt_reads).toBe(2);
+  await expect(intent.getByTestId('prompt-live')).toHaveText('v2 live');
+  await expect(intent.getByTestId('prompt-text')).toHaveText(INTENT_V2.content);
+  await expect(intent.getByTestId('prompt-live-panel')).toContainText('v2');
+  await expect(versionRow(intent, INTENT_V2.version)).toHaveAttribute('data-active', 'true');
+  await expect(versionRow(intent, INTENT_V3.version)).toHaveAttribute('data-active', 'false');
+  await expect(versionRow(intent, INTENT_V2.version).getByTestId('prompt-make-live')).toBeHidden();
+});
+
+test('a failed Make live shows the error in the row and keeps the live version', async ({
+  page,
+}) => {
+  await openSession(page);
+  const stub = await stubPrompts(page, [INTENT]);
+  const writes = await stubPromptWrites(page, stub, { fails: true });
+  await page.goto(PROMPTS_PATH);
+
+  const intent = await openCard(page, 'IntentAgent.parse');
+  const row = versionRow(intent, INTENT_V2.version);
+  await row.getByRole('button').first().click();
+  await row.getByTestId('prompt-make-live').click();
+
+  await expect(row.getByTestId('prompt-live-error')).toHaveText(
+    'The running controller could not be reached'
+  );
+  expect(writes).toHaveLength(1);
+  await expect(row.getByTestId('prompt-make-live')).toBeEnabled();
+  await expect(intent.getByTestId('prompt-live')).toHaveText('v3 live');
+  expect(stub.list_reads).toBe(1);
+  expect(stub.prompt_reads).toBe(1);
+});
+
+test('saving an edit creates the next version, listed but not live, and closes the editor', async ({
+  page,
+}) => {
+  await openSession(page);
+  const stub = await stubPrompts(page, [INTENT, SUMMARIZE]);
+  const writes = await stubPromptWrites(page, stub);
+  await page.goto(PROMPTS_PATH);
+
+  const editor = await openEditor(page, 'IntentAgent.parse');
+  await expect(editor.content).toHaveValue(INTENT_V3.content);
+  await expect(editor.content).toBeFocused();
+  await expect(editor.card.getByTestId('prompt-text')).toBeHidden();
+  await expect(editor.card.getByTestId('prompt-edit')).toBeHidden();
+  await expect(editor.save).toHaveText('Save as v4');
+  await expect(editor.save).toBeEnabled();
+  await expect(editor.card.getByTestId('prompt-editor-hint')).toHaveText(
+    'Saving adds v4. Agents keep getting v3 until you make v4 live.'
+  );
+
+  await editor.content.fill('   ');
   await expect(editor.save).toBeDisabled();
 
-  await editor.system.fill(EDIT.system);
-  await editor.user.fill(EDIT.user);
+  await editor.content.fill(EDIT.content);
   await expect(editor.save).toBeEnabled();
-  expect(stub.reads).toBe(1);
+  expect(stub.prompt_reads).toBe(1);
 
   await editor.save.click();
   await expect(page.getByTestId('app-toast')).toContainText(
-    'Saved intent.parse as intent-parse-5e6f7a8b-4'
+    'Saved v4 of IntentAgent.parse. Agents still get v3.'
   );
-  expect(saves).toEqual([{ method: 'PUT', path: `${PROMPTS_PATH}/intent.parse`, body: EDIT }]);
+  expect(writes).toEqual([
+    { method: 'POST', path: `${PROMPTS_PATH}/IntentAgent.parse/versions`, body: EDIT },
+  ]);
 
-  await expect.poll(() => stub.reads).toBe(2);
-  const intent = promptRow(page, 'intent.parse');
-  await expect(intent).toContainText('5e6f7a8b');
-  await expect(intent).toContainText('4');
-  await expect(panel(page).getByText(EDIT.system)).toBeVisible();
-  await expect(panel(page).getByText(EDIT.user)).toBeVisible();
-  await expect(editor.save).toHaveCount(0);
-  await expect(page.getByTestId('prompt-edit')).toBeVisible();
+  // A save changes the history but not what is live, so only the card re-reads.
+  await expect.poll(() => stub.prompt_reads).toBe(2);
+  expect(stub.list_reads).toBe(1);
+  await expect(editor.card.getByTestId('prompt-editor')).toHaveCount(0);
+  await expect(editor.card.getByTestId('prompt-text')).toHaveText(INTENT_V3.content);
+  await expect(editor.card.getByTestId('prompt-live')).toHaveText('v3 live');
+  const added = versionRow(editor.card, INTENT_V4.version);
+  await expect(editor.card.getByTestId('prompt-version')).toHaveCount(3);
+  await expect(added).toHaveAttribute('data-active', 'false');
+  await added.getByRole('button').first().click();
+  await expect(added.getByTestId('prompt-version-text')).toHaveText(EDIT.content);
+  await expect(added.getByTestId('prompt-make-live')).toHaveText('Make v4 live');
 });
 
-test('cancelling an edit restores the read view without saving', async ({ page }) => {
+test('Cmd+Enter in the editor saves', async ({ page }) => {
   await openSession(page);
   const stub = await stubPrompts(page, [INTENT]);
-  const saves = await stubPromptSave(page, stub);
+  const writes = await stubPromptWrites(page, stub);
   await page.goto(PROMPTS_PATH);
 
-  const editor = await openEditor(page, 'intent.parse');
-  await editor.system.fill('discarded');
+  const editor = await openEditor(page, 'IntentAgent.parse');
+  await editor.content.fill(EDIT.content);
+  await editor.content.press('ControlOrMeta+Enter');
+
+  await expect(page.getByTestId('app-toast')).toContainText('Saved v4 of IntentAgent.parse');
+  expect(writes).toEqual([
+    { method: 'POST', path: `${PROMPTS_PATH}/IntentAgent.parse/versions`, body: EDIT },
+  ]);
+});
+
+test('cancelling an edit closes the editor without saving', async ({ page }) => {
+  await openSession(page);
+  const stub = await stubPrompts(page, [INTENT]);
+  const writes = await stubPromptWrites(page, stub);
+  await page.goto(PROMPTS_PATH);
+
+  const editor = await openEditor(page, 'IntentAgent.parse');
+  await editor.content.fill('discarded');
   await editor.cancel.click();
 
-  await expect(editor.save).toHaveCount(0);
-  await expect(panel(page).getByText(INTENT.system)).toBeVisible();
-  await expect(panel(page).getByText('discarded')).toHaveCount(0);
-  await expect(page.getByTestId('prompt-edit')).toBeVisible();
-  expect(saves).toEqual([]);
-  expect(stub.reads).toBe(1);
+  await expect(editor.card.getByTestId('prompt-editor')).toBeHidden();
+  await expect(editor.card.getByTestId('prompt-text')).toHaveText(INTENT_V3.content);
+  await expect(editor.card.getByTestId('prompt-edit')).toBeVisible();
+  expect(writes).toEqual([]);
+  expect(stub.list_reads).toBe(1);
+  expect(stub.prompt_reads).toBe(1);
 });
 
-test('a failed read shows the error and Retry reads again', async ({ page }) => {
+test('a failed save shows the error and keeps the draft on screen', async ({ page }) => {
   await openSession(page);
-  const stub = await stubPrompts(page, [INTENT], { fail_first: true });
+  const stub = await stubPrompts(page, [INTENT]);
+  const writes = await stubPromptWrites(page, stub, { fails: true });
   await page.goto(PROMPTS_PATH);
 
-  const error = page.getByTestId('project-prompt-error');
-  await expect(error).toBeVisible();
-  await expect(error).toContainText('Could not load prompts.');
-  expect(stub.reads).toBe(1);
+  const editor = await openEditor(page, 'IntentAgent.parse');
+  await editor.content.fill(EDIT.content);
+  await editor.save.click();
 
-  await error.getByRole('button', { name: 'Retry' }).click();
-  await expect(promptRow(page, 'intent.parse')).toBeVisible();
-  await expect(error).toHaveCount(0);
-  expect(stub.reads).toBe(2);
+  await expect(editor.card.getByTestId('prompt-save-error')).toHaveText(
+    'The running controller could not be reached'
+  );
+  expect(writes).toHaveLength(1);
+  await expect(editor.content).toHaveValue(EDIT.content);
+  await expect(editor.save).toBeEnabled();
+  expect(stub.prompt_reads).toBe(1);
 });
 
-test('a config with no prompts shows the empty state', async ({ page }) => {
+test('a failed listing shows the error and Retry reads again', async ({ page }) => {
+  await openSession(page);
+  const stub = await stubPrompts(page, [INTENT], { first: 'fails' });
+  await page.goto(PROMPTS_PATH);
+
+  await expect(screen(page)).toHaveAttribute('data-state', 'error');
+  const error = page.getByTestId('project-prompt-error');
+  await expect(error).toHaveText(/Could not load prompts\./);
+  expect(stub.list_reads).toBe(1);
+
+  await page.getByTestId('project-prompt-retry').click();
+  await expect(screen(page)).toHaveAttribute('data-state', 'list');
+  await expect(card(page, 'IntentAgent.parse')).toBeVisible();
+  await expect(error).toHaveCount(0);
+  expect(stub.list_reads).toBe(2);
+});
+
+test('a project that is not running says so instead of a generic error', async ({ page }) => {
+  await openSession(page);
+  await stubPrompts(page, [INTENT], { first: 'not_running' });
+  await page.goto(PROMPTS_PATH);
+
+  await expect(screen(page)).toHaveAttribute('data-state', 'error');
+  await expect(page.getByTestId('project-prompt-error')).toContainText(
+    'This project is not running, so its prompts cannot be read.'
+  );
+});
+
+test('a project with no prompts shows the empty state', async ({ page }) => {
   await openSession(page);
   await stubPrompts(page, []);
   await page.goto(PROMPTS_PATH);
 
+  await expect(screen(page)).toHaveAttribute('data-state', 'empty');
   await expect(page.getByTestId('project-prompt-empty')).toHaveText(
-    'No prompts. Add config/prompts.yaml to your project.'
+    'No prompts yet. Add config/prompts.yaml to the project and deploy it again.'
   );
   await expect(page.getByTestId('project-prompt-error')).toHaveCount(0);
 });
 
-test('a failed save toasts the error and keeps the edit on screen', async ({ page }) => {
+test('cards open and close independently of each other', async ({ page }) => {
   await openSession(page);
-  const stub = await stubPrompts(page, [INTENT]);
-  const saves = await stubPromptSave(page, stub, { fails: true });
+  const stub = await stubPrompts(page, [INTENT, SUMMARIZE]);
   await page.goto(PROMPTS_PATH);
 
-  const editor = await openEditor(page, 'intent.parse');
-  await editor.system.fill(EDIT.system);
-  await editor.save.click();
+  const intent = await openCard(page, 'IntentAgent.parse');
+  const summarize = await openCard(page, 'summarize');
+  await expect(intent).toHaveAttribute('data-state', 'open');
+  await expect(summarize).toHaveAttribute('data-state', 'open');
+  await expect(summarize.getByTestId('prompt-text')).toHaveText(SUMMARIZE_V1.content);
+  expect(stub.prompt_reads).toBe(2);
 
-  await expect(page.getByTestId('app-toast')).toContainText('Could not save intent.parse');
-  expect(saves).toHaveLength(1);
-  await expect(editor.system).toHaveValue(EDIT.system);
-  await expect(editor.save).toBeEnabled();
-  await expect(page.getByTestId('prompt-edit')).toHaveCount(0);
-  expect(stub.reads).toBe(1);
+  await toggle(intent).click();
+  await expect(intent).toHaveAttribute('data-state', 'closed');
+  await expect(summarize).toHaveAttribute('data-state', 'open');
 });

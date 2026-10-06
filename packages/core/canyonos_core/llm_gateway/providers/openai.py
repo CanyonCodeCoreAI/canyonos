@@ -27,6 +27,18 @@ class OpenAIProvider(HttpProvider):
             params=req.args.to_dict(flat=True),
         )
 
+    def set_system(self, params, subpath, text):
+        """Responses take `instructions`; chat completions take a leading system message."""
+        if subpath.endswith("responses"):
+            params["instructions"] = text
+            return True
+        if subpath.endswith("chat/completions"):
+            messages = params.get("messages") or []
+            rest = [m for m in messages if m.get("role") not in ("system", "developer")]
+            params["messages"] = [{"role": "system", "content": text}, *rest]
+            return True
+        return False
+
     def merge_stream_usage(self, payload, usage):
         """Copy the token counts from a streamed OpenAI event into the running usage for
         the response. The Responses API carries them on the `response.completed` event's

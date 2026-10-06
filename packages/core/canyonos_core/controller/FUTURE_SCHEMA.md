@@ -26,6 +26,8 @@ Fields currently written into `future:{future_id}`, and where:
 | `agent`                     | `local_controller.py` (agent_id that executed this step) |
 | `queue_time`                | `local_controller.py` (only when `submitted_at` is known) |
 | `model`                     | `llm_gateway/hooks.py` (on_response) |
+| `prompt_name`               | `llm_gateway/hooks.py` (on_response) |
+| `prompt_version`            | `llm_gateway/hooks.py` (on_response) |
 | `input_token_count`         | `llm_gateway/hooks.py` |
 | `output_token_count`        | `llm_gateway/hooks.py` |
 | `token_count`               | `llm_gateway/hooks.py` |

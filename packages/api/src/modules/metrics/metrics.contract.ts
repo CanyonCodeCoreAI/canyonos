@@ -22,4 +22,6 @@ export const RUNTIME_ATTRIBUTES = {
   SERVER_COST: 'server_cost',
   ERROR_COUNT: 'error_count',
   CPU_PERCENT: 'cpu',
+  PROMPT_NAME: 'prompt_name',
+  PROMPT_VERSION: 'prompt_version',
 } as const;

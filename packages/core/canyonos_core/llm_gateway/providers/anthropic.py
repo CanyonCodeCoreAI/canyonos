@@ -28,6 +28,13 @@ class AnthropicProvider(HttpProvider):
             params=req.args.to_dict(flat=True),
         )
 
+    def set_system(self, params, subpath, text):
+        """The Messages API takes the system prompt as its top-level `system`."""
+        if not subpath.endswith("messages"):
+            return False
+        params["system"] = text
+        return True
+
     def merge_stream_usage(self, payload, usage):
         # Input counts arrive on message_start and output counts on message_delta, so neither event alone is enough.
         """Merge the token counts from one streamed Anthropic event into the running

@@ -36,6 +36,8 @@ export const RequestTraceBlockSchema = z.object({
   label: z.string(),
   kind: BlockKindSchema,
   model: z.string().nullable(),
+  prompt_name: z.string().nullable(),
+  prompt_version: z.string().nullable(),
   started_offset_ms: z.number().int().nonnegative(),
   execution_time_ms: z.number().int().nonnegative().nullable(),
   input_token_count: z.number().int().nonnegative(),

@@ -36,6 +36,8 @@ interface SeededSpan {
   readonly name?: string;
   readonly failed?: boolean;
   readonly model?: string;
+  readonly prompt_name?: string;
+  readonly prompt_version?: string;
   readonly input_tokens?: number;
   readonly output_tokens?: number;
   readonly cost?: number;
@@ -74,6 +76,8 @@ function listing_spans(prefix: string): SeededSpan[] {
       start_time_unix_nano: done_start,
       end_time_unix_nano: plus(done_start, 1000),
       model: 'claude-sonnet',
+      prompt_name: 'Planner.plan',
+      prompt_version: 'Planner-plan-0a1b2c3d-v2',
       input_tokens: 60,
       output_tokens: 40,
       cost: 0.0003,
@@ -769,6 +773,8 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       label: 'plan',
       kind: 'model',
       model: 'claude-sonnet',
+      prompt_name: 'Planner.plan',
+      prompt_version: 'Planner-plan-0a1b2c3d-v2',
       started_offset_ms: 0,
       execution_time_ms: 1000,
       input_token_count: 60,
@@ -780,6 +786,8 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       label: 'retrieve',
       kind: 'harness',
       model: null,
+      prompt_name: null,
+      prompt_version: null,
       started_offset_ms: 2000,
       execution_time_ms: 3000,
       errors: 1,

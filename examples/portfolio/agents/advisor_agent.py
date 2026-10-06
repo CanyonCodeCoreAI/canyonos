@@ -12,6 +12,9 @@
 # If the LLM is unavailable (returns an empty string), it falls back to a
 # deterministic templated summary so the pipeline still returns.
 #
+# The instructions are the AdvisorAgent.summarize system prompt in config/prompts.yaml, which the
+# LLM gateway adds to every Converse call.
+#
 # Resource profile: cheap CPU; the LLM cost sits in the Bedrock call, not here.
 
 import os
@@ -44,13 +47,8 @@ class AdvisorAgent(object):
 
     def _build_prompt(self, holdings: dict, metrics: dict, risk: dict) -> str:
         lines = [
-            "You are a portfolio analyst. Given the figures below, write a "
-            "concise 3-4 sentence briefing covering return, risk, "
-            "diversification, and concentration. Be specific and neutral.\n"
-        ]
-        lines.append(
             "Holdings (weights): " + ", ".join(f"{t}={w}" for t, w in holdings.items())
-        )
+        ]
         lines.append("\nPer-ticker metrics:")
         for t, m in metrics.items():
             if "error" in m:

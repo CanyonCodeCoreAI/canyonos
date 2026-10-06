@@ -29,6 +29,12 @@ export const isModelSpan = (alias: string): string =>
 // An identifier, never arithmetic, and absent on spans written before the receiver emitted it.
 export const spanAgentId = (alias: string): string => attrText(alias, GEN_AI.AGENT_ID);
 
+export const spanPromptName = (alias: string): string =>
+  attrText(alias, RUNTIME_ATTRIBUTES.PROMPT_NAME);
+
+export const spanPromptVersion = (alias: string): string =>
+  attrText(alias, RUNTIME_ATTRIBUTES.PROMPT_VERSION);
+
 export const spanModel = (alias: string): string =>
   `coalesce(${attrText(alias, GEN_AI.RESPONSE_MODEL)}, ${attrText(alias, GEN_AI.REQUEST_MODEL)})`;
 

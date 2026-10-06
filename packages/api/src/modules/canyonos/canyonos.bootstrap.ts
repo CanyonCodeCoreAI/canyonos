@@ -7,6 +7,7 @@ import { LOG_DOMAINS, logger } from '@core/logger';
 
 import { UUID_RE } from '../auth/project-access';
 import { UserStatusEnum } from '../auth/types';
+import { load_prompts } from '../prompts/prompts.service';
 import { CONTROLLER_IDENTITY_KEY, with_redis } from './canyonos.redis';
 
 const ADMIN_NAME = 'admin';
@@ -91,5 +92,10 @@ export async function bootstrap_canyonos(): Promise<void> {
     project_id: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_id'),
     project_name: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_name'),
   })).catch(() => ({ project_id: null, project_name: null }));
-  await ensure_canyonos_project(identity.project_id, identity.project_name);
+  if (await ensure_canyonos_project(identity.project_id, identity.project_name)) {
+    // Like an unreachable identity, a failed prompt load must not stop the dashboard from starting.
+    await load_prompts(identity.project_id!).catch((error: unknown) =>
+      canyonos_logger.warn('Could not load stored prompts', { error })
+    );
+  }
 }

@@ -4,18 +4,24 @@ import { config } from '@core/env';
 
 export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
 export const PROMPTS_CONFIG_KEY = 'prompts:config';
+export const PROMPTS_YAML_KEY = 'prompts:yaml';
 export const ACTIVE_AGENTS_KEY = 'agents:active';
 export const SCALING_CONFIG_KEY = 'scaling:config';
 
-export interface StoredPromptVersion {
+export interface StoredSystemPrompt {
   readonly version: string;
-  readonly system: string;
-  readonly user: string;
+  readonly content: string;
   readonly updated_at: string | null;
+  readonly live?: boolean;
 }
 
 export interface PromptsConfig {
-  readonly prompts: Record<string, StoredPromptVersion[]>;
+  readonly prompts: Record<string, StoredSystemPrompt[]>;
+}
+
+/** prompts:config: each prompt's live version. */
+export interface LivePromptsConfig {
+  readonly prompts: Record<string, StoredSystemPrompt>;
 }
 
 /** Runs operation against the same Redis the API reads the running controller from. */
@@ -34,14 +40,14 @@ async function with_test_redis<T>(operation: (redis: RedisClient) => Promise<T>)
   }
 }
 
-/** Publishes project_id as the running controller, with prompts_config as its prompt config. */
+/** Publishes project_id as the running controller, with prompts_yaml as its prompts.yaml. */
 export async function seed_running_project(
   project_id: string,
-  prompts_config: PromptsConfig
+  prompts_yaml: PromptsConfig
 ): Promise<void> {
   await with_test_redis(async (redis) => {
     await redis.hset(CONTROLLER_IDENTITY_KEY, 'project_id', project_id);
-    await redis.set(PROMPTS_CONFIG_KEY, JSON.stringify(prompts_config));
+    await redis.set(PROMPTS_YAML_KEY, JSON.stringify(prompts_yaml));
   });
 }
 
@@ -50,6 +56,7 @@ export async function reset_controller(): Promise<void> {
   await with_test_redis(async (redis) => {
     await redis.del(CONTROLLER_IDENTITY_KEY);
     await redis.del(PROMPTS_CONFIG_KEY);
+    await redis.del(PROMPTS_YAML_KEY);
     await redis.del(ACTIVE_AGENTS_KEY);
     await redis.del(SCALING_CONFIG_KEY);
   });
@@ -71,7 +78,7 @@ export async function read_scaling_config(): Promise<unknown> {
   return raw === null ? null : JSON.parse(raw);
 }
 
-export async function read_prompts_config(): Promise<PromptsConfig | null> {
+export async function read_prompts_config(): Promise<LivePromptsConfig | null> {
   const raw = await with_test_redis((redis) => redis.get(PROMPTS_CONFIG_KEY));
-  return raw === null ? null : (JSON.parse(raw) as PromptsConfig);
+  return raw === null ? null : (JSON.parse(raw) as LivePromptsConfig);
 }

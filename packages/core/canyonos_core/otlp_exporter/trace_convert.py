@@ -78,6 +78,8 @@ def trace_row_to_span(row):
         k: v
         for k, v in {
             "gen_ai.request.model": row.get("model"),
+            "prompt_name": row.get("prompt_name"),
+            "prompt_version": row.get("prompt_version"),
             "cpu": row.get("cpu"),
             "gpu": row.get("gpu"),
             "execution_time_ms": row.get("execution_time_ms"),

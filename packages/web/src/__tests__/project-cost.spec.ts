@@ -450,6 +450,8 @@ const REQUEST_TRACE: RequestTrace = {
       label: 'ingest',
       kind: 'harness',
       model: null,
+      prompt_name: null,
+      prompt_version: null,
       started_offset_ms: 0,
       execution_time_ms: 125,
       input_token_count: 0,
@@ -463,6 +465,8 @@ const REQUEST_TRACE: RequestTrace = {
       label: 'classify',
       kind: 'model',
       model: 'claude-haiku-4',
+      prompt_name: 'Classifier.classify',
+      prompt_version: 'Classifier-classify-0a1b2c3d-v3',
       started_offset_ms: 120,
       execution_time_ms: 438,
       input_token_count: 1100,
@@ -476,6 +480,8 @@ const REQUEST_TRACE: RequestTrace = {
       label: 'retrieve',
       kind: 'harness',
       model: null,
+      prompt_name: null,
+      prompt_version: null,
       started_offset_ms: 540,
       execution_time_ms: 1500,
       input_token_count: 0,
@@ -489,6 +495,8 @@ const REQUEST_TRACE: RequestTrace = {
       label: 'extract',
       kind: 'model',
       model: 'claude-sonnet-4-5',
+      prompt_name: null,
+      prompt_version: null,
       started_offset_ms: 1980,
       execution_time_ms: 7600,
       input_token_count: 214_000,
@@ -502,6 +510,8 @@ const REQUEST_TRACE: RequestTrace = {
       label: 'validate',
       kind: 'model',
       model: 'claude-haiku-4',
+      prompt_name: null,
+      prompt_version: null,
       started_offset_ms: 9240,
       execution_time_ms: 688,
       input_token_count: 900,
@@ -515,6 +525,8 @@ const REQUEST_TRACE: RequestTrace = {
       label: 'review-escalation ×5',
       kind: 'model',
       model: 'claude-opus-5',
+      prompt_name: null,
+      prompt_version: null,
       started_offset_ms: 9900,
       execution_time_ms: 22_000,
       input_token_count: 165_000,
@@ -528,6 +540,8 @@ const REQUEST_TRACE: RequestTrace = {
       label: 'emit',
       kind: 'harness',
       model: null,
+      prompt_name: null,
+      prompt_version: null,
       started_offset_ms: 31_400,
       execution_time_ms: 125,
       input_token_count: 0,
@@ -2298,6 +2312,10 @@ test.describe('query trace drawer', () => {
     await expect(page.getByTestId(`${TRACE_DRAWER}-timeline`)).toBeVisible();
     await expect(page.getByTestId(`${TRACE_DRAWER}-timeline`)).toContainText('99.80¢');
     await expect(page.getByTestId(`${TRACE_DRAWER}-timeline`)).toContainText('Cost (¢)');
+    // Every block carries the slot; only the block that made an LLM call shows a version in it.
+    await expect(
+      page.getByTestId('trace-block-prompt-version').filter({ visible: true })
+    ).toHaveText('Classifier-classify-0a1b2c3d-v3');
     await expect(page.getByTestId(TRACE_DRAWER)).toContainText('review-escalation ×5');
     await expect
       .poll(() => calls.some((call) => call.endsWith(`/requests/${SESSION_ID}`)))

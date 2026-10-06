@@ -19,6 +19,8 @@ import redis
 log = logging.getLogger("llm_gateway")
 
 FUTURE_ID_HEADER = "x-canyonos-future-id"
+# The agent function making the call, so the gateway can pick its prompt.
+FUNCTION_HEADER = "x-canyonos-function"
 
 
 @dataclass
@@ -51,6 +53,8 @@ class Ctx:
     headers: Dict[str, str]
     t0: float
     model: Optional[str] = None
+    prompt_name: Optional[str] = None
+    prompt_version: Optional[str] = None
 
     def elapsed_ms(self) -> float:
         """Return milliseconds since the request started."""
@@ -153,6 +157,9 @@ class Hooks:
                 # A future can make several LLM calls, so each call adds to its totals.
                 key = f"future:{future_id}"
                 self._redis.hset(key, "model", model_id)
+                if ctx.prompt_version:
+                    self._redis.hset(key, "prompt_name", ctx.prompt_name)
+                    self._redis.hset(key, "prompt_version", ctx.prompt_version)
                 for field, count in counts.items():
                     self._redis.hincrby(key, field, count)
                 log.info("Added telemetry to %s: model=%s %s", key, model_id, counts)
