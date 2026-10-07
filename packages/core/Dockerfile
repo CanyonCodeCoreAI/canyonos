@@ -4,8 +4,11 @@ ENV PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y docker.io zstd openssh-client && rm -rf /var/lib/apt/lists/*
 
-COPY . /src
+# Installs dependencies from pyproject.toml alone so source edits don't reinstall them.
+COPY pyproject.toml /src/
 RUN pip install /src
+COPY . /src
+RUN pip install --no-deps /src
 
 # global_controller.py bare-imports these; pip install only ships the .proto source.
 RUN python -m grpc_tools.protoc \
