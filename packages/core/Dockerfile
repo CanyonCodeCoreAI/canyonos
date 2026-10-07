@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y docker.io zstd openssh-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends docker-cli docker-buildx zstd openssh-client && rm -rf /var/lib/apt/lists/*
 
 # Installs dependencies from pyproject.toml alone so source edits don't reinstall them.
 COPY pyproject.toml /src/

@@ -179,7 +179,7 @@ Run `canyonos deploy` again to apply your changes.
 
 #### Configuring the Global Controller (in progress)
 
-Edit `.car/config/global_controller.yaml` to list the agents you want to deploy, their `provider`, `replicas`, and resource limits. Add a per-agent `requirements: [pkg, ...]` list for any extra pip packages that agent's code imports — only a small base list (grpc, redis, pyyaml, psutil, etc.) is installed by default.
+Edit `.car/config/global_controller.yaml` to list the agents you want to deploy, their `provider`, `replicas`, and resource limits. Add a per-agent `requirements: [pkg, ...]` list for any extra pip packages that agent's code imports — only `grpcio`, `protobuf`, and `redis` are installed by default.
 
 Agents that need API keys read them from environment variables. Point `env_file` at a `.env` file to have CanyonOS inject it into every agent container:
 

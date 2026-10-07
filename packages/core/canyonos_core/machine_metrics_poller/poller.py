@@ -51,8 +51,7 @@ class MachineMetricsPoller:
         self._prev_net_io = None
         # Prime cpu_percent so the first real reading isn't 0.0 -- psutil measures
         # utilization between successive calls.
-        if psutil is not None:
-            psutil.cpu_percent(interval=None)
+        psutil.cpu_percent(interval=None)
 
     def _collect(self):
         """Snapshot this machine's metrics.
@@ -202,9 +201,6 @@ class MachineMetricsPoller:
 
     def run(self):
         """Write this machine's metrics to Redis every interval until stopped."""
-        if psutil is None:
-            logger.error("psutil is unavailable; machine metrics poller cannot run.")
-            return
         logger.info(
             "Machine metrics poller started (key=%s, interval=%.1fs).",
             self.metrics_key,

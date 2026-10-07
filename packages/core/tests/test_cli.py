@@ -548,7 +548,7 @@ class CliBuildTests(unittest.TestCase):
                             "type": "workflow",
                             "workflow_file": "workflows/example_workflow.py",
                             "provider": "local",
-                            "requirements": ["sqlalchemy-utils"],
+                            "requirements": ["humanize"],
                         },
                     ]
                 }
@@ -574,7 +574,7 @@ class CliBuildTests(unittest.TestCase):
 
         self.assertEqual(
             generate_workflow_docker.call_args.kwargs["requirements"],
-            ["sqlalchemy-utils"],
+            ["humanize"],
         )
 
     def test_build_uses_the_expanded_values_the_schema_validated(self):
