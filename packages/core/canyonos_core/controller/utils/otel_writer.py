@@ -7,11 +7,14 @@ is the exporter's job (see ``otlp_exporter/otel_reader.py``). The two sides shar
 but ``controller/utils/schema.py`` and the database file.
 """
 
+import contextlib
 import json
 import logging
 import sqlite3
 import time
+import uuid
 
+from canyonos_core.controller.utils.log_entry import build_log_entry
 from canyonos_core.controller.utils.schema import DB_PATH
 from canyonos_core.llm_gateway import pricing
 # pricing enriches trace rows with server cost at write time; a candidate to move
@@ -336,26 +339,87 @@ def _log_write_rows(rows, project_id=None, db_path=DB_PATH):
             for index, entry in enumerate(entries):
                 if not isinstance(entry, dict):
                     continue
-                attrs = entry.get("Attributes") or {}
                 conn.execute(
                     _LOGS_UPSERT,
-                    {
-                        "log_id": f"{fid}:{index}",
-                        "future_id": fid,
-                        "session_id": session_id,
-                        "project_id": project_id,
-                        "agent_id": agent_id,
-                        "observed_at": entry.get("ObservedTimestamp")
-                        or entry.get("Timestamp"),
-                        "severity_number": entry.get("SeverityNumber"),
-                        "severity_text": entry.get("SeverityText"),
-                        "body": entry.get("Body"),
-                        "attributes": json.dumps(attrs),
-                    },
+                    _log_params(
+                        entry, f"{fid}:{index}", fid, session_id, project_id, agent_id
+                    ),
                 )
         conn.commit()
     finally:
         conn.close()
+
+
+def _log_params(entry, log_id, future_id, session_id, project_id, agent_id):
+    """The _LOGS_UPSERT parameters for one OTel-shaped log entry."""
+    return {
+        "log_id": log_id,
+        "future_id": future_id,
+        "session_id": session_id,
+        "project_id": project_id,
+        "agent_id": agent_id,
+        "observed_at": entry.get("ObservedTimestamp") or entry.get("Timestamp"),
+        "severity_number": entry.get("SeverityNumber"),
+        "severity_text": entry.get("SeverityText"),
+        "body": entry.get("Body"),
+        "attributes": json.dumps(entry.get("Attributes") or {}),
+    }
+
+
+class ProcessLogHandler(logging.Handler):
+    """Queues every INFO-and-above record of this process for OTel export as one log source.
+
+    For the Global Controller, which runs no futures: its logs reach the dashboard under
+    `source_name` instead of a future's `logs` field. Taking WARNING and above here cannot
+    double-record a failure, since `build_failure_entry` only ever writes to futures.
+    """
+
+    def __init__(self, source_name, project_id=None, db_path=DB_PATH):
+        super().__init__(level=logging.INFO)
+        self._source_name = source_name
+        self._project_id = project_id
+        self._db_path = db_path
+        self._conn = None
+
+    def emit(self, record):
+        """Write the record to logs_waiting; a failed write is reported, never raised."""
+        try:
+            if self._conn is None:
+                # Handler.handle holds self.lock around emit, so threads never share it at once.
+                self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            entry = build_log_entry(record, agent_name=self._source_name)
+            self._conn.execute(
+                _LOGS_UPSERT,
+                _log_params(
+                    entry,
+                    uuid.uuid4().hex,
+                    None,
+                    None,
+                    self._project_id,
+                    self._source_name,
+                ),
+            )
+            self._conn.commit()
+        except Exception:
+            self._drop_connection()
+            self.handleError(record)
+
+    def close(self):
+        """Close the queue connection along with the handler."""
+        self.acquire()
+        try:
+            self._drop_connection()
+        finally:
+            self.release()
+        super().close()
+
+    def _drop_connection(self):
+        """Close the connection, if any, so the next record opens a fresh one."""
+        if self._conn is None:
+            return
+        with contextlib.suppress(sqlite3.Error):
+            self._conn.close()
+        self._conn = None
 
 
 def _pull_telemetry(redis_client):

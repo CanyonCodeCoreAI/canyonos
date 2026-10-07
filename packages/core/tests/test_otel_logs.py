@@ -5,10 +5,12 @@ covered by test_otel_exporter_fanout.py; the metrics side by test_otel_metrics.p
 """
 
 import json
+import logging
 import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -192,7 +194,7 @@ def _future_row(
     }
 
 
-class WriteLogRowsTests(unittest.TestCase):
+class _LogsQueueTestCase(unittest.TestCase):
     def setUp(self):
         fd, self.tmp = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -207,6 +209,8 @@ class WriteLogRowsTests(unittest.TestCase):
             conn.row_factory = sqlite3.Row
             return {r["log_id"]: r for r in conn.execute("SELECT * FROM logs_waiting")}
 
+
+class WriteLogRowsTests(_LogsQueueTestCase):
     def test_logs_array_explodes_into_one_row_per_entry(self):
         row = _future_row(
             logs=json.dumps([_log_entry(body="first"), _log_entry(body="second")])
@@ -257,6 +261,71 @@ class WriteLogRowsTests(unittest.TestCase):
     def test_unparseable_logs_field_is_dropped(self):
         otel_writer._log_write_rows([_future_row(logs="not-json")], db_path=self.tmp)
         self.assertEqual(len(self._rows()), 0)
+
+
+class ProcessLogHandlerTests(_LogsQueueTestCase):
+    def setUp(self):
+        super().setUp()
+        self.logger = logging.getLogger("test_process_log_handler")
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.propagate = False
+        self.handler = otel_writer.ProcessLogHandler(
+            "Global Controller", "proj", self.tmp
+        )
+        self.logger.addHandler(self.handler)
+
+    def tearDown(self):
+        self.logger.removeHandler(self.handler)
+        self.handler.close()
+        super().tearDown()
+
+    def test_process_log_handler_queues_records_under_its_source_name(self):
+        self.logger.info("polling %d instance(s)", 3)
+        self.logger.debug("not queued")
+
+        (row,) = self._rows().values()
+        self.assertEqual(row["body"], "polling 3 instance(s)")
+        self.assertEqual(row["agent_id"], "Global Controller")
+        self.assertEqual(row["project_id"], "proj")
+        self.assertIsNone(row["future_id"])
+        self.assertEqual(
+            json.loads(row["attributes"])["agent.name"], "Global Controller"
+        )
+
+    def test_records_from_many_threads_each_get_a_row(self):
+        threads = [
+            threading.Thread(target=self.logger.warning, args=("tick %d", i))
+            for i in range(8)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        bodies = sorted(row["body"] for row in self._rows().values())
+        self.assertEqual(bodies, sorted(f"tick {i}" for i in range(8)))
+
+    def test_a_failed_write_is_reported_without_raising(self):
+        os.remove(self.tmp)
+        os.mkdir(self.tmp)
+        self.handler.handleError = MagicMock()
+        try:
+            self.logger.info("lost")
+        finally:
+            os.rmdir(self.tmp)
+
+        self.handler.handleError.assert_called_once()
+
+    def test_logging_resumes_once_the_queue_is_writable_again(self):
+        self.handler.handleError = MagicMock()
+        with sqlite3.connect(self.tmp) as conn:
+            conn.execute("DROP TABLE logs_waiting")
+        self.logger.info("lost")
+        schema.init_db(self.tmp)
+        self.logger.info("kept")
+
+        self.handler.handleError.assert_called_once()
+        self.assertEqual([row["body"] for row in self._rows().values()], ["kept"])
 
 
 # ---------------------------------------------------------------------------

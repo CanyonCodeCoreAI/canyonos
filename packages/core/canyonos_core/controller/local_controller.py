@@ -62,6 +62,12 @@ ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
 POLICY_RULES_KEY = "policy:rules"
 EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5
+WORKFLOW_LOG_SOURCE = "Workflow"
+
+
+def log_source_name(agent_name):
+    """The name a replica's logs report as their source; the workflow replica has no agent name."""
+    return agent_name or WORKFLOW_LOG_SOURCE
 
 
 class LocalController(object):
@@ -117,7 +123,7 @@ class LocalController(object):
             self._log_handler = LogHandler(
                 self.redis,
                 agent_id=self.agent_id,
-                agent_name=self.agent_name,
+                agent_name=log_source_name(self.agent_name),
                 endpoint=self._my_endpoint,
             )
             logging.getLogger().addHandler(self._log_handler)
@@ -529,7 +535,7 @@ class LocalController(object):
                 entry = build_failure_entry(
                     error,
                     agent_id=self.agent_id,
-                    agent_name=self.agent_name,
+                    agent_name=log_source_name(self.agent_name),
                     endpoint=self._my_endpoint,
                     error_name=error_name,
                 )

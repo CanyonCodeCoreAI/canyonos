@@ -35,8 +35,8 @@ Fields:
 ### Agent metrics (per local controller)
 `LocalController` publishes `controller:{host}:{port}:metrics`.
 
-Fields: `status`, `queue_length`, `observed_at`, `started_at`, `requests_served` and
-`full_failures`.
+Fields: `status`, `queue_length`, `observed_at`, `started_at`, `requests_served`,
+`requests_completed` and `full_failures`.
 
 ## `metrics_waiting` table schema (`controller/utils/schema.py`)
 
@@ -88,6 +88,7 @@ semconv, kept as-is), `host.name`, `canyonos.agent.port`, `canyonos.project.id`.
 | --- | --- | --- | --- |
 | `queue_length` | `canyonos.agent.queue.length` | Gauge | `{item}` |
 | `requests_served` | `canyonos.agent.requests` | Sum (monotonic, cumulative) | `{request}` |
+| `requests_completed` | `canyonos.agent.requests.completed` | Sum (monotonic, cumulative) | `{request}` |
 | `full_failures` | `canyonos.agent.failures` | Sum (monotonic, cumulative) | `{failure}` |
 | `status` | `canyonos.agent.up` | Gauge (`1` if `healthy` else `0`) | `1` |
 

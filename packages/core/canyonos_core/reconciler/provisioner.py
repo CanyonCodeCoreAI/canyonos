@@ -3,7 +3,6 @@
 import logging
 import os
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from canyonos_core.controller.controller_context import (
@@ -167,7 +166,7 @@ class Provisioner(object):
             if runtime_id:
                 self._track_runtime(job["agent_name"], runtime_id)
 
-            agent_id = uuid.uuid4().hex
+            agent_id = f"{job['agent_name']}-{replica_index}"
             instance = runtime.bootstrap_instance(
                 instance, agent_spec, replica_index, agent_id
             )

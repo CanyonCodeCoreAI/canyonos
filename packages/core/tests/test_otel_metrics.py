@@ -48,6 +48,7 @@ _AGENT_METRICS = {
     "observed_at": "100.0",
     "started_at": "50.0",
     "requests_served": "42",
+    "requests_completed": "40",
     "full_failures": "2",
 }
 
@@ -94,6 +95,9 @@ class MetricConvertAgentTests(unittest.TestCase):
         self.assertEqual(dp.start_time_unix_nano, int(50.0 * 1e9))
         self.assertEqual(dp.time_unix_nano, int(100.0 * 1e9))
         self.assertEqual(by["canyonos.agent.failures"].data.data_points[0].value, 2)
+        self.assertEqual(
+            by["canyonos.agent.requests.completed"].data.data_points[0].value, 40
+        )
 
     def test_health_gauge_reflects_status(self):
         up = {m.name: m for m in self._convert().scope_metrics[0].metrics}[

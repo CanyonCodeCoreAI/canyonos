@@ -68,6 +68,7 @@ _AGENT_GAUGES = {
 }
 _AGENT_SUMS = {
     "requests_served": ("canyonos.agent.requests", "{request}"),
+    "requests_completed": ("canyonos.agent.requests.completed", "{request}"),
     "full_failures": ("canyonos.agent.failures", "{failure}"),
 }
 

@@ -108,9 +108,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         alpha = manager.ensure_instances([{"name": "Alpha", "provider": "local"}])[0]
         beta = manager.ensure_instances([{"name": "Beta", "provider": "local"}])[0]
 
-        alpha_agent_id = alpha.pop("agent_id")
-        self.assertEqual(len(alpha_agent_id), 32)
-        int(alpha_agent_id, 16)  # raises ValueError if not a hex string
+        self.assertEqual(alpha.pop("agent_id"), "Alpha-0")
 
         self.assertEqual(
             alpha,

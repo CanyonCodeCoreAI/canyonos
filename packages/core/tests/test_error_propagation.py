@@ -239,6 +239,7 @@ class ErrorPropagationTests(unittest.TestCase):
             "Malformed request: missing service, function, or future_id",
         )
         self.assertEqual(logs[0]["Attributes"]["exception.type"], "MalformedRequest")
+        self.assertEqual(logs[0]["Attributes"]["agent.name"], "Workflow")
 
     def test_policy_denied_request_is_marked_failed_with_category(self):
         redis = _FakeRedis()

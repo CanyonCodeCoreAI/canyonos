@@ -61,6 +61,8 @@ logger = logging.getLogger(__name__)
 DRAIN_TIMEOUT_SECONDS = 30
 
 LOCAL_NETWORK = "canyonos-local"
+GLOBAL_CONTROLLER_LOG_SOURCE = "Global Controller"
+
 # Set by the CLI to the image the GC itself runs. No default: guessing one means
 # silently running a stale image that need not hold the code this GC was built from.
 CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
@@ -191,6 +193,12 @@ class GlobalController(ControllerContext):
             # exporter process can access it. GC owns schema creation; because GC spawns the
             # exporter, the tables always exist before the exporter reads them.
             schema.init_db()
+            if self.config.get("logs", True):
+                logging.getLogger().addHandler(
+                    otel_writer.ProcessLogHandler(
+                        GLOBAL_CONTROLLER_LOG_SOURCE, self.config.get("project_id")
+                    )
+                )
             self.process_supervisor.register(
                 "reconciler",
                 [
