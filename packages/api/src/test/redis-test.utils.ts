@@ -63,6 +63,8 @@ export async function seed_running_project(
   project_id: string,
   prompts_yaml: PromptsConfig
 ): Promise<void> {
+  // A freshly started controller carries no leftovers from whatever the previous test corrupted.
+  await reset_controller();
   await with_test_redis(async (redis) => {
     await redis.hset(CONTROLLER_IDENTITY_KEY, 'project_id', project_id);
     await redis.set(PROMPTS_YAML_KEY, JSON.stringify(prompts_yaml));
