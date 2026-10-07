@@ -205,9 +205,9 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
       failed_block_count: 0,
       error_count: 1,
       token_count: 100,
-      llm_cost: '0.000300',
-      harness_cost: '0.000030',
-      total_cost: '0.000330',
+      llm_cost: '0.0003000000',
+      harness_cost: '0.0000300000',
+      total_cost: '0.0003300000',
     });
 
     const failed = page.items[2]!;
@@ -217,7 +217,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
       failed_block_count: 1,
       duration_ms: 500,
       token_count: 0,
-      total_cost: '0.000030',
+      total_cost: '0.0000300000',
     });
   });
 
@@ -330,7 +330,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
       session_id: 'shared-trace',
       block_count: 1,
       duration_ms: 100,
-      total_cost: '0.000011',
+      total_cost: '0.0000110000',
     });
   });
 
@@ -761,8 +761,8 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       duration_ms: 5000,
       error_count: 1,
       token_count: 100,
-      total_cost: '0.000330',
-      harness_cost: '0.000030',
+      total_cost: '0.0003300000',
+      harness_cost: '0.0000300000',
     });
     expect(trace.input).toEqual({ prompt: 'done' });
     expect(trace.output).toEqual({ result: 'done' });
@@ -859,7 +859,10 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     });
 
     expect(res.error).toBeNull();
-    expect(res.data?.median_cost).toBe('0.002000');
+    expect(res.data?.median_cost).toBe('0.0020000000');
+    expect(res.data?.cost_vs_median).toBe(1);
+    expect(res.data?.harness_cost_vs_median).toBeNull();
+    expect(res.data?.token_count_vs_median).toBeNull();
   });
 
   test('a project that billed nothing in the window reports no median', async () => {
@@ -877,7 +880,8 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
     expect(res.error).toBeNull();
     expect(res.data?.median_cost).toBeNull();
-    expect(res.data?.total_cost).toBe('0.000000');
+    expect(res.data?.cost_vs_median).toBeNull();
+    expect(res.data?.total_cost).toBe('0.0000000000');
   });
 
   test('a trace never includes another project sharing its trace id', async () => {
@@ -907,7 +911,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
     expect(res.error).toBeNull();
     expect(res.data?.blocks.map((block) => block.future_id)).toEqual(['tshare-mine-1']);
-    expect(res.data?.total_cost).toBe('0.000011');
+    expect(res.data?.total_cost).toBe('0.0000110000');
     expect(res.data?.duration_ms).toBe(100);
   });
 
@@ -962,9 +966,9 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       block_count: 2,
       token_count: 0,
       error_count: 0,
-      llm_cost: '0.000000',
-      harness_cost: '0.000004',
-      total_cost: '0.000004',
+      llm_cost: '0.0000000000',
+      harness_cost: '0.0000040000',
+      total_cost: '0.0000040000',
     });
 
     const res = await api.projects[project_id]!.requests['bad']!.get({ $headers: bearer(token) });
@@ -975,12 +979,12 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       input_token_count: 0,
       output_token_count: 0,
       errors: 0,
-      total_cost: '0.000000',
+      total_cost: '0.0000000000',
     });
     expect(res.data?.blocks[1]).toMatchObject({
       input_token_count: 0,
       errors: 0,
-      total_cost: '0.000004',
+      total_cost: '0.0000040000',
     });
   });
 });

@@ -8,7 +8,7 @@ import {
 
 export const RequestStatusSchema = z.enum(['running', 'completed', 'failed']);
 
-// Money fields are numeric(14,6) rendered as fixed 6-decimal strings — the API never converts
+// Money fields are numeric(20, 10) rendered as fixed 10-decimal strings — the API never converts
 // costs to floats.
 export const RequestListItemSchema = z.object({
   session_id: z.string(),
@@ -69,6 +69,12 @@ export const RequestTraceSchema = RequestListItemSchema.pick({
   harness_cost: z.string(),
   median_harness_cost: z.string().nullable(),
   median_token_count: z.number().nullable(),
+  // How many times the median each figure is, computed over the exact numerics so the dashboard
+  // never divides parsed floats. Null without a median, and also for a zero median: a billed project
+  // can spend $0 on harness, which is a real reference that supports no multiple.
+  cost_vs_median: z.number().nullable(),
+  harness_cost_vs_median: z.number().nullable(),
+  token_count_vs_median: z.number().nullable(),
   blocks: z.array(RequestTraceBlockSchema),
 });
 

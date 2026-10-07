@@ -62,9 +62,9 @@ const REQUESTS_CTE = `requests as (
       (count(*) filter (where ${spanFailed('s')}))::int as failed_block_count,
       coalesce(sum(${spanErrorCount('s')}), 0)::float8 as error_count,
       coalesce(sum(${spanTotalTokens('s')}), 0)::float8 as token_count,
-      coalesce(sum(${spanTokenCost('s')}), 0)::numeric(14, 6) as llm_cost,
-      coalesce(sum(${spanServerCost('s')}), 0)::numeric(14, 6) as harness_cost,
-      coalesce(sum(${spanCost('s')}), 0)::numeric(14, 6) as total_cost
+      coalesce(sum(${spanTokenCost('s')}), 0)::numeric(20, 10) as llm_cost,
+      coalesce(sum(${spanServerCost('s')}), 0)::numeric(20, 10) as harness_cost,
+      coalesce(sum(${spanCost('s')}), 0)::numeric(20, 10) as total_cost
     from scoped s
     group by s.trace_id
   )`;
@@ -213,10 +213,9 @@ export const requests_repo = {
       medians as (
         select
           percentile_cont(0.5) within group (order by m.token_count)::float8 as median_token_count,
-          percentile_cont(0.5) within group (order by m.total_cost)
-            ::numeric(14, 6)::text as median_cost,
+          percentile_cont(0.5) within group (order by m.total_cost)::numeric(20, 10) as median_cost,
           percentile_cont(0.5) within group (order by m.harness_cost)
-            ::numeric(14, 6)::text as median_harness_cost
+            ::numeric(20, 10) as median_harness_cost
         from project_requests m
       ),
       block_rows as (
@@ -232,7 +231,7 @@ export const requests_repo = {
           round(${sql.raw(spanDurationMs('s'))})::float8 as execution_time_ms,
           coalesce(${sql.raw(spanInputTokens('s'))}, 0)::float8 as input_token_count,
           coalesce(${sql.raw(spanOutputTokens('s'))}, 0)::float8 as output_token_count,
-          coalesce(${sql.raw(spanCost('s'))}, 0)::numeric(14, 6)::text as total_cost,
+          coalesce(${sql.raw(spanCost('s'))}, 0)::numeric(20, 10)::text as total_cost,
           coalesce(${sql.raw(spanErrorCount('s'))}, 0)::float8 as errors,
           ${sql.raw(spanFailed('s'))} as failed,
           ${sql.raw(spanInput('s'))} as input,
@@ -242,9 +241,13 @@ export const requests_repo = {
         from scoped s
       )
       select ${sql.raw(REQUEST_COLUMNS)},
-        m.median_cost,
-        m.median_harness_cost,
+        m.median_cost::text as median_cost,
+        m.median_harness_cost::text as median_harness_cost,
         m.median_token_count,
+        -- A zero median is a real reference but supports no multiple, so the ratio alone is null.
+        (q.total_cost / nullif(m.median_cost, 0))::float8 as cost_vs_median,
+        (q.harness_cost / nullif(m.median_harness_cost, 0))::float8 as harness_cost_vs_median,
+        (q.token_count / nullif(m.median_token_count, 0))::float8 as token_count_vs_median,
         (
           select b.input from block_rows b
           where b.input is not null

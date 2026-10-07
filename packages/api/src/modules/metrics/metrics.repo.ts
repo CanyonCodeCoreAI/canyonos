@@ -93,12 +93,12 @@ const kpi_columns = (key: MetricsWindow): string => {
     `coalesce(sum(${spanTotalTokens('s')})${f}, 0)::float8 as "tokens_${key}"`,
     `(coalesce(sum(${spanTotalTokens('s')})${f}, 0)::float8
         / nullif(count(*)${f}, 0)) as "per_block_tokens_${key}"`,
-    `coalesce(sum(${spanServerCost('s')})${f}, 0)::numeric(14, 6)::text as "harness_cost_${key}"`,
-    `coalesce(sum(${spanTokenCost('s')})${f}, 0)::numeric(14, 6)::text as "llm_cost_${key}"`,
-    `coalesce(sum(${spanCost('s')})${f}, 0)::numeric(14, 6)::text as "total_cost_${key}"`,
+    `coalesce(sum(${spanServerCost('s')})${f}, 0)::numeric(20, 10)::text as "harness_cost_${key}"`,
+    `coalesce(sum(${spanTokenCost('s')})${f}, 0)::numeric(20, 10)::text as "llm_cost_${key}"`,
+    `coalesce(sum(${spanCost('s')})${f}, 0)::numeric(20, 10)::text as "total_cost_${key}"`,
     `coalesce(sum(${recoverable_cost('s')})${priced}, 0)
-        ::numeric(14, 6)::text as "recoverable_cost_${key}"`,
-    `(avg(${spanCost('s')})${priced})::numeric(14, 6)::text as "per_block_cost_${key}"`,
+        ::numeric(20, 10)::text as "recoverable_cost_${key}"`,
+    `(avg(${spanCost('s')})${priced})::numeric(20, 10)::text as "per_block_cost_${key}"`,
     `(avg(${spanDurationMs('s')})${f})::float8 as "per_block_latency_ms_${key}"`,
     `count(*)${priced}::int as "costed_block_count_${key}"`,
     `count(distinct s.trace_id)${priced}::int as "costed_request_count_${key}"`,
@@ -109,7 +109,7 @@ const kpi_columns = (key: MetricsWindow): string => {
 // dollars across requests that priced nothing.
 const kpi_cost_per_request_column = (key: MetricsWindow): string => {
   const floor = key === '1q' ? '' : ` and s.start_time_unix_nano >= ${window_floor_nanos(key)}`;
-  return `(select avg(q.cost)::numeric(14, 6)::text
+  return `(select avg(q.cost)::numeric(20, 10)::text
       from (
         select s.trace_id, sum(${spanCost('s')}) as cost
         from scoped s
@@ -173,9 +173,9 @@ const timeseries_sql = ({
         'start_at', (
           g.start_local + make_interval(secs => (b - 1) * g.bucket_seconds)
         ) at time zone ${time_zone},
-        'llm_cost', coalesce(p.llm_cost, 0)::numeric(14, 6)::text,
-        'harness_cost', coalesce(p.harness_cost, 0)::numeric(14, 6)::text,
-        'total_cost', coalesce(p.total_cost, 0)::numeric(14, 6)::text,
+        'llm_cost', coalesce(p.llm_cost, 0)::numeric(20, 10)::text,
+        'harness_cost', coalesce(p.harness_cost, 0)::numeric(20, 10)::text,
+        'total_cost', coalesce(p.total_cost, 0)::numeric(20, 10)::text,
         'request_count', coalesce(p.request_count, 0),
         'block_count', coalesce(p.block_count, 0),
         'tokens', coalesce(p.tokens, 0)
@@ -188,11 +188,11 @@ const timeseries_sql = ({
 
 const block_aggregates = (): string =>
   [
-    `coalesce(sum(${spanCost('s')}), 0)::numeric(14, 6)::text as cost`,
-    `coalesce(sum(${spanTokenCost('s')}), 0)::numeric(14, 6)::text as llm_cost`,
-    `coalesce(sum(${spanServerCost('s')}), 0)::numeric(14, 6)::text as harness_cost`,
+    `coalesce(sum(${spanCost('s')}), 0)::numeric(20, 10)::text as cost`,
+    `coalesce(sum(${spanTokenCost('s')}), 0)::numeric(20, 10)::text as llm_cost`,
+    `coalesce(sum(${spanServerCost('s')}), 0)::numeric(20, 10)::text as harness_cost`,
     `coalesce(sum(${recoverable_cost('s')}) filter (where ${spanCost('s')} is not null), 0)
-      ::numeric(14, 6)::text as recoverable_cost`,
+      ::numeric(20, 10)::text as recoverable_cost`,
     `count(*)::int as block_count`,
     `coalesce(sum(${spanTotalTokens('s')}), 0)::float8 as token_count`,
     `((count(*) filter (where ${spanErrorCount('s')} > 0))::float8
@@ -314,7 +314,7 @@ export const metrics_repo = {
         group by a.agent_id, s.name, ${sql.raw(spanModel('s'))}
       )
       select
-        coalesce((select sum(cost::numeric) from grouped), 0)::numeric(14, 6)::text as total_cost,
+        coalesce((select sum(cost::numeric) from grouped), 0)::numeric(20, 10)::text as total_cost,
         coalesce((
           select json_agg(json_build_object(
             'agent_id', g.agent_id,
@@ -361,7 +361,7 @@ export const metrics_repo = {
       project_totals as (
         select
           count(distinct s.trace_id)::int as request_count,
-          coalesce(sum(${sql.raw(spanCost('s'))}), 0)::numeric(14, 6)::text as total_cost
+          coalesce(sum(${sql.raw(spanCost('s'))}), 0)::numeric(20, 10)::text as total_cost
         from scoped s
       ),
       agent_summary as (

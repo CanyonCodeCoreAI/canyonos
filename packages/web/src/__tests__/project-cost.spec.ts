@@ -437,13 +437,16 @@ const REQUEST_TRACE: RequestTrace = {
   started_at: '2026-07-29T10:00:00.000Z',
   finished_at: '2026-07-29T10:00:33.000Z',
   duration_ms: 33_000,
-  total_cost: '2.046000',
-  median_cost: '0.012050',
-  harness_cost: '0.046000',
-  median_harness_cost: '0.002050',
+  total_cost: '2.0460000000',
+  median_cost: '0.0120500000',
+  cost_vs_median: 169.79,
+  harness_cost: '0.0460000000',
+  median_harness_cost: '0.0020500000',
+  harness_cost_vs_median: 22.44,
   error_count: 4,
   token_count: 385_100,
   median_token_count: 192_550,
+  token_count_vs_median: 2,
   blocks: [
     {
       future_id: 'trace-ingest',
@@ -2452,7 +2455,12 @@ test.describe('query trace drawer', () => {
   test('a query just above the median reads as a fraction, not a rounded 1×', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page, {
-      trace: { ...REQUEST_TRACE, total_cost: '1.400000', median_cost: '1.000000' },
+      trace: {
+        ...REQUEST_TRACE,
+        total_cost: '1.4000000000',
+        median_cost: '1.0000000000',
+        cost_vs_median: 1.4,
+      },
     });
     await openTrace(page);
 
@@ -2468,6 +2476,9 @@ test.describe('query trace drawer', () => {
         median_cost: null,
         median_token_count: null,
         median_harness_cost: null,
+        cost_vs_median: null,
+        token_count_vs_median: null,
+        harness_cost_vs_median: null,
       },
     });
     await openTrace(page);

@@ -22,8 +22,17 @@ const WINDOW_LABELS: Record<MetricsWindow, string> = {
   '1q': 'last 90 days',
 };
 
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+// A fleet of a few hundred real calls spends well under a cent, where two decimals read as $0.00.
+const USD_SUB_CENT = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumSignificantDigits: 3,
+});
+
 function format_money(amount: number): string {
-  return `$${Math.round(amount).toLocaleString('en-US')}`;
+  if (amount !== 0 && Math.abs(amount) < 0.01) return USD_SUB_CENT.format(amount);
+  return USD.format(amount);
 }
 
 function format_compact(value: number): string {

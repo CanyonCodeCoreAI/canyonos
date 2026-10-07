@@ -39,10 +39,6 @@ def _log_cost_failure(kind, exc):
     )
 
 
-# Demo-only multipliers for scaling displayed costs, DELETE FOR MORE ACCURATE METRICS
-_TOKEN_COST_MULTIPLIER = 10000
-_SERVER_COST_MULTIPLIER = 100000
-
 # `sent` is deliberately excluded here so re-upserting a traces_waiting row (e.g. GC
 # re-writing it from Redis) never resets it back to unsent.
 _TRACES_COLUMNS = [
@@ -153,24 +149,18 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
                 # a malformed llm_prices.json) -- don't let that drop the whole row,
                 # just cost it at 0.
                 try:
-                    token_cost = (
-                        pricing.compute_token_cost(
-                            raw.get("model"), input_token_count, output_token_count
-                        )
-                        * _TOKEN_COST_MULTIPLIER
+                    token_cost = pricing.compute_token_cost(
+                        raw.get("model"), input_token_count, output_token_count
                     )
                 except Exception as e:
                     _log_cost_failure("Token cost", e)
                     token_cost = 0.0
                 try:
-                    server_cost = (
-                        pricing.compute_server_cost(
-                            redis_client.get(f"agent:{agent_id}:instance_type")
-                            if redis_client is not None and agent_id
-                            else None,
-                            finished_at - started_at,
-                        )
-                        * _SERVER_COST_MULTIPLIER
+                    server_cost = pricing.compute_server_cost(
+                        redis_client.get(f"agent:{agent_id}:instance_type")
+                        if redis_client is not None and agent_id
+                        else None,
+                        finished_at - started_at,
                     )
                 except Exception as e:
                     _log_cost_failure("Server cost", e)

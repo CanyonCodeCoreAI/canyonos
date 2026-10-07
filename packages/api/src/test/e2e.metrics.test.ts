@@ -114,9 +114,9 @@ async function seed_span_fixture(project_id: string): Promise<void> {
     execution_time_ms: 1000,
     input_token_count: 60,
     output_token_count: 40,
-    token_cost: '0.000100',
-    server_cost: '0.000010',
-    total_cost: '0.000110',
+    token_cost: '0.0001000000',
+    server_cost: '0.0000100000',
+    total_cost: '0.0001100000',
   });
   await insert_span(project_id, {
     span_id: 'kpi-b-recent-2',
@@ -125,9 +125,9 @@ async function seed_span_fixture(project_id: string): Promise<void> {
     execution_time_ms: 3000,
     input_token_count: 120,
     output_token_count: 80,
-    token_cost: '0.000200',
-    server_cost: '0.000020',
-    total_cost: '0.000220',
+    token_cost: '0.0002000000',
+    server_cost: '0.0000200000',
+    total_cost: '0.0002200000',
     errors: 1,
   });
   await insert_span(project_id, {
@@ -137,9 +137,9 @@ async function seed_span_fixture(project_id: string): Promise<void> {
     execution_time_ms: 2000,
     input_token_count: 40,
     output_token_count: 10,
-    token_cost: '0.000050',
-    server_cost: '0.000005',
-    total_cost: '0.000055',
+    token_cost: '0.0000500000',
+    server_cost: '0.0000050000',
+    total_cost: '0.0000550000',
     errors: 2,
     failed: true,
   });
@@ -156,9 +156,9 @@ async function seed_span_fixture(project_id: string): Promise<void> {
     execution_time_ms: 500,
     input_token_count: 30,
     output_token_count: 20,
-    token_cost: '0.000050',
-    server_cost: '0.000005',
-    total_cost: '0.000055',
+    token_cost: '0.0000500000',
+    server_cost: '0.0000050000',
+    total_cost: '0.0000550000',
   });
   await insert_span(project_id, {
     span_id: 'kpi-b-free-1',
@@ -175,9 +175,9 @@ async function seed_span_fixture(project_id: string): Promise<void> {
     execution_time_ms: 4000,
     input_token_count: 400,
     output_token_count: 100,
-    token_cost: '0.000500',
-    server_cost: '0.000050',
-    total_cost: '0.000550',
+    token_cost: '0.0005000000',
+    server_cost: '0.0000500000',
+    total_cost: '0.0005500000',
   });
 }
 
@@ -201,31 +201,31 @@ describe('GET /projects/:project_id/metrics/kpis', () => {
       failed_block_count: 0,
       tokens: 300,
       per_block_tokens: 150,
-      harness_cost: '0.000030',
-      llm_cost: '0.000300',
-      total_cost: '0.000330',
+      harness_cost: '0.0000300000',
+      llm_cost: '0.0003000000',
+      total_cost: '0.0003300000',
       // Only kpi-b-recent-2 retried: it ran twice for one result, so half its 0.000220 is waste.
-      recoverable_cost: '0.000110',
-      per_block_cost: '0.000165',
+      recoverable_cost: '0.0001100000',
+      per_block_cost: '0.0001650000',
       per_block_latency_ms: 2000,
       costed_block_count: 2,
       costed_request_count: 1,
-      per_costed_request_cost: '0.000330',
+      per_costed_request_cost: '0.0003300000',
     });
 
     expect(windows['7d'].request_count).toBe(2);
     expect(windows['7d'].block_count).toBe(3);
     expect(windows['7d'].tokens).toBe(350);
     expect(windows['7d'].per_block_tokens).toBeCloseTo(350 / 3, 6);
-    expect(windows['7d'].llm_cost).toBe('0.000350');
-    expect(windows['7d'].harness_cost).toBe('0.000035');
-    expect(windows['7d'].total_cost).toBe('0.000385');
-    expect(windows['7d'].per_block_cost).toBe('0.000128');
+    expect(windows['7d'].llm_cost).toBe('0.0003500000');
+    expect(windows['7d'].harness_cost).toBe('0.0000350000');
+    expect(windows['7d'].total_cost).toBe('0.0003850000');
+    expect(windows['7d'].per_block_cost).toBe('0.0001283333');
     expect(windows['7d'].per_block_latency_ms).toBe(2000);
     // kpi-b-failed-1 failed with errors=2: it is counted once, at its full 0.000055, on top of the
     // 0.000110 retry waste already in the 1d window.
     expect(windows['7d'].failed_block_count).toBe(1);
-    expect(windows['7d'].recoverable_cost).toBe('0.000165');
+    expect(windows['7d'].recoverable_cost).toBe('0.0001650000');
 
     expect(windows['30d'].request_count).toBe(4);
     expect(windows['30d'].block_count).toBe(6);
@@ -233,12 +233,12 @@ describe('GET /projects/:project_id/metrics/kpis', () => {
     expect(windows['30d'].costed_request_count).toBe(3);
     expect(windows['30d'].tokens).toBe(400);
     expect(windows['30d'].per_block_tokens).toBeCloseTo(400 / 6, 6);
-    expect(windows['30d'].total_cost).toBe('0.000440');
-    expect(windows['30d'].per_block_cost).toBe('0.000110');
+    expect(windows['30d'].total_cost).toBe('0.0004400000');
+    expect(windows['30d'].per_block_cost).toBe('0.0001100000');
     // Averaged over the three costed traces (0.000330, 0.000055, 0.000055), not over all four.
-    expect(windows['30d'].per_costed_request_cost).toBe('0.000147');
+    expect(windows['30d'].per_costed_request_cost).toBe('0.0001466667');
     expect(windows['30d'].per_block_latency_ms).toBe(1250);
-    expect(windows['30d'].recoverable_cost).toBe('0.000165');
+    expect(windows['30d'].recoverable_cost).toBe('0.0001650000');
 
     expect(windows['1q'].request_count).toBe(5);
     expect(windows['1q'].block_count).toBe(7);
@@ -247,12 +247,12 @@ describe('GET /projects/:project_id/metrics/kpis', () => {
     expect(windows['1q'].failed_block_count).toBe(1);
     expect(windows['1q'].tokens).toBe(900);
     expect(windows['1q'].per_block_tokens).toBeCloseTo(900 / 7, 6);
-    expect(windows['1q'].harness_cost).toBe('0.000090');
-    expect(windows['1q'].llm_cost).toBe('0.000900');
-    expect(windows['1q'].total_cost).toBe('0.000990');
+    expect(windows['1q'].harness_cost).toBe('0.0000900000');
+    expect(windows['1q'].llm_cost).toBe('0.0009000000');
+    expect(windows['1q'].total_cost).toBe('0.0009900000');
     // The whole 0.000990 spread over the four costed traces, not over all five.
-    expect(windows['1q'].per_costed_request_cost).toBe('0.000248');
-    expect(windows['1q'].recoverable_cost).toBe('0.000165');
+    expect(windows['1q'].per_costed_request_cost).toBe('0.0002475000');
+    expect(windows['1q'].recoverable_cost).toBe('0.0001650000');
     expect(windows['1q'].per_block_latency_ms).toBeCloseTo(11500 / 7, 6);
   });
 
@@ -268,10 +268,10 @@ describe('GET /projects/:project_id/metrics/kpis', () => {
       failed_block_count: 0,
       tokens: 0,
       per_block_tokens: null,
-      harness_cost: '0.000000',
-      llm_cost: '0.000000',
-      total_cost: '0.000000',
-      recoverable_cost: '0.000000',
+      harness_cost: '0.0000000000',
+      llm_cost: '0.0000000000',
+      total_cost: '0.0000000000',
+      recoverable_cost: '0.0000000000',
       per_block_cost: null,
       per_block_latency_ms: null,
       costed_block_count: 0,
@@ -397,9 +397,9 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
       execution_time_ms: 1000,
       input_token_count: 60,
       output_token_count: 40,
-      token_cost: '0.000100',
-      server_cost: '0.000010',
-      total_cost: '0.000110',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000100000',
+      total_cost: '0.0001100000',
     });
     await insert_span(series_project, {
       span_id: 'ser-b-2',
@@ -408,9 +408,9 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
       execution_time_ms: 3000,
       input_token_count: 120,
       output_token_count: 80,
-      token_cost: '0.000200',
-      server_cost: '0.000020',
-      total_cost: '0.000220',
+      token_cost: '0.0002000000',
+      server_cost: '0.0000200000',
+      total_cost: '0.0002200000',
     });
     await insert_span(series_project, {
       span_id: 'ser-b-3',
@@ -419,9 +419,9 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
       execution_time_ms: 2000,
       input_token_count: 40,
       output_token_count: 10,
-      token_cost: '0.000050',
-      server_cost: '0.000005',
-      total_cost: '0.000055',
+      token_cost: '0.0000500000',
+      server_cost: '0.0000050000',
+      total_cost: '0.0000550000',
     });
 
     // Two calendar days apart on purpose: one block inside today, one older than any day-grid the
@@ -436,9 +436,9 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
       execution_time_ms: 1000,
       input_token_count: 60,
       output_token_count: 40,
-      token_cost: '0.000100',
-      server_cost: '0.000010',
-      total_cost: '0.000110',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000100000',
+      total_cost: '0.0001100000',
     });
     await insert_span(calendar_project, {
       span_id: 'cal-b-old',
@@ -447,9 +447,9 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
       execution_time_ms: 1000,
       input_token_count: 10,
       output_token_count: 10,
-      token_cost: '0.000050',
-      server_cost: '0.000005',
-      total_cost: '0.000055',
+      token_cost: '0.0000500000',
+      server_cost: '0.0000050000',
+      total_cost: '0.0000550000',
     });
   });
 
@@ -488,17 +488,17 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
       request_count: 1,
       block_count: 1,
       tokens: 50,
-      llm_cost: '0.000050',
-      harness_cost: '0.000005',
-      total_cost: '0.000055',
+      llm_cost: '0.0000500000',
+      harness_cost: '0.0000050000',
+      total_cost: '0.0000550000',
     });
     expect(busy[1]!.point).toMatchObject({
       request_count: 1,
       block_count: 2,
       tokens: 300,
-      llm_cost: '0.000300',
-      harness_cost: '0.000030',
-      total_cost: '0.000330',
+      llm_cost: '0.0003000000',
+      harness_cost: '0.0000300000',
+      total_cost: '0.0003300000',
     });
 
     const empty = series.points.filter((point) => point.block_count === 0);
@@ -506,9 +506,9 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
     expect(empty[0]).toMatchObject({
       request_count: 0,
       tokens: 0,
-      llm_cost: '0.000000',
-      harness_cost: '0.000000',
-      total_cost: '0.000000',
+      llm_cost: '0.0000000000',
+      harness_cost: '0.0000000000',
+      total_cost: '0.0000000000',
     });
 
     const starts = series.points.map((point) => Date.parse(point.start_at));
@@ -572,7 +572,7 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
     expect(week_points.at(-1)).toMatchObject({
       request_count: 1,
       block_count: 1,
-      total_cost: '0.000110',
+      total_cost: '0.0001100000',
     });
     // Seven midnight-aligned days reach back six days, so the 8-day-old block is outside them.
     expect(week_points.reduce((sum, point) => sum + point.block_count, 0)).toBe(1);
@@ -624,7 +624,7 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
     });
     expect(res.error).toBeNull();
     expect(res.data!.points).toHaveLength(5);
-    expect(res.data!.points.every((point) => point.total_cost === '0.000000')).toBe(true);
+    expect(res.data!.points.every((point) => point.total_cost === '0.0000000000')).toBe(true);
     expect(res.data!.points.every((point) => point.request_count === 0)).toBe(true);
   });
 
@@ -700,9 +700,9 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
       execution_time_ms: 1000,
       input_token_count: 60,
       output_token_count: 40,
-      token_cost: '0.000100',
-      server_cost: '0.000010',
-      total_cost: '0.000110',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000100000',
+      total_cost: '0.0001100000',
       agent_id: 'blk-agent-model',
       model: 'claude-opus-4',
       cache_read_tokens: 60,
@@ -714,9 +714,9 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
       execution_time_ms: 3000,
       input_token_count: 120,
       output_token_count: 80,
-      token_cost: '0.000200',
-      server_cost: '0.000020',
-      total_cost: '0.000220',
+      token_cost: '0.0002000000',
+      server_cost: '0.0000200000',
+      total_cost: '0.0002200000',
       errors: 1,
       agent_id: 'blk-agent-model',
       model: 'claude-opus-4',
@@ -731,9 +731,9 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
       execution_time_ms: 2000,
       input_token_count: 0,
       output_token_count: 0,
-      token_cost: '0.000000',
-      server_cost: '0.000500',
-      total_cost: '0.000500',
+      token_cost: '0.0000000000',
+      server_cost: '0.0005000000',
+      total_cost: '0.0005000000',
       errors: 3,
       failed: true,
       agent_id: 'blk-agent-harness',
@@ -748,7 +748,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     expect(res.error).toBeNull();
     const { total_cost, blocks } = res.data!;
 
-    expect(total_cost).toBe('0.000830');
+    expect(total_cost).toBe('0.0008300000');
     expect(blocks.map((block) => block.agent_id)).toEqual(['blk-agent-harness', 'blk-agent-model']);
 
     const [harness, model] = blocks;
@@ -757,11 +757,11 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
       // No display name reported for this agent, so the label falls back to its id.
       label: 'blk-agent-harness',
       kind: 'harness',
-      cost: '0.000500',
-      llm_cost: '0.000000',
-      harness_cost: '0.000500',
+      cost: '0.0005000000',
+      llm_cost: '0.0000000000',
+      harness_cost: '0.0005000000',
       // Failed once, not failed-plus-retried twice: 0.000500, not 0.000500 + 0.000375.
-      recoverable_cost: '0.000500',
+      recoverable_cost: '0.0005000000',
       block_count: 1,
       token_count: 0,
       retry_rate: 1,
@@ -774,10 +774,10 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
       model: 'claude-opus-4',
       label: 'blk-agent-model',
       kind: 'model',
-      cost: '0.000330',
-      llm_cost: '0.000300',
-      harness_cost: '0.000030',
-      recoverable_cost: '0.000110',
+      cost: '0.0003300000',
+      llm_cost: '0.0003000000',
+      harness_cost: '0.0000300000',
+      recoverable_cost: '0.0001100000',
       block_count: 2,
       token_count: 300,
       retry_rate: 0.5,
@@ -795,7 +795,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     });
     expect(res.error).toBeNull();
     expect(res.data!.blocks.map((block) => block.label)).toEqual(['blk-agent-model']);
-    expect(res.data!.total_cost).toBe('0.000330');
+    expect(res.data!.total_cost).toBe('0.0003300000');
   });
 
   test('a project with no telemetry spans returns no blocks and zero cost', async () => {
@@ -808,7 +808,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     expect(res.data).toEqual({
       project_id: empty.project_id,
       time_window: '30d',
-      total_cost: '0.000000',
+      total_cost: '0.0000000000',
       blocks: [],
     });
   });
@@ -827,8 +827,8 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
       label: 'unattributed',
       kind: 'harness',
       block_count: 7,
-      cost: '0.000990',
-      recoverable_cost: '0.000165',
+      cost: '0.0009900000',
+      recoverable_cost: '0.0001650000',
     });
   });
 
@@ -879,9 +879,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       execution_time_ms: 1000,
       input_token_count: 60,
       output_token_count: 40,
-      token_cost: '0.000300',
-      server_cost: '0.000100',
-      total_cost: '0.000400',
+      token_cost: '0.0003000000',
+      server_cost: '0.0001000000',
+      total_cost: '0.0004000000',
       agent_id: 'detail-agent',
       model: 'claude-haiku-4',
       cache_read_tokens: 60,
@@ -893,9 +893,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       execution_time_ms: 2000,
       input_token_count: 30,
       output_token_count: 20,
-      token_cost: '0.000100',
-      server_cost: '0.000000',
-      total_cost: '0.000100',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000000000',
+      total_cost: '0.0001000000',
       errors: 1,
       agent_id: 'detail-agent',
       model: 'claude-sonnet-4',
@@ -908,9 +908,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       execution_time_ms: 3000,
       input_token_count: 150,
       output_token_count: 50,
-      token_cost: '0.001000',
-      server_cost: '0.000500',
-      total_cost: '0.001500',
+      token_cost: '0.0010000000',
+      server_cost: '0.0005000000',
+      total_cost: '0.0015000000',
       errors: 2,
       failed: true,
       agent_id: 'detail-agent',
@@ -923,9 +923,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       execution_time_ms: 500,
       input_token_count: 0,
       output_token_count: 0,
-      token_cost: '0.000000',
-      server_cost: '0.001000',
-      total_cost: '0.001000',
+      token_cost: '0.0000000000',
+      server_cost: '0.0010000000',
+      total_cost: '0.0010000000',
       agent_id: 'detail-other',
     });
     await insert_span(details_project, {
@@ -935,9 +935,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       execution_time_ms: 4000,
       input_token_count: 900,
       output_token_count: 100,
-      token_cost: '0.008000',
-      server_cost: '0.001000',
-      total_cost: '0.009000',
+      token_cost: '0.0080000000',
+      server_cost: '0.0010000000',
+      total_cost: '0.0090000000',
       agent_id: 'detail-old-agent',
       model: 'claude-opus-4',
     });
@@ -959,16 +959,16 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       project: {
         // A request is its spans, so the three in-window traces count and detail-old does not.
         request_count: 3,
-        total_cost: '0.003000',
+        total_cost: '0.0030000000',
       },
       agent: {
         request_count: 2,
         block_count: 3,
         token_count: 350,
-        cost: '0.002000',
-        llm_cost: '0.001400',
-        harness_cost: '0.000600',
-        recoverable_cost: '0.001550',
+        cost: '0.0020000000',
+        llm_cost: '0.0014000000',
+        harness_cost: '0.0006000000',
+        recoverable_cost: '0.0015500000',
       },
     });
     expect(details.agent.retry_rate).toBeCloseTo(2 / 3, 10);
@@ -1083,9 +1083,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       execution_time_ms: 1500,
       input_token_count: 10,
       output_token_count: 10,
-      token_cost: '0.000100',
-      server_cost: '0.000000',
-      total_cost: '0.000100',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000000000',
+      total_cost: '0.0001000000',
       agent_id: 'partial-agent',
       model: 'claude-haiku-4',
     });
@@ -1096,9 +1096,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       execution_time_ms: 4000,
       input_token_count: 20,
       output_token_count: 10,
-      token_cost: '0.000200',
-      server_cost: '0.000000',
-      total_cost: '0.000200',
+      token_cost: '0.0002000000',
+      server_cost: '0.0000000000',
+      total_cost: '0.0002000000',
       agent_id: 'partial-agent',
       model: 'claude-haiku-4',
     });
@@ -1166,9 +1166,9 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
         execution_time_ms: 200,
         input_token_count: 30,
         output_token_count: 20,
-        token_cost: '0.000100',
-        server_cost: '0.000020',
-        total_cost: '0.000120',
+        token_cost: '0.0001000000',
+        server_cost: '0.0000200000',
+        total_cost: '0.0001200000',
         agent_id,
         model: 'claude-opus-4',
       });
@@ -1185,7 +1185,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
     expect(drawer.data!.label).toBe('DrawerAgent');
     expect(drawer.data!.agent.replica_count).toBe(2);
     expect(drawer.data!.agent.block_count).toBe(2);
-    expect(drawer.data!.agent.cost).toBe('0.000240');
+    expect(drawer.data!.agent.cost).toBe('0.0002400000');
 
     // The block breakdown advertises that same address, so clicking it opens exactly this drawer.
     const blocks = await api.projects[rep.project_id]!.metrics.blocks.get({
@@ -1223,9 +1223,9 @@ describe('stored runtime pricing', () => {
       execution_time_ms: 3600000,
       input_token_count: 600,
       output_token_count: 400,
-      token_cost: '0.004600',
-      server_cost: '0.000000',
-      total_cost: '0.004600',
+      token_cost: '0.0046000000',
+      server_cost: '0.0000000000',
+      total_cost: '0.0046000000',
       agent_id: 'price-agent-stored',
       model: 'claude-opus-4',
     });
@@ -1238,9 +1238,9 @@ describe('stored runtime pricing', () => {
       execution_time_ms: 1800000,
       input_token_count: 300000,
       output_token_count: 100000,
-      token_cost: '0.000000',
-      server_cost: '0.000000',
-      total_cost: '0.000000',
+      token_cost: '0.0000000000',
+      server_cost: '0.0000000000',
+      total_cost: '0.0000000000',
       agent_id: 'price-agent-zero',
       model: 'claude-opus-4',
     });
@@ -1255,16 +1255,16 @@ describe('stored runtime pricing', () => {
     const by_agent = new Map(res.data!.blocks.map((block) => [block.agent_id, block]));
 
     expect(by_agent.get('price-agent-stored')).toMatchObject({
-      llm_cost: '0.004600',
-      harness_cost: '0.000000',
-      cost: '0.004600',
+      llm_cost: '0.0046000000',
+      harness_cost: '0.0000000000',
+      cost: '0.0046000000',
     });
     expect(by_agent.get('price-agent-zero')).toMatchObject({
-      llm_cost: '0.000000',
-      harness_cost: '0.000000',
-      cost: '0.000000',
+      llm_cost: '0.0000000000',
+      harness_cost: '0.0000000000',
+      cost: '0.0000000000',
     });
-    expect(res.data!.total_cost).toBe('0.004600');
+    expect(res.data!.total_cost).toBe('0.0046000000');
   });
 
   test('the KPI, timeseries, and requests surfaces agree on the same dollars', async () => {
@@ -1284,29 +1284,29 @@ describe('stored runtime pricing', () => {
     expect(requests.error).toBeNull();
 
     expect(kpis.data!.windows['1d']).toMatchObject({
-      llm_cost: '0.004600',
-      harness_cost: '0.000000',
-      total_cost: '0.004600',
+      llm_cost: '0.0046000000',
+      harness_cost: '0.0000000000',
+      total_cost: '0.0046000000',
     });
 
     const series_total = series
       .data!.points.reduce((sum, point) => sum + Number(point.total_cost), 0)
-      .toFixed(6);
-    expect(series_total).toBe('0.004600');
+      .toFixed(10);
+    expect(series_total).toBe('0.0046000000');
 
     expect(
       requests.data!.items.find((item) => item.session_id === 'price-stored-session')
     ).toMatchObject({
-      llm_cost: '0.004600',
-      harness_cost: '0.000000',
-      total_cost: '0.004600',
+      llm_cost: '0.0046000000',
+      harness_cost: '0.0000000000',
+      total_cost: '0.0046000000',
     });
     expect(
       requests.data!.items.find((item) => item.session_id === 'price-zero-session')
     ).toMatchObject({
-      llm_cost: '0.000000',
-      harness_cost: '0.000000',
-      total_cost: '0.000000',
+      llm_cost: '0.0000000000',
+      harness_cost: '0.0000000000',
+      total_cost: '0.0000000000',
     });
   });
 });
@@ -1332,9 +1332,9 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
         execution_time_ms: step * 100,
         input_token_count: step * 10,
         output_token_count: 0,
-        token_cost: (step * 0.001).toFixed(6),
-        server_cost: '0.000000',
-        total_cost: (step * 0.001).toFixed(6),
+        token_cost: (step * 0.001).toFixed(10),
+        server_cost: '0.0000000000',
+        total_cost: (step * 0.001).toFixed(10),
         agent_id: 'coh-agent',
         model: 'claude-opus-4',
       });
@@ -1390,9 +1390,9 @@ describe('project scoping at the data boundary', () => {
       execution_time_ms: 100,
       input_token_count: 10,
       output_token_count: 10,
-      token_cost: '0.000100',
-      server_cost: '0.000010',
-      total_cost: '0.000110',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000100000',
+      total_cost: '0.0001100000',
       agent_id: 'orphan-agent',
     });
 
@@ -1415,7 +1415,7 @@ describe('project scoping at the data boundary', () => {
       request_count: 1,
       block_count: 1,
       tokens: 20,
-      total_cost: '0.000110',
+      total_cost: '0.0001100000',
     });
 
     const requests = await api.projects[owner.project_id]!.requests.get({
@@ -1439,9 +1439,9 @@ describe('project scoping at the data boundary', () => {
       execution_time_ms: 100,
       input_token_count: 10,
       output_token_count: 0,
-      token_cost: '0.000100',
-      server_cost: '0.000000',
-      total_cost: '0.000100',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000000000',
+      total_cost: '0.0001000000',
       agent_id: 'shared-agent',
     });
     await insert_span(project_b, {
@@ -1451,15 +1451,15 @@ describe('project scoping at the data boundary', () => {
       execution_time_ms: 900,
       input_token_count: 700,
       output_token_count: 0,
-      token_cost: '0.000700',
-      server_cost: '0.000000',
-      total_cost: '0.000700',
+      token_cost: '0.0007000000',
+      server_cost: '0.0000000000',
+      total_cost: '0.0007000000',
       agent_id: 'shared-agent',
     });
 
     for (const [project_id, cost, tokens, latency] of [
-      [owner.project_id, '0.000100', 10, 100],
-      [project_b, '0.000700', 700, 900],
+      [owner.project_id, '0.0001000000', 10, 100],
+      [project_b, '0.0007000000', 700, 900],
     ] as const) {
       const kpis = await api.projects[project_id]!.metrics.kpis.get({
         $headers: bearer(owner.token),
@@ -1521,10 +1521,10 @@ describe('project scoping at the data boundary', () => {
       request_count: 1,
       block_count: 1,
       tokens: 0,
-      total_cost: '0.000000',
-      llm_cost: '0.000000',
-      harness_cost: '0.000000',
-      recoverable_cost: '0.000000',
+      total_cost: '0.0000000000',
+      llm_cost: '0.0000000000',
+      harness_cost: '0.0000000000',
+      recoverable_cost: '0.0000000000',
       costed_block_count: 0,
       costed_request_count: 0,
       per_block_cost: null,
@@ -1536,13 +1536,13 @@ describe('project scoping at the data boundary', () => {
       $query: { time_window: '30d' },
     });
     expect(blocks.error).toBeNull();
-    expect(blocks.data!.total_cost).toBe('0.000000');
+    expect(blocks.data!.total_cost).toBe('0.0000000000');
     expect(blocks.data!.blocks[0]).toMatchObject({
       agent_id: 'malformed-agent',
       block_count: 1,
       token_count: 0,
-      cost: '0.000000',
-      recoverable_cost: '0.000000',
+      cost: '0.0000000000',
+      recoverable_cost: '0.0000000000',
       retry_rate: 0,
       failed_rate: 0,
       cache_hit_ratio: null,
@@ -1577,9 +1577,9 @@ describe('every executed agent has an address', () => {
         execution_time_ms: 100,
         input_token_count: 5,
         output_token_count: 5,
-        token_cost: '0.000010',
-        server_cost: '0.000001',
-        total_cost: '0.000011',
+        token_cost: '0.0000100000',
+        server_cost: '0.0000010000',
+        total_cost: '0.0000110000',
       });
     }
   });
@@ -1666,9 +1666,9 @@ describe('a request spends the sum of its spans', () => {
       execution_time_ms: 2000,
       input_token_count: 60,
       output_token_count: 40,
-      token_cost: '0.000200',
-      server_cost: '0.000020',
-      total_cost: '0.000220',
+      token_cost: '0.0002000000',
+      server_cost: '0.0000200000',
+      total_cost: '0.0002200000',
       agent_id: 'summed-agent',
       model: 'claude-opus-4',
     });
@@ -1679,9 +1679,9 @@ describe('a request spends the sum of its spans', () => {
       execution_time_ms: 3000,
       input_token_count: 120,
       output_token_count: 80,
-      token_cost: '0.000400',
-      server_cost: '0.000040',
-      total_cost: '0.000440',
+      token_cost: '0.0004000000',
+      server_cost: '0.0000400000',
+      total_cost: '0.0004400000',
       agent_id: 'summed-agent',
       model: 'claude-opus-4',
     });
@@ -1693,9 +1693,9 @@ describe('a request spends the sum of its spans', () => {
     });
     const time_window = res.data!.windows['30d'];
     expect(time_window.block_count).toBe(2);
-    expect(time_window.total_cost).toBe('0.000660');
-    expect(time_window.llm_cost).toBe('0.000600');
-    expect(time_window.harness_cost).toBe('0.000060');
+    expect(time_window.total_cost).toBe('0.0006600000');
+    expect(time_window.llm_cost).toBe('0.0006000000');
+    expect(time_window.harness_cost).toBe('0.0000600000');
     expect(time_window.tokens).toBe(300);
   });
 
@@ -1704,7 +1704,7 @@ describe('a request spends the sum of its spans', () => {
       $headers: bearer(once_token),
       $query: { time_window: '30d' },
     });
-    expect(res.data!.total_cost).toBe('0.000660');
+    expect(res.data!.total_cost).toBe('0.0006600000');
     expect(res.data!.blocks).toHaveLength(1);
     expect(res.data!.blocks[0]!.agent_id).toBe('summed-agent');
     expect(res.data!.blocks[0]!.block_count).toBe(2);
@@ -1718,7 +1718,7 @@ describe('a request spends the sum of its spans', () => {
     });
     const request = res.data!.items[0]!;
     expect(request.block_count).toBe(2);
-    expect(request.total_cost).toBe('0.000660');
+    expect(request.total_cost).toBe('0.0006600000');
     expect(request.token_count).toBe(300);
   });
 
@@ -1731,13 +1731,13 @@ describe('a request spends the sum of its spans', () => {
       execution_time_ms: 1000,
       input_token_count: 10,
       output_token_count: 10,
-      token_cost: '0.000100',
-      server_cost: '0.000010',
-      total_cost: '0.000110',
+      token_cost: '0.0001000000',
+      server_cost: '0.0000100000',
+      total_cost: '0.0001100000',
     });
 
     const res = await api.projects[solo_project]!.metrics.kpis.get({ $headers: bearer(token) });
     expect(res.data!.windows['30d'].block_count).toBe(1);
-    expect(res.data!.windows['30d'].total_cost).toBe('0.000110');
+    expect(res.data!.windows['30d'].total_cost).toBe('0.0001100000');
   });
 });

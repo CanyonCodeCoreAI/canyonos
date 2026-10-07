@@ -83,6 +83,7 @@ void _requests_contract;
 function _trace_contract(trace: RequestTrace) {
   const block = trace.blocks[0];
   void `${trace.status} ${trace.duration_ms} ${trace.total_cost} ${trace.median_cost}`;
+  void `${trace.cost_vs_median} ${trace.harness_cost_vs_median} ${trace.token_count_vs_median}`;
   void `${block?.label} ${block?.kind} ${block?.started_offset_ms} ${block?.execution_time_ms}`;
   void `${block?.total_cost} ${block?.failed}`;
 }

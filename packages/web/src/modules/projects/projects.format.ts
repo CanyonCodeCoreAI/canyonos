@@ -2,12 +2,15 @@ const MISSING = '—';
 
 const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 // Per-query and per-block costs live well below a cent, where two decimals would render every
-// figure as $0.00.
+// figure as $0.00. Six fraction digits carry anything down to $0.0001 ($0.001235); below that the
+// significant-digit cap takes over so a figure never collapses to a string of zeros ($0.0000533).
 const USD_SUB_CENT = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
   minimumFractionDigits: 4,
   maximumFractionDigits: 6,
+  maximumSignificantDigits: 3,
+  roundingPriority: 'morePrecision',
 });
 const USD_COMPACT = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -28,6 +31,8 @@ const USD_QUERY = new Intl.NumberFormat('en-US', {
 const CENTS = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 3,
+  maximumSignificantDigits: 3,
+  roundingPriority: 'morePrecision',
 });
 const COUNT = new Intl.NumberFormat('en-US');
 const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
@@ -51,7 +56,7 @@ const DATE_TIME = new Intl.DateTimeFormat('en-US', {
 });
 
 /**
- * Costs arrive as fixed 6-decimal strings because the API sums them in exact `numeric`. Parsing is
+ * Costs arrive as fixed 10-decimal strings because the API sums them in exact `numeric`. Parsing is
  * for rendering and chart geometry only — every total, split and average on this screen is read
  * straight off the payload rather than re-derived from these floats.
  */

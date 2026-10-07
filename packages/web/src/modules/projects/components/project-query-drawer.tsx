@@ -186,41 +186,22 @@ function TraceLoading() {
   );
 }
 
-/**
- * How this query compares to a typical one on the project. A median is null when the project billed
- * nothing over the trailing 30 days — the comparison is missing. A zero median is a real reference
- * (a billed project can spend $0 on harness) but supports no multiple, so only the ratio is absent.
- */
-function comparison(
-  value: number,
-  median: number | null,
-  format: (value: number) => string
-): { readonly ratio: number | null; readonly hint: string } | null {
-  if (median === null) return null;
-  if (median <= 0) return { ratio: null, hint: `median ${format(median)}` };
-  return {
-    ratio: value / median,
-    hint: `${formatMultiple(value / median)} · median ${format(median)}`,
-  };
-}
-
 const NO_MEDIAN = 'No median in the last 30 days';
+
+/**
+ * How this query compares to a typical one on the project. The API leaves the median null when the
+ * project billed nothing over the trailing 30 days, and the multiple null when there is no median or
+ * it is zero — a real reference that supports no multiple.
+ */
+function comparisonHint(median: string | null, multiple: number | null): string {
+  if (median === null) return NO_MEDIAN;
+  if (multiple === null) return `median ${median}`;
+  return `${formatMultiple(multiple)} · median ${median}`;
+}
 
 /** The three figures a reader opens a query to judge, each against the project's median. */
 function QueryRibbon({ trace }: { readonly trace: RequestTrace }) {
-  const cost = comparison(
-    parseMoney(trace.total_cost),
-    trace.median_cost === null ? null : parseMoney(trace.median_cost),
-    (value) => formatQueryCost(value.toFixed(6))
-  );
-  const tokens = comparison(trace.token_count, trace.median_token_count, (value) =>
-    formatTokens(value)
-  );
-  const harness = comparison(
-    parseMoney(trace.harness_cost),
-    trace.median_harness_cost === null ? null : parseMoney(trace.median_harness_cost),
-    (value) => formatQueryCost(value.toFixed(6))
-  );
+  const expensive = trace.cost_vs_median !== null && trace.cost_vs_median >= EXPENSIVE_VS_MEDIAN;
 
   return (
     <div
@@ -232,26 +213,31 @@ function QueryRibbon({ trace }: { readonly trace: RequestTrace }) {
         label="Cost"
         value={formatQueryCost(trace.total_cost)}
         // Called out only when it is the reason the reader opened this query.
-        color={
-          cost !== null && cost.ratio !== null && cost.ratio >= EXPENSIVE_VS_MEDIAN
-            ? 'var(--destructive)'
-            : undefined
-        }
-        hint={cost?.hint ?? NO_MEDIAN}
+        color={expensive ? 'var(--destructive)' : undefined}
+        hint={comparisonHint(
+          trace.median_cost === null ? null : formatQueryCost(trace.median_cost),
+          trace.cost_vs_median
+        )}
       />
       <RibbonCell
         test_id={`${TEST_ID}-ribbon-tokens`}
         label="Tokens"
         value={formatTokens(trace.token_count)}
         color={COST_SPLIT.llm_cost.color}
-        hint={tokens?.hint ?? NO_MEDIAN}
+        hint={comparisonHint(
+          trace.median_token_count === null ? null : formatTokens(trace.median_token_count),
+          trace.token_count_vs_median
+        )}
       />
       <RibbonCell
         test_id={`${TEST_ID}-ribbon-harness`}
         label="Harness & compute"
         value={formatQueryCost(trace.harness_cost)}
         color={COST_SPLIT.harness_cost.color}
-        hint={harness?.hint ?? NO_MEDIAN}
+        hint={comparisonHint(
+          trace.median_harness_cost === null ? null : formatQueryCost(trace.median_harness_cost),
+          trace.harness_cost_vs_median
+        )}
       />
     </div>
   );

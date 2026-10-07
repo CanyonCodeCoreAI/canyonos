@@ -9,6 +9,7 @@ import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { formatMoneyValue } from '@/modules/projects/projects.format';
 
 const CALL_LIMIT = 200;
 
@@ -17,7 +18,7 @@ const formatDuration = (ms: number | null) =>
 
 const formatTokens = (value: number | null) => (value === null ? '—' : value.toLocaleString());
 
-const formatCost = (value: number | null) => (value === null ? '—' : `$${value.toFixed(4)}`);
+const formatCost = (value: number | null) => (value === null ? '—' : formatMoneyValue(value));
 
 interface LlmCallListProps {
   readonly project_id: string;

@@ -43,7 +43,7 @@ describe('build_overview', () => {
       '30d'
     );
 
-    expect(kpi(overview, 'total_spend')).toBe('$2');
+    expect(kpi(overview, 'total_spend')).toBe('$2.00');
     expect(kpi(overview, 'requests')).toBe('3');
     expect(kpi(overview, 'tokens')).toBe('1.5M');
     expect(kpi(overview, 'avg_latency')).toBe('2.0 s');
@@ -96,7 +96,7 @@ describe('build_overview', () => {
     const overview = build_overview([], '7d');
 
     expect(overview.projects).toEqual([]);
-    expect(kpi(overview, 'total_spend')).toBe('$0');
+    expect(kpi(overview, 'total_spend')).toBe('$0.00');
     expect(kpi(overview, 'active_projects')).toBe('0');
     expect(kpi(overview, 'requests')).toBe('0');
     expect(kpi(overview, 'tokens')).toBe('0');
@@ -118,7 +118,17 @@ describe('build_overview', () => {
   test('names the window in every KPI sub-label', () => {
     const overview = build_overview([row({ project_id: 'only' })], '1q');
 
-    expect(kpi(overview, 'total_spend')).toBe('$0');
+    expect(kpi(overview, 'total_spend')).toBe('$0.00');
     expect(overview.kpis.find((entry) => entry.id === 'requests')?.sub_label).toBe('last 90 days');
+  });
+
+  test('keeps spend below a cent readable instead of rounding it away', () => {
+    const cents = build_overview([row({ project_id: 'a', total_cost: '0.1340000000' })], '7d');
+    const sub_cent = build_overview([row({ project_id: 'a', total_cost: '0.0004500000' })], '7d');
+    const thousands = build_overview([row({ project_id: 'a', total_cost: '1340.5' })], '7d');
+
+    expect(kpi(cents, 'total_spend')).toBe('$0.13');
+    expect(kpi(sub_cent, 'total_spend')).toBe('$0.00045');
+    expect(kpi(thousands, 'total_spend')).toBe('$1,340.50');
   });
 });

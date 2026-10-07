@@ -37,7 +37,7 @@ export const resources_repo = {
         count(s.span_id)::int as block_count,
         count(s.span_id) filter (where ${sql.raw(spanFailed('s'))})::int as failed_block_count,
         coalesce(sum(${sql.raw(spanTotalTokens('s'))}), 0)::float8 as tokens,
-        coalesce(sum(${sql.raw(spanCost('s'))}), 0)::numeric(14, 6)::text as total_cost,
+        coalesce(sum(${sql.raw(spanCost('s'))}), 0)::numeric(20, 10)::text as total_cost,
         avg(${sql.raw(spanDurationMs('s'))})::float8 as avg_latency_ms
       from projects p
       left join ${otelSpans} s
