@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 
-import type { ScalingPolicy } from '@canyonos/api/scaling';
-
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
 import {
@@ -12,6 +10,7 @@ import {
   seed_scaling,
   seed_scaling_agents,
 } from './redis-test.utils';
+import type { ScalingPolicy } from '../modules/scaling/scaling.types';
 
 setupE2ETests();
 
