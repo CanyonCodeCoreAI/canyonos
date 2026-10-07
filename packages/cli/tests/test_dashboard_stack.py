@@ -306,6 +306,26 @@ def test_success_pulls_starts_and_verifies(monkeypatch, project):
     ]
 
 
+def test_shell_image_keyword_does_not_override_resolved_images(monkeypatch, project):
+    monkeypatch.setenv("CANYONOS_API_IMAGE", "local")
+    monkeypatch.setenv("CANYONOS_WEB_IMAGE", "local")
+    env_by_subcommand = {}
+
+    def fake_run(argv, env=None, **_):
+        for subcommand in ("pull", "up"):
+            if subcommand in argv:
+                env_by_subcommand[subcommand] = env
+        return completed(argv, returncode=1 if "up" in argv else 0)
+
+    monkeypatch.setattr(dashboard_stack.subprocess, "run", fake_run)
+    dashboard_stack.run_dashboard()
+
+    assert set(env_by_subcommand) == {"pull", "up"}
+    for env in env_by_subcommand.values():
+        assert env["CANYONOS_API_IMAGE"] == dashboard_stack.API_IMAGE
+        assert env["CANYONOS_WEB_IMAGE"] == dashboard_stack.WEB_IMAGE
+
+
 DASHBOARD_PROJECT = ["docker", "compose", "-p", "canyonos-dashboard"]
 STOP_AND_TEARDOWN = pytest.mark.parametrize(
     ("dashboard_command", "compose_command", "leftover_query"),

@@ -65,13 +65,15 @@ _ERROR_MARKERS = (
     "process did not complete successfully",
 )
 
-# Loggers whose own ERROR: lines are expected, self-recovering noise -- not a
+# Lines logged at ERROR: that are expected, self-recovering noise -- not a
 # reason to abort the deploy. Checked before _ERROR_MARKERS so they never
-# match: the OTel exporter logs at ERROR: when a destination (the dashboard's
-# ingest) isn't reachable yet, which is normal on every cold deploy since
-# `canyonos serve` hasn't been started at that point -- it retries and
-# recovers on its own once the dashboard comes up.
-_BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.",)
+# match. Both come from OTel export to a destination (the dashboard's ingest)
+# that isn't reachable yet, which is normal on every cold deploy since
+# `canyonos serve` hasn't been started at that point: the OpenTelemetry SDK's
+# own loggers, and `otlp_exporter/otel_exporter.py`'s "Destination X failed to
+# export ..." lines (it runs as a script, so its logger is `__main__`). Both
+# retry and recover on their own once the dashboard comes up.
+_BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.", "ERROR:__main__:Destination ")
 
 # The global controller brackets each failed container's log with these
 # (`_dump_container_log`). What sits between them is another process's output

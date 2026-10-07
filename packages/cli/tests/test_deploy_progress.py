@@ -208,6 +208,7 @@ def test_fatal_lines_are_flagged(line):
     [
         "WARNING:canyonos_core.controller.global_controller:otel.destinations not configured -- no OTel metrics collection will happen.\n",
         "  Warning: no entrypoint mapping for 'agent'\n",
+        "ERROR:__main__:Destination local failed to export 2 log record(s).\n",
     ],
 )
 def test_benign_warnings_do_not_trip_the_error_path(line):

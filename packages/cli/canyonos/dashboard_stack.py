@@ -69,8 +69,10 @@ class DashboardStack:
         return self.project_dir / ".env"
 
 
-def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, check=False, text=True)
+def _run(
+    argv: list[str], env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, capture_output=True, check=False, text=True, env=env)
 
 
 def _state_dir() -> Path:
@@ -271,9 +273,18 @@ def _command_failure_message(
     return f"{message}: {_redact_logs(detail, managed_env['CANYONOS_JWT_SECRET'])}"
 
 
+def _compose_env(managed_env: dict[str, str]) -> dict[str, str]:
+    # Compose prefers the process environment over --env-file, so a shell's
+    # CANYONOS_API_IMAGE=local would beat the resolved image ref we wrote.
+    return {**os.environ, **managed_env}
+
+
 def _pull(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> str:
     try:
-        result = _run([*_compose_argv(stack, manifest), "pull", "--policy", "missing"])
+        result = _run(
+            [*_compose_argv(stack, manifest), "pull", "--policy", "missing"],
+            env=_compose_env(managed_env),
+        )
     except OSError:
         raise PhaseFailure("pull", "could not run docker compose pull")
     if result.returncode != 0:
@@ -306,7 +317,8 @@ def _start(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -
                 "--wait",
                 "--wait-timeout",
                 "180",
-            ]
+            ],
+            env=_compose_env(managed_env),
         )
     except OSError:
         raise PhaseFailure("start", "could not run docker compose up")
