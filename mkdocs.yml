@@ -7,12 +7,15 @@ theme: readthedocs
 
 nav:
   - Home: index.md
+  - Quickstart: QUICKSTART.md
   - Guides:
       - Overview: guides/README.md
       - Workflow design: guides/WORKFLOW_DESIGN.md
       - Limitations: guides/LIMITATIONS.md
       - Prompt management: guides/PROMPTS.md
       - Autoscaling: guides/SCALING.md
+      - Dashboard: guides/DASHBOARD.md
+      - CLI reference: guides/CLI.md
       - The .car artifact: guides/BUILD_ARTIFACT.md
       - global_controller.yaml: guides/GLOBAL_CONTROLLER.md
       - Runtime contract: guides/RUNTIME_CONTRACT.md

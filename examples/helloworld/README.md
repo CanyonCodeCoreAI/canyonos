@@ -1,56 +1,147 @@
-# My CanyonOS Project
+# Hello World
 
-A distributed agent orchestration project built with [CanyonOS](https://github.com/canyonos).
+The starting point to creating your own workflows!
 
-## Quick Start
+The guides/QUICKSTART.md has more general information on running a workflow, but this doc is tailored specifically towards getting this Hello World workflow up and running.
+
+This workflow does not use an LLM, so no money would be spent from this.
+
+The smallest CanyonOS workflow: a REST endpoint that calls one agent and returns a greeting. It needs no LLM and no API keys, so it's the quickest way to check your setup end to end.
+
+This walkthrough takes it from a fresh copy to a request you can see in the dashboard. For the general steps, see the [Quickstart](../../docs/QUICKSTART.md).
+
+## What's in it
+
+| File | What it does |
+|---|---|
+| `agents/example_agent.py` | `ExampleAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the ExampleAgent."` |
+| `agents/example_agent.yaml` | The agent's name and function signature. The class name must match `agent.name` here and `name` in `global_controller.yaml`. |
+| `agents/vllm_agent.py`, `.yaml` | A second agent, `VllmAgent`. It's deployed, but the workflow doesn't call it. |
+| `workflow/example_workflow.py` | `main(query)` calls `ExampleAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. `deploy(main, port=8080)` serves it at `POST /main`. |
+| `config/global_controller.yaml` | What to run: the two agents and the workflow, all on `provider: local`. |
+| `config/policy.yaml` | Which callers can reach which agents. |
+
+## Before you start
+
+- Docker is running, and `canyonos doctor` passes.
+- This example is already in CanyonOS format, so skip `canyonos build`. It needs no `.env`.
+- Work on a copy. Deploying writes into the project folder: it fills default resources into `config/global_controller.yaml`, and the dashboard adds a `.env` with `CANYONOS_*` lines.
 
 ```bash
-# Build stubs and Docker images
-canyonos build
+cd helloworld
+```
 
-# Launch all agents
+The dashboard names your project after this folder, `helloworld`.
+
+## 1. Test it
+
+```bash
+canyonos test "World"
+```
+
+The first run takes about a minute while it builds the images. A pass ends with:
+
+```
+✓ deploy          Global Controller on port 8000
+✓ verify_runtime  3 agent(s) up
+✓ query           answered in 23.199s
+
+Output     {
+  "greeting": "Hello, World! I'm the ExampleAgent."
+}
+```
+
+A passing test tears everything down again, including the dashboard.
+
+## 2. Deploy
+
+```bash
 canyonos deploy
-
-# Test with curl
-curl -X POST http://<workflow_host_ip>:8080/main \
-     -H 'Content-Type: application/json' \
-     -d '{"query": "World"}'
-
-# Check result
-curl http://<workflow_host_ip>:8080/status/<request_id>
 ```
 
-## Project Structure
+It ends with:
 
 ```
-├── agents/               # Agent implementations and YAML definitions
-│   ├── example_agent.py
-│   └── example_agent.yaml
-├── workflow/             # Workflow scripts (deployed as REST APIs)
-│   └── example_workflow.py
-├── config/
-│   ├── global_controller.yaml   # Deployment configuration
-│   └── policy.yaml              # Access control rules
-├── stubs/                # Generated agent stubs (auto-generated)
-├── grpc_stubs/           # Generated gRPC stubs (auto-generated)
-└── Makefile
+Deploy is live
+
+Dashboard  http://127.0.0.1:8081
+
+Workflow
+curl -X POST http://127.0.0.1:8080/main -H "Content-Type: application/json" -d '{"query": "your query"}'
+poll       curl http://127.0.0.1:8080/status/<request_id>
 ```
 
-## Adding a New Agent
+The dashboard port moves to the next free one if 8081 is taken, so use the URL it prints.
 
-1. Create `agents/my_agent.yaml` with the agent interface definition
-2. Create `agents/my_agent.py` with the implementation class
-3. Add the agent entry to `config/global_controller.yaml`
-4. Run `canyonos build` to regenerate stubs and Docker images
-5. Run `canyonos deploy` to launch
-
-## Policy Rules
-
-Edit `config/policy.yaml` to control which callers can access which agents.
-Pass `_context` in your curl request to set the caller identity:
+## 3. Send a request
 
 ```bash
-curl -X POST http://localhost:8080/main \
-     -H 'Content-Type: application/json' \
-     -d '{"query": "World", "_context": {"origin": "admin"}}'
+curl -X POST http://127.0.0.1:8080/main \
+  -H "Content-Type: application/json" \
+  -d '{"query": "World"}'
 ```
+
+```json
+{"request_id": "<request_id>"}
+```
+
+Then fetch the result with that id:
+
+```bash
+curl http://127.0.0.1:8080/status/<request_id>
+```
+
+```json
+{"request_id": "<request_id>", "result": {"greeting": "Hello, World! I'm the ExampleAgent."}, "status": "done"}
+```
+
+- The JSON body is passed to `main` as arguments, so `{"query": "Ada"}` returns `Hello, Ada! ...`, and `{}` falls back to `World`.
+- The path is the function's name. `POST /hello` returns `404`.
+- A body that isn't JSON returns `{"error": "Invalid JSON in request body"}`.
+
+## 4. Find it in the dashboard
+
+Open the dashboard URL, then **Projects** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see the workflow call `ExampleAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
+
+Each redeploy starts the dashboard's history fresh.
+
+## 5. Try a policy rule
+
+Rules in `config/policy.yaml` decide which agents a request may reach, based on the `_context` you send with it. The rule with the most matching keys wins, and `match: {}` is the fallback. By default every agent is allowed.
+
+Remove `ExampleAgent` from the fallback rule:
+
+```yaml
+  - match: {}
+    access:
+      - VllmAgent
+      - Workflow
+```
+
+Redeploy, then send the same request. It now fails:
+
+```json
+{"error": "PolicyDenied", "request_id": "...", "status": "error"}
+```
+
+A request that sends `_context` matching the admin rule still gets through:
+
+```bash
+curl -X POST http://127.0.0.1:8080/main \
+  -H "Content-Type: application/json" \
+  -d '{"query": "World", "_context": {"origin": "admin"}}'
+```
+
+`_context` is removed from the body before `main` is called.
+
+## 6. Stop
+
+```bash
+canyonos stop   # stop the agents and the dashboard
+canyonos quit   # remove everything CanyonOS started
+```
+
+## If something goes wrong
+
+- `Port 8080 is already in use`: another deploy or app holds it. Run `canyonos quit`, or change `api_port` on the workflow entry.
+- More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

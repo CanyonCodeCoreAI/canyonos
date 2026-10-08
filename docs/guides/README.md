@@ -9,6 +9,9 @@
 - [Prompt management](PROMPTS.md): viewing and editing agent prompts from the
   dashboard.
 - [Autoscaling](SCALING.md): adding and removing agent replicas based on load.
+- [Dashboard](DASHBOARD.md): opening the local dashboard, finding a run, and what
+  each page shows.
+- [CLI reference](CLI.md): every `canyonos` command and what it does.
 
 ## Contract reference
 

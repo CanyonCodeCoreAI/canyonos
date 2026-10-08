@@ -73,6 +73,12 @@ Rename or delete the extra file.
 | `400 Invalid JSON in request body` or `Request body must be a JSON object` | The body is not a JSON object |
 | Function argument missing | The body did not carry it. The managed platform sends only `query` |
 
+## `canyonos test` fails
+
+If the test passes, everything is shut down. If it fails, the containers stay up so
+you can check `canyonos logs`, or one agent's logs with `docker logs canyonos-<agent>-0`
+(e.g. `canyonos-intentagent-0`). Run `canyonos quit` to remove them.
+
 ## Stopping and cleaning
 
 | Symptom | Likely cause |
