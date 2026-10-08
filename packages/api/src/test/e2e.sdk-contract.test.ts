@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { MetricsBlocks, MetricsKpis } from '@canyonos/api/metrics';
+import type {
+  MonitoringErrorSummaryResponse,
+  MonitoringLlmCallsResponse,
+  MonitoringLogSourcesResponse,
+  MonitoringLogsResponse,
+  MonitoringResourceUtilizationResponse,
+  MonitoringSeriesResponse,
+  MonitoringTracesResponse,
+} from '@canyonos/api/monitoring';
 import type { ProjectStats, ProjectSummary } from '@canyonos/api/projects';
 import type { Prompt, PromptListItem, SystemPrompt } from '@canyonos/api/prompts';
 import type { RequestList } from '@canyonos/api/requests';
@@ -69,6 +78,53 @@ describe('SDK contract', () => {
     expect(kpis.project_id).toBe(project_id);
     expect(blocks.project_id).toBe(project_id);
     expect(overview.projects.some(({ id }) => id === project_id)).toBe(true);
+  });
+
+  test('monitoring endpoints are typed at runtime', async () => {
+    const token = await authenticate('sdk-monitoring-contract@canyonos.test');
+    const headers = bearer(token);
+    const { project_id } = await create_test_project(token, { name: 'SDK Monitoring' });
+    const monitoring = api.projects[project_id]!.monitoring;
+    const window = { time_window: '1d' } as const;
+    const list = { ...window, limit: 200 };
+
+    const series: MonitoringSeriesResponse = (
+      await monitoring.series.get({ $query: window, $headers: headers })
+    ).data!;
+    const logs: MonitoringLogsResponse = (
+      await monitoring.logs.get({ $query: { ...list, errors_only: false }, $headers: headers })
+    ).data!;
+    const sources: MonitoringLogSourcesResponse = (
+      await monitoring.logs.sources.get({ $query: window, $headers: headers })
+    ).data!;
+    const calls: MonitoringLlmCallsResponse = (
+      await monitoring.llm.get({ $query: list, $headers: headers })
+    ).data!;
+    const traces: MonitoringTracesResponse = (
+      await monitoring.traces.get({ $query: list, $headers: headers })
+    ).data!;
+    const errors: MonitoringErrorSummaryResponse = (
+      await monitoring.errors.summary.get({ $query: window, $headers: headers })
+    ).data!;
+    const resources: MonitoringResourceUtilizationResponse = (
+      await monitoring.resources.get({ $query: window, $headers: headers })
+    ).data!;
+
+    const scope = { project_id, time_window: '1d' } as const;
+    expect(series).toMatchObject({ ...scope, bucket_seconds: 3600 });
+    expect(series.series.map(({ signal, samples }) => [signal, samples])).toEqual([
+      ['traffic', 24],
+      ['errors', 24],
+      ['latency', 0],
+      ['saturation', 0],
+    ]);
+    expect(logs).toEqual({ ...scope, logs: [] });
+    expect(sources).toEqual({ ...scope, sources: [] });
+    expect(calls).toEqual({ ...scope, calls: [] });
+    expect(traces).toEqual({ ...scope, traces: [] });
+    expect(errors).toEqual({ ...scope, total: 0, by_type: [], by_agent: [] });
+    expect(resources).toMatchObject({ ...scope, machines: [], agents: [] });
+    expect(resources.bucket_start_ats).toHaveLength(24);
   });
 
   test('prompt endpoints are typed at runtime', async () => {

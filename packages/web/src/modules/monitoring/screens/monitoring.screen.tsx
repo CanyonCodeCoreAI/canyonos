@@ -95,8 +95,6 @@ function SignalQuadrant({
 }) {
   const label = SIGNAL_LABELS[series.signal];
   const config: ChartConfig = { value: { label, color: SIGNAL_COLORS[series.signal] } };
-  const measured = series.values.filter((value): value is number => value !== null);
-  const max = measured.length > 0 ? Math.max(...measured) : 0;
 
   return (
     <section
@@ -104,7 +102,7 @@ function SignalQuadrant({
       data-testid={`monitoring-quadrant-${series.signal}`}
     >
       <h2 className="text-foreground mb-4 text-sm font-semibold">{label}</h2>
-      {measured.length === 0 ? (
+      {series.samples === 0 ? (
         <EmptyState size="section" test_id={`monitoring-quadrant-${series.signal}-empty`}>
           Nothing recorded for this signal in the selected window.
         </EmptyState>
@@ -114,7 +112,7 @@ function SignalQuadrant({
             data={series.values.map((value, index) => ({ index, value }))}
             config={config}
             mark="line"
-            maxValue={max > 0 ? max : 1}
+            maxValue={series.peak !== null && series.peak > 0 ? series.peak : 1}
             axisFormatter={(value) => formatSignalValue(value, series.unit)}
             valueFormatter={(value) => formatSignalValue(value, series.unit)}
             xTickFormatter={(index) => formatBucketLabel(bucket_start_ats[index]!, bucket_seconds)}

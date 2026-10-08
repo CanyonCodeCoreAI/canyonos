@@ -21,7 +21,7 @@ describe('project access across the /projects tree', () => {
     expect(detail.data?.id).toBe(project_id);
   });
 
-  // The resolver is wired per plugin (projects / requests / metrics / prompts / scaling), so
+  // The resolver is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling), so
   // reaching every sub-resource proves the new rule fires in each composed plugin.
   test('a user from another company reaches every project sub-resource', async () => {
     const owner = await authenticate('access-owner2@canyonos.test');
@@ -36,6 +36,19 @@ describe('project access across the /projects tree', () => {
       api.projects[project_id]!.stats.get(read),
       api.projects[project_id]!.requests.get({ ...read, $query: { limit: 20, offset: 0 } }),
       api.projects[project_id]!.metrics.kpis.get(read),
+      api.projects[project_id]!.monitoring.series.get({ ...read, $query: { time_window: '1d' } }),
+      api.projects[project_id]!.monitoring.logs.get({
+        ...read,
+        $query: { time_window: '1d', limit: 200, errors_only: false },
+      }),
+      api.projects[project_id]!.monitoring.traces.get({
+        ...read,
+        $query: { time_window: '1d', limit: 200 },
+      }),
+      api.projects[project_id]!.monitoring.resources.get({
+        ...read,
+        $query: { time_window: '1d' },
+      }),
       api.projects[project_id]!.prompts.get(read),
       api.projects[project_id]!.scaling.get(read),
     ]);

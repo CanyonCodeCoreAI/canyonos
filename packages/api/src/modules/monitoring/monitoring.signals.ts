@@ -1,4 +1,9 @@
-import type { MonitoringKind, MonitoringSignal, MonitoringUnit } from './monitoring.types';
+import type {
+  MonitoringKind,
+  MonitoringResource,
+  MonitoringSignal,
+  MonitoringUnit,
+} from './monitoring.types';
 
 type SignalDefinition = {
   unit: MonitoringUnit;
@@ -12,15 +17,13 @@ export const SIGNALS = {
   saturation: { unit: 'percent', kind: 'stock' },
 } as const satisfies Record<MonitoringSignal, SignalDefinition>;
 
-export const SATURATION_METRIC = 'canyonos.machine.cpu.utilization';
-
 export const MACHINE_UTILIZATION_METRICS = {
   cpu: 'canyonos.machine.cpu.utilization',
   memory: 'canyonos.machine.memory.utilization',
   disk: 'canyonos.machine.disk.utilization',
   gpu: 'canyonos.machine.gpu.utilization',
-} as const;
+} as const satisfies Record<MonitoringResource, string>;
 
-export type MonitoringResource = keyof typeof MACHINE_UTILIZATION_METRICS;
+export const SATURATION_METRIC = MACHINE_UTILIZATION_METRICS.cpu;
 
 export const RESOURCE_PROJECT_ATTRIBUTE = 'canyonos.project.id';

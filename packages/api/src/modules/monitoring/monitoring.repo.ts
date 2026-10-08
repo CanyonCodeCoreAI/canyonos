@@ -4,7 +4,7 @@ import type { SQL } from 'drizzle-orm';
 import { db } from '@api/db/client';
 import { otelLogs, otelMetrics } from '@api/db/schema';
 
-import { window_floor_nanos, WINDOW_INTERVALS } from '../../metrics/metrics.scope';
+import { window_floor_nanos, WINDOW_INTERVALS } from '../metrics/metrics.scope';
 import {
   isModelSpan,
   projectSpans,
@@ -18,26 +18,34 @@ import {
   spanModel,
   spanOutputTokens,
   spanStart,
-} from '../../metrics/metrics.sql';
+} from '../metrics/metrics.sql';
 import {
   MACHINE_UTILIZATION_METRICS,
   RESOURCE_PROJECT_ATTRIBUTE,
   SATURATION_METRIC,
-} from '../monitoring.signals';
-import type { MetricsWindow } from '../../metrics/metrics.types';
+} from './monitoring.signals';
+import type { MetricsWindow } from '../metrics/metrics.types';
 import type {
+  MonitoringErrorSummaryResponse,
+  MonitoringGrid,
+  MonitoringListQuery,
   MonitoringLlmCall,
   MonitoringLog,
   MonitoringLogSource,
+  MonitoringLogsQuery,
+  MonitoringQuery,
+  MonitoringResourceUtilizationResponse,
+  MonitoringScope,
+  MonitoringSignal,
   MonitoringTrace,
-} from '../monitoring.types';
-import type {
-  ErrorSummaryRow,
-  LogsFilter,
-  MonitoringStore,
-  ResourceUtilizationRow,
-  SeriesRow,
-} from './store';
+  MonitoringValueSeries,
+} from './monitoring.types';
+
+type SeriesRow = MonitoringGrid & Record<MonitoringSignal, MonitoringValueSeries>;
+
+type ResourceUtilizationRow = Omit<MonitoringResourceUtilizationResponse, keyof MonitoringScope>;
+
+type ErrorSummaryRow = Omit<MonitoringErrorSummaryResponse, keyof MonitoringScope>;
 
 const GRID_UNITS: Record<MetricsWindow, 'hour' | 'day'> = {
   '1d': 'hour',
@@ -99,6 +107,15 @@ const traceStart = (alias: string): string =>
 const traceDurationMs = (alias: string): string =>
   `((max(${alias}.end_time_unix_nano) - min(${alias}.start_time_unix_nano)) / 1e6)`;
 
+// The stats read the same per-bucket value the chart draws, over the buckets that have one.
+const value_series = (value: string): string => `json_build_object(
+  'values', json_agg(${value} order by b),
+  'average', avg(${value})::float8,
+  'peak', max(${value})::float8,
+  'latest', (array_agg(${value} order by b desc) filter (where ${value} is not null))[1]::float8,
+  'samples', count(${value})::int
+)`;
+
 const series_sql = (project_id: string, time_window: MetricsWindow): SQL => {
   const buckets = String(BUCKET_COUNTS[time_window]);
   const interval = WINDOW_INTERVALS[time_window];
@@ -154,10 +171,10 @@ const series_sql = (project_id: string, time_window: MetricsWindow): SQL => {
         (g.start_local + make_interval(secs => (b - 1) * g.bucket_seconds)) at time zone ${GRID_ZONE}
         order by b
       ) as bucket_start_ats,
-      json_agg(coalesce(s.traffic, 0) order by b) as traffic,
-      json_agg(coalesce(s.errors, 0) order by b) as errors,
-      json_agg(s.latency order by b) as latency,
-      json_agg(m.saturation order by b) as saturation
+      ${sql.raw(value_series('coalesce(s.traffic, 0)'))} as traffic,
+      ${sql.raw(value_series('coalesce(s.errors, 0)'))} as errors,
+      ${sql.raw(value_series('s.latency'))} as latency,
+      ${sql.raw(value_series('m.saturation'))} as saturation
     from grid g
     cross join generate_series(1, ${sql.raw(buckets)}::int) b
     left join traces_bucket s on s.bucket = b
@@ -230,16 +247,15 @@ const entity_rollup = (prefix: 'machine' | 'agent'): SQL =>
     from ${prefix}_series group by key
   )`);
 
-export const postgres_store: MonitoringStore = {
-  async series(project_id: string, time_window: MetricsWindow): Promise<SeriesRow> {
+export const monitoring_repo = {
+  async series(project_id: string, { time_window }: MonitoringQuery): Promise<SeriesRow> {
     const rows = await db.execute(series_sql(project_id, time_window));
     return (rows as unknown as [SeriesRow])[0];
   },
 
   async logs(
     project_id: string,
-    time_window: MetricsWindow,
-    { limit, errors_only, agent, replica }: LogsFilter
+    { time_window, limit, errors_only, agent, replica }: MonitoringLogsQuery
   ): Promise<MonitoringLog[]> {
     const floor_nanos = window_floor_nanos(time_window);
     const severity_filter = errors_only ? sql`and ${ERROR_SEVERITY}` : sql``;
@@ -258,7 +274,7 @@ export const postgres_store: MonitoringStore = {
         l.body,
         l.trace_id,
         l.span_id,
-        l.attributes
+        l.attributes - 'canyonos.agent.id' - 'canyonos.agent.name' as attributes
       from ${otelLogs} l
       where ${log_scope(project_id, floor_nanos)}
         ${severity_filter}
@@ -272,8 +288,7 @@ export const postgres_store: MonitoringStore = {
 
   async llm_calls(
     project_id: string,
-    time_window: MetricsWindow,
-    limit: number
+    { time_window, limit }: MonitoringListQuery
   ): Promise<MonitoringLlmCall[]> {
     const floor_nanos = window_floor_nanos(time_window);
     const rows = await db.execute(sql`
@@ -306,8 +321,7 @@ export const postgres_store: MonitoringStore = {
 
   async traces(
     project_id: string,
-    time_window: MetricsWindow,
-    limit: number
+    { time_window, limit }: MonitoringListQuery
   ): Promise<MonitoringTrace[]> {
     const floor_nanos = window_floor_nanos(time_window);
     const agent = `nullif(${spanAgentId('s')}, '')`;
@@ -356,7 +370,7 @@ export const postgres_store: MonitoringStore = {
 
   async log_sources(
     project_id: string,
-    time_window: MetricsWindow
+    { time_window }: MonitoringQuery
   ): Promise<MonitoringLogSource[]> {
     const floor_nanos = window_floor_nanos(time_window);
     const rows = await db.execute(sql`
@@ -375,7 +389,7 @@ export const postgres_store: MonitoringStore = {
 
   async resource_utilization(
     project_id: string,
-    time_window: MetricsWindow
+    { time_window }: MonitoringQuery
   ): Promise<ResourceUtilizationRow> {
     const floor_nanos = window_floor_nanos(time_window);
     const buckets = String(BUCKET_COUNTS[time_window]);
@@ -443,7 +457,10 @@ export const postgres_store: MonitoringStore = {
     return (rows as unknown as [ResourceUtilizationRow])[0];
   },
 
-  async error_summary(project_id: string, time_window: MetricsWindow): Promise<ErrorSummaryRow> {
+  async error_summary(
+    project_id: string,
+    { time_window }: MonitoringQuery
+  ): Promise<ErrorSummaryRow> {
     const floor_nanos = window_floor_nanos(time_window);
     const rows = await db.execute(sql`
       with scoped as (${projectSpans(project_id, floor_nanos)}),

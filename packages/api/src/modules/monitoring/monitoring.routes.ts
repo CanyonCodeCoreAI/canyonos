@@ -14,7 +14,7 @@ import {
 } from './monitoring.service';
 import {
   MonitoringErrorSummaryResponseSchema,
-  MonitoringLlmCallsQuerySchema,
+  MonitoringListQuerySchema,
   MonitoringLlmCallsResponseSchema,
   MonitoringLogSourcesResponseSchema,
   MonitoringLogsQuerySchema,
@@ -22,7 +22,6 @@ import {
   MonitoringQuerySchema,
   MonitoringResourceUtilizationResponseSchema,
   MonitoringSeriesResponseSchema,
-  MonitoringTracesQuerySchema,
   MonitoringTracesResponseSchema,
 } from './monitoring.types';
 
@@ -62,7 +61,7 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     ({ params, query }) => get_llm_calls(params.project_id, query),
     {
       params: ProjectIdParams,
-      query: MonitoringLlmCallsQuerySchema,
+      query: MonitoringListQuerySchema,
       response: { 200: MonitoringLlmCallsResponseSchema },
       detail: { ...doc, summary: 'Spans carrying a model call, newest first' },
     }
@@ -72,7 +71,7 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     ({ params, query }) => get_traces(params.project_id, query),
     {
       params: ProjectIdParams,
-      query: MonitoringTracesQuerySchema,
+      query: MonitoringListQuerySchema,
       response: { 200: MonitoringTracesResponseSchema },
       detail: { ...doc, summary: 'Recent traces with their spans, newest first' },
     }

@@ -153,11 +153,9 @@ function LogRow({ log, index }: { readonly log: MonitoringLog; readonly index: n
               <LogField label="trace_id" value={log.trace_id} />
               <LogField label="span_id" value={log.span_id} />
               <LogField label="severity_number" value={log.severity_number} />
-              {Object.entries(log.attributes)
-                .filter(([key]) => key !== 'canyonos.agent.id')
-                .map(([key, value]) => (
-                  <LogField key={key} label={key} value={value} />
-                ))}
+              {Object.entries(log.attributes).map(([key, value]) => (
+                <LogField key={key} label={key} value={value} />
+              ))}
             </dl>
           </td>
         </tr>

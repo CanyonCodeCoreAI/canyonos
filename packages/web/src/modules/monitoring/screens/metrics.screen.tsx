@@ -18,31 +18,6 @@ interface MetricsScreenProps {
   readonly project_id: string;
 }
 
-function trimLeadingGap(
-  data: MonitoringResourceUtilizationResponse
-): MonitoringResourceUtilizationResponse {
-  const all = [...data.machines, ...data.agents].flatMap((entry) => entry.series);
-  const first = all.reduce((earliest, series) => {
-    const index = series.values.findIndex((value) => value !== null);
-    return index === -1 ? earliest : Math.min(earliest, index);
-  }, data.bucket_start_ats.length);
-
-  if (first === 0 || first === data.bucket_start_ats.length) return data;
-
-  const trimEntries = (entries: MonitoringResourceUtilizationResponse['machines']) =>
-    entries.map((entry) => ({
-      ...entry,
-      series: entry.series.map((series) => ({ ...series, values: series.values.slice(first) })),
-    }));
-
-  return {
-    ...data,
-    bucket_start_ats: data.bucket_start_ats.slice(first),
-    machines: trimEntries(data.machines),
-    agents: trimEntries(data.agents),
-  };
-}
-
 function presentResources(data: MonitoringResourceUtilizationResponse): MonitoringResource[] {
   const seen = new Set<MonitoringResource>();
   for (const entry of [...data.machines, ...data.agents]) {
@@ -86,7 +61,7 @@ export function MetricsScreen({ project_id }: MetricsScreenProps) {
           <Skeleton className="h-64 w-full rounded-[1.125rem]" />
         </div>
       ) : (
-        <MetricsSections data={trimLeadingGap(query.data)} />
+        <MetricsSections data={query.data} />
       )}
     </main>
   );
