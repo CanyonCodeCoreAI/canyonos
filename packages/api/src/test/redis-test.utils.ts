@@ -7,6 +7,7 @@ export const PROMPTS_CONFIG_KEY = 'prompts:config';
 export const PROMPTS_YAML_KEY = 'prompts:yaml';
 export const SCALING_CONFIG_KEY = 'scaling:config';
 export const ACTIVE_AGENTS_KEY = 'agents:active';
+const AGENT_INSTANCE_PATTERN = 'agent_instance:*';
 
 /** An agent as the controller publishes it: its spec, desired count and newest load sample. */
 export interface SeededAgent {
@@ -80,6 +81,8 @@ export async function reset_controller(): Promise<void> {
     await redis.del(SCALING_CONFIG_KEY);
     const agent_keys = (await redis.send('KEYS', ['agent:*'])) as string[];
     for (const key of agent_keys) await redis.del(key);
+    const instance_keys = (await redis.send('KEYS', [AGENT_INSTANCE_PATTERN])) as string[];
+    for (const key of instance_keys) await redis.del(key);
     await redis.del(ACTIVE_AGENTS_KEY);
   });
 }
@@ -100,6 +103,18 @@ export async function seed_scaling_agents(agents: readonly SeededAgent[]): Promi
       if (sample !== null) await redis.send('LPUSH', [`agent:${agent.name}:samples`, sample]);
     }
     await redis.set(ACTIVE_AGENTS_KEY, JSON.stringify(agents.map((agent) => agent.name)));
+  });
+}
+
+/** Writes a replica's agent_instance record the way the provisioner does. */
+export async function seed_agent_instance(
+  instance_id: string,
+  record: Record<string, string>
+): Promise<void> {
+  await with_test_redis(async (redis) => {
+    for (const [field, value] of Object.entries(record)) {
+      await redis.hset(`agent_instance:${instance_id}`, field, value);
+    }
   });
 }
 

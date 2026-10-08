@@ -103,6 +103,15 @@ export const MonitoringLogsResponseSchema = MonitoringScopeSchema.extend({
   logs: z.array(MonitoringLogSchema),
 });
 
+export const MonitoringLlmDetailsSchema = z.object({
+  model: z.string().nullable(),
+  input_tokens: z.number().nullable(),
+  output_tokens: z.number().nullable(),
+  cost: z.number().nullable(),
+  input: z.string().nullable(),
+  output: z.string().nullable(),
+});
+
 export const MonitoringTraceSpanSchema = z.object({
   span_id: z.string(),
   parent_span_id: z.string().nullable(),
@@ -112,6 +121,7 @@ export const MonitoringTraceSpanSchema = z.object({
   duration_ms: z.number(),
   failed: z.boolean(),
   status_message: z.string().nullable(),
+  llm: MonitoringLlmDetailsSchema.nullable(),
 });
 
 export const MonitoringLlmCallSchema = MonitoringTraceSpanSchema.pick({
@@ -121,16 +131,11 @@ export const MonitoringLlmCallSchema = MonitoringTraceSpanSchema.pick({
   failed: true,
   status_message: true,
 }).extend({
+  ...MonitoringLlmDetailsSchema.shape,
   at: z.string(),
   trace_id: z.string(),
-  model: z.string().nullable(),
   duration_ms: z.number().nullable(),
-  input_tokens: z.number().nullable(),
-  output_tokens: z.number().nullable(),
   cache_hit_ratio: z.number().nullable(),
-  cost: z.number().nullable(),
-  input: z.string().nullable(),
-  output: z.string().nullable(),
   attributes: z.record(z.string(), z.unknown()),
 });
 
@@ -152,6 +157,32 @@ export const MonitoringTraceSchema = MonitoringTraceSpanSchema.pick({
 
 export const MonitoringTracesResponseSchema = MonitoringScopeSchema.extend({
   traces: z.array(MonitoringTraceSchema),
+});
+
+// Only replicas that report a `service.instance.id`: without one, samples from different
+// containers cannot be told apart, so they would collapse into one row and miscount the replicas up.
+export const MonitoringReplicaSchema = z.object({
+  agent: z.string(),
+  replica: z.string(),
+  queue_length: z.number().int().nullable(),
+  active_requests: z.number().int().nullable(),
+});
+
+export const MonitoringReplicasResponseSchema = MonitoringScopeSchema.pick({
+  project_id: true,
+}).extend({
+  replicas: z.array(MonitoringReplicaSchema),
+});
+
+export const MonitoringEndpointSchema = z.object({
+  name: z.string(),
+  url: z.string(),
+});
+
+export const MonitoringEndpointsResponseSchema = MonitoringScopeSchema.pick({
+  project_id: true,
+}).extend({
+  endpoints: z.array(MonitoringEndpointSchema),
 });
 
 export const MonitoringErrorGroupSchema = z.object({
@@ -188,8 +219,13 @@ export type MonitoringLog = z.infer<typeof MonitoringLogSchema>;
 export type MonitoringLogsResponse = z.infer<typeof MonitoringLogsResponseSchema>;
 export type MonitoringLlmCall = z.infer<typeof MonitoringLlmCallSchema>;
 export type MonitoringLlmCallsResponse = z.infer<typeof MonitoringLlmCallsResponseSchema>;
+export type MonitoringLlmDetails = z.infer<typeof MonitoringLlmDetailsSchema>;
 export type MonitoringTraceSpan = z.infer<typeof MonitoringTraceSpanSchema>;
 export type MonitoringTrace = z.infer<typeof MonitoringTraceSchema>;
 export type MonitoringTracesResponse = z.infer<typeof MonitoringTracesResponseSchema>;
+export type MonitoringReplica = z.infer<typeof MonitoringReplicaSchema>;
+export type MonitoringReplicasResponse = z.infer<typeof MonitoringReplicasResponseSchema>;
+export type MonitoringEndpoint = z.infer<typeof MonitoringEndpointSchema>;
+export type MonitoringEndpointsResponse = z.infer<typeof MonitoringEndpointsResponseSchema>;
 export type MonitoringErrorGroup = z.infer<typeof MonitoringErrorGroupSchema>;
 export type MonitoringErrorSummaryResponse = z.infer<typeof MonitoringErrorSummaryResponseSchema>;

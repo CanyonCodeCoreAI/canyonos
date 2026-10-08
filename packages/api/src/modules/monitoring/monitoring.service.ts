@@ -1,7 +1,9 @@
+import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
 import { monitoring_repo } from './monitoring.repo';
 import { SIGNALS } from './monitoring.signals';
 import { MonitoringSignalSchema } from './monitoring.types';
 import type {
+  MonitoringEndpointsResponse,
   MonitoringErrorSummaryResponse,
   MonitoringListQuery,
   MonitoringLlmCallsResponse,
@@ -9,6 +11,7 @@ import type {
   MonitoringLogsQuery,
   MonitoringLogsResponse,
   MonitoringQuery,
+  MonitoringReplicasResponse,
   MonitoringResourceEntry,
   MonitoringResourceUtilizationResponse,
   MonitoringSeriesResponse,
@@ -117,4 +120,23 @@ export async function get_log_sources(
     time_window: query.time_window,
     sources: await monitoring_repo.log_sources(project_id, query),
   };
+}
+
+export async function get_replicas(project_id: string): Promise<MonitoringReplicasResponse> {
+  return { project_id, replicas: await monitoring_repo.replicas(project_id) };
+}
+
+// Only workflow replicas carry an api_port; callers reach them on the public host.
+export async function get_endpoints(project_id: string): Promise<MonitoringEndpointsResponse> {
+  return with_redis(async (redis) => {
+    await assert_project_running(redis, project_id);
+    const instances = await monitoring_repo.agent_instances(redis);
+    const endpoints = instances
+      .filter((instance) => instance.api_port && instance.public_host)
+      .map((instance) => ({
+        name: instance.agent_name ?? 'Workflow',
+        url: `http://${instance.public_host}:${instance.api_port}`,
+      }));
+    return { project_id, endpoints };
+  });
 }

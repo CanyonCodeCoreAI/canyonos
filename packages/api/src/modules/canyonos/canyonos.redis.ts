@@ -35,6 +35,26 @@ export async function with_redis<T>(operation: (redis: RedisClient) => Promise<T
   }
 }
 
+const SCAN_BATCH_SIZE = '100';
+
+/** Every key matching pattern, walked with SCAN so a large keyspace never blocks the controller. */
+export async function scan_keys(redis: RedisClient, pattern: string): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor = '0';
+  do {
+    const [next_cursor, batch] = (await redis.send('SCAN', [
+      cursor,
+      'MATCH',
+      pattern,
+      'COUNT',
+      SCAN_BATCH_SIZE,
+    ])) as [string, string[]];
+    keys.push(...batch);
+    cursor = next_cursor;
+  } while (cursor !== '0');
+  return keys;
+}
+
 /** Throws not found unless the running controller belongs to project_id. */
 export async function assert_project_running(
   redis: RedisClient,

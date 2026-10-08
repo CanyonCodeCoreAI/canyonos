@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from 'bun:test';
+import { beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 
 import { db } from '@api/db/client';
 import { otelLogs, otelMetrics, otelSpans } from '@api/db/schema';
@@ -9,7 +9,12 @@ import {
   STATUS_CODE,
 } from '@api/modules/metrics/metrics.contract';
 import {
+  AGENT_UP_METRIC,
   MACHINE_UTILIZATION_METRICS,
+  QUEUE_LENGTH_METRIC,
+  REPLICA_UP_SECONDS,
+  REQUESTS_COMPLETED_METRIC,
+  REQUESTS_STARTED_METRIC,
   RESOURCE_PROJECT_ATTRIBUTE,
 } from '@api/modules/monitoring/monitoring.signals';
 import type { MetricsWindow } from '@api/modules/metrics/metrics.types';
@@ -17,6 +22,7 @@ import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitorin
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { reset_controller, seed_agent_instance, seed_running_project } from './redis-test.utils';
 
 setupE2ETests();
 
@@ -850,6 +856,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
               duration_ms: 200,
               failed: false,
               status_message: null,
+              llm: null,
             },
           ],
         },
@@ -871,6 +878,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
               duration_ms: 300,
               failed: false,
               status_message: null,
+              llm: null,
             },
           ],
         },
@@ -892,6 +900,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
               duration_ms: 4000,
               failed: false,
               status_message: null,
+              llm: null,
             },
             {
               span_id: 'tr-a-llm',
@@ -902,6 +911,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
               duration_ms: 1000,
               failed: true,
               status_message: 'llm down',
+              llm: null,
             },
             {
               span_id: 'tr-a-fetch',
@@ -912,11 +922,60 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
               duration_ms: 500,
               failed: false,
               status_message: null,
+              llm: null,
             },
           ],
         },
       ],
     });
+  });
+
+  test('a model span carries its call details and any other span carries null', async () => {
+    const { project_id: llm_id } = await create_project(token, 'Traces LLM');
+    await write_span(llm_id, {
+      span_id: 'tr-llm-root',
+      trace_id: 'tr-llm',
+      name: 'Workflow.run',
+      ms_ago: HOUR_MS,
+      duration_ms: 50,
+    });
+    await write_span(llm_id, {
+      span_id: 'tr-llm-model',
+      trace_id: 'tr-llm',
+      parent_span_id: 'tr-llm-root',
+      name: 'Planner.plan',
+      ms_ago: HOUR_MS - 10,
+      duration_ms: 30,
+      attributes: {
+        [GEN_AI.REQUEST_MODEL]: 'claude-test',
+        [GEN_AI.INPUT_TOKENS]: 120,
+        [GEN_AI.OUTPUT_TOKENS]: 30,
+        [GEN_AI.USAGE_COST]: 0.25,
+      },
+      input: 'plan the trip',
+      output: 'here is the plan',
+    });
+
+    const res = await api.projects[llm_id]!.monitoring.traces.get({
+      $headers: bearer(token),
+      $query: { time_window: '1d', limit: 200 },
+    });
+
+    expect(res.error).toBeNull();
+    expect(res.data!.traces[0]!.spans.map(({ name, llm }) => ({ name, llm }))).toEqual([
+      { name: 'Workflow.run', llm: null },
+      {
+        name: 'Planner.plan',
+        llm: {
+          model: 'claude-test',
+          input_tokens: 120,
+          output_tokens: 30,
+          cost: 0.25,
+          input: 'plan the trip',
+          output: 'here is the plan',
+        },
+      },
+    ]);
   });
 
   test('limit counts traces, not spans', async () => {
@@ -1027,8 +1086,9 @@ describe('GET /projects/:project_id/monitoring/errors/summary', () => {
 describe('GET /projects/:project_id/monitoring/resources', () => {
   /**
    * Machines: `host-b` CPU 80 (1.5h); `host-a` CPU 20 (3.5h) and 40 (1.5h), memory 70 (1.5h);
-   * `svc-m` (no host name) disk 10 (1.5h). Agents from span CPU: `risk-0` 50 (1.5h), `price-0` 25
-   * (2.5h) and 35 (1.5h). The earliest reading is 3.5h ago, so the grid opens there.
+   * `svc-m` (no host name) disk 10 (1.5h). Agents from span CPU, keyed on the agent that names the
+   * span: `Risk` 50 (1.5h); `Price` 25 (2.5h, replica price-0) and 35 (1.5h, replica price-1). The
+   * earliest reading is 3.5h ago, so the grid opens there.
    */
   test('machines and agents with their stats on a grid trimmed to the first reading', async () => {
     const { project_id } = await create_project(token, 'Resources Project');
@@ -1061,17 +1121,24 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
     });
     await write_metric(foreign_id, { metric_name: cpu, ms_ago: 5 * HOUR_MS, value: 99 });
 
-    const cpu_span = (span_id: string, agent_id: string, ms_ago: number, value: number) =>
+    const cpu_span = (
+      span_id: string,
+      name: string,
+      agent_id: string,
+      ms_ago: number,
+      value: number
+    ) =>
       write_span(project_id, {
         span_id,
         trace_id: span_id,
+        name,
         ms_ago,
         duration_ms: 10,
         attributes: { [GEN_AI.AGENT_ID]: agent_id, [RUNTIME_ATTRIBUTES.CPU_PERCENT]: value },
       });
-    await cpu_span('res-price-1', 'price-0', middle, 25);
-    await cpu_span('res-price-2', 'price-0', recent, 35);
-    await cpu_span('res-risk-1', 'risk-0', recent, 50);
+    await cpu_span('res-price-1', 'Price.quote', 'price-0', middle, 25);
+    await cpu_span('res-price-2', 'Price.requote', 'price-1', recent, 35);
+    await cpu_span('res-risk-1', 'Risk.assess', 'risk-0', recent, 50);
     await write_span(project_id, {
       span_id: 'res-no-cpu',
       trace_id: 'res-no-cpu',
@@ -1133,13 +1200,13 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
       ],
       agents: [
         {
-          key: 'risk-0',
+          key: 'Risk',
           series: [
             series('cpu', [[recent, 50]], { average: 50, peak: 50, latest: 50, samples: 1 }),
           ],
         },
         {
-          key: 'price-0',
+          key: 'Price',
           series: [
             series(
               'cpu',
@@ -1179,6 +1246,137 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
   });
 });
 
+interface ReplicaSample {
+  readonly agent: string;
+  readonly replica: string | null;
+  readonly metric: string;
+  readonly value: number;
+  readonly ms_ago: number;
+}
+
+const sample = (
+  agent: string,
+  replica: string | null,
+  metric: string,
+  value: number,
+  ms_ago: number
+): ReplicaSample => ({ agent, replica, metric, value, ms_ago });
+
+// Replica freshness is judged against now(), not the frozen BASE_MS the other fixtures share.
+async function write_replica_samples(
+  project_id: string,
+  samples: readonly ReplicaSample[]
+): Promise<void> {
+  const now_ms = Date.now();
+  await db.insert(otelMetrics).values(
+    samples.map(({ agent, replica, metric, value, ms_ago }) => ({
+      service_name: agent,
+      resource_attributes: {
+        [RESOURCE_PROJECT_ATTRIBUTE]: project_id,
+        ...(replica === null ? {} : { 'service.instance.id': replica }),
+      },
+      metric_name: metric,
+      metric_type: 'gauge' as const,
+      time_unix_nano: BigInt(now_ms - ms_ago) * NANOS_PER_MS,
+      value,
+    }))
+  );
+}
+
+describe('GET /projects/:project_id/monitoring/replicas', () => {
+  test('lists identified replicas whose latest up sample is fresh and 1, with their load', async () => {
+    const { project_id } = await create_project(token, 'Replicas Project');
+    const { project_id: other_project_id } = await create_project(token, 'Foreign Replicas');
+    const stale_ms = (REPLICA_UP_SECONDS + 30) * 1000;
+
+    await write_replica_samples(project_id, [
+      sample('Planner', 'planner-0', AGENT_UP_METRIC, 0, 10_000),
+      sample('Planner', 'planner-0', AGENT_UP_METRIC, 1, 1_000),
+      sample('Planner', 'planner-0', QUEUE_LENGTH_METRIC, 9, 8_000),
+      sample('Planner', 'planner-0', QUEUE_LENGTH_METRIC, 3, 1_000),
+      sample('Planner', 'planner-0', REQUESTS_STARTED_METRIC, 10, 1_000),
+      sample('Planner', 'planner-0', REQUESTS_COMPLETED_METRIC, 7, 1_000),
+      sample('Planner', 'planner-stale', AGENT_UP_METRIC, 1, stale_ms),
+      sample('Planner', 'planner-down', AGENT_UP_METRIC, 1, 10_000),
+      sample('Planner', 'planner-down', AGENT_UP_METRIC, 0, 1_000),
+      sample('Planner', null, AGENT_UP_METRIC, 1, 1_000),
+      sample('Planner', null, QUEUE_LENGTH_METRIC, 4, 1_000),
+      sample('Worker', 'worker-0', AGENT_UP_METRIC, 1, 1_000),
+      sample('Worker', 'worker-0', REQUESTS_STARTED_METRIC, 5, 1_000),
+    ]);
+    await write_replica_samples(other_project_id, [
+      sample('Planner', 'foreign-0', AGENT_UP_METRIC, 1, 1_000),
+    ]);
+
+    const res = await api.projects[project_id]!.monitoring.replicas.get({
+      $headers: bearer(token),
+    });
+
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual({
+      project_id,
+      replicas: [
+        { agent: 'Planner', replica: 'planner-0', queue_length: 3, active_requests: 3 },
+        { agent: 'Worker', replica: 'worker-0', queue_length: null, active_requests: null },
+      ],
+    });
+  });
+
+  test('a project with no replica samples lists no replicas', async () => {
+    const { project_id } = await create_project(token, 'Empty Replicas');
+
+    const res = await api.projects[project_id]!.monitoring.replicas.get({
+      $headers: bearer(token),
+    });
+
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual({ project_id, replicas: [] });
+  });
+});
+
+describe('GET /projects/:project_id/monitoring/endpoints', () => {
+  beforeEach(reset_controller);
+
+  test('a project the controller is not running is 404 canyonos.project_not_running', async () => {
+    const { project_id } = await create_project(token, 'Idle Endpoints');
+
+    const res = await api.projects[project_id]!.monitoring.endpoints.get({
+      $headers: bearer(token),
+    });
+
+    expect(res.error?.status as number).toBe(404);
+    expect((res.error?.value as { error?: string })?.error).toBe('canyonos.project_not_running');
+  });
+
+  test('lists only the workflow replicas, which carry an api_port and a public host', async () => {
+    const { project_id } = await create_project(token, 'Endpoints Project');
+    await seed_running_project(project_id, { prompts: {} });
+    await seed_agent_instance('local-checkout-0', {
+      agent_id: 'local-checkout-0',
+      agent_name: 'Checkout',
+      public_host: '203.0.113.7',
+      api_port: '8080',
+      host_port: '9001',
+    });
+    await seed_agent_instance('local-planner-0', {
+      agent_id: 'local-planner-0',
+      agent_name: 'Planner',
+      public_host: '203.0.113.7',
+      host_port: '9002',
+    });
+
+    const res = await api.projects[project_id]!.monitoring.endpoints.get({
+      $headers: bearer(token),
+    });
+
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual({
+      project_id,
+      endpoints: [{ name: 'Checkout', url: 'http://203.0.113.7:8080' }],
+    });
+  });
+});
+
 describe('monitoring access', () => {
   test('every monitoring route rejects a caller without a token and an unknown project', async () => {
     const { project_id } = await create_project(token, 'Access Monitoring');
@@ -1195,6 +1393,8 @@ describe('monitoring access', () => {
         monitoring.traces.get(list),
         monitoring.errors.summary.get(read),
         monitoring.resources.get(read),
+        monitoring.replicas.get({ $headers: headers }),
+        monitoring.endpoints.get({ $headers: headers }),
       ]);
     };
 

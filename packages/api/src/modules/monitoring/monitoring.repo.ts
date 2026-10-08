@@ -1,14 +1,17 @@
 import { sql } from 'drizzle-orm';
+import type { RedisClient } from 'bun';
 import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { otelLogs, otelMetrics } from '@api/db/schema';
 
+import { scan_keys } from '../canyonos/canyonos.redis';
 import { window_floor_nanos, WINDOW_INTERVALS } from '../metrics/metrics.scope';
 import {
   isModelSpan,
   projectSpans,
   spanAgentId,
+  spanAgentName,
   spanCacheHitRatio,
   spanCost,
   spanCpuPercent,
@@ -20,7 +23,12 @@ import {
   spanStart,
 } from '../metrics/metrics.sql';
 import {
+  AGENT_UP_METRIC,
   MACHINE_UTILIZATION_METRICS,
+  QUEUE_LENGTH_METRIC,
+  REPLICA_UP_SECONDS,
+  REQUESTS_COMPLETED_METRIC,
+  REQUESTS_STARTED_METRIC,
   RESOURCE_PROJECT_ATTRIBUTE,
   SATURATION_METRIC,
 } from './monitoring.signals';
@@ -34,6 +42,7 @@ import type {
   MonitoringLogSource,
   MonitoringLogsQuery,
   MonitoringQuery,
+  MonitoringReplica,
   MonitoringResourceUtilizationResponse,
   MonitoringScope,
   MonitoringSignal,
@@ -74,6 +83,13 @@ const UNKNOWN_AGENT = 'unknown';
 const UNKNOWN_HOST = 'unknown';
 
 const GROUP_LIMIT = 10;
+
+const AGENT_INSTANCE_PATTERN = 'agent_instance:*';
+
+const REPLICA_ID = `nullif(m.resource_attributes ->> 'service.instance.id', '')`;
+
+const latest_of = (metric: string): SQL =>
+  sql`max(l.value) filter (where l.metric_name = ${metric})`;
 
 const METRIC_NAME_LIST = sql`(${sql.join(
   Object.values(MACHINE_UTILIZATION_METRICS).map((metric) => sql`${metric}`),
@@ -356,7 +372,15 @@ export const monitoring_repo = {
             'offset_ms', ((s.start_time_unix_nano - r.start_nanos) / 1e6)::float8,
             'duration_ms', ${sql.raw(spanDurationMs('s'))}::float8,
             'failed', ${sql.raw(spanFailed('s'))},
-            'status_message', s.status_message
+            'status_message', s.status_message,
+            'llm', case when ${sql.raw(isModelSpan('s'))} then json_build_object(
+              'model', ${sql.raw(spanModel('s'))},
+              'input_tokens', ${sql.raw(spanInputTokens('s'))}::int,
+              'output_tokens', ${sql.raw(spanOutputTokens('s'))}::int,
+              'cost', ${sql.raw(spanCost('s'))}::float8,
+              'input', s.input,
+              'output', s.output
+            ) end
           )
           order by s.start_time_unix_nano
         ) as spans
@@ -425,7 +449,7 @@ export const monitoring_repo = {
       ),
       agent_samples as (
         select
-          coalesce(nullif(${sql.raw(spanAgentId('s'))}, ''), ${UNKNOWN_AGENT}) as key,
+          coalesce(nullif(${sql.raw(spanAgentName('s'))}, ''), ${UNKNOWN_AGENT}) as key,
           'cpu' as resource,
           ${sql.raw(spanCpuPercent('s'))} as value,
           s.start_time_unix_nano as at_nanos,
@@ -455,6 +479,38 @@ export const monitoring_repo = {
       group by g.bucket_seconds
     `);
     return (rows as unknown as [ResourceUtilizationRow])[0];
+  },
+
+  async replicas(project_id: string): Promise<MonitoringReplica[]> {
+    const rows = await db.execute(sql`
+      select l.agent, l.replica,
+        ${latest_of(QUEUE_LENGTH_METRIC)}::int as queue_length,
+        (${latest_of(REQUESTS_STARTED_METRIC)} - ${latest_of(REQUESTS_COMPLETED_METRIC)})::int
+          as active_requests
+      from (
+        select distinct on (replica, m.metric_name)
+          m.service_name as agent,
+          ${sql.raw(REPLICA_ID)} as replica,
+          m.metric_name,
+          m.value
+        from ${otelMetrics} m
+        where m.metric_name in (${AGENT_UP_METRIC}, ${QUEUE_LENGTH_METRIC},
+            ${REQUESTS_STARTED_METRIC}, ${REQUESTS_COMPLETED_METRIC})
+          and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
+          and ${sql.raw(REPLICA_ID)} is not null
+          and ${sql.raw(metricTime('m'))} >= now() - make_interval(secs => ${REPLICA_UP_SECONDS})
+        order by replica, m.metric_name, m.time_unix_nano desc
+      ) l
+      group by l.agent, l.replica
+      having ${latest_of(AGENT_UP_METRIC)} = 1
+      order by l.agent, l.replica
+    `);
+    return rows as unknown as MonitoringReplica[];
+  },
+
+  async agent_instances(redis: RedisClient): Promise<Record<string, string>[]> {
+    const keys = await scan_keys(redis, AGENT_INSTANCE_PATTERN);
+    return Promise.all(keys.sort().map((key) => redis.hgetall(key)));
   },
 
   async error_summary(

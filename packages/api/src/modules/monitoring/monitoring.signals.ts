@@ -26,4 +26,15 @@ export const MACHINE_UTILIZATION_METRICS = {
 
 export const SATURATION_METRIC = MACHINE_UTILIZATION_METRICS.cpu;
 
+export const AGENT_UP_METRIC = 'canyonos.agent.up';
+
+export const QUEUE_LENGTH_METRIC = 'canyonos.agent.queue.length';
+
+export const REQUESTS_STARTED_METRIC = 'canyonos.agent.requests';
+
+export const REQUESTS_COMPLETED_METRIC = 'canyonos.agent.requests.completed';
+
+// Replicas report every ~5s; one missing more than this many seconds of samples is not up.
+export const REPLICA_UP_SECONDS = 30;
+
 export const RESOURCE_PROJECT_ATTRIBUTE = 'canyonos.project.id';

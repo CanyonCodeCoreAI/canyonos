@@ -6,6 +6,7 @@ import type {
   MonitoringLlmCallsResponse,
   MonitoringLogSourcesResponse,
   MonitoringLogsResponse,
+  MonitoringReplicasResponse,
   MonitoringResourceUtilizationResponse,
   MonitoringSeriesResponse,
   MonitoringTracesResponse,
@@ -109,6 +110,9 @@ describe('SDK contract', () => {
     const resources: MonitoringResourceUtilizationResponse = (
       await monitoring.resources.get({ $query: window, $headers: headers })
     ).data!;
+    const replicas: MonitoringReplicasResponse = (
+      await monitoring.replicas.get({ $headers: headers })
+    ).data!;
 
     const scope = { project_id, time_window: '1d' } as const;
     expect(series).toMatchObject({ ...scope, bucket_seconds: 3600 });
@@ -125,6 +129,7 @@ describe('SDK contract', () => {
     expect(errors).toEqual({ ...scope, total: 0, by_type: [], by_agent: [] });
     expect(resources).toMatchObject({ ...scope, machines: [], agents: [] });
     expect(resources.bucket_start_ats).toHaveLength(24);
+    expect(replicas).toEqual({ project_id, replicas: [] });
   });
 
   test('prompt endpoints are typed at runtime', async () => {

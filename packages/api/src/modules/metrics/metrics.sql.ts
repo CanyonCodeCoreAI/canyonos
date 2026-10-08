@@ -29,6 +29,9 @@ export const isModelSpan = (alias: string): string =>
 // An identifier, never arithmetic, and absent on spans written before the receiver emitted it.
 export const spanAgentId = (alias: string): string => attrText(alias, GEN_AI.AGENT_ID);
 
+// Agent spans are named `<Agent>.<method>`, so the agent is shared by every replica that ran it.
+export const spanAgentName = (alias: string): string => `split_part(${alias}.name, '.', 1)`;
+
 export const spanPromptName = (alias: string): string =>
   attrText(alias, RUNTIME_ATTRIBUTES.PROMPT_NAME);
 

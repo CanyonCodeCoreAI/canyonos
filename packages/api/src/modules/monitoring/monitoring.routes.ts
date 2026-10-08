@@ -4,15 +4,18 @@ import { resolveAuth } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { ProjectIdParams } from '../projects/projects.types';
 import {
+  get_endpoints,
   get_error_summary,
   get_llm_calls,
   get_log_sources,
   get_logs,
+  get_replicas,
   get_resource_utilization,
   get_series,
   get_traces,
 } from './monitoring.service';
 import {
+  MonitoringEndpointsResponseSchema,
   MonitoringErrorSummaryResponseSchema,
   MonitoringListQuerySchema,
   MonitoringLlmCallsResponseSchema,
@@ -20,6 +23,7 @@ import {
   MonitoringLogsQuerySchema,
   MonitoringLogsResponseSchema,
   MonitoringQuerySchema,
+  MonitoringReplicasResponseSchema,
   MonitoringResourceUtilizationResponseSchema,
   MonitoringSeriesResponseSchema,
   MonitoringTracesResponseSchema,
@@ -95,4 +99,14 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       response: { 200: MonitoringResourceUtilizationResponseSchema },
       detail: { ...doc, summary: 'Resource utilization per machine and per agent' },
     }
-  );
+  )
+  .get('/:project_id/monitoring/replicas', ({ params }) => get_replicas(params.project_id), {
+    params: ProjectIdParams,
+    response: { 200: MonitoringReplicasResponseSchema },
+    detail: { ...doc, summary: 'Replicas reporting up, with their queue lengths' },
+  })
+  .get('/:project_id/monitoring/endpoints', ({ params }) => get_endpoints(params.project_id), {
+    params: ProjectIdParams,
+    response: { 200: MonitoringEndpointsResponseSchema },
+    detail: { ...doc, summary: 'Where the running workflow answers' },
+  });
