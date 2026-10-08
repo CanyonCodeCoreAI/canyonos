@@ -98,7 +98,7 @@ test('Monitoring and Configuration are dropdowns, open only where the current pa
 
   const monitoring = page.getByRole('group', { name: 'Monitoring' });
   const configuration = page.getByRole('group', { name: 'Configuration' });
-  for (const slug of ['manage', 'monitoring', 'logs', 'errors', 'metrics', 'llm']) {
+  for (const slug of ['manage', 'monitoring', 'logs', 'errors', 'metrics']) {
     await expect(monitoring.getByTestId(`nav-project-${slug}-${PROJECT.id}`)).toBeVisible();
   }
   const prompts = configuration.getByTestId(`nav-project-prompts-${PROJECT.id}`);

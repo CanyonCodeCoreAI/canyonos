@@ -49,10 +49,6 @@ export function ProjectMetricsBreadcrumbs() {
   return <ProjectSectionBreadcrumbs id="metrics" label="Metrics" />;
 }
 
-export function ProjectLlmBreadcrumbs() {
-  return <ProjectSectionBreadcrumbs id="llm" label="LLM" />;
-}
-
 export function ProjectDeploymentConfigBreadcrumbs() {
   const project = project_route.useLoaderData();
   return (
