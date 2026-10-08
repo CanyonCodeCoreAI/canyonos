@@ -3,8 +3,8 @@
 import { cn } from '../lib/utils';
 import { ToggleGroup, ToggleGroupItem } from '../shadcn/toggle-group';
 
-interface TimeRangeOption {
-  readonly value: string;
+interface TimeRangeOption<T extends string = string> {
+  readonly value: T;
   readonly label: string;
 }
 
@@ -16,29 +16,30 @@ const DEFAULT_OPTIONS = [
 
 type DefaultTimeRange = (typeof DEFAULT_OPTIONS)[number]['value'];
 
-interface TimeRangeToggleProps {
-  value: string;
-  onValueChange: (value: string) => void;
-  options?: readonly TimeRangeOption[];
+interface TimeRangeToggleProps<T extends string = string> {
+  value: T;
+  onValueChange: (value: T) => void;
+  options: readonly TimeRangeOption<T>[];
   className?: string;
   'aria-label'?: string;
   'data-testid'?: string;
 }
 
-function TimeRangeToggle({
+function TimeRangeToggle<T extends string = string>({
   value,
   onValueChange,
-  options = DEFAULT_OPTIONS,
+  options,
   className,
   'aria-label': ariaLabel = 'Time range',
   'data-testid': dataTestId,
-}: TimeRangeToggleProps) {
+}: TimeRangeToggleProps<T>) {
   return (
     <ToggleGroup
       type="single"
       value={value}
       onValueChange={(next) => {
-        if (next) onValueChange(next);
+        const picked = options.find((option) => option.value === next);
+        if (picked) onValueChange(picked.value);
       }}
       aria-label={ariaLabel}
       data-testid={dataTestId}

@@ -1,15 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
+import { getRouteApi } from '@tanstack/react-router';
 import { useState } from 'react';
+import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
-import type { MonitoringSeries } from '@canyonos/api/monitoring';
+import type { MonitoringSeries, MonitoringSeriesResponse } from '@canyonos/api/monitoring';
 
 import { TimeseriesChart } from '@repo/ui/components/charts/timeseries-chart';
+import { TimeRangeToggle } from '@repo/ui/components/time-range-toggle';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
+import type { TimeRangeOption } from '@repo/ui/components/time-range-toggle';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
-import { PALETTE } from '@/modules/core/navigation/navigation';
+import { LlmCallList } from '@/modules/monitoring/components/llm-call-list';
 import { TraceList } from '@/modules/monitoring/components/trace-list';
 import {
   formatBucketLabel,
@@ -20,13 +24,22 @@ import {
 } from '@/modules/monitoring/monitoring.queries';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
 import { DEFAULT_METRICS_WINDOW } from '@/modules/projects/projects.metrics';
+import type { TraceView } from '@/modules/monitoring/monitoring.search';
 
 const SIGNAL_COLORS = {
-  traffic: PALETTE.steel,
-  latency: PALETTE.violet,
+  traffic: 'var(--signal-traffic)',
+  latency: 'var(--signal-latency)',
 } as const;
 
 const X_TICK_INTERVAL = 2;
+
+const VIEW_OPTIONS = [
+  { value: 'traces', label: 'All traces' },
+  { value: 'llm_traces', label: 'With LLM calls' },
+  { value: 'llm_calls', label: 'LLM calls' },
+] as const satisfies readonly TimeRangeOption<TraceView>[];
+
+const route = getRouteApi('/_authenticated/projects/$project_id/monitoring');
 
 type ShownSignal = keyof typeof SIGNAL_COLORS;
 
@@ -41,6 +54,8 @@ interface MonitoringScreenProps {
 export function MonitoringScreen({ project_id }: MonitoringScreenProps) {
   const [time_window, setTimeWindow] = useState<MetricsWindow>(DEFAULT_METRICS_WINDOW);
   const query = useQuery(monitoringSeriesQueryOptions(project_id, time_window));
+  const { view } = route.useSearch();
+  const navigate = route.useNavigate();
 
   return (
     <main className="flex min-h-full flex-col gap-7 p-7" data-testid="monitoring-screen">
@@ -51,37 +66,68 @@ export function MonitoringScreen({ project_id }: MonitoringScreenProps) {
         <ProjectWindowControl value={time_window} onChange={setTimeWindow} />
       </header>
 
-      {query.error ? (
-        <QueryError
-          message="Could not load trace signals."
-          onRetry={() => void query.refetch()}
-          test_id="monitoring-error"
-        />
-      ) : query.isPending ? (
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          {[0, 1].map((slot) => (
-            <Skeleton key={slot} className="h-72 w-full rounded-[1.125rem]" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2" data-testid="monitoring-grid">
-          {query.data.series.filter(isShown).map((series) => (
-            <SignalQuadrant
-              key={series.signal}
-              series={series}
-              bucket_start_ats={query.data.bucket_start_ats}
-              bucket_seconds={query.data.bucket_seconds}
-            />
-          ))}
-        </div>
-      )}
+      <SignalGrid query={query} />
 
       <section className="flex min-w-0 flex-col gap-3">
-        <h2 className="text-foreground text-sm font-semibold">All traces</h2>
-        <TraceList project_id={project_id} time_window={time_window} />
+        <TimeRangeToggle
+          value={view}
+          onValueChange={(next) => void navigate({ search: { view: next } })}
+          options={VIEW_OPTIONS}
+          aria-label="Trace view"
+          data-testid="trace-view-toggle"
+          className="self-start"
+        />
+        <TraceViewPanel project_id={project_id} time_window={time_window} view={view} />
       </section>
     </main>
   );
+}
+
+function SignalGrid({ query }: { readonly query: UseQueryResult<MonitoringSeriesResponse> }) {
+  if (query.isPending) {
+    return (
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        {[0, 1].map((slot) => (
+          <Skeleton key={slot} className="h-72 w-full rounded-[1.125rem]" />
+        ))}
+      </div>
+    );
+  }
+  if (query.isError) {
+    return (
+      <QueryError
+        message="Could not load trace signals."
+        onRetry={() => void query.refetch()}
+        test_id="monitoring-error"
+      />
+    );
+  }
+  return (
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-2" data-testid="monitoring-grid">
+      {query.data.series.filter(isShown).map((series) => (
+        <SignalQuadrant
+          key={series.signal}
+          series={series}
+          bucket_start_ats={query.data.bucket_start_ats}
+          bucket_seconds={query.data.bucket_seconds}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TraceViewPanel({
+  project_id,
+  time_window,
+  view,
+}: {
+  readonly project_id: string;
+  readonly time_window: MetricsWindow;
+  readonly view: TraceView;
+}) {
+  if (view === 'llm_calls')
+    return <LlmCallList project_id={project_id} time_window={time_window} />;
+  return <TraceList project_id={project_id} time_window={time_window} />;
 }
 
 function SignalQuadrant({

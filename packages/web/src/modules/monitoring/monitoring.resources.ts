@@ -1,12 +1,10 @@
 import type { MonitoringResource } from '@canyonos/api/monitoring';
 
-import { PALETTE } from '@/modules/core/navigation/navigation';
-
 export const RESOURCE_COLORS: Record<MonitoringResource, string> = {
-  cpu: PALETTE.steel,
-  memory: '#7b2d3f',
-  disk: '#c9a227',
-  gpu: PALETTE.emerald,
+  cpu: 'var(--resource-cpu)',
+  memory: 'var(--resource-memory)',
+  disk: 'var(--resource-disk)',
+  gpu: 'var(--resource-gpu)',
 };
 
 export const RESOURCE_LABELS: Record<MonitoringResource, string> = {

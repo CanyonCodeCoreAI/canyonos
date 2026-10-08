@@ -43,6 +43,16 @@
     --chart-5: #8a7fb5;
     --chart-6: #5aa39a;
 
+    /* Resolved on <html>, the element .dark sits on, so each follows the theme's chart token. */
+    --signal-traffic: var(--chart-2);
+    --signal-latency: var(--chart-5);
+    --signal-errors: var(--destructive);
+    --signal-saturation: var(--chart-3);
+    --resource-cpu: var(--chart-2);
+    --resource-memory: var(--chart-4);
+    --resource-disk: var(--chart-3);
+    --resource-gpu: var(--chart-1);
+
     --heat-1: #e07b39;
     --heat-2: #e9a43c;
     --heat-3: #d9c24b;
@@ -185,6 +195,15 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
+
+  --color-signal-traffic: var(--signal-traffic);
+  --color-signal-latency: var(--signal-latency);
+  --color-signal-errors: var(--signal-errors);
+  --color-signal-saturation: var(--signal-saturation);
+  --color-resource-cpu: var(--resource-cpu);
+  --color-resource-memory: var(--resource-memory);
+  --color-resource-disk: var(--resource-disk);
+  --color-resource-gpu: var(--resource-gpu);
 
   --color-heat-1: var(--heat-1);
   --color-heat-2: var(--heat-2);

@@ -1,22 +1,24 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { ChevronDownIcon } from 'lucide-react';
-import { useState } from 'react';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
 import type { MonitoringLlmCall, MonitoringLlmCallsResponse } from '@canyonos/api/monitoring';
 
+import { Collapsible, CollapsibleContent } from '@repo/ui/shadcn/collapsible';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { Payload } from '@/modules/monitoring/components/payload';
+import { RowTrigger } from '@/modules/monitoring/components/row-trigger';
+import { formatTokens } from '@/modules/monitoring/monitoring.format';
 import { formatMoneyValue } from '@/modules/projects/projects.format';
 
 const CALL_LIMIT = 200;
 
 const formatDuration = (ms: number | null) =>
   ms === null ? '—' : ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
-
-const formatTokens = (value: number | null) => (value === null ? '—' : value.toLocaleString());
 
 const formatCost = (value: number | null) => (value === null ? '—' : formatMoneyValue(value));
 
@@ -74,96 +76,93 @@ export function LlmCallList({ project_id, time_window }: LlmCallListProps) {
             <th className="w-9 px-2 py-2" />
           </tr>
         </thead>
-        <tbody>
-          {query.data.calls.map((call, index) => (
-            <LlmCallRow key={call.span_id} call={call} index={index} />
-          ))}
-        </tbody>
+        {query.data.calls.map((call, index) => (
+          <LlmCallRow key={call.span_id} call={call} index={index} project_id={project_id} />
+        ))}
       </table>
     </div>
   );
 }
 
-function LlmCallRow({ call, index }: { readonly call: MonitoringLlmCall; readonly index: number }) {
-  const [open, setOpen] = useState(false);
-
+function LlmCallRow({
+  call,
+  index,
+  project_id,
+}: {
+  readonly call: MonitoringLlmCall;
+  readonly index: number;
+  readonly project_id: string;
+}) {
   return (
-    <>
-      <tr
-        onClick={() => setOpen((was) => !was)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return;
-          event.preventDefault();
-          setOpen((was) => !was);
-        }}
-        tabIndex={0}
-        role="button"
-        aria-expanded={open}
-        aria-label={open ? 'Collapse LLM call' : 'Expand LLM call'}
-        data-testid={`llm-row-toggle-${index}`}
-        className="border-border/50 hover:bg-foreground/[0.03] focus-visible:bg-foreground/[0.03] cursor-pointer border-b last:border-b-0 focus-visible:outline-none"
-      >
-        <td className="text-muted-foreground px-4 py-2 align-top whitespace-nowrap">{call.at}</td>
-        <td className="text-foreground truncate px-2 py-2 align-top">{call.model ?? '—'}</td>
-        <td className="text-muted-foreground truncate px-2 py-2 align-top">{call.agent ?? '—'}</td>
-        <td
-          className={`px-2 py-2 align-top break-words ${call.failed ? 'text-red-500' : 'text-foreground'} ${open ? 'whitespace-pre-wrap' : 'truncate'}`}
-        >
-          {call.name}
-        </td>
-        <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
-          {formatTokens(call.input_tokens)}
-        </td>
-        <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
-          {formatTokens(call.output_tokens)}
-        </td>
-        <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
-          {formatDuration(call.duration_ms)}
-        </td>
-        <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
-          {formatCost(call.cost)}
-        </td>
-        <td className="text-muted-foreground px-2 py-2 align-top">
-          <ChevronDownIcon
-            className={`size-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
-            aria-hidden
-          />
-        </td>
-      </tr>
-      {open ? (
-        <tr className="border-border/50 border-b last:border-b-0">
-          <td colSpan={9} className="bg-foreground/[0.02] px-4 py-3">
-            {call.input === null ? null : <Payload label="input" value={call.input} />}
-            {call.output === null ? null : <Payload label="output" value={call.output} />}
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
-              <CallField label="trace_id" value={call.trace_id} />
-              <CallField label="span_id" value={call.span_id} />
-              <CallField label="status_message" value={call.status_message} />
-              <CallField
-                label="cache_hit_ratio"
-                value={
-                  call.cache_hit_ratio === null
-                    ? null
-                    : `${Math.round(call.cache_hit_ratio * 100)}%`
-                }
-              />
-              {Object.entries(call.attributes).map(([key, value]) => (
-                <CallField key={key} label={key} value={value} />
-              ))}
-            </dl>
+    <Collapsible asChild>
+      <tbody className="group/call border-border/50 border-b last:border-b-0">
+        <tr className="hover:bg-foreground/[0.03] has-[:focus-visible]:bg-foreground/[0.03] relative cursor-pointer">
+          <td className="text-muted-foreground px-4 py-2 align-top whitespace-nowrap">{call.at}</td>
+          <td className="text-foreground truncate px-2 py-2 align-top">
+            <RowTrigger data-testid={`llm-row-toggle-${index}`}>{call.model ?? '—'}</RowTrigger>
+          </td>
+          <td className="text-muted-foreground truncate px-2 py-2 align-top">
+            {call.agent ?? '—'}
+          </td>
+          <td
+            className={`truncate px-2 py-2 align-top break-words group-data-[state=open]/call:whitespace-pre-wrap ${call.failed ? 'text-red-500' : 'text-foreground'}`}
+          >
+            {call.name}
+          </td>
+          <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
+            {formatTokens(call.input_tokens)}
+          </td>
+          <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
+            {formatTokens(call.output_tokens)}
+          </td>
+          <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
+            {formatDuration(call.duration_ms)}
+          </td>
+          <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
+            {formatCost(call.cost)}
+          </td>
+          <td className="text-muted-foreground px-2 py-2 align-top">
+            <ChevronDownIcon
+              className="size-3.5 transition-transform group-data-[state=open]/call:rotate-180"
+              aria-hidden
+            />
           </td>
         </tr>
-      ) : null}
-    </>
-  );
-}
-
-function Payload({ label, value }: { readonly label: string; readonly value: string }) {
-  return (
-    <div className="mb-3">
-      <div className="text-muted-foreground mb-1">{label}</div>
-      <pre className="text-foreground break-words whitespace-pre-wrap">{value}</pre>
-    </div>
+        <CollapsibleContent asChild>
+          <tr>
+            <td colSpan={9} className="bg-foreground/[0.02] px-4 py-3">
+              <Link
+                to="/projects/$project_id/monitoring"
+                params={{ project_id }}
+                search={{ view: 'traces', trace: call.trace_id }}
+                className="text-link mb-3 inline-block underline-offset-2 hover:underline"
+                data-testid={`llm-row-open-trace-${index}`}
+              >
+                Open trace
+              </Link>
+              {call.input === null ? null : <Payload label="input" value={call.input} />}
+              {call.output === null ? null : <Payload label="output" value={call.output} />}
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
+                <CallField label="trace_id" value={call.trace_id} />
+                <CallField label="span_id" value={call.span_id} />
+                <CallField label="status_message" value={call.status_message} />
+                <CallField
+                  label="cache_hit_ratio"
+                  value={
+                    call.cache_hit_ratio === null
+                      ? null
+                      : `${Math.round(call.cache_hit_ratio * 100)}%`
+                  }
+                />
+                {Object.entries(call.attributes).map(([key, value]) => (
+                  <CallField key={key} label={key} value={value} />
+                ))}
+              </dl>
+            </td>
+          </tr>
+        </CollapsibleContent>
+      </tbody>
+    </Collapsible>
   );
 }
 

@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 
+import { MonitoringSearchSchema } from '@/modules/monitoring/monitoring.search';
 import { MonitoringScreen } from '@/modules/monitoring/screens/monitoring.screen';
 import { ProjectMonitoringBreadcrumbs } from '@/modules/projects/components/project-breadcrumbs';
 
@@ -9,6 +10,7 @@ function MonitoringRoute() {
 }
 
 export const Route = createFileRoute('/_authenticated/projects/$project_id/monitoring')({
+  validateSearch: MonitoringSearchSchema,
   staticData: {
     breadcrumbSlot: ProjectMonitoringBreadcrumbs,
   },
