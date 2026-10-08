@@ -13,6 +13,9 @@ from packaging.requirements import Requirement
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core import stub_generator
+from canyonos_core.controller.global_controller import (
+    CONTROLLER_READY_TIMEOUT_SECONDS,
+)
 from canyonos_core.stub_generator import (
     BASE_AGENT_REQUIREMENTS,
     BASE_WORKFLOW_REQUIREMENTS,
@@ -160,7 +163,10 @@ class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
         self.assertIn("target=controller.run", launcher)
         self.assertIn('socket.create_connection(("127.0.0.1", 9123)', launcher)
         self.assertIn("controller.mark_ready()", launcher)
-        self.assertIn("WORKFLOW_READY_TIMEOUT_SECONDS = 180", launcher)
+        self.assertIn(
+            f"WORKFLOW_READY_TIMEOUT_SECONDS = {CONTROLLER_READY_TIMEOUT_SECONDS}",
+            launcher,
+        )
         # The watcher gives up as failed, not silently: a port that never opens
         # must not leave the deploy waiting on a status nobody wrote.
         watcher = launcher[

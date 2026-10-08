@@ -34,15 +34,15 @@ scaling:
 ## How scaling decides
 
 The Global Controller measures every agent's load each poll interval (`poll_interval`
-in `global_controller.yaml`, 5 seconds by default). It keeps the last 10 measurements
+in `global_controller.yaml`, 5 seconds by default). It keeps the last 4 measurements
 for each agent.
 
 1. If the agent's replica count is outside `min_replicas` and `max_replicas`, it moves
    straight to the nearest limit.
-2. Otherwise, it waits until the agent has run at the same replica count for 10
+2. Otherwise, it waits until the agent has run at the same replica count for 4
    measurements in a row, with every replica up. That wait also acts as a cooldown
    after each change.
-3. It then averages the metric over those 10 measurements. Above `scale_up_above`, it
+3. It then averages the metric over those 4 measurements. Above `scale_up_above`, it
    adds one replica. Below `scale_down_below`, it removes one. Replicas change one at
    a time.
 

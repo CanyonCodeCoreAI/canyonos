@@ -3,7 +3,7 @@
 import json
 import time
 
-WINDOW_LENGTH = 10
+WINDOW_LENGTH = 4
 
 
 # ------------------------------------------------------------------ #
