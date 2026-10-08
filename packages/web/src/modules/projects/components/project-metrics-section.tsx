@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import type { ReactNode } from 'react';
 
+import { cardVariants } from '@repo/ui/shadcn/card';
 import { cn } from '@repo/ui/utils';
 
 interface ProjectMetricsSectionProps {
@@ -39,7 +40,7 @@ export function ProjectMetricsSection({
     <section
       className={cn(
         'flex flex-col gap-3',
-        framed && 'border-border bg-card gap-4 rounded-2xl border p-5 shadow-xs',
+        framed && cardVariants({ className: 'gap-4 p-5' }),
         className
       )}
       aria-labelledby={title ? heading_id : undefined}

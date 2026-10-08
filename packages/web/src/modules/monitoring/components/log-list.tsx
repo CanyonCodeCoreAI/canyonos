@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { MetricsWindow } from '@canyonos/api/metrics';
 import type { MonitoringLog, MonitoringLogsResponse } from '@canyonos/api/monitoring';
 
+import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
@@ -78,7 +79,7 @@ export function LogList({
   }
 
   if (query.isPending) {
-    return <Skeleton className="h-96 w-full rounded-[1.125rem]" />;
+    return <Skeleton className="h-96 w-full rounded-lg" />;
   }
 
   if (query.data.logs.length === 0) {
@@ -86,10 +87,7 @@ export function LogList({
   }
 
   return (
-    <div
-      className="border-border/70 bg-card min-w-0 overflow-x-auto rounded-[1.125rem] border shadow-xs"
-      data-testid={`${test_id}-table`}
-    >
+    <Card className="min-w-0 overflow-x-auto" data-testid={`${test_id}-table`}>
       <table className="w-full border-collapse text-left font-mono text-xs">
         <tbody>
           {query.data.logs.map((log, index) => (
@@ -97,7 +95,7 @@ export function LogList({
           ))}
         </tbody>
       </table>
-    </div>
+    </Card>
   );
 }
 

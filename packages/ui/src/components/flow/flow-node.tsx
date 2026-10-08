@@ -3,6 +3,7 @@ import { use } from 'react';
 import type { NodeProps } from '@xyflow/react';
 
 import { cn } from '../../lib/utils';
+import { Card } from '../../shadcn/card';
 import { FlowChromeContext } from './flow-chrome';
 import { chipColorToken, nodeColorToken, nodeWidthToken } from './flow-tokens';
 import type { FlowNode } from './flow-hoc';
@@ -70,9 +71,9 @@ export function FlowNodeCard({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <div className="relative" data-testid={nodeTestId(id)}>
       <AnchorHandles />
-      <div
+      <Card
         className={cn(
-          'bg-card flex flex-col gap-1.5 rounded-xl border px-3.5 py-3 shadow-xs transition-shadow duration-150',
+          'gap-1.5 px-3.5 py-3 transition-shadow duration-150',
           selected ? 'border-transparent' : 'border-border/60 hover:border-border hover:shadow-sm'
         )}
         style={{
@@ -151,7 +152,7 @@ export function FlowNodeCard({ id, data, selected }: NodeProps<FlowNode>) {
             })}
           </div>
         ) : null}
-      </div>
+      </Card>
     </div>
   );
 }

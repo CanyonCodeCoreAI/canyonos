@@ -34,8 +34,8 @@ export function ErrorsScreen({ project_id, time_window }: ErrorsScreenProps) {
         />
       ) : summary.isPending ? (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <Skeleton className="h-64 w-full rounded-[1.125rem]" />
-          <Skeleton className="h-64 w-full rounded-[1.125rem]" />
+          <Skeleton className="h-64 w-full rounded-lg" />
+          <Skeleton className="h-64 w-full rounded-lg" />
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2" data-testid="errors-summary">

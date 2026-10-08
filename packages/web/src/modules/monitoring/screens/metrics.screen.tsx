@@ -55,8 +55,8 @@ export function MetricsScreen({ project_id, time_window }: MetricsScreenProps) {
         />
       ) : query.isPending ? (
         <div className="flex flex-col gap-5">
-          <Skeleton className="h-64 w-full rounded-[1.125rem]" />
-          <Skeleton className="h-64 w-full rounded-[1.125rem]" />
+          <Skeleton className="h-64 w-full rounded-lg" />
+          <Skeleton className="h-64 w-full rounded-lg" />
         </div>
       ) : (
         <MetricsSections data={query.data} />

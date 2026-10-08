@@ -1,5 +1,6 @@
 import type { MonitoringErrorGroup } from '@canyonos/api/monitoring';
 
+import { cardVariants } from '@repo/ui/shadcn/card';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 
 interface ErrorGroupPanelProps {
@@ -14,10 +15,7 @@ export function ErrorGroupPanel({ title, groups, total, test_id }: ErrorGroupPan
   const listed = groups.reduce((sum, group) => sum + group.count, 0);
 
   return (
-    <section
-      className="border-border/70 bg-card flex min-w-0 flex-col rounded-[1.125rem] border p-5 shadow-xs"
-      data-testid={test_id}
-    >
+    <section className={cardVariants({ className: 'min-w-0 p-5' })} data-testid={test_id}>
       <header className="mb-4 flex items-baseline justify-between gap-3">
         <h2 className="text-foreground text-sm font-semibold">{title}</h2>
         <span className="text-muted-foreground text-xs tabular-nums">

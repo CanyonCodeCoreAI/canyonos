@@ -21,6 +21,7 @@ import type {
 
 import { Badge } from '@repo/ui/shadcn/badge';
 import { Button } from '@repo/ui/shadcn/button';
+import { cardVariants } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/shadcn/collapsible';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { toast } from '@repo/ui/shadcn/sonner';
@@ -61,7 +62,7 @@ export function PromptCard({
   return (
     <Collapsible asChild>
       <section
-        className="group/card border-border/70 bg-card rounded-[1.125rem] border shadow-xs"
+        className={cardVariants({ className: 'group/card' })}
         aria-label={summary.name}
         data-testid="prompt-card"
         data-name={summary.name}
@@ -69,7 +70,7 @@ export function PromptCard({
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="hover:bg-foreground/[0.025] flex w-full items-center gap-4 rounded-[1.125rem] px-5 py-4 text-left transition-colors group-data-[state=open]/card:rounded-b-none focus-visible:outline-none"
+            className="hover:bg-foreground/[0.025] flex w-full items-center gap-4 rounded-lg px-5 py-4 text-left transition-colors group-data-[state=open]/card:rounded-b-none focus-visible:outline-none"
             data-testid="prompt-toggle"
           >
             <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -143,7 +144,7 @@ function PromptHistory({
         aria-busy="true"
         data-testid="prompt-body-loading"
       >
-        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-md" />
       </div>
     );
   }
@@ -198,7 +199,7 @@ function VersionHeading({
 function PromptText({ text, test_id }: { readonly text: string; readonly test_id: string }) {
   return (
     <pre
-      className="bg-muted/60 border-border/50 text-foreground overflow-x-auto rounded-xl border px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+      className="bg-muted/60 border-border/50 text-foreground overflow-x-auto rounded-md border px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
       data-testid={test_id}
     >
       {text}
@@ -373,7 +374,7 @@ function VersionRow({
   return (
     <Collapsible asChild>
       <li
-        className="group/row border-border/60 data-[active=true]:border-primary/40 data-[active=true]:bg-primary/[0.04] rounded-xl border"
+        className="group/row border-border/60 data-[active=true]:border-primary/40 data-[active=true]:bg-primary/[0.04] rounded-md border"
         data-testid="prompt-version"
         data-version={version.version}
         data-active={is_live}
@@ -381,7 +382,7 @@ function VersionRow({
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="hover:bg-foreground/[0.03] flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs transition-colors focus-visible:outline-none"
+            className="hover:bg-foreground/[0.03] flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs transition-colors focus-visible:outline-none"
           >
             <span
               className={cn(

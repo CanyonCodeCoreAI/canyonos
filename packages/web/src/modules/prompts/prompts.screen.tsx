@@ -54,8 +54,8 @@ function PromptsBody({
     case 'loading':
       return (
         <div className="flex flex-col gap-4" aria-busy="true" data-testid="project-prompt-loading">
-          <Skeleton className="h-[4.25rem] w-full rounded-[1.125rem]" />
-          <Skeleton className="h-[4.25rem] w-full rounded-[1.125rem]" />
+          <Skeleton className="h-[4.25rem] w-full rounded-lg" />
+          <Skeleton className="h-[4.25rem] w-full rounded-lg" />
         </div>
       );
     case 'error':

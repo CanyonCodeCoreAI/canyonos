@@ -7,6 +7,7 @@ import type { MonitoringSeries, MonitoringSeriesResponse } from '@canyonos/api/m
 
 import { TimeseriesChart } from '@repo/ui/components/charts/timeseries-chart';
 import { TimeRangeToggle } from '@repo/ui/components/time-range-toggle';
+import { cardVariants } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import type { TimeRangeOption } from '@repo/ui/components/time-range-toggle';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';
@@ -86,7 +87,7 @@ function SignalGrid({ query }: { readonly query: UseQueryResult<MonitoringSeries
     return (
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {[0, 1].map((slot) => (
-          <Skeleton key={slot} className="h-72 w-full rounded-[1.125rem]" />
+          <Skeleton key={slot} className="h-72 w-full rounded-lg" />
         ))}
       </div>
     );
@@ -142,7 +143,7 @@ function SignalQuadrant({
 
   return (
     <section
-      className="border-border/70 bg-card flex min-w-0 flex-col rounded-[1.125rem] border p-5 shadow-xs"
+      className={cardVariants({ className: 'min-w-0 p-5' })}
       data-testid={`monitoring-quadrant-${series.signal}`}
     >
       <h2 className="text-foreground mb-4 text-sm font-semibold">{label}</h2>

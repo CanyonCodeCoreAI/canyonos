@@ -64,7 +64,7 @@ export function FileDiff({ path, change, rows, className }: FileDiffProps) {
   const badge = CHANGE_BADGE[change];
   return (
     <section
-      className={cn('bg-card flex flex-col overflow-hidden rounded-xl border', className)}
+      className={cn('bg-card flex flex-col overflow-hidden rounded-lg border', className)}
       aria-label={`Diff for ${path}`}
     >
       <header className="bg-muted/40 flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2.5">

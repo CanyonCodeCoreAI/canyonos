@@ -19,7 +19,7 @@ function ResizablePanel(props: ResizablePrimitive.PanelProps) {
 
 function HandleGrip() {
   return (
-    <div className="bg-border group-data-[separator=active]:bg-accent group-data-[separator=hover]:bg-accent z-10 flex h-4 w-3 items-center justify-center rounded-xs border transition-colors">
+    <div className="bg-border group-data-[separator=active]:bg-accent group-data-[separator=hover]:bg-accent z-10 flex h-4 w-3 items-center justify-center rounded-sm border transition-colors">
       <GripVerticalIcon className="size-2.5" />
     </div>
   );

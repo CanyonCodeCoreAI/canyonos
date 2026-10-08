@@ -11,6 +11,7 @@ import type {
 import { TimeseriesChart } from '@repo/ui/components/charts/timeseries-chart';
 import { Legend } from '@repo/ui/components/legend';
 import { StatCard } from '@repo/ui/components/stat-card';
+import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { TooltipProvider } from '@repo/ui/shadcn/tooltip';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';
@@ -152,7 +153,7 @@ function TimeseriesChartPanel({
   if (query.isPending) {
     return (
       <Skeleton
-        className={`${CHART_MIN_HEIGHT} rounded-2xl`}
+        className={`${CHART_MIN_HEIGHT} rounded-lg`}
         data-testid="project-timeseries-loading"
       />
     );
@@ -187,7 +188,7 @@ function TimeseriesStatsPanel({
     return (
       <div className={STATS_RAIL} aria-busy data-testid="project-timeseries-stats-loading">
         {['queries', 'run-rate', 'tokens', 'per-query', 'recoverable'].map((key) => (
-          <Skeleton key={key} className="h-[3.375rem] rounded-xl" />
+          <Skeleton key={key} className="h-[3.375rem] rounded-md" />
         ))}
       </div>
     );
@@ -256,10 +257,7 @@ export function CostTimeseriesChart({
   const maxValue = Math.max(...points.map((point) => parseMoney(point.total_cost)), 0);
 
   return (
-    <div
-      className="border-border/70 bg-card min-w-0 rounded-[1.125rem] border p-5 shadow-xs"
-      data-testid={`${test_id_prefix}-chart`}
-    >
+    <Card className="min-w-0 p-5" data-testid={`${test_id_prefix}-chart`}>
       <div className={`${CHART_MIN_HEIGHT} w-full`}>
         <TimeseriesChart
           data={data}
@@ -273,7 +271,7 @@ export function CostTimeseriesChart({
           labelFormatter={(point) => bucketLabel(point.index)}
         />
       </div>
-    </div>
+    </Card>
   );
 }
 

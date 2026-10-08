@@ -8,6 +8,7 @@ import type { RequestListItem, RequestTrace, RequestTraceBlock } from '@canyonos
 import { CopyButton } from '@repo/ui/components/copy-button';
 import { SectionLabel } from '@repo/ui/components/section-label';
 import { StatCard } from '@repo/ui/components/stat-card';
+import { Card } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/shadcn/collapsible';
 import {
   Sheet,
@@ -173,15 +174,15 @@ function TraceLoading() {
     <div className="flex flex-col gap-6" aria-busy data-testid={`${TEST_ID}-loading`}>
       <section className="flex flex-col gap-2.5">
         <SectionLabel as="h3">This query</SectionLabel>
-        <Skeleton className="h-[5.5rem] rounded-2xl" />
+        <Skeleton className="h-[5.5rem] rounded-lg" />
         <div className="grid grid-cols-3 gap-2.5">
           {Array.from({ length: 3 }, (_cell, index) => (
-            <Skeleton key={index} className="h-[3.375rem] rounded-xl" />
+            <Skeleton key={index} className="h-[3.375rem] rounded-md" />
           ))}
         </div>
       </section>
-      <Skeleton className="h-40 rounded-xl" />
-      <Skeleton className="h-[23rem] rounded-xl" />
+      <Skeleton className="h-40 rounded-lg" />
+      <Skeleton className="h-[23rem] rounded-lg" />
     </div>
   );
 }
@@ -204,10 +205,7 @@ function QueryRibbon({ trace }: { readonly trace: RequestTrace }) {
   const expensive = trace.cost_vs_median !== null && trace.cost_vs_median >= EXPENSIVE_VS_MEDIAN;
 
   return (
-    <div
-      className="border-border bg-card grid overflow-hidden rounded-2xl border shadow-xs sm:grid-cols-3"
-      data-testid={`${TEST_ID}-ribbon`}
-    >
+    <Card className="grid overflow-hidden sm:grid-cols-3" data-testid={`${TEST_ID}-ribbon`}>
       <RibbonCell
         test_id={`${TEST_ID}-ribbon-cost`}
         label="Cost"
@@ -239,7 +237,7 @@ function QueryRibbon({ trace }: { readonly trace: RequestTrace }) {
           trace.harness_cost_vs_median
         )}
       />
-    </div>
+    </Card>
   );
 }
 
@@ -323,7 +321,7 @@ function TraceBody({ trace }: { readonly trace: RequestTrace }) {
           />
         </Payload>
         <Payload label="Output" test_id={`${TEST_ID}-output`}>
-          <pre className="border-border/70 bg-muted/20 text-secondary-foreground max-h-48 overflow-auto rounded-xl border px-3.5 py-3 font-mono text-[0.75rem] leading-relaxed break-words whitespace-pre-wrap">
+          <pre className="border-border/70 bg-muted/20 text-secondary-foreground max-h-48 overflow-auto rounded-md border px-3.5 py-3 font-mono text-[0.75rem] leading-relaxed break-words whitespace-pre-wrap">
             {formatPayload(trace.output)}
           </pre>
         </Payload>
@@ -456,7 +454,7 @@ function TraceTimelineRow({
       </span>
       <div className="relative h-full min-h-[2.125rem]">
         <div
-          className="absolute top-1/2 flex h-4 min-w-[3px] -translate-y-1/2 items-center rounded-[4px] px-1.5"
+          className="absolute top-1/2 flex h-4 min-w-[3px] -translate-y-1/2 items-center rounded-md px-1.5"
           style={{ left: `${left}%`, width: `${width}%`, backgroundColor: color }}
           title={`${block.label}: ${formatDurationMs(block.execution_time_ms)}`}
         >

@@ -74,7 +74,7 @@ export function UserMenu() {
           data-testid="sidebar-user-menu"
           className={cn(
             'app-sidebar-collapse-to-icon',
-            'flex min-h-11 w-full items-center gap-2.5 rounded-[0.5625rem] px-2 py-1.5 text-left transition-[background-color,transform] duration-150',
+            'flex min-h-11 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-[background-color,transform] duration-150',
             'hover:bg-foreground/[0.035] focus-visible:outline-none active:scale-[0.985]'
           )}
         >

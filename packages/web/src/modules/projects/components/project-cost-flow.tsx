@@ -20,9 +20,6 @@ const SPEND_TITLE = 'Where the money sits';
 const SPEND_DESCRIPTION =
   'Spend across the selected window, read three ways — over time, by agent, and by query.';
 
-const SPEND_TAB_TRIGGER_CLASS =
-  'focus-visible:ring-ring data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-card/50 data-[state=inactive]:hover:text-foreground relative -mb-px rounded-t-[0.625rem] rounded-b-none border border-transparent px-4 pt-2 pb-2.5 text-[0.8125rem] font-semibold transition-[background-color,color] duration-150 focus-visible:ring-2 data-[state=active]:shadow-none';
-
 function isSpendTab(value: string): value is SpendTab {
   return value === 'overview' || value === 'agent' || value === 'query';
 }
@@ -59,18 +56,12 @@ export function ProjectCostFlow({
       >
         <TabsList
           aria-label="Spend view"
-          className="border-border bg-muted/60 -mx-5 flex h-auto shrink-0 items-end justify-start gap-1 rounded-none border-b px-4 pt-1.5 pb-0"
+          className="-mx-5 shrink-0 justify-start px-5"
           data-testid="project-spend-tabs"
         >
-          <TabsTrigger value="overview" className={SPEND_TAB_TRIGGER_CLASS}>
-            {SPEND_TAB_LABEL.overview}
-          </TabsTrigger>
-          <TabsTrigger value="agent" className={SPEND_TAB_TRIGGER_CLASS}>
-            {SPEND_TAB_LABEL.agent}
-          </TabsTrigger>
-          <TabsTrigger value="query" className={SPEND_TAB_TRIGGER_CLASS}>
-            {SPEND_TAB_LABEL.query}
-          </TabsTrigger>
+          <TabsTrigger value="overview">{SPEND_TAB_LABEL.overview}</TabsTrigger>
+          <TabsTrigger value="agent">{SPEND_TAB_LABEL.agent}</TabsTrigger>
+          <TabsTrigger value="query">{SPEND_TAB_LABEL.query}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-0 flex min-w-0 flex-col gap-5">

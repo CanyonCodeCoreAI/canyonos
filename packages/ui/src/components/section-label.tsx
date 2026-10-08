@@ -10,7 +10,7 @@ export function SectionLabel({ as: Tag = 'span', className, ...props }: SectionL
   return (
     <Tag
       className={cn(
-        'text-muted-foreground text-[0.6875rem] font-bold tracking-[0.06em] uppercase',
+        'text-muted-foreground text-[0.6875rem] font-bold tracking-[0.07em] uppercase',
         className
       )}
       {...props}

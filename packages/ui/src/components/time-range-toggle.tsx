@@ -1,6 +1,5 @@
 //
 
-import { cn } from '../lib/utils';
 import { ToggleGroup, ToggleGroupItem } from '../shadcn/toggle-group';
 
 interface TimeRangeOption<T extends string = string> {
@@ -43,17 +42,10 @@ function TimeRangeToggle<T extends string = string>({
       }}
       aria-label={ariaLabel}
       data-testid={dataTestId}
-      className={cn(
-        'border-border bg-secondary gap-1 rounded-[0.5625rem] border p-[0.1875rem]',
-        className
-      )}
+      className={className}
     >
       {options.map((option) => (
-        <ToggleGroupItem
-          key={option.value}
-          value={option.value}
-          className="text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-foreground h-auto rounded-[0.4375rem] px-[0.8125rem] py-1.5 text-[0.78125rem] font-semibold hover:bg-transparent data-[state=on]:shadow-sm"
-        >
+        <ToggleGroupItem key={option.value} value={option.value}>
           {option.label}
         </ToggleGroupItem>
       ))}

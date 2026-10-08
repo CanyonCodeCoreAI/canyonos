@@ -3,6 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { MonitoringEndpointsResponse } from '@canyonos/api/monitoring';
 
+import { cardVariants } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { cn } from '@repo/ui/utils';
 import { ApiResponseError } from '@/api';
@@ -14,7 +15,7 @@ import {
 } from '@/modules/monitoring/monitoring.queries';
 import { projectDetailQueryOptions } from '@/modules/projects/projects.queries';
 
-const CARD = 'border-border/70 bg-card min-w-0 rounded-[1.125rem] border p-5 shadow-xs';
+const CARD = cardVariants({ className: 'min-w-0 p-5' });
 // deploy() serves POST /<workflow function name> and the API does not report that name, so this
 // shows the `main` entry the runtime contract and `canyonos test` both post to.
 const CONVENTIONAL_WORKFLOW_ROUTE = 'main';

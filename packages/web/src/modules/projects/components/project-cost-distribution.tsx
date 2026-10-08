@@ -92,7 +92,7 @@ export function ProjectCostDistribution({
       }
     >
       {distribution_query.isPending ? (
-        <Skeleton className="h-72 rounded-2xl" data-testid="project-distribution-loading" />
+        <Skeleton className="h-72 rounded-lg" data-testid="project-distribution-loading" />
       ) : distribution_query.error ? (
         <QueryError
           message="Could not load the per-query distribution."

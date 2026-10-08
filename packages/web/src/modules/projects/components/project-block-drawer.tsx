@@ -271,10 +271,10 @@ function AgentSections({
       <div className="flex flex-col gap-4" aria-busy data-testid={`${TEST_ID}-loading`}>
         <div className="grid grid-cols-2 gap-2.5">
           {Array.from({ length: 8 }, (_cell, index) => (
-            <Skeleton key={index} className="h-[3.375rem] rounded-xl" />
+            <Skeleton key={index} className="h-[3.375rem] rounded-md" />
           ))}
         </div>
-        <Skeleton className="h-56 rounded-2xl" />
+        <Skeleton className="h-56 rounded-lg" />
       </div>
     );
   }
@@ -457,10 +457,7 @@ function CostOverTimeSection({ query }: { readonly query: UseQueryResult<Metrics
     <section className="border-border/70 flex flex-col gap-2.5 border-t pt-5">
       <SectionLabel as="h3">Cost over time · {WINDOW_LABEL}</SectionLabel>
       {query.isPending ? (
-        <Skeleton
-          className="h-72 w-full rounded-[1.125rem]"
-          data-testid={`${TEST_ID}-cost-time-loading`}
-        />
+        <Skeleton className="h-72 w-full rounded-lg" data-testid={`${TEST_ID}-cost-time-loading`} />
       ) : query.error ? null : (
         <AgentCostChart details={query.data} />
       )}

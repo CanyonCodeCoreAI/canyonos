@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ChevronDownIcon } from 'lucide-react';
+import { ArrowUpRightIcon, ChevronDownIcon } from 'lucide-react';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
 import type { MonitoringLlmCall, MonitoringLlmCallsResponse } from '@canyonos/api/monitoring';
 
+import { Card } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent } from '@repo/ui/shadcn/collapsible';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { apiCall, forgeAuthApi } from '@/api';
@@ -50,7 +51,7 @@ export function LlmCallList({ project_id, time_window }: LlmCallListProps) {
   }
 
   if (query.isPending) {
-    return <Skeleton className="h-96 w-full rounded-[1.125rem]" />;
+    return <Skeleton className="h-96 w-full rounded-lg" />;
   }
 
   if (query.data.calls.length === 0) {
@@ -58,10 +59,7 @@ export function LlmCallList({ project_id, time_window }: LlmCallListProps) {
   }
 
   return (
-    <div
-      className="border-border/70 bg-card min-w-0 overflow-x-auto rounded-[1.125rem] border shadow-xs"
-      data-testid="llm-table"
-    >
+    <Card className="min-w-0 overflow-x-auto" data-testid="llm-table">
       <table className="w-full border-collapse text-left font-mono text-xs">
         <thead className="text-muted-foreground border-border/50 border-b">
           <tr>
@@ -86,7 +84,7 @@ export function LlmCallList({ project_id, time_window }: LlmCallListProps) {
           />
         ))}
       </table>
-    </div>
+    </Card>
   );
 }
 
@@ -143,10 +141,11 @@ function LlmCallRow({
                 to="/projects/$project_id/monitoring"
                 params={{ project_id }}
                 search={{ time_window, view: 'traces', trace: call.trace_id }}
-                className="text-link mb-3 inline-block underline-offset-2 hover:underline"
+                className="text-link mb-3 inline-flex items-center gap-1"
                 data-testid={`llm-row-open-trace-${index}`}
               >
                 Open trace
+                <ArrowUpRightIcon className="size-3" aria-hidden />
               </Link>
               {call.input === null ? null : <Payload label="input" value={call.input} />}
               {call.output === null ? null : <Payload label="output" value={call.output} />}

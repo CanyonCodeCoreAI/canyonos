@@ -4,6 +4,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import type { KpiWindow, MetricsKpis, MetricsWindow } from '@canyonos/api/metrics';
 
 import { Badge } from '@repo/ui/shadcn/badge';
+import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@repo/ui/shadcn/tooltip';
 import { cn } from '@repo/ui/utils';
@@ -19,8 +20,7 @@ import {
 import { COST_SPLIT } from '@/modules/projects/projects.metrics';
 import { projectKpisQueryOptions } from '@/modules/projects/projects.queries';
 
-const RIBBON =
-  'border-border bg-card grid overflow-hidden rounded-2xl border shadow-xs sm:grid-cols-2 lg:grid-cols-5';
+const RIBBON = 'grid overflow-hidden sm:grid-cols-2 lg:grid-cols-5';
 
 interface ProjectCostRibbonProps {
   readonly project_id: string;
@@ -185,7 +185,7 @@ function RibbonBody({
 }) {
   if (query.isPending) {
     return (
-      <div className={RIBBON} aria-busy data-testid="project-cost-ribbon-loading">
+      <Card className={RIBBON} aria-busy data-testid="project-cost-ribbon-loading">
         {['queries', 'spend', 'model', 'harness', 'per-query'].map((key) => (
           <div
             key={key}
@@ -196,7 +196,7 @@ function RibbonBody({
             <Skeleton className="h-3 w-32" />
           </div>
         ))}
-      </div>
+      </Card>
     );
   }
 
@@ -224,7 +224,7 @@ function RibbonBody({
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className={RIBBON}>
+      <Card className={RIBBON}>
         <RibbonCell
           test_id="project-cost-queries"
           label="Queries"
@@ -261,7 +261,7 @@ function RibbonBody({
           hint={`${formatMoney(kpi.per_block_cost)} per block`}
           kpi={kpi}
         />
-      </div>
+      </Card>
     </TooltipProvider>
   );
 }

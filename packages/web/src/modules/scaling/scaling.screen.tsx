@@ -9,6 +9,7 @@ import type {
   ScalingStatus,
 } from '@canyonos/api/scaling';
 
+import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { TooltipProvider } from '@repo/ui/shadcn/tooltip';
 import { EmptyState } from '@/modules/core/components/EmptyState';
@@ -75,8 +76,8 @@ function ScalingBody({
   if (query.data === undefined) {
     return (
       <div className="flex flex-col gap-7" aria-busy="true" data-testid="scaling-loading">
-        <Skeleton className="h-44 w-full max-w-3xl rounded-[1.125rem]" />
-        <Skeleton className="h-40 w-full max-w-3xl rounded-[1.125rem]" />
+        <Skeleton className="h-44 w-full max-w-3xl rounded-lg" />
+        <Skeleton className="h-40 w-full max-w-3xl rounded-lg" />
       </div>
     );
   }
@@ -153,7 +154,7 @@ function ScalingAgentsBody({
   if (query.data === undefined) {
     return (
       <Skeleton
-        className="h-32 w-full rounded-[1.125rem]"
+        className="h-32 w-full rounded-lg"
         aria-busy="true"
         data-testid="scaling-agents-loading"
       />
@@ -182,7 +183,7 @@ function AgentsTable({
   readonly metric: ScalingMetric | null;
 }) {
   return (
-    <div className="border-border/70 bg-card overflow-hidden rounded-[1.125rem] border shadow-xs">
+    <Card className="overflow-hidden">
       <table className="w-full text-sm" data-testid="scaling-agents-table">
         <thead>
           <tr className="text-muted-foreground border-border/60 border-b text-left text-[0.6875rem] font-semibold tracking-wide uppercase">
@@ -211,7 +212,7 @@ function AgentsTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </Card>
   );
 }
 

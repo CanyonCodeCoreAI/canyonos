@@ -18,7 +18,7 @@ const statCardVariants = cva('flex flex-col', {
      */
     size: {
       hero: 'gap-2 px-[1.0625rem] py-[0.9375rem]',
-      compact: 'gap-1.5 rounded-xl px-3.5 py-3',
+      compact: 'gap-1.5 rounded-md px-3.5 py-3',
     },
   },
   compoundVariants: [{ tone: 'default', size: 'compact', class: 'bg-muted/40' }],
@@ -33,7 +33,7 @@ const statValueVariants = cva('leading-none font-bold tabular-nums', {
       danger: 'text-destructive',
     },
     size: {
-      hero: 'text-[1.5rem] tracking-[-0.02em]',
+      hero: 'text-[1.75rem] tracking-[-0.02em]',
       compact: 'shrink-0 font-mono text-[0.875rem] font-semibold',
     },
   },
@@ -67,7 +67,7 @@ export function StatCard({
     <Card className={cn(statCardVariants({ tone, size }), className)} {...props}>
       <div className="flex min-w-0 items-center gap-2">
         {leading}
-        <span className="text-muted-foreground truncate text-[0.65625rem] font-semibold tracking-[0.06em] uppercase">
+        <span className="text-muted-foreground truncate text-[0.6875rem] font-bold tracking-[0.07em] uppercase">
           {label}
         </span>
       </div>

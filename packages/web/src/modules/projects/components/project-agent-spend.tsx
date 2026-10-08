@@ -31,7 +31,7 @@ const MISSING = '—';
 const ROW_GRID_CLASS = 'grid-cols-[minmax(0,1fr)_5.5rem_5rem_5rem_5rem_4.5rem]';
 
 const AGENT_VIEW_TRIGGER_CLASS =
-  'focus-visible:ring-ring data-[state=active]:bg-card data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground h-6 rounded-md px-2.5 text-xs font-semibold transition-[background-color,color,box-shadow,transform] duration-150 focus-visible:ring-2 active:scale-[0.97] data-[state=active]:shadow-xs';
+  'data-[state=active]:bg-foreground/10 data-[state=active]:border-transparent mb-0 h-7 rounded-sm border-b-0 px-3 text-xs data-[state=active]:shadow-sm';
 
 const blocksQuery = (project_id: string, time_window: MetricsWindow) => ({
   queryKey: projectQueryKeys.metricsBlocks(project_id, time_window),
@@ -77,10 +77,7 @@ export function ProjectAgentSpend({ project_id, time_window }: ProjectAgentSpend
   if (blocks_query.isPending) {
     return (
       <AgentSpendSection>
-        <Skeleton
-          className="min-h-0 flex-1 rounded-[1.125rem]"
-          data-testid="project-agents-loading"
-        />
+        <Skeleton className="min-h-0 flex-1 rounded-lg" data-testid="project-agents-loading" />
       </AgentSpendSection>
     );
   }
@@ -123,7 +120,7 @@ export function ProjectAgentSpend({ project_id, time_window }: ProjectAgentSpend
         action={
           <TabsList
             aria-label="Agent spend view"
-            className="border-border/70 bg-muted/70 inline-flex h-8 rounded-lg border p-0.5"
+            className="bg-muted inline-flex h-auto gap-0.5 rounded-md border-b-0 p-1"
             data-testid="project-agent-view-toggle"
           >
             <TabsTrigger value="pie" className={AGENT_VIEW_TRIGGER_CLASS}>

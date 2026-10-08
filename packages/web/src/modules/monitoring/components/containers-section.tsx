@@ -44,7 +44,7 @@ export function ContainersSection({ project_id }: { readonly project_id: string 
 }
 
 function ContainersBody({ query }: { readonly query: UseQueryResult<MonitoringReplicasResponse> }) {
-  if (query.isPending) return <Skeleton className="h-24 w-full rounded-xl" />;
+  if (query.isPending) return <Skeleton className="h-24 w-full rounded-lg" />;
 
   if (query.isError) {
     return (

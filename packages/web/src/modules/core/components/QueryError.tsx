@@ -19,7 +19,7 @@ export function QueryError({
   return (
     <div
       className={cn(
-        'border-destructive/25 bg-destructive/5 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3',
+        'border-destructive/25 bg-destructive/5 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3',
         className
       )}
       role="alert"

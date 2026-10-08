@@ -10,6 +10,7 @@ import type {
   MonitoringTracesResponse,
 } from '@canyonos/api/monitoring';
 
+import { Card } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent } from '@repo/ui/shadcn/collapsible';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { cn } from '@repo/ui/utils';
@@ -75,7 +76,7 @@ export function TraceList({ project_id, time_window }: TraceListProps) {
   }
 
   if (query.isPending) {
-    return <Skeleton className="h-96 w-full rounded-[1.125rem]" />;
+    return <Skeleton className="h-96 w-full rounded-lg" />;
   }
 
   const llm_only = view === 'llm_traces';
@@ -92,10 +93,7 @@ export function TraceList({ project_id, time_window }: TraceListProps) {
   }
 
   return (
-    <div
-      className="border-border/70 bg-card min-w-0 overflow-x-auto rounded-[1.125rem] border shadow-xs"
-      data-testid="traces-table"
-    >
+    <Card className="min-w-0 overflow-x-auto" data-testid="traces-table">
       <table className="w-full border-collapse text-left font-mono text-xs">
         <thead className="text-muted-foreground border-border/50 border-b">
           <tr>
@@ -117,7 +115,7 @@ export function TraceList({ project_id, time_window }: TraceListProps) {
           />
         ))}
       </table>
-    </div>
+    </Card>
   );
 }
 

@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useReducer } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import type { CSSProperties } from 'react';
 
 import type { ProjectSummary } from '@canyonos/api/projects';
 
@@ -53,7 +52,7 @@ function ChildQueryError({
       <button
         type="button"
         onClick={on_retry}
-        className="text-foreground hover:bg-foreground/[0.06] rounded px-1.5 py-0.5 text-[0.6875rem] font-semibold"
+        className="text-foreground hover:bg-foreground/[0.06] rounded-sm px-1.5 py-0.5 text-[0.6875rem] font-semibold"
       >
         Retry
       </button>
@@ -62,7 +61,7 @@ function ChildQueryError({
 }
 
 const ROUTE_ROW_CLASS =
-  'hover:bg-foreground/[0.03] flex items-center gap-[0.4375rem] rounded-[0.4375rem] py-[0.3125rem] pr-2.5 transition-colors';
+  'hover:bg-foreground/[0.03] flex items-center gap-[0.4375rem] rounded-md py-[0.3125rem] pr-2.5 transition-colors';
 
 const PROJECT_ROUTE_GROUPS = [
   {
@@ -152,7 +151,7 @@ function ProjectRouteRow({
       data-testid={test_id}
       className={cn(
         ROUTE_ROW_CLASS,
-        'group/route data-[status=active]:bg-background pl-[1.875rem] data-[status=active]:shadow-xs'
+        'group/route data-[status=active]:bg-sidebar-accent pl-[1.875rem] data-[status=active]:shadow-sm'
       )}
     >
       <Icon
@@ -210,10 +209,7 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
       onOpenChange={(is_open) => dispatchExpansion({ type: 'open_changed', is_open })}
       className="group/proj flex flex-col gap-[0.1875rem]"
     >
-      <div
-        className="app-sidebar-row app-sidebar-collapse-to-icon gap-2 px-2.5 py-[0.5625rem]"
-        style={{ '--app-sidebar-color': color } as CSSProperties}
-      >
+      <div className="app-sidebar-row app-sidebar-collapse-to-icon gap-2 px-2.5 py-[0.5625rem]">
         {is_icon_collapsed ? null : (
           <CollapsibleTrigger asChild>
             <button
@@ -221,7 +217,7 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
               aria-label={`Toggle ${project.name} sources`}
               aria-expanded={open}
               data-testid={`nav-project-toggle-${project.id}`}
-              className="app-sidebar-hide-when-collapsed text-muted-foreground hover:bg-foreground/[0.06] -ml-1 flex size-4 shrink-0 items-center justify-center rounded transition-colors"
+              className="app-sidebar-hide-when-collapsed text-muted-foreground hover:bg-foreground/[0.06] -ml-1 flex size-4 shrink-0 items-center justify-center rounded-sm transition-colors"
             >
               <ChevronRightIcon
                 className={cn('size-3.5 transition-transform duration-150', open && 'rotate-90')}

@@ -8,6 +8,7 @@ import { MIN_REPLICAS_FLOOR, ScalingPolicySchema } from '@canyonos/api/scaling';
 import type { ScalingMetric, ScalingPolicy, ScalingStatus } from '@canyonos/api/scaling';
 
 import { Button } from '@repo/ui/shadcn/button';
+import { cardVariants } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/shadcn/collapsible';
 import { ToggleGroup, ToggleGroupItem } from '@repo/ui/shadcn/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@repo/ui/shadcn/tooltip';
@@ -85,7 +86,7 @@ export function ScalingPolicyCard({
   return (
     <Collapsible asChild>
       <section
-        className="group/card border-border/70 bg-card flex flex-col rounded-[1.125rem] border shadow-xs"
+        className={cardVariants({ className: 'group/card' })}
         aria-label="Scaling policy"
         data-testid="scaling-policy"
         data-policy={policy.status}
@@ -515,17 +516,11 @@ function KindToggle({
       onValueChange={(next) => {
         if (next) onChange(next as ScalingPolicyKind);
       }}
-      className="bg-foreground/[0.05] gap-0.5 rounded-lg p-0.5"
       aria-label="Load to watch"
       data-testid="policy-kind"
     >
       {KINDS.map((option) => (
-        <ToggleGroupItem
-          key={option}
-          value={option}
-          className="text-muted-foreground data-[state=on]:text-foreground h-7 rounded-md px-2.5 text-xs font-semibold data-[state=on]:shadow-xs"
-          data-testid={`policy-kind-${option}`}
-        >
+        <ToggleGroupItem key={option} value={option} data-testid={`policy-kind-${option}`}>
           {POLICY_KINDS[option].label}
         </ToggleGroupItem>
       ))}

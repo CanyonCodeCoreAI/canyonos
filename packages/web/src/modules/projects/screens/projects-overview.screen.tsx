@@ -8,6 +8,7 @@ import type { ProjectSummary } from '@canyonos/api/projects';
 import type { FleetOverview, FleetProject } from '@canyonos/api/resources';
 
 import { SectionLabel } from '@repo/ui/components/section-label';
+import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { apiCall, forgeAuthApi } from '@/api';
 import { authSelectors, useAuthStore } from '@/modules/auth/auth.store';
@@ -18,8 +19,7 @@ import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
 
 const SKELETON_KEYS = ['a', 'b', 'c', 'd', 'e'] as const;
 const ENTER = 'animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both ease-snappy duration-300';
-const LIST_CARD =
-  'border-border bg-card scroll-area flex min-h-0 flex-col overflow-y-auto rounded-2xl border shadow-xs';
+const LIST_CARD = 'scroll-area min-h-0 overflow-y-auto';
 
 type Greeting = 'morning' | 'afternoon' | 'evening';
 
@@ -124,7 +124,7 @@ function ProjectsList({
 }) {
   if (projectsQuery.isPending) {
     return (
-      <div className={LIST_CARD} data-testid="projects-overview-loading" aria-busy>
+      <Card className={LIST_CARD} data-testid="projects-overview-loading" aria-busy>
         <ul className="divide-border divide-y">
           {SKELETON_KEYS.map((key) => (
             <li key={key} className="flex items-center gap-4 px-5 py-4">
@@ -137,7 +137,7 @@ function ProjectsList({
             </li>
           ))}
         </ul>
-      </div>
+      </Card>
     );
   }
 
@@ -154,7 +154,7 @@ function ProjectsList({
   if (projectsQuery.data.length === 0) return <NoProjectsYet />;
 
   return (
-    <div className={LIST_CARD} data-testid="projects-overview-list">
+    <Card className={LIST_CARD} data-testid="projects-overview-list">
       <ul className="divide-border divide-y">
         {projectsQuery.data.map((project) => (
           <ProjectOverviewRow
@@ -164,7 +164,7 @@ function ProjectsList({
           />
         ))}
       </ul>
-    </div>
+    </Card>
   );
 }
 

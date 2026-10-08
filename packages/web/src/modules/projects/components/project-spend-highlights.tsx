@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import type { MetricsBlock, MetricsBlocks, MetricsWindow } from '@canyonos/api/metrics';
 import type { RequestList, RequestListItem } from '@canyonos/api/requests';
 
+import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { cn } from '@repo/ui/utils';
 import { apiCall, forgeAuthApi } from '@/api';
@@ -101,7 +102,7 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
 
   if (blocks_query.isPending || kpis_query.isPending || dearest_query.isPending) {
     return (
-      <div className={GRID} aria-busy data-testid="project-spend-highlights-loading">
+      <Card className={GRID} aria-busy data-testid="project-spend-highlights-loading">
         {['agent', 'query'].map((key) => (
           <div key={key} className={CELL}>
             <Skeleton className="h-3 w-32" />
@@ -109,7 +110,7 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
             <Skeleton className="h-3 w-48" />
           </div>
         ))}
-      </div>
+      </Card>
     );
   }
 
@@ -139,7 +140,7 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
 
   return (
     <div className="flex min-w-0 flex-col gap-2" data-testid="project-spend-highlights">
-      <div className={GRID} ref={tiles_ref}>
+      <Card className={GRID} ref={tiles_ref}>
         <HighlightTile
           label="Most expensive agent"
           value={!dearest_agent || unavailable ? MISSING : dearest_agent.label}
@@ -163,7 +164,7 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
           onOpen={dearest_request ? () => setSelectedRequest(dearest_request) : null}
           test_id="project-highlight-query"
         />
-      </div>
+      </Card>
 
       <p className="text-muted-foreground px-3 text-[0.71875rem]">
         Both highlights are scoped to the selected window.
@@ -185,8 +186,7 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
   );
 }
 
-const GRID =
-  'border-border bg-card grid min-w-0 overflow-hidden rounded-[1.125rem] border shadow-xs sm:grid-cols-2';
+const GRID = 'grid min-w-0 overflow-hidden sm:grid-cols-2';
 
 const CELL = 'flex min-w-0 flex-col gap-1.5 px-[1.0625rem] py-[0.9375rem]';
 
