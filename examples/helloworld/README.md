@@ -14,11 +14,10 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 
 | File | What it does |
 |---|---|
-| `agents/example_agent.py` | `ExampleAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the ExampleAgent."` |
-| `agents/example_agent.yaml` | The agent's name and function signature. The class name must match `agent.name` here and `name` in `global_controller.yaml`. |
-| `agents/vllm_agent.py`, `.yaml` | A second agent, `VllmAgent`. It's deployed, but the workflow doesn't call it. |
-| `workflow/example_workflow.py` | `main(query)` calls `ExampleAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. `deploy(main, port=8080)` serves it at `POST /main`. |
-| `config/global_controller.yaml` | What to run: the two agents and the workflow, all on `provider: local`. |
+| `agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
+| `agents/hello_agent.yaml` | The agent's name and function signature. The class name must match `agent.name` here and `name` in `global_controller.yaml`. |
+| `workflow/example_workflow.py` | `main(query)` calls `HelloAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. `deploy(main, port=8080)` serves it at `POST /main`. |
+| `config/global_controller.yaml` | What to run: the agent and workflow, both on `provider: local`. |
 | `config/policy.yaml` | Which callers can reach which agents. |
 
 ## Before you start
@@ -43,11 +42,11 @@ The first run takes about a minute while it builds the images. A pass ends with:
 
 ```
 ✓ deploy          Global Controller on port 8000
-✓ verify_runtime  3 agent(s) up
+✓ verify_runtime  2 agent(s) up
 ✓ query           answered in 23.199s
 
 Output     {
-  "greeting": "Hello, World! I'm the ExampleAgent."
+  "greeting": "Hello, World! I'm the HelloAgent!"
 }
 ```
 
@@ -92,7 +91,7 @@ curl http://127.0.0.1:8080/status/<request_id>
 ```
 
 ```json
-{"request_id": "<request_id>", "result": {"greeting": "Hello, World! I'm the ExampleAgent."}, "status": "done"}
+{"request_id": "<request_id>", "result": {"greeting": "Hello, World! I'm the HelloAgent!"}, "status": "done"}
 ```
 
 - The JSON body is passed to `main` as arguments, so `{"query": "Ada"}` returns `Hello, Ada! ...`, and `{}` falls back to `World`.
@@ -101,7 +100,7 @@ curl http://127.0.0.1:8080/status/<request_id>
 
 ## 4. Find it in the dashboard
 
-Open the dashboard URL, then **Projects** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see the workflow call `ExampleAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
+Open the dashboard URL, then **Projects** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see the workflow call `HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
 
 Each redeploy starts the dashboard's history fresh.
 
@@ -109,12 +108,11 @@ Each redeploy starts the dashboard's history fresh.
 
 Rules in `config/policy.yaml` decide which agents a request may reach, based on the `_context` you send with it. The rule with the most matching keys wins, and `match: {}` is the fallback. By default every agent is allowed.
 
-Remove `ExampleAgent` from the fallback rule:
+Remove `HelloAgent` from the fallback rule:
 
 ```yaml
   - match: {}
     access:
-      - VllmAgent
       - Workflow
 ```
 

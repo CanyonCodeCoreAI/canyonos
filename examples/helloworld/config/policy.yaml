@@ -11,6 +11,5 @@ rules:
 
   - match: {}
     access:
-      - ExampleAgent
-      - VllmAgent
+      - HelloAgent
       - Workflow

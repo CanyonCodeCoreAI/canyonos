@@ -33,8 +33,8 @@ def run_integration_test():
             print(f"\nWorkflow Completed! Result: {result}")
 
             # Validation assertions
-            assert result.get("greeting") == "Hello, World! I'm the ExampleAgent.", (
-                "ExampleAgent did not return the expected greeting."
+            assert result.get("greeting") == "Hello, World! I'm the HelloAgent!", (
+                "HelloAgent did not return the expected greeting."
             )
 
             print("\nIntegration test passed. All validations successful.")
@@ -65,7 +65,7 @@ class IntegrationScriptTests(unittest.TestCase):
         status_response = SimpleNamespace(
             json=lambda: {
                 "status": "done",
-                "result": {"greeting": "Hello, World! I'm the ExampleAgent."},
+                "result": {"greeting": "Hello, World! I'm the HelloAgent!"},
             }
         )
 

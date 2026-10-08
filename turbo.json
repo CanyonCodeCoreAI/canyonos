@@ -89,6 +89,12 @@
         "$TURBO_ROOT$/README.md"
       ]
     },
+    "canyonos-core#test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/examples/helloworld/**"
+      ]
+    },
     "canyonos-python#test": {
       "command": [
         "uv",

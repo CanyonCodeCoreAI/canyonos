@@ -9,7 +9,7 @@ agents:
     resources:
       cpu: 1
       memory: 512
-    entrypoint: agents/example_agent.py
+    entrypoint: agents/hello_agent.py
     provider: local
 
   - name: Workflow

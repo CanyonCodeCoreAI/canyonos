@@ -20,7 +20,7 @@ To run the complete suite:
 Verifies that a query sent to the deployed helloworld workflow reaches its agent and comes back.
 - Dispatches a single query to the deployed `/main` endpoint.
 - Polls the `/status/<request_id>` endpoint until completion.
-- Checks that the result holds the greeting from `ExampleAgent`.
+- Checks that the result holds the greeting from `HelloAgent`.
 
 To run manually against an already-deployed CanyonOS instance:
 ```bash
