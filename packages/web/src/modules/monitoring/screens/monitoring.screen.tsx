@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { getRouteApi } from '@tanstack/react-router';
-import { useState } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
@@ -23,7 +22,6 @@ import {
   UNIT_AXIS_LABELS,
 } from '@/modules/monitoring/monitoring.queries';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
-import { DEFAULT_METRICS_WINDOW } from '@/modules/projects/projects.metrics';
 import type { TraceView } from '@/modules/monitoring/monitoring.search';
 
 const SIGNAL_COLORS = {
@@ -49,21 +47,21 @@ const isShown = (series: MonitoringSeries): series is ShownSeries => series.sign
 
 interface MonitoringScreenProps {
   readonly project_id: string;
+  readonly time_window: MetricsWindow;
+  readonly view: TraceView;
 }
 
-export function MonitoringScreen({ project_id }: MonitoringScreenProps) {
-  const [time_window, setTimeWindow] = useState<MetricsWindow>(DEFAULT_METRICS_WINDOW);
+export function MonitoringScreen({ project_id, time_window, view }: MonitoringScreenProps) {
   const query = useQuery(monitoringSeriesQueryOptions(project_id, time_window));
-  const { view } = route.useSearch();
   const navigate = route.useNavigate();
 
   return (
-    <main className="flex min-h-full flex-col gap-7 p-7" data-testid="monitoring-screen">
+    <main className="flex min-h-full shrink-0 flex-col gap-7 p-7" data-testid="monitoring-screen">
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
           Traces
         </h1>
-        <ProjectWindowControl value={time_window} onChange={setTimeWindow} />
+        <ProjectWindowControl />
       </header>
 
       <SignalGrid query={query} />
@@ -71,7 +69,7 @@ export function MonitoringScreen({ project_id }: MonitoringScreenProps) {
       <section className="flex min-w-0 flex-col gap-3">
         <TimeRangeToggle
           value={view}
-          onValueChange={(next) => void navigate({ search: { view: next } })}
+          onValueChange={(next) => void navigate({ search: { time_window, view: next } })}
           options={VIEW_OPTIONS}
           aria-label="Trace view"
           data-testid="trace-view-toggle"

@@ -34,7 +34,6 @@ describe('refreshProjectDashboard', () => {
       projectQueryKeys.metricsDistribution(PROJECT_ID, 'cost_per_request', '7d', 20),
       projectQueryKeys.metricsBlocks(PROJECT_ID, '30d'),
       projectQueryKeys.metricsAgent(PROJECT_ID, AGENT_ID, 'UTC'),
-      projectQueryKeys.stats(PROJECT_ID),
       // Different page and different filters: the listing key inlines both, so a refresh that only
       // reached the entry currently on screen would leave these two behind.
       projectQueryKeys.requests(PROJECT_ID, FIRST_PAGE, NO_FILTERS),

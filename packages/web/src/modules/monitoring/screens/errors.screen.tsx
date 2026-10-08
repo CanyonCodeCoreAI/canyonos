@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
 
@@ -9,23 +8,22 @@ import { ErrorGroupPanel } from '@/modules/monitoring/components/error-group-pan
 import { LogList } from '@/modules/monitoring/components/log-list';
 import { errorSummaryQueryOptions } from '@/modules/monitoring/monitoring.queries';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
-import { DEFAULT_METRICS_WINDOW } from '@/modules/projects/projects.metrics';
 
 interface ErrorsScreenProps {
   readonly project_id: string;
+  readonly time_window: MetricsWindow;
 }
 
-export function ErrorsScreen({ project_id }: ErrorsScreenProps) {
-  const [time_window, setTimeWindow] = useState<MetricsWindow>(DEFAULT_METRICS_WINDOW);
+export function ErrorsScreen({ project_id, time_window }: ErrorsScreenProps) {
   const summary = useQuery(errorSummaryQueryOptions(project_id, time_window));
 
   return (
-    <main className="flex min-h-full flex-col gap-7 p-7" data-testid="errors-screen">
+    <main className="flex min-h-full shrink-0 flex-col gap-7 p-7" data-testid="errors-screen">
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
           Errors
         </h1>
-        <ProjectWindowControl value={time_window} onChange={setTimeWindow} />
+        <ProjectWindowControl />
       </header>
 
       {summary.error ? (

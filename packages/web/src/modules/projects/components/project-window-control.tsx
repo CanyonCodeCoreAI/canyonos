@@ -1,25 +1,30 @@
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
+import { z } from 'zod';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
+import { MetricsWindowSchema } from '@canyonos/api/metrics';
 
 import { TimeRangeToggle } from '@repo/ui/components/time-range-toggle';
 import { HeaderDockPortal } from '@/modules/core/navigation/header-dock';
-import { isMetricsWindow, METRICS_WINDOW_OPTIONS } from '@/modules/projects/projects.metrics';
+import {
+  DEFAULT_METRICS_WINDOW,
+  isMetricsWindow,
+  METRICS_WINDOW_OPTIONS,
+} from '@/modules/projects/projects.metrics';
 
-// Below this the header already carries the sidebar trigger, the workspace link, the project
-// breadcrumb and two deploy buttons; four more segments would overflow it, so the control stays in
-// the hero and the reader scrolls up to reach it.
-const DOCK_MIN_WIDTH = 1024;
+/** The search params of a screen scoped to a metrics window, so a link carries the window it shows. */
+export const metricsWindowSearchSchema = z.object({
+  time_window: MetricsWindowSchema.default(DEFAULT_METRICS_WINDOW).catch(DEFAULT_METRICS_WINDOW),
+});
+
+// shadcn's sidebar goes mobile below this, where the header has no room left for four segments,
+// so the control stays in the hero and the reader scrolls up to reach it.
+const DOCK_MIN_WIDTH = 768;
 
 // Reserves the control's box in the hero whether or not the control is currently in it. Load-bearing
 // rather than cosmetic: this is the element the observer watches, so its height must not depend on
 // docking — otherwise docking would move it, re-fire the observer, and oscillate.
 const HERO_SLOT = 'flex h-10 shrink-0 items-center';
-
-interface ProjectWindowControlProps {
-  readonly value: MetricsWindow;
-  readonly onChange: (time_window: MetricsWindow) => void;
-}
 
 /**
  * The metrics window toggle, which rides up into the app header once the hero scrolls away.
@@ -28,9 +33,12 @@ interface ProjectWindowControlProps {
  * control has to survive scrolling. It is portalled — not duplicated — into the header dock: one
  * instance means one test id, one focus target, and no second copy to keep in sync. The cost is that
  * crossing the portal boundary remounts it, so keyboard focus does not follow the handoff; the
- * handoff is caused by scrolling, so nothing was focused when it happens.
+ * handoff is caused by scrolling, so nothing was focused when it happens. The window itself is the
+ * route's `time_window` search param, so it survives reloads and links.
  */
-export function ProjectWindowControl({ value, onChange }: ProjectWindowControlProps) {
+export function ProjectWindowControl() {
+  const { time_window = DEFAULT_METRICS_WINDOW } = useSearch({ strict: false });
+  const navigate = useNavigate();
   const [docked, setDocked] = useState(false);
   const slot = useRef<HTMLDivElement>(null);
 
@@ -63,9 +71,11 @@ export function ProjectWindowControl({ value, onChange }: ProjectWindowControlPr
 
   const toggle = (
     <TimeRangeToggle
-      value={value}
+      value={time_window}
       onValueChange={(next) => {
-        if (isMetricsWindow(next)) onChange(next);
+        if (isMetricsWindow(next)) {
+          void navigate({ to: '.', search: (previous) => ({ ...previous, time_window: next }) });
+        }
       }}
       options={METRICS_WINDOW_OPTIONS}
       aria-label="Metrics window"

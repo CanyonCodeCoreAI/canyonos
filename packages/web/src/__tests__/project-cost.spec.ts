@@ -583,15 +583,6 @@ const PROJECT = {
   updated_at: '2026-07-01T12:00:00.000Z',
 };
 
-const PROJECT_STATS = {
-  project_id: PROJECT_ID,
-  file_count: 5,
-  workflow_count: 1,
-  ready_workflow_count: 1,
-  agent_count: 3,
-  tool_count: 2,
-};
-
 function requestedTimeWindow(url: URL): MetricsWindow {
   return (url.searchParams.get('time_window') as MetricsWindow | null) ?? '7d';
 }
@@ -615,11 +606,10 @@ const BLOCKS_PATH = `/projects/${PROJECT_ID}/metrics/blocks`;
 const TIMESERIES_PATH = `/projects/${PROJECT_ID}/metrics/timeseries`;
 const KPIS_PATH = `/projects/${PROJECT_ID}/metrics/kpis`;
 const DISTRIBUTION_PATH = `/projects/${PROJECT_ID}/metrics/distribution`;
-const STATS_PATH = `/projects/${PROJECT_ID}/stats`;
 
 // The sections the dashboard shows above and beside the listing. Refresh has to move all of them, or
 // the screen still reports two different reads.
-const OVERVIEW_PATHS = [KPIS_PATH, TIMESERIES_PATH, STATS_PATH] as const;
+const OVERVIEW_PATHS = [KPIS_PATH, TIMESERIES_PATH] as const;
 
 // StrictMode lets a query fetch more than once, so the assertion is that the count grew — never what
 // it grew to.
@@ -637,9 +627,6 @@ async function mockProjectCost(page: Page, options: MetricsMocks = {}): Promise<
   const calls: string[] = [];
   const routes: readonly [string, (url: URL) => unknown, boolean][] = [
     [`/projects/${PROJECT_ID}`, () => PROJECT, false],
-    // The context strip is part of the dashboard the refresh control speaks for, so the mocked
-    // screen has to answer for it too — an unanswered section has no read time to report.
-    [STATS_PATH, () => PROJECT_STATS, false],
     [KPIS_PATH, () => options.kpis ?? KPIS, options.kpisFails === true],
     [BLOCKS_PATH, () => options.blocks ?? BLOCKS, false],
     [
@@ -739,7 +726,7 @@ const AXIS_SHAPES: readonly [string, MetricsWindow, RegExp][] = [
   ['24 hours', '1d', /^\d{1,2} (AM|PM)$/],
   ['7 days', '7d', /^[A-Z][a-z]{2} \d{1,2}$/],
   ['30 days', '30d', /^[A-Z][a-z]{2} \d{1,2}$/],
-  ['a quarter', '1q', /^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/],
+  ['90 days', '1q', /^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/],
 ];
 
 test.describe('project cost dashboard', () => {
@@ -918,6 +905,21 @@ test.describe('project cost dashboard', () => {
       'data-state',
       'on'
     );
+  });
+
+  test('the window is read from and written to the address', async ({ page }) => {
+    await authenticate(page);
+    await mockProjectCost(page);
+    await page.goto(`/projects/${PROJECT_ID}?time_window=30d`);
+
+    const toggle = page.getByTestId('project-hero').getByTestId('project-window-toggle');
+    await expect(toggle.getByRole('radio', { name: '30 days' })).toHaveAttribute(
+      'data-state',
+      'on'
+    );
+
+    await toggle.getByRole('radio', { name: '24 hours' }).click();
+    await expect(page).toHaveURL(/[?&]time_window=1d\b/);
   });
 
   test('a section that fails shows its own error without blanking the others', async ({ page }) => {
@@ -1175,7 +1177,7 @@ test.describe('spend tabs', () => {
       ['24 hours', '1d'],
       ['7 days', '7d'],
       ['30 days', '30d'],
-      ['a quarter', '1q'],
+      ['90 days', '1q'],
     ] as const) {
       await page.getByTestId('project-window-toggle').getByRole('radio', { name: label }).click();
       await expect
@@ -1626,8 +1628,8 @@ test.describe('distribution selection', () => {
 
     await page.getByTestId('project-window-toggle').getByRole('radio', { name: '30 days' }).click();
 
-    // The dashboard's controls live in the screen, not the URL, so the cleared bucket shows up in
-    // what the table asks for rather than in the address bar.
+    // The bucket lives in the screen, not the URL, so the cleared bucket shows up in what the table
+    // asks for rather than in the address bar.
     await expect.poll(() => ranges.at(-1)).toBe('all');
     await expect(page.getByTestId('project-queries').getByRole('heading', { level: 2 })).toHaveText(
       'Queries · 30 days'

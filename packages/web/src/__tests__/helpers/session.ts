@@ -138,16 +138,6 @@ export async function stubProjectDashboard(
   const base = `/projects/${project.id}`;
 
   await routePath(page, base, (route) => fulfillJson(route, project));
-  await routePath(page, `${base}/stats`, (route) =>
-    fulfillJson(route, {
-      project_id: project.id,
-      file_count: project.file_count,
-      workflow_count: 1,
-      ready_workflow_count: 1,
-      agent_count: 2,
-      tool_count: 1,
-    })
-  );
   await routePath(page, `${base}/metrics/kpis`, (route) =>
     kpis_fail
       ? failJson(route, 'Could not read cost totals')

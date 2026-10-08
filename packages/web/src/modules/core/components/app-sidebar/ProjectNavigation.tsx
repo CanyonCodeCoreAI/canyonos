@@ -146,8 +146,9 @@ function ProjectRouteRow({
     <Link
       to={to}
       params={{ project_id }}
-      // The router marks a prefix match active, which would keep Costs current on /prompts.
-      activeOptions={{ exact: true }}
+      // The router marks a prefix match active, which would keep Costs current on /prompts, and
+      // compares search params, which would unmark a row once the window lands in the URL.
+      activeOptions={{ exact: true, includeSearch: false }}
       data-testid={test_id}
       className={cn(
         ROUTE_ROW_CLASS,

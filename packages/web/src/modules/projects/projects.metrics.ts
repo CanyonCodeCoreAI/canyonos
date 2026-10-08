@@ -17,7 +17,7 @@ export const METRICS_WINDOW_OPTIONS = [
   { value: '1d', label: '24 hours' },
   { value: '7d', label: '7 days' },
   { value: '30d', label: '30 days' },
-  { value: '1q', label: 'a quarter' },
+  { value: '1q', label: '90 days' },
 ] as const satisfies readonly TimeRangeOption[];
 
 export const DEFAULT_METRICS_WINDOW: MetricsWindow = '7d';
@@ -202,11 +202,10 @@ export function distributionCdfPoints(stats: DistributionStats): CdfPoint[] {
 // One source for the model-vs-harness split: the flow board, the timeseries bands, the block rows
 // and every legend read the same key, colour and labels, so a node, a band and a row for the same
 // side always match. `long` is the spelled-out form the split legend uses when it has the room.
-// Model spend is the violet of the palette and harness/compute the blue, matching the design and
-// the runtime's own charts — swapping them reads as a different metric to anyone who knows both.
+// Two shades of one green: both sides are parts of the same total, not two separate metrics.
 export const COST_SPLIT = {
-  harness_cost: { label: 'Harness', long: 'Harness & compute', color: 'var(--chart-2)' },
-  llm_cost: { label: 'Model', long: 'Model tokens', color: 'var(--chart-5)' },
+  harness_cost: { label: 'Harness', long: 'Harness & compute', color: 'var(--chart-1)' },
+  llm_cost: { label: 'Model', long: 'Model tokens', color: 'var(--brand-mint)' },
 } as const;
 
 export type CostSplitSide = keyof typeof COST_SPLIT;

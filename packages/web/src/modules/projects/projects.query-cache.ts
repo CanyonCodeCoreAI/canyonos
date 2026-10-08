@@ -7,7 +7,6 @@ import type { RequestListFilters, RequestsPage } from './projects.metrics';
 export const projectQueryKeys = {
   all: ['projects'] as const,
   detail: (project_id: string) => ['projects', project_id] as const,
-  stats: (project_id: string) => ['projects', project_id, 'stats'] as const,
   prompts: (project_id: string) => ['projects', project_id, 'prompts'] as const,
   prompt: (project_id: string, name: string) => ['projects', project_id, 'prompts', name] as const,
   scaling: (project_id: string) => ['projects', project_id, 'scaling'] as const,
@@ -67,12 +66,12 @@ export async function retryProjectDetailLoader(
   reset();
 }
 
-// The metrics sections, the context strip, and the query listing — not `requestTrace`: the drawer
+// The metrics sections and the query listing — not `requestTrace`: the drawer
 // isn't live and a refresh must not refetch behind it.
 export function isProjectDashboardQuery(query_key: QueryKey, project_id: string): boolean {
   if (query_key[0] !== 'projects' || query_key[1] !== project_id) return false;
   if (query_key[2] === 'requests' && query_key.at(-1) === 'trace') return false;
-  return query_key[2] === 'metrics' || query_key[2] === 'requests' || query_key[2] === 'stats';
+  return query_key[2] === 'metrics' || query_key[2] === 'requests';
 }
 
 export const DASHBOARD_POLL_INTERVAL_MS = 5_000;

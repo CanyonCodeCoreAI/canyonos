@@ -5,48 +5,39 @@ import type { DistributionMetric, MetricsWindow } from '@canyonos/api/metrics';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { QueryError } from '@/modules/core/components/QueryError';
-import { ProjectContext } from '@/modules/projects/components/project-context';
 import { ProjectCostDistribution } from '@/modules/projects/components/project-cost-distribution';
 import { ProjectCostFlow } from '@/modules/projects/components/project-cost-flow';
 import { ProjectCostRibbon } from '@/modules/projects/components/project-cost-ribbon';
 import { ProjectRequestsTable } from '@/modules/projects/components/project-requests-table';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
-import { DEFAULT_METRICS_WINDOW } from '@/modules/projects/projects.metrics';
 import { projectDetailQueryOptions } from '@/modules/projects/projects.queries';
 import type { SpendTab } from '@/modules/projects/components/project-cost-flow';
 import type { DistributionSelection } from '@/modules/projects/projects.metrics';
 
 interface DashboardState {
-  readonly time_window: MetricsWindow;
   readonly metric: DistributionMetric;
   readonly selection: DistributionSelection | null;
 }
 
 type DashboardAction =
-  | { readonly type: 'time_window'; readonly time_window: MetricsWindow }
   | { readonly type: 'metric'; readonly metric: DistributionMetric }
   | { readonly type: 'select'; readonly selection: DistributionSelection | null };
 
 const INITIAL_DASHBOARD: DashboardState = {
-  time_window: DEFAULT_METRICS_WINDOW,
   metric: 'cost_per_request',
   selection: null,
 };
 
 /**
- * The three controls the dashboard reads itself through: the range every section is scoped to, the
- * metric the histogram plots, and the bucket of it the query table lists.
+ * The two controls the query panel reads itself through: the metric the histogram plots, and the
+ * bucket of it the query table lists. The range lives in the URL, owned by the route.
  *
- * A selected bucket only means something against the range and metric it was read from, so moving
- * either drops it — stated once here rather than at each call site that used to repeat it.
+ * A selected bucket only means something against the metric it was read from, so moving the metric
+ * drops it — stated once here rather than at each call site that used to repeat it.
  * Unchanged actions return the same state, so re-picking what is already selected costs no render.
  */
 function reduceDashboard(state: DashboardState, action: DashboardAction): DashboardState {
   switch (action.type) {
-    case 'time_window':
-      return state.time_window === action.time_window
-        ? state
-        : { ...state, time_window: action.time_window, selection: null };
     case 'metric':
       return state.metric === action.metric
         ? state
@@ -58,17 +49,18 @@ function reduceDashboard(state: DashboardState, action: DashboardAction): Dashbo
 
 interface ProjectScreenProps {
   readonly project_id: string;
+  readonly time_window: MetricsWindow;
 }
 
-export function ProjectScreen({ project_id }: ProjectScreenProps) {
-  // Held here rather than in the URL: reading this dashboard is exploration, and routing every
-  // range, metric and bucket click re-renders the whole app shell, which the sidebar and the
-  // header both subscribe to. Nothing here is worth linking someone to.
+export function ProjectScreen({ project_id, time_window }: ProjectScreenProps) {
+  // Held here rather than in the URL: picking a metric or a bucket is exploration, and routing every
+  // click re-renders the whole app shell, which the sidebar and the header both subscribe to.
   const [dashboard, dispatch] = useReducer(reduceDashboard, INITIAL_DASHBOARD);
   // Which cut of the spend is showing. Held here because the sections below the flow card are only
   // meaningful against the overview: the per-agent and per-query lists carry their own totals.
   const [spend_tab, setSpendTab] = useState<SpendTab>('overview');
-  const { time_window } = dashboard;
+  // The window is the route's, so a bucket read under another window is ignored rather than cleared.
+  const selection = dashboard.selection?.time_window === time_window ? dashboard.selection : null;
 
   const project_query = useQuery(projectDetailQueryOptions(project_id));
 
@@ -93,18 +85,13 @@ export function ProjectScreen({ project_id }: ProjectScreenProps) {
           {project_query.isPending ? (
             <Skeleton className="h-7 w-64 rounded-lg" />
           ) : (
-            <h1 className="text-foreground min-w-0 truncate text-[1.5rem] leading-none font-bold tracking-tight">
+            <h1 className="text-foreground min-w-0 truncate text-[1.5rem] leading-tight font-bold tracking-tight">
               {project_query.data.name}
             </h1>
           )}
         </div>
-        <ProjectWindowControl
-          value={time_window}
-          onChange={(time_window) => dispatch({ type: 'time_window', time_window })}
-        />
+        <ProjectWindowControl />
       </header>
-
-      <ProjectContext project_id={project_id} />
 
       <ProjectCostRibbon project_id={project_id} time_window={time_window} />
       <ProjectCostFlow
@@ -121,14 +108,14 @@ export function ProjectScreen({ project_id }: ProjectScreenProps) {
               project_id={project_id}
               time_window={time_window}
               metric={dashboard.metric}
-              selection={dashboard.selection}
+              selection={selection}
               onMetricChange={(metric) => dispatch({ type: 'metric', metric })}
               onSelect={(selection) => dispatch({ type: 'select', selection })}
             />
             <ProjectRequestsTable
               project_id={project_id}
               time_window={time_window}
-              selection={dashboard.selection}
+              selection={selection}
             />
           </div>
         }

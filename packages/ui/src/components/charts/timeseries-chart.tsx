@@ -45,20 +45,17 @@ const AXIS_LABEL_STYLE = {
   textAnchor: 'middle',
 } as const;
 
-const Y_TITLE_INSET = 11;
+const Y_TITLE_SPACE = 22;
 
+// Above the axis rather than rotated beside it, so the title reads left to right.
 const renderYAxisTitle = (value: string) =>
   function YAxisTitle({ viewBox }: LabelProps) {
     const box = viewBox && 'height' in viewBox ? viewBox : undefined;
-    const x = (box?.x ?? 0) + Y_TITLE_INSET;
-    const y = (box?.y ?? 0) + (box?.height ?? 0) / 2;
     return (
       <text
-        x={x}
-        y={y}
-        transform={`rotate(-90, ${x}, ${y})`}
-        textAnchor="middle"
-        style={AXIS_LABEL_STYLE}
+        x={box?.x ?? 0}
+        y={(box?.y ?? 0) - Y_TITLE_SPACE / 2}
+        style={{ ...AXIS_LABEL_STYLE, textAnchor: 'start' }}
       >
         {value}
       </text>
@@ -122,7 +119,10 @@ function TimeseriesChart({
 
   return (
     <ChartContainer config={config} className={cn('aspect-auto size-full', className)} {...props}>
-      <ComposedChart data={data as SeriesPoint[]} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
+      <ComposedChart
+        data={data as SeriesPoint[]}
+        margin={{ top: yAxisLabel ? Y_TITLE_SPACE : 6, right: 6, bottom: 0, left: 0 }}
+      >
         {bars || lines ? null : (
           <defs>
             {series.map((dataKey) => (
@@ -153,7 +153,7 @@ function TimeseriesChart({
           domain={[0, maxValue]}
           tickLine={false}
           axisLine={AXIS_LINE}
-          width={(bars ? Y_AXIS_WIDTH : 40) + (yAxisLabel ? AXIS_LABEL_SPACE : 0)}
+          width={bars ? Y_AXIS_WIDTH : 40}
           tickMargin={bars ? 6 : undefined}
           tickCount={4}
           tickFormatter={axisFormatter}
@@ -222,7 +222,7 @@ function TimeseriesChart({
               dataKey={dataKey}
               type="monotone"
               stroke={`var(--color-${dataKey})`}
-              strokeWidth={2}
+              strokeWidth={3}
               dot={false}
               activeDot={{ r: 3.5 }}
               connectNulls={false}

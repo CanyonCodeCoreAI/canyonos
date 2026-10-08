@@ -227,7 +227,7 @@ function HighlightTile({
       <span className="text-muted-foreground text-[0.65625rem] font-semibold tracking-[0.05em] uppercase">
         {label}
       </span>
-      <span className="text-foreground min-w-0 truncate font-mono text-[1.25rem] leading-none font-semibold tracking-[-0.02em]">
+      <span className="text-foreground min-w-0 truncate font-mono text-[1.25rem] leading-tight font-semibold tracking-[-0.02em]">
         {value}
       </span>
       <span className="text-muted-foreground text-[0.71875rem] leading-snug text-pretty">

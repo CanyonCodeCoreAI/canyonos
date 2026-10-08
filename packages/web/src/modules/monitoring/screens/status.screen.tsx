@@ -60,7 +60,7 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
   const active_requests = deployment === 'checking' ? undefined : workflow_requests;
 
   return (
-    <main className="flex min-h-full flex-col gap-7 p-7" data-testid="status-screen">
+    <main className="flex min-h-full shrink-0 flex-col gap-7 p-7" data-testid="status-screen">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
           {project.data?.name ?? 'Status'}

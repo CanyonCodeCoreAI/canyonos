@@ -77,7 +77,13 @@ export function LlmCallList({ project_id, time_window }: LlmCallListProps) {
           </tr>
         </thead>
         {query.data.calls.map((call, index) => (
-          <LlmCallRow key={call.span_id} call={call} index={index} project_id={project_id} />
+          <LlmCallRow
+            key={call.span_id}
+            call={call}
+            index={index}
+            project_id={project_id}
+            time_window={time_window}
+          />
         ))}
       </table>
     </div>
@@ -88,10 +94,12 @@ function LlmCallRow({
   call,
   index,
   project_id,
+  time_window,
 }: {
   readonly call: MonitoringLlmCall;
   readonly index: number;
   readonly project_id: string;
+  readonly time_window: MetricsWindow;
 }) {
   return (
     <Collapsible asChild>
@@ -134,7 +142,7 @@ function LlmCallRow({
               <Link
                 to="/projects/$project_id/monitoring"
                 params={{ project_id }}
-                search={{ view: 'traces', trace: call.trace_id }}
+                search={{ time_window, view: 'traces', trace: call.trace_id }}
                 className="text-link mb-3 inline-block underline-offset-2 hover:underline"
                 data-testid={`llm-row-open-trace-${index}`}
               >

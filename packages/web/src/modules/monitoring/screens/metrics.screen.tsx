@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
 import type {
@@ -12,10 +11,10 @@ import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ResourceLegend, ResourceSection } from '@/modules/monitoring/components/resource-section';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
-import { DEFAULT_METRICS_WINDOW } from '@/modules/projects/projects.metrics';
 
 interface MetricsScreenProps {
   readonly project_id: string;
+  readonly time_window: MetricsWindow;
 }
 
 function presentResources(data: MonitoringResourceUtilizationResponse): MonitoringResource[] {
@@ -26,8 +25,7 @@ function presentResources(data: MonitoringResourceUtilizationResponse): Monitori
   return [...seen];
 }
 
-export function MetricsScreen({ project_id }: MetricsScreenProps) {
-  const [time_window, setTimeWindow] = useState<MetricsWindow>(DEFAULT_METRICS_WINDOW);
+export function MetricsScreen({ project_id, time_window }: MetricsScreenProps) {
   const query = useQuery({
     queryKey: ['projects', project_id, 'monitoring', 'resources', time_window],
     queryFn: () =>
@@ -46,7 +44,7 @@ export function MetricsScreen({ project_id }: MetricsScreenProps) {
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
           Metrics
         </h1>
-        <ProjectWindowControl value={time_window} onChange={setTimeWindow} />
+        <ProjectWindowControl />
       </header>
 
       {query.error ? (
