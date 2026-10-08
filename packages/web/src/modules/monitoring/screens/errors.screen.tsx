@@ -2,13 +2,12 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
-import type { MonitoringErrorSummaryResponse } from '@canyonos/api/monitoring';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ErrorGroupPanel } from '@/modules/monitoring/components/error-group-panel';
 import { LogList } from '@/modules/monitoring/components/log-list';
+import { errorSummaryQueryOptions } from '@/modules/monitoring/monitoring.queries';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
 import { DEFAULT_METRICS_WINDOW } from '@/modules/projects/projects.metrics';
 
@@ -18,16 +17,7 @@ interface ErrorsScreenProps {
 
 export function ErrorsScreen({ project_id }: ErrorsScreenProps) {
   const [time_window, setTimeWindow] = useState<MetricsWindow>(DEFAULT_METRICS_WINDOW);
-  const summary = useQuery({
-    queryKey: ['projects', project_id, 'monitoring', 'errors', 'summary', time_window],
-    queryFn: () =>
-      apiCall<MonitoringErrorSummaryResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.errors.summary.get({
-          $query: { time_window },
-        })
-      ),
-    retry: false,
-  });
+  const summary = useQuery(errorSummaryQueryOptions(project_id, time_window));
 
   return (
     <main className="flex min-h-full flex-col gap-7 p-7" data-testid="errors-screen">

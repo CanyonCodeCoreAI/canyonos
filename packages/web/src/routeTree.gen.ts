@@ -24,6 +24,7 @@ import { Route as AuthenticatedProjectsProject_idMetricsRouteImport } from './ro
 import { Route as AuthenticatedProjectsProject_idMonitoringRouteImport } from './routes/_authenticated/projects/$project_id/monitoring'
 import { Route as AuthenticatedProjectsProject_idPromptsRouteImport } from './routes/_authenticated/projects/$project_id/prompts'
 import { Route as AuthenticatedProjectsProject_idScalingRouteImport } from './routes/_authenticated/projects/$project_id/scaling'
+import { Route as AuthenticatedProjectsProject_idStatusRouteImport } from './routes/_authenticated/projects/$project_id/status'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -108,6 +109,12 @@ const AuthenticatedProjectsProject_idScalingRoute =
     path: '/scaling',
     getParentRoute: () => AuthenticatedProjectsProject_idRoute,
   } as any)
+const AuthenticatedProjectsProject_idStatusRoute =
+  AuthenticatedProjectsProject_idStatusRouteImport.update({
+    id: '/status',
+    path: '/status',
+    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByFullPath {
   '/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
   '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
+  '/projects/$project_id/status': typeof AuthenticatedProjectsProject_idStatusRoute
   '/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRoutesByTo {
@@ -136,6 +144,7 @@ export interface FileRoutesByTo {
   '/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
   '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
+  '/projects/$project_id/status': typeof AuthenticatedProjectsProject_idStatusRoute
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRoutesById {
@@ -154,6 +163,7 @@ export interface FileRoutesById {
   '/_authenticated/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
   '/_authenticated/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
   '/_authenticated/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
+  '/_authenticated/projects/$project_id/status': typeof AuthenticatedProjectsProject_idStatusRoute
   '/_authenticated/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
 }
 export interface FileRouteTypes {
@@ -171,6 +181,7 @@ export interface FileRouteTypes {
     | '/projects/$project_id/monitoring'
     | '/projects/$project_id/prompts'
     | '/projects/$project_id/scaling'
+    | '/projects/$project_id/status'
     | '/projects/$project_id/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -185,6 +196,7 @@ export interface FileRouteTypes {
     | '/projects/$project_id/monitoring'
     | '/projects/$project_id/prompts'
     | '/projects/$project_id/scaling'
+    | '/projects/$project_id/status'
     | '/projects/$project_id'
   id:
     | '__root__'
@@ -202,6 +214,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects/$project_id/monitoring'
     | '/_authenticated/projects/$project_id/prompts'
     | '/_authenticated/projects/$project_id/scaling'
+    | '/_authenticated/projects/$project_id/status'
     | '/_authenticated/projects/$project_id/'
   fileRoutesById: FileRoutesById
 }
@@ -317,6 +330,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProject_idScalingRouteImport
       parentRoute: typeof AuthenticatedProjectsProject_idRoute
     }
+    '/_authenticated/projects/$project_id/status': {
+      id: '/_authenticated/projects/$project_id/status'
+      path: '/status'
+      fullPath: '/projects/$project_id/status'
+      preLoaderRoute: typeof AuthenticatedProjectsProject_idStatusRouteImport
+      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+    }
   }
 }
 
@@ -328,6 +348,7 @@ interface AuthenticatedProjectsProject_idRouteChildren {
   AuthenticatedProjectsProject_idMonitoringRoute: typeof AuthenticatedProjectsProject_idMonitoringRoute
   AuthenticatedProjectsProject_idPromptsRoute: typeof AuthenticatedProjectsProject_idPromptsRoute
   AuthenticatedProjectsProject_idScalingRoute: typeof AuthenticatedProjectsProject_idScalingRoute
+  AuthenticatedProjectsProject_idStatusRoute: typeof AuthenticatedProjectsProject_idStatusRoute
   AuthenticatedProjectsProject_idIndexRoute: typeof AuthenticatedProjectsProject_idIndexRoute
 }
 
@@ -347,6 +368,8 @@ const AuthenticatedProjectsProject_idRouteChildren: AuthenticatedProjectsProject
       AuthenticatedProjectsProject_idPromptsRoute,
     AuthenticatedProjectsProject_idScalingRoute:
       AuthenticatedProjectsProject_idScalingRoute,
+    AuthenticatedProjectsProject_idStatusRoute:
+      AuthenticatedProjectsProject_idStatusRoute,
     AuthenticatedProjectsProject_idIndexRoute:
       AuthenticatedProjectsProject_idIndexRoute,
   }

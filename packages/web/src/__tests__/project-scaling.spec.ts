@@ -223,7 +223,7 @@ test('@smoke the Scaling row opens the scaling screen and is the row marked curr
   await openSession(page);
   await stubScaling(page, APPLIED);
   const scaling = page.getByTestId(`nav-project-scaling-${PROJECT.id}`);
-  const manage = page.getByTestId(`nav-project-manage-${PROJECT.id}`);
+  const costs = page.getByTestId(`nav-project-manage-${PROJECT.id}`);
   const prompts = page.getByTestId(`nav-project-prompts-${PROJECT.id}`);
 
   await page.goto('/projects');
@@ -231,6 +231,7 @@ test('@smoke the Scaling row opens the scaling screen and is the row marked curr
   await expect(scaling).toHaveCount(0);
 
   await page.getByTestId(`nav-project-toggle-${PROJECT.id}`).click();
+  await page.getByRole('button', { name: 'Configuration' }).click();
   await expect(scaling).toBeVisible();
   await expect(scaling).not.toHaveAttribute('aria-current', 'page');
 
@@ -240,7 +241,7 @@ test('@smoke the Scaling row opens the scaling screen and is the row marked curr
   await expect(screen(page)).toHaveAttribute('data-state', 'ready');
   await expect(appliedCard(page)).toBeVisible();
   await expect(scaling).toHaveAttribute('aria-current', 'page');
-  await expect(manage).not.toHaveAttribute('aria-current', 'page');
+  await expect(costs).toHaveCount(0);
   await expect(prompts).not.toHaveAttribute('aria-current', 'page');
 });
 

@@ -180,7 +180,7 @@ function ProjectOverviewRow({
   return (
     <li className="group has-[a:focus-visible]:ring-ring hover:bg-muted/40 relative flex items-center gap-3 px-5 py-4 transition-colors has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-inset sm:gap-4">
       <Link
-        to="/projects/$project_id"
+        to="/projects/$project_id/status"
         params={{ project_id: project.id }}
         data-testid={`projects-overview-project-${project.id}`}
         aria-label={project.name}

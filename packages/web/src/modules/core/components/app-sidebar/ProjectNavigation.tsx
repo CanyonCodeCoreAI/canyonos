@@ -1,16 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams, useRouterState } from '@tanstack/react-router';
+import { Link, useMatchRoute, useParams } from '@tanstack/react-router';
 import {
+  ActivityIcon,
   ChartColumnIcon,
   ChevronRightIcon,
   FileTextIcon,
   FolderIcon,
-  GaugeIcon,
-  LayoutDashboardIcon,
   ScalingIcon,
   ScrollTextIcon,
   SparklesIcon,
   TriangleAlertIcon,
+  WalletIcon,
+  WaypointsIcon,
 } from 'lucide-react';
 import { useEffect, useReducer } from 'react';
 import type { LucideIcon } from 'lucide-react';
@@ -63,32 +64,70 @@ function ChildQueryError({
 const ROUTE_ROW_CLASS =
   'hover:bg-foreground/[0.03] flex items-center gap-[0.4375rem] rounded-[0.4375rem] py-[0.3125rem] pr-2.5 transition-colors';
 
-const PROJECT_ROUTE_ROWS = [
-  { to: '/projects/$project_id/prompts', slug: 'prompts', label: 'Prompts', Icon: FileTextIcon },
-  { to: '/projects/$project_id/scaling', slug: 'scaling', label: 'Scaling', Icon: ScalingIcon },
+const PROJECT_ROUTE_GROUPS = [
   {
-    to: '/projects/$project_id/monitoring',
-    slug: 'monitoring',
-    label: 'Traces',
-    Icon: GaugeIcon,
+    label: 'Monitoring',
+    rows: [
+      {
+        to: '/projects/$project_id',
+        test_slug: 'manage',
+        label: 'Costs',
+        Icon: WalletIcon,
+      },
+      {
+        to: '/projects/$project_id/monitoring',
+        test_slug: 'monitoring',
+        label: 'Traces',
+        Icon: WaypointsIcon,
+      },
+      {
+        to: '/projects/$project_id/errors',
+        test_slug: 'errors',
+        label: 'Errors',
+        Icon: TriangleAlertIcon,
+      },
+      {
+        to: '/projects/$project_id/metrics',
+        test_slug: 'metrics',
+        label: 'Metrics',
+        Icon: ChartColumnIcon,
+      },
+      {
+        to: '/projects/$project_id/logs',
+        test_slug: 'logs',
+        label: 'Logs',
+        Icon: ScrollTextIcon,
+      },
+      {
+        to: '/projects/$project_id/llm',
+        test_slug: 'llm',
+        label: 'LLM',
+        Icon: SparklesIcon,
+      },
+    ],
   },
-  { to: '/projects/$project_id/logs', slug: 'logs', label: 'Logs', Icon: ScrollTextIcon },
   {
-    to: '/projects/$project_id/errors',
-    slug: 'errors',
-    label: 'Errors',
-    Icon: TriangleAlertIcon,
+    label: 'Configuration',
+    rows: [
+      {
+        to: '/projects/$project_id/prompts',
+        test_slug: 'prompts',
+        label: 'Prompts',
+        Icon: FileTextIcon,
+      },
+      {
+        to: '/projects/$project_id/scaling',
+        test_slug: 'scaling',
+        label: 'Scaling',
+        Icon: ScalingIcon,
+      },
+    ],
   },
-  {
-    to: '/projects/$project_id/metrics',
-    slug: 'metrics',
-    label: 'Metrics',
-    Icon: ChartColumnIcon,
-  },
-  { to: '/projects/$project_id/llm', slug: 'llm', label: 'LLM', Icon: SparklesIcon },
 ] as const;
 
-type ProjectRoute = '/projects/$project_id' | (typeof PROJECT_ROUTE_ROWS)[number]['to'];
+type ProjectRoute =
+  | '/projects/$project_id/status'
+  | (typeof PROJECT_ROUTE_GROUPS)[number]['rows'][number]['to'];
 
 function ProjectRouteRow({
   project_id,
@@ -96,38 +135,30 @@ function ProjectRouteRow({
   label,
   Icon,
   test_id,
-  is_active,
 }: {
   readonly project_id: string;
   readonly to: ProjectRoute;
   readonly label: string;
   readonly Icon: LucideIcon;
   readonly test_id: string;
-  readonly is_active: boolean;
 }) {
   return (
     <Link
       to={to}
       params={{ project_id }}
-      // The router marks a prefix match active, which would keep Manage current on /prompts.
+      // The router marks a prefix match active, which would keep Costs current on /prompts.
       activeOptions={{ exact: true }}
       data-testid={test_id}
-      aria-current={is_active ? 'page' : undefined}
-      className={cn(ROUTE_ROW_CLASS, 'pl-[1.875rem]', is_active && 'bg-background shadow-xs')}
+      className={cn(
+        ROUTE_ROW_CLASS,
+        'group/route data-[status=active]:bg-background pl-[1.875rem] data-[status=active]:shadow-xs'
+      )}
     >
       <Icon
-        className={cn(
-          'size-[0.8125rem] shrink-0',
-          is_active ? 'text-primary' : 'text-muted-foreground'
-        )}
+        className="text-muted-foreground group-data-[status=active]/route:text-primary size-[0.8125rem] shrink-0"
         strokeWidth={1.9}
       />
-      <span
-        className={cn(
-          'min-w-0 flex-1 truncate font-mono text-[0.75rem] font-semibold',
-          is_active ? 'text-primary' : 'text-sidebar-foreground'
-        )}
-      >
+      <span className="text-sidebar-foreground group-data-[status=active]/route:text-primary min-w-0 flex-1 truncate font-mono text-[0.75rem] font-semibold">
         {label}
       </span>
     </Link>
@@ -136,10 +167,8 @@ function ProjectRouteRow({
 
 function ProjectRow({ project }: { readonly project: ProjectSummary }) {
   const params = useParams({ strict: false });
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const matchRoute = useMatchRoute();
   const is_active = params.project_id === project.id;
-  const project_path = `/projects/${project.id}`;
-  const is_manage_active = pathname === project_path || pathname === `${project_path}/`;
   const [expansion, dispatchExpansion] = useReducer(
     reduceProjectExpansion,
     is_active,
@@ -170,9 +199,6 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
         )}
       >
         {project.name}
-      </span>
-      <span className="app-sidebar-meta app-sidebar-hide-when-collapsed text-[0.65625rem]">
-        {project.file_count} files
       </span>
     </>
   );
@@ -208,7 +234,7 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
             sources underneath are a detail of that project, so arriving also expands them — the
             chevron is what closes them again. */}
         <Link
-          to="/projects/$project_id"
+          to="/projects/$project_id/status"
           params={{ project_id: project.id }}
           onClick={() => dispatchExpansion({ type: 'open_changed', is_open: true })}
           data-testid={`nav-project-${project.id}`}
@@ -224,22 +250,47 @@ function ProjectRow({ project }: { readonly project: ProjectSummary }) {
         <div className="flex flex-col gap-[0.1875rem]">
           <ProjectRouteRow
             project_id={project.id}
-            to="/projects/$project_id"
-            label="Manage"
-            Icon={LayoutDashboardIcon}
-            test_id={`nav-project-manage-${project.id}`}
-            is_active={is_manage_active}
+            to="/projects/$project_id/status"
+            label="Status"
+            Icon={ActivityIcon}
+            test_id={`nav-project-status-${project.id}`}
           />
-          {PROJECT_ROUTE_ROWS.map((route) => (
-            <ProjectRouteRow
-              key={route.to}
-              project_id={project.id}
-              to={route.to}
-              label={route.label}
-              Icon={route.Icon}
-              test_id={`nav-project-${route.slug}-${project.id}`}
-              is_active={pathname === `${project_path}/${route.slug}`}
-            />
+          {PROJECT_ROUTE_GROUPS.map((group) => (
+            <Collapsible
+              key={group.label}
+              defaultOpen={group.rows.some((route) =>
+                Boolean(matchRoute({ to: route.to, params: { project_id: project.id } }))
+              )}
+              role="group"
+              aria-label={group.label}
+              className="group/section flex flex-col gap-[0.1875rem]"
+            >
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 pt-2.5 pb-1 pl-[1.25rem] text-left font-mono text-[0.75rem] font-semibold transition-colors"
+                >
+                  <ChevronRightIcon
+                    className="size-3.5 shrink-0 transition-transform duration-150 group-data-[state=open]/section:rotate-90"
+                    strokeWidth={2.2}
+                    aria-hidden
+                  />
+                  {group.label}
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down flex flex-col gap-[0.1875rem] overflow-hidden">
+                {group.rows.map((route) => (
+                  <ProjectRouteRow
+                    key={route.to}
+                    project_id={project.id}
+                    to={route.to}
+                    label={route.label}
+                    Icon={route.Icon}
+                    test_id={`nav-project-${route.test_slug}-${project.id}`}
+                  />
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
           ))}
         </div>
       </CollapsibleContent>

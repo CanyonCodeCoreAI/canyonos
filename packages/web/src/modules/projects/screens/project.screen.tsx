@@ -2,10 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useReducer, useState } from 'react';
 
 import type { DistributionMetric, MetricsWindow } from '@canyonos/api/metrics';
-import type { ProjectSummary } from '@canyonos/api/projects';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ProjectContext } from '@/modules/projects/components/project-context';
 import { ProjectCostDistribution } from '@/modules/projects/components/project-cost-distribution';
@@ -14,7 +12,7 @@ import { ProjectCostRibbon } from '@/modules/projects/components/project-cost-ri
 import { ProjectRequestsTable } from '@/modules/projects/components/project-requests-table';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
 import { DEFAULT_METRICS_WINDOW } from '@/modules/projects/projects.metrics';
-import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import { projectDetailQueryOptions } from '@/modules/projects/projects.queries';
 import type { SpendTab } from '@/modules/projects/components/project-cost-flow';
 import type { DistributionSelection } from '@/modules/projects/projects.metrics';
 
@@ -72,11 +70,7 @@ export function ProjectScreen({ project_id }: ProjectScreenProps) {
   const [spend_tab, setSpendTab] = useState<SpendTab>('overview');
   const { time_window } = dashboard;
 
-  const project_query = useQuery({
-    queryKey: projectQueryKeys.detail(project_id),
-    queryFn: () => apiCall<ProjectSummary>(() => forgeAuthApi.projects[project_id]!.get()),
-    retry: false,
-  });
+  const project_query = useQuery(projectDetailQueryOptions(project_id));
 
   if (project_query.error) {
     return (

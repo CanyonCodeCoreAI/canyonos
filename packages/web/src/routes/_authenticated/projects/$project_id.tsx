@@ -1,24 +1,15 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Outlet, useRouter } from '@tanstack/react-router';
 
-import type { ProjectSummary } from '@canyonos/api/projects';
-
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ProjectBreadcrumbs } from '@/modules/projects/components/project-breadcrumbs';
-import {
-  projectQueryKeys,
-  retryProjectDetailLoader,
-} from '@/modules/projects/projects.query-cache';
+import { projectDetailQueryOptions } from '@/modules/projects/projects.queries';
+import { retryProjectDetailLoader } from '@/modules/projects/projects.query-cache';
 
 export const Route = createFileRoute('/_authenticated/projects/$project_id')({
   loader: ({ context, params }) =>
-    context.queryClient.ensureQueryData({
-      queryKey: projectQueryKeys.detail(params.project_id),
-      queryFn: () => apiCall<ProjectSummary>(() => forgeAuthApi.projects[params.project_id]!.get()),
-      retry: false,
-    }),
+    context.queryClient.ensureQueryData(projectDetailQueryOptions(params.project_id)),
   pendingComponent: () => <EmptyState>Loading project…</EmptyState>,
   errorComponent: ({ reset }) => <ProjectRouteError reset={reset} />,
   staticData: { breadcrumbSlot: ProjectBreadcrumbs },

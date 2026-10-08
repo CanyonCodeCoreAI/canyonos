@@ -97,7 +97,7 @@ test('projects overview list fits short project lists instead of filling the vie
   expect(listBox.height).toBeLessThan(rowBox.height + 16);
 });
 
-test('a project row opens its dashboard', async ({ page }) => {
+test('a project row opens its Status', async ({ page }) => {
   await authenticate(page);
   await mockProjectsList(page, [projectFixture(PROJECT_A, 'Fraud Screen')]);
 
@@ -105,7 +105,7 @@ test('a project row opens its dashboard', async ({ page }) => {
 
   await expect(page.getByTestId(`projects-overview-project-${PROJECT_A}`)).toHaveAttribute(
     'href',
-    `/projects/${PROJECT_A}`
+    `/projects/${PROJECT_A}/status`
   );
 });
 

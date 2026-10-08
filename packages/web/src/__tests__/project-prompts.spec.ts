@@ -198,13 +198,14 @@ test('@smoke the Prompts row opens the prompt screen and is the row marked curre
   await openSession(page);
   await stubPrompts(page, [INTENT, SUMMARIZE]);
   const prompts = page.getByTestId(`nav-project-prompts-${PROJECT.id}`);
-  const manage = page.getByTestId(`nav-project-manage-${PROJECT.id}`);
+  const costs = page.getByTestId(`nav-project-manage-${PROJECT.id}`);
 
   await page.goto('/projects');
   await expect(page.getByTestId(`nav-project-${PROJECT.id}`)).toBeVisible();
   await expect(prompts).toHaveCount(0);
 
   await page.getByTestId(`nav-project-toggle-${PROJECT.id}`).click();
+  await page.getByRole('button', { name: 'Configuration' }).click();
   await expect(prompts).toBeVisible();
   await expect(prompts).not.toHaveAttribute('aria-current', 'page');
 
@@ -213,7 +214,7 @@ test('@smoke the Prompts row opens the prompt screen and is the row marked curre
   await expect(screen(page)).toHaveAttribute('data-state', 'list');
   await expect(card(page, 'IntentAgent.parse')).toBeVisible();
   await expect(prompts).toHaveAttribute('aria-current', 'page');
-  await expect(manage).not.toHaveAttribute('aria-current', 'page');
+  await expect(costs).toHaveCount(0);
 });
 
 test('a closed card names the function, its live version and the first line of its text, reading nothing else', async ({
