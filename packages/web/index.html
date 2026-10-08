@@ -7,19 +7,34 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter+Tight:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <title>Canyon Code</title>
     <script>
       (function () {
+        // Inline scripts cannot import: 'cc-theme' must match THEME_STORAGE_KEY in ThemeToggle.tsx.
+        var root = document.documentElement;
         var link = document.getElementById('theme-favicon');
-        var dark = window.matchMedia('(prefers-color-scheme: dark)');
-        var paint = function () {
-          link.href = dark.matches ? '/cc-favicon.svg' : '/cc-favicon-light.svg';
+        var system = window.matchMedia('(prefers-color-scheme: dark)');
+        var storedTheme = function () {
+          try {
+            return localStorage.getItem('cc-theme');
+          } catch (error) {
+            return null;
+          }
         };
+        var apply = function () {
+          var theme = storedTheme();
+          root.classList.toggle('dark', theme === 'dark' || (theme !== 'light' && system.matches));
+        };
+        var paint = function () {
+          link.href = root.classList.contains('dark') ? '/cc-favicon.svg' : '/cc-favicon-light.svg';
+        };
+        apply();
         paint();
-        dark.addEventListener('change', paint);
+        system.addEventListener('change', apply);
+        new MutationObserver(paint).observe(root, { attributes: true, attributeFilter: ['class'] });
       })();
     </script>
   </head>

@@ -144,7 +144,7 @@ function SignalQuadrant({
 
   return (
     <section
-      className="border-border/70 bg-card min-w-0 rounded-[1.125rem] border p-5 shadow-xs"
+      className="border-border/70 bg-card flex min-w-0 flex-col rounded-[1.125rem] border p-5 shadow-xs"
       data-testid={`monitoring-quadrant-${series.signal}`}
     >
       <h2 className="text-foreground mb-4 text-sm font-semibold">{label}</h2>

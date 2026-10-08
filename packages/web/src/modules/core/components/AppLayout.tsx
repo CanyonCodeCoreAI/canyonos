@@ -36,7 +36,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider
       className="h-svh flex-col overflow-hidden"
-      style={{ '--header-height': '3.75rem', '--sidebar-width': '17.625rem' } as CSSProperties}
+      style={
+        {
+          '--header-height': '3.75rem',
+          '--sidebar-width': '17.625rem',
+        } as CSSProperties
+      }
     >
       <AppHeader workspace={WORKSPACE_NAME} />
       <div className="flex min-h-0 w-full flex-1">

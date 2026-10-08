@@ -21,7 +21,7 @@
     },
     "packages/api": {
       "name": "@canyonos/api",
-      "version": "0.1.1",
+      "version": "0.1.734",
       "dependencies": {
         "@elysiajs/cors": "1.4.2",
         "@elysiajs/openapi": "1.4.15",
@@ -118,12 +118,11 @@
     },
     "packages/web": {
       "name": "web",
-      "version": "0.1.1",
+      "version": "0.1.734",
       "dependencies": {
         "@canyonos/api": "*",
         "@elysiajs/eden": "^1.4.9",
         "@hookform/resolvers": "^5.4.0",
-        "@lottiefiles/dotlottie-web": "^0.76.0",
         "@repo/ui": "*",
         "@tanstack/react-query": "^5.81.2",
         "@tanstack/react-query-devtools": "^5.81.2",
@@ -345,8 +344,6 @@
     "@lezer/lr": ["@lezer/lr@1.4.10", "", { "dependencies": { "@lezer/common": "^1.0.0" } }, "sha512-rnCpTIBafOx4mRp43xOxDJbFipJm/c0cia/V5TiGlhmMa+wsSdoGmUN3w5Bqrks/09Q/D4tNAmWaT8p6NRi77A=="],
 
     "@lezer/python": ["@lezer/python@1.1.19", "", { "dependencies": { "@lezer/common": "^1.2.0", "@lezer/highlight": "^1.0.0", "@lezer/lr": "^1.0.0" } }, "sha512-MhQIURHRytsNzP/YXnqpYKW6la6voAH3kyplTOOiCdjyFY6cWWGFVmYVdHIPrElqSDf4iCDktQCockB9FxuhzQ=="],
-
-    "@lottiefiles/dotlottie-web": ["@lottiefiles/dotlottie-web@0.76.0", "", {}, "sha512-uWJ86UJM6hjN4MY2aGSyyFcRQEAM4B9qDCnb/336dHab1zE6nyOF45b90t8xesZPwNtP/2moNGMrMQ1UJW6+lQ=="],
 
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.4", "", {}, "sha512-Wy0V7+SGUjnF9/TkiM1hKVDPj7jKXduPNboMVtHTA8dySMURWqfg/JZ9E2Sq8JgSJmkl7k7Qe9FLeMSrSraWmQ=="],
 

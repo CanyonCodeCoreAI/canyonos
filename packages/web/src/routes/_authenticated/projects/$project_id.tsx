@@ -10,7 +10,7 @@ import { retryProjectDetailLoader } from '@/modules/projects/projects.query-cach
 export const Route = createFileRoute('/_authenticated/projects/$project_id')({
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(projectDetailQueryOptions(params.project_id)),
-  pendingComponent: () => <EmptyState>Loading project…</EmptyState>,
+  pendingComponent: () => <EmptyState loading>Loading project…</EmptyState>,
   errorComponent: ({ reset }) => <ProjectRouteError reset={reset} />,
   staticData: { breadcrumbSlot: ProjectBreadcrumbs },
   component: Outlet,

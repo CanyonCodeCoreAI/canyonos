@@ -54,7 +54,7 @@ export function ResourceSection({
   test_id,
 }: ResourceSectionProps) {
   return (
-    <section className="min-w-0" data-testid={test_id}>
+    <section className="flex min-w-0 flex-col" data-testid={test_id}>
       <header className="mb-4">
         <h2 className="text-foreground text-sm font-semibold">{title}</h2>
         <p className="text-muted-foreground mt-1 text-xs">{caption}</p>

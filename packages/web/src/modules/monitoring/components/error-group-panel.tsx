@@ -15,7 +15,7 @@ export function ErrorGroupPanel({ title, groups, total, test_id }: ErrorGroupPan
 
   return (
     <section
-      className="border-border/70 bg-card min-w-0 rounded-[1.125rem] border p-5 shadow-xs"
+      className="border-border/70 bg-card flex min-w-0 flex-col rounded-[1.125rem] border p-5 shadow-xs"
       data-testid={test_id}
     >
       <header className="mb-4 flex items-baseline justify-between gap-3">

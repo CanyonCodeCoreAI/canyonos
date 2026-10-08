@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 
-import { Sidebar, SidebarContent, SidebarFooter, SidebarRail } from '@repo/ui/shadcn/sidebar';
+import { Sidebar, SidebarContent, SidebarFooter, SidebarResize } from '@repo/ui/shadcn/sidebar';
 import { ProjectNavigation } from '@/modules/core/components/app-sidebar/ProjectNavigation';
 import { UserMenu } from '@/modules/core/components/app-sidebar/UserMenu';
 
@@ -16,7 +16,7 @@ export function AppSidebar(props: ComponentProps<typeof Sidebar>) {
       <SidebarFooter className="px-3 pt-0 pb-3 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-2">
         <UserMenu />
       </SidebarFooter>
-      <SidebarRail />
+      <SidebarResize data-testid="sidebar-resize-handle" />
     </Sidebar>
   );
 }

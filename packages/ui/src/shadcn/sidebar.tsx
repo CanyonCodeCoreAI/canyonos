@@ -19,6 +19,8 @@ const SIDEBAR_WIDTH = '17rem';
 const SIDEBAR_WIDTH_MOBILE = '18rem';
 const SIDEBAR_WIDTH_ICON = '3rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b';
+const SIDEBAR_WRAPPER = '[data-slot=sidebar-wrapper]';
+const ARROW_DIRECTION: Partial<Record<string, -1 | 1>> = { ArrowLeft: -1, ArrowRight: 1 };
 
 type SidebarContextProps = {
   state: 'expanded' | 'collapsed';
@@ -196,7 +198,7 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          'relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear',
+          'relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear in-data-resizing:transition-none',
           'group-data-[collapsible=offcanvas]:w-0',
           'group-data-[side=right]:rotate-180',
           variant === 'floating' || variant === 'inset'
@@ -207,7 +209,7 @@ function Sidebar({
       <div
         data-slot="sidebar-container"
         className={cn(
-          'fixed top-(--header-height) bottom-0 z-10 hidden h-[calc(100svh-var(--header-height))] w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex',
+          'fixed top-(--header-height) bottom-0 z-10 hidden h-[calc(100svh-var(--header-height))] w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear in-data-resizing:transition-none md:flex',
           side === 'left'
             ? 'left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]'
             : 'right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]',
@@ -270,6 +272,105 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
         'hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full',
         '[[data-side=left][data-collapsible=offcanvas]_&]:-right-2',
         '[[data-side=right][data-collapsible=offcanvas]_&]:-left-2',
+        className
+      )}
+      {...props}
+    />
+  );
+}
+
+// The handle is the only writer of the width, so aria-valuenow is its source of truth; it starts
+// from the provider's inline --sidebar-width. Writing the DOM directly keeps a drag from
+// re-rendering the layout on every pointer move.
+function readInitialWidth(handle: HTMLDivElement | null) {
+  const width = handle
+    ?.closest<HTMLElement>(SIDEBAR_WRAPPER)
+    ?.style.getPropertyValue('--sidebar-width');
+  if (width) handle?.setAttribute('aria-valuenow', String(Number.parseFloat(width)));
+}
+
+function SidebarResize({
+  minRem = 12.5,
+  maxRem = 30,
+  collapseBelowRem = 6.25,
+  stepRem = 1,
+  className,
+  ...props
+}: React.ComponentProps<'div'> & {
+  minRem?: number;
+  maxRem?: number;
+  collapseBelowRem?: number;
+  stepRem?: number;
+}) {
+  const { open, setOpen, toggleSidebar } = useSidebar();
+  const pointerToRem = React.useRef<(clientX: number) => number>(null);
+
+  function resizeTo(handle: HTMLElement, widthRem: number) {
+    const collapse = widthRem < collapseBelowRem;
+    if (collapse === open) setOpen(!collapse);
+    if (collapse) return;
+    const clampedRem = Math.min(Math.max(widthRem, minRem), maxRem);
+    handle
+      .closest<HTMLElement>(SIDEBAR_WRAPPER)
+      ?.style.setProperty('--sidebar-width', `${clampedRem}rem`);
+    handle.setAttribute('aria-valuenow', String(clampedRem));
+  }
+
+  function startResize(event: React.PointerEvent<HTMLDivElement>) {
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    handle.closest(SIDEBAR_WRAPPER)?.setAttribute('data-resizing', '');
+    // Pointers report px; dividing by the root font size keeps the width in rem.
+    const rootPx = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const fromRight = handle.closest('[data-side]')?.getAttribute('data-side') === 'right';
+    pointerToRem.current = (clientX) =>
+      (fromRight ? window.innerWidth - clientX : clientX) / rootPx;
+  }
+
+  function resize(event: React.PointerEvent<HTMLDivElement>) {
+    if (!pointerToRem.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    resizeTo(event.currentTarget, pointerToRem.current(event.clientX));
+  }
+
+  function endResize(event: React.PointerEvent<HTMLDivElement>) {
+    event.currentTarget.closest(SIDEBAR_WRAPPER)?.removeAttribute('data-resizing');
+  }
+
+  function resizeWithKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      toggleSidebar();
+      return;
+    }
+    const direction = ARROW_DIRECTION[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    if (!open) {
+      if (direction > 0) setOpen(true);
+      return;
+    }
+    const handle = event.currentTarget;
+    resizeTo(handle, Number(handle.getAttribute('aria-valuenow')) + direction * stepRem);
+  }
+
+  return (
+    <div
+      ref={readInitialWidth}
+      data-sidebar="resize"
+      data-slot="sidebar-resize"
+      role="separator"
+      tabIndex={0}
+      aria-label="Resize sidebar"
+      aria-orientation="vertical"
+      aria-valuemin={minRem}
+      aria-valuemax={maxRem}
+      title="Resize sidebar"
+      onPointerDown={startResize}
+      onPointerMove={resize}
+      onLostPointerCapture={endResize}
+      onKeyDown={resizeWithKeyboard}
+      className={cn(
+        'hover:after:bg-sidebar-border focus-visible:after:bg-sidebar-ring absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 cursor-col-resize touch-none outline-none group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] sm:flex',
         className
       )}
       {...props}
@@ -670,6 +771,7 @@ export {
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
+  SidebarResize,
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,

@@ -29,7 +29,6 @@
     "@canyonos/api": "*",
     "@elysiajs/eden": "^1.4.9",
     "@hookform/resolvers": "^5.4.0",
-    "@lottiefiles/dotlottie-web": "^0.76.0",
     "@repo/ui": "*",
     "@tanstack/react-query": "^5.81.2",
     "@tanstack/react-query-devtools": "^5.81.2",

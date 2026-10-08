@@ -18,9 +18,10 @@ const statCardVariants = cva('flex flex-col', {
      */
     size: {
       hero: 'gap-2 px-[1.0625rem] py-[0.9375rem]',
-      compact: 'bg-muted/40 gap-1.5 rounded-xl px-3.5 py-3',
+      compact: 'gap-1.5 rounded-xl px-3.5 py-3',
     },
   },
+  compoundVariants: [{ tone: 'default', size: 'compact', class: 'bg-muted/40' }],
   defaultVariants: { tone: 'default', size: 'hero' },
 });
 

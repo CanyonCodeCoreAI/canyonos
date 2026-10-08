@@ -5,6 +5,8 @@
    component classes must be registered explicitly or they never get generated. */
 @source '../**/*.{ts,tsx}';
 
+@custom-variant dark (&:is(.dark *));
+
 @layer base {
   :root {
     --background: #ffffff;
@@ -91,28 +93,28 @@
   }
 
   .dark {
-    --background: #14130f;
-    --foreground: #f4f3ee;
-    --card: #1c1b16;
-    --card-foreground: #f4f3ee;
-    --popover: #1c1b16;
-    --popover-foreground: #f4f3ee;
+    --background: #121212;
+    --foreground: #f2f2f2;
+    --card: #1a1a1a;
+    --card-foreground: #f2f2f2;
+    --popover: #1a1a1a;
+    --popover-foreground: #f2f2f2;
     --primary: #34b06a;
     --primary-foreground: #08190f;
     --primary-hover: #3cc176;
-    --secondary: #26241d;
-    --secondary-foreground: #e7e6df;
-    --muted: #26241d;
-    --muted-foreground: #a8a79c;
-    --accent: #14331f;
+    --secondary: #262626;
+    --secondary-foreground: #e0e0e0;
+    --muted: #262626;
+    --muted-foreground: #a0a0a0;
+    --accent: #0d2415;
     --accent-foreground: #9ee3ba;
-    --destructive: #e8623a;
-    --link: #7aa9dd;
+    --destructive: #e75243;
+    --link: #8a8a8a;
     --destructive-foreground: #ffffff;
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: #34b06a;
-    --placeholder: #6f6e64;
+    --placeholder: #6e6e6e;
     --brand-deep: #9ee3ba;
     --brand-mint: #9ee3ba;
     --brand-bright: #4ade80;
@@ -139,18 +141,18 @@
     --flow-edge-loop: #d19a3e;
     --flow-edge-return: #34b06a;
 
-    --sidebar: #1a1914;
-    --sidebar-foreground: #e7e6df;
+    --sidebar: #171717;
+    --sidebar-foreground: #e0e0e0;
     --sidebar-primary: #34b06a;
     --sidebar-primary-foreground: #08190f;
-    --sidebar-accent: #14331f;
+    --sidebar-accent: #0d2415;
     --sidebar-accent-foreground: #9ee3ba;
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: #34b06a;
 
-    --editor-bg: #1c1b16;
-    --editor-fg: #f4f3ee;
-    --editor-gutter: #6f6e64;
+    --editor-bg: #1a1a1a;
+    --editor-fg: #f2f2f2;
+    --editor-gutter: #6e6e6e;
     --editor-selection: color-mix(in srgb, #34b06a 26%, transparent);
     --editor-active-line: color-mix(in srgb, #ffffff 5%, transparent);
     --editor-cursor: #34b06a;
@@ -229,7 +231,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --font-sans: 'Inter Tight', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
@@ -250,6 +252,7 @@
   --animate-collapsible-down: collapsible-down 0.2s var(--ease-snappy);
   --animate-collapsible-up: collapsible-up 0.2s var(--ease-snappy);
   --animate-notice-in: notice-in 200ms var(--ease-snappy) both;
+  --animate-shimmer: shimmer 1.8s ease-in-out infinite;
 
   @keyframes caret-blink {
     0%,
@@ -285,6 +288,15 @@
     from {
       opacity: 0;
       transform: translateY(-4px);
+    }
+  }
+
+  @keyframes shimmer {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
     }
   }
 }
@@ -345,6 +357,10 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     text-rendering: optimizeLegibility;
+  }
+  /* Draws every icon 1px smaller than its sized box without changing layout. */
+  svg.lucide {
+    padding: 0.5px;
   }
   input::placeholder,
   textarea::placeholder {

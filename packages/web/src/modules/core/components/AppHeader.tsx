@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 
 import { Separator } from '@repo/ui/shadcn/separator';
 import { SidebarTrigger } from '@repo/ui/shadcn/sidebar';
+import { ThemeToggle } from '@/modules/core/components/ThemeToggle';
 import { HEADER_DOCK_ID } from '@/modules/core/navigation/header-dock';
 import { useBreadcrumbSlot, useHeaderSlot } from '@/modules/core/navigation/header-slot';
 
@@ -43,6 +44,7 @@ export function AppHeader({ workspace }: { workspace: string }) {
             <HeaderSlot />
           </div>
         ) : null}
+        <ThemeToggle />
       </div>
     </header>
   );

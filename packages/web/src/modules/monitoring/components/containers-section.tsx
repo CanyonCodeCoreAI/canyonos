@@ -23,7 +23,7 @@ export function ContainersSection({ project_id }: { readonly project_id: string 
   const query = useQuery(replicasQueryOptions(project_id));
 
   return (
-    <section className="min-w-0" data-testid="metrics-containers">
+    <section className="flex min-w-0 flex-col" data-testid="metrics-containers">
       <header className="mb-4 flex items-baseline justify-between gap-4">
         <div>
           <h2 className="text-foreground text-sm font-semibold">Containers</h2>
