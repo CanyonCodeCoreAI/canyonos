@@ -55,6 +55,23 @@ echo "-------------------------------------------"
 echo ">> Running Performance/Load Tests..."
 python3 "$SCRIPT_DIR/test_performance.py" --concurrent 5 --total 20 || exit 1
 
+echo "-------------------------------------------"
+echo ">> Redeploying with the context propagation workflow..."
+kill -9 $DEPLOY_PID 2>/dev/null || true
+cd "$TEST_DIR"
+cp -R "$SCRIPT_DIR/../examples/helloworld" context_propagation
+cp "$SCRIPT_DIR/context_propagation_workflow.py" context_propagation/workflow/example_workflow.py
+cd context_propagation
+canyonos deploy &
+DEPLOY_PID=$!
+until curl -s http://localhost:8080/status/probe > /dev/null 2>&1; do
+    sleep 2
+done
+sleep 5
+
+echo ">> Running Context Propagation Tests..."
+python3 "$SCRIPT_DIR/test_context_propagation.py" || exit 1
+
 echo "==========================================="
 echo "   All Tests Passed Successfully!"
 echo "==========================================="

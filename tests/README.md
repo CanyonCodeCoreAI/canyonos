@@ -9,7 +9,8 @@ This script automates the entire testing lifecycle by interacting with the `cany
 2. Builds and launches it using `canyonos deploy` in the background.
 3. Waits for the deployed workflow endpoint to become reachable, then gives the agents a few extra seconds to register.
 4. Runs the Python integration and performance scripts.
-5. **Cleanup:** Automatically terminates the deployment and cleans up the temporary directory upon success or failure.
+5. Redeploys helloworld with `context_propagation_workflow.py` as its workflow and runs the context propagation script.
+6. **Cleanup:** Automatically terminates the deployment and cleans up the temporary directory upon success or failure.
 
 To run the complete suite:
 ```bash
@@ -36,3 +37,8 @@ To run manually against an already-deployed CanyonOS instance (e.g. 50 requests 
 ```bash
 python test_performance.py --concurrent 10 --total 50
 ```
+
+## 4. Context Propagation (`test_context_propagation.py`)
+Checks that agent calls made from a thread, a raw `_thread.start_new_thread` thread, an asyncio task, asyncio's default executor, a `multiprocessing.Process`, and a reused thread pool, process pool and `multiprocessing.Pool` keep the request they belong to.
+- `run_tests.sh` redeploys helloworld with `context_propagation_workflow.py` as its workflow.
+- Sends two rounds of three concurrent requests and checks each caller saw the request's ID and the workflow's future ID, and that Redis recorded its agent call under that request and parent.

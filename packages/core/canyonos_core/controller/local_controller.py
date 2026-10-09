@@ -21,7 +21,10 @@ try:
     from canyonos_core.controller.local_controller_frontend import start_server
     from canyonos_core.controller.utils.gpu_metrics import read_gpu_percent
     from canyonos_core.controller.utils.redis_client import RedisClient
-    from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
+    from canyonos_core.controller.utils.grpc_options import (
+        GRPC_CHANNEL_OPTIONS,
+        call_with_retry,
+    )
     from canyonos_core.controller.utils.log_handler import LogHandler
     from canyonos_core.controller.utils.log_entry import (
         build_failure_entry,
@@ -34,7 +37,7 @@ except ImportError:
     from local_controller_frontend import start_server
     from log_handler import LogHandler
     from redis_client import RedisClient
-    from grpc_options import GRPC_CHANNEL_OPTIONS
+    from grpc_options import GRPC_CHANNEL_OPTIONS, call_with_retry
     from log_entry import build_failure_entry, append_log_entry, error_type_name
 
 # Add local generated grpc_stubs to path (Docker context copies them directly to /app)
@@ -914,30 +917,6 @@ class LocalController(object):
             logger.info("Created gRPC connection to remote controller at %s", endpoint)
         return self._remote_stubs[endpoint]
 
-    def _call_with_retry(self, fn, endpoint):
-        """Call a remote stub RPC, retrying transient UNAVAILABLE before raising."""
-        max_attempts = 8
-        backoff = 0.5
-        for attempt in range(1, max_attempts + 1):
-            try:
-                return fn()
-            except grpc.RpcError as e:
-                if (
-                    not isinstance(e, grpc.Call)
-                    or e.code() != grpc.StatusCode.UNAVAILABLE
-                    or attempt == max_attempts
-                ):
-                    raise
-                logger.warning(
-                    "Transient UNAVAILABLE calling %s (attempt %d/%d), retrying in %.1fs",
-                    endpoint,
-                    attempt,
-                    max_attempts,
-                    backoff,
-                )
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 8)
-
     def _forward_request(self, endpoint, data):
         """Forward a request to a remote controller via gRPC."""
         # Tag the request with our endpoint so the remote LC can call back
@@ -949,7 +928,7 @@ class LocalController(object):
         stub = self._get_remote_stub(endpoint)
         request = local_controler_pb2.JsonResponse(resonse=json.dumps(data))
         try:
-            self._call_with_retry(lambda: stub.Execute(request), endpoint)
+            call_with_retry(lambda: stub.Execute(request), endpoint)
             logger.debug("Forwarded request to %s", endpoint)
         except Exception as e:
             logger.error("Failed to forward request to %s: %s", endpoint, e)
@@ -982,7 +961,7 @@ class LocalController(object):
         logger.info("Payload: Future %s,Sent %s ", future_id, payload)
         request = local_controler_pb2.JsonResponse(resonse=payload)
         try:
-            self._call_with_retry(lambda: stub.WriteResult(request), origin)
+            call_with_retry(lambda: stub.WriteResult(request), origin)
             logger.info(
                 "Sent result callback to %s for future %s, result %s",
                 origin,

@@ -15,9 +15,12 @@ except ImportError:
     import canyonos_context
 
 try:
-    from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
+    from canyonos_core.controller.utils.grpc_options import (
+        GRPC_CHANNEL_OPTIONS,
+        call_with_retry,
+    )
 except ImportError:
-    from grpc_options import GRPC_CHANNEL_OPTIONS
+    from grpc_options import GRPC_CHANNEL_OPTIONS, call_with_retry
 
 try:
     from canyonos_core.controller.utils.log_entry import (
@@ -130,7 +133,9 @@ class Future(object):
 
         request = local_controler_pb2.JsonResponse(resonse=json.dumps(request_data))
         try:
-            self.response = stub.Execute(request)
+            self.response = call_with_retry(
+                lambda: stub.Execute(request), f"{self._lc_host}:{self._lc_port}"
+            )
             logger.debug(
                 "Submitted %s.%s (future=%s)", self.service, self.method, self.id
             )
@@ -261,3 +266,18 @@ class Future(object):
         """Remove a consumer."""
         self.consumers.remove(consumer)
         self.redis.srem(self._consumers_key(), consumer)
+
+
+# A forked child must not reuse the parent's channel, which another thread may have been mid-call on.
+os.register_at_fork(after_in_child=lambda: setattr(Future, "_stub", None))
+# The parent's Redis pool lock may have been copied while held, which deadlocks the child's first write.
+os.register_at_fork(
+    after_in_child=lambda: setattr(
+        Future,
+        "redis",
+        RedisClient(
+            host=os.environ.get("CANYONOS_REDIS_HOST", "localhost"),
+            port=int(os.environ.get("CANYONOS_REDIS_PORT", 6379)),
+        ),
+    )
+)

@@ -47,26 +47,17 @@ def _bind_failure_marker(controller):
     return controller
 
 
-def _bind_call_with_retry(controller):
-    controller._call_with_retry = lambda fn, endpoint: LocalController._call_with_retry(
-        controller, fn, endpoint
-    )
-    return controller
-
-
 class ErrorPropagationTests(unittest.TestCase):
     def test_forward_request_writes_future_error_on_grpc_failure(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(Execute=MagicMock(side_effect=RuntimeError("boom")))
-        controller = _bind_call_with_retry(
-            _bind_failure_marker(
-                SimpleNamespace(
-                    redis=redis,
-                    agent_id=None,
-                    agent_name=None,
-                    _my_endpoint="172.31.19.107:50051",
-                    _get_remote_stub=lambda endpoint: stub,
-                )
+        controller = _bind_failure_marker(
+            SimpleNamespace(
+                redis=redis,
+                agent_id=None,
+                agent_name=None,
+                _my_endpoint="172.31.19.107:50051",
+                _get_remote_stub=lambda endpoint: stub,
             )
         )
         data = {
@@ -132,12 +123,10 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_result_callback_sends_error_separately_from_result(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(WriteResult=MagicMock())
-        controller = _bind_call_with_retry(
-            SimpleNamespace(
-                redis=redis,
-                agent_name="ExampleAgent",
-                _get_remote_stub=lambda endpoint: stub,
-            )
+        controller = SimpleNamespace(
+            redis=redis,
+            agent_name="ExampleAgent",
+            _get_remote_stub=lambda endpoint: stub,
         )
 
         LocalController._send_result_callback(
@@ -317,15 +306,13 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_result_callback_failure_is_marked_with_category(self):
         redis = _FakeRedis()
         stub = SimpleNamespace(WriteResult=MagicMock(side_effect=RuntimeError("boom")))
-        controller = _bind_call_with_retry(
-            _bind_failure_marker(
-                SimpleNamespace(
-                    redis=redis,
-                    agent_id="agent-1",
-                    agent_name="ExampleAgent",
-                    _my_endpoint="localhost:50051",
-                    _get_remote_stub=lambda endpoint: stub,
-                )
+        controller = _bind_failure_marker(
+            SimpleNamespace(
+                redis=redis,
+                agent_id="agent-1",
+                agent_name="ExampleAgent",
+                _my_endpoint="localhost:50051",
+                _get_remote_stub=lambda endpoint: stub,
             )
         )
 
@@ -407,17 +394,15 @@ class ErrorPropagationTests(unittest.TestCase):
 
         stub.WriteResult.side_effect = capture_write_result
 
-        executor = _bind_call_with_retry(
-            SimpleNamespace(
-                redis=executor_redis,
-                agent=SimpleNamespace(greet=boom),
-                agent_name="Greeter",
-                agent_id="executor-agent",
-                _my_endpoint="executor:50051",
-                _metrics_key="controller:executor:50051:metrics",
-                _resolve_future_args=lambda args: args,
-                _get_remote_stub=lambda endpoint: stub,
-            )
+        executor = SimpleNamespace(
+            redis=executor_redis,
+            agent=SimpleNamespace(greet=boom),
+            agent_name="Greeter",
+            agent_id="executor-agent",
+            _my_endpoint="executor:50051",
+            _metrics_key="controller:executor:50051:metrics",
+            _resolve_future_args=lambda args: args,
+            _get_remote_stub=lambda endpoint: stub,
         )
         executor._mark_future_failed = lambda future_id, error, origin=None: (
             LocalController._mark_future_failed(executor, future_id, error, origin)
@@ -505,7 +490,6 @@ class ErrorPropagationTests(unittest.TestCase):
         executor._send_result_callback = lambda *a, **k: (
             LocalController._send_result_callback(executor, *a, **k)
         )
-        _bind_call_with_retry(executor)
 
         LocalController._execute_locally(
             executor, "Greeter", "greet", {}, "future-1", origin="localhost:8002"

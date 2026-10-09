@@ -1,6 +1,8 @@
+import contextvars
 import os
 import sys
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -8,11 +10,9 @@ import canyonos_core.controller.canyonos_context as canyonos_context
 
 
 class CanyonosContextTests(unittest.TestCase):
-    def setUp(self):
-        canyonos_context._local = canyonos_context.threading.local()
-
-    def tearDown(self):
-        canyonos_context._local = canyonos_context.threading.local()
+    def run(self, result=None):
+        # Each test starts from an empty context, so values set in one never reach another.
+        return contextvars.Context().run(super().run, result)
 
     def test_request_id_defaults_to_empty_string(self):
         self.assertEqual(canyonos_context.get_request_id(), "")
@@ -42,6 +42,36 @@ class CanyonosContextTests(unittest.TestCase):
         self.assertEqual(
             canyonos_context.get_current_metrics_key(),
             "controller:localhost:50051:metrics",
+        )
+
+    def test_request_context_lists_every_context_var(self):
+        context_vars = {
+            value
+            for value in vars(canyonos_context).values()
+            if isinstance(value, contextvars.ContextVar)
+        }
+        self.assertEqual(set(canyonos_context.REQUEST_CONTEXT), context_vars)
+
+    def _set_all(self):
+        canyonos_context.set_request_id("req-123")
+        canyonos_context.set_current_future_id("future-abc")
+        canyonos_context.set_current_metrics_key("controller:localhost:50051:metrics")
+
+    @staticmethod
+    def _get_all():
+        return (
+            canyonos_context.get_request_id(),
+            canyonos_context.get_current_future_id(),
+            canyonos_context.get_current_metrics_key(),
+        )
+
+    def test_values_reach_worker_run_in_copied_context(self):
+        self._set_all()
+        ctx = contextvars.copy_context()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            seen = pool.submit(ctx.run, self._get_all).result()
+        self.assertEqual(
+            seen, ("req-123", "future-abc", "controller:localhost:50051:metrics")
         )
 
 

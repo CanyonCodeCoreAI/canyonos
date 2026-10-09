@@ -1,5 +1,6 @@
 """Unit tests for automatic future-id injection into httpx requests."""
 
+import contextvars
 import os
 import sys
 import unittest
@@ -24,11 +25,8 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
             canyonos_context.get_current_function,
         )
 
-    def setUp(self):
-        canyonos_context._local = canyonos_context.threading.local()
-
-    def tearDown(self):
-        canyonos_context._local = canyonos_context.threading.local()
+    def run(self, result=None):
+        return contextvars.Context().run(super().run, result)
 
     def test_header_injected_for_openai_gateway_path(self):
         canyonos_context.set_current_future_id("future-sync")

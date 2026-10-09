@@ -640,6 +640,15 @@ class PlatformPinTests(unittest.TestCase):
                     gateway_stage,
                 )
 
+    def test_both_images_patch_the_stdlib_after_copying_the_patch_in(self):
+        for workflow in (False, True):
+            with self.subTest(workflow=workflow):
+                dockerfile = self._dockerfile(workflow)
+                self.assertLess(
+                    dockerfile.index("COPY . ."),
+                    dockerfile.index("RUN python concurrency_context_patch.py"),
+                )
+
     def test_installs_are_held_below_each_images_tested_majors(self):
         for workflow, caps in (
             (False, "'grpcio<2' 'protobuf<7' 'redis<9'"),

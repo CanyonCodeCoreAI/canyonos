@@ -2,7 +2,10 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+import warnings
+from unittest.mock import MagicMock, patch
+
+import grpc
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.path.insert(
@@ -17,6 +20,32 @@ sys.path.insert(
 import canyonos_core.controller.future as future_module
 import canyonos_core.controller.canyonos_context as canyonos_context
 from fakes import _FakeRedis
+
+
+class _Unavailable(grpc.RpcError, grpc.Call):
+    def code(self):
+        return grpc.StatusCode.UNAVAILABLE
+
+    def details(self):
+        return "Failed parsing HTTP/2"
+
+    def initial_metadata(self):
+        return None
+
+    def trailing_metadata(self):
+        return None
+
+    def is_active(self):
+        return False
+
+    def time_remaining(self):
+        return None
+
+    def cancel(self):
+        return False
+
+    def add_callback(self, callback):
+        return False
 
 
 class FutureParentIdTests(unittest.TestCase):
@@ -89,6 +118,43 @@ class FutureParentIdTests(unittest.TestCase):
             )
         except Exception as e:
             self.fail(f"Future.__init__ raised unexpectedly: {e}")
+
+    def test_unavailable_submission_is_retried(self):
+        future_module.Future._stub.Execute.side_effect = [_Unavailable(), "queued"]
+
+        with patch("canyonos_core.controller.utils.grpc_options.time.sleep") as sleep:
+            future = future_module.Future(
+                parent="ignored/file.py", service="Svc", method="do_thing"
+            )
+
+        self.assertEqual(future_module.Future._stub.Execute.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+        self.assertEqual(future.response, "queued")
+        self.assertNotIn("failed", self.fake_redis.hashes[f"future:{future.id}"])
+
+
+class FutureForkTests(unittest.TestCase):
+    def test_a_forked_child_drops_the_parents_stub_and_redis_client(self):
+        original_stub = future_module.Future._stub
+        original_redis = future_module.Future.redis
+        future_module.Future._stub = MagicMock()
+        try:
+            # The child only checks one attribute and exits, so forking with threads running is safe.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                pid = os.fork()
+            if pid == 0:
+                fresh = (
+                    future_module.Future._stub is None
+                    and future_module.Future.redis is not original_redis
+                )
+                os._exit(0 if fresh else 1)
+            _, status = os.waitpid(pid, 0)
+            self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+            self.assertIsNotNone(future_module.Future._stub)
+            self.assertIs(future_module.Future.redis, original_redis)
+        finally:
+            future_module.Future._stub = original_stub
 
 
 if __name__ == "__main__":

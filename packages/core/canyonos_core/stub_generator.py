@@ -67,6 +67,11 @@ _AGENT_FLAT_SOURCES = {
     "log_entry.py": ("controller", "utils", "log_entry.py"),
     "gpu_metrics.py": ("controller", "utils", "gpu_metrics.py"),
     "log_handler.py": ("controller", "utils", "log_handler.py"),
+    "concurrency_context_patch.py": (
+        "controller",
+        "utils",
+        "concurrency_context_patch.py",
+    ),
 }
 
 # A workflow image serves HTTP, so it carries one more.
@@ -800,6 +805,7 @@ ENV PYTHONUNBUFFERED=1
 
 {_dockerfile_install_steps(overrides, BASE_AGENT_REQUIREMENTS, requirements or [])}
 COPY . .
+RUN python concurrency_context_patch.py
 
 ENV CANYONOS_AGENT_NAME={agent_name}
 ENV CANYONOS_AGENT_FILE={agent_basename}
@@ -960,6 +966,7 @@ ENV PYTHONUNBUFFERED=1
 
 {_dockerfile_install_steps(overrides, BASE_WORKFLOW_REQUIREMENTS, requirements or [])}
 COPY . .
+RUN python concurrency_context_patch.py
 
 EXPOSE 50051
 EXPOSE {api_port}
