@@ -14,9 +14,11 @@ import argparse
 import ast
 import os
 import shutil
+import subprocess
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
+from canyonos_core.controller.controller_context import _is_local_host, is_ec2
 from canyonos_core.schema import load_agent_declaration
 
 # Lowest versions the image's own code runs on; an app asking for older fails the install.
@@ -579,9 +581,41 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
-def target_docker_platform():
-    """The platform every image is built for."""
-    return os.environ.get("CANYONOS_DOCKER_PLATFORM", DEFAULT_DOCKER_PLATFORM)
+# Bandage: revisit once resources are pooled and agents no longer declare a provider.
+def target_docker_platform(agents):
+    """Return the platform `canyonos deploy` builds and pulls every image for:
+    `CANYONOS_DOCKER_PLATFORM` when set, else this Docker daemon's own when every
+    agent runs on this machine, else the portable one EC2 and remote hosts run."""
+    explicit = os.environ.get("CANYONOS_DOCKER_PLATFORM")
+    if explicit:
+        return explicit
+    if all(
+        not is_ec2(agent) and _is_local_host(agent.get("host", "localhost"))
+        for agent in agents
+    ):
+        return _docker_daemon_platform()
+    return DEFAULT_DOCKER_PLATFORM
+
+
+def _docker_daemon_platform():
+    """Ask the Docker daemon this deploy builds on for its platform, e.g. `linux/arm64`.
+    Raise with Docker's own message when it cannot answer, so the deploy shows it."""
+    try:
+        result = subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            "Cannot find the `docker` command to ask which platform to build for."
+        ) from error
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Docker could not say which platform to build for: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    return result.stdout.strip()
 
 
 def _platform_overrides(requirements):
@@ -689,7 +723,8 @@ def _dockerfile_install_steps(overrides, base_requirements, requirements):
         for name, major in _tested_majors(base_requirements).items()
         if name not in asked_newer
     )
-    return f"""COPY requirements.txt .
+    return f"""ENV UV_COMPILE_BYTECODE=1
+COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
  && printf '%s\\n' {caps} > /tmp/tested.txt \\
  && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt

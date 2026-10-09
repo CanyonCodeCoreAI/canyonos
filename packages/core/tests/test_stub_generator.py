@@ -644,6 +644,15 @@ class PlatformPinTests(unittest.TestCase):
                     gateway_stage,
                 )
 
+    def test_both_images_compile_bytecode_for_every_install(self):
+        for workflow in (False, True):
+            with self.subTest(workflow=workflow):
+                dockerfile = self._dockerfile(workflow)
+                self.assertLess(
+                    dockerfile.index("ENV UV_COMPILE_BYTECODE=1"),
+                    dockerfile.index("uv pip install --system"),
+                )
+
     def test_images_leave_the_python_install_unpatched(self):
         for workflow in (False, True):
             with self.subTest(workflow=workflow):
@@ -865,3 +874,64 @@ class GenerateStubTests(unittest.TestCase):
         )
 
         self.assertIn("def hello(self, a: dict[str, int] | None)", source)
+
+
+class TargetDockerPlatformTests(unittest.TestCase):
+    """An explicit platform wins; otherwise images run natively when every agent is
+    on this machine, and portably when any runs on EC2 or a remote host."""
+
+    def _platform(self, agents, explicit=None):
+        daemon = unittest.mock.Mock(returncode=0, stdout="linux/arm64\n", stderr="")
+        with (
+            unittest.mock.patch(
+                "canyonos_core.stub_generator.subprocess.run", return_value=daemon
+            ) as run,
+            unittest.mock.patch.dict(os.environ),
+        ):
+            os.environ.pop("CANYONOS_DOCKER_PLATFORM", None)
+            if explicit:
+                os.environ["CANYONOS_DOCKER_PLATFORM"] = explicit
+            return stub_generator.target_docker_platform(agents), run
+
+    def test_an_explicit_platform_wins_over_the_daemons(self):
+        platform, run = self._platform(
+            [{"name": "A", "provider": "local"}], explicit="linux/amd64"
+        )
+        self.assertEqual(platform, "linux/amd64")
+        run.assert_not_called()
+
+    def test_agents_on_this_machine_build_for_the_daemons_platform(self):
+        platform, run = self._platform(
+            [
+                {"name": "A", "provider": "local"},
+                {"name": "B", "provider": "local", "host": "127.0.0.1"},
+            ]
+        )
+        self.assertEqual(platform, "linux/arm64")
+        run.assert_called_once()
+
+    def test_an_ec2_or_remote_agent_builds_for_the_portable_platform(self):
+        for agent in (
+            {"name": "B", "provider": "EC2"},
+            {"name": "B", "provider": "local", "host": "10.0.0.5"},
+        ):
+            with self.subTest(agent=agent):
+                platform, run = self._platform(
+                    [{"name": "A", "provider": "local"}, agent]
+                )
+                self.assertEqual(platform, stub_generator.DEFAULT_DOCKER_PLATFORM)
+                run.assert_not_called()
+
+    def test_a_daemon_that_cannot_answer_fails_with_dockers_message(self):
+        refused = unittest.mock.Mock(
+            returncode=1, stdout="", stderr="Cannot connect to the Docker daemon"
+        )
+        with (
+            unittest.mock.patch(
+                "canyonos_core.stub_generator.subprocess.run", return_value=refused
+            ),
+            unittest.mock.patch.dict(os.environ),
+        ):
+            os.environ.pop("CANYONOS_DOCKER_PLATFORM", None)
+            with self.assertRaisesRegex(RuntimeError, "Cannot connect to the Docker"):
+                stub_generator.target_docker_platform([{"name": "A"}])

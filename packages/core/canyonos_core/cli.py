@@ -190,18 +190,6 @@ def _normalize_requirements(agent_cfg):
     return list(agent_cfg.get("requirements") or [])
 
 
-def _docker_platform():
-    """Return the target Docker platform for portable runtime images."""
-    from canyonos_core.stub_generator import target_docker_platform
-
-    return target_docker_platform()
-
-
-def _docker_build_cmd(*args):
-    """Build a Docker build command with an explicit target platform."""
-    return ["docker", "build", "--platform", _docker_platform(), *args]
-
-
 def _docker_available(probe_cmd=("docker", "info")):
     """Return True if Docker is installed and its daemon answers; checked before
     building images and before an EC2 deploy."""
@@ -398,6 +386,7 @@ def _run_build(config_path):
         generate_stub,
         generate_docker,
         generate_workflow_docker,
+        target_docker_platform,
     )
 
     yaml_files = glob.glob(os.path.join(declarations_dir, "*.yaml"))
@@ -466,6 +455,7 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     #  Step 4: Generate Docker contexts                               #
     # -------------------------------------------------------------- #
+    platform = target_docker_platform(agents)
     bake_targets = []
     for agent_cfg in agents:
         agent_name = agent_cfg["name"]
@@ -479,7 +469,7 @@ def _run_build(config_path):
             target_image = f"canyonos-{agent_name.lower()}"
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
             subprocess.run(
-                ["docker", "pull", "--platform", _docker_platform(), image], check=True
+                ["docker", "pull", "--platform", platform, image], check=True
             )
             subprocess.run(["docker", "tag", image, target_image], check=True)
             continue
@@ -552,7 +542,7 @@ def _run_build(config_path):
         docker_container_dir = os.path.join(artifact_root, "docker_container")
         os.makedirs(docker_container_dir, exist_ok=True)
         bake_file_path = os.path.join(docker_container_dir, "docker-bake.json")
-        _write_bake_file(bake_targets, bake_file_path, _docker_platform())
+        _write_bake_file(bake_targets, bake_file_path, platform)
 
         target_names = [target["name"] for target in bake_targets]
         logger.info(
@@ -570,7 +560,15 @@ def _run_build(config_path):
         for target in bake_targets:
             logger.info("Building Docker image: %s", target["image_name"])
             subprocess.run(
-                _docker_build_cmd("-t", target["image_name"], target["context"]),
+                [
+                    "docker",
+                    "build",
+                    "--platform",
+                    platform,
+                    "-t",
+                    target["image_name"],
+                    target["context"],
+                ],
                 check=True,
             )
 

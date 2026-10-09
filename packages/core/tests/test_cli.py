@@ -293,7 +293,10 @@ class CliBuildTests(unittest.TestCase):
             ) as generate_workflow_docker,
             patch("canyonos_core.cli.subprocess.run", side_effect=fake_run),
             patch("canyonos_core.cli._docker_available", return_value=buildx_available),
-            patch("canyonos_core.cli._docker_platform", return_value=platform),
+            patch(
+                "canyonos_core.stub_generator.target_docker_platform",
+                return_value=platform,
+            ),
         ):
             cwd = os.getcwd()
             os.chdir(project_dir)
@@ -612,6 +615,10 @@ class CliBuildTests(unittest.TestCase):
                     "canyonos_core.stub_generator.generate_docker"
                 ) as generate_docker,
                 patch("canyonos_core.cli.subprocess.run"),
+                patch(
+                    "canyonos_core.stub_generator.target_docker_platform",
+                    return_value="linux/amd64",
+                ),
                 patch("canyonos_core.cli._docker_available", return_value=False),
             ):
                 cwd = os.getcwd()
