@@ -33,6 +33,18 @@ WEB_IMAGE = env.web_image
 HOST_GATEWAY = "host.docker.internal"
 REDIS_HOST = HOST_GATEWAY
 
+# The keys `canyonos serve` owns in the project's .env; every other line is the user's.
+MANAGED_ENV_KEYS = frozenset(
+    {
+        "CANYONOS_JWT_SECRET",
+        "CANYONOS_REDIS_HOST",
+        "CANYONOS_REDIS_PORT",
+        "CANYONOS_API_IMAGE",
+        "CANYONOS_WEB_IMAGE",
+        "CANYONOS_WEB_PORT",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ServeResult:
@@ -226,6 +238,20 @@ def _write_project_env(env_path: Path, managed_env: dict[str, str]) -> None:
         if key not in replaced
     )
     _write_private_file(env_path, "".join(updated_lines))
+
+
+def remove_project_env_keys(env_path: Path) -> int:
+    """Drop the MANAGED_ENV_KEYS lines from the user's .env and return how many went."""
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except FileNotFoundError:
+        return 0
+
+    kept = [line for line in lines if line.partition("=")[0] not in MANAGED_ENV_KEYS]
+    removed = len(lines) - len(kept)
+    if removed:
+        _write_private_file(env_path, "".join(kept))
+    return removed
 
 
 def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:

@@ -142,6 +142,7 @@ def test_prepare_preserves_unrelated_env_lines_and_mode(project):
     managed_env, message = dashboard_stack._prepare(stack)
 
     assert message == "dashboard state prepared"
+    assert set(managed_env) == dashboard_stack.MANAGED_ENV_KEYS
     env_lines = stack.env_path.read_text().splitlines()
     assert env_lines[:2] == ["OTHER=one", "# preserved"]
     assert env_lines[2] == "JWT_SECRET=kept-secret"

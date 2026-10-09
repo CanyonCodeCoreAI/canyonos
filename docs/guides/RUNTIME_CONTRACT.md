@@ -235,6 +235,8 @@ recreates orphaned agent containers, but a workflow `api_port`, a database
 `db_port` or a Redis port still in use is a hard error.
 
 `canyonos clean` deletes the entire `.car` directory in the current
-directory, including `app/` and `config/`, and removes every local Docker
-image named `canyonos-*`. It does not touch containers; use `canyonos stop`
-or `canyonos quit` for those.
+directory, including `app/` and `config/`, strips the `CANYONOS_*` keys
+`canyonos serve` wrote to `.env`, removes the skill `canyonos build`
+installed in this project (a global install is kept), and removes every
+local Docker image named `canyonos-*`. It does not touch containers; use
+`canyonos stop` or `canyonos quit` for those.
