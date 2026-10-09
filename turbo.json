@@ -82,11 +82,37 @@
       ]
     },
     "canyonos#test": {
+      "command": [
+        "uv",
+        "run",
+        "--active",
+        "--frozen",
+        "--package",
+        "canyonos",
+        "pytest",
+        "tests",
+        "--ignore=tests/e2e"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!tests/e2e/**",
         "$TURBO_ROOT$/skills/porting-to-canyonos/**",
         "$TURBO_ROOT$/docs/**",
         "$TURBO_ROOT$/README.md"
+      ]
+    },
+    "canyonos#test:e2e": {
+      "cache": false,
+      "passThroughEnv": ["PYTEST_ADDOPTS"],
+      "command": [
+        "uv",
+        "run",
+        "--active",
+        "--frozen",
+        "--package",
+        "canyonos",
+        "pytest",
+        "tests/e2e"
       ]
     },
     "canyonos-core#test": {

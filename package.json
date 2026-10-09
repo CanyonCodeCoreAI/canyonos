@@ -25,6 +25,7 @@
     "canyonos:dev": "bun run ./scripts/canyonos-dev.ts",
     "dashboard:dev": "bun run ./scripts/dashboard-dev.ts",
     "api:test:e2e": "bun run --filter @canyonos/api test:e2e",
+    "cli:test:e2e": "turbo run test:e2e --filter=canyonos",
     "ui:test:e2e": "bun run --filter web test:e2e",
     "canyonos:smoke": "bun run ./scripts/canyonos-smoke.ts",
     "version:check": "bun run ./scripts/release-version.ts check",
