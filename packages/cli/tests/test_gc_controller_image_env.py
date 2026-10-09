@@ -44,7 +44,9 @@ def docker(monkeypatch):
 
 
 def env_flags(argv):
-    return dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "-e")
+    return dict(
+        argv[i + 1].partition("=")[::2] for i, a in enumerate(argv) if a == "-e"
+    )
 
 
 def test_the_controller_image_is_passed_to_the_gc_container(docker):
@@ -62,3 +64,9 @@ def test_it_matches_the_image_the_gc_itself_runs(docker):
     argv = docker.run_argv
     assert argv[-1] == "ghcr.io/example/canyonos-core:v9"
     assert env_flags(argv)["CANYONOS_CONTROLLER_IMAGE"] == argv[-1]
+
+
+def test_the_docker_platform_is_passed_through_from_the_host(docker):
+    init_cmd._run_container()
+
+    assert "CANYONOS_DOCKER_PLATFORM" in env_flags(docker.run_argv)

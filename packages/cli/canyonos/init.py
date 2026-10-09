@@ -317,6 +317,9 @@ def _run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
             # its own image; it cannot read that from inside, so pass it in.
             "-e",
             f"CANYONOS_CONTROLLER_IMAGE={image}",
+            # A bare name copies the host's value when set, so agent images match its CPU.
+            "-e",
+            "CANYONOS_DOCKER_PLATFORM",
         ]
         # Extra env for the GC container. The local runtime forwards select keys
         # (e.g. CANYONOS_LLM_STUB_TEXT) from here into each agent container.
