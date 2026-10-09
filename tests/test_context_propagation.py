@@ -50,7 +50,7 @@ def _problems(request_id, result):
             "request_id": request_id,
             "future_id": workflow_future,
             "function": "main",
-            "greeting": f"Hello, {caller}! I'm the ExampleAgent.",
+            "greeting": f"Hello, {caller}! I'm the HelloAgent!",
             "agent_request_id": request_id,
             "agent_parent": workflow_future,
         }

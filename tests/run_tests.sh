@@ -57,7 +57,12 @@ python3 "$SCRIPT_DIR/test_performance.py" --concurrent 5 --total 20 || exit 1
 
 echo "-------------------------------------------"
 echo ">> Redeploying with the context propagation workflow..."
+canyonos stop
 kill -9 $DEPLOY_PID 2>/dev/null || true
+# The old workflow also answers on 8080, so wait for it to go before waiting for the new one.
+while curl -s http://localhost:8080/status/probe > /dev/null 2>&1; do
+    sleep 1
+done
 cd "$TEST_DIR"
 cp -R "$SCRIPT_DIR/../examples/helloworld" context_propagation
 cp "$SCRIPT_DIR/context_propagation_workflow.py" context_propagation/workflow/example_workflow.py

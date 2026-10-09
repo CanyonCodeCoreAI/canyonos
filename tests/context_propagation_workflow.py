@@ -1,4 +1,4 @@
-# Calls ExampleAgent from threads, asyncio and reused thread and process pools, and reports the
+# Calls HelloAgent from threads, asyncio and reused thread and process pools, and reports the
 # request context each call saw. Swapped in for helloworld's workflow by run_tests.sh.
 
 import _thread
@@ -19,7 +19,7 @@ except ImportError:
     import canyonos_context
 
 from deploy import deploy
-from agents.example_agent import ExampleAgent
+from agents.hello_agent import HelloAgent
 
 # Created before any request so their workers are reused, which is when stale IDs would show.
 THREAD_POOL = ThreadPoolExecutor(max_workers=1)
@@ -27,7 +27,7 @@ PROCESS_POOL = ProcessPoolExecutor(max_workers=1)
 
 
 def _observe(where):
-    future = ExampleAgent().hello(name=where)
+    future = HelloAgent().hello(name=where)
     return {
         "request_id": canyonos_context.get_request_id(),
         "future_id": canyonos_context.get_current_future_id(),

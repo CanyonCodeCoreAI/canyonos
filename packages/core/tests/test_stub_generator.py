@@ -161,6 +161,10 @@ class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
             "controller = LocalController(port=50051, publish_ready=False)", launcher
         )
         self.assertIn("target=controller.run", launcher)
+        self.assertLess(
+            launcher.index("canyonos_context.install()"),
+            launcher.index("exec(open("),
+        )
         self.assertIn('socket.create_connection(("127.0.0.1", 9123)', launcher)
         self.assertIn("controller.mark_ready()", launcher)
         self.assertIn(
@@ -640,14 +644,10 @@ class PlatformPinTests(unittest.TestCase):
                     gateway_stage,
                 )
 
-    def test_both_images_patch_the_stdlib_after_copying_the_patch_in(self):
+    def test_images_leave_the_python_install_unpatched(self):
         for workflow in (False, True):
             with self.subTest(workflow=workflow):
-                dockerfile = self._dockerfile(workflow)
-                self.assertLess(
-                    dockerfile.index("COPY . ."),
-                    dockerfile.index("RUN python concurrency_context_patch.py"),
-                )
+                self.assertNotIn("RUN python", self._dockerfile(workflow))
 
     def test_installs_are_held_below_each_images_tested_majors(self):
         for workflow, caps in (

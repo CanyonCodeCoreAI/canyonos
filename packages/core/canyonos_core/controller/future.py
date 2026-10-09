@@ -268,16 +268,14 @@ class Future(object):
         self.redis.srem(self._consumers_key(), consumer)
 
 
-# A forked child must not reuse the parent's channel, which another thread may have been mid-call on.
-os.register_at_fork(after_in_child=lambda: setattr(Future, "_stub", None))
-# The parent's Redis pool lock may have been copied while held, which deadlocks the child's first write.
-os.register_at_fork(
-    after_in_child=lambda: setattr(
-        Future,
-        "redis",
-        RedisClient(
-            host=os.environ.get("CANYONOS_REDIS_HOST", "localhost"),
-            port=int(os.environ.get("CANYONOS_REDIS_PORT", 6379)),
-        ),
+def _reset_after_fork():
+    # The parent's channel may be mid-call on another thread, and its Redis pool lock may
+    # have been copied while held, which deadlocks the child's first write.
+    Future._stub = None
+    Future.redis = RedisClient(
+        host=os.environ.get("CANYONOS_REDIS_HOST", "localhost"),
+        port=int(os.environ.get("CANYONOS_REDIS_PORT", 6379)),
     )
-)
+
+
+os.register_at_fork(after_in_child=_reset_after_fork)

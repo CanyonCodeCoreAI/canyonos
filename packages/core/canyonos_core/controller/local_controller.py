@@ -50,6 +50,7 @@ try:
 except ImportError:
     import canyonos_context
 
+canyonos_context.install()
 gateway_headers.install(
     canyonos_context.get_current_future_id, canyonos_context.get_current_function
 )
