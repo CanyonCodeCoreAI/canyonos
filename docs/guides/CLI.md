@@ -20,7 +20,7 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `serve` | Start the local dashboard separately |
 | `stop` | Stop the running workflow, keep the container |
 | `quit` | Full teardown — remove the container and workspace |
-| `clean` | Remove the generated `.car` folder and every `canyonos-*` Docker image |
+| `clean` | Remove the generated `.car` folder, the project's CanyonOS skill, the `.env` keys `serve` wrote, and every `canyonos-*` Docker image |
 | `validate` | Check a converted `.car` against the CanyonOS contract |
 | `doctor` | Check that your environment is ready |
 | `new-app` | Scaffold a new project |

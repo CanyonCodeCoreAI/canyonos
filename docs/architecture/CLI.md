@@ -109,18 +109,15 @@ INPUT: canyonos test "Test Query"
 
 1. Detects the working directory (goes into .car folder for commands if .car exists, uses current dir otherwise) [default_config_path()]
 2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
-3. With `--stub-llm`, sets a variable in the container env that gets picked up by the LLM Gateway to always return a dummy value, default is "test", to verify a workflow doesn't cost tokens. [CANYONOS_LLM_STUB_TEXT]
-4. Then we deploy [canyonos deploy]
+3. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
    - All agent containers are up and their names are as expected
    - The number of replicas is as initialized
    - The endpoints are correctly working and queryable.
-5. Once everything is verified running, we send a test query and verify that it goes fully through
+4. Once everything is verified running, we send a test query and verify that it goes fully through
 
 #### Action Items:
-- There may be problems with stubbing the LLM-Gateway, but I wouldn't remove my current implementation as it allows for really quick testing.
 - Verify that there are valid timeouts and correct error tracing for everything
-- When we stub the LLM, we don't ensure the LLM works, maybe a separate test that just queries the LLM with a extremely simple message would be nice, or to just remove the LLM stub.
 
 ### `config` — view or edit settings
 
@@ -171,8 +168,7 @@ And to observe without changing anything:
 #### Steps:
 1. Detects the working directory (goes into .car folder for commands if .car exists, uses current dir otherwise) [default_config_path()]
 2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
-3. With `--stub-llm`, sets a variable in the container env that gets picked up by the LLM Gateway to always return a dummy value, default is "test", to verify a workflow doesn't cost tokens. [CANYONOS_LLM_STUB_TEXT]
-4. Then we deploy [canyonos deploy]
+3. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
    - All agent containers are up and their names are as expected
    - The number of replicas is as initialized
@@ -181,9 +177,7 @@ And to observe without changing anything:
 
 #### Action Items:
 - Currently assuming the query body is always "query", need to harden it
-- There may be problems with stubbing the LLM-Gateway, but I wouldn't remove my current implementation as it allows for really quick testing.
 - Verify that there are valid timeouts and correct error tracing for everything
-- When we stub the LLM, we don't ensure the LLM works, maybe a separate test that just queries the LLM with a extremely simple message would be nice, or to just remove the LLM stub.
 
 ## canyonos build:
 ### INPUT: canyonos build
