@@ -42,6 +42,11 @@ def fail(message):
     _emit(message, "bold red", "✗")
 
 
+def root_cause(message):
+    """Show the line that explains a failure, marked with a bright red ✗."""
+    console.print(Text(f"✗ Root Cause: {message}", style="bold bright_red"))
+
+
 def warn(message):
     """Show a warning in the terminal, marked with a yellow !."""
     _emit(message, "yellow", "!")

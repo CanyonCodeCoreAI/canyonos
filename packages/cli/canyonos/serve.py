@@ -9,7 +9,7 @@ from canyonos.constants import dashboard_port, default_config_path
 from .dashboard_stack import ServeResult, run_dashboard
 
 
-def serve_dashboard() -> ServeResult:
+def serve_dashboard(report_failure: bool = True) -> ServeResult:
     """Bring the dashboard up, reporting progress. Returns the stack's result.
 
     Phases drive the spinner while the stack comes up; the trace itself is
@@ -26,7 +26,7 @@ def serve_dashboard() -> ServeResult:
 
         result = run_dashboard(report, preferred_port)
 
-    if result.ok:
+    if result.ok or not report_failure:
         return result
 
     for phase, message in trace:

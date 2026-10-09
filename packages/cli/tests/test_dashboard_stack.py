@@ -460,3 +460,29 @@ def test_dashboard_url_falls_back_to_loopback_off_ec2(monkeypatch):
     monkeypatch.setattr(dashboard_stack, "public_ip", lambda: None)
 
     assert dashboard_stack.dashboard_url(8081) == "http://127.0.0.1:8081"
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error response from daemon: driver failed programming external connectivity "
+        "on endpoint canyonos-dashboard-api-1 (fd4d): "
+        "Bind for 0.0.0.0:3000 failed: port is already allocated",
+        "Error response from daemon: Ports are not available: exposing port TCP "
+        "0.0.0.0:3000 -> 127.0.0.1:0: listen tcp 0.0.0.0:3000: bind: address already in use",
+    ],
+)
+def test_a_port_conflict_on_start_names_the_port(monkeypatch, project, stderr):
+    def response(argv):
+        if argv[-5:] == ["up", "-d", "--wait", "--wait-timeout", "180"]:
+            return completed(argv, returncode=1, stderr=stderr)
+        return completed(argv)
+
+    install_docker(monkeypatch, [], response)
+    result = dashboard_stack.run_dashboard()
+
+    assert result.phase == "start"
+    assert result.message == (
+        "port 3000 is already in use by another process or container"
+    )
+    assert result.log_path is not None

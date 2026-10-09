@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from canyonos import deploy as deploy_cmd
@@ -297,7 +299,7 @@ def test_a_build_that_dies_silently_does_not_hang(monkeypatch, capsys):
 
 def test_a_live_child_that_never_becomes_ready_times_out(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.001)
-    monkeypatch.setattr(deploy_cmd, "_STARTUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "STARTUP_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0)
     monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": True})
 
@@ -319,7 +321,7 @@ def test_a_log_reader_error_fails_promptly(monkeypatch):
         def __iter__(self):
             raise OSError("pipe closed")
 
-    monkeypatch.setattr(deploy_cmd, "_STARTUP_TIMEOUT_SECONDS", 10)
+    monkeypatch.setattr(deploy_cmd, "STARTUP_TIMEOUT_SECONDS", 10)
     lines = deploy_cmd._queued_lines(BrokenStream())
 
     with pytest.raises(RuntimeError, match="Could not read.*pipe closed"):
@@ -470,7 +472,10 @@ def test_verbose_fails_on_a_fatal_line_instead_of_waiting_for_the_timeout(
     verdict = "CRITICAL:canyonos_core.cli:Agent replica(s) failed to become healthy within 4s: Broken 0/1\n"
     lines = deploy_cmd._queued_lines(iter([_BEGIN, *_QUOTED_TRACEBACK, _END, verdict]))
 
-    with pytest.raises(RuntimeError, match="Deploy failed: CRITICAL.*Broken 0/1"):
+    with pytest.raises(
+        RuntimeError,
+        match="Deploy failed: Broken: ERROR:local_controller:Failed to load agent Broken",
+    ):
         deploy_cmd._tail_verbose(
             lines,
             {"port": 1},
@@ -540,3 +545,179 @@ def test_verbose_keeps_echoing_after_a_fatal_line_until_the_deploy_is_gone(
         )
 
     assert "Removing instance local:Broken:0" in capsys.readouterr().out
+
+
+def test_a_quiet_deploy_keeps_waiting_and_names_the_running_step(monkeypatch):
+    monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(deploy_cmd, "_IDLE_WARN_SECONDS", 0.05)
+    monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": True})
+    updates = []
+    monkeypatch.setattr(deploy_cmd.ui, "status", lambda _m: _Spinner(updates))
+    silence = threading.Event()
+
+    def stream():
+        yield "#22 [agent 5/7] RUN uv pip install -r requirements.txt\n"
+        yield "#22 12.3 Building wheel for numpy\n"
+        silence.wait(0.3)
+        yield "INFO:canyonos_core.controller.global_controller:Global controller started, polling every 5s\n"
+
+    monkeypatch.setattr(deploy_cmd, "_deploy_summary", lambda *_a: "summary")
+
+    summary = deploy_cmd._tail_quiet(
+        deploy_cmd._queued_lines(stream()),
+        {"port": 1},
+        8080,
+        "config/global_controller.yaml",
+        serve=False,
+        on_ready=lambda _ready: None,
+    )
+
+    assert summary == "summary"
+    stalled = next(str(u) for u in updates if str(u).startswith("Still running"))
+    assert (
+        "step: [agent 5/7] RUN uv pip install -r requirements.txt (running " in stalled
+    )
+    assert "last: #22 12.3 Building wheel for numpy" in stalled
+
+
+class _Spinner:
+    def __init__(self, updates):
+        self.updates = updates
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def update(self, message):
+        self.updates.append(message)
+
+
+def _explain(lines):
+    tracker = deploy_cmd.PhaseTracker()
+    for line in lines:
+        if tracker.parse_line(line)[2]:
+            return tracker.explain_failure(line)
+    return None
+
+
+def test_a_failed_build_step_is_explained_by_its_own_uv_lines():
+    explained = _explain(
+        [
+            "#22 [helloagent stage-0 5/9] RUN uv pip install --system -r requirements.txt\n",
+            "#22 0.147 Using Python 3.11.17 environment at: /usr/local\n",
+            "#23 [workflow stage-0 9/9] RUN python concurrency_context_patch.py\n",
+            "#23 0.200 error: unrelated step\n",
+            "#22 0.419 error: No solution found when resolving dependencies\n",
+            "#22 0.419   cause: Because nonexistent-package-xyz was not found in the package registry\n",
+            "#22 0.419   hint: Packages were unavailable because the network was disabled\n",
+            '#22 ERROR: process "/bin/sh -c uv pip install" did not complete successfully: exit code: 1\n',
+        ]
+    )
+
+    assert explained == (
+        "error: No solution found when resolving dependencies\n"
+        "cause: Because nonexistent-package-xyz was not found in the package registry\n"
+        "hint: Packages were unavailable because the network was disabled"
+    )
+
+
+_GC = "WARNING:canyonos_core.controller.global_controller:"
+
+
+def test_a_replica_that_never_came_up_is_explained_by_its_container_log():
+    explained = _explain(
+        [
+            f"{_GC}--- begin container log: HelloAgent (localhost:8002) status=failed ---\n",
+            f"{_GC}  INFO:__main__:Started LLM gateway on 127.0.0.1:8081 (PID: 20)\n",
+            f"{_GC}  ERROR:__main__:Failed to load agent HelloAgent from /app/hello_agent.py: boom\n",
+            f"{_GC}  Traceback (most recent call last):\n",
+            f'{_GC}      raise RuntimeError("boom")\n',
+            f"{_GC}  RuntimeError: boom\n",
+            f"{_GC}  RuntimeError: Failed to load configured agent HelloAgent.\n",
+            f"{_GC}--- end container log: HelloAgent ---\n",
+            "CRITICAL:canyonos_core:Controller readiness failed: Agent replica(s) "
+            "failed to become healthy within 2s: HelloAgent 0/1\n",
+        ]
+    )
+
+    assert explained == (
+        "HelloAgent: ERROR:__main__:Failed to load agent HelloAgent "
+        "from /app/hello_agent.py: boom"
+    )
+
+
+def test_a_quoted_traceback_without_an_error_line_is_explained_by_its_last_line():
+    explained = _explain(
+        [
+            f"{_GC}--- begin container log: IndexAgent (localhost:8003) status=failed ---\n",
+            f"{_GC}  Traceback (most recent call last):\n",
+            f"{_GC}  ModuleNotFoundError: No module named 'numpy'\n",
+            f"{_GC}--- end container log: IndexAgent ---\n",
+            "CRITICAL:canyonos_core:Controller readiness failed: Agent replica(s) "
+            "failed to become healthy within 9s: IndexAgent 0/1\n",
+        ]
+    )
+
+    assert explained == "IndexAgent: ModuleNotFoundError: No module named 'numpy'"
+
+
+def test_a_replica_whose_log_names_no_error_is_explained_by_the_verdict():
+    verdict = (
+        "CRITICAL:canyonos_core:Controller readiness failed: Agent replica(s) "
+        "failed to become healthy within 361s: Workflow 0/1"
+    )
+    explained = _explain(
+        [
+            f"{_GC}--- begin container log: Workflow (localhost:8001) status=initializing ---\n",
+            f"{_GC}  INFO:__main__:Started LLM gateway on 127.0.0.1:8081 (PID: 20)\n",
+            f"{_GC}--- end container log: Workflow ---\n",
+            verdict + "\n",
+        ]
+    )
+
+    assert explained == verdict
+
+
+def test_any_other_trigger_is_its_own_explanation():
+    line = "CRITICAL:canyonos_core:Failed to launch Redis\n"
+    assert _explain([line]) == line.strip()
+
+
+def test_the_stalled_spinner_text_is_not_read_as_markup():
+    tracker = deploy_cmd.PhaseTracker()
+    tracker.parse_line("#12 [indexagent stage-0 5/8] RUN uv pip install\n")
+
+    with deploy_cmd.ui.status("Deploying agents...") as spinner:
+        spinner.update(
+            deploy_cmd._still_running(tracker, "#12 1.0 copying [/workspace/app]", 200)
+        )
+        shown = spinner.renderable.text.plain
+
+    assert "step: [indexagent stage-0 5/8] RUN uv pip install (running " in shown
+    assert "last: #12 1.0 copying [/workspace/app]" in shown
+
+
+def test_the_stalled_spinner_names_the_oldest_step_still_running(monkeypatch):
+    clock = iter(range(100))
+    monkeypatch.setattr(deploy_cmd.time, "monotonic", lambda: next(clock))
+    tracker = deploy_cmd.PhaseTracker()
+    for line in [
+        "#22 [helloagent stage-0 5/9] RUN uv pip install --system -r requirements.txt\n",
+        "#22 0.147 Using Python 3.11.17 environment at: /usr/local\n",
+        "#22 ...\n",
+        "#23 [workflow stage-0 9/9] RUN python concurrency_context_patch.py\n",
+        "#23 DONE 0.3s\n",
+        "#22 [helloagent stage-0 5/9] RUN uv pip install --system -r requirements.txt\n",
+        "#24 [workflow] exporting to image\n",
+        "#24 naming to docker.io/library/canyonos-workflow:latest done\n",
+        "#24 DONE 0.2s\n",
+    ]:
+        tracker.parse_line(line)
+
+    shown = deploy_cmd._still_running(tracker, "#24 DONE 0.2s", 200).plain
+
+    assert "step: [helloagent stage-0 5/9] RUN uv pip install" in shown
+    assert "(running 0m" in shown
+    assert tracker.oldest_open_step()[1] == 0

@@ -20,7 +20,7 @@ def deployable(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "workflow_api_port", lambda _config: 8080)
     monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *_a: None)
-    monkeypatch.setattr(deploy_cmd, "_start_dashboard", lambda: None)
+    monkeypatch.setattr(deploy_cmd, "_start_dashboard", lambda **_k: None)
     monkeypatch.setattr(deploy_cmd, "run_quit", lambda: None)
 
 
@@ -28,7 +28,7 @@ def test_a_config_path_outside_the_project_raises(monkeypatch, deployable):
     monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda _p: None)
 
     with pytest.raises(
-        RuntimeError, match="Config must be inside the project directory"
+        RuntimeError, match="The config file must be inside this project folder"
     ):
         deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
 

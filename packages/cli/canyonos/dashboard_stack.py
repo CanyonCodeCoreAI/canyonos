@@ -25,7 +25,7 @@ from canyonos.constants import (
     local_redis_port,
     public_ip,
 )
-from canyonos.port_utils import find_free_port
+from canyonos.port_utils import find_free_port, is_port_conflict
 
 COMPOSE_PROJECT = "canyonos-dashboard"
 API_IMAGE = env.api_image
@@ -273,6 +273,17 @@ def _command_failure_message(
     return f"{message}: {_redact_logs(detail, managed_env['CANYONOS_JWT_SECRET'])}"
 
 
+def _start_failure_message(
+    result: subprocess.CompletedProcess[str], managed_env: dict[str, str]
+) -> str:
+    """Say why `docker compose up` failed, naming the port when another process or
+    container already holds one the dashboard publishes."""
+    port = re.search(r"(?:\d{1,3}(?:\.\d{1,3}){3}|::\]?):(\d+)", result.stderr or "")
+    if port and is_port_conflict(result.stderr):
+        return f"port {port.group(1)} is already in use by another process or container"
+    return _command_failure_message("docker compose up failed", result, managed_env)
+
+
 def _compose_env(managed_env: dict[str, str]) -> dict[str, str]:
     # Compose prefers the process environment over --env-file, so a shell's
     # CANYONOS_API_IMAGE=local would beat the resolved image ref we wrote.
@@ -323,10 +334,7 @@ def _start(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -
     except OSError:
         raise PhaseFailure("start", "could not run docker compose up")
     if result.returncode != 0:
-        raise PhaseFailure(
-            "start",
-            _command_failure_message("docker compose up failed", result, managed_env),
-        )
+        raise PhaseFailure("start", _start_failure_message(result, managed_env))
 
 
 def _endpoint_healthy(url: str, timeout: float = 5) -> bool:

@@ -32,9 +32,14 @@ from canyonos.constants import (
     workflow_entrypoint,
     workspace_relative,
 )
-from canyonos.deploy import run_deploy, workflow_targets
+from canyonos.deploy import (
+    STARTUP_TIMEOUT_SECONDS,
+    PhaseTracker,
+    run_deploy,
+    workflow_targets,
+)
 from canyonos.gc import deploy_status
-from canyonos.init import load_state, quit_existing
+from canyonos.init import docker_env, load_state, quit_existing
 from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
 
@@ -43,11 +48,12 @@ DEFAULT_QUERY = "hello"
 # Pass --stub-llm to stub the in-container LLM gateway instead.
 # Stubbed calls return this text; override it with --stub-text.
 DEFAULT_LLM_STUB = "test"
-READY_TIMEOUT = 60
+READY_TIMEOUT = STARTUP_TIMEOUT_SECONDS
 REQUEST_TIMEOUT = 300
 SUBMIT_TIMEOUT = 30
 POLL_INTERVAL = 2
 LOG_TAIL_LINES = 40
+DOCKER_LOGS_TIMEOUT = 30
 
 
 def _force_local_providers(config_path):
@@ -83,17 +89,57 @@ def _workflow_ready(host, port):
         return False
 
 
-def _wait_for_workflow(gc_port, api_port):
+def _root_cause(state):
+    """Read the Global Controller's log and explain the first line `canyonos deploy`
+    would flag as the failure, or return None when nothing in it was fatal."""
+    try:
+        result = subprocess.run(
+            ["docker", "logs", state["container_id"]],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=docker_env(state),
+            timeout=DOCKER_LOGS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    lines = result.stdout.splitlines()
+    tracker = PhaseTracker()
+    for line in lines:
+        if tracker.parse_line(line)[2]:
+            return tracker.explain_failure(line)
+    return None
+
+
+class _DeployFailed(RuntimeError):
+    """Raised when the deploy never brought the workflow up; `root_cause` says why,
+    when the Global Controller's log does."""
+
+    def __init__(self, message, root_cause):
+        super().__init__(message)
+        self.root_cause = root_cause
+
+
+def _wait_for_workflow(state, api_port):
+    """Wait until the workflow answers, for as long as `canyonos deploy` would.
+
+    Ends early only when the deploy itself stops, so the Root Cause is read from
+    the finished deploy's log rather than one still building.
+    """
     deadline = time.time() + READY_TIMEOUT
     with ui.status("Building images and starting containers..."):
         while time.time() < deadline:
             if _workflow_ready("127.0.0.1", api_port):
                 return
-            if not (deploy_status(gc_port) or {}).get("running", False):
-                raise RuntimeError("The deploy stopped before the workflow came up.")
+            if not (deploy_status(state["port"]) or {}).get("running", False):
+                raise _DeployFailed(
+                    "The deploy stopped before the workflow came up.",
+                    _root_cause(state),
+                )
             time.sleep(POLL_INTERVAL)
-    raise RuntimeError(
-        f"Timed out after {READY_TIMEOUT}s waiting for the workflow to come up."
+    raise _DeployFailed(
+        f"Timed out after {READY_TIMEOUT}s waiting for the workflow to come up.",
+        _root_cause(state),
     )
 
 
@@ -159,11 +205,13 @@ def _await_result(host, port, request_id, timeout):
     return {"status": "timeout"}
 
 
-def _log_tail(container_id):
+def _log_tail(state):
     result = subprocess.run(
-        ["docker", "logs", "--tail", str(LOG_TAIL_LINES), container_id],
+        ["docker", "logs", "--tail", str(LOG_TAIL_LINES), state["container_id"]],
         capture_output=True,
         text=True,
+        env=docker_env(state),
+        timeout=DOCKER_LOGS_TIMEOUT,
     )
     return (result.stdout + result.stderr).strip() or None
 
@@ -186,6 +234,7 @@ class _Run:
         self.result = None
         self.error = None
         self.log_tail = None
+        self.root_cause = None
 
     def begin(self, name, number, title, total=3):
         """Open a phase, recorded as failed until `done` says otherwise."""
@@ -226,7 +275,7 @@ def _deploy_locally(run, config_path, api_port, llm_stub=None):
     )
     run.deploy_started = True
 
-    _wait_for_workflow(state["port"], api_port)
+    _wait_for_workflow(state, api_port)
     run.done(f"Global Controller on port {state['port']}")
     return state
 
@@ -284,7 +333,7 @@ def _run_test(run, llm_stub=None, timeout=REQUEST_TIMEOUT):
     already up. The config is restored whatever happens."""
     config_path = workspace_relative(default_config_path())
     if config_path is None:
-        raise RuntimeError("Config must be inside the project directory being synced.")
+        raise RuntimeError("The config file must be inside this project folder")
     if not os.path.isfile(config_path):
         raise RuntimeError(f"No config at {config_path}. Run `canyonos build` first.")
 
@@ -386,6 +435,7 @@ def _payload(run):
         "result": run.result,
         "error": run.error,
         "log_tail": run.log_tail,
+        "root_cause": run.root_cause,
     }
 
 
@@ -406,6 +456,7 @@ def run_test(prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT)
             # mode: docker unreachable, validation failure, port in use, workflow
             # timeout, etc. `--json` needs it inside the payload either way.
             run.error = str(e)
+            run.root_cause = getattr(e, "root_cause", None)
 
         if run.error is not None:
             run.failed(run.error)
@@ -414,9 +465,9 @@ def run_test(prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT)
             # Read the log before anything else touches the container, and leave
             # it running -- a torn-down deploy can't be diagnosed.
             try:
-                run.log_tail = _log_tail(load_state()["container_id"])
+                run.log_tail = _log_tail(load_state())
                 container_live = True
-            except (FileNotFoundError, OSError):
+            except (OSError, subprocess.TimeoutExpired):
                 pass
         elif run.error is None and not run.against_existing:
             quit_existing()
@@ -430,6 +481,9 @@ def run_test(prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT)
             _print_summary(run)
             if container_live:
                 _print_failure_logs(run)
+            if run.root_cause:
+                ui.hint("Recent Logging Trace Above, Root Cause Below.")
+                ui.root_cause(run.root_cause)
 
         return 0 if run.error is None else 1
     finally:

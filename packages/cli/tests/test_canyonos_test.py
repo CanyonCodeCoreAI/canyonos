@@ -342,3 +342,59 @@ def test_running_containers_are_filtered_to_the_runtime_prefix(monkeypatch):
 
     assert verify._running_containers() == ["canyonos-echoagent-0"]
     assert "name=canyonos-" in seen[0]
+
+
+def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(monkeypatch):
+    log = (
+        "Building Docker image: echoagent\n"
+        "ERROR:opentelemetry.exporter:ingest unreachable\n"
+        "CRITICAL:canyonos_core.controller.global_controller:Failed to launch Redis on 127.0.0.1: port taken\n"
+        "Traceback (most recent call last):\n"
+    )
+    monkeypatch.setattr(test_cmd, "READY_TIMEOUT", 0)
+    monkeypatch.setattr(
+        test_cmd.subprocess,
+        "run",
+        lambda argv, **_k: subprocess.CompletedProcess(argv, 0, log, None),
+    )
+
+    with pytest.raises(RuntimeError) as err:
+        test_cmd._wait_for_workflow({"port": 1, "container_id": "cid"}, 2)
+
+    assert str(err.value) == "Timed out after 0s waiting for the workflow to come up."
+    assert err.value.root_cause == (
+        "CRITICAL:canyonos_core.controller.global_controller:"
+        "Failed to launch Redis on 127.0.0.1: port taken"
+    )
+
+
+def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(monkeypatch):
+    log = (
+        "WARNING:canyonos_core.controller.global_controller:"
+        "--- begin container log: Workflow (localhost:8001) status=initializing ---\n"
+        "WARNING:canyonos_core.controller.global_controller:--- end container log: Workflow ---\n"
+        "CRITICAL:canyonos_core:Controller readiness failed: Agent replica(s) "
+        "failed to become healthy within 361s: Workflow 0/1\n"
+    )
+    polls = iter([True] * 40 + [False])
+    seen = []
+    monkeypatch.setattr(test_cmd, "POLL_INTERVAL", 0)
+    monkeypatch.setattr(test_cmd, "_workflow_ready", lambda *_a: False)
+    monkeypatch.setattr(
+        test_cmd, "deploy_status", lambda _port: {"running": next(polls)}
+    )
+
+    def docker_logs(argv, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(argv, 0, log, None)
+
+    monkeypatch.setattr(test_cmd.subprocess, "run", docker_logs)
+    state = {"port": 1, "container_id": "cid", "docker_socket": "/tmp/docker.sock"}
+
+    with pytest.raises(RuntimeError) as err:
+        test_cmd._wait_for_workflow(state, 2)
+
+    assert str(err.value) == "The deploy stopped before the workflow came up."
+    assert err.value.root_cause.endswith("Workflow 0/1")
+    assert seen[0]["env"]["DOCKER_HOST"] == "unix:///tmp/docker.sock"
+    assert seen[0]["timeout"] == test_cmd.DOCKER_LOGS_TIMEOUT

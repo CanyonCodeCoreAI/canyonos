@@ -50,7 +50,8 @@ from canyonos.sync import run_sync
 # wait out the real poll/grace windows.
 _STATUS_POLL_SECONDS = 2.0
 _REVEAL_GRACE_SECONDS = 30.0
-_STARTUP_TIMEOUT_SECONDS = 30 * 60
+_IDLE_WARN_SECONDS = 180.0
+STARTUP_TIMEOUT_SECONDS = 30 * 60
 
 # Substrings that mean the in-container deploy hit something fatal. `WARNING:` is
 # deliberately absent: the OTel-not-configured notice and stub_generator's
@@ -87,6 +88,22 @@ _CONTAINER_LOG_END = "--- end container log:"
 # the polling loop: the workflow is up. Like the markers above, it counts only
 # outside a quoted container log.
 _UP_MARKER = "Global controller started, polling every"
+
+# The global controller's verdict when a replica never came up. Its own words
+# only name the agent; the reason is in the container log quoted before it.
+_READINESS_FAILED = "failed to become healthy"
+
+# uv's own explanation inside a buildx step, e.g. `#22 0.419 error: No solution found`.
+_STEP_DETAIL = re.compile(r"#(\d+) [\d.]+\s+((?:error|cause|hint): .*)")
+
+# A buildx step opening (`#22 [agent 5/9] RUN ...`) and closing (`#22 DONE 0.3s`).
+_STEP_OPEN = re.compile(r"#(\d+) (\[[^\]]+\] .+)")
+_STEP_CLOSE = re.compile(r"#(\d+) (?:DONE|CACHED|ERROR|CANCELED)\b")
+
+# The last line of a Python traceback, e.g. `RuntimeError: boom`.
+_EXCEPTION_LINE = re.compile(
+    r"[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)\b(?::.*)?"
+)
 
 
 def _log_message(line):
@@ -129,7 +146,13 @@ class PhaseTracker:
         self.spinner = None
         self.replicas_total = 0
         self.replicas_ready = set()
+        self.open_steps = {}
         self.in_container_log = False
+        self.step_details = {}
+        self.agent_errors = []
+        self._quoted_agent = None
+        self._quoted_error = None
+        self._quoted_exception = None
 
     def _agent_progress(self):
         if self.replicas_total:
@@ -145,17 +168,35 @@ class PhaseTracker:
         message = _log_message(line)
         if message.startswith(_CONTAINER_LOG_BEGIN):
             self.in_container_log = True
+            self._open_quote(message[len(_CONTAINER_LOG_BEGIN) :])
             return None, None, False
         if message.startswith(_CONTAINER_LOG_END):
             self.in_container_log = False
+            self._close_quote()
             return None, None, False
         if self.in_container_log:
+            self._quote(message.strip())
             return None, None, False
+
+        detail = _STEP_DETAIL.match(line)
+        if detail:
+            self.step_details.setdefault(detail.group(1), []).append(detail.group(2))
 
         if any(prefix in line for prefix in _BENIGN_ERROR_PREFIXES):
             return None, None, False
         if any(marker in line for marker in _ERROR_MARKERS):
             return None, None, True
+
+        opened = _STEP_OPEN.match(line)
+        if opened:
+            self.open_steps.setdefault(
+                opened.group(1), (opened.group(2), time.monotonic())
+            )
+        closed = _STEP_CLOSE.match(line)
+        if closed:
+            self.open_steps.pop(closed.group(1), None)
+        if "Build complete." in line:
+            self.open_steps.clear()
 
         count = re.search(r"Building (\d+) Docker image\(s\) via", line)
         if count:
@@ -185,6 +226,44 @@ class PhaseTracker:
                 return None, done, False
 
         return None, None, False
+
+    def oldest_open_step(self):
+        """The buildx step that has been running longest, as (name, started), or None.
+
+        buildx builds every image at once and reprints a step's header whenever its
+        output resumes, so the last header seen is not the step holding things up.
+        """
+        return min(self.open_steps.values(), key=lambda step: step[1], default=None)
+
+    def _open_quote(self, header):
+        self._quoted_agent = (header.split() or ["agent"])[0]
+        self._quoted_error = None
+        self._quoted_exception = None
+
+    def _quote(self, payload):
+        if payload.startswith("ERROR:") and self._quoted_error is None:
+            self._quoted_error = payload
+        elif _EXCEPTION_LINE.fullmatch(payload):
+            self._quoted_exception = payload
+
+    def _close_quote(self):
+        error = self._quoted_error or self._quoted_exception
+        if error:
+            self.agent_errors.append(f"{self._quoted_agent}: {error}")
+
+    def explain_failure(self, trigger):
+        """Say why the deploy failed, for the Root Cause line in the terminal.
+
+        A failed build step is explained by uv's own lines for that step, and a
+        replica that never came up by the error its container logged. Any other
+        failure line explains itself.
+        """
+        step = re.match(r"#(\d+) ERROR: ", trigger)
+        if step and step.group(1) in self.step_details:
+            return "\n".join(self.step_details[step.group(1)])
+        if _READINESS_FAILED in trigger and self.agent_errors:
+            return "\n".join(self.agent_errors)
+        return trigger.strip()
 
     def agents_ready_message(self):
         """(message, all_ready). Stays partial-aware because the up-marker can
@@ -217,9 +296,7 @@ def run_deploy(
     if config_path is not None:
         config_path = workspace_relative(config_path)
         if config_path is None:
-            raise RuntimeError(
-                "Config must be inside the project directory being synced."
-            )
+            raise RuntimeError("The config file must be inside this project folder")
 
     # `canyonos test` (quiet) deploys the config as-is, without the picker.
     if not quiet and not configure_resources(config_path or default_config_path()):
@@ -258,7 +335,7 @@ def run_deploy(
             # LLM gateway (e.g. a guardrail calling the OpenAI SDK directly) works
             # under `canyonos test` too -- just skip the log-tail/summary UI.
             if serve:
-                _start_dashboard()
+                _start_dashboard(report_failure=False)
             return state
 
         _stream_logs_and_autoserve(
@@ -386,14 +463,20 @@ def _print_deploy_summary(dashboard_url, targets, config_path):
     ui.blank()
 
 
-def _start_dashboard():
+def _start_dashboard(report_failure=True):
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy."""
     try:
-        return serve_dashboard().url
+        result = serve_dashboard(report_failure=report_failure)
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")
         ui.hint("Run `canyonos serve` manually to view it.")
         return None
+    if not result.ok and not report_failure:
+        log = f" Log: {result.log_path}" if result.log_path else ""
+        ui.warn(
+            f"Dashboard didn't start ({result.message}); continuing without it.{log}"
+        )
+    return result.url
 
 
 def _deploy_summary(state, api_port, config_path, serve, on_ready):
@@ -423,14 +506,14 @@ def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
     is fatal, so whether a broken deploy fails cannot depend on `-v`.
     """
     tracker = PhaseTracker()
-    deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
+    deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
     for line in _drain(lines, state, deadline=deadline, hide_status_requests=False):
         print(line, end="")
         _, _, is_error = tracker.parse_line(line)
         if is_error:
             _echo_until_the_deploy_is_gone(lines, state)
             raise RuntimeError(
-                f"Deploy failed: {line.strip()} "
+                f"Deploy failed: {tracker.explain_failure(line)} "
                 "Automatic cleanup will be attempted; see the log above for the cause."
             )
         # Logged exactly once, right after the workflow finishes coming up --
@@ -481,14 +564,28 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
     # The spinner is exited before the summary panel or the dashboard's own
     # spinner is drawn, and on the way out of a Ctrl+C, so the cursor is restored.
     # A nested spinner wouldn't raise, it would silently render nothing.
-    trigger_line = None
-    with ui.status("Starting build...") as spinner:
-        deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
-        for line in _drain(lines, state, deadline=deadline):
+    root_cause = None
+    last_output = time.monotonic()
+    stalled = False
+    with ui.status("Deploying agents...") as spinner:
+        deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+        for line in _drain(lines, state, deadline=deadline, heartbeat=True):
+            if line is None:
+                idle = time.monotonic() - last_output
+                if idle > _IDLE_WARN_SECONDS:
+                    spinner.update(
+                        _still_running(tracker, recent[-1] if recent else "", idle)
+                    )
+                    stalled = True
+                continue
+            last_output = time.monotonic()
+            if stalled:
+                spinner.update(tracker.spinner or "Deploying agents...")
+                stalled = False
             recent.append(line)
             message, done, is_error = tracker.parse_line(line)
             if is_error:
-                trigger_line = line
+                root_cause = tracker.explain_failure(line)
                 break
             if done:
                 ui.ok(done)
@@ -516,11 +613,35 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
     if reached_up_marker:
         return _deploy_summary(state, api_port, config_path, serve, on_ready)
 
-    _reveal_failure(lines, recent, state, trigger_line)
+    _reveal_failure(lines, recent, state, root_cause)
     raise RuntimeError(
         "Deploy stopped or timed out before the workflow became ready. "
         "Automatic cleanup will be attempted; rerun with `canyonos deploy -v` "
         "for full logs."
+    )
+
+
+def _duration(seconds):
+    """`seconds` as `MmSSs`, the way the stalled spinner counts time."""
+    return f"{int(seconds) // 60}m{int(seconds) % 60:02d}s"
+
+
+def _still_running(tracker, last_line, idle):
+    """Build the spinner text for a quiet deploy whose container is still up.
+
+    Built as a `Text` because build step names (`[agent 5/7]`) and log lines are
+    literal, not Rich markup: `[/x]` in a log line must not break the spinner.
+    """
+    oldest = tracker.oldest_open_step()
+    if oldest:
+        name, started = oldest
+        step = f"{name[:100]} (running {_duration(time.monotonic() - started)})"
+    else:
+        step = (tracker.spinner or "Deploying agents...")[:100]
+    return Text(
+        f"Still running, no output for {_duration(idle)} (container is up)\n"
+        f"  step: {step}\n"
+        f"  last: {last_line.strip()[:100]}"
     )
 
 
@@ -546,8 +667,11 @@ def _queued_lines(stream):
     return lines
 
 
-def _drain(lines, state, deadline=None, hide_status_requests=True):
+def _drain(lines, state, deadline=None, hide_status_requests=True, heartbeat=False):
     """Yield log lines until the stream ends, the deploy dies, or `deadline` passes.
+
+    With `heartbeat`, also yields None on each silent poll that finds the deploy
+    still alive.
 
     The container's /status is polled on the read timeout rather than per line,
     because the container logs each of those requests into the very stream being
@@ -563,6 +687,8 @@ def _drain(lines, state, deadline=None, hide_status_requests=True):
             dead, misses = _deploy_is_dead(state, misses)
             if dead:
                 return
+            if heartbeat:
+                yield None
             continue
         if line is None:
             return
@@ -589,15 +715,15 @@ def _deploy_is_dead(state, misses):
     return misses >= 2, misses
 
 
-def _reveal_failure(lines, recent, state, trigger_line=None):
+def _reveal_failure(lines, recent, state, root_cause=None):
     """Stop hiding: replay what was suppressed, then keep echoing.
 
     The cause is usually still in flight when the verdict lands, so this keeps
     draining until the container confirms the deploy is gone. That drain is
     unfiltered, so an unrelated process still logging in the container (e.g.
     a background poller retrying a connection) can scroll the actual cause
-    off screen -- `trigger_line` (the line that actually tripped the failure)
-    is reprinted at the end so it's the last thing visible either way.
+    off screen -- `root_cause` (what explains the line that tripped the
+    failure) is printed at the end so it's the last thing visible either way.
     """
     ui.fail("Deploy failed.")
     ui.blank()
@@ -607,10 +733,10 @@ def _reveal_failure(lines, recent, state, trigger_line=None):
     for line in _drain(lines, state, deadline=time.monotonic() + _REVEAL_GRACE_SECONDS):
         print(line, end="")
 
-    if trigger_line:
+    if root_cause:
         ui.blank()
-        ui.hint("Full Logging Trace Above, Root Cause Below.")
-        ui.fail(f"Root Cause: {trigger_line.rstrip()}")
+        ui.hint("Recent Logging Trace Above, Root Cause Below.")
+        ui.root_cause(root_cause)
 
     ui.blank()
     ui.hint("Run `canyonos deploy -v` or `canyonos logs` for the full container log.")
