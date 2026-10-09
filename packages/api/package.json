@@ -1,6 +1,6 @@
 {
   "name": "@canyonos/api",
-  "version": "0.1.734",
+  "version": "0.1.735",
   "type": "module",
   "private": true,
   "exports": {
