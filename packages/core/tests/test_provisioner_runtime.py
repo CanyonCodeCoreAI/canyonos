@@ -10,6 +10,7 @@ from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
 from canyonos_core.controller.controller_context import list_instances
+from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.reconciler.provisioner import Provisioner
 from fakes import _FakeRedis
 
@@ -372,6 +373,25 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                 None,
             ),
         )
+
+    def test_local_workflow_publishes_api_port_onto_the_container_port(self):
+        controller = _fake_controller()
+        manager = Provisioner(controller)
+
+        with patch.object(local_runtime, "_port_check", return_value=False):
+            manager.ensure_instances(
+                [
+                    {
+                        "name": "Workflow",
+                        "provider": "local",
+                        "type": "workflow",
+                        "api_port": 8090,
+                    }
+                ]
+            )
+
+        run_cmd = controller._run_cmd.call_args.args[0]
+        self.assertIn(f"8090:{WORKFLOW_CONTAINER_PORT}", run_cmd)
 
     def test_workflow_bootstrap_fails_fast_on_an_occupied_api_port(self):
         controller = _fake_controller()

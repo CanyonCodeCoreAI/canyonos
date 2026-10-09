@@ -19,6 +19,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
 from canyonos_core.controller.controller_context import _is_local_host, is_ec2
+from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.schema import load_agent_declaration
 
 # Lowest versions the image's own code runs on; an app asking for older fails the install.
@@ -855,7 +856,6 @@ def generate_workflow_docker(
     stub_files,
     output_dir=None,
     grpc_stubs_dir=None,
-    api_port=8080,
     project_dir=None,
     stub_entrypoints=None,
     requirements=None,
@@ -953,7 +953,7 @@ def mark_ready_when_serving():
     deadline = time.monotonic() + WORKFLOW_READY_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         try:
-            with socket.create_connection(("127.0.0.1", {api_port}), timeout=1):
+            with socket.create_connection(("127.0.0.1", {WORKFLOW_CONTAINER_PORT}), timeout=1):
                 controller.mark_ready()
                 return
         except OSError:
@@ -999,7 +999,7 @@ ENV PYTHONUNBUFFERED=1
 COPY . .
 
 EXPOSE 50051
-EXPOSE {api_port}
+EXPOSE {WORKFLOW_CONTAINER_PORT}
 
 CMD ["python", "workflow_launcher.py"]
 """

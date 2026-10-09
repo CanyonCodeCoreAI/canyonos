@@ -13,6 +13,7 @@ from canyonos_core.controller.utils.container_names import (
     container_name,
     redis_container_name,
 )
+from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
     transfer_image,
@@ -179,7 +180,9 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         ]
 
         if ctrl_type == "workflow":
-            cmd.extend(["-p", f"{spec.get('api_port', 8080)}:8080"])
+            cmd.extend(
+                ["-p", f"{spec.get('api_port', 8080)}:{WORKFLOW_CONTAINER_PORT}"]
+            )
             config = _require_controller().config
             project_id = config.get("project_id")
             if project_id:

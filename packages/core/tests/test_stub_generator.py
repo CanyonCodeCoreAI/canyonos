@@ -151,11 +151,10 @@ class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
             workflow_file.write_text("raise RuntimeError('broken')\n")
             output_dir = os.path.join(tmpdir, "out")
 
-            generate_workflow_docker(
-                str(workflow_file), [], output_dir=output_dir, api_port=9123
-            )
+            generate_workflow_docker(str(workflow_file), [], output_dir=output_dir)
 
             launcher = (Path(output_dir) / "workflow_launcher.py").read_text()
+            dockerfile = (Path(output_dir) / "Dockerfile").read_text()
 
         self.assertIn(
             "controller = LocalController(port=50051, publish_ready=False)", launcher
@@ -165,7 +164,10 @@ class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
             launcher.index("canyonos_context.install()"),
             launcher.index("exec(open("),
         )
-        self.assertIn('socket.create_connection(("127.0.0.1", 9123)', launcher)
+        # The probe targets the in-container port every runtime publishes the
+        # configured api_port onto, never api_port itself (a host-side port).
+        self.assertIn('socket.create_connection(("127.0.0.1", 8080)', launcher)
+        self.assertIn("EXPOSE 8080", dockerfile)
         self.assertIn("controller.mark_ready()", launcher)
         self.assertIn(
             f"WORKFLOW_READY_TIMEOUT_SECONDS = {CONTROLLER_READY_TIMEOUT_SECONDS}",

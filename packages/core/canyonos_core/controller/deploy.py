@@ -45,12 +45,22 @@ logger = logging.getLogger(__name__)
 
 FUTURE_RESULT_TIMEOUT_SECONDS = 300
 
+# The port a workflow serves on inside its container. The runtimes publish the
+# configured api_port onto it, so api_port is host-side only.
+WORKFLOW_CONTAINER_PORT = 8080
+
 # Allows the workflow to have a future: the launcher sets these to its in-process local controller.
 controller: Any = None
 workflow_name = None
 
 
-def deploy(workflow_fn, port=8080, host="0.0.0.0", redis_host=None, redis_port=None):
+def deploy(
+    workflow_fn,
+    port=WORKFLOW_CONTAINER_PORT,
+    host="0.0.0.0",
+    redis_host=None,
+    redis_port=None,
+):
     """
     Deploy a workflow function as a REST API endpoint.
 
@@ -60,7 +70,8 @@ def deploy(workflow_fn, port=8080, host="0.0.0.0", redis_host=None, redis_port=N
 
     Args:
         workflow_fn:  The workflow function to expose.
-        port:         Port for the REST server (default: 8080).
+        port:         Port for the REST server inside the container (default: 8080).
+                      Keep 8080: the runtimes publish api_port onto it.
         host:         Host to bind to (default: 0.0.0.0).
         redis_host:   Redis host (default: from env or localhost).
         redis_port:   Redis port (default: from env or 6379).

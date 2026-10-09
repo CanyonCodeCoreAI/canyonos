@@ -26,6 +26,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from canyonos_core.controller.controller_context import DEFAULT_SSH_KEY_PATH
+from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.controller.utils.container_names import (
     container_name,
     redis_container_name,
@@ -333,7 +334,10 @@ def _bootstrap_instance(
     else:
         port_args = ["-p", f"{CONTAINER_PORT}:{CONTAINER_PORT}"]
         if spec.get("type") == "workflow":
-            port_args += ["-p", f"{spec.get('api_port', 8080)}:8080"]
+            port_args += [
+                "-p",
+                f"{spec.get('api_port', 8080)}:{WORKFLOW_CONTAINER_PORT}",
+            ]
 
     volume_args = []
     if spec.get("type") == "database":

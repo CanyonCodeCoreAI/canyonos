@@ -407,6 +407,40 @@ class CliBuildTests(unittest.TestCase):
             any(call[:3] == ["docker", "buildx", "bake"] for call in docker_calls)
         )
 
+    def test_build_gives_each_workflow_its_own_docker_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            (project_dir / "workflows" / "second_workflow.py").write_text(
+                "print('ok')\n"
+            )
+            config_path = project_dir / "config" / "global_controller.yaml"
+            config = yaml.safe_load(config_path.read_text())
+            config["agents"].append(
+                {
+                    "name": "SecondWorkflow",
+                    "type": "workflow",
+                    "workflow_file": "workflows/second_workflow.py",
+                    "api_port": 8090,
+                    "provider": "local",
+                }
+            )
+            config_path.write_text(yaml.safe_dump(config))
+
+            self._run_build(project_dir, [str(agent_yaml)], buildx_available=True)
+
+            with open(project_dir / "docker_container" / "docker-bake.json") as f:
+                targets = json.load(f)["target"]
+
+        self.assertEqual(
+            os.path.realpath(targets["workflow"]["context"]),
+            os.path.realpath(project_dir / "docker_container" / "Workflow"),
+        )
+        self.assertEqual(
+            os.path.realpath(targets["secondworkflow"]["context"]),
+            os.path.realpath(project_dir / "docker_container" / "SecondWorkflow"),
+        )
+
     def test_build_uses_buildx_bake_when_available(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)

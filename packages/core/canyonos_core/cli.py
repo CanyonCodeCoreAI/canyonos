@@ -480,14 +480,13 @@ def _run_build(config_path):
         if agent_type == "workflow":
             # Workflow container
             workflow_path = os.path.join(source_root, agent_cfg["workflow_file"])
-            docker_context = os.path.join(artifact_root, "docker_container", "Workflow")
+            docker_context = os.path.join(artifact_root, "docker_container", agent_name)
             logger.info("Generating workflow Docker context for '%s'", agent_name)
             generate_workflow_docker(
                 workflow_path,
                 stub_paths,
                 output_dir=docker_context,
                 grpc_stubs_dir=grpc_stubs_dir,
-                api_port=agent_cfg.get("api_port", 8080),
                 project_dir=source_root,
                 requirements=_normalize_requirements(agent_cfg),
                 # Stubs are placed both flat and at their entrypoint-mirrored path,
