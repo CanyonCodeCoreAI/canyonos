@@ -8,6 +8,7 @@ from concurrent import futures
 import os
 from threading import Thread
 import json
+import math
 import queue
 import logging
 import sys
@@ -27,9 +28,12 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
 FUTURE_CLEANUP_GRACE_MULTIPLIER = 3
 FUTURE_CLEANUP_GRACE_MIN_SECONDS = 30
-FUTURE_CLEANUP_GRACE_SECONDS = max(
-    FUTURE_CLEANUP_GRACE_MIN_SECONDS,
-    POLL_INTERVAL_SECONDS * FUTURE_CLEANUP_GRACE_MULTIPLIER,
+# Redis EXPIRE rejects floats, so ceil() converts the TTL to a next whole number (e.g. 2.1 -> 3).
+FUTURE_CLEANUP_GRACE_SECONDS = math.ceil(
+    max(
+        FUTURE_CLEANUP_GRACE_MIN_SECONDS,
+        POLL_INTERVAL_SECONDS * FUTURE_CLEANUP_GRACE_MULTIPLIER,
+    )
 )
 EXECUTE_DEDUP_TTL_SECONDS = 3600
 
@@ -147,7 +151,16 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
         return local_controler_pb2.JsonResponse(resonse="Cleanup triggered")
 
     def _cleanup_request(self, request_id):
-        """Delete a request's consolidated future hashes and bookkeeping."""
+        """Expire a request's consolidated future hashes and bookkeeping, once the GC
+        has marked its telemetry delivered."""
+        delivered_key = f"telemetry:delivered:{request_id}"
+        if not self.redis.get(delivered_key):
+            logger.info(
+                "Telemetry for request %s is not yet delivered; skipping cleanup.",
+                request_id,
+            )
+            return
+
         # Atomically claim cleanup — prevents duplicate work when multiple LCs share a Redis
         lock_key = f"request:{request_id}:cleanup_lock"
         if not self.redis.setnx(lock_key, self.my_endpoint):
@@ -161,6 +174,8 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
             futures_key = f"request:{request_id}:futures"
             future_ids = self.redis.smembers(futures_key)
             if not future_ids:
+                # Nothing of this request lives on this node; only its marker does.
+                self.redis.expire(delivered_key, FUTURE_CLEANUP_GRACE_SECONDS, nx=True)
                 logger.info("No futures found for request %s on this node.", request_id)
                 return
 
@@ -178,6 +193,9 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                         f"future:{fid}:consumers",
                     ]
                 )
+            # The marker goes last so it never expires before the futures it vouches
+            # for -- the GC would otherwise re-mark them delivered with no expiry.
+            keys_to_expire.append(delivered_key)
             for key in keys_to_expire:
                 self.redis.expire(key, FUTURE_CLEANUP_GRACE_SECONDS, nx=True)
             logger.info(

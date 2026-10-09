@@ -79,6 +79,12 @@ _TRACES_COLUMNS = [
 _TRACES_UPSERT = """
     INSERT INTO traces_waiting ({cols}) VALUES ({placeholders})
     ON CONFLICT(future_id) DO UPDATE SET {updates}
+    WHERE (
+        traces_waiting.finished_at IS NULL
+        AND COALESCE(traces_waiting.failed, 0) = 0
+    )
+    OR excluded.finished_at IS NOT NULL
+    OR COALESCE(excluded.failed, 0) = 1
 """.format(
     cols=", ".join(_TRACES_COLUMNS),
     placeholders=", ".join(f":{c}" for c in _TRACES_COLUMNS),
@@ -440,8 +446,58 @@ def _pull_telemetry(redis_client):
 def send_telemetry(redis_client, project_id=None, db_path=DB_PATH):
     """Pull per-execution future rows from Redis and queue them into the ``traces_waiting``
     and ``logs_waiting`` tables for OTLP export. GC's ``_poll_one_instance`` calls this once
-    per poll.
+    per poll. Returns the rows it wrote.
     """
     rows = _pull_telemetry(redis_client)
     _trace_write_rows(rows, redis_client, project_id, db_path)
     _log_write_rows(rows, project_id, db_path)
+    return rows
+
+
+def deliver_completed_requests(
+    redis_clients, request_ids, project_id=None, db_path=DB_PATH
+):
+    """Persist a final all-node snapshot and mark the requests safe to clean up.
+
+    Completion is authoritative in ``request:completed``. The expected future set is
+    the union across every node, while terminal rows are collected from every node. A
+    marker is written to every node only after all SQLite writes have committed.
+
+    Returns ``(delivered, gone)``: ``delivered`` requests have every expected future
+    terminal and are now marked; ``gone`` requests have no futures left on any node --
+    already cleaned up and expired -- so they can leave ``request:completed``.
+    """
+    request_ids = set(request_ids)
+    if not request_ids:
+        return set(), set()
+
+    expected_by_request = {request_id: set() for request_id in request_ids}
+    terminal_by_request = {request_id: set() for request_id in request_ids}
+    for redis_client in redis_clients:
+        # Judge delivery from the rows just written, not a fresh pull: a future that
+        # finished after this write would otherwise be marked delivered unpersisted.
+        rows = send_telemetry(redis_client, project_id, db_path)
+        for request_id in request_ids:
+            expected_by_request[request_id].update(
+                redis_client.smembers(f"request:{request_id}:futures")
+            )
+        for row in rows:
+            request_id = row.get("request_id")
+            if request_id not in request_ids:
+                continue
+            if row.get("finished_at") or str(row.get("failed")) == "1":
+                terminal_by_request[request_id].add(row["future_id"])
+
+    gone = {
+        request_id for request_id in request_ids if not expected_by_request[request_id]
+    }
+    delivered = {
+        request_id
+        for request_id in request_ids - gone
+        if expected_by_request[request_id] <= terminal_by_request[request_id]
+    }
+    for redis_client in redis_clients:
+        for request_id in delivered:
+            # NX: never overwrite the marker, so the expiry cleanup gave it survives.
+            redis_client.set(f"telemetry:delivered:{request_id}", "1", nx=True)
+    return delivered, gone

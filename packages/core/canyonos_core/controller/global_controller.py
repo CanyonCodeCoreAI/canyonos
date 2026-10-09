@@ -1399,7 +1399,7 @@ class GlobalController(ControllerContext):
                 logger.warning("Cleanup loop encountered an error: %s", e)
 
     def _trigger_cleanup(self):
-        """Broadcast a batched Cleanup gRPC to all instances for every completed request, gathered from every node's Redis."""
+        """Drain completed requests whose futures are gone, and broadcast a batched Cleanup gRPC to all instances for every delivered one, gathered from every node's Redis."""
         # Falls back to self.redis alone if node_redis is unset/empty.
         node_redis_map = getattr(self, "node_redis", None) or {}
         redis_clients = list(node_redis_map.values()) or [self.redis]
@@ -1415,7 +1415,25 @@ class GlobalController(ControllerContext):
         if not all_completed:
             return
 
-        payload = json.dumps({"request_ids": list(all_completed)})
+        delivered, gone = otel_writer.deliver_completed_requests(
+            redis_clients,
+            all_completed,
+            getattr(self, "config", {}).get("project_id"),
+        )
+        # A request leaves "request:completed" only once its futures are gone on every
+        # node. A Cleanup that fails or never arrives leaves them in place, so the
+        # request stays delivered and is sent again next cycle.
+        for client, completed in completed_by_client.items():
+            to_remove = completed & gone
+            if to_remove:
+                client.srem("request:completed", *to_remove)
+        if gone:
+            logger.info("Drained %d cleaned-up request(s)", len(gone))
+
+        if not delivered:
+            return
+
+        payload = json.dumps({"request_ids": list(delivered)})
 
         def _send(instance):
             # Container-reachable address (runtime_id:CONTAINER_PORT), not
@@ -1427,7 +1445,7 @@ class GlobalController(ControllerContext):
                 stub.Cleanup(local_controler_pb2.JsonResponse(resonse=payload))
                 logger.debug(
                     "Sent Cleanup batch of %d request(s) to %s",
-                    len(all_completed),
+                    len(delivered),
                     endpoint,
                 )
                 return True
@@ -1438,27 +1456,20 @@ class GlobalController(ControllerContext):
         instances = list_instances(self.redis)
         if not instances:
             logger.warning(
-                "No instances to broadcast cleanup to; leaving %d request(s) queued.",
-                len(all_completed),
+                "No instances to broadcast cleanup to; %d delivered request(s) wait "
+                "for the next cycle.",
+                len(delivered),
             )
             return
 
         with ThreadPoolExecutor(max_workers=len(instances)) as executor:
-            if not all(executor.map(_send, instances)):
-                logger.warning(
-                    "Cleanup broadcast failed for at least one instance; leaving %d "
-                    "request(s) queued for retry on the next cycle.",
-                    len(all_completed),
-                )
-                return
-
+            sent = sum(executor.map(_send, instances))
         logger.info(
-            "Triggered cleanup for %d completed request(s) across %d node(s)",
-            len(all_completed),
-            len(completed_by_client),
+            "Sent cleanup for %d delivered request(s) to %d of %d instance(s)",
+            len(delivered),
+            sent,
+            len(instances),
         )
-        for client, completed in completed_by_client.items():
-            client.srem("request:completed", *completed)
 
     # ------------------------------------------------------------------ #
     #  Runtime launching                                                  #

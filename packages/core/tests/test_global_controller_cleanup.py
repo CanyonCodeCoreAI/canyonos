@@ -73,6 +73,19 @@ def _bare_controller(testcase, redis, instances, node_redis=None):
     controller._lc_stubs = {}
     if node_redis is not None:
         controller.node_redis = node_redis
+
+    # Every completed request is delivered, except those a test lists in
+    # `testcase.gone` (futures already expired), which are gone instead.
+    def _deliver(clients, request_ids, project_id=None):
+        gone = set(request_ids) & getattr(testcase, "gone", set())
+        return set(request_ids) - gone, gone
+
+    patcher = patch(
+        "canyonos_core.controller.global_controller.otel_writer.deliver_completed_requests",
+        side_effect=_deliver,
+    )
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
     return controller
 
 
@@ -99,13 +112,13 @@ class TriggerCleanupTests(unittest.TestCase):
             )
             self.assertEqual(set(stub.calls[0]["request_ids"]), expected)
 
-        # Drained after broadcasting, same as before.
-        self.assertEqual(redis.smembers("request:completed"), set())
+        # Sending isn't draining: they stay queued until their futures are gone.
+        self.assertEqual(redis.smembers("request:completed"), expected)
 
-    def test_one_instance_failing_leaves_the_batch_queued_for_retry(self):
-        # CAN-391: a batch leaves "request:completed" only once every instance confirms.
-        # If one Cleanup RPC fails the whole batch must stay queued; dropping it is how
-        # entries went missing and Redis grew unbounded.
+    def test_one_instance_failing_does_not_stop_the_others(self):
+        # CAN-391: a failed Cleanup RPC must not drop requests -- dropping them is how
+        # entries went missing and Redis grew unbounded. They stay queued and are
+        # sent again next cycle, since their futures are still there.
         completed = {"reqA", "reqB"}
         expected = set(completed)  # snapshot -- see note in the test above
         redis = _FakeRedis(sets={"request:completed": completed})
@@ -118,11 +131,49 @@ class TriggerCleanupTests(unittest.TestCase):
 
         controller._trigger_cleanup()  # must not raise
 
-        # The reachable instance still gets the batch...
         self.assertEqual(len(good_stub.calls), 1)
         self.assertEqual(set(good_stub.calls[0]["request_ids"]), expected)
-        # ...but nothing is drained until every instance has confirmed.
         self.assertEqual(redis.smembers("request:completed"), expected)
+
+    def test_gone_requests_are_drained_and_not_sent_again(self):
+        redis = _FakeRedis(sets={"request:completed": {"req1", "req2"}})
+        controller = _bare_controller(self, redis, [{"endpoint": "host:50051"}])
+        stub = _FakeStub()
+        controller._get_lc_stub = lambda endpoint: stub
+        self.gone = {"req1"}
+
+        controller._trigger_cleanup()
+
+        self.assertEqual(redis.smembers("request:completed"), {"req2"})
+        self.assertEqual([set(call["request_ids"]) for call in stub.calls], [{"req2"}])
+
+    def test_undelivered_requests_are_neither_sent_nor_drained(self):
+        redis = _FakeRedis(sets={"request:completed": {"req1"}})
+        controller = _bare_controller(self, redis, [{"endpoint": "host:50051"}])
+        stub = _FakeStub()
+        controller._get_lc_stub = lambda endpoint: stub
+        patcher = patch(
+            "canyonos_core.controller.global_controller.otel_writer.deliver_completed_requests",
+            return_value=(set(), set()),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        controller._trigger_cleanup()
+
+        self.assertEqual(stub.calls, [])
+        self.assertEqual(redis.smembers("request:completed"), {"req1"})
+
+    def test_gone_requests_drain_even_with_no_instance_reachable(self):
+        # Draining depends only on Redis state, never on an LC answering.
+        redis = _FakeRedis(sets={"request:completed": {"req1", "req2"}})
+        controller = _bare_controller(self, redis, [{"endpoint": "bad:50051"}])
+        controller._get_lc_stub = lambda endpoint: _FailingStub()
+        self.gone = {"req1"}
+
+        controller._trigger_cleanup()
+
+        self.assertEqual(redis.smembers("request:completed"), {"req2"})
 
     def test_noop_when_nothing_completed(self):
         redis = _FakeRedis()
@@ -136,8 +187,8 @@ class TriggerCleanupTests(unittest.TestCase):
         self.assertEqual(stub.calls, [])
 
     def test_noop_when_no_instances_registered(self):
-        # CAN-391: with nothing to broadcast to, nothing has confirmed the
-        # batch -- it must stay queued rather than being silently dropped.
+        # CAN-391: with nothing to broadcast to, nothing has been cleaned --
+        # the batch must stay queued rather than being silently dropped.
         redis = _FakeRedis(sets={"request:completed": {"req1"}})
         controller = _bare_controller(self, redis, [])
 
@@ -166,6 +217,10 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
 
         self.assertEqual(len(stub.calls), 1)
         self.assertEqual(set(stub.calls[0]["request_ids"]), {"reqE"})
+
+        # A later cycle, once its futures are gone, drains it from that node.
+        self.gone = {"reqE"}
+        controller._trigger_cleanup()
         self.assertEqual(ec2_redis.smembers("request:completed"), set())
 
     def test_requests_across_multiple_nodes_batched_into_one_call_per_instance(self):
@@ -194,6 +249,8 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
             )
             self.assertEqual(set(stub.calls[0]["request_ids"]), expected)
 
+        self.gone = expected
+        controller._trigger_cleanup()
         for redis in (localhost_redis, ec2_redis_1, ec2_redis_2):
             self.assertEqual(redis.smembers("request:completed"), set())
 
@@ -207,6 +264,7 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
 
         stub = _FakeStub()
         controller._get_lc_stub = lambda endpoint: stub
+        self.gone = {"reqX"}
 
         controller._trigger_cleanup()
 
@@ -226,8 +284,10 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
         controller._get_lc_stub = lambda endpoint: stub
 
         controller._trigger_cleanup()
-
         self.assertEqual(set(stub.calls[0]["request_ids"]), completed)
+
+        self.gone = completed
+        controller._trigger_cleanup()
         self.assertEqual(redis.smembers("request:completed"), set())
 
     def test_falls_back_to_self_redis_when_node_redis_is_empty_dict(self):
@@ -243,8 +303,10 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
         controller._get_lc_stub = lambda endpoint: stub
 
         controller._trigger_cleanup()
-
         self.assertEqual(set(stub.calls[0]["request_ids"]), completed)
+
+        self.gone = completed
+        controller._trigger_cleanup()
         self.assertEqual(redis.smembers("request:completed"), set())
 
 
@@ -279,7 +341,6 @@ class RoutingEndpointTests(unittest.TestCase):
 
         self.assertEqual(len(routing_stub.calls), 1)
         self.assertEqual(set(routing_stub.calls[0]["request_ids"]), completed)
-        self.assertEqual(redis.smembers("request:completed"), set())
 
     def test_distinct_endpoints_across_multiple_instances(self):
         completed = {"req1", "req2"}

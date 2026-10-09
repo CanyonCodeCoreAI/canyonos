@@ -170,6 +170,7 @@ class CleanupRequestTests(unittest.TestCase):
         redis = _FakeRedis(
             sets={"request:req1:futures": {"fut1", "fut2"}},
             strings={
+                "telemetry:delivered:req1": "1",
                 "future:fut1": "x",
                 "future:fut2": "x",
                 "future:fut1:children": "x",
@@ -193,17 +194,24 @@ class CleanupRequestTests(unittest.TestCase):
             "future:fut2",
             "future:fut1:children",
             "future:fut1:consumers",
+            "telemetry:delivered:req1",
         ):
             self.assertEqual(redis.ttls.get(key), FUTURE_CLEANUP_GRACE_SECONDS)
         self.assertIn("request:req1:futures", redis.sets)
         self.assertIn("future:fut1", redis.strings)
+        # Expired last, so it can't lapse before the futures and be re-marked.
+        self.assertEqual(list(redis.ttls)[-1], "telemetry:delivered:req1")
 
     def test_cleanup_still_deletes_affinity_bindings_outright(self):
         # Affinity bindings aren't read by the telemetry poll loop, so there's
         # no race to protect against here -- immediate deletion is still fine.
         redis = _FakeRedis(
             sets={"request:req1:futures": {"fut1"}},
-            strings={"future:fut1": "x", "affinity:req1": "some-host"},
+            strings={
+                "telemetry:delivered:req1": "1",
+                "future:fut1": "x",
+                "affinity:req1": "some-host",
+            },
         )
         servicer = _bare_servicer(redis)
 
@@ -215,12 +223,30 @@ class CleanupRequestTests(unittest.TestCase):
         self.assertEqual(redis.ttls.get("future:fut1"), FUTURE_CLEANUP_GRACE_SECONDS)
 
     def test_cleanup_releases_its_lock_even_with_no_futures(self):
-        redis = _FakeRedis(sets={"request:req1:futures": set()})
+        redis = _FakeRedis(
+            strings={"telemetry:delivered:req1": "1"},
+            sets={"request:req1:futures": set()},
+        )
         servicer = _bare_servicer(redis)
 
         servicer._cleanup_request("req1")
 
         self.assertNotIn("request:req1:cleanup_lock", redis.strings)
+        # A node holding none of the request's futures still expires its marker.
+        self.assertEqual(
+            redis.ttls.get("telemetry:delivered:req1"), FUTURE_CLEANUP_GRACE_SECONDS
+        )
+
+    def test_cleanup_waits_for_telemetry_delivery(self):
+        redis = _FakeRedis(
+            sets={"request:req1:futures": {"fut1"}}, strings={"future:fut1": "x"}
+        )
+        servicer = _bare_servicer(redis)
+
+        servicer._cleanup_request("req1")
+
+        self.assertNotIn("request:req1:cleanup_lock", redis.strings)
+        self.assertEqual(redis.ttls, {})
 
 
 if __name__ == "__main__":
