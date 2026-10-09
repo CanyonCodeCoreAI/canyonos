@@ -174,8 +174,6 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                     "ANTHROPIC_API_BASE=http://127.0.0.1:8081/anthropic",
                     "-e",
                     "CANYONOS_LOGS_ENABLED=true",
-                    "-e",
-                    "CANYONOS_LLM_STUB_TEXT=",
                     "--cpus",
                     "1",
                     "--memory",
@@ -300,29 +298,6 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         index = cmd.index("CANYONOS_LOGS_ENABLED=false")
         self.assertEqual(cmd[index - 1], "-e")
 
-    def test_llm_stub_env_is_forwarded_to_the_agent_when_set(self):
-        controller = _fake_controller()
-        manager = Provisioner(controller)
-
-        with patch.dict(os.environ, {"CANYONOS_LLM_STUB_TEXT": "test"}):
-            manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
-
-        cmd = controller._run_cmd.call_args_list[1].args[0]
-        self.assertIn("CANYONOS_LLM_STUB_TEXT=test", cmd)
-
-    def test_llm_stub_is_explicitly_disabled_by_default(self):
-        """Without `canyonos test`, the stub is pinned empty (off) and immune to --env-file."""
-        controller = _fake_controller()
-        manager = Provisioner(controller)
-
-        os.environ.pop("CANYONOS_LLM_STUB_TEXT", None)
-        manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
-
-        cmd = controller._run_cmd.call_args_list[1].args[0]
-        # Explicitly empty means stub off; -e beats --env-file, so a user's .env loses.
-        self.assertIn("CANYONOS_LLM_STUB_TEXT=", cmd)
-        self.assertNotIn("CANYONOS_LLM_STUB_TEXT=test", cmd)
-
     def test_local_workflow_and_resource_flags_stay_the_same(self):
         controller = _fake_controller()
         manager = Provisioner(controller)
@@ -383,8 +358,6 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                     "ANTHROPIC_API_BASE=http://127.0.0.1:8081/anthropic",
                     "-e",
                     "CANYONOS_LOGS_ENABLED=true",
-                    "-e",
-                    "CANYONOS_LLM_STUB_TEXT=",
                     "-p",
                     "8080:8080",
                     "--cpus",

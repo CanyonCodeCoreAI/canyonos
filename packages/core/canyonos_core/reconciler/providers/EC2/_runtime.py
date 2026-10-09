@@ -369,11 +369,6 @@ def _bootstrap_instance(
         f"CANYONOS_POLL_INTERVAL={_controller.config.get('poll_interval', 5)}",
         # Route the agent's LLM SDK calls through the in-container gateway for telemetry.
         *llm_gateway_docker_env_args(),
-        # The LLM stub is a local-only `canyonos test` control; it must never be
-        # active on EC2. Pin it empty explicitly so a user's --env-file cannot
-        # turn it on (docker: -e beats --env-file).
-        "-e",
-        "CANYONOS_LLM_STUB_TEXT=",
         "-e",
         f"CANYONOS_LOGS_ENABLED={str(bool(_controller.config.get('logs', True))).lower()}",
     ]

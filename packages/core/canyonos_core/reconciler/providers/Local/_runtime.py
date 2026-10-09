@@ -7,7 +7,6 @@ the Provisioner stay focused on orchestration and persistence.
 """
 
 import logging
-import os
 import socket
 
 from canyonos_core.controller.utils.container_names import (
@@ -178,16 +177,6 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             "-e",
             f"CANYONOS_LOGS_ENABLED={str(bool(_require_controller().config.get('logs', True))).lower()}",
         ]
-
-        # The LLM stub is `canyonos test`-only. Set it on every agent (to the GC's
-        # value, or empty) so it beats --env-file: a user's .env can neither enable nor
-        # change it.
-        cmd.extend(
-            [
-                "-e",
-                f"CANYONOS_LLM_STUB_TEXT={os.environ.get('CANYONOS_LLM_STUB_TEXT', '')}",
-            ]
-        )
 
         if ctrl_type == "workflow":
             cmd.extend(["-p", f"{spec.get('api_port', 8080)}:8080"])

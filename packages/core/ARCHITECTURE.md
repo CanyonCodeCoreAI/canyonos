@@ -164,7 +164,6 @@
    │  header X-Canyonos-Future-ID   ◀─ thread-local current future (httpx patch / boto3 hook)
    ▼
  llm_gateway  core.proxy_request
-   ├─ CANYONOS_LLM_STUB_TEXT set? ─▶ canned reply
    └─ provider.forward ───────────▶ api.openai.com / api.anthropic.com / bedrock-runtime
          │ response (or stream)
          ▼

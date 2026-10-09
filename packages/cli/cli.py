@@ -25,7 +25,7 @@ from canyonos.quit import run_quit
 from canyonos.serve import run_serve
 from canyonos.status import run_status
 from canyonos.stop import run_stop
-from canyonos.test import DEFAULT_LLM_STUB, DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
+from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
 from canyonos.validate import DEFAULT_ARTIFACT_ROOT, run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
 
@@ -142,16 +142,11 @@ def main():
     add("serve", lambda args: sys.exit(run_serve()))
     add("status", lambda args: run_status())
 
-    # Test has args: prompt, --json, --stub-llm, --stub-text, --timeout.
+    # Test has args: prompt, --json, --timeout.
     test = add(
         "test",
         lambda args: sys.exit(
-            run_test(
-                args.prompt,
-                as_json=args.json,
-                llm_stub=(args.stub_text if args.stub_llm else None),
-                timeout=args.timeout,
-            )
+            run_test(args.prompt, as_json=args.json, timeout=args.timeout)
         ),
     )
     test.add_argument(
@@ -164,20 +159,6 @@ def main():
         "--json",
         action="store_true",
         help="Print a single JSON result object and nothing else (for CI)",
-    )
-    test.add_argument(
-        "--stub-text",
-        default=DEFAULT_LLM_STUB,
-        metavar="TEXT",
-        help=(
-            "Text returned for every model call when --stub-llm is enabled "
-            f"(default: {DEFAULT_LLM_STUB!r})."
-        ),
-    )
-    test.add_argument(
-        "--stub-llm",
-        action="store_true",
-        help="Use stubbed LLM responses instead of real API Calls.",
     )
     test.add_argument(
         "--timeout",

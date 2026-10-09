@@ -5,7 +5,6 @@ startup."""
 
 import importlib
 import logging
-import os
 from functools import wraps
 
 from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, FUTURE_ID_HEADER
@@ -27,15 +26,6 @@ def install(get_future_id, get_function=lambda: ""):
         function = get_function()
         if function:
             headers[FUNCTION_HEADER] = function
-
-    # Stub mode never calls AWS, but boto3 still needs some credentials to sign requests to
-    # the local gateway, so supply throwaway ones. They never leave this machine.
-    if os.getenv("CANYONOS_LLM_STUB_TEXT"):
-        os.environ.setdefault("AWS_ACCESS_KEY_ID", "stub")
-        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "stub")
-        os.environ.setdefault(
-            "AWS_DEFAULT_REGION", os.getenv("AWS_REGION", "us-east-1")
-        )
 
     try:
         import boto3

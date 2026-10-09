@@ -11,9 +11,7 @@ STATE = {"container_id": "abc", "port": 8000}
 def deployable(monkeypatch):
     """Every step run_deploy drives succeeds unless overridden."""
     monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda p: p)
-    monkeypatch.setattr(
-        deploy_cmd, "run_init", lambda banner=True, extra_env=None: None
-    )
+    monkeypatch.setattr(deploy_cmd, "run_init", lambda banner=True: None)
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
     monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)
     monkeypatch.setattr(deploy_cmd, "load_state", lambda: dict(STATE))
@@ -140,24 +138,15 @@ def test_non_quiet_still_streams_and_returns_state(monkeypatch, deployable):
     assert calls == [(STATE, 8080, CONFIG_PATH, False, True)]
 
 
-def test_extra_env_and_banner_are_forwarded_to_run_init(monkeypatch, deployable):
+def test_banner_is_forwarded_to_run_init(monkeypatch, deployable):
     seen = {}
     monkeypatch.setattr(
-        deploy_cmd,
-        "run_init",
-        lambda banner=True, extra_env=None: seen.update(
-            banner=banner, extra_env=extra_env
-        ),
+        deploy_cmd, "run_init", lambda banner=True: seen.update(banner=banner)
     )
 
-    deploy_cmd.run_deploy(
-        CONFIG_PATH,
-        quiet=True,
-        extra_env={"CANYONOS_LLM_STUB_TEXT": "test"},
-        banner=False,
-    )
+    deploy_cmd.run_deploy(CONFIG_PATH, quiet=True, banner=False)
 
-    assert seen == {"banner": False, "extra_env": {"CANYONOS_LLM_STUB_TEXT": "test"}}
+    assert seen == {"banner": False}
 
 
 def test_a_cancelled_resource_picker_stops_before_run_init(monkeypatch, deployable):

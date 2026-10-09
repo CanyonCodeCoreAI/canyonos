@@ -263,7 +263,7 @@ def _free_container_name():
         raise RuntimeError(failure)
 
 
-def _run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
+def _run_container(image=GC_IMAGE, max_attempts=50):
     port = GC_CONTAINER_PORT
     # The real socket behind whatever's active right now, not the
     # /var/run/docker.sock alias -- some other app can hold that alias and
@@ -321,10 +321,6 @@ def _run_container(image=GC_IMAGE, max_attempts=50, extra_env=None):
             "-e",
             "CANYONOS_DOCKER_PLATFORM",
         ]
-        # Extra env for the GC container. The local runtime forwards select keys
-        # (e.g. CANYONOS_LLM_STUB_TEXT) from here into each agent container.
-        for _k, _v in (extra_env or {}).items():
-            cmd.extend(["-e", f"{_k}={_v}"])
         cmd.append(image)  # image must come after all flags
         result = run_docker(
             cmd,
@@ -430,7 +426,7 @@ def quit_existing():
         )
 
 
-def run_init(banner=True, extra_env=None, image=GC_IMAGE):
+def run_init(banner=True, image=GC_IMAGE):
     """Replace any existing Global Controller with a fresh container from `image` and
     save its ID and port for later commands; run at the start of `canyonos deploy`."""
     if banner:
@@ -443,9 +439,7 @@ def run_init(banner=True, extra_env=None, image=GC_IMAGE):
     with ui.status("Pulling Global Controller image..."):
         _pull_image(image)
     with ui.status("Starting Global Controller container..."):
-        container_id, port, docker_socket = _run_container(
-            image=image, extra_env=extra_env
-        )
+        container_id, port, docker_socket = _run_container(image=image)
     try:
         _save_state(container_id, port, docker_socket)
     except OSError as e:

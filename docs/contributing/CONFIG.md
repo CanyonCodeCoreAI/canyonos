@@ -20,7 +20,7 @@ Every reader goes through `load_config` in
 `packages/core/canyonos_core/controller/utils/config_env.py`:
 
 1. Import the project root's `.env` into the process environment, without overriding
-   variables that are already set, and skipping `RESERVED_ENV_KEYS`.
+   variables that are already set.
 2. Parse the YAML.
 3. Replace every `${VAR}` with the variable's text. Unset references stay as written.
 

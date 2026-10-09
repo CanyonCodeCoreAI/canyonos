@@ -56,8 +56,7 @@ app.py  create_app()
      └── ANY  /<provider>/<path>  ──▶ core.py  proxy_request(hooks, ...)
                                         ├──▶ hooks.on_request
                                         ├──▶ routing.route            (allow-list, cost cap)
-                                        ├──▶ stub.py  build_stub      (test mode)
-                                        ├──▶ provider.forward         (normal)
+                                        ├──▶ provider.forward
                                         └──▶ hooks.on_response
 
 routing.py ──▶ pricing.py ──▶ llm_prices.json
@@ -85,8 +84,7 @@ core.proxy_request
      │
      ├─▶ routing.route(model_id, body) ──denied──▶ 403 denied_response ──┐
      │                                                                   │
-     ├─▶ CANYONOS_LLM_STUB_TEXT set? ──yes──▶ stub.build_stub ──┐        │
-     │                               └─no──▶ provider.forward ──┤◀───────┘
+     ├─▶ provider.forward ──────────────────────────────────────┬◀───────┘
      │                                                          ▼
      │                                                   GatewayResponse
      │                                           ┌──────────────┴──────────────┐

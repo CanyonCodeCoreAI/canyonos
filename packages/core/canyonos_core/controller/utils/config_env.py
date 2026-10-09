@@ -11,9 +11,6 @@ replica rather than three.
 import os
 import re
 
-# Internal controls a user's .env must never be able to set.
-RESERVED_ENV_KEYS = frozenset({"CANYONOS_LLM_STUB_TEXT"})
-
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -31,9 +28,6 @@ def load_dotenv(path):
             value = value.strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
                 value = value[1:-1]
-            if key in RESERVED_ENV_KEYS:
-                # Reserved internal control -- never honor it from user .env.
-                continue
             if key and key not in os.environ:
                 os.environ[key] = value
 

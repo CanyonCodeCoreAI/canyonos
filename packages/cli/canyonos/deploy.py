@@ -285,7 +285,6 @@ def run_deploy(
     serve=True,
     verbose=False,
     quiet=False,
-    extra_env=None,
     banner=True,
 ):
     """`quiet` skips the log-tail/dashboard UI and returns the GC state right
@@ -303,7 +302,7 @@ def run_deploy(
         ui.say("Deploy cancelled.")
         return None
 
-    run_init(banner=banner, extra_env=extra_env)
+    run_init(banner=banner)
 
     # Non-empty once the workflow has reported ready; see the handler below.
     ready = []

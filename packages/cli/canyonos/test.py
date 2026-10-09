@@ -44,10 +44,6 @@ from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
 
 DEFAULT_QUERY = "hello"
-# `canyonos test` uses real LLM API calls by default.
-# Pass --stub-llm to stub the in-container LLM gateway instead.
-# Stubbed calls return this text; override it with --stub-text.
-DEFAULT_LLM_STUB = "test"
 READY_TIMEOUT = STARTUP_TIMEOUT_SECONDS
 REQUEST_TIMEOUT = 300
 SUBMIT_TIMEOUT = 30
@@ -256,23 +252,15 @@ class _Run:
         return round(time.monotonic() - self.started, 3)
 
 
-def _deploy_locally(run, config_path, api_port, llm_stub=None):
-    """Deploy the project locally for `canyonos test`, with LLM calls stubbed when
-    `llm_stub` is given, and wait until the workflow answers."""
+def _deploy_locally(run, config_path, api_port):
+    """Deploy the project locally for `canyonos test` and wait until the
+    workflow answers."""
     run.begin("deploy", 1, "Deploy locally")
-    # When stubbing, hand the flag to the GC container; the local runtime
-    # forwards it into every agent so their LLM calls are replaced with canned
-    # text (see canyonos_core/llm_gateway/stub.py).
-    extra_env = {"CANYONOS_LLM_STUB_TEXT": llm_stub} if llm_stub else None
-    if llm_stub:
-        ui.say(f"LLM stub on: every model call returns {llm_stub!r} (no real LLM).")
 
     # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI, we do our
     # own HTTP readiness check below instead. serve=True still brings the
     # dashboard's LLM gateway up, quietly, for code that calls it directly.
-    state = run_deploy(
-        config_path, serve=True, quiet=True, extra_env=extra_env, banner=False
-    )
+    state = run_deploy(config_path, serve=True, quiet=True, banner=False)
     run.deploy_started = True
 
     _wait_for_workflow(state, api_port)
@@ -328,7 +316,7 @@ def _existing_deploy():
     return None
 
 
-def _run_test(run, llm_stub=None, timeout=REQUEST_TIMEOUT):
+def _run_test(run, timeout=REQUEST_TIMEOUT):
     """Query the workflow, standing up our own local deploy first unless one is
     already up. The config is restored whatever happens."""
     config_path = workspace_relative(default_config_path())
@@ -346,18 +334,18 @@ def _run_test(run, llm_stub=None, timeout=REQUEST_TIMEOUT):
     existing = _existing_deploy()
     if existing is not None:
         # A deploy is already up: query it exactly as it stands (its own
-        # providers and LLM, no local flip, no stub) instead of tearing it down
-        # to stand up our own. This is the only phase, and we leave it running.
+        # providers, no local flip) instead of tearing it down to stand up our
+        # own. This is the only phase, and we leave it running.
         run.against_existing = True
         ui.say(
-            "A deploy is already up -- querying it as it stands (providers and LLM unchanged)."
+            "A deploy is already up -- querying it as it stands (providers unchanged)."
         )
         _query(run, existing["port"], api_port, config_path, timeout, number=1, total=1)
         return
 
     original_config = _force_local_providers(config_path)
     try:
-        state = _deploy_locally(run, config_path, api_port, llm_stub=llm_stub)
+        state = _deploy_locally(run, config_path, api_port)
         _verify_runtime(run, config_path, state["port"])
         _query(run, state["port"], api_port, config_path, timeout)
     finally:
@@ -439,7 +427,7 @@ def _payload(run):
     }
 
 
-def run_test(prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT):
+def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
     """Run `canyonos test`: deploy the project, send one query, report the result, and
     return the exit code. A failed deploy is left running for debugging."""
     run = _Run(prompt or DEFAULT_QUERY)
@@ -448,7 +436,7 @@ def run_test(prompt=None, as_json=False, llm_stub=None, timeout=REQUEST_TIMEOUT)
     try:
         container_live = False
         try:
-            _run_test(run, llm_stub=llm_stub, timeout=timeout)
+            _run_test(run, timeout=timeout)
         except KeyboardInterrupt:
             run.error = "cancelled by user"
         except RuntimeError as e:

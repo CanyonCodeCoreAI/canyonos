@@ -179,14 +179,8 @@ the build adds when your code imports it.
   event-stream format, so your boto3 client sees exactly what Bedrock would
   send.
 
-Two caveats for streaming:
-
-- Token usage for a streamed OpenAI call is reported only when the request
-  sets `stream_options={"include_usage": True}`. The gateway does not add it.
-- `canyonos test --stub-llm` answers OpenAI and Anthropic with a plain JSON
-  body even for a streaming request, so code that reads tokens as they arrive
-  can fail or come back empty under the stub. Plain `canyonos test` calls the
-  real model.
+Token usage for a streamed OpenAI call is reported only when the request sets
+`stream_options={"include_usage": True}`. The gateway does not add it.
 
 ## Errors
 

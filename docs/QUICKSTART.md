@@ -57,7 +57,7 @@ To send your own query instead, pass it in quotes: `canyonos test "your query"`.
 - Every agent runs locally during the test, whatever its `provider`.
 - If the test fails, see [Troubleshooting](guides/TROUBLESHOOTING.md#canyonos-test-fails).
 - If a deploy is already running, the query is sent to that deploy instead, and it stays running.
-- Add `--stub-llm` to skip real model calls (each returns `test`, or the text given with `--stub-text`; if your code parses the reply, pass a `--stub-text` it can parse), and `--timeout SECONDS` to wait longer than the default 300 seconds. Stubbing doesn't apply when the query goes to an already running deploy.
+- Add `--timeout SECONDS` to wait longer than the default 300 seconds.
 
 ### 4. Deploy
 

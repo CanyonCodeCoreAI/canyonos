@@ -27,8 +27,8 @@ def _guess_model(body: bytes) -> Optional[str]:
 
 
 def proxy_request(hooks, provider, subpath, flask_request):
-    """Forward one agent request to its LLM provider (or return canned text when
-    `canyonos test` stubs LLMs) and record its token usage on the calling future."""
+    """Forward one agent request to its LLM provider and record its token usage on
+    the calling future."""
     prompt_name = f"{AGENT_NAME}.{flask_request.headers.get(FUNCTION_HEADER)}"
     body, prompt_version = prompts.apply(
         provider, prompt_name, subpath, flask_request.get_data()
@@ -47,19 +47,8 @@ def proxy_request(hooks, provider, subpath, flask_request):
     hooks.on_request(ctx)
     # Policy/routing call; all routing and policy logic lives in routing.py.
     denied = route(hooks._extract_model_id(ctx), body)
-
-    # Test mode: if CANYONOS_LLM_STUB_TEXT is set, return canned text instead of
-    # calling the real upstream. Telemetry hooks still fire so the whole pipeline
-    # is exercised end-to-end without cloud credentials.
-    from canyonos_core.llm_gateway.stub import build_stub, stub_text
-
-    # Empty string (the runtime's explicit "disabled" value) is falsy, so only a
-    # non-empty stub text -- which only `canyonos test` sets -- enables stubbing.
-    _stub = stub_text()
     if denied:
         pr = denied_response(denied)
-    elif _stub:
-        pr = build_stub(provider.name, subpath, _stub, body=body)
     else:
         pr = provider.forward(flask_request, subpath, body)
 
