@@ -9,6 +9,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
+
+from test_manifest_schema import example_environment
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -27,20 +30,15 @@ CONFIG = """\
 agents:
   - name: EchoAgent
     entrypoint: agents/echo_agent.py
+    functions:
+      - name: echo
+        arguments:
+          - name: text
+            type: str
 
   - name: Workflow
     type: workflow
     workflow_file: workflow/echo_workflow.py
-"""
-
-DECLARATION = """\
-agent:
-  name: EchoAgent
-  functions:
-    - name: echo
-      arguments:
-        - name: text
-          type: str
 """
 
 AGENT = """\
@@ -62,7 +60,6 @@ deploy(main, port=8080)
 
 BASE = {
     "config/global_controller.yaml": CONFIG,
-    "config/echo_agent.yaml": DECLARATION,
     "app/agents/echo_agent.py": AGENT,
     "app/workflow/echo_workflow.py": WORKFLOW,
 }
@@ -95,16 +92,26 @@ class ValidateCarTests(unittest.TestCase):
     def test_a_minimal_port_is_clean(self):
         self.assertEqual(validate_car(self.car()), [])
 
-    def test_the_helloworld_example_is_clean(self):
-        """The shipped example is what a port is meant to look like."""
-        example = REPO_ROOT / "examples" / "helloworld"
-        root = Path(self.tmpdir) / ".car"
-        (root / "config").mkdir(parents=True)
-        shutil.copytree(example / "config", root / "config", dirs_exist_ok=True)
-        for part in ("agents", "workflow"):
-            shutil.copytree(example / part, root / "app" / part)
-        for declaration in (root / "app" / "agents").glob("*.yaml"):
-            declaration.rename(root / "config" / declaration.name)
+    def test_every_example_is_clean(self):
+        """The shipped examples are what a port is meant to look like."""
+        for example in sorted((REPO_ROOT / "examples").iterdir()):
+            if not example.is_dir():
+                continue
+            root = Path(self.tmpdir) / example.name / ".car"
+            (root / "config").mkdir(parents=True)
+            shutil.copytree(example / "config", root / "config", dirs_exist_ok=True)
+            for part in ("agents", "workflow"):
+                shutil.copytree(example / part, root / "app" / part)
+            manifest = root / "config" / "global_controller.yaml"
+
+            with (
+                self.subTest(example=example.name),
+                patch.dict(os.environ, example_environment(manifest)),
+            ):
+                self.assertEqual(validate_car(str(root)), [])
+
+    def test_the_committed_e2e_port_is_clean(self):
+        root = REPO_ROOT / "tests" / "e2e" / "portfolio" / ".car"
 
         self.assertEqual(validate_car(str(root)), [])
 
@@ -218,8 +225,8 @@ class ValidateCarTests(unittest.TestCase):
             )
         )
 
-        # The method takes an argument the declaration does not send, and the
-        # declaration sends one the method cannot take.
+        # The method takes an argument `functions` does not send, and
+        # `functions` sends one the method cannot take.
         self.assertEqual(
             [f.code for f in findings],
             ["CAR-ADAPTER-SIGNATURE", "CAR-ADAPTER-SIGNATURE"],
@@ -798,20 +805,18 @@ class ValidateCarTests(unittest.TestCase):
         findings = validate_car(
             self.car(
                 {
-                    "config/echo_agent.yaml": "agent:\n"
-                    "  name: EchoAgent\n"
-                    "  functions:\n"
-                    "    - name: echo\n"
-                    "      arguments:\n"
-                    "        - name: text\n"
-                    "          type: List[str]\n"
+                    "config/global_controller.yaml": CONFIG.replace(
+                        "type: str", "type: List[str]"
+                    )
                 }
             )
         )
 
         self.assertEqual([f.code for f in findings], ["CAR-SCHEMA"])
-        self.assertEqual(findings[0].path, os.path.join("config", "echo_agent.yaml"))
-        self.assertEqual(findings[0].line, 7)
+        self.assertEqual(
+            findings[0].path, os.path.join("config", "global_controller.yaml")
+        )
+        self.assertEqual(findings[0].line, 8)
         self.assertIn("is not built from builtin types", findings[0].summary)
 
     def test_a_manifest_that_does_not_check_out_stops_at_the_schema(self):
@@ -875,13 +880,11 @@ class RuntimeConstantTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
 
     def _agent_context(self):
-        yaml_path = Path(self.tmpdir) / "EchoAgent.yaml"
-        yaml_path.write_text("agent:\n  name: EchoAgent\n")
         agent_file = Path(self.tmpdir) / "echo_agent.py"
         agent_file.write_text("class EchoAgent:\n    pass\n")
         output_dir = os.path.join(self.tmpdir, "agent-out")
         with redirect_stdout(io.StringIO()):
-            generate_docker(str(yaml_path), str(agent_file), output_dir=output_dir)
+            generate_docker("EchoAgent", str(agent_file), output_dir=output_dir)
         return Path(output_dir)
 
     def _workflow_context(self):

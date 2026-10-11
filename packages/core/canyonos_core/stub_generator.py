@@ -1,16 +1,12 @@
 """
 Stub generator for CanyonOS agents.
 
-Reads a YAML agent definition and generates an importable Python stub file
-where each function returns a Future object. Similar in spirit to how gRPC
-generates *_pb2_grpc.py stub files from .proto definitions.
-
-
-Usage:
-    python stub_generator.py <yaml_path> [-o output_path]
+Reads the functions an agent declares in `global_controller.yaml` and generates
+an importable Python stub file where each function returns a Future object.
+Similar in spirit to how gRPC generates *_pb2_grpc.py stub files from .proto
+definitions.
 """
 
-import argparse
 import ast
 import os
 import shutil
@@ -20,7 +16,6 @@ from packaging.version import InvalidVersion, Version
 
 from canyonos_core.controller.controller_context import _is_local_host, is_ec2
 from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
-from canyonos_core.schema import load_agent_declaration
 
 # Lowest versions the image's own code runs on; an app asking for older fails the install.
 BASE_AGENT_REQUIREMENTS = [
@@ -108,22 +103,19 @@ def _build_stub_method(function, agent_name):
 
     Given a function config like:
         name: get_stock_price
-        description: Get the stock price for a given ticker.
+        arguments:
           - name: ticker
             type: str
-        arguments:
         returns:
           type: float
 
     Generates:
         def get_stock_price(self, ticker: str) -> Future:
-            \"\"\"Get the stock price for a given ticker.\"\"\"
             args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker}
             return Future(parent=inspect.stack()[1].filename, service="FinanceAgent",
                           method="get_stock_price", args=args, grpc_stub=self.stub)
     """
     func_name = function.name
-    description = function.description
     arguments = function.arguments
 
     # Build argument nodes: self + declared args with type annotations
@@ -147,10 +139,6 @@ def _build_stub_method(function, agent_name):
 
     # Build the function body
     body = []
-
-    # Docstring
-    if description:
-        body.append(ast.Expr(value=ast.Constant(value=description)))
 
     # Build the args dict with Future replacement:
     # args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker, ...}
@@ -232,7 +220,7 @@ def _build_stub_method(function, agent_name):
     return func_def
 
 
-def _build_stub_class(declaration):
+def _build_stub_class(service):
     """
     Build an AST node for the entire stub class.
 
@@ -242,8 +230,8 @@ def _build_stub_class(declaration):
                 pass
             ...stub methods...
     """
-    class_name = declaration.name
-    functions = declaration.functions
+    class_name = service.name
+    functions = service.functions
 
     # __init__ method: simple pass, no gRPC setup needed.
     # Future handles its own gRPC connections via env vars.
@@ -266,7 +254,7 @@ def _build_stub_class(declaration):
     # Build all stub methods
     methods = [init_method]
     for function in functions:
-        methods.append(_build_stub_method(function, declaration.name))
+        methods.append(_build_stub_method(function, service.name))
 
     class_def = ast.ClassDef(
         name=class_name,
@@ -279,14 +267,11 @@ def _build_stub_class(declaration):
     return class_def
 
 
-def generate_stub(yaml_path, output_path):
+def generate_stub(service, output_path):
     """
-    Read a YAML agent definition and generate an importable Python stub file.
-
-    Raises:
-        SchemaError: the declaration fails the agent schema.
+    Generate an importable Python stub file for an agent's declared functions.
     """
-    class_def = _build_stub_class(load_agent_declaration(yaml_path))
+    class_def = _build_stub_class(service)
 
     # Build the full module AST
     module = ast.Module(
@@ -737,7 +722,7 @@ RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-gateway \\
 
 
 def generate_docker(
-    yaml_path,
+    agent_name,
     agent_file,
     output_dir=None,
     grpc_stubs_dir=None,
@@ -753,7 +738,7 @@ def generate_docker(
     source files needed to run the agent with its own local controller.
 
     Args:
-        yaml_path:         Path to the YAML agent definition.
+        agent_name:        The agent's class name, as its manifest entry names it.
         agent_file:        Path to the original Python agent implementation.
         output_dir:        Optional output directory (default: docker_container/<AgentName>/).
         grpc_stubs_dir:    Optional path to compiled gRPC stubs (default: <repo_root>/grpc_stubs).
@@ -762,7 +747,6 @@ def generate_docker(
         stub_entrypoints:  Optional {stub_basename: entrypoint} map for exact stub placement.
         requirements:   Optional list of extra pip packages this agent needs.
     """
-    agent_name = load_agent_declaration(yaml_path).name
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.join(script_dir, "..")
 
@@ -816,12 +800,6 @@ def generate_docker(
     shutil.copy2(
         os.path.abspath(agent_file),
         os.path.join(output_dir, os.path.basename(agent_file)),
-    )
-
-    # Copy the YAML definition too
-    shutil.copy2(
-        os.path.abspath(yaml_path),
-        os.path.join(output_dir, os.path.basename(yaml_path)),
     )
 
     # ---- Dockerfile ------------------------------------------------------
@@ -1008,75 +986,3 @@ CMD ["python", "workflow_launcher.py"]
 
     print(f"Generated workflow Docker context -> {output_dir}")
     return output_dir
-
-
-if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.join(script_dir, "..")
-    stubs_dir = os.path.join(project_root, "stubs")
-
-    parser = argparse.ArgumentParser(
-        description="Generate Future-returning stub classes from YAML agent definitions."
-    )
-    parser.add_argument(
-        "yaml_path",
-        nargs="?",
-        default=os.path.join(project_root, "examples", "finance_agent.yaml"),
-        help="Path to the YAML agent definition file (default: examples/finance_agent.yaml)",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        default=None,
-        help="Output path for the generated stub file (default: stubs/<name>_stub.py)",
-    )
-    parser.add_argument(
-        "--agent-file",
-        default=None,
-        help="Path to the original Python agent file (required for --docker)",
-    )
-    parser.add_argument(
-        "--docker",
-        action="store_true",
-        help="Generate a Docker build context for the agent",
-    )
-    parser.add_argument(
-        "--workflow",
-        action="store_true",
-        help="Generate a Docker build context for a workflow",
-    )
-    parser.add_argument(
-        "--workflow-file",
-        default=None,
-        help="Path to the workflow Python file (required for --workflow)",
-    )
-    parser.add_argument(
-        "--stub-files",
-        nargs="*",
-        default=[],
-        help="Stub files to include in the workflow Docker context",
-    )
-
-    args = parser.parse_args()
-
-    # Always generate the stub (unless --workflow mode)
-    if not args.workflow:
-        if args.output:
-            output_path = args.output
-        else:
-            base_name = os.path.splitext(os.path.basename(args.yaml_path))[0]
-            output_path = os.path.join(stubs_dir, f"{base_name}.py")
-
-        generate_stub(args.yaml_path, output_path)
-
-    # Optionally generate Docker context
-    if args.docker:
-        if not args.agent_file:
-            parser.error("--agent-file is required when using --docker")
-        generate_docker(args.yaml_path, args.agent_file, stub_files=args.stub_files)
-
-    # Generate workflow Docker context
-    if args.workflow:
-        if not args.workflow_file:
-            parser.error("--workflow-file is required when using --workflow")
-        generate_workflow_docker(args.workflow_file, args.stub_files)

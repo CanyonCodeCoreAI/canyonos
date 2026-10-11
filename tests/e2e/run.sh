@@ -85,6 +85,18 @@ docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$
 
 cd "$PROJECT_DIR"
 
+# The image just built has to stop a manifest whose functions do not match the
+# agent's class, before anything is deployed.
+for mode in rename drop; do
+  step "canyonos validate rejects a broken manifest ($mode)"
+  broken_car="$(mktemp -d)/.car"
+  cp -R "$PROJECT_DIR/.car" "$broken_car"
+  expected="$(uv run --project "$REPO_ROOT" python "$E2E_DIR/break_manifest.py" "$broken_car" "$mode")"
+  out="$ARTIFACTS_DIR/validate-$mode.json"
+  canyonos validate "$broken_car" --json >"$out" && status=0 || status=$?
+  [ "$status" -eq 1 ] && grep -qF "$expected" "$out" || { cat "$out"; exit 1; }
+done
+
 # `canyonos test` queries a deploy that is already up instead of standing up its
 # own, so start from nothing to make it deploy this fixture.
 step "canyonos quit (any previous deploy)"

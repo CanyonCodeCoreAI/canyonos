@@ -21,7 +21,6 @@ from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.schema import (
     check_project,
-    declarations_by_name,
     render_violation,
 )
 
@@ -147,7 +146,7 @@ def _artifact_prefix(root):
 
 
 def _project_layout():
-    """(artifact_root, source_root, declarations_dir) for the project in cwd.
+    """(artifact_root, source_root) for the project in cwd.
 
     The .car layout keeps the app's own code under `.car/app` and everything
     generated beside it; a plain checkout keeps both at the project root.
@@ -158,7 +157,6 @@ def _project_layout():
     return (
         artifact_root,
         os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir,
-        os.path.join(artifact_root, "config" if prefix else "agents"),
     )
 
 
@@ -174,9 +172,9 @@ def _reject(violations, summary):
     sys.exit(1)
 
 
-def _validate_or_exit(config_path, declarations_dir, source_dir=None):
+def _validate_or_exit(config_path, source_dir=None):
     """Reject the config before anything is generated; return the parsed manifest."""
-    manifest, violations = check_project(config_path, declarations_dir, source_dir)
+    manifest, violations = check_project(config_path, source_dir)
     if violations:
         _reject(
             violations,
@@ -285,9 +283,9 @@ def _cmd_new_project(args):
         logger.error("Templates directory not found at %s", templates_dir)
         sys.exit(1)
 
-    # Copy the entire templates tree into .car/app, then pull config and agent
-    # declarations up into .car/config, keeping generated artifacts (stubs,
-    # grpc_stubs, docker_container) siblings of the source under .car/.
+    # Copy the entire templates tree into .car/app, then pull config up into
+    # .car/config, keeping generated artifacts (stubs, grpc_stubs,
+    # docker_container) siblings of the source under .car/.
     artifact_root = os.path.join(project_dir, ARTIFACT_DIR_NAME)
     source_root = os.path.join(artifact_root, SOURCE_DIR_NAME)
     shutil.copytree(templates_dir, source_root)
@@ -298,10 +296,6 @@ def _cmd_new_project(args):
         shutil.move(source_config, artifact_root)
     else:
         os.makedirs(artifact_config)
-
-    source_agents = os.path.join(source_root, "agents")
-    for declaration in glob.glob(os.path.join(source_agents, "*.yaml")):
-        shutil.move(declaration, artifact_config)
 
     readme = os.path.join(source_root, "README.md")
     if os.path.isfile(readme):
@@ -334,12 +328,12 @@ def _run_build(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
 
-    artifact_root, source_root, declarations_dir = _project_layout()
+    artifact_root, source_root = _project_layout()
 
     # Nothing below runs against a config the schema rejects. Validate before loading so
     # non-YAML files render as violations too, and pass source_root so a service with
     # missing code fails here instead of being skipped from a "successful" deploy.
-    _validate_or_exit(config_path, declarations_dir, source_root)
+    manifest = _validate_or_exit(config_path, source_root)
 
     config = _load_config(config_path)
     agents = config.get("agents", [])
@@ -377,7 +371,7 @@ def _run_build(config_path):
         sys.exit(1)
 
     # -------------------------------------------------------------- #
-    #  Step 1: Discover agent YAML files and generate Python stubs    #
+    #  Step 1: Generate Python stubs from the agents' functions       #
     # -------------------------------------------------------------- #
     stubs_dir = os.path.join(artifact_root, "stubs")
     os.makedirs(stubs_dir, exist_ok=True)
@@ -389,43 +383,21 @@ def _run_build(config_path):
         target_docker_platform,
     )
 
-    yaml_files = glob.glob(os.path.join(declarations_dir, "*.yaml"))
-    if not yaml_files:
-        logger.warning("No agent YAML files found in %s", declarations_dir)
-
-    # Looks up a config entry's YAML and to map stubs to entrypoints.
-    yaml_by_name = declarations_by_name(declarations_dir)
-
-    # Maps each generated stub's basename to its agent's entrypoint path, which
-    # is the single location the stub is written to and copied to.
-    entrypoints_by_name = {a["name"]: a.get("entrypoint") for a in agents}
-    missing_stubs = [
-        a["name"]
-        for a in agents
-        if a.get("type", "agent") not in ("workflow", "database")
-        and (a["name"] not in yaml_by_name or not a.get("entrypoint"))
-    ]
-    if missing_stubs:
-        logger.error("Cannot generate stubs for agents: %s", ", ".join(missing_stubs))
-        sys.exit(1)
+    agent_services = [service for service in manifest.agents if service.type == "agent"]
 
     # Keyed by the stub's own basename, which is the entrypoint's: the stub is
     # written to `stubs/<entrypoint>` below.
     stub_entrypoints = {
-        os.path.basename(entrypoints_by_name[n]): entrypoints_by_name[n]
-        for n in yaml_by_name
-        if entrypoints_by_name.get(n)
+        os.path.basename(service.entrypoint): service.entrypoint
+        for service in agent_services
     }
 
     stub_paths = []
-    for agent_name, yaml_path in yaml_by_name.items():
-        entrypoint = entrypoints_by_name.get(agent_name)
-        if not entrypoint:
-            continue
-        output_path = os.path.join(stubs_dir, entrypoint)
+    for service in agent_services:
+        output_path = os.path.join(stubs_dir, service.entrypoint)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        logger.info("Generating stub: %s -> %s", yaml_path, output_path)
-        generate_stub(yaml_path, output_path)
+        logger.info("Generating stub: %s -> %s", service.name, output_path)
+        generate_stub(service, output_path)
         stub_paths.append(output_path)
 
     # -------------------------------------------------------------- #
@@ -500,19 +472,10 @@ def _run_build(config_path):
             # Agent container
             agent_file = os.path.join(source_root, agent_cfg["entrypoint"])
 
-            # Find matching YAML by agent name
-            matching_yaml = yaml_by_name.get(agent_name)
-            if not matching_yaml:
-                logger.warning(
-                    "No YAML definition found for agent '%s', skipping Docker",
-                    agent_name,
-                )
-                continue
-
             docker_context = os.path.join(artifact_root, "docker_container", agent_name)
             logger.info("Generating Docker context for '%s'", agent_name)
             generate_docker(
-                matching_yaml,
+                agent_name,
                 agent_file,
                 output_dir=docker_context,
                 grpc_stubs_dir=grpc_stubs_dir,

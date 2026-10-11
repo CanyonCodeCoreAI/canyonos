@@ -83,11 +83,11 @@ fail later, when the first agent or task is used, not at import.
 ## What `canyonos validate` checks
 
 `canyonos validate` reads `.car` and never builds an image, installs a
-package or serves a request. It checks the schema of the manifest and the
-declarations (`CAR-SCHEMA`), that every entrypoint exists inside `app/`
+package or serves a request. It checks the schema of the manifest
+(`CAR-SCHEMA`), that every entrypoint exists inside `app/`
 (`CAR-ENTRYPOINT-MISSING`, `CAR-ENTRYPOINT-OUTSIDE`), that the entrypoint has
 a module-level class named after the entry with a no-argument constructor and
-synchronous methods matching the declaration (`CAR-ADAPTER-CLASS`,
+synchronous methods matching its `functions` (`CAR-ADAPTER-CLASS`,
 `CAR-ADAPTER-INIT`, `CAR-ADAPTER-SIGNATURE`, `CAR-ADAPTER-ASYNC`), that a
 package `__init__.py` does not re-export from a stubbed entrypoint
 (`CAR-PACKAGE-REEXPORT`), that the workflow file has the expected shape and

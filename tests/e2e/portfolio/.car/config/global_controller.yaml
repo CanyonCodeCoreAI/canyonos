@@ -9,6 +9,13 @@ agents:
       memory: 256
     requirements:
       - boto3>=1.43.91,<2.0
+    functions:
+      - name: parse
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: dict
 
   - name: PriceAgent
     entrypoint: agents/price_agent.py
@@ -20,6 +27,15 @@ agents:
       memory: 256
     requirements:
       - yfinance>=0.2.40,<2.0
+    functions:
+      - name: get_history
+        arguments:
+          - name: ticker
+            type: str
+          - name: lookback_days
+            type: int
+        returns:
+          type: dict
 
   - name: MetricsAgent
     entrypoint: agents/metrics_agent.py
@@ -30,6 +46,15 @@ agents:
       cpu: 1
       memory: 256
     requirements: []
+    functions:
+      - name: compute
+        arguments:
+          - name: ticker
+            type: str
+          - name: lookback_days
+            type: int
+        returns:
+          type: dict
 
   - name: RiskAgent
     entrypoint: agents/risk_agent.py
@@ -40,6 +65,15 @@ agents:
       cpu: 1
       memory: 256
     requirements: []
+    functions:
+      - name: assess
+        arguments:
+          - name: holdings
+            type: dict
+          - name: metrics
+            type: dict
+        returns:
+          type: dict
 
   - name: AdvisorAgent
     entrypoint: agents/advisor_agent.py
@@ -51,6 +85,17 @@ agents:
       memory: 512
     requirements:
       - boto3>=1.43.91,<2.0
+    functions:
+      - name: summarize
+        arguments:
+          - name: holdings
+            type: dict
+          - name: metrics
+            type: dict
+          - name: risk
+            type: dict
+        returns:
+          type: str
 
   - name: Workflow
     type: workflow

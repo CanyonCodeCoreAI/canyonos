@@ -16,7 +16,7 @@
 ## Contract reference
 
 These pages describe the contract CanyonOS Core enforces when it builds and
-runs a `.car` artifact: the directory shape, the manifest and agent yaml keys,
+runs a `.car` artifact: the directory shape, the manifest keys,
 how containers load and execute your code, what goes into each image, how
 model calls are proxied, what EC2 needs, and how to read a failure.
 
@@ -33,7 +33,7 @@ against this contract but is not part of it.
 - [The `.car` artifact](BUILD_ARTIFACT.md): what lives under `.car`, what
   becomes `/app` in the containers, and the names the platform uses.
 - [`global_controller.yaml`](GLOBAL_CONTROLLER.md): how to write the deploy file,
-  and every key in it and in the agent yaml files, with defaults.
+  and every key in it, with defaults.
 - [Runtime contract](RUNTIME_CONTRACT.md): how agents and workflows are
   loaded, called, stubbed and torn down.
 - [Images and dependencies](IMAGES_AND_DEPENDENCIES.md): what Python can

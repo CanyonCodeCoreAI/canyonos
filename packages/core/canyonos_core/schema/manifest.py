@@ -37,6 +37,7 @@ from canyonos_core.schema._checks import (
     _unknown_key_message,
 )
 from canyonos_core.schema.errors import SchemaError, SchemaViolation
+from canyonos_core.schema.functions import STUB_GLOBAL_NAMES, _functions, _identifier
 from canyonos_core.schema.otel_destinations import (
     DESTINATION_KEYS,
     destination_problems,
@@ -68,7 +69,7 @@ _COMMON_SERVICE_KEYS = frozenset(
         "user",
     }
 )
-_AGENT_KEYS = _COMMON_SERVICE_KEYS | {"entrypoint", "requirements"}
+_AGENT_KEYS = _COMMON_SERVICE_KEYS | {"entrypoint", "requirements", "functions"}
 _WORKFLOW_KEYS = _COMMON_SERVICE_KEYS | {
     "workflow_file",
     "requirements",
@@ -205,6 +206,7 @@ class AgentService(_Service):
     entrypoint: str = ""
     requirements: tuple = ()
     requirement_lines: tuple = field(default=(), compare=False, repr=False)
+    functions: tuple = ()
 
     type: ClassVar[str] = "agent"
 
@@ -393,7 +395,13 @@ def _service(collector, entries, index):
     service_type = _service_type(collector, node, prefix)
     _check_service_keys(collector, node, prefix, service_type)
 
-    name = _string(collector, node, "name", prefix, required=True)
+    name = (
+        _identifier(
+            collector, node, "name", prefix, required=True, reserved=STUB_GLOBAL_NAMES
+        )
+        if service_type == "agent"
+        else _string(collector, node, "name", prefix, required=True)
+    )
     common = {
         "name": name,
         "provider": _provider(collector, node, prefix),
@@ -459,6 +467,7 @@ def _service(collector, entries, index):
             ),
             "requirements": _requirements(collector, node, prefix),
             "requirement_lines": _item_lines(node, "requirements"),
+            "functions": _functions(collector, node, prefix),
         }
     else:
         return None

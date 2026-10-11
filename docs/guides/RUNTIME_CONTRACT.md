@@ -11,30 +11,30 @@ rules apply under every provider.
 | Input | Where |
 |---|---|
 | manifest | `.car/config/global_controller.yaml`, or the file given with `-c` |
-| agent declarations | any `.car/config/*.yaml` with a top-level `agent.name` |
+| agent functions | `functions` on an agent entry |
 | entrypoint | `entrypoint` on an agent entry, relative to `.car/app` |
 | workflow | `workflow_file` on the `type: workflow` entry, relative to `.car/app` |
 | policy | `policy.yaml` next to the manifest |
 | generated files | `stubs/`, `grpc_stubs/`, `docker_container/` under `.car` |
 
-Three names have to agree for every agent service:
+Two names have to agree for every agent service:
 
 ```text
-manifest entry name == yaml agent.name == class name in the entrypoint
+manifest entry name == class name in the entrypoint
 ```
 
-A missing declaration, a missing entrypoint file, or a schema error stops the
+A missing entrypoint file or a schema error stops the
 deploy before anything is built. A class name that does not match is only
 found when the container starts: the agent fails to load, the replica reports
 `failed`, and `canyonos deploy` prints that container's log and fails.
 
-## Agent yaml and stubs
+## Agent functions and stubs
 
-Each declaration produces one Python stub: a class with the declared name and
-one method per declared function. Each method takes the declared arguments as
-keywords, with no defaults, and returns a `Future` right away. The stub
-imports nothing from your code, which is why argument types are limited to
-builtins (see [Manifest reference](GLOBAL_CONTROLLER.md#agent-declarations)).
+Each agent entry produces one Python stub: a class with the entry's name and
+one method per function in its `functions`. Each method takes the declared
+arguments as keywords, with no defaults, and returns a `Future` right away.
+The stub imports nothing from your code, which is why argument types are
+limited to builtins (see [Manifest reference](GLOBAL_CONTROLLER.md#agent-functions)).
 
 The stub is written into every build context, including the agent's own, in
 two places: at the agent's `entrypoint` path, and at the context root under
@@ -82,9 +82,9 @@ result = getattr(agent, method_name)(**args)
 So:
 
 - Construction takes no arguments.
-- Declared methods take the yaml argument names as keywords. Arguments
+- Declared methods take the `functions` argument names as keywords. Arguments
   travel as JSON, so an `int` stays an `int`. A `Future` passed as an
-  argument is replaced by its result, which is always text. The yaml `type`
+  argument is replaced by its result, which is always text. The declared `type`
   is never used to convert anything.
 - Methods are called synchronously. An `async def` is not awaited, and its
   coroutine's `repr` is what lands in Redis. `canyonos validate` reports

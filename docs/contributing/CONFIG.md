@@ -36,14 +36,13 @@ allows `${VAR}` only in string fields.
   dataclasses (`Manifest`, `AgentService`, `WorkflowService`, `DatabaseService`,
   `RedisSpec`, `OtelSpec`, `Ec2Spec`) and collects every violation before raising one
   `SchemaError`.
-- `agent_yaml.py`: agent declarations. Their names become Python source in the stub, so
-  argument types are limited to builtins.
+- `functions.py`: an agent entry's `functions`. Their names become Python source in the
+  stub, so argument types are limited to builtins.
 - `otel_destinations.py`: `otel.destinations`, shared with the runtime.
 - `yaml_lines.py`: a YAML loader that keeps line numbers, so each violation names its
   line.
-- `__init__.py`: `check_project` ties them together. It also checks that every `agent`
-  entry has a declaration with its name and that every `entrypoint` and
-  `workflow_file` exists inside the project.
+- `__init__.py`: `check_project` ties them together. It also checks that every
+  `entrypoint` and `workflow_file` exists inside the project.
 
 The allowed keys are declared once, at the top of `manifest.py`: top-level keys in
 `_MANIFEST_KEYS` and entry keys per type in `_SERVICE_KEYS_BY_TYPE`. Anything else is

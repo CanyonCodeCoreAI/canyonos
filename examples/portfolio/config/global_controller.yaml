@@ -18,6 +18,13 @@ agents:
       gpu: 0
     entrypoint: agents/intent_agent.py
     requirements: [boto3]
+    functions:
+      - name: parse
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: dict
     provider: local
     instance_type: t3.micro
 
@@ -34,6 +41,15 @@ agents:
     provider: local
     instance_type: t3.micro
     requirements: [yfinance]
+    functions:
+      - name: get_history
+        arguments:
+          - name: ticker
+            type: str
+          - name: lookback_days
+            type: int
+        returns:
+          type: dict
 
   # Stage 1: per-ticker metrics. Cheap CPU, high fan-out (one call per holding).
   # Calls PriceAgent remotely, then computes return/vol/Sharpe/drawdown.
@@ -45,6 +61,15 @@ agents:
       memory: 256
       gpu: 0
     entrypoint: agents/metrics_agent.py
+    functions:
+      - name: compute
+        arguments:
+          - name: ticker
+            type: str
+          - name: lookback_days
+            type: int
+        returns:
+          type: dict
     provider: local
     instance_type: t3.micro
 
@@ -58,6 +83,15 @@ agents:
       memory: 256
       gpu: 0
     entrypoint: agents/risk_agent.py
+    functions:
+      - name: assess
+        arguments:
+          - name: holdings
+            type: dict
+          - name: metrics
+            type: dict
+        returns:
+          type: dict
     provider: local
     instance_type: t3.micro
 
@@ -72,6 +106,17 @@ agents:
       gpu: 0
     entrypoint: agents/advisor_agent.py
     requirements: [boto3]
+    functions:
+      - name: summarize
+        arguments:
+          - name: holdings
+            type: dict
+          - name: metrics
+            type: dict
+          - name: risk
+            type: dict
+        returns:
+          type: str
     provider: local
     instance_type: t3.micro
 

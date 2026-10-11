@@ -1,6 +1,6 @@
 # Example Agent
 # Replace this with your agent implementation.
-# The class name must match the 'name' field in the YAML definition.
+# The class name must match the agent's 'name' in config/global_controller.yaml.
 
 
 class HelloAgent(object):

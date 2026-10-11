@@ -25,7 +25,7 @@ def drive(lines):
 def test_a_full_run_reports_each_phase_once():
     _, spinners, done, errored = drive(
         [
-            "INFO:canyonos_core:Generating stub: a.yaml -> a_stub.py\n",
+            "INFO:canyonos_core:Generating stub: A -> stubs/a.py\n",
             "INFO:canyonos_core:Compiling gRPC proto: a.proto\n",
             "INFO:canyonos_core:Building 3 Docker image(s) via `docker buildx bake`.\n",
             "#5 [4/7] RUN pip install -r requirements.txt\n",
@@ -62,8 +62,8 @@ def test_phases_are_matched_in_the_order_the_container_emits_them():
 def test_repeated_build_lines_collapse_to_one_spinner_update():
     _, spinners, _, _ = drive(
         [
-            "INFO:canyonos_core:Generating stub: a.yaml -> a_stub.py\n",
-            "INFO:canyonos_core:Generating stub: b.yaml -> b_stub.py\n",
+            "INFO:canyonos_core:Generating stub: A -> stubs/a.py\n",
+            "INFO:canyonos_core:Generating stub: B -> stubs/b.py\n",
             "INFO:canyonos_core:Generating Docker context for 'b'\n",
         ]
     )

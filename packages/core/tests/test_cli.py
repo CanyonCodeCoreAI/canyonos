@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import sys
@@ -190,7 +191,15 @@ class CliDeployTests(unittest.TestCase):
             config_path = project_dir / "config" / "global_controller.yaml"
             config_path.write_text(
                 yaml.safe_dump(
-                    {"agents": [{"name": "ExampleAgent", "entrypoint": "/abs.py"}]}
+                    {
+                        "agents": [
+                            {
+                                "name": "ExampleAgent",
+                                "entrypoint": "/abs.py",
+                                "functions": [{"name": "work"}],
+                            }
+                        ]
+                    }
                 )
             )
 
@@ -224,6 +233,7 @@ class CliDeployTests(unittest.TestCase):
                             {
                                 "name": "A",
                                 "entrypoint": "agents/a.py",
+                                "functions": [{"name": "work"}],
                                 "resources": resources,
                             }
                         ]
@@ -246,9 +256,7 @@ class CliDeployTests(unittest.TestCase):
 
 
 class CliBuildTests(unittest.TestCase):
-    def _run_build(
-        self, project_dir, agent_yaml_paths, buildx_available, platform="linux/amd64"
-    ):
+    def _run_build(self, project_dir, buildx_available, platform="linux/amd64"):
         """Run _run_build against project_dir with docker/subprocess calls mocked.
 
         Returns (docker_calls, generate_docker_mock, generate_workflow_docker_mock).
@@ -263,30 +271,12 @@ class CliBuildTests(unittest.TestCase):
             docker_calls.append(cmd)
             return SimpleNamespace(returncode=0)
 
-        def fake_glob(pattern):
-            if pattern.endswith("*.proto"):
-                return ["proto/a.proto"]
-            if agent_yaml_paths:
-                self.assertEqual(
-                    os.path.realpath(Path(pattern).parent),
-                    os.path.realpath(Path(agent_yaml_paths[0]).parent),
-                )
-            return agent_yaml_paths
-
-        def fake_generate_stub(yaml_path, _output_path):
-            with open(yaml_path) as f:
-                self.assertIn("agent", yaml.safe_load(f))
-
         with (
             patch(
                 "canyonos_core.cli._get_package_dir",
                 return_value=str(project_dir / "package"),
             ),
-            patch("canyonos_core.cli.glob.glob", side_effect=fake_glob),
-            patch(
-                "canyonos_core.stub_generator.generate_stub",
-                side_effect=fake_generate_stub,
-            ),
+            patch("canyonos_core.cli.glob.glob", return_value=["proto/a.proto"]),
             patch("canyonos_core.stub_generator.generate_docker") as generate_docker,
             patch(
                 "canyonos_core.stub_generator.generate_workflow_docker"
@@ -308,7 +298,7 @@ class CliBuildTests(unittest.TestCase):
         return docker_calls, generate_docker, generate_workflow_docker
 
     def _write_agent_and_workflow_config(self, project_dir):
-        """Scaffold a project with one agent + one workflow entry; returns the agent YAML path."""
+        """Scaffold a project with one agent + one workflow entry."""
         (project_dir / "config").mkdir()
         (project_dir / "agents").mkdir()
         (project_dir / "workflows").mkdir()
@@ -318,8 +308,6 @@ class CliBuildTests(unittest.TestCase):
         )
         (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
         (project_dir / "workflows" / "example_workflow.py").write_text("print('ok')\n")
-        agent_yaml = project_dir / "agents" / "example_agent.yaml"
-        agent_yaml.write_text("agent:\n  name: ExampleAgent\n")
         config_path = project_dir / "config" / "global_controller.yaml"
         config_path.write_text(
             yaml.safe_dump(
@@ -328,6 +316,7 @@ class CliBuildTests(unittest.TestCase):
                         {
                             "name": "ExampleAgent",
                             "entrypoint": "agents/example_agent.py",
+                            "functions": [{"name": "work"}],
                             "provider": "local",
                         },
                         {
@@ -340,12 +329,11 @@ class CliBuildTests(unittest.TestCase):
                 }
             )
         )
-        return agent_yaml
 
     def test_build_stops_on_a_workflow_requirement_below_the_supported_floor(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            self._write_agent_and_workflow_config(project_dir)
             config_path = project_dir / "config" / "global_controller.yaml"
             config = yaml.safe_load(config_path.read_text())
             config["agents"][0]["requirements"] = ["flask==1.9"]
@@ -356,7 +344,7 @@ class CliBuildTests(unittest.TestCase):
                 self.assertRaises(SystemExit),
                 self.assertLogs("canyonos_core", level="ERROR") as logs,
             ):
-                self._run_build(project_dir, [str(agent_yaml)], buildx_available=True)
+                self._run_build(project_dir, buildx_available=True)
 
         self.assertEqual(
             logs.output,
@@ -369,7 +357,7 @@ class CliBuildTests(unittest.TestCase):
     def test_build_warns_on_a_requirement_above_the_tested_major_and_continues(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            self._write_agent_and_workflow_config(project_dir)
             config_path = project_dir / "config" / "global_controller.yaml"
             config = yaml.safe_load(config_path.read_text())
             config["agents"][0]["requirements"] = ["protobuf>=7"]
@@ -377,7 +365,7 @@ class CliBuildTests(unittest.TestCase):
 
             with self.assertLogs("canyonos_core", level="WARNING") as logs:
                 _, generate_docker, _ = self._run_build(
-                    project_dir, [str(agent_yaml)], buildx_available=True
+                    project_dir, buildx_available=True
                 )
 
         self.assertIn(
@@ -390,11 +378,9 @@ class CliBuildTests(unittest.TestCase):
     def test_build_falls_back_to_sequential_docker_build_without_buildx(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            self._write_agent_and_workflow_config(project_dir)
 
-            docker_calls, _, _ = self._run_build(
-                project_dir, [str(agent_yaml)], buildx_available=False
-            )
+            docker_calls, _, _ = self._run_build(project_dir, buildx_available=False)
 
         flattened = [" ".join(call) for call in docker_calls]
         self.assertFalse(
@@ -410,7 +396,7 @@ class CliBuildTests(unittest.TestCase):
     def test_build_gives_each_workflow_its_own_docker_context(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            self._write_agent_and_workflow_config(project_dir)
             (project_dir / "workflows" / "second_workflow.py").write_text(
                 "print('ok')\n"
             )
@@ -427,7 +413,7 @@ class CliBuildTests(unittest.TestCase):
             )
             config_path.write_text(yaml.safe_dump(config))
 
-            self._run_build(project_dir, [str(agent_yaml)], buildx_available=True)
+            self._run_build(project_dir, buildx_available=True)
 
             with open(project_dir / "docker_container" / "docker-bake.json") as f:
                 targets = json.load(f)["target"]
@@ -441,14 +427,64 @@ class CliBuildTests(unittest.TestCase):
             os.path.realpath(project_dir / "docker_container" / "SecondWorkflow"),
         )
 
+    def test_build_writes_one_stub_per_agent_at_its_entrypoint(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            self._write_agent_and_workflow_config(project_dir)
+            (project_dir / "agents" / "sub").mkdir()
+            (project_dir / "agents" / "sub" / "nested_agent.py").write_text(
+                "print('ok')\n"
+            )
+            config_path = project_dir / "config" / "global_controller.yaml"
+            config = yaml.safe_load(config_path.read_text())
+            config["agents"] += [
+                {
+                    "name": "NestedAgent",
+                    "entrypoint": "agents/sub/nested_agent.py",
+                    "functions": [
+                        {
+                            "name": "lookup",
+                            "arguments": [{"name": "key", "type": "str"}],
+                        }
+                    ],
+                    "provider": "local",
+                },
+                {"name": "postgres", "type": "database", "image": "postgres:16"},
+            ]
+            config_path.write_text(yaml.safe_dump(config))
+
+            self._run_build(project_dir, buildx_available=True)
+
+            stubs_dir = project_dir / "stubs"
+            stubs = {
+                path.relative_to(stubs_dir).as_posix(): ast.parse(path.read_text())
+                for path in stubs_dir.rglob("*.py")
+            }
+
+        methods = {
+            path: [
+                f"{cls.name}.{fn.name}({', '.join(a.arg for a in fn.args.args)})"
+                for cls in tree.body
+                if isinstance(cls, ast.ClassDef)
+                for fn in cls.body
+                if isinstance(fn, ast.FunctionDef) and fn.name != "__init__"
+            ]
+            for path, tree in stubs.items()
+        }
+        self.assertEqual(
+            methods,
+            {
+                "agents/example_agent.py": ["ExampleAgent.work(self)"],
+                "agents/sub/nested_agent.py": ["NestedAgent.lookup(self, key)"],
+            },
+        )
+
     def test_build_uses_buildx_bake_when_available(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            agent_yaml = self._write_agent_and_workflow_config(project_dir)
+            self._write_agent_and_workflow_config(project_dir)
 
-            docker_calls, _, _ = self._run_build(
-                project_dir, [str(agent_yaml)], buildx_available=True
-            )
+            docker_calls, _, _ = self._run_build(project_dir, buildx_available=True)
 
             bake_file = project_dir / "docker_container" / "docker-bake.json"
             self.assertTrue(bake_file.is_file())
@@ -490,14 +526,11 @@ class CliBuildTests(unittest.TestCase):
             artifact_root = project_dir / ".car"
             source_root = artifact_root / "app"
             source_root.mkdir(parents=True)
-            source_yaml = self._write_agent_and_workflow_config(source_root)
+            self._write_agent_and_workflow_config(source_root)
             source_root.joinpath("config").rename(artifact_root / "config")
-            agent_yaml = artifact_root / "config" / source_yaml.name
-            source_yaml.rename(agent_yaml)
 
-            manifest = artifact_root / "config" / "global_controller.yaml"
             _, generate_docker, generate_workflow_docker = self._run_build(
-                project_dir, [str(manifest), str(agent_yaml)], buildx_available=True
+                project_dir, buildx_available=True
             )
 
         for call in (generate_docker, generate_workflow_docker):
@@ -518,7 +551,7 @@ class CliBuildTests(unittest.TestCase):
             config_path = project_dir / "config" / "global_controller.yaml"
             config_path.write_text(yaml.safe_dump({"agents": []}))
 
-            docker_calls, _, _ = self._run_build(project_dir, [], buildx_available=True)
+            docker_calls, _, _ = self._run_build(project_dir, buildx_available=True)
 
         self.assertFalse(any(call[0] == "docker" for call in docker_calls))
 
@@ -541,7 +574,7 @@ class CliBuildTests(unittest.TestCase):
             # The schema gate reports it before the build starts, as one line.
             with self.assertLogs("canyonos_core", level="ERROR") as log:
                 with self.assertRaises(SystemExit) as raised:
-                    self._run_build(project_dir, [], buildx_available=True)
+                    self._run_build(project_dir, buildx_available=True)
 
         self.assertEqual(raised.exception.code, 1)
         self.assertIn("agents[0].entrypoint: is required but missing", log.output[0])
@@ -559,11 +592,6 @@ class CliBuildTests(unittest.TestCase):
         (project_dir / "agents" / "vllm_agent.py").write_text("print('ok')\n")
         (project_dir / "workflows" / "example_workflow.py").write_text("print('ok')\n")
 
-        example_yaml = project_dir / "agents" / "example_agent.yaml"
-        example_yaml.write_text("agent:\n  name: ExampleAgent\n")
-        vllm_yaml = project_dir / "agents" / "vllm_agent.yaml"
-        vllm_yaml.write_text("agent:\n  name: VllmAgent\n")
-
         config_path = project_dir / "config" / "global_controller.yaml"
         config_path.write_text(
             yaml.safe_dump(
@@ -572,11 +600,13 @@ class CliBuildTests(unittest.TestCase):
                         {
                             "name": "ExampleAgent",
                             "entrypoint": "agents/example_agent.py",
+                            "functions": [{"name": "work"}],
                             "provider": "local",
                         },
                         {
                             "name": "VllmAgent",
                             "entrypoint": "agents/vllm_agent.py",
+                            "functions": [{"name": "work"}],
                             "provider": "local",
                             "requirements": ["yfinance"],
                         },
@@ -591,15 +621,14 @@ class CliBuildTests(unittest.TestCase):
                 }
             )
         )
-        return [str(example_yaml), str(vllm_yaml)]
 
     def test_build_passes_per_agent_requirements_to_generators(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            agent_yamls = self._write_requirements_config(project_dir)
+            self._write_requirements_config(project_dir)
 
             _, generate_docker, generate_workflow_docker = self._run_build(
-                project_dir, agent_yamls, buildx_available=True
+                project_dir, buildx_available=True
             )
 
         requirements_by_agent = {
@@ -623,13 +652,12 @@ class CliBuildTests(unittest.TestCase):
             (project_dir / "config").mkdir()
             (project_dir / "agents").mkdir()
             (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
-            example_yaml = project_dir / "agents" / "example_agent.yaml"
-            example_yaml.write_text("agent:\n  name: ExampleAgent\n")
             (project_dir / "config" / "global_controller.yaml").write_text(
                 "agents:\n"
                 "  - name: ExampleAgent\n"
                 "    entrypoint: ${CANYONOS_TEST_AGENT_FILE}\n"
                 "    requirements: ['${CANYONOS_TEST_EXTRA}']\n"
+                "    functions: [{name: work}]\n"
             )
 
             with (
@@ -681,8 +709,6 @@ class CliBuildTests(unittest.TestCase):
             (project_dir / "config").mkdir()
             (project_dir / "agents").mkdir()
             (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
-            example_yaml = project_dir / "agents" / "example_agent.yaml"
-            example_yaml.write_text("agent:\n  name: ExampleAgent\n")
             config_path = project_dir / "config" / "global_controller.yaml"
             config_path.write_text(
                 yaml.safe_dump(
@@ -691,6 +717,7 @@ class CliBuildTests(unittest.TestCase):
                             {
                                 "name": "ExampleAgent",
                                 "entrypoint": "agents/example_agent.py",
+                                "functions": [{"name": "work"}],
                                 "provider": "local",
                                 "requirements": "boto3",
                             },
@@ -701,9 +728,7 @@ class CliBuildTests(unittest.TestCase):
 
             with self.assertLogs("canyonos_core", level="ERROR") as log:
                 with self.assertRaises(SystemExit):
-                    self._run_build(
-                        project_dir, [str(example_yaml)], buildx_available=True
-                    )
+                    self._run_build(project_dir, buildx_available=True)
 
         self.assertIn("agents[0].requirements", log.output[0])
         self.assertIn("expected a list of strings", log.output[0])
@@ -715,10 +740,6 @@ class CliBuildTests(unittest.TestCase):
             (project_dir / "agents").mkdir()
             (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
             (project_dir / "agents" / "other_agent.py").write_text("print('ok')\n")
-            example_yaml = project_dir / "agents" / "example_agent.yaml"
-            example_yaml.write_text("agent:\n  name: ExampleAgent\n")
-            other_yaml = project_dir / "agents" / "other_agent.yaml"
-            other_yaml.write_text("agent:\n  name: OtherAgent\n")
             config_path = project_dir / "config" / "global_controller.yaml"
             config_path.write_text(
                 yaml.safe_dump(
@@ -727,11 +748,13 @@ class CliBuildTests(unittest.TestCase):
                             {
                                 "name": "ExampleAgent",
                                 "entrypoint": "agents/example_agent.py",
+                                "functions": [{"name": "work"}],
                                 "requirements": ["protobuf<5"],
                             },
                             {
                                 "name": "OtherAgent",
                                 "entrypoint": "agents/other_agent.py",
+                                "functions": [{"name": "work"}],
                                 "requirements": ["grpcio<1.0"],
                             },
                         ]
@@ -741,11 +764,7 @@ class CliBuildTests(unittest.TestCase):
 
             with self.assertLogs("canyonos_core", level="ERROR") as log:
                 with self.assertRaises(SystemExit):
-                    self._run_build(
-                        project_dir,
-                        [str(example_yaml), str(other_yaml)],
-                        buildx_available=True,
-                    )
+                    self._run_build(project_dir, buildx_available=True)
 
         # Both services are reported, so two bad pins take one run to find.
         self.assertIn("ExampleAgent", log.output[0])
@@ -756,25 +775,20 @@ class CliBuildTests(unittest.TestCase):
 class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
     """A rejected config must cost nothing: no stub, no protoc, no Docker."""
 
-    def _scaffold(self, project_dir, manifest, declaration, write_source=True):
+    def _scaffold(self, project_dir, manifest, write_source=True):
         (project_dir / "config").mkdir()
         (project_dir / "agents").mkdir()
         if write_source:
             (project_dir / "agents" / "example_agent.py").write_text("print('ok')\n")
-        (project_dir / "agents" / "example_agent.yaml").write_text(
-            yaml.safe_dump(declaration)
-        )
         (project_dir / "config" / "global_controller.yaml").write_text(
             yaml.safe_dump(manifest)
         )
         return project_dir / "config" / "global_controller.yaml"
 
-    def _build(self, manifest, declaration, write_source=True):
+    def _build(self, manifest, write_source=True):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            config_path = self._scaffold(
-                project_dir, manifest, declaration, write_source
-            )
+            config_path = self._scaffold(project_dir, manifest, write_source)
 
             with (
                 patch("canyonos_core.stub_generator.generate_stub") as generate_stub,
@@ -798,31 +812,32 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
                     {
                         "name": "ExampleAgent",
                         "entrypoint": "agents/example_agent.py",
+                        "functions": [{"name": "work"}],
                         "replicas": "2",
                     }
                 ]
             },
-            {"agent": {"name": "ExampleAgent"}},
         )
 
         self.assertEqual(exit_error.code, 1)
         generate_stub.assert_not_called()
         subprocess_run.assert_not_called()
 
-    def test_an_invalid_declaration_stops_the_build(self):
+    def test_an_invalid_function_stops_the_build(self):
         exit_error, generate_stub, subprocess_run = self._build(
             {
                 "agents": [
-                    {"name": "ExampleAgent", "entrypoint": "agents/example_agent.py"}
+                    {
+                        "name": "ExampleAgent",
+                        "entrypoint": "agents/example_agent.py",
+                        "functions": [
+                            {
+                                "name": "hello",
+                                "arguments": [{"name": "v", "type": "List"}],
+                            }
+                        ],
+                    }
                 ]
-            },
-            {
-                "agent": {
-                    "name": "ExampleAgent",
-                    "functions": [
-                        {"name": "hello", "arguments": [{"name": "v", "type": "List"}]}
-                    ],
-                }
             },
         )
 
@@ -836,10 +851,13 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
         exit_error, generate_stub, subprocess_run = self._build(
             {
                 "agents": [
-                    {"name": "ExampleAgent", "entrypoint": "agents/example_agent.py"}
+                    {
+                        "name": "ExampleAgent",
+                        "entrypoint": "agents/example_agent.py",
+                        "functions": [{"name": "work"}],
+                    }
                 ]
             },
-            {"agent": {"name": "ExampleAgent"}},
             write_source=False,
         )
 
@@ -861,7 +879,6 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
                     }
                 ]
             },
-            {"agent": {"name": "ExampleAgent"}},
         )
 
         self.assertEqual(exit_error.code, 1)
@@ -877,9 +894,6 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
             project_dir = Path(tmpdir)
             artifact_root = project_dir / ".car"
             (artifact_root / "config").mkdir(parents=True)
-            (artifact_root / "config" / "example_agent.yaml").write_text(
-                yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
-            )
             config_path = artifact_root / "config" / "global_controller.yaml"
             config_path.write_text(
                 yaml.safe_dump(
@@ -888,6 +902,7 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
                             {
                                 "name": "ExampleAgent",
                                 "entrypoint": "agents/example_agent.py",
+                                "functions": [{"name": "work"}],
                             }
                         ]
                     }
@@ -952,7 +967,7 @@ class ValidateOrExitTests(unittest.TestCase):
             with patch.object(
                 schema, "load_manifest", wraps=schema.load_manifest
             ) as load_manifest:
-                manifest = _validate_or_exit(manifest_path, tmpdir)
+                manifest = _validate_or_exit(manifest_path)
 
         self.assertEqual(load_manifest.call_count, 1)
         self.assertEqual(manifest.agents[0].name, "Workflow")

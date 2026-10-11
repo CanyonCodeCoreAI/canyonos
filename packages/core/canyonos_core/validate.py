@@ -1,9 +1,8 @@
 """Contracts a `.car` has to keep that the schema alone cannot see.
 
-`validate_project` reads the manifest and the agent declarations. What it
-cannot read is the Python beside them: a class the controller loads by name, a
-method the executor calls without awaiting, the one module the platform posts
-to. Each of those survives a green build and fails inside a container, or on
+`validate_project` reads the manifest. What it cannot read is the Python
+beside it: a class the controller loads by name, a method the executor calls
+without awaiting, the one module the platform posts to. Each of those survives a green build and fails inside a container, or on
 its first request, so they are checked here against the same parsed model the
 deploy uses -- never against a second copy of the pins, the image Python or the
 runtime's module names.
@@ -15,7 +14,6 @@ Exit 1 if any error was found, 0 otherwise.
 
 import argparse
 import ast
-import glob
 import json
 import os
 import sys
@@ -25,7 +23,6 @@ from canyonos_core.schema import (
     AgentService,
     SchemaError,
     WorkflowService,
-    load_agent_declaration,
     load_manifest,
     validate_project,
 )
@@ -282,7 +279,7 @@ def _methods(source_dir, cls, seen=frozenset()):
     return methods, complete
 
 
-def _check_adapter(report, source_dir, entrypoint_path, service, declaration):
+def _check_adapter(report, source_dir, entrypoint_path, service):
     """The class the controller loads, and the methods it calls on it."""
     tree, error = _parse(entrypoint_path)
     if tree is None:
@@ -308,15 +305,13 @@ def _check_adapter(report, source_dir, entrypoint_path, service, declaration):
             1,
             f"no class named `{service.name}` at module level (found: {found})",
             "_load_agent does getattr(module, CANYONOS_AGENT_NAME) and swallows "
-            "the AttributeError. The class name must equal agent.name exactly.",
+            "the AttributeError. The class name must equal the entry's name exactly.",
         )
         return
 
     methods, complete = _methods(source_dir, cls)
     _check_constructor(report, service.name, methods)
-    if declaration is None:
-        return
-    for function in declaration.functions:
+    for function in service.functions:
         _check_method(report, cls.path, service.name, function, methods, complete)
 
 
@@ -349,7 +344,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
             class_path,
             0,
             f"`{class_name}` has no method `{function.name}`",
-            "The declaration gives callers a stub for it; the controller then "
+            "Its `functions` entry gives callers a stub for it; the controller then "
             f"answers \"Agent {class_name} has no method '{function.name}'\".",
         )
         return
@@ -399,8 +394,8 @@ def _check_method(report, class_path, class_name, function, methods, complete):
             path,
             method.lineno,
             f"`{class_name}.{function.name}` has no parameter "
-            f"{', '.join(repr(name) for name in missing)}, but the declaration "
-            "declares it",
+            f"{', '.join(repr(name) for name in missing)}, but its `functions` "
+            "entry declares it",
             "The controller does method(**args) with the declared argument "
             "names. A mismatch is TypeError: unexpected keyword argument, at "
             "request time.",
@@ -417,10 +412,10 @@ def _check_method(report, class_path, class_name, function, methods, complete):
             path,
             method.lineno,
             f"`{class_name}.{function.name}` requires {', '.join(unfilled)}, "
-            "which the declaration does not declare",
+            "which its `functions` entry does not declare",
             "Only declared arguments are ever sent, and the generated stub "
-            "gives none of them a default. Declare them in the agent YAML or "
-            "default them in the signature.",
+            "gives none of them a default. Declare them in the agent's "
+            "functions or default them in the signature.",
         )
 
 
@@ -813,23 +808,6 @@ class _Report:
             return path
 
 
-def _declarations(config_dir):
-    """Every agent declaration in the config directory, by the name it claims.
-
-    A file that does not parse or does not check out is left out: the schema
-    already reported it, and the checks below need a declaration they can trust.
-    """
-    found = {}
-    for path in sorted(glob.glob(os.path.join(config_dir, "*.yaml"))):
-        try:
-            declaration = load_agent_declaration(path)
-        except SchemaError:
-            continue
-        if declaration.name:
-            found[declaration.name] = declaration
-    return found
-
-
 def validate_car(artifact_root, config_path=None):
     """Every violation in a prepared `.car`, schema first, contracts after.
 
@@ -842,11 +820,10 @@ def validate_car(artifact_root, config_path=None):
         config_path = os.path.join(artifact_root, DEFAULT_CONFIG_PATH)
     elif not os.path.isabs(config_path):
         config_path = os.path.join(artifact_root, config_path)
-    config_dir = os.path.dirname(config_path)
     source_dir = os.path.join(artifact_root, SOURCE_DIR_NAME)
 
     report = _Report(artifact_root)
-    for violation in validate_project(config_path, config_dir):
+    for violation in validate_project(config_path):
         report.add(
             "CAR-SCHEMA",
             violation.path,
@@ -863,7 +840,6 @@ def validate_car(artifact_root, config_path=None):
     except SchemaError:
         return _sorted(report.findings)
 
-    declarations = _declarations(config_dir)
     _check_entrypoints(report, manifest, source_dir, config_path)
     if not os.path.isdir(source_dir):
         # Already reported, and there is no Python to check without it.
@@ -878,11 +854,8 @@ def validate_car(artifact_root, config_path=None):
             source_dir, entrypoint_path
         ):
             continue  # reported by _check_entrypoints
-        if service.name in declarations:
-            stub_modules[service.name] = _module_path(service.entrypoint)
-        _check_adapter(
-            report, source_dir, entrypoint_path, service, declarations.get(service.name)
-        )
+        stub_modules[service.name] = _module_path(service.entrypoint)
+        _check_adapter(report, source_dir, entrypoint_path, service)
         _check_package_reexport(report, source_dir, service)
 
     for service in manifest.agents:

@@ -1,4 +1,4 @@
-"""Field readers shared by the manifest and the agent declaration schemas.
+"""Field readers shared by the manifest and the agent functions schemas.
 
 Each reader takes the mapping a key lives in, records a violation when the
 value is not what the schema declares, and hands back the declared default so

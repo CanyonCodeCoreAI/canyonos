@@ -11,7 +11,6 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 |---|---|
 | `Config file not found: .car/config/global_controller.yaml` | The command ran in a directory without that file. `canyonos deploy` looks for `.car` in the current directory. |
 | `the project source directory .car/app does not exist` | `.car/app` was never created, or the command ran from the wrong directory |
-| `no agent declaration ... sets agent.name` | An agent entry has no yaml in `.car/config` whose `agent.name` matches it |
 | `duplicate service name ... (names are lowercased into one image tag)` | Two entries differ only in case |
 | `is required when provider is 'EC2'` | An EC2 entry has no `instance_type` |
 | `expected an integer >= 1` on `replicas` | `replicas` is a string or zero |
@@ -21,10 +20,6 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `currently requires protobuf<...` during the build | A requirement pins a base package below the platform floor |
 | `Deploy failed: generated grpc_stubs are missing or not importable` | The generated `*_pb2.py` modules do not import in the controller, usually a protobuf runtime mismatch |
 | `Port ... already in use` | The workflow `api_port`, a database `db_port` or the Redis port is taken by something else, often a previous deployment that was killed |
-
-A quiet failure also exists: two files in `.car/config` declaring the same
-`agent.name`. The last one in sorted filename order wins and nothing warns.
-Rename or delete the extra file.
 
 ## A container exits or serves nothing
 
@@ -53,8 +48,8 @@ Rename or delete the extra file.
 
 | Symptom | Likely cause |
 |---|---|
-| `unexpected keyword argument` in the agent | The yaml argument name differs from the method's parameter name |
-| `missing ... required positional argument` | The yaml does not declare a parameter the method requires, or the caller did not send it |
+| `unexpected keyword argument` in the agent | The argument name in `functions` differs from the method's parameter name |
+| `missing ... required positional argument` | `functions` does not declare a parameter the method requires, or the caller did not send it |
 | `Unauthorized: Policy denied access to service` | The first matching policy rule, or no rule at all, excludes that service |
 | `.value()` returns text that looks like a dict | Expected. Results travel as strings; `json.loads` it |
 | `returned a result that cannot be sent as JSON` | The workflow returned framework objects. Convert to plain types first |

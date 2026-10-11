@@ -1,7 +1,7 @@
-"""The agent declaration schema: the YAML a stub is generated from.
+"""The agent functions schema: the `functions` a stub is generated from.
 
-The stub generator builds from what `load_agent_declaration` returns, so every
-name here becomes Python source: the agent is a class, each function a method
+The stub generator builds from an agent entry's `functions`, so every name
+here becomes Python source: the agent is a class, each function a method
 and each argument a parameter. An argument's `type` becomes its annotation,
 and the stub imports nothing, so a type may only be built from builtins.
 """
@@ -11,17 +11,12 @@ import builtins
 import keyword
 from dataclasses import dataclass
 
-import yaml
-
 from canyonos_core.schema._checks import (
     _check_keys,
-    _Collector,
     _describe,
     _field,
     _string,
 )
-from canyonos_core.schema.errors import SchemaError, SchemaViolation
-from canyonos_core.schema.yaml_lines import line_of, load_yaml_lines, parse_failure
 
 # Names the generated stub can annotate with, given it imports nothing.
 BUILTIN_TYPE_NAMES = frozenset(
@@ -60,16 +55,14 @@ _ANNOTATION_NODES = (
 # argument by one of these names would shadow it.
 STUB_GLOBAL_NAMES = frozenset({"Future", "inspect", "isinstance"})
 
-_DOCUMENT_KEYS = frozenset({"agent"})
-_DECLARATION_KEYS = frozenset({"name", "functions"})
-_FUNCTION_KEYS = frozenset({"name", "description", "arguments", "returns"})
+_FUNCTION_KEYS = frozenset({"name", "arguments", "returns"})
 _ARGUMENT_KEYS = frozenset({"name", "type"})
 _RETURNS_KEYS = frozenset({"type"})
 
 
 @dataclass(frozen=True)
 class ArgumentDecl:
-    """One argument of a function declared in an agent's YAML."""
+    """One argument of a function declared for an agent."""
 
     name: str
     type: str | None = None
@@ -77,28 +70,18 @@ class ArgumentDecl:
 
 @dataclass(frozen=True)
 class ReturnsDecl:
-    """The optional return type of a function declared in an agent's YAML."""
+    """The optional return type of a function declared for an agent."""
 
     type: str | None = None
 
 
 @dataclass(frozen=True)
 class FunctionDecl:
-    """One function declared in an agent's YAML; becomes a method on its stub."""
+    """One function declared for an agent; becomes a method on its stub."""
 
     name: str
-    description: str = ""
     arguments: tuple = ()
     returns: ReturnsDecl | None = None
-
-
-@dataclass(frozen=True)
-class AgentDeclaration:
-    """A parsed agent YAML file: the agent's name and the functions it exposes."""
-
-    name: str
-    functions: tuple = ()
-    path: str = ""
 
 
 def _is_builtin_annotation(type_name):
@@ -230,24 +213,35 @@ def _arguments(collector, node, prefix):
     return tuple(arguments)
 
 
-def _functions(collector, node):
+def _functions(collector, node, parent):
     """Parse the agent's `functions` list, recording violations and skipping any entry
     that can't be read."""
     raw = node.get("functions")
     if raw is None:
+        collector.add(
+            node, "functions", _field(parent, "functions"), "is required but missing"
+        )
         return ()
     if not isinstance(raw, list):
         collector.add(
             node,
             "functions",
-            "agent.functions",
+            _field(parent, "functions"),
             f"expected a list of functions, got {_describe(raw)}",
+        )
+        return ()
+    if not raw:
+        collector.add(
+            node,
+            "functions",
+            _field(parent, "functions"),
+            "is required and must not be empty",
         )
         return ()
 
     functions = []
     for index, entry in enumerate(raw):
-        prefix = f"agent.functions[{index}]"
+        prefix = f"{parent}.functions[{index}]"
         if not isinstance(entry, dict):
             collector.add(
                 raw, index, prefix, f"expected a mapping, got {_describe(entry)}"
@@ -255,75 +249,14 @@ def _functions(collector, node):
             continue
         _check_keys(collector, entry, prefix, _FUNCTION_KEYS)
         name = _identifier(collector, entry, "name", prefix, required=True)
-        description = entry.get("description")
-        if description is not None and not isinstance(description, str):
-            collector.add(
-                entry,
-                "description",
-                _field(prefix, "description"),
-                f"expected a string, got {_describe(description)}",
-            )
-            description = None
         arguments = _arguments(collector, entry, prefix)
         returns = _returns(collector, entry, prefix)
         if name:
             functions.append(
                 FunctionDecl(
                     name=name,
-                    description=description or "",
                     arguments=arguments,
                     returns=returns,
                 )
             )
     return tuple(functions)
-
-
-def load_agent_declaration(path):
-    """Parse and check one agent YAML, reporting every problem at once.
-
-    Raises:
-        SchemaError: the declaration is unusable; `.violations` holds them all.
-    """
-    collector = _Collector(path)
-    try:
-        document = load_yaml_lines(path)
-    except OSError as exc:
-        raise SchemaError(
-            [SchemaViolation(path, 0, "", f"cannot be read: {exc}")]
-        ) from exc
-    except yaml.YAMLError as exc:
-        line, detail = parse_failure(exc)
-        raise SchemaError(
-            [SchemaViolation(path, line, "", f"is not valid YAML: {detail}")]
-        ) from exc
-
-    if not isinstance(document, dict):
-        raise SchemaError(
-            [
-                SchemaViolation(
-                    path, 0, "", f"expected a mapping, got {_describe(document)}"
-                )
-            ]
-        )
-
-    _check_keys(collector, document, "", _DOCUMENT_KEYS)
-    block = document.get("agent")
-    if not isinstance(block, dict):
-        collector.violations.append(
-            SchemaViolation(
-                path,
-                line_of(document, "agent"),
-                "agent",
-                f"is required and must be a mapping, got {_describe(block)}",
-            )
-        )
-        raise SchemaError(collector.violations)
-
-    _check_keys(collector, block, "agent", _DECLARATION_KEYS)
-    name = _identifier(
-        collector, block, "name", "agent", required=True, reserved=STUB_GLOBAL_NAMES
-    )
-    functions = _functions(collector, block)
-    if collector.violations:
-        raise SchemaError(collector.violations)
-    return AgentDeclaration(name=name or "", functions=functions, path=path)

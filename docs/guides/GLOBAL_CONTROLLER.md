@@ -132,10 +132,9 @@ every problem at once, each with the line it's on, so you can fix them all in on
 
 ## Reference
 
-Two kinds of file live in `.car/config/`: the manifest
-`global_controller.yaml`, and one yaml declaration per agent service. The
-schema in `canyonos_core/schema` checks both before anything is built. A key
-it does not know is an error, so this page lists every key it accepts.
+The schema in `canyonos_core/schema` checks the manifest
+`global_controller.yaml` before anything is built. A key it does not know is
+an error, so this page lists every key it accepts.
 
 ### `global_controller.yaml`
 
@@ -148,7 +147,7 @@ Keys every entry accepts:
 
 | Key | Default | Notes |
 |---|---|---|
-| `name` | required | Must equal the yaml `agent.name` and the class name in the entrypoint. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one manifest is a duplicate and the deploy is rejected. |
+| `name` | required | Must equal the class name in the entrypoint. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one manifest is a duplicate and the deploy is rejected. |
 | `type` | `agent` | One of `agent`, `workflow`, `database`. |
 | `provider` | `local` | `local` or `EC2`, in any casing. |
 | `replicas` | `1` | Integer, at least 1. A local workflow must be 1. A database must be 1. |
@@ -168,6 +167,7 @@ Agent entries add:
 |---|---|---|
 | `entrypoint` | required | `.py` path relative to `.car/app`, no `..`, not absolute. Holds the class named `name`. |
 | `requirements` | `[]` | One PEP 508 requirement per item. See [Per-image requirements](#per-image-requirements). |
+| `functions` | required | The methods other services can call. See [Agent functions](#agent-functions). |
 
 Workflow entries add:
 
@@ -186,7 +186,7 @@ Database entries add:
 | `db_port` | `5432` | Port the database listens on. |
 | `volume_path` | none | Mount point for a named volume `canyonos-<name>-data`. |
 
-A database entry needs no yaml declaration and no code. Other services reach
+A database entry needs no code. Other services reach
 it through the routing table: the Redis hash `routing_table:endpoints` maps
 the entry name to a JSON list of `host:port` strings, on the Redis every
 container reaches through `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT`.
@@ -287,29 +287,27 @@ otel:
 terminal UI. View shows what is in the file. Change lets you edit or delete a
 key and saves in place. It does not create the file or fill in defaults.
 
-### Agent declarations
+### Agent functions
 
-Any `*.yaml` in `.car/config/` with a top-level `agent.name` is a
-declaration. The filename does not matter; `global_controller.yaml` and
-`policy.yaml` are skipped because they have no `agent` block. If two files
-declare the same `agent.name`, the last one in sorted filename order wins and
-nothing warns you.
+`functions` on an agent entry lists the methods of its stub. Every agent entry
+needs at least one.
 
 ```yaml
-agent:
-  name: ExampleAgent
-  functions:
-    - name: work
-      description: Optional text
-      arguments:
-        - name: query
-          type: str
-      returns:
-        type: dict
+agents:
+  - name: MetricsAgent
+    entrypoint: agents/metrics_agent.py
+    functions:
+      - name: compute
+        arguments:
+          - name: ticker
+            type: str
+          - name: lookback_days
+            type: int
+        returns:
+          type: dict
 ```
 
-Only `agent`, `functions`, `name`, `description`, `arguments`, `returns` and
-`type` are accepted where shown.
+Only `name`, `arguments`, `returns` and `type` are accepted where shown.
 
 Argument `type` becomes an annotation in a generated stub that imports
 nothing, so it has to be built from builtins: `bool`, `bytearray`, `bytes`,

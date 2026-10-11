@@ -2,12 +2,12 @@ import io
 import os
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
-import yaml
 from packaging.requirements import Requirement
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -16,6 +16,7 @@ from canyonos_core import stub_generator
 from canyonos_core.controller.global_controller import (
     CONTROLLER_READY_TIMEOUT_SECONDS,
 )
+from canyonos_core.schema import load_manifest
 from canyonos_core.stub_generator import (
     BASE_AGENT_REQUIREMENTS,
     BASE_WORKFLOW_REQUIREMENTS,
@@ -37,19 +38,17 @@ def _read_dockerfile(output_dir):
 
 
 class GenerateDockerRequirementsTests(unittest.TestCase):
-    def _write_agent_yaml(self, tmpdir, name="ExampleAgent"):
-        yaml_path = Path(tmpdir) / f"{name}.yaml"
-        yaml_path.write_text(yaml.safe_dump({"agent": {"name": name}}))
+    def _write_agent_file(self, tmpdir):
         agent_file = Path(tmpdir) / "agent.py"
         agent_file.write_text("print('ok')\n")
-        return str(yaml_path), str(agent_file)
+        return str(agent_file)
 
     def test_base_only_when_requirements_omitted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            yaml_path, agent_file = self._write_agent_yaml(tmpdir)
+            agent_file = self._write_agent_file(tmpdir)
             output_dir = os.path.join(tmpdir, "out")
 
-            generate_docker(yaml_path, agent_file, output_dir=output_dir)
+            generate_docker("ExampleAgent", agent_file, output_dir=output_dir)
 
             requirements = _read_requirements(output_dir)
 
@@ -66,11 +65,14 @@ class GenerateDockerRequirementsTests(unittest.TestCase):
 
     def test_per_agent_requirements_are_appended_to_base(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            yaml_path, agent_file = self._write_agent_yaml(tmpdir)
+            agent_file = self._write_agent_file(tmpdir)
             output_dir = os.path.join(tmpdir, "out")
 
             generate_docker(
-                yaml_path, agent_file, output_dir=output_dir, requirements=["yfinance"]
+                "ExampleAgent",
+                agent_file,
+                output_dir=output_dir,
+                requirements=["yfinance"],
             )
 
             requirements = _read_requirements(output_dir)
@@ -279,13 +281,11 @@ class ProjectSweepTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
             _write(project / "requirements.txt", "yfinance==0.1\n")
-            yaml_path = project / "ExampleAgent.yaml"
-            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
             agent_file = _write(project / "agent.py", "print('ok')\n")
             output_dir = os.path.join(tmpdir, "out")
 
             generate_docker(
-                str(yaml_path),
+                "ExampleAgent",
                 str(agent_file),
                 output_dir=output_dir,
                 project_dir=str(project),
@@ -298,14 +298,12 @@ class ProjectSweepTests(unittest.TestCase):
     def test_agent_context_receives_the_swept_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
-            yaml_path = project / "ExampleAgent.yaml"
-            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
             agent_file = _write(project / "agent.py", "print('ok')\n")
             _write(project / "data" / "handbook.pdf", "%PDF-1.4")
             output_dir = os.path.join(tmpdir, "out")
 
             generate_docker(
-                str(yaml_path),
+                "ExampleAgent",
                 str(agent_file),
                 output_dir=output_dir,
                 project_dir=str(project),
@@ -391,14 +389,12 @@ class ProjectSweepTests(unittest.TestCase):
     def test_the_build_context_is_not_swept_into_itself(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
-            yaml_path = project / "ExampleAgent.yaml"
-            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
             agent_file = _write(project / "agent.py", "print('ok')\n")
             # Not docker_container/, so nothing but exclude_dir keeps this out.
             output_dir = project / "build_context"
 
             generate_docker(
-                str(yaml_path),
+                "ExampleAgent",
                 str(agent_file),
                 output_dir=str(output_dir),
                 project_dir=str(project),
@@ -532,13 +528,9 @@ class PlatformPinTests(unittest.TestCase):
                         requirements=requirements,
                     )
                 else:
-                    yaml_path = project / "ExampleAgent.yaml"
-                    yaml_path.write_text(
-                        yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
-                    )
                     agent_file = _write(project / "agent.py", "print('ok')\n")
                     generate_docker(
-                        str(yaml_path),
+                        "ExampleAgent",
                         str(agent_file),
                         output_dir=output_dir,
                         requirements=requirements,
@@ -617,13 +609,9 @@ class PlatformPinTests(unittest.TestCase):
                         str(wf), [], output_dir=output_dir, requirements=requirements
                     )
                 else:
-                    yaml_path = project / "ExampleAgent.yaml"
-                    yaml_path.write_text(
-                        yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
-                    )
                     agent = _write(project / "agent.py", "print('ok')\n")
                     generate_docker(
-                        str(yaml_path),
+                        "ExampleAgent",
                         str(agent),
                         output_dir=output_dir,
                         requirements=requirements,
@@ -766,13 +754,11 @@ class PlatformPinTests(unittest.TestCase):
         # keeps exactly what the app asked for.
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
-            yaml_path = project / "ExampleAgent.yaml"
-            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
             agent_file = _write(project / "agent.py", "print('ok')\n")
             output_dir = os.path.join(tmpdir, "out")
             with redirect_stdout(io.StringIO()):
                 generate_docker(
-                    str(yaml_path),
+                    "ExampleAgent",
                     str(agent_file),
                     output_dir=output_dir,
                     requirements=["protobuf>=7", "Protobuf>=7.1"],
@@ -789,13 +775,11 @@ class PlatformPinTests(unittest.TestCase):
         # An unquoted `protobuf>=7` would be a redirect, not an argument.
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
-            yaml_path = project / "ExampleAgent.yaml"
-            yaml_path.write_text(yaml.safe_dump({"agent": {"name": "ExampleAgent"}}))
             agent_file = _write(project / "agent.py", "print('ok')\n")
             output_dir = os.path.join(tmpdir, "out")
             with redirect_stdout(io.StringIO()):
                 generate_docker(
-                    str(yaml_path),
+                    "ExampleAgent",
                     str(agent_file),
                     output_dir=output_dir,
                     requirements=["protobuf>=6.32"],
@@ -815,13 +799,9 @@ class PlatformPinTests(unittest.TestCase):
                             wf = _write(project / "workflow.py", "print('ok')\n")
                             generate_workflow_docker(str(wf), [], output_dir=output_dir)
                         else:
-                            yaml_path = project / "ExampleAgent.yaml"
-                            yaml_path.write_text(
-                                yaml.safe_dump({"agent": {"name": "ExampleAgent"}})
-                            )
                             agent = _write(project / "agent.py", "print('ok')\n")
                             generate_docker(
-                                str(yaml_path), str(agent), output_dir=output_dir
+                                "ExampleAgent", str(agent), output_dir=output_dir
                             )
                     dockerfile = _read_dockerfile(output_dir)
 
@@ -836,34 +816,36 @@ if __name__ == "__main__":
 
 
 class GenerateStubTests(unittest.TestCase):
-    """The stub is generated from the declaration the schema checked."""
+    """The stub is generated from the `functions` the schema checked."""
 
-    def _generate(self, text, env=None):
+    def _generate(self, functions, env=None):
         with tempfile.TemporaryDirectory() as tmpdir:
-            yaml_path = Path(tmpdir) / "hello.yaml"
-            yaml_path.write_text(text)
+            manifest_path = Path(tmpdir) / "global_controller.yaml"
+            manifest_path.write_text(
+                "agents:\n  - name: Hello\n    entrypoint: hello.py\n    functions:\n"
+                + functions
+            )
             output_path = Path(tmpdir) / "stubs" / "hello.py"
             with (
                 unittest.mock.patch.dict(os.environ, env or {}),
                 redirect_stdout(io.StringIO()),
             ):
-                source = stub_generator.generate_stub(str(yaml_path), str(output_path))
+                (agent,) = load_manifest(str(manifest_path)).agents
+                source = stub_generator.generate_stub(agent, str(output_path))
         compile(source, "hello.py", "exec")
         return source
 
     def test_a_blank_list_or_type_is_generated_as_absent(self):
         for text in (
-            "agent:\n  name: Hello\n  functions:\n",
-            "agent:\n  name: Hello\n  functions:\n    - name: hello\n      arguments:\n",
-            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
-            "      arguments:\n        - name: a\n          type:\n",
+            "      - name: hello\n        arguments:\n",
+            "      - name: hello\n        arguments:\n          - name: a\n            type:\n",
         ):
             with self.subTest(text=text):
                 self.assertIn("class Hello(object):", self._generate(text))
 
     def test_env_references_are_expanded_into_the_stub(self):
         source = self._generate(
-            "agent:\n  name: Hello\n  functions:\n    - name: ${STUB_FN_NAME}\n",
+            "      - name: ${STUB_FN_NAME}\n",
             env={"STUB_FN_NAME": "hello"},
         )
 
@@ -871,11 +853,34 @@ class GenerateStubTests(unittest.TestCase):
 
     def test_a_type_built_from_builtins_is_written_as_its_annotation(self):
         source = self._generate(
-            "agent:\n  name: Hello\n  functions:\n    - name: hello\n"
-            "      arguments:\n        - name: a\n          type: dict[str, int] | None\n"
+            "      - name: hello\n        arguments:\n"
+            "          - name: a\n            type: dict[str, int] | None\n"
         )
 
         self.assertIn("def hello(self, a: dict[str, int] | None)", source)
+
+    def test_a_call_names_the_agent_the_method_and_the_declared_arguments(self):
+        source = self._generate(
+            "      - name: hello\n        arguments:\n"
+            "          - name: who\n          - name: earlier\n"
+        )
+
+        class FakeFuture:
+            id = "upstream-id"
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        future_module = types.ModuleType("future")
+        future_module.Future = FakeFuture
+        namespace = {}
+        with unittest.mock.patch.dict(sys.modules, {"future": future_module}):
+            exec(compile(source, "hello.py", "exec"), namespace)
+        sent = namespace["Hello"]().hello("world", FakeFuture()).kwargs
+
+        self.assertEqual(sent["service"], "Hello")
+        self.assertEqual(sent["method"], "hello")
+        self.assertEqual(sent["args"], {"who": "world", "earlier": "upstream-id"})
 
 
 class TargetDockerPlatformTests(unittest.TestCase):

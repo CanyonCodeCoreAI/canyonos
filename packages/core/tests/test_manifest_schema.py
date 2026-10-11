@@ -40,7 +40,11 @@ def example_environment(manifest_path):
 
 
 def _agent(**overrides):
-    entry = {"name": "ExampleAgent", "entrypoint": "agents/example_agent.py"}
+    entry = {
+        "name": "ExampleAgent",
+        "entrypoint": "agents/example_agent.py",
+        "functions": [{"name": "work"}],
+    }
     entry.update(overrides)
     return entry
 
@@ -148,7 +152,9 @@ class ReplicaTests(_ManifestCase):
 
 class ServiceIdentityTests(_ManifestCase):
     def test_a_service_without_a_name_is_rejected(self):
-        violation = self.one({"agents": [{"entrypoint": "agents/a.py"}]})
+        violation = self.one(
+            {"agents": [{"entrypoint": "agents/a.py", "functions": [{"name": "work"}]}]}
+        )
 
         self.assertEqual(violation.field, "agents[0].name")
         self.assertEqual(violation.message, "is required but missing")
@@ -174,6 +180,41 @@ class ServiceIdentityTests(_ManifestCase):
 
         self.assertEqual(violation.field, "agents[1].name")
         self.assertIn("image tag", violation.message)
+
+    def test_only_an_agent_name_has_to_be_a_python_identifier(self):
+        manifest = self.load(
+            {
+                "agents": [
+                    {
+                        "name": "portfolio-workflow",
+                        "type": "workflow",
+                        "workflow_file": "workflow/w.py",
+                    },
+                    {"name": "postgres-db", "type": "database", "image": "postgres:16"},
+                ]
+            }
+        )
+
+        self.assertEqual(
+            [service.name for service in manifest.agents],
+            ["portfolio-workflow", "postgres-db"],
+        )
+
+    def test_only_an_agent_declares_functions(self):
+        violation = self.one(
+            {
+                "agents": [
+                    {
+                        "name": "Workflow",
+                        "type": "workflow",
+                        "workflow_file": "workflow/w.py",
+                        "functions": [{"name": "work"}],
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(violation.field, "agents[0].functions")
 
 
 class LoadConfigParityTests(_ManifestCase):
@@ -268,7 +309,9 @@ class LogsFlagTests(_ManifestCase):
 
 class EntrypointTests(_ManifestCase):
     def test_an_agent_without_an_entrypoint_is_rejected(self):
-        violation = self.one({"agents": [{"name": "ExampleAgent"}]})
+        violation = self.one(
+            {"agents": [{"name": "ExampleAgent", "functions": [{"name": "work"}]}]}
+        )
 
         self.assertEqual(violation.field, "agents[0].entrypoint")
         self.assertEqual(violation.message, "is required but missing")
@@ -720,7 +763,8 @@ class RetiredKeyTests(unittest.TestCase):
             Path(path).write_text(
                 "agents:\n"
                 "  - name: ExampleAgent\n"
-                "    entrypoint: agents/example_agent.py\n" + text
+                "    entrypoint: agents/example_agent.py\n"
+                "    functions: [{name: work}]\n" + text
             )
             with self.assertRaises(SchemaError) as raised:
                 load_manifest(path)
@@ -730,7 +774,7 @@ class RetiredKeyTests(unittest.TestCase):
         (violation,) = self._violations("database:\n  url: sqlite:///runtime.db\n")
 
         self.assertEqual(violation.field, "database")
-        self.assertEqual(violation.line, 4)
+        self.assertEqual(violation.line, 5)
         self.assertEqual(violation.message, self._MESSAGE)
 
     def test_an_empty_database_block_is_rejected_too(self):
@@ -899,7 +943,16 @@ class EveryProblemInAnEntryTests(_ManifestCase):
 
     def test_a_missing_name_does_not_hide_the_entrys_other_fields(self):
         fields = self.fields(
-            {"agents": [{"name": None, "entrypoint": 7, "replicas": "many"}]}
+            {
+                "agents": [
+                    {
+                        "name": None,
+                        "entrypoint": 7,
+                        "replicas": "many",
+                        "functions": [{"name": "work"}],
+                    }
+                ]
+            }
         )
 
         self.assertEqual(
@@ -936,35 +989,38 @@ class ListItemLineTests(unittest.TestCase):
             "agents:\n"
             "  - name: ExampleAgent\n"
             "    entrypoint: agents/example_agent.py\n"
+            "    functions: [{name: work}]\n"
             "  - not-a-mapping\n"
         )
 
-        self.assertEqual((violation.field, violation.line), ("agents[1]", 4))
+        self.assertEqual((violation.field, violation.line), ("agents[1]", 5))
 
     def test_a_destination_that_is_not_a_mapping_points_at_its_line(self):
         (violation,) = self._violations(
             "agents:\n"
             "  - name: ExampleAgent\n"
             "    entrypoint: agents/example_agent.py\n"
+            "    functions: [{name: work}]\n"
             "otel:\n"
             "  destinations:\n"
             "    - just-a-string\n"
         )
 
-        self.assertEqual((violation.field, violation.line), ("otel.destinations[0]", 6))
+        self.assertEqual((violation.field, violation.line), ("otel.destinations[0]", 7))
 
     def test_a_bad_requirement_points_at_its_line(self):
         (violation,) = self._violations(
             "agents:\n"
             "  - name: ExampleAgent\n"
             "    entrypoint: agents/example_agent.py\n"
+            "    functions: [{name: work}]\n"
             "    requirements:\n"
             "      - requests\n"
             "      - -r deps.txt\n"
         )
 
         self.assertEqual(
-            (violation.field, violation.line), ("agents[0].requirements[1]", 6)
+            (violation.field, violation.line), ("agents[0].requirements[1]", 7)
         )
 
 
@@ -978,7 +1034,8 @@ class NonFiniteNumberTests(unittest.TestCase):
             Path(path).write_text(
                 "agents:\n"
                 "  - name: ExampleAgent\n"
-                "    entrypoint: agents/example_agent.py\n" + field_text
+                "    entrypoint: agents/example_agent.py\n"
+                "    functions: [{name: work}]\n" + field_text
             )
             with self.assertRaises(SchemaError) as raised:
                 load_manifest(path)
@@ -1077,6 +1134,7 @@ class UnparseableFileTests(unittest.TestCase):
                 "agents:\n"
                 "  - name: ExampleAgent\n"
                 "    entrypoint: agents/example_agent.py\n"
+                "    functions: [{name: work}]\n"
                 "    env:\n"
                 "      1: a\n"
                 "      '1': b\n"
@@ -1091,7 +1149,7 @@ class UnparseableFileTests(unittest.TestCase):
         self.assertEqual(
             violation.message, "expected string keys, got the key the number 1"
         )
-        self.assertEqual(violation.line, 5)
+        self.assertEqual(violation.line, 6)
 
     def test_an_empty_file_is_reported(self):
         (violation,) = self._load("# nothing here\n")
@@ -1129,7 +1187,10 @@ class RenderingTests(_ManifestCase):
     def test_every_violation_in_a_file_is_reported_at_once(self):
         fields = self.fields(
             {
-                "agents": [_agent(replicas="2"), {"name": "Nameless"}],
+                "agents": [
+                    _agent(replicas="2"),
+                    {"name": "Nameless", "functions": [{"name": "work"}]},
+                ],
                 "poll_interval": "soon",
             }
         )

@@ -30,7 +30,7 @@ class PublishConfigFilesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as config_dir:
             _write(config_dir, "llms.yaml", "routes:\n  - agent: IntentAgent\n")
             _write(config_dir, "global_controller.yaml", "poll_interval: 5\n")
-            _write(config_dir, "intent_agent.yml", "agent:\n  name: IntentAgent\n")
+            _write(config_dir, "scaling.yml", "scaling: {}\n")
             nodes = {"localhost": _FakeRedis(), "172.31.0.5": _FakeRedis()}
 
             controller = _controller(config_dir, nodes)
@@ -44,10 +44,7 @@ class PublishConfigFilesTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(node.get("global_controller:config")), {"poll_interval": 5}
             )
-            self.assertEqual(
-                json.loads(node.get("intent_agent:config")),
-                {"agent": {"name": "IntentAgent"}},
-            )
+            self.assertEqual(json.loads(node.get("scaling:config")), {"scaling": {}})
 
     def test_files_that_are_not_yaml_are_left_out(self):
         with tempfile.TemporaryDirectory() as config_dir:

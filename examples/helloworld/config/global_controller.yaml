@@ -10,6 +10,13 @@ agents:
       cpu: 1
       memory: 512
     entrypoint: agents/hello_agent.py
+    functions:
+      - name: hello
+        arguments:
+          - name: name
+            type: str
+        returns:
+          type: str
     provider: local
 
   - name: Workflow
