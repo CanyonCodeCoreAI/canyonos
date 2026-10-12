@@ -14,6 +14,9 @@ from rich.text import Text
 from canyonos.theme import GRADIENT, GREEN, WHITE
 
 console = Console()
+# For notices that are not the command's result, so `--json` output on stdout
+# stays a single parseable object.
+err_console = Console(stderr=True)
 
 
 def set_quiet(quiet):
@@ -21,10 +24,10 @@ def set_quiet(quiet):
     console.quiet = quiet
 
 
-def _emit(message, style, symbol=None):
+def _emit(message, style, symbol=None, target=console):
     parts = [(f"{symbol} ", style)] if symbol else []
     parts.append((str(message), WHITE if symbol else style))
-    console.print(Text.assemble(*parts))
+    target.print(Text.assemble(*parts))
 
 
 def say(message):
@@ -52,9 +55,21 @@ def warn(message):
     _emit(message, "yellow", "!")
 
 
+def notice(message, urgent=False):
+    """Show a warning on stderr, apart from the command's own output: marked with a
+    yellow !, or a bold red one when `urgent`."""
+    _emit(message, "bold red" if urgent else "yellow", "!", err_console)
+
+
 def hint(message):
     """Show a dimmed hint in the terminal, such as the next command to run."""
     _emit(message, "dim")
+
+
+def command(text):
+    """Show a command to copy in the terminal, dimmed and never wrapped, so even a long
+    one pastes back as one line."""
+    console.print(Text(str(text), style="dim"), soft_wrap=True)
 
 
 def blank():

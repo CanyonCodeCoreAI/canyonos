@@ -31,6 +31,7 @@
     "version:check": "bun run ./scripts/release-version.ts check",
     "version:set": "bun run ./scripts/release-version.ts set",
     "formula:write": "bun run ./scripts/homebrew-formula.ts",
+    "supported-versions:write": "bun run ./scripts/supported-versions.ts",
     "dev:emails": "bun run --filter @canyonos/api dev:emails"
   },
   "devDependencies": {

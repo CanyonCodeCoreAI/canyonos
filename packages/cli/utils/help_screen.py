@@ -29,6 +29,7 @@ UTIL_COMMANDS = (
     ("status", "Check whether a deploy is running and where it answers"),
     ("stop", "Stop the running deploy, keeping the container and files"),
     ("test", "Deploy locally and run one prompt end to end"),
+    ("upgrade", "Upgrade the canyonos CLI to the latest release"),
     ("validate", "Check a ported .car against the CanyonOS contract"),
 )
 

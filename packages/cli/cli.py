@@ -26,6 +26,7 @@ from canyonos.serve import run_serve
 from canyonos.status import run_status
 from canyonos.stop import run_stop
 from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
+from canyonos.upgrade import notify_if_outdated, run_upgrade
 from canyonos.validate import DEFAULT_ARTIFACT_ROOT, run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
 
@@ -141,6 +142,7 @@ def main():
     add("doctor", lambda args: sys.exit(0 if run_doctor() else 1))
     add("serve", lambda args: sys.exit(run_serve()))
     add("status", lambda args: run_status())
+    add("upgrade", lambda args: sys.exit(run_upgrade()))
 
     # Test has args: prompt, --json, --timeout.
     test = add(
@@ -196,6 +198,10 @@ def main():
     if not getattr(args, "command", None):
         parser.print_help()
         return
+
+    # `upgrade` is the notice's own advice, so repeating it there says nothing.
+    if args.command != "upgrade":
+        notify_if_outdated()
 
     try:
         args.func(args)
