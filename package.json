@@ -32,7 +32,11 @@
     "version:set": "bun run ./scripts/release-version.ts set",
     "formula:write": "bun run ./scripts/homebrew-formula.ts",
     "supported-versions:write": "bun run ./scripts/supported-versions.ts",
-    "dev:emails": "bun run --filter @canyonos/api dev:emails"
+    "dev:emails": "bun run --filter @canyonos/api dev:emails",
+    "skills:test": "bun test scripts/skills-check.test.ts",
+    "skills:check": "bun run skills:test && promptfoo validate config -c evals/promptfooconfig.js && bun run scripts/skills-promptfoo-smoke.ts",
+    "skills:eval": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo eval -c evals/promptfooconfig.js --env-file .env",
+    "skills:eval:view": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo view .promptfoo"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.237",
@@ -45,6 +49,7 @@
     "oxlint-tsgolint": "0.4.0",
     "prettier": "3.6.2",
     "prettier-plugin-tailwindcss": "^0.7.1",
+    "promptfoo": "0.124.1",
     "turbo": "2.10.13",
     "typescript": "5.9.3"
   }

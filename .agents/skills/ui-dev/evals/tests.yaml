@@ -1,0 +1,60 @@
+- description: 'UI routing: select for a React project dialog'
+  metadata: { skill: ui-dev, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: ui-dev,
+      kind: trigger,
+      request: 'Add a confirmation dialog before deleting a project in the React dashboard.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'UI routing: skip a Redis worker transition'
+  metadata: { skill: ui-dev, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: ui-dev,
+      kind: trigger,
+      request: 'Make the Redis worker status transition atomic.',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'UI: use existing primitives and TanStack Query ownership'
+  metadata: { skill: ui-dev, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'Add a delete-project confirmation dialog. The app already has Dialog and useDeleteProjectMutation.'
+    context: 'The project list uses TanStack Query.'
+    skillSource: file://../.agents/skills/ui-dev/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response reuses the existing Dialog and mutation, keeps request pending/error state in TanStack Query rather than useState/useEffect or a custom fetch lifecycle, and describes keyboard/focus plus real browser verification. It must not propose color-only errors or an unrelated redesign.

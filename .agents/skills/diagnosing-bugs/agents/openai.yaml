@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Diagnosing Bugs'
+  short_description: 'Investigate failures with evidence'
+  default_prompt: 'Use $diagnosing-bugs to help with this task.'

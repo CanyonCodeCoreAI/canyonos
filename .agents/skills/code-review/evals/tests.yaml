@@ -1,0 +1,60 @@
+- description: 'Review routing: select for a pull request review'
+  metadata: { skill: code-review, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: code-review,
+      kind: trigger,
+      request: 'Review this pull request for correctness and verification gaps.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'Review routing: skip implementing an endpoint'
+  metadata: { skill: code-review, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: code-review,
+      kind: trigger,
+      request: 'Implement an endpoint for project deletion.',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'Review: report evidence and ask for finding disposition'
+  metadata: { skill: code-review, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'Review a change that adds a local cache in a React component for query loading state.'
+    context: 'The application already uses TanStack Query for the same data.'
+    skillSource: file://../.agents/skills/code-review/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response identifies the competing loading-state owner with a concrete consequence, requests or cites evidence from the actual diff before asserting a defect, asks the user to choose fix here, follow-up, or ignore/discard before action, and does not silently edit code or post a PR comment.

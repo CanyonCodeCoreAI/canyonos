@@ -1,19 +1,20 @@
 # AGENTS.md
+
 This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Repository map
 
 A Bun + Turborepo workspace (TypeScript) and a uv workspace (Python) in one repo.
 
-| Path | What it is | Language |
-|---|---|---|
-| `packages/core` | Runtime: controllers, LLM gateway, policy, telemetry (`canyonos_core`) | Python |
-| `packages/cli` | The `canyonos` command line | Python |
-| `packages/api` | Dashboard API | TypeScript (Bun) |
-| `packages/web` | Dashboard frontend | TypeScript (React, Vite) |
-| `packages/ui` | Shared React components for `web` | TypeScript (React) |
-| `examples/` | Sample workflows to deploy with `canyonos deploy` | Python |
-| `tests/` | Cross-package integration and performance tests | Python |
+| Path            | What it is                                                             | Language                 |
+| --------------- | ---------------------------------------------------------------------- | ------------------------ |
+| `packages/core` | Runtime: controllers, LLM gateway, policy, telemetry (`canyonos_core`) | Python                   |
+| `packages/cli`  | The `canyonos` command line                                            | Python                   |
+| `packages/api`  | Dashboard API                                                          | TypeScript (Bun)         |
+| `packages/web`  | Dashboard frontend                                                     | TypeScript (React, Vite) |
+| `packages/ui`   | Shared React components for `web`                                      | TypeScript (React)       |
+| `examples/`     | Sample workflows to deploy with `canyonos deploy`                      | Python                   |
+| `tests/`        | Cross-package integration and performance tests                        | Python                   |
 
 How each part works is in [docs/architecture/](docs/architecture/README.md).
 
@@ -67,3 +68,6 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) (Conventional Commits, review gates), 
 - [skills/porting-to-canyonos](skills/porting-to-canyonos/SKILL.md): porting an existing Python agent to CanyonOS.
 - [skills/prompt-management](skills/prompt-management/SKILL.md): extracting source prompts into versioned `prompts.yaml`.
 - [skills/scaling-agents](skills/scaling-agents/SKILL.md): agent memory, `llms.yaml` model access and caps, and `scaling.yaml` policies.
+- Engineering skills are canonical in `.agents/skills/`; `.claude/skills/` contains compatibility symlinks.
+  Run `bun run skills:check` for offline validation. Read [evals/README.md](evals/README.md)
+  before running the paid model evaluations.

@@ -1,0 +1,60 @@
+- description: 'Testing routing: select for a regression test decision'
+  metadata: { skill: testing, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: testing,
+      kind: trigger,
+      request: 'Add regression coverage for an invoice that is saved twice when its request retries.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'Testing routing: skip explaining a module boundary'
+  metadata: { skill: testing, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: testing,
+      kind: trigger,
+      request: 'Should this module be extracted into a reusable package?',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'Testing: prove the retry behavior at a meaningful boundary'
+  metadata: { skill: testing, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'Add coverage for an invoice create operation that must remain idempotent when a request is retried.'
+    context: 'The endpoint writes through a real transactional database in integration tests.'
+    skillSource: file://../.agents/skills/testing/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response proposes a focused integration or public-boundary test using the actual persistence behavior, asserts the observable idempotency contract, includes cleanup and bounded asynchronous waiting where needed, and does not mock the persistence module under test or add unrelated coverage.

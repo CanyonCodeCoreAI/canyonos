@@ -1,0 +1,60 @@
+- description: 'Architecture routing: select for a cross-layer ownership decision'
+  metadata: { skill: architecture, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: architecture,
+      kind: trigger,
+      request: 'Decide whether approval rules belong in the API route, service, or a new shared package.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'Architecture routing: skip a focused failing-test investigation'
+  metadata: { skill: architecture, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: architecture,
+      kind: trigger,
+      request: 'Why does this one test fail only on CI?',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'Architecture: choose the responsible boundary without speculative framework work'
+  metadata: { skill: architecture, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'The API route and dashboard both reimplement project approval eligibility. Decide how to remove the duplication.'
+    context: 'The API already has a project domain service and SDK contract exports.'
+    skillSource: file://../.agents/skills/architecture/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response assigns the eligibility rule to its domain owner, reuses or exports the canonical contract for consumers, keeps HTTP and UI concerns at their boundaries, and proposes only a focused extraction justified by the current duplication. It must not recommend a generic framework or unrelated migration.

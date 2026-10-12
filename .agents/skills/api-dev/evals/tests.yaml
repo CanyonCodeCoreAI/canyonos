@@ -1,0 +1,60 @@
+- description: 'API routing: select for an Elysia endpoint'
+  metadata: { skill: api-dev, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: api-dev,
+      kind: trigger,
+      request: 'Add an authenticated Elysia endpoint to create a project.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'API routing: skip restyling a dashboard card'
+  metadata: { skill: api-dev, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: api-dev,
+      kind: trigger,
+      request: 'Restyle the dashboard metric cards for mobile.',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'API: keep contracts, access, and transactions at their owners'
+  metadata: { skill: api-dev, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'Create an organization project endpoint that writes a project and its initial version.'
+    context: 'The API uses Elysia, Zod, Drizzle, an existing project service, and a shared organization-access resolver.'
+    skillSource: file://../.agents/skills/api-dev/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response uses the established Elysia/Zod boundary, authenticates and uses the shared organization-access resolver before the service operation, keeps business rules in the service and queries in the repository, and makes the related database writes transactional or explains their failure boundary. It must not duplicate schemas or propose a generic repository framework.

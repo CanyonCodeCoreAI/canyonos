@@ -1,0 +1,60 @@
+- description: 'Diagnosis routing: select for an intermittent production failure'
+  metadata: { skill: diagnosing-bugs, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: diagnosing-bugs,
+      kind: trigger,
+      request: 'Investigate why the deployment sometimes creates duplicate workers.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'Diagnosis routing: skip a new feature request'
+  metadata: { skill: diagnosing-bugs, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: diagnosing-bugs,
+      kind: trigger,
+      request: 'Add pagination to the projects list.',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'Diagnosis: reproduce before changing scope'
+  metadata: { skill: diagnosing-bugs, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'Investigate a pull-request finding that one command occasionally sends the same job twice.'
+    context: 'The reporter has not supplied commands, inputs, logs, or the expected result, and has not chosen a disposition for the finding.'
+    skillSource: file://../.agents/skills/diagnosing-bugs/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response distinguishes diagnosis from a fix, asks for the real workflow and evidence, proposes a reproducible check or hypotheses without inventing a cause, and states that discovered PR findings need a fix, follow-up, or ignore/discard disposition before changing code.

@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Testing'
+  short_description: 'Design focused behavior tests'
+  default_prompt: 'Use $testing to help with this task.'

@@ -1,0 +1,60 @@
+- description: 'Python routing: select for Redis-backed worker recovery'
+  metadata: { skill: python-systems, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: python-systems,
+      kind: trigger,
+      request: 'Fix duplicate job dispatch after a Python worker restarts with Redis shared state.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'Python routing: skip choosing a React button color'
+  metadata: { skill: python-systems, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: python-systems,
+      kind: trigger,
+      request: 'Choose colors for a React destructive button.',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'Python: make a distributed transition durable and recoverable'
+  metadata: { skill: python-systems, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'Record a worker job as dispatched, start its process, and recover safely if the process dies between those steps.'
+    context: 'Several Python worker replicas use Redis as shared state.'
+    skillSource: file://../.agents/skills/python-systems/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response assigns lifecycle and recovery to a durable owner, avoids treating process memory or read-then-write Redis updates as coordination, describes an atomic/idempotent transition and reconciliation or recovery for partial success, and bounds retries. It must not claim the multi-system operation is automatically atomic.

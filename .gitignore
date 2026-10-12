@@ -70,3 +70,7 @@ playwright-report/
 
 # MkDocs build output
 site/
+
+# Local skill-evaluation state and reports
+.promptfoo/
+evals/results/

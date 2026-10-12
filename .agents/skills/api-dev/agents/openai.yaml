@@ -1,0 +1,4 @@
+interface:
+  display_name: 'API Development'
+  short_description: 'Build typed Elysia API services'
+  default_prompt: 'Use $api-dev to help with this task.'

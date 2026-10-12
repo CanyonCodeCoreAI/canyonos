@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Python Systems'
+  short_description: 'Design reliable Python runtimes'
+  default_prompt: 'Use $python-systems to help with this task.'

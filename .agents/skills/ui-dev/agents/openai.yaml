@@ -1,0 +1,4 @@
+interface:
+  display_name: 'UI Development'
+  short_description: 'Build accessible React interfaces'
+  default_prompt: 'Use $ui-dev to help with this task.'

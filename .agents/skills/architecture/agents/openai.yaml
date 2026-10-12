@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Architecture'
+  short_description: 'Clarify ownership and boundaries'
+  default_prompt: 'Use $architecture to help with this task.'
