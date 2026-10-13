@@ -4,6 +4,7 @@ import { join } from 'node:path';
 export const engineeringSkills = [
   'api-dev',
   'architecture',
+  'cc-pr-review',
   'code-review',
   'diagnosing-bugs',
   'python-systems',

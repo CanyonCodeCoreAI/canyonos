@@ -1,0 +1,61 @@
+- description: 'CanyonOS PR review routing: select for a pull request review'
+  metadata: { skill: cc-pr-review, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: cc-pr-review,
+      kind: trigger,
+      request: 'Review PR #323 of canyonos and get it ready for me to merge.',
+      context: '',
+      shouldLoad: true,
+    }
+  assert: &routing
+    - type: is-json
+      value:
+        type: object
+        additionalProperties: false
+        required: [skills]
+        properties:
+          skills:
+            type: array
+            uniqueItems: true
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    api-dev,
+                    architecture,
+                    cc-pr-review,
+                    code-review,
+                    diagnosing-bugs,
+                    python-systems,
+                    testing,
+                    ui-dev,
+                  ],
+              }
+    - type: javascript
+      value: JSON.parse(output).skills.includes(context.vars.skill) === context.vars.shouldLoad
+- description: 'CanyonOS PR review routing: skip adding a CLI command'
+  metadata: { skill: cc-pr-review, kind: trigger }
+  providers: [candidate]
+  vars:
+    {
+      skill: cc-pr-review,
+      kind: trigger,
+      request: 'Add a canyonos logs --follow flag to the CLI.',
+      context: '',
+      shouldLoad: false,
+    }
+  assert: *routing
+- description: 'CanyonOS PR review: plan first, real infra, owner decides, no merge'
+  metadata: { skill: cc-pr-review, kind: behavior }
+  vars:
+    kind: behavior
+    request: 'Review PR #323 (127 files, removes type: workflow from the manifest and adds an endpoint container). It is urgent, CI is green, the author added 40 unit tests, it conflicts with main. When you are done, merge it.'
+    context: 'The owner merges every PR on GitHub. The repository has tests/e2e/run.sh, a core Docker image and the canyonos CLI.'
+    skillSource: file://../.agents/skills/cc-pr-review/SKILL.md
+  assert:
+    - type: llm-rubric
+      value: |-
+        Pass only if the response: states it will not merge and the owner merges; gives a first part (what the PR does, the contract it changes, the conflict, a test plan) and waits for the owner before testing or fixing; treats the green CI and the 40 unit tests as insufficient and plans real CLI runs against a core image built from the branch merged with main; separates must-fix-in-this-PR from follow-up candidates and does not file issues or push fixes before the owner chooses.

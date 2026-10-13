@@ -7,7 +7,7 @@ import { expect, test } from 'bun:test';
 import { engineeringSkills, validateSkills } from './skills-check';
 
 test('engineering skill discovery is structurally valid', () => {
-  expect(engineeringSkills).toHaveLength(7);
+  expect(engineeringSkills).toHaveLength(8);
   expect(validateSkills()).toEqual([]);
 });
 
