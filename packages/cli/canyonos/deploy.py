@@ -330,9 +330,6 @@ def run_deploy(
             raise RuntimeError(str(e)) from None
 
         if quiet:
-            # Still bring the dashboard up so anything reachable only through its
-            # LLM gateway (e.g. a guardrail calling the OpenAI SDK directly) works
-            # under `canyonos test` too -- just skip the log-tail/summary UI.
             if serve:
                 _start_dashboard(report_failure=False)
             return state

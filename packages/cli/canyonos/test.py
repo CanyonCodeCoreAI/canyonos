@@ -257,10 +257,9 @@ def _deploy_locally(run, config_path, api_port):
     workflow answers."""
     run.begin("deploy", 1, "Deploy locally")
 
-    # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI, we do our
-    # own HTTP readiness check below instead. serve=True still brings the
-    # dashboard's LLM gateway up, quietly, for code that calls it directly.
-    state = run_deploy(config_path, serve=True, quiet=True, banner=False)
+    # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI; the test
+    # performs its own HTTP readiness check below.
+    state = run_deploy(config_path, serve=False, quiet=True, banner=False)
     run.deploy_started = True
 
     _wait_for_workflow(state, api_port)
