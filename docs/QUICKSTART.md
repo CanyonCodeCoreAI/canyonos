@@ -42,8 +42,6 @@ Using one of our examples? Copy its `.env.example` to `.env` and fill in the val
 
 `env_file: .env` in `.car/config/global_controller.yaml` passes these to every agent container. Without them, the test fails at the first agent that needs one.
 
-CanyonOS also adds its own `CANYONOS_*` lines to `.env` when the dashboard starts. Leave those as they are.
-
 ### 3. Test
 
 Verify the workflow works by deploying everything locally and sending a test query. `canyonos build` saves a sample query taken from your project in `.car/config/test_query.txt`:
@@ -144,15 +142,15 @@ For `provider: EC2` agents specifically (AMI/IAM/security group requirements, th
 ### 7. Stop or quit
 
 ```bash
-canyonos stop   # stop all containers; keeps CanyonOS's own container and files for the next deploy
-canyonos quit   # full teardown — also removes CanyonOS's container, its copy of your project, and the dashboard
+canyonos stop   # stop this project's containers; keeps CanyonOS's own container and files for the next deploy
+canyonos quit   # full teardown — also removes CanyonOS's container, its copy of your project, and the dashboard if no other project is running
 ```
 
-`quit` leaves your project folder (including `.car/` and `.env`) and the built images in place. Use `canyonos clean` for `.car/`, the images, the installed skill and the `.env` keys `canyonos serve` wrote.
+`quit` leaves your project folder (including `.car/` and `.env`) and the built images in place. Use `canyonos clean` for `.car/`, the images, the installed skill and the `CANYONOS_*` `.env` keys older versions of `canyonos serve` wrote.
 
 ### Clean generated files
 
-Removes the `.car` folder, the CanyonOS skill `canyonos build` installed in this project, the `.env` keys `canyonos serve` wrote (your own lines stay), and every `canyonos-*` Docker image on this machine, including other projects' images.
+Removes the `.car` folder, the CanyonOS skill `canyonos build` installed in this project, the `.env` keys `canyonos serve` wrote (your own lines stay), and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay.
 
 ```bash
 canyonos clean

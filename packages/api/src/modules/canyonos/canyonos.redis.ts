@@ -3,6 +3,8 @@ import { RedisClient } from 'bun';
 import { config } from '@core/env';
 import { badGateway, notFound } from '@core/errors';
 
+import { canyonos_repo } from './canyonos.repo';
+
 export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
 
 async function connect(redis: RedisClient): Promise<void> {
@@ -17,10 +19,12 @@ async function connect(redis: RedisClient): Promise<void> {
   }
 }
 
-/** Runs operation against the running controller's Redis, closing the connection afterwards. */
-export async function with_redis<T>(operation: (redis: RedisClient) => Promise<T>): Promise<T> {
-  const { redisHost, redisPort } = config.canyonos;
-  const redis = new RedisClient(`redis://${redisHost}:${redisPort}`, {
+/** Runs operation against the configured host's Redis on redis_port, then closes the connection. */
+export async function with_redis_at<T>(
+  redis_port: number,
+  operation: (redis: RedisClient) => Promise<T>
+): Promise<T> {
+  const redis = new RedisClient(`redis://${config.canyonos.redisHost}:${redis_port}`, {
     autoReconnect: false,
     maxRetries: 0,
     enableOfflineQueue: false,
@@ -33,6 +37,17 @@ export async function with_redis<T>(operation: (redis: RedisClient) => Promise<T
   } finally {
     redis.close();
   }
+}
+
+// Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
+// with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
+/** Runs operation against the Redis project_id registered, or the configured one if it never did. */
+export async function with_redis<T>(
+  project_id: string,
+  operation: (redis: RedisClient) => Promise<T>
+): Promise<T> {
+  const redis_port = await canyonos_repo.find_redis_port(project_id);
+  return with_redis_at(redis_port ?? config.canyonos.redisPort, operation);
 }
 
 const SCAN_BATCH_SIZE = '100';

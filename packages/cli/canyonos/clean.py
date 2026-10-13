@@ -1,22 +1,49 @@
-"""Logic for canyonos clean: remove generated artifacts, skills, managed .env keys and images."""
+"""Logic for canyonos clean: remove generated artifacts, skills, managed .env keys and
+the project's agent images."""
 
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
-from canyonos import build, dashboard_stack, ui
+import yaml
 
-# Core tags every image it builds "canyonos-<agent>"; the ghcr.io dashboard
-# images must not match.
-IMAGE_REFERENCE = "canyonos-*"
+from canyonos import build, dashboard_stack, project, ui
+from canyonos.constants import default_config_path
 
 
-def _remove_canyon_images():
-    """Removes all the images prefixed with IMAGE_REFERENCE from machine."""
+def _project_images():
+    """Return the image name of every agent in the project's `global_controller.yaml`,
+    or None when the file is missing or can't be read."""
+    try:
+        with open(default_config_path()) as f:
+            config = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    agents = config.get("agents") if isinstance(config, dict) else None
+    return [
+        project.image_name(agent["name"])
+        for agent in agents or []
+        if isinstance(agent, dict) and isinstance(agent.get("name"), str)
+    ]
+
+
+def _remove_canyon_images(images):
+    """Remove the images CanyonOS built for this project's agents, leaving other
+    projects' images and the CanyonOS images themselves in place."""
+    if images is None:
+        ui.hint(
+            f"No readable {default_config_path()} here, so no Docker images were "
+            "removed."
+        )
+        return
+    if not images:
+        return
+
+    filters = [arg for image in images for arg in ("--filter", f"reference={image}")]
     try:
         result = subprocess.run(
-            ["docker", "images", "--filter", f"reference={IMAGE_REFERENCE}", "-q"],
+            ["docker", "images", *filters, "-q"],
             capture_output=True,
             text=True,
             check=False,
@@ -80,7 +107,7 @@ def _remove_canyon_skills():
 
 
 def _remove_canyon_env_vars():
-    """Strips the keys `canyonos serve` writes from the project's `.env`."""
+    """Strips the keys older versions of `canyonos serve` wrote into the project's `.env`."""
     try:
         removed = dashboard_stack.remove_project_env_keys(Path.cwd() / ".env")
     except (OSError, UnicodeDecodeError) as error:
@@ -92,7 +119,9 @@ def _remove_canyon_env_vars():
 
 def run_clean():
     """Remove the current project's `.car` folder, CanyonOS skill and the `.env`
-    keys `canyonos serve` wrote, and all `canyonos-*` Docker images."""
+    keys `canyonos serve` wrote, and the Docker images built for its agents."""
+    # A built project keeps its agent list inside .car, which goes first.
+    images = _project_images()
     car_dir = os.path.join(os.getcwd(), ".car")
 
     if os.path.isdir(car_dir):
@@ -104,5 +133,5 @@ def run_clean():
 
     _remove_canyon_skills()
     _remove_canyon_env_vars()
-    _remove_canyon_images()
+    _remove_canyon_images(images)
     ui.ok("Clean complete.")

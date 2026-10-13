@@ -1,4 +1,5 @@
-"""Compile the controller protos before collection.
+"""Compile the controller protos before collection, and keep the developer's
+shell from changing the Docker names the tests expect.
 
 canyonos_core.controller bare-imports local_controler_pb2. The container
 images put protoc's output on sys.path; a checkout has to generate it.
@@ -49,3 +50,9 @@ def _unbind_providers():
     unbind()
     yield
     unbind()
+
+
+def _no_docker_project(monkeypatch):
+    """Clear the project a developer shell may export, so every test starts from the
+    plain `canyonos-...` names unless it sets a project itself."""
+    monkeypatch.delenv("CANYONOS_DOCKER_PROJECT", raising=False)

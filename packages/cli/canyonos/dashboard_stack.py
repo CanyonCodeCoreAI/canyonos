@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import importlib.resources
 import json
 import os
@@ -12,29 +13,24 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from canyonos import env
-from canyonos.constants import (
-    DEFAULT_DASHBOARD_PORT,
-    default_config_path,
-    local_redis_port,
-    public_ip,
-)
+from canyonos.constants import DEFAULT_DASHBOARD_PORT, public_ip
 from canyonos.port_utils import find_free_port, is_port_conflict
 
 COMPOSE_PROJECT = "canyonos-dashboard"
 API_IMAGE = env.api_image
 WEB_IMAGE = env.web_image
-HOST_GATEWAY = "host.docker.internal"
-REDIS_HOST = HOST_GATEWAY
+LOCK_WAIT_MESSAGE = "waiting for another canyonos command to finish with the dashboard"
 
-# The keys `canyonos serve` owns in the project's .env; every other line is the user's.
-MANAGED_ENV_KEYS = frozenset(
+# What older versions of `canyonos serve` wrote into each project's .env, before
+# the dashboard's settings moved to one .env per machine; every other line is the user's.
+LEGACY_PROJECT_ENV_KEYS = frozenset(
     {
         "CANYONOS_JWT_SECRET",
         "CANYONOS_REDIS_HOST",
@@ -71,14 +67,13 @@ class DashboardStack:
     """Where the dashboard's files live on this machine and the port it serves on."""
 
     state_dir: Path
-    project_dir: Path
     web_port: int = DEFAULT_DASHBOARD_PORT
 
     @property
     def env_path(self) -> Path:
-        """Path to the project's `.env` file, where `canyonos serve` writes the
-        dashboard's settings and JWT secret."""
-        return self.project_dir / ".env"
+        """Path to the machine's dashboard `.env`, where `canyonos serve` writes the
+        stack's settings and JWT secret, shared by every project."""
+        return self.state_dir / ".env"
 
 
 def _run(
@@ -89,6 +84,36 @@ def _run(
 
 def _state_dir() -> Path:
     return Path.home() / ".canyonos" / "dashboard"
+
+
+@contextmanager
+def _dashboard_lock(on_wait: Callable[[], None] | None = None) -> Iterator[None]:
+    """Hold the machine-wide dashboard lock for the duration of the block.
+
+    Every command that starts, stops, or removes the shared stack takes it, so
+    two project folders never interleave their compose calls, port choice, or
+    JWT secret. Blocks until the lock is free, calling `on_wait` first when
+    another command holds it. Raises PhaseFailure("validate", ...) when the
+    lock file cannot be opened or locked.
+    """
+    state_dir = _state_dir()
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        lock_file = open(state_dir / ".lock", "a", encoding="utf-8")
+    except OSError:
+        raise PhaseFailure("validate", "dashboard state directory is not writable")
+
+    with lock_file:
+        try:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if on_wait is not None:
+                    on_wait()
+                fcntl.flock(lock_file, fcntl.LOCK_EX)
+        except OSError as e:
+            raise PhaseFailure("validate", f"could not lock the dashboard: {e}") from e
+        yield
 
 
 def _project_argv() -> list[str]:
@@ -150,10 +175,6 @@ def _validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     except OSError:
         raise PhaseFailure("validate", "docker daemon or socket is unavailable")
 
-    # The dashboard reads no project config, so the project root is just the
-    # cwd, the same assumption sync/clean/build already make.
-    project_root = Path.cwd()
-
     state_dir = _state_dir()
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -170,7 +191,7 @@ def _validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     except RuntimeError as e:
         raise PhaseFailure("validate", str(e)) from e
 
-    return DashboardStack(state_dir, project_root, web_port)
+    return DashboardStack(state_dir, web_port)
 
 
 def _env_value(value: str) -> str:
@@ -211,43 +232,16 @@ def _env_line(key: str, value: str) -> str:
     return f"{key}={value}\n"
 
 
-def _write_project_env(env_path: Path, managed_env: dict[str, str]) -> None:
-    """Rewrite only the CANYONOS_* keys, leaving every other line of the user's .env alone."""
-    try:
-        lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except FileNotFoundError:
-        lines = []
-
-    replaced: set[str] = set()
-    updated_lines: list[str] = []
-    for line in lines:
-        key, separator, _ = line.partition("=")
-        if separator and key in managed_env:
-            if key not in replaced:
-                updated_lines.append(_env_line(key, managed_env[key]))
-                replaced.add(key)
-            continue
-        updated_lines.append(line)
-
-    if updated_lines and not updated_lines[-1].endswith("\n"):
-        updated_lines[-1] += "\n"
-
-    updated_lines.extend(
-        _env_line(key, value)
-        for key, value in managed_env.items()
-        if key not in replaced
-    )
-    _write_private_file(env_path, "".join(updated_lines))
-
-
 def remove_project_env_keys(env_path: Path) -> int:
-    """Drop the MANAGED_ENV_KEYS lines from the user's .env and return how many went."""
+    """Drop the LEGACY_PROJECT_ENV_KEYS lines from the user's .env and return how many went."""
     try:
         lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
     except FileNotFoundError:
         return 0
 
-    kept = [line for line in lines if line.partition("=")[0] not in MANAGED_ENV_KEYS]
+    kept = [
+        line for line in lines if line.partition("=")[0] not in LEGACY_PROJECT_ENV_KEYS
+    ]
     removed = len(lines) - len(kept)
     if removed:
         _write_private_file(env_path, "".join(kept))
@@ -261,17 +255,18 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
         managed_env = {
             "CANYONOS_JWT_SECRET": _read_existing_secret(stack.env_path)
             or secrets.token_urlsafe(32),
-            "CANYONOS_REDIS_HOST": REDIS_HOST,
-            "CANYONOS_REDIS_PORT": str(local_redis_port(default_config_path())),
             "CANYONOS_API_IMAGE": API_IMAGE,
             "CANYONOS_WEB_IMAGE": WEB_IMAGE,
             "CANYONOS_WEB_PORT": str(stack.web_port),
         }
-        _write_project_env(stack.env_path, managed_env)
+        _write_private_file(
+            stack.env_path,
+            "".join(_env_line(key, value) for key, value in managed_env.items()),
+        )
         (stack.state_dir / "stack.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 3,
+                    "schema_version": 4,
                     "version": env.VERSION,
                     "compose_project": COMPOSE_PROJECT,
                 }
@@ -341,10 +336,6 @@ def _project_has_running_containers(stack: DashboardStack, manifest: Path) -> bo
 
 
 def _start(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> None:
-    # The api reads the controller's Redis identity once at startup to create
-    # its project row, so a surviving container keeps serving whichever project
-    # was deployed before it. Replace it every serve rather than reuse it.
-    _run([*_compose_argv(stack, manifest), "rm", "-sf", "api"])
     try:
         result = _run(
             [
@@ -456,14 +447,23 @@ def _dashboard_compose_command(command: str, *leftover_flags: str) -> bool:
     return leftover.returncode == 0 and not leftover.stdout.strip()
 
 
+def _locked_dashboard_compose_command(command: str, *leftover_flags: str) -> bool:
+    """`_dashboard_compose_command` under the dashboard lock; False when the lock fails."""
+    try:
+        with _dashboard_lock():
+            return _dashboard_compose_command(command, *leftover_flags)
+    except PhaseFailure:
+        return False
+
+
 def stop_dashboard() -> bool:
     """`docker compose stop` -- halts web/api/db, keeping them for a later `canyonos serve`."""
-    return _dashboard_compose_command("stop")
+    return _locked_dashboard_compose_command("stop")
 
 
 def teardown_dashboard() -> bool:
     """`docker compose down` -- removes the dashboard's web/api/db containers entirely."""
-    return _dashboard_compose_command("down", "--all")
+    return _locked_dashboard_compose_command("down", "--all")
 
 
 def run_dashboard(
@@ -471,7 +471,11 @@ def run_dashboard(
     preferred_port: int = DEFAULT_DASHBOARD_PORT,
 ) -> ServeResult:
     """Start the local dashboard for `canyonos serve` and `canyonos deploy`, reporting
-    each step; on failure, save the logs and remove what this run started."""
+    each step; on failure, save the logs and remove what this run started.
+
+    The whole run holds the dashboard lock, so a concurrent serve, stop, or quit
+    from another project folder waits for it rather than racing it.
+    """
 
     def report(result: ServeResult) -> None:
         if phase_reporter is not None:
@@ -485,6 +489,11 @@ def run_dashboard(
     had_containers = False
     with ExitStack() as resources:
         try:
+            resources.enter_context(
+                _dashboard_lock(
+                    lambda: report(ServeResult(True, "validate", LOCK_WAIT_MESSAGE))
+                )
+            )
             stack = _validate(preferred_port)
             report(ServeResult(True, "validate", "dashboard prerequisites validated"))
 

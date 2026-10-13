@@ -18,6 +18,7 @@ import sys
 
 from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.docker_utils import docker_available
+from canyonos_core.controller.utils.container_names import image_name
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.reconciler import providers
 from canyonos_core.schema import (
@@ -392,7 +393,7 @@ def _run_build(config_path):
             # agent image so the rest of the deploy pipeline treats it the
             # same way (EC2 image transfer, etc.) without further changes.
             image = agent_cfg["image"]
-            target_image = f"canyonos-{agent_name.lower()}"
+            target_image = image_name(agent_name)
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
             subprocess.run(
                 ["docker", "pull", "--platform", platform, image], check=True
@@ -445,7 +446,7 @@ def _run_build(config_path):
             {
                 "name": agent_name.lower(),
                 "context": docker_context,
-                "image_name": f"canyonos-{agent_name.lower()}",
+                "image_name": image_name(agent_name),
             }
         )
 

@@ -11,6 +11,7 @@ from canyonos_core.controller.controller_context import (
     instance_key as _instance_key,
     list_instances,
 )
+from canyonos_core.controller.utils.container_names import ForeignContainerError
 from canyonos_core.reconciler import providers
 from canyonos_core.reconciler.routing import publish_routing_snapshot
 
@@ -158,9 +159,17 @@ class Provisioner(object):
         )
 
         agent_id = f"{job['agent_name']}-{replica_index}"
-        instance = runtime.bootstrap_instance(
-            instance, agent_spec, replica_index, agent_id
-        )
+        try:
+            instance = runtime.bootstrap_instance(
+                instance, agent_spec, replica_index, agent_id
+            )
+        except ForeignContainerError:
+            # The container under this name is another project's: left in the
+            # record, remove_unfinished would terminate theirs as ours.
+            self._discard_instance_record(
+                job["instance_id"], {"agent_name": job["agent_name"]}
+            )
+            raise
         instance["agent_id"] = agent_id
         self._write_instance(instance, hourly_cost)
         return instance

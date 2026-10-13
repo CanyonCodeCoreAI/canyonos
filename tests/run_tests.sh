@@ -12,13 +12,22 @@ python3 -m pytest "$SCRIPT_DIR" "$SCRIPT_DIR/../packages"
 
 TEST_DIR="/tmp/canyonos_test_env_$$"
 PROJECT_NAME="canyonos_test"
+# The helloworld example's `api_port`; tests/test_*.py query the same port.
+WORKFLOW_PORT=8082
+# The helloworld example's Redis port, which the dashboard keeps for this project.
+REDIS_PORT=6380
 
-# Cleanup function ensures we kill the deployed Flask/GlobalController on exit
+# Each copy below is its own CanyonOS project, so each one is quit from its folder.
 function cleanup {
     echo ">> Cleaning up test environment..."
     if [ -n "$DEPLOY_PID" ]; then
         kill -9 $DEPLOY_PID 2>/dev/null || true
     fi
+    for project in "$TEST_DIR/$PROJECT_NAME" "$TEST_DIR/context_propagation"; do
+        if [ -d "$project" ]; then
+            (cd "$project" && canyonos quit) || true
+        fi
+    done
     rm -rf "$TEST_DIR"
     echo ">> Cleanup complete."
 }
@@ -36,14 +45,16 @@ canyonos deploy &
 DEPLOY_PID=$!
 
 # Wait for the workflow flask app to become reachable
-echo ">> Waiting for deployment to become healthy on port 8080..."
-until curl -s http://localhost:8080/main > /dev/null 2>&1 || [ "$?" -eq "4" ] || [ "$?" -eq "0" ] || [ "$?" -eq "52" ]; do
+echo ">> Waiting for deployment to become healthy on port $WORKFLOW_PORT..."
+until curl -s http://localhost:$WORKFLOW_PORT/main > /dev/null 2>&1 || [ "$?" -eq "4" ] || [ "$?" -eq "0" ] || [ "$?" -eq "52" ]; do
     sleep 2
 done
 
 # Wait an additional few seconds for agents to register to redis properly
 sleep 5
-echo ">> Deployment healthy! Running test suite."
+echo ">> Deployment healthy! Checking the dashboard registers this project..."
+until curl -sf -X POST http://127.0.0.1:3000/canyonos/projects -H "Content-Type: application/json" -d "{\"redis_port\": $REDIS_PORT}" | grep -q '"project_id"'; do sleep 2; done
+echo ">> Running test suite."
 
 ORIG_CWD=$(pwd)
 
@@ -57,10 +68,11 @@ python3 "$SCRIPT_DIR/test_performance.py" --concurrent 5 --total 20 || exit 1
 
 echo "-------------------------------------------"
 echo ">> Redeploying with the context propagation workflow..."
-canyonos stop
+# A separate project folder gets its own Global Controller, so quit this one
+# instead of stopping it: both publish the workflow on the same port.
+canyonos quit
 kill -9 $DEPLOY_PID 2>/dev/null || true
-# The old workflow also answers on 8080, so wait for it to go before waiting for the new one.
-while curl -s http://localhost:8080/status/probe > /dev/null 2>&1; do
+while curl -s http://localhost:$WORKFLOW_PORT/status/probe > /dev/null 2>&1; do
     sleep 1
 done
 cd "$TEST_DIR"
@@ -69,7 +81,7 @@ cp "$SCRIPT_DIR/context_propagation_workflow.py" context_propagation/workflow/ex
 cd context_propagation
 canyonos deploy &
 DEPLOY_PID=$!
-until curl -s http://localhost:8080/status/probe > /dev/null 2>&1; do
+until curl -s http://localhost:$WORKFLOW_PORT/status/probe > /dev/null 2>&1; do
     sleep 2
 done
 sleep 5

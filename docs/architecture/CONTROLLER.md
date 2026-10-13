@@ -4,7 +4,7 @@
 
 ```
 CLI host:         ──▶          8000
-                         ┌───────┴──── canyonos-global-controller ────────┐
+                         ┌───────┴─ canyonos-<project>-global-controller ─┐
                          │ canyonos_core.server                           │
                          │ POST /deploy ──▶ canyonos_core.cli deploy      │
                          │                         │                      │
@@ -14,7 +14,7 @@ CLI host:         ──▶          8000
                          └────────────────────────┬───────────────────────┘
                                                   │ 
 ┌──────────────────────────── one machine ────────┼───────────────────────────┐
-│ canyonos-redis-<host> ◀── RedisClient ──────────┘  redis_port (6379)        │
+│ canyonos-<project>-redis-<host> ◀─ RedisClient ─┘  redis_port (6379)        │
 │        ▲                                                                     │
 │        ├── agent replica: LocalController + agent code                      │
 │        │      gRPC [::]:50051; host publication <host>:<host_port>           │
@@ -24,7 +24,7 @@ CLI host:         ──▶          8000
 │        ├── workflow replica: LocalController + deploy(workflow_fn)           │
 │        │      host <api_port> ──▶ container 8080                             │
 │        │                                                                     │
-│        └── canyonos-metrics-<host>                                           │
+│        └── canyonos-<project>-metrics-<host>                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 

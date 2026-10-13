@@ -31,7 +31,11 @@ from canyonos_core.scaling import contract
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.utils.container_log import dump_container_log
-from canyonos_core.controller.utils.container_names import redis_container_name
+from canyonos_core.controller.utils.container_names import (
+    metrics_container_name,
+    project_label_args,
+    redis_container_name,
+)
 from canyonos_core.reconciler import providers, state
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
@@ -257,9 +261,7 @@ class GlobalController(ControllerContext):
                 if host not in host_containers:
                     host_containers[host] = (user, set())
                 host_containers[host][1].add(redis_container_name(host))
-                host_containers[host][1].add(
-                    f"canyonos-metrics-{host.replace('.', '-')}"
-                )
+                host_containers[host][1].add(metrics_container_name(host))
 
         # Try to remove each one on its respective host
         for host, (user, container_names) in host_containers.items():
@@ -571,6 +573,7 @@ class GlobalController(ControllerContext):
                     "docker",
                     "run",
                     "-d",
+                    *project_label_args(),
                     "--name",
                     container_name,
                     *network_args,
@@ -677,7 +680,7 @@ class GlobalController(ControllerContext):
 
         for host, node_cfg in nodes.items():
             user = node_cfg["user"]
-            container_name = f"canyonos-metrics-{host.replace('.', '-')}"
+            container_name = metrics_container_name(host)
             try:
                 inspect = self._run_cmd(
                     ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
@@ -697,6 +700,7 @@ class GlobalController(ControllerContext):
                     "docker",
                     "run",
                     "-d",
+                    *project_label_args(),
                     "--name",
                     container_name,
                     "--restart",

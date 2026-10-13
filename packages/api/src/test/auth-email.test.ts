@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { projects, users } from '@api/db/schema';
-import { ADMIN_EMAIL, ensure_canyonos_project } from '@api/modules/canyonos/canyonos.bootstrap';
+import { ADMIN_EMAIL, save_controller_project } from '@api/modules/canyonos/canyonos.bootstrap';
 import { config } from '@core/env';
 
 import { api, setupE2ETests } from './e2e.setup';
@@ -90,7 +90,7 @@ describe('AUTH_MODE=email_otp signs in over real SMTP', () => {
 
   test('the controller project is bootstrapped under the admin, who never signs in', async () => {
     const project_id = '55555555-5555-4555-8555-555555555555';
-    expect(await ensure_canyonos_project(project_id)).toBe(true);
+    await save_controller_project({ project_id, project_name: null }, 6380);
 
     const [admin] = await db
       .select({ id: users.id, company_id: users.companyId })
@@ -109,7 +109,7 @@ describe('AUTH_MODE=email_otp signs in over real SMTP', () => {
 
   test('two users who signed in with a mailed code both list and open that project', async () => {
     const project_id = '66666666-6666-4666-8666-666666666666';
-    expect(await ensure_canyonos_project(project_id)).toBe(true);
+    await save_controller_project({ project_id, project_name: null }, 6380);
 
     const first = await sign_in_with_mailed_code(`authon-reader-${RUN_ID}@canyonos.test`);
     const second = await sign_in_with_mailed_code(`authon-second-reader-${RUN_ID}@canyonos.test`);

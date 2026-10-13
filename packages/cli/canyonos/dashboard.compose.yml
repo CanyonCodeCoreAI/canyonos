@@ -33,8 +33,6 @@ services:
       # The image always sets NODE_ENV=production, where the api refuses to
       # boot unless AUTH_MODE is named.
       AUTH_MODE: fixed_code
-      CANYONOS_REDIS_HOST: ${CANYONOS_REDIS_HOST}
-      CANYONOS_REDIS_PORT: ${CANYONOS_REDIS_PORT}
       LOG_LEVEL: info
     extra_hosts:
       - host.docker.internal:host-gateway

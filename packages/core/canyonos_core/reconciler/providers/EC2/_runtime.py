@@ -26,6 +26,9 @@ from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import (
     container_name,
+    data_volume_name,
+    image_name,
+    project_label_args,
     redis_container_name,
 )
 from canyonos_core.controller.utils.docker_utils import docker_available
@@ -351,6 +354,7 @@ def _bootstrap_instance(
             "docker",
             "run",
             "-d",
+            *project_label_args(),
             "--name",
             redis_container,
             *resource_limit_args(),
@@ -375,7 +379,7 @@ def _bootstrap_instance(
     node_redis.set(f"controller:{private_host}:{CONTAINER_PORT}:agent_id", agent_id)
 
     agent_name = spec["name"]
-    image = f"canyonos-{agent_name.lower()}"
+    image = image_name(agent_name)
     container = container_name(agent_name, replica_index)
     if spec.get("type") == "database":
         port_args = ["-p", f"{spec.get('db_port', 5432)}:5432"]
@@ -391,7 +395,7 @@ def _bootstrap_instance(
     if spec.get("type") == "database":
         volume_path = spec.get("volume_path")
         if volume_path:
-            volume_args = ["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"]
+            volume_args = ["-v", f"{data_volume_name(agent_name)}:{volume_path}"]
 
     transfer_image(_controller, image, private_host, user)
 
@@ -399,6 +403,7 @@ def _bootstrap_instance(
         "docker",
         "run",
         "-d",
+        *project_label_args(),
         "--restart",
         "unless-stopped",
         "--add-host=host.docker.internal:host-gateway",

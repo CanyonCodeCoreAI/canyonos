@@ -168,7 +168,7 @@ async function store_new_yaml_prompts(
 
 /** At startup, store prompts.yaml's prompts not stored yet, then publish every live version. */
 export async function load_prompts(project_id: string): Promise<void> {
-  await with_redis(async (redis) => {
+  await with_redis(project_id, async (redis) => {
     const yaml = parse_config(await redis.get(YAML_KEY));
     await write_prompts(redis, project_id, (tx, stored) =>
       store_new_yaml_prompts(tx, project_id, yaml, stored)
@@ -186,7 +186,7 @@ async function store_prompts_added_to_yaml(redis: RedisClient, project_id: strin
 }
 
 export async function list_prompts(project_id: string): Promise<PromptListItem[]> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     await store_prompts_added_to_yaml(redis, project_id);
     return parse_prompts(await stored_config(db, project_id)).map(list_item);
@@ -194,7 +194,7 @@ export async function list_prompts(project_id: string): Promise<PromptListItem[]
 }
 
 export async function get_prompt(project_id: string, name: string): Promise<Prompt> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     return find_prompt(await stored_config(db, project_id), name);
   });
@@ -206,7 +206,7 @@ export async function create_system_prompt(
   name: string,
   { content }: SystemPromptCreate
 ): Promise<SystemPrompt> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     let version = '';
     const config = await write_prompts(redis, project_id, (tx, stored) => {
@@ -223,7 +223,7 @@ export async function set_live(
   name: string,
   { version }: PromptLive
 ): Promise<PromptListItem> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     const config = await write_prompts(redis, project_id, (tx, stored) => {
       if (!find_prompt(stored, name).versions.some((stored) => stored.version === version)) {

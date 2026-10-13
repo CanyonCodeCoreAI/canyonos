@@ -101,7 +101,7 @@ async function update_config(
 }
 
 export async function get_scaling(project_id: string): Promise<ScalingStatus> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     return status_of(parse_config(await redis.get(CONFIG_KEY)).scaling);
   });
@@ -111,7 +111,7 @@ export async function save_scaling_policy(
   project_id: string,
   policy: ScalingPolicy
 ): Promise<ScalingPolicy> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     await update_config(redis, (config) => ({ ...config, scaling: policy }));
     return policy;
@@ -119,7 +119,7 @@ export async function save_scaling_policy(
 }
 
 export async function delete_scaling_policy(project_id: string): Promise<ScalingDeleteResponse> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     await update_config(redis, (config) => {
       if (config.scaling == null) {
@@ -185,7 +185,7 @@ async function read_agent(redis: RedisClient, name: string): Promise<ScalingAgen
 
 /** The agents the policy applies to, with what each one is running right now. */
 export async function list_scaling_agents(project_id: string): Promise<ScalingAgentsResponse> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     const names = parse_names(await redis.get(ACTIVE_AGENTS_KEY));
     const agents = await Promise.all(names.map((name) => read_agent(redis, name)));

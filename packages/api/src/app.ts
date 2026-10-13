@@ -7,6 +7,7 @@ import { runMigrations } from '@api/db/client';
 import { seedDevData } from '@api/db/seed';
 import { authRoutes } from '@api/modules/auth/auth.routes';
 import { bootstrap_canyonos } from '@api/modules/canyonos/canyonos.bootstrap';
+import { canyonosRoutes } from '@api/modules/canyonos/canyonos.routes';
 import { companiesRoutes } from '@api/modules/companies/companies.routes';
 import { onboardingRoutes } from '@api/modules/onboarding/onboarding.routes';
 import { projectsRoutes } from '@api/modules/projects/projects.routes';
@@ -66,6 +67,7 @@ export const createApp = () =>
                 { name: 'Requests' },
                 { name: 'Metrics' },
                 { name: 'Telemetry' },
+                { name: 'CanyonOS' },
               ],
               components: {
                 securitySchemes: {
@@ -90,7 +92,8 @@ export const createApp = () =>
     .use(resourcesRoutes)
     .use(projectsRoutes)
     // Deliberately unauthenticated in every mode: the OTLP emitter is an agent process, not a person.
-    .use(telemetryRoutes);
+    .use(telemetryRoutes)
+    .use(canyonosRoutes);
 
 export const forgeApi = createApp();
 

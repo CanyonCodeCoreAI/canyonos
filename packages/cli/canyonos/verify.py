@@ -14,11 +14,9 @@ import subprocess
 import yaml
 from rich.table import Table
 
-from canyonos import gc, ui
+from canyonos import gc, project, ui
 from canyonos.constants import DEFAULT_API_PORT
 from canyonos.theme import GREEN
-
-RUNTIME_PREFIX = "canyonos-"
 
 
 # ------------------------------------------------------------------ #
@@ -41,7 +39,7 @@ def _running_containers():
             "docker",
             "ps",
             "--filter",
-            f"name={RUNTIME_PREFIX}",
+            f"label={project.PROJECT_LABEL}={project.project_group()}",
             "--format",
             "{{.Names}}",
         ],
@@ -93,11 +91,10 @@ def agent_rows(config_path, gc_port):
         name = agent.get("name")
         if not name:
             continue
-        # Image and container names the local provider derives from the agent name.
-        image = f"canyonos-{name.lower()}"
+        image = project.image_name(name)
         expected = int(agent.get("replicas", 1) or 1)
         running = sum(
-            1 for c in containers if c.startswith(f"{RUNTIME_PREFIX}{name.lower()}-")
+            1 for i in range(expected) if project.container_name(name, i) in containers
         )
         image_built = image in images
 

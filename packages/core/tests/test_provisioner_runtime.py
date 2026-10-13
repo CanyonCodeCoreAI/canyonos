@@ -44,8 +44,11 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         def fake_run_cmd(cmd, host, user=None):
             calls.append(cmd)
             if cmd[:2] == ["docker", "inspect"]:
-                return SimpleNamespace(returncode=0, stdout="true\n")
+                return SimpleNamespace(returncode=0, stdout=inspect_output(cmd))
             return SimpleNamespace(returncode=0, stdout="")
+
+        def inspect_output(cmd):
+            return "true\n" if cmd[3] == "{{.State.Running}}" else "canyonos\n"
 
         controller._run_cmd = fake_run_cmd
         manager = Provisioner(controller)
@@ -55,6 +58,7 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         self.assertEqual(
             [c[:3] for c in calls],
             [
+                ["docker", "inspect", "-f"],
                 ["docker", "inspect", "-f"],
                 ["docker", "rm", "-f"],
                 ["docker", "run", "-d"],
@@ -116,6 +120,8 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                     "docker",
                     "run",
                     "-d",
+                    "--label",
+                    "com.docker.compose.project=canyonos",
                     "--network",
                     "canyonos-local",
                     "--name",
@@ -318,6 +324,8 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                     "docker",
                     "run",
                     "-d",
+                    "--label",
+                    "com.docker.compose.project=canyonos",
                     "--network",
                     "canyonos-local",
                     "--name",

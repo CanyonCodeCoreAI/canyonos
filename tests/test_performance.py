@@ -41,7 +41,7 @@ def poll_request(session, base_url, req_id):
 
 
 def run_performance_test(concurrent_users, total_requests):
-    base_url = "http://localhost:8080"
+    base_url = "http://localhost:8082"
     print(
         f"Starting Performance Test: {total_requests} total requests across {concurrent_users} workers."
     )

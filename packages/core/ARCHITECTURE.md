@@ -18,12 +18,12 @@
                                    │ host docker.sock / ssh
                                    ▼  (sibling containers, one set per host)
 ┌──────────────────────────── node (host) ─────────────────────────────┐
-│                                                                      │
-│  canyonos-redis-<host>        canyonos-metrics-<host>                │
+│  <p> = the project, the folder `canyonos deploy` ran from            │
+│  canyonos-<p>-redis-<host>    canyonos-<p>-metrics-<host>            │
 │         ▲  ▲  ▲                 (machine_metrics_poller)             │
 │         │  │  │                                                      │
 │  ┌──────┴──┴──┴───────────────┐  ┌────────────────────────────────┐  │
-│  │ canyonos-<agent>-<i>       │  │ canyonos-<workflow>-0          │  │
+│  │ canyonos-<p>-<agent>-<i>   │  │ canyonos-<p>-<workflow>-0      │  │
 │  │  LocalController  :50051   │  │  LocalController (routing only)│  │
 │  │  agent code (real class)   │  │  workflow fn + agent stubs     │  │
 │  │ llm_gateway 127.0.0.1:8081 │  │  deploy.py Flask  :api_port    │  │

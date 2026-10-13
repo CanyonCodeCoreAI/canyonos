@@ -6,10 +6,11 @@
 ┌─────────────────────────────────── one host ───────────────────────────────────┐
 │                                                                                 │
 │   ┌──────────────────────────────┐        ┌──────────────────────────────────┐  │
-│   │ canyonos-metrics-<host>      │        │ agent replica containers         │  │
-│   │ (controller image,           │        │  Local Controller writes its own │  │
-│   │  entrypoint overridden)      │        │  per-instance metrics hash       │  │
-│   │                              │        └──────────────────────────────────┘  │
+│   │ canyonos-<project>-metrics-  │        │ agent replica containers         │  │
+│   │   <host>                     │        │  Local Controller writes its own │  │
+│   │ (controller image,           │        │  per-instance metrics hash       │  │
+│   │  entrypoint overridden)      │        └──────────────────────────────────┘  │
+│   │                              │                                              │
 │   │ python -m canyonos_core.     │                                              │
 │   │   machine_metrics_poller     │                                              │
 │   │                              │                                              │
@@ -47,7 +48,7 @@ _launch_metrics_collectors
      │
      └─ per host (local docker or SSH)
            │
-           ├─ docker inspect canyonos-metrics-<host>
+           ├─ docker inspect canyonos-<project>-metrics-<host>
            │     └─ running? ──▶ reuse
            │
            ├─ docker rm -f  (stale container)

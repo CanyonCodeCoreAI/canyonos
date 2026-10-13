@@ -8,9 +8,11 @@ source, and the source itself is not part of the deployment.
 
 CanyonOS Core is the product. `canyonos` is the CLI. Inside the platform the
 Python package is `canyonos_core`, environment variables start with
-`CANYONOS_`, and Docker images and containers are named `canyonos-*`. Image
-tags are the lowercased entry name (`canyonos-splitagent`), and containers are
-`canyonos-<agent>-<replica>`.
+`CANYONOS_`, and Docker images and containers are named
+`canyonos-<project>-*`, where `<project>` is the normalised name of the folder
+`canyonos` runs from. Image tags add the lowercased entry name
+(`canyonos-myapp-splitagent`), and containers are
+`canyonos-<project>-<agent>-<replica>`.
 
 ## Layout
 
@@ -27,8 +29,8 @@ tags are the lowercased entry name (`canyonos-splitagent`), and containers are
 
 You author `config/` and `app/`. `canyonos deploy` writes the other three
 next to them, never inside `app/`. `canyonos clean` deletes the whole `.car`,
-including `app/` and `config/`, and removes every local Docker image named
-`canyonos-*`.
+including `app/` and `config/`, and removes the local Docker image of each
+agent listed in `config/global_controller.yaml`.
 
 Every path in the manifest (`entrypoint`, `workflow_file`) is relative to
 `app/`. It has to be a `.py` file, it cannot be absolute, and it cannot use

@@ -27,9 +27,6 @@ def test_resync_removes_a_host_file_deleted_since_the_previous_sync(
     monkeypatch.setattr(
         sync_cmd.ui, "status", lambda _message: contextlib.nullcontext()
     )
-    monkeypatch.setattr(
-        sync_cmd, "SYNC_STATE_PATH", str(tmp_path / "sync-manifest.json")
-    )
 
     remote_files = {}
 

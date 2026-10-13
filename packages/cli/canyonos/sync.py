@@ -13,13 +13,12 @@ import json
 import os
 import tempfile
 
-from canyonos import ui
+from canyonos import project, ui
 from canyonos.docker_cmd import DOCKER_RUN_TIMEOUT, run_docker
 from canyonos.gc import require_state
-from canyonos.init import GC_WORKSPACE_PATH, STATE_DIR
+from canyonos.init import GC_WORKSPACE_PATH
 
 
-SYNC_STATE_PATH = os.path.join(STATE_DIR, "sync-manifest.json")
 _SYNC_STATE_VERSION = 1
 
 # This runs inside the Global Controller container. Paths are deleted deepest
@@ -92,20 +91,21 @@ _MANIFEST_RECOVERY_HINT = "Move or remove that file, then run `canyonos deploy` 
 def _previous_entries(container_id):
     """Return the project files the last sync copied into this container, from the list
     saved under `~/.canyonos`; empty if it was never synced."""
+    manifest_path = project.sync_manifest_path()
     try:
-        with open(SYNC_STATE_PATH, encoding="utf-8") as manifest_file:
+        with open(manifest_path, encoding="utf-8") as manifest_file:
             manifest = json.load(manifest_file)
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(
-            f"Could not read the sync manifest at {SYNC_STATE_PATH}: {error}. "
+            f"Could not read the sync manifest at {manifest_path}: {error}. "
             f"{_MANIFEST_RECOVERY_HINT}"
         ) from None
 
     if not isinstance(manifest, dict):
         raise RuntimeError(
-            f"The sync manifest at {SYNC_STATE_PATH} is invalid. {_MANIFEST_RECOVERY_HINT}"
+            f"The sync manifest at {manifest_path} is invalid. {_MANIFEST_RECOVERY_HINT}"
         )
 
     if manifest.get("container_id") != container_id:
@@ -125,7 +125,7 @@ def _previous_entries(container_id):
         )
     ):
         raise RuntimeError(
-            f"The sync manifest at {SYNC_STATE_PATH} is invalid. {_MANIFEST_RECOVERY_HINT}"
+            f"The sync manifest at {manifest_path} is invalid. {_MANIFEST_RECOVERY_HINT}"
         )
     return entries
 
@@ -191,12 +191,13 @@ def _remove_stale_entries(container_id, stale_entries):
 def _save_sync_state(container_id, entries):
     """Save a list, in a file under `~/.canyonos`, of the project files just copied into
     the container, so the next sync can tell which ones you've deleted since."""
-    os.makedirs(os.path.dirname(SYNC_STATE_PATH), exist_ok=True)
+    manifest_path = project.sync_manifest_path()
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
-            dir=os.path.dirname(SYNC_STATE_PATH),
+            dir=os.path.dirname(manifest_path),
             prefix="sync-manifest.",
             suffix=".tmp",
             delete=False,
@@ -213,7 +214,7 @@ def _save_sync_state(container_id, entries):
             )
             manifest_file.flush()
             os.fsync(manifest_file.fileno())
-        os.replace(temporary_path, SYNC_STATE_PATH)
+        os.replace(temporary_path, manifest_path)
     except Exception:
         if temporary_path is not None:
             try:
@@ -256,7 +257,9 @@ def run_sync():
     try:
         _save_sync_state(container_id, entries)
     except OSError as e:
-        ui.fail(f"Could not save the sync manifest at {SYNC_STATE_PATH}: {e}")
+        ui.fail(
+            f"Could not save the sync manifest at {project.sync_manifest_path()}: {e}"
+        )
         return False
 
     ui.ok("Sync complete.")

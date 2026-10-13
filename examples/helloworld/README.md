@@ -15,7 +15,7 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 | File | What it does |
 |---|---|
 | `agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
-| `workflow/example_workflow.py` | `main(query)` calls `HelloAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. `deploy(main, port=8080)` serves it at `POST /main`. |
+| `workflow/example_workflow.py` | `main(query)` calls `HelloAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. `deploy(main, port=8080)` serves it at `POST /main` inside its container; `api_port: 8082` in the config publishes it on the host. |
 | `config/global_controller.yaml` | What to run: the agent and workflow, both on `provider: local`. The agent's `functions` hold the signature of `hello`, and its `name` must match the class name. |
 | `config/policy.yaml` | Which callers can reach which agents. |
 
@@ -65,8 +65,8 @@ Deploy is live
 Dashboard  http://127.0.0.1:8081
 
 Workflow
-curl -X POST http://127.0.0.1:8080/main -H "Content-Type: application/json" -d '{"query": "your query"}'
-poll       curl http://127.0.0.1:8080/status/<request_id>
+curl -X POST http://127.0.0.1:8082/main -H "Content-Type: application/json" -d '{"query": "your query"}'
+poll       curl http://127.0.0.1:8082/status/<request_id>
 ```
 
 The dashboard port moves to the next free one if 8081 is taken, so use the URL it prints.
@@ -74,7 +74,7 @@ The dashboard port moves to the next free one if 8081 is taken, so use the URL i
 ## 3. Send a request
 
 ```bash
-curl -X POST http://127.0.0.1:8080/main \
+curl -X POST http://127.0.0.1:8082/main \
   -H "Content-Type: application/json" \
   -d '{"query": "World"}'
 ```
@@ -86,7 +86,7 @@ curl -X POST http://127.0.0.1:8080/main \
 Then fetch the result with that id:
 
 ```bash
-curl http://127.0.0.1:8080/status/<request_id>
+curl http://127.0.0.1:8082/status/<request_id>
 ```
 
 ```json
@@ -124,7 +124,7 @@ Redeploy, then send the same request. It now fails:
 A request that sends `_context` matching the admin rule still gets through:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/main \
+curl -X POST http://127.0.0.1:8082/main \
   -H "Content-Type: application/json" \
   -d '{"query": "World", "_context": {"origin": "admin"}}'
 ```
@@ -134,11 +134,11 @@ curl -X POST http://127.0.0.1:8080/main \
 ## 6. Stop
 
 ```bash
-canyonos stop   # stop the agents and the dashboard
+canyonos stop   # stop the agents, and the dashboard if no other project is running
 canyonos quit   # remove everything CanyonOS started
 ```
 
 ## If something goes wrong
 
-- `Port 8080 is already in use`: another deploy or app holds it. Run `canyonos quit`, or change `api_port` on the workflow entry.
+- `Port 8082 is already in use`: another deploy or app holds it. Run `canyonos quit`, or change `api_port` on the workflow entry.
 - More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

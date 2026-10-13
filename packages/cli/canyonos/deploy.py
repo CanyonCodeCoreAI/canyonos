@@ -27,7 +27,7 @@ from collections import deque
 from rich.panel import Panel
 from rich.text import Text
 
-from canyonos import ui
+from canyonos import project, ui
 from canyonos.constants import (
     DEFAULT_QUERY_PARAM,
     WORKFLOW_ROUTE,
@@ -40,7 +40,7 @@ from canyonos.constants import (
 )
 from canyonos.gc import GCError, deploy_status, post_deploy, workflow_endpoints
 from canyonos.theme import GREEN, WHITE
-from canyonos.init import GC_CONTAINER_NAME, docker_env, load_state, run_init
+from canyonos.init import docker_env, load_state, run_init
 from canyonos.quit import run_quit
 from canyonos.resources import configure_resources
 from canyonos.serve import serve_dashboard
@@ -747,7 +747,7 @@ def _stream_logs_and_autoserve(state, api_port, config_path, serve, verbose, on_
         # By name, not the id in `state`: a concurrent redeploy/quit can replace
         # the container behind the same name/port before this line runs. The
         # explicit env pins it to the engine that container actually lives on.
-        ["docker", "logs", "-f", GC_CONTAINER_NAME],
+        ["docker", "logs", "-f", project.gc_container_name()],
         env=docker_env(state),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

@@ -4,9 +4,9 @@ Logic for `canyonos logs`: re-subscribe to the running deploy's log stream.
 
 import subprocess
 
-from canyonos import ui
+from canyonos import project, ui
 from canyonos.gc import deploy_status, require_state
-from canyonos.init import GC_CONTAINER_NAME, docker_env
+from canyonos.init import docker_env
 
 
 def run_logs():
@@ -24,7 +24,8 @@ def run_logs():
 
     try:
         result = subprocess.run(
-            ["docker", "logs", "-f", GC_CONTAINER_NAME], env=docker_env(state)
+            ["docker", "logs", "-f", project.gc_container_name()],
+            env=docker_env(state),
         )
     except KeyboardInterrupt:
         ui.blank()

@@ -1,9 +1,10 @@
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from canyonos import init as init_cmd
+from canyonos import init as init_cmd, project
 
 
 def test_docker_runtime_start_uses_bounded_translated_command(monkeypatch):
@@ -34,12 +35,18 @@ def test_docker_runtime_start_uses_bounded_translated_command(monkeypatch):
     ]
 
 
+def _project_state_path(monkeypatch, tmp_path):
+    (tmp_path / "portfolio").mkdir()
+    monkeypatch.chdir(tmp_path / "portfolio")
+    state_path = Path(project.state_path())
+    state_path.parent.mkdir(parents=True)
+    return state_path
+
+
 def test_failed_state_write_preserves_the_previous_state(monkeypatch, tmp_path):
-    state_path = tmp_path / "state.json"
+    state_path = _project_state_path(monkeypatch, tmp_path)
     original = {"container_id": "old", "port": 8000}
     state_path.write_text(json.dumps(original))
-    monkeypatch.setattr(init_cmd, "STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(init_cmd, "STATE_PATH", str(state_path))
     monkeypatch.setattr(
         init_cmd.json,
         "dump",
@@ -50,7 +57,7 @@ def test_failed_state_write_preserves_the_previous_state(monkeypatch, tmp_path):
         init_cmd._save_state("new", 8001)
 
     assert json.loads(state_path.read_text()) == original
-    assert list(tmp_path.glob("state.*.tmp")) == []
+    assert list(state_path.parent.glob("state.*.tmp")) == []
 
 
 def test_state_save_failure_removes_the_new_container(monkeypatch):
@@ -91,9 +98,8 @@ def test_state_save_failure_removes_the_new_container(monkeypatch):
     ],
 )
 def test_invalid_state_has_recovery_guidance(monkeypatch, tmp_path, contents):
-    state_path = tmp_path / "state.json"
+    state_path = _project_state_path(monkeypatch, tmp_path)
     state_path.write_text(contents)
-    monkeypatch.setattr(init_cmd, "STATE_PATH", str(state_path))
 
     with pytest.raises(RuntimeError, match="Move or remove that file"):
         init_cmd.load_state()

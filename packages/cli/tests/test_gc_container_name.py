@@ -62,7 +62,9 @@ class FakeDocker:
 
 
 @pytest.fixture
-def docker(monkeypatch):
+def docker(monkeypatch, tmp_path):
+    (tmp_path / "portfolio").mkdir()
+    monkeypatch.chdir(tmp_path / "portfolio")
     fake = FakeDocker()
     monkeypatch.setattr(init_cmd.subprocess, "run", fake)
     monkeypatch.setattr(init_cmd, "_port_reachable", lambda _port: True)
@@ -74,7 +76,7 @@ def test_the_container_is_started_under_a_fixed_name(docker):
 
     assert container_id == CONTAINER_ID
     assert port == init_cmd.GC_CONTAINER_PORT
-    assert name_flag(docker.run_calls[0]) == init_cmd.GC_CONTAINER_NAME
+    assert name_flag(docker.run_calls[0]) == "canyonos-portfolio-global-controller"
 
 
 def test_a_leftover_container_holding_the_name_is_removed_first(docker):
@@ -93,7 +95,7 @@ def test_a_running_container_holding_the_name_is_refused_not_removed(docker):
     docker.named_id = LEFTOVER_ID
     docker.named_running = True
 
-    with pytest.raises(RuntimeError, match="canyonos quit"):
+    with pytest.raises(RuntimeError, match="`canyonos quit` from the `portfolio`"):
         init_cmd._run_container()
 
     assert docker.removals == []
@@ -117,6 +119,6 @@ def test_a_port_collision_retry_still_gets_the_name(docker, message):
 
     assert (container_id, port) == (CONTAINER_ID, init_cmd.GC_CONTAINER_PORT + 1)
     assert [name_flag(argv) for argv in docker.run_calls] == [
-        init_cmd.GC_CONTAINER_NAME
+        "canyonos-portfolio-global-controller"
     ] * 2
     assert docker.removals == [["docker", "rm", "-f", LEFTOVER_ID]]

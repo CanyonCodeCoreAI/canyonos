@@ -6,7 +6,7 @@ import { companies, projects, users } from '@api/db/schema';
 import {
   ADMIN_EMAIL,
   bootstrap_canyonos,
-  ensure_canyonos_project,
+  save_controller_project,
 } from '@api/modules/canyonos/canyonos.bootstrap';
 import { config } from '@core/env';
 
@@ -18,6 +18,7 @@ import { write_project_span } from './telemetry-test.utils';
 setupE2ETests();
 
 const ADMIN_NAME = 'admin';
+const REDIS_PORT = 6380;
 const BYPASS_CODE = '111111';
 const NOW_NANOS = BigInt(Date.now()) * 1_000_000n;
 const MINUTE_NANOS = 60_000_000_000n;
@@ -69,6 +70,15 @@ async function seed_foreign_project(label: string): Promise<string> {
   return project!.id;
 }
 
+const save_project = (project_id: string | null, project_name: string | null = null) =>
+  save_controller_project({ project_id, project_name }, REDIS_PORT);
+
+const rejection = (promise: Promise<unknown>) =>
+  promise.then(
+    () => null,
+    (error: unknown) => error
+  );
+
 async function sign_in_as_admin(): Promise<string> {
   const verify = await api.auth.verify.post({ email: ADMIN_EMAIL, code: BYPASS_CODE });
   expect(verify.error).toBeNull();
@@ -96,7 +106,10 @@ describe('canyonos bootstrap', () => {
     const before = await count_projects();
 
     for (const identity of ['0', '', '   ', 'not-a-uuid', null]) {
-      expect(await ensure_canyonos_project(identity)).toBe(false);
+      expect(await rejection(save_project(identity))).toMatchObject({
+        status: 422,
+        code: 'canyonos.identity_unusable',
+      });
     }
     await bootstrap_canyonos();
 
@@ -106,43 +119,43 @@ describe('canyonos bootstrap', () => {
 
   test('the controller project is created under the admin company', async () => {
     const project_id = '11111111-1111-4111-8111-111111111111';
-    expect(await ensure_canyonos_project(project_id)).toBe(true);
+    expect(await save_project(project_id)).toEqual({ project_id, name: 'project_1' });
 
     const project = await read_project(project_id);
     const admin = await read_admin();
-    expect(project?.name).toBe('project_1');
+    expect(project?.redis_port).toBe(REDIS_PORT);
     expect(project?.company_id).toBe(admin!.companyId!);
     expect(project?.created_by).toBe(admin!.id);
   });
 
   test('the controller project takes the published project name, falling back when empty', async () => {
     const named_id = '55555555-5555-4555-8555-555555555555';
-    expect(await ensure_canyonos_project(named_id, 'portfolio_agent')).toBe(true);
+    expect((await save_project(named_id, 'portfolio_agent')).name).toBe('portfolio_agent');
     expect((await read_project(named_id))?.name).toBe('portfolio_agent');
 
     const empty_id = '66666666-6666-4666-8666-666666666666';
-    expect(await ensure_canyonos_project(empty_id, '')).toBe(true);
+    await save_project(empty_id, '');
     expect((await read_project(empty_id))?.name).toBe('project_1');
   });
 
   test('a rerun with the same id writes no rows', async () => {
     const project_id = '22222222-2222-4222-8222-222222222222';
-    await ensure_canyonos_project(project_id);
+    await save_project(project_id);
     const before = await count_projects();
 
-    await ensure_canyonos_project(project_id);
+    await save_project(project_id);
 
     expect(await count_projects()).toBe(before);
     expect(await count_admin_rows()).toEqual({ users: 1, companies: 1 });
   });
 
-  test('an existing project keeps its name, company, creator, and timestamps', async () => {
+  test('an existing project only takes the port: name, company, creator, timestamps stay', async () => {
     const project_id = await seed_foreign_project('kept-owner');
     const before = await read_project(project_id);
 
-    expect(await ensure_canyonos_project(project_id)).toBe(true);
+    expect(await save_project(project_id, 'renamed')).toEqual({ project_id, name: 'kept-owner' });
 
-    expect(await read_project(project_id)).toEqual(before!);
+    expect(await read_project(project_id)).toEqual({ ...before!, redis_port: REDIS_PORT });
   });
 });
 
@@ -201,7 +214,7 @@ describe('canyonos admin sign-in', () => {
 describe('canyonos admin reads', () => {
   test('the admin lists, opens, and reads requests for the controller project', async () => {
     const project_id = '33333333-3333-4333-8333-333333333333';
-    await ensure_canyonos_project(project_id);
+    await save_project(project_id);
     await write_project_span(project_id, {
       span_id: 'canyonos-admin-span',
       trace_id: 'canyonos-admin-trace',

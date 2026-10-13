@@ -29,6 +29,13 @@
       "when": 1791305967214,
       "tag": "0003_system_prompts",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791903091159,
+      "tag": "0004_project_redis_port",
+      "breakpoints": true
     }
   ]
 }

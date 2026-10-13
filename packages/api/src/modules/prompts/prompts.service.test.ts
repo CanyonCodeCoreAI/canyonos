@@ -21,7 +21,8 @@ await mock.module('./prompts.repo', () => ({
 }));
 
 await mock.module('../canyonos/canyonos.redis', () => ({
-  with_redis: (operation: (client: typeof redis) => Promise<unknown>) => operation(redis),
+  with_redis: (_project_id: string, operation: (client: typeof redis) => Promise<unknown>) =>
+    operation(redis),
   assert_project_running: async () => {},
 }));
 

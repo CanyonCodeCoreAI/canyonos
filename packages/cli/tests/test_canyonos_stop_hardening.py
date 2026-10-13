@@ -1,6 +1,6 @@
 import subprocess
 
-from canyonos import dashboard_stack, stop as stop_cmd
+from canyonos import dashboard_stack, project, stop as stop_cmd
 
 STOP_WARNING = (
     "Deploy stopped, but the dashboard did not. Run `canyonos quit` to remove it."
@@ -14,6 +14,9 @@ def _running_deploy(monkeypatch, reported):
         lambda: {"container_id": "abcdef123456", "port": 8000},
     )
     monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: None)
+    monkeypatch.setattr(
+        project, "other_global_controllers_running", lambda _id, _env=None: False
+    )
     monkeypatch.setattr(stop_cmd.ui, "ok", lambda _message: reported.append("ok"))
     monkeypatch.setattr(
         stop_cmd.ui, "warn", lambda message: reported.append(str(message))

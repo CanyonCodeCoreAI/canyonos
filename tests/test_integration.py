@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 
 def run_integration_test():
-    base_url = "http://localhost:8080"
+    base_url = "http://localhost:8082"
     print(f"Submitting query to {base_url}/main...")
 
     response = requests.post(f"{base_url}/main", json={"query": "World"})

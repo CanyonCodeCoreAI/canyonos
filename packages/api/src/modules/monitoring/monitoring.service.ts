@@ -128,7 +128,7 @@ export async function get_replicas(project_id: string): Promise<MonitoringReplic
 
 // Only workflow replicas carry an api_port; callers reach them on the public host.
 export async function get_endpoints(project_id: string): Promise<MonitoringEndpointsResponse> {
-  return with_redis(async (redis) => {
+  return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
     const instances = await monitoring_repo.agent_instances(redis);
     const endpoints = instances

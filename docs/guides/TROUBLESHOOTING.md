@@ -74,15 +74,16 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 ## `canyonos test` fails
 
 If the test passes, everything is shut down. If it fails, the containers stay up so
-you can check `canyonos logs`, or one agent's logs with `docker logs canyonos-<agent>-0`
-(e.g. `canyonos-intentagent-0`). Run `canyonos quit` to remove them.
+you can check `canyonos logs`, or one agent's logs with `docker logs canyonos-<project>-<agent>-0`
+(e.g. `canyonos-portfolio-intentagent-0`). `docker ps --filter label=com.docker.compose.project=canyonos-<project>`
+lists the project's containers. Run `canyonos quit` to remove them.
 
 ## Stopping and cleaning
 
 | Symptom | Likely cause |
 |---|---|
 | Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
-| `canyonos clean` deleted `.car/app` and `.car/config` | That is what it does: it removes the whole `.car` and every `canyonos-*` image |
+| `canyonos clean` deleted `.car/app` and `.car/config` | That is what it does: it removes the whole `.car` and the images of the agents in `global_controller.yaml` |
 | Containers remain after `canyonos clean` | `clean` never touches containers. Use `canyonos stop` or `canyonos quit` |
-| Images remain after `canyonos clean` | Docker was unreachable, or the images live on a different Docker context than the one the deploy used |
 | EC2 instances remain after `canyonos stop` | The drain waited 30 seconds and moved on. See [EC2 deployment](EC2.md) |
+| Images remain after `canyonos clean` | Docker was unreachable, the images live on a different Docker context than the one the deploy used, or the agent was removed from `global_controller.yaml` before `clean` ran |

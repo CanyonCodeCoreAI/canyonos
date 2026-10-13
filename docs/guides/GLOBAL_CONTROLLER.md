@@ -191,7 +191,7 @@ Database entries add:
 |---|---|---|
 | `image` | required | Docker image to pull. Nothing is built for a database. |
 | `db_port` | `5432` | Port the database listens on. |
-| `volume_path` | none | Mount point for a named volume `canyonos-<name>-data`. |
+| `volume_path` | none | Mount point for a named volume `canyonos-<project>-<name>-data`. |
 
 A database entry needs no code. Other services reach
 it through the routing table: the Redis hash `routing_table:endpoints` maps

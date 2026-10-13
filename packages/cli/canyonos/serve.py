@@ -5,8 +5,38 @@ Automatically gets created when deploy runs unless --serve flag is set to false.
 """
 
 from canyonos import ui
-from canyonos.constants import dashboard_port, default_config_path
+from canyonos.constants import dashboard_port, default_config_path, local_redis_port
+from canyonos.gc import deploy_status
+from canyonos.init import load_state
+from .dashboard_registration import RegistrationError, register_project
 from .dashboard_stack import ServeResult, run_dashboard
+
+
+def _register_running_project() -> None:
+    """Register this folder's project with the dashboard when its controller is running.
+
+    Temporary: applied now so multi-project dashboards work without blocking the flow;
+    revisit with the project-key design in CAN-521 (the api should not hold
+    per-project Redis addresses).
+
+    A folder with no readable deploy state or no running deploy has nothing to
+    register, so it is skipped without a word. A failed registration only
+    warns: the dashboard is up either way.
+    """
+    try:
+        state = load_state()
+    except (FileNotFoundError, RuntimeError):
+        return
+    if not (deploy_status(state["port"]) or {}).get("running", False):
+        return
+
+    try:
+        registered = register_project(local_redis_port(default_config_path()))
+    except RegistrationError as e:
+        ui.warn(f"Dashboard could not register this project: {e}")
+        ui.hint("Run `canyonos serve` again to retry.")
+        return
+    ui.ok(f"Registered {registered.get('name', 'this project')} with the dashboard")
 
 
 def serve_dashboard(report_failure: bool = True) -> ServeResult:
@@ -26,7 +56,10 @@ def serve_dashboard(report_failure: bool = True) -> ServeResult:
 
         result = run_dashboard(report, preferred_port)
 
-    if result.ok or not report_failure:
+    if result.ok:
+        _register_running_project()
+        return result
+    if not report_failure:
         return result
 
     for phase, message in trace:

@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:8082"
 CALLERS = (
     "main",
     "thread",

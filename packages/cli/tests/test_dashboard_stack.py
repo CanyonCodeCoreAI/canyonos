@@ -20,8 +20,6 @@ def project(monkeypatch, tmp_path):
     for key in (
         "JWT_SECRET",
         "CANYONOS_JWT_SECRET",
-        "CANYONOS_REDIS_HOST",
-        "CANYONOS_REDIS_PORT",
         "CANYONOS_API_IMAGE",
         "CANYONOS_WEB_IMAGE",
     ):
@@ -85,20 +83,6 @@ def test_docker_validation_failures_do_not_pull(monkeypatch, project, prepare, m
     assert all("pull" not in command for command in calls)
 
 
-def test_user_jwt_secret_is_untouched_while_canyonos_secret_is_stable(project):
-    source_line = "JWT_SECRET=user-value\n"
-    Path.cwd().joinpath(".env").write_text(source_line)
-    stack = dashboard_stack.DashboardStack(dashboard_stack._state_dir(), Path.cwd())
-
-    first_env, _ = dashboard_stack._prepare(stack)
-    second_env, _ = dashboard_stack._prepare(stack)
-
-    env_contents = stack.env_path.read_text()
-    assert env_contents.startswith(source_line)
-    assert first_env["CANYONOS_JWT_SECRET"] != "user-value"
-    assert first_env["CANYONOS_JWT_SECRET"] == second_env["CANYONOS_JWT_SECRET"]
-
-
 def test_state_directory_and_port_validation_failures_do_not_pull(
     monkeypatch, project, tmp_path
 ):
@@ -131,41 +115,6 @@ def test_state_directory_and_port_validation_failures_do_not_pull(
         == "no free port found for the dashboard after 50 attempts starting at 8080"
     )
     assert all("pull" not in command for command in calls)
-
-
-def test_prepare_preserves_unrelated_env_lines_and_mode(project):
-    Path.cwd().joinpath(".env").write_text(
-        "OTHER=one\n# preserved\nJWT_SECRET=kept-secret\nLAST=two\n"
-    )
-    stack = dashboard_stack.DashboardStack(dashboard_stack._state_dir(), Path.cwd())
-
-    managed_env, message = dashboard_stack._prepare(stack)
-
-    assert message == "dashboard state prepared"
-    assert set(managed_env) == dashboard_stack.MANAGED_ENV_KEYS
-    env_lines = stack.env_path.read_text().splitlines()
-    assert env_lines[:2] == ["OTHER=one", "# preserved"]
-    assert env_lines[2] == "JWT_SECRET=kept-secret"
-    assert env_lines[3] == "LAST=two"
-    assert {line.split("=", 1)[0] for line in env_lines if "=" in line} == {
-        "OTHER",
-        "JWT_SECRET",
-        "LAST",
-        "CANYONOS_JWT_SECRET",
-        "CANYONOS_REDIS_HOST",
-        "CANYONOS_REDIS_PORT",
-        "CANYONOS_API_IMAGE",
-        "CANYONOS_WEB_IMAGE",
-        "CANYONOS_WEB_PORT",
-    }
-    assert stack.env_path.stat().st_mode & 0o777 == 0o600
-    assert stack.state_dir.stat().st_mode & 0o777 == 0o700
-    assert sorted(path.name for path in stack.state_dir.iterdir()) == ["stack.json"]
-    assert json.loads((stack.state_dir / "stack.json").read_text()) == {
-        "schema_version": 3,
-        "version": dashboard_stack.env.VERSION,
-        "compose_project": "canyonos-dashboard",
-    }
 
 
 def test_redaction_removes_urls_secrets_and_credentials():
@@ -224,7 +173,10 @@ def test_pull_failure_includes_redacted_stderr(monkeypatch, project):
         if "pull" in argv:
             secret = next(
                 line.split("=", 1)[1]
-                for line in Path.cwd().joinpath(".env").read_text().splitlines()
+                for line in dashboard_stack._state_dir()
+                .joinpath(".env")
+                .read_text()
+                .splitlines()
                 if line.startswith("CANYONOS_JWT_SECRET=")
             )
             return completed(
@@ -299,8 +251,13 @@ def test_success_pulls_starts_and_verifies(monkeypatch, project):
     pull_index = next(index for index, command in enumerate(calls) if "pull" in command)
     up_index = next(index for index, command in enumerate(calls) if "up" in command)
     assert pull_index < up_index
-    assert calls[pull_index][4:6] == ["--env-file", str(project / ".env")]
+    assert calls[pull_index][4:6] == [
+        "--env-file",
+        str(project / "home" / ".canyonos" / "dashboard" / ".env"),
+    ]
     assert calls[up_index][-5:] == ["up", "-d", "--wait", "--wait-timeout", "180"]
+    assert not any("rm" in command for command in calls)
+    assert not (project / ".env").exists()
     assert endpoints == [
         ("http://127.0.0.1:8081/healthz", 5),
         ("http://127.0.0.1:8081/api/healthz", 5),
@@ -439,8 +396,6 @@ def test_manifest_gives_the_api_its_self_hosted_environment():
         "DATABASE_URL",
         "JWT_SECRET",
         "AUTH_MODE",
-        "CANYONOS_REDIS_HOST",
-        "CANYONOS_REDIS_PORT",
         "LOG_LEVEL",
     }
 

@@ -1,4 +1,3 @@
-import fnmatch
 import subprocess
 
 import pytest
@@ -26,31 +25,21 @@ def isolated_global_skill_dirs(monkeypatch, tmp_path):
     monkeypatch.setattr(clean.build, "AGENTS", agents)
 
 
-def test_matching_canyonos_images_are_removed_without_force(monkeypatch, tmp_path):
-    calls = []
-
-    def fake_run(argv, **_):
-        calls.append(argv)
-        if argv[:2] == ["docker", "images"]:
-            return completed(argv, stdout="image-one\nimage-two\n")
-        return completed(argv)
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(clean.subprocess, "run", fake_run)
-
-    clean.run_clean()
-
-    assert calls == [
-        ["docker", "images", "--filter", f"reference={clean.IMAGE_REFERENCE}", "-q"],
-        ["docker", "image", "rm", "image-one", "image-two"],
-    ]
-    assert "-f" not in calls[1]
-    assert "--force" not in calls[1]
+def in_project(monkeypatch, tmp_path, name, agents=("Workflow", "CVPilotAgent")):
+    """Make `tmp_path/<name>` a project whose `global_controller.yaml` declares
+    `agents`, and run from it."""
+    root = tmp_path / name
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "global_controller.yaml").write_text(
+        "agents:\n" + "".join(f"  - name: {agent}\n" for agent in agents)
+    )
+    monkeypatch.chdir(root)
+    return root
 
 
 def test_docker_unavailable_warns_and_does_not_crash(monkeypatch, tmp_path):
     warnings = []
-    monkeypatch.chdir(tmp_path)
+    in_project(monkeypatch, tmp_path, "portfolio")
     monkeypatch.setattr(
         clean.subprocess,
         "run",
@@ -98,26 +87,6 @@ def test_project_skills_are_removed_and_global_skills_kept(monkeypatch, tmp_path
     assert all(skill_dir.exists() for skill_dir in skill_dirs["global"])
 
 
-def test_serve_managed_env_keys_are_removed_and_user_lines_kept(monkeypatch, tmp_path):
-    user_lines = (
-        "# my app secrets\n"
-        'OPENAI_API_KEY="sk-user value"\n'
-        "CANYONOS_DOCKER_PLATFORM=linux/arm64\n"
-        "CANYONOS_MAX_AGENT_INSTANCES=4\n"
-    )
-    managed_lines = "".join(
-        f"{key}=value\n" for key in sorted(clean.dashboard_stack.MANAGED_ENV_KEYS)
-    )
-    env_path = tmp_path / ".env"
-    env_path.write_text(user_lines + managed_lines + "LAST=no-newline")
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
-
-    clean.run_clean()
-
-    assert env_path.read_text() == user_lines + "LAST=no-newline"
-
-
 def test_emptied_skill_folders_are_removed_and_user_skills_kept(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
@@ -162,7 +131,7 @@ def test_unreadable_env_warns_and_images_are_still_cleaned(monkeypatch, tmp_path
     def unreadable(env_path):
         raise PermissionError(f"Permission denied: '{env_path}'")
 
-    monkeypatch.chdir(tmp_path)
+    in_project(monkeypatch, tmp_path, "portfolio")
     monkeypatch.setattr(clean.subprocess, "run", fake_run)
     monkeypatch.setattr(clean.ui, "warn", warnings.append)
     monkeypatch.setattr(clean.dashboard_stack, "remove_project_env_keys", unreadable)
@@ -185,7 +154,7 @@ def test_image_removal_failure_warns_without_forcing(monkeypatch, tmp_path):
             argv, returncode=1, stderr="image is being used by running container"
         )
 
-    monkeypatch.chdir(tmp_path)
+    in_project(monkeypatch, tmp_path, "portfolio")
     monkeypatch.setattr(clean.subprocess, "run", fake_run)
     monkeypatch.setattr(clean.ui, "warn", warnings.append)
 
@@ -194,14 +163,3 @@ def test_image_removal_failure_warns_without_forcing(monkeypatch, tmp_path):
     assert calls[1] == ["docker", "image", "rm", "image-in-use"]
     assert "-f" not in calls[1]
     assert "image is being used by running container" in warnings[-1]
-
-
-def test_image_pattern_matches_built_images_but_not_pulled_ones():
-    for built in ("canyonos-workflow", "canyonos-cvpilotagent"):
-        assert fnmatch.fnmatch(built, clean.IMAGE_REFERENCE)
-    for pulled in (
-        "ghcr.io/canyoncodecoreai/canyonos-api",
-        "ghcr.io/canyoncodecoreai/canyonos-core",
-        "redis",
-    ):
-        assert not fnmatch.fnmatch(pulled, clean.IMAGE_REFERENCE)

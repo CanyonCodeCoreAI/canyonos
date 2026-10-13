@@ -18,7 +18,7 @@ import urllib.request
 # Formatting
 from pyfiglet import figlet_format
 
-from canyonos import env, ui
+from canyonos import env, project, ui
 from canyonos.docker_cmd import (
     DOCKER_PULL_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -33,23 +33,18 @@ from canyonos.port_utils import is_port_conflict
 # built from their checkout instead.
 GC_IMAGE = env.core_image
 GC_CONTAINER_PORT = 8000
-GC_CONTAINER_NAME = "canyonos-global-controller"
 
 # Same network canyonos_core's own GlobalController creates for local-provider
 # Redis/agent containers -- the GC container needs to be on it too, e.g. to
 # resolve <runtime_id>:50051 for its own cleanup gRPC calls.
 LOCAL_NETWORK = "canyonos-local"
 
-# Named docker volume mounted at /workspace inside the container. Files are
-# copied in via `canyonos sync` (docker cp), not mounted live, so host-side
-# edits don't reach a running build. `canyonos quit` removes the volume, and
-# since every deploy quits any previous controller first, each deploy starts
-# from an empty workspace.
-GC_WORKSPACE_VOLUME = "canyonos-workspace"
+# The project's workspace volume (`project.workspace_volume()`) is mounted here.
+# Files are copied in via `canyonos sync` (docker cp), not mounted live, so
+# host-side edits don't reach a running build. `canyonos quit` removes the
+# volume, and since every deploy quits the project's previous controller first,
+# each deploy starts from an empty workspace.
 GC_WORKSPACE_PATH = "/workspace"
-
-STATE_DIR = os.path.expanduser("~/.canyonos")
-STATE_PATH = os.path.join(STATE_DIR, "state.json")
 
 # How to start the daemon behind each docker context, as (CLI command, macOS
 # app). Keyed off the *active context* rather than which app is installed: with
@@ -216,8 +211,10 @@ def _port_reachable(port, attempts=10, delay=0.5):
     return False
 
 
-def _named_container(name=GC_CONTAINER_NAME):
-    """(id, running) for the container holding exactly this name, or (None, False)."""
+def _named_container(name=None):
+    """(id, running) for the container holding exactly this name, or (None, False).
+    The name defaults to this project's Global Controller container."""
+    name = name or project.gc_container_name()
     try:
         result = run_docker(
             ["docker", "inspect", "--format", "{{.Id}} {{.State.Running}}", name],
@@ -235,7 +232,7 @@ def _named_container(name=GC_CONTAINER_NAME):
 
 
 def _free_container_name():
-    """Remove a leftover container squatting on GC_CONTAINER_NAME.
+    """Remove a leftover container squatting on the project's Global Controller name.
 
     A fixed --name only works if nothing else holds it, and two things leave a
     dead holder behind: a crashed run whose state file is gone, and a failed
@@ -250,9 +247,9 @@ def _free_container_name():
         return
     if running:
         raise RuntimeError(
-            f"The container name {GC_CONTAINER_NAME} is held by a running Global "
-            f"Controller ({container_id[:12]}). Run `canyonos quit` to tear it down "
-            "first."
+            f"The container name {project.gc_container_name()} is held by a running "
+            f"Global Controller ({container_id[:12]}). Run `canyonos quit` from the "
+            f"`{project.folder_name()}` folder to tear it down first."
         )
     failure = cleanup_docker(
         ["docker", "rm", "-f", container_id],
@@ -261,6 +258,18 @@ def _free_container_name():
     )
     if failure:
         raise RuntimeError(failure)
+
+
+def _create_workspace_volume():
+    """Create the project's workspace volume up front, so it carries the project's
+    label and shows in its Docker group; a volume that already exists is reused."""
+    volume = project.workspace_volume()
+    run_docker(
+        ["docker", "volume", "create", *project.project_label_args(), volume],
+        timeout=DOCKER_QUICK_TIMEOUT,
+        action=f"Creating Docker volume {volume}",
+        check=True,
+    )
 
 
 def _run_container(image=GC_IMAGE, max_attempts=50):
@@ -285,14 +294,17 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
             f"Could not create Docker network {LOCAL_NETWORK}: "
             f"{network.stderr.strip() or network.stdout.strip()}"
         )
+    _create_workspace_volume()
     for _ in range(max_attempts):
         _free_container_name()
         cmd = [
             "docker",
             "run",
             "-d",
+            *project.project_label_args(),
+            *project.gc_role_label_args(),
             "--name",
-            GC_CONTAINER_NAME,
+            project.gc_container_name(),
             "-p",
             f"127.0.0.1:{port}:{GC_CONTAINER_PORT}",
             "--network",
@@ -304,7 +316,7 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
             "-v",
             f"{host_socket}:{GC_DOCKER_SOCKET}",
             "-v",
-            f"{GC_WORKSPACE_VOLUME}:{GC_WORKSPACE_PATH}",
+            f"{project.workspace_volume()}:{GC_WORKSPACE_PATH}",
             "--add-host=host.docker.internal:host-gateway",
             "-e",
             "CANYONOS_REDIS_HOST=host.docker.internal",
@@ -320,6 +332,9 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
             # A bare name copies the host's value when set, so agent images match its CPU.
             "-e",
             "CANYONOS_DOCKER_PLATFORM",
+            # Names and labels every container the GC launches with this project.
+            "-e",
+            f"{project.DOCKER_PROJECT_ENV}={project.project_name()}",
         ]
         cmd.append(image)  # image must come after all flags
         result = run_docker(
@@ -357,11 +372,12 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
 
 def _save_state(container_id, port, docker_socket=None):
     """Atomically write GC state so interruption cannot truncate the old record."""
-    os.makedirs(STATE_DIR, exist_ok=True)
+    state_dir = project.state_dir()
+    os.makedirs(state_dir, exist_ok=True)
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", dir=STATE_DIR, prefix="state.", suffix=".tmp", delete=False
+            mode="w", dir=state_dir, prefix="state.", suffix=".tmp", delete=False
         ) as f:
             temporary_path = f.name
             json.dump(
@@ -374,7 +390,7 @@ def _save_state(container_id, port, docker_socket=None):
             )
             f.flush()
             os.fsync(f.fileno())
-        os.replace(temporary_path, STATE_PATH)
+        os.replace(temporary_path, project.state_path())
     except Exception:
         if temporary_path is not None:
             try:
@@ -385,15 +401,17 @@ def _save_state(container_id, port, docker_socket=None):
 
 
 def load_state():
-    """Reads GC container info from ~/.canyonos/state.json"""
+    """Read this project's Global Controller container and port from its state file
+    under `~/.canyonos/projects`."""
+    state_path = project.state_path()
     try:
-        with open(STATE_PATH) as f:
+        with open(state_path) as f:
             state = json.load(f)
     except FileNotFoundError:
         raise
     except (OSError, json.JSONDecodeError) as e:
         raise RuntimeError(
-            f"Could not read CanyonOS state at {STATE_PATH}: {e}. "
+            f"Could not read CanyonOS state at {state_path}: {e}. "
             "Move or remove that file, then run `canyonos deploy` again."
         ) from None
 
@@ -405,7 +423,7 @@ def load_state():
         or not 1 <= state["port"] <= 65535
     ):
         raise RuntimeError(
-            f"CanyonOS state at {STATE_PATH} is invalid. "
+            f"CanyonOS state at {state_path} is invalid. "
             "Move or remove that file, then run `canyonos deploy` again."
         )
     return state
@@ -420,7 +438,7 @@ def quit_existing():
     # Deferred: quit.py imports from this module, so a top-level import cycles.
     from canyonos.quit import run_quit
 
-    if os.path.isfile(STATE_PATH) and run_quit():
+    if os.path.isfile(project.state_path()) and run_quit():
         ui.warn(
             "Starting a new Global Controller anyway; the leftovers above need cleaning up by hand."
         )
@@ -454,7 +472,7 @@ def run_init(banner=True, image=GC_IMAGE):
             else ""
         )
         raise RuntimeError(
-            f"Could not save Global Controller state at {STATE_PATH}: {e}. "
+            f"Could not save Global Controller state at {project.state_path()}: {e}. "
             f"Removed container {container_id[:12]}.{detail}"
         ) from None
     ui.ok(f"Global Controller running in container {container_id[:12]} on port {port}")

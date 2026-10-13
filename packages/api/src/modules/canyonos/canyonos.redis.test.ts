@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 
 import { notFound } from '@core/errors';
 
-import { with_redis } from './canyonos.redis';
+import { with_redis_at } from './canyonos.redis';
 
 const rejection = (promise: Promise<unknown>) =>
   promise.then(
@@ -14,7 +14,7 @@ const rejection = (promise: Promise<unknown>) =>
 const connect = spyOn(RedisClient.prototype, 'connect');
 const close = spyOn(RedisClient.prototype, 'close');
 
-describe('with_redis', () => {
+describe('with_redis_at', () => {
   beforeEach(() => {
     connect.mockReset().mockResolvedValue(undefined);
     close.mockReset().mockReturnValue(undefined);
@@ -29,7 +29,7 @@ describe('with_redis', () => {
     const refused = new Error('ECONNREFUSED');
     connect.mockRejectedValue(refused);
 
-    expect(await rejection(with_redis(async () => 'unreached'))).toMatchObject({
+    expect(await rejection(with_redis_at(6379, async () => 'unreached'))).toMatchObject({
       status: 502,
       code: 'canyonos.controller_unreachable',
       cause: refused,
@@ -42,7 +42,7 @@ describe('with_redis', () => {
 
     expect(
       await rejection(
-        with_redis(async () => {
+        with_redis_at(6379, async () => {
           throw failure;
         })
       )
@@ -55,7 +55,7 @@ describe('with_redis', () => {
 
     expect(
       await rejection(
-        with_redis(async () => {
+        with_redis_at(6379, async () => {
           throw failure;
         })
       )
@@ -63,7 +63,7 @@ describe('with_redis', () => {
   });
 
   test('the operation result is returned and the connection closed', async () => {
-    expect(await with_redis(async () => 42)).toBe(42);
+    expect(await with_redis_at(6379, async () => 42)).toBe(42);
     expect(connect).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(1);
   });

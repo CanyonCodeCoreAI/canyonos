@@ -72,6 +72,13 @@ export async function seed_running_project(
   });
 }
 
+/** Publishes project_name as the running controller's project name. */
+export async function seed_project_name(project_name: string): Promise<void> {
+  await with_test_redis((redis) =>
+    redis.hset(CONTROLLER_IDENTITY_KEY, 'project_name', project_name)
+  );
+}
+
 /** Leaves no controller running, so each test starts from the same Redis state. */
 export async function reset_controller(): Promise<void> {
   await with_test_redis(async (redis) => {

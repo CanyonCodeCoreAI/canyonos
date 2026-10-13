@@ -1,13 +1,17 @@
 import subprocess
 
-from canyonos import dashboard_stack, docker_cmd, quit as quit_cmd
+from pathlib import Path
+
+from canyonos import dashboard_stack, docker_cmd, project, quit as quit_cmd
 from canyonos.gc import GCError
 
 
 def _state(monkeypatch, tmp_path):
-    state_path = tmp_path / "state.json"
+    (tmp_path / "portfolio").mkdir()
+    monkeypatch.chdir(tmp_path / "portfolio")
+    state_path = Path(project.state_path())
+    state_path.parent.mkdir(parents=True)
     state_path.write_text('{"container_id": "abcdef123456", "port": 8000}')
-    monkeypatch.setattr(quit_cmd, "STATE_PATH", str(state_path))
     monkeypatch.setattr(
         quit_cmd,
         "require_state",
@@ -17,6 +21,9 @@ def _state(monkeypatch, tmp_path):
         quit_cmd, "_container_state", lambda _container_id, _env: (True, True)
     )
     monkeypatch.setattr(quit_cmd, "teardown_dashboard", lambda: True)
+    monkeypatch.setattr(
+        project, "other_global_controllers_running", lambda _id, _env=None: False
+    )
     return state_path
 
 
@@ -124,7 +131,6 @@ def test_quit_outside_the_project_fails_while_dashboard_containers_remain(
     monkeypatch.setattr(
         quit_cmd, "teardown_dashboard", dashboard_stack.teardown_dashboard
     )
-    monkeypatch.chdir(tmp_path)
     docker_calls = []
 
     def docker(argv, **_kwargs):

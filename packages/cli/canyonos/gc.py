@@ -4,11 +4,10 @@ that talk to it don't each restate the same routes, payloads and failure modes.
 """
 
 import json
-import os
 import urllib.error
 import urllib.request
 
-from canyonos import ui
+from canyonos import project, ui
 from canyonos.init import load_state
 
 REQUEST_TIMEOUT_SECONDS = 60
@@ -79,7 +78,7 @@ def post_deploy(port, config_path=None):
 
     Omitting config_path lets canyonos resolve it against the synced workspace.
     """
-    payload = {"project_name": os.path.basename(os.getcwd())}
+    payload = {"project_name": project.folder_name()}
     if config_path:
         payload["config_path"] = config_path
     body = json.dumps(payload).encode()

@@ -21,7 +21,8 @@ const dev = Bun.spawn(['turbo', 'run', 'dev', '--filter=@canyonos/api', '--filte
     ...env,
     APP_ENV: env.APP_ENV || 'development',
     AUTH_MODE: env.AUTH_MODE || 'fixed_code',
-    // The API image defaults to host.docker.internal; on the host the workflow's Redis is local.
+    // The default Redis, read at startup and for projects that never registered. The API image
+    // defaults to host.docker.internal; on the host it is local.
     CANYONOS_REDIS_HOST: env.CANYONOS_REDIS_HOST || '127.0.0.1',
     CANYONOS_REDIS_PORT: env.CANYONOS_REDIS_PORT || '6379',
     DEPLOY_WORKER: env.DEPLOY_WORKER || 'none',

@@ -1,14 +1,18 @@
 import { eq } from 'drizzle-orm';
+import type { RedisClient } from 'bun';
 
 import { db } from '@api/db/client';
-import { companies, projects, users } from '@api/db/schema';
-import { internalError } from '@core/errors';
+import { companies, users } from '@api/db/schema';
+import { config } from '@core/env';
+import { internalError, unprocessable } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
 import { UUID_RE } from '../auth/project-access';
 import { UserStatusEnum } from '../auth/types';
 import { load_prompts } from '../prompts/prompts.service';
-import { CONTROLLER_IDENTITY_KEY, with_redis } from './canyonos.redis';
+import { CONTROLLER_IDENTITY_KEY, with_redis_at } from './canyonos.redis';
+import { canyonos_repo } from './canyonos.repo';
+import type { RegisteredProject } from './canyonos.types';
 
 const ADMIN_NAME = 'admin';
 // `.invalid` is reserved by RFC 2606, so this placeholder address can never route.
@@ -52,50 +56,58 @@ export async function ensure_canyonos_admin(): Promise<AdminOwner> {
   return db.transaction((tx) => ensure_admin_owner(tx));
 }
 
-/** An existing project short-circuits: its name, company, creator, and timestamps are never rewritten. */
-export async function ensure_canyonos_project(
-  project_id: string | null,
-  project_name?: string | null
-): Promise<boolean> {
+interface ControllerIdentity {
+  readonly project_id: string | null;
+  readonly project_name: string | null;
+}
+
+async function read_identity(redis: RedisClient): Promise<ControllerIdentity> {
+  return {
+    project_id: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_id'),
+    project_name: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_name'),
+  };
+}
+
+/** Stores the identity's project under the admin, or gives an existing one the new Redis port. */
+export async function save_controller_project(
+  { project_id, project_name }: ControllerIdentity,
+  redis_port: number
+): Promise<RegisteredProject> {
   if (project_id === null || !UUID_RE.test(project_id)) {
-    canyonos_logger.warn('CanyonOS identity is unusable, bootstrapping no project', { project_id });
-    return false;
+    throw unprocessable(
+      'canyonos.identity_unusable',
+      `The controller on Redis port ${redis_port} published no usable project id`
+    );
   }
 
-  await db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.id, project_id))
-      .limit(1);
-    if (existing) return;
-
+  return db.transaction(async (tx) => {
     const { user_id, company_id } = await ensure_admin_owner(tx);
-    await tx
-      .insert(projects)
-      .values({
-        id: project_id,
-        company_id,
-        created_by: user_id,
-        name: project_name || DEFAULT_PROJECT_NAME,
-      })
-      .onConflictDoNothing();
+    return canyonos_repo.save_registration(tx, {
+      project_id,
+      name: project_name || DEFAULT_PROJECT_NAME,
+      company_id,
+      created_by: user_id,
+      redis_port,
+    });
   });
-  return true;
+}
+
+/** Registers the project whose controller publishes its identity on redis_port. */
+export async function register_project_at(redis_port: number): Promise<RegisteredProject> {
+  const identity = await with_redis_at(redis_port, read_identity);
+  const project = await save_controller_project(identity, redis_port);
+  // A failed prompt load must not fail the registration: the prompts listing stores them later.
+  await load_prompts(project.project_id).catch((error: unknown) =>
+    canyonos_logger.warn('Could not load stored prompts', { error })
+  );
+  return project;
 }
 
 export async function bootstrap_canyonos(): Promise<void> {
   await ensure_canyonos_admin();
 
-  // An unreachable controller is the same outcome as a missing id.
-  const identity = await with_redis(async (redis) => ({
-    project_id: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_id'),
-    project_name: await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_name'),
-  })).catch(() => ({ project_id: null, project_name: null }));
-  if (await ensure_canyonos_project(identity.project_id, identity.project_name)) {
-    // Like an unreachable identity, a failed prompt load must not stop the dashboard from starting.
-    await load_prompts(identity.project_id!).catch((error: unknown) =>
-      canyonos_logger.warn('Could not load stored prompts', { error })
-    );
-  }
+  // Without a reachable controller the dashboard still starts; the CLI registers projects later.
+  await register_project_at(config.canyonos.redisPort).catch((error: unknown) =>
+    canyonos_logger.warn('Could not register the configured controller project', { error })
+  );
 }

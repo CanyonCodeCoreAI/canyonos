@@ -52,9 +52,10 @@ Three things worth internalizing about this diagram:
 1. **The container talks to the host Docker daemon.** The GC mounts the host's `docker.sock`, so the Redis and agent/workflow containers it launches are **siblings on your machine**, not nested inside it. (This is why teardown has to be explicit — see `stop` vs `quit` below.)
 2. **The dashboard is separate.** It's its own compose stack that just *renders* the OTLP traces your workflow emits — it isn't in the deploy critical path. A failure for this command doesn't stop the deployment nor the traces, just prevents automatic trace collection and visualization.
 
-State connecting the CLI to its container is a single file:
-`~/.canyonos/state.json` (container id + port). Every command that needs the
-container reads it.
+State connecting the CLI to its container is a single file per project:
+`~/.canyonos/projects/<project>/state.json` (container id + port), where
+`<project>` is the normalised name of the folder `canyonos` runs from. Every
+command that needs the container reads it.
 
 ---
 
@@ -100,8 +101,22 @@ INPUT: canyonos deploy [optional: --serve true|false, -v/--verbose]
    └─ 4. narrate       → tail container logs, boil them down to phases,
                          and when the workflow reports "up":
                            • auto-start the dashboard (canyonos serve)
+                             and register this project with it
                            • print where everything lives
 ```
+
+`canyonos serve`, run by `deploy` or on its own, starts the one dashboard stack
+of the machine, whose settings and JWT secret live in `~/.canyonos/dashboard/.env`.
+Every command that starts, stops or removes that stack holds the lock
+`~/.canyonos/dashboard/.lock`, so commands from different project folders wait
+for each other instead of racing. Once the stack is healthy, and only when this
+folder's Global Controller reports a running deploy, `serve` sends the
+project's Redis port to `POST /canyonos/projects` on the dashboard api. The api
+reads the controller's identity from that port on its own Redis host and keeps
+the port for the project's prompts, scaling and monitoring pages. A failed
+registration prints a warning and never fails `serve` or `deploy`; run
+`canyonos serve` again to retry. This per-project Redis port is temporary until
+the project-key design in CAN-521.
 
 ### `canyonos test`
 
@@ -146,8 +161,12 @@ Because the deploy spawns real sibling containers, "make it stop" has two levels
 
 - **`stop`** — pause the show, keep the stage set. Redeploy without re-pulling.
 - **`quit`** — full teardown. Removes the container *and* the `/workspace`
-  volume (your copied files). Every `deploy` quietly does this to any previous
-  controller, so each deploy starts clean.
+  volume (your copied files). Every `deploy` quietly does this to the
+  project's previous controller, so each deploy starts clean.
+
+Both act only on the current project's containers. The dashboard is shared by
+every project on the machine, so `stop` and `quit` leave it running while
+another project's Global Controller is still up.
 
 And to observe without changing anything:
 

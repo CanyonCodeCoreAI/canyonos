@@ -3,7 +3,7 @@
 ## Where it runs
 
 ```
-┌──────────────────────── canyonos-global-controller container ────────────────────────┐
+┌─────────────────── canyonos-<project>-global-controller container ───────────────────┐
 │  ┌─────────────────────────────┐      ProcessSupervisor.register("otel_exporter")      │
 │  │ GlobalController            │ ───────────────────────────────────────────────┐      │
 │  │ _poll_controllers           │       ┌────────────────────────────────────────────┐  │

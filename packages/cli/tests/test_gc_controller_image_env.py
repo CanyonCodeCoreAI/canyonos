@@ -36,7 +36,9 @@ class FakeDocker:
 
 
 @pytest.fixture
-def docker(monkeypatch):
+def docker(monkeypatch, tmp_path):
+    (tmp_path / "portfolio").mkdir()
+    monkeypatch.chdir(tmp_path / "portfolio")
     fake = FakeDocker()
     monkeypatch.setattr(init_cmd.subprocess, "run", fake)
     monkeypatch.setattr(init_cmd, "_port_reachable", lambda _port: True)
@@ -70,3 +72,7 @@ def test_the_docker_platform_is_passed_through_from_the_host(docker):
     init_cmd._run_container()
 
     assert "CANYONOS_DOCKER_PLATFORM" in env_flags(docker.run_argv)
+
+
+def label_flags(argv):
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "--label"]

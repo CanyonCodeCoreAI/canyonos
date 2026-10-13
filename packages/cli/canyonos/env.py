@@ -66,8 +66,8 @@ LOCAL_API_IMAGE = "canyonos-api:dev"
 LOCAL_WEB_IMAGE = "canyonos-web:dev"
 
 # Only the CLI's own file, never the current directory: a project the CLI is
-# pointed at has a `.env` of its own (the dashboard stack writes one), and that
-# belongs to the project, not to this CLI. `override=False` keeps a shell
+# pointed at may have a `.env` of its own, and that belongs to the project,
+# not to this CLI. `override=False` keeps a shell
 # variable ahead of the file.
 load_dotenv(ENV_PATH, override=False)
 

@@ -32,12 +32,13 @@ def loud():
 
 @pytest.fixture
 def project(monkeypatch, tmp_path):
-    car = tmp_path / ".car"
+    root = tmp_path / "portfolio"
+    car = root / ".car"
     (car / "config").mkdir(parents=True)
     (car / "app").mkdir()
     (car / "config" / "global_controller.yaml").write_text(CONFIG)
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
+    monkeypatch.chdir(root)
+    return root
 
 
 # ------------------------------------------------------------------ #
@@ -56,15 +57,16 @@ def runtime(monkeypatch):
     return install
 
 
+IMAGES = {"canyonos-portfolio-echoagent", "canyonos-portfolio-workflow"}
 ALL_UP = [
-    "canyonos-echoagent-0",
-    "canyonos-echoagent-1",
-    "canyonos-workflow-0",
+    "canyonos-portfolio-echoagent-0",
+    "canyonos-portfolio-echoagent-1",
+    "canyonos-portfolio-workflow-0",
 ]
 
 
 def test_a_complete_deploy_passes(project, runtime):
-    runtime({"canyonos-echoagent", "canyonos-workflow"}, ALL_UP)
+    runtime(IMAGES, ALL_UP)
 
     result = verify.verify_runtime(
         str(project / ".car" / "config" / "global_controller.yaml"), 8000
@@ -77,7 +79,7 @@ def test_a_complete_deploy_passes(project, runtime):
 
 
 def test_a_short_replica_count_fails(project, runtime):
-    runtime({"canyonos-echoagent", "canyonos-workflow"}, ALL_UP[1:])
+    runtime(IMAGES, ALL_UP[1:])
 
     with pytest.raises(RuntimeError, match="1 of 2 replicas"):
         verify.verify_runtime(
@@ -86,16 +88,18 @@ def test_a_short_replica_count_fails(project, runtime):
 
 
 def test_an_image_that_was_never_built_fails(project, runtime):
-    runtime({"canyonos-workflow"}, ["canyonos-workflow-0"])
+    runtime({"canyonos-portfolio-workflow"}, ["canyonos-portfolio-workflow-0"])
 
-    with pytest.raises(RuntimeError, match="canyonos-echoagent was never built"):
+    with pytest.raises(
+        RuntimeError, match="canyonos-portfolio-echoagent was never built"
+    ):
         verify.verify_runtime(
             str(project / ".car" / "config" / "global_controller.yaml"), 8000
         )
 
 
 def test_the_workflow_endpoint_falls_back_to_the_configured_port(project, runtime):
-    runtime({"canyonos-echoagent", "canyonos-workflow"}, ALL_UP)
+    runtime(IMAGES, ALL_UP)
 
     result = verify.verify_runtime(
         str(project / ".car" / "config" / "global_controller.yaml"), 8000
@@ -315,19 +319,6 @@ def test_query_body_falls_back_to_query_when_introspection_fails(project):
 # ------------------------------------------------------------------ #
 #  Docker plumbing                                                    #
 # ------------------------------------------------------------------ #
-
-
-def test_running_containers_are_filtered_to_the_runtime_prefix(monkeypatch):
-    seen = []
-
-    def fake_run(argv, **_):
-        seen.append(argv)
-        return subprocess.CompletedProcess(argv, 0, "canyonos-echoagent-0\n", "")
-
-    monkeypatch.setattr(verify.subprocess, "run", fake_run)
-
-    assert verify._running_containers() == ["canyonos-echoagent-0"]
-    assert "name=canyonos-" in seen[0]
 
 
 def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(monkeypatch):

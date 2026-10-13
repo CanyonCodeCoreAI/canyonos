@@ -27,7 +27,7 @@ from canyonos import env, ui
 _RAW_MAIN = "https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main"
 POLICY_URL = f"{_RAW_MAIN}/packages/cli/supported-versions.json"
 INSTALL_SCRIPT_URL = f"{_RAW_MAIN}/packages/cli/install.sh"
-# Spelled like `init.STATE_DIR`: `expanduser` never raises, so importing the CLI
+# Spelled like `project.state_dir()`: `expanduser` never raises, so importing the CLI
 # can't fail over a home directory the check would only have skipped.
 CACHE_PATH = Path(os.path.expanduser("~/.canyonos/supported-versions.json"))
 # install.sh's own default, so only another directory has to be spelled out.

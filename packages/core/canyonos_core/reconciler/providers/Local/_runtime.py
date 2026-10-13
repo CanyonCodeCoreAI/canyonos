@@ -10,7 +10,13 @@ import logging
 import socket
 
 from canyonos_core.controller.utils.container_names import (
+    PROJECT_LABEL,
+    ForeignContainerError,
     container_name,
+    data_volume_name,
+    image_name,
+    project_group,
+    project_label_args,
     redis_container_name,
 )
 from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
@@ -114,12 +120,44 @@ def provision_instance(spec, replica_index, next_host_port, launch_id):
     }
 
 
+def _refuse_other_projects_container(runtime_id, host, user):
+    """Raise instead of replacing a running container that has this replica's name
+    but belongs to another project. Project `my` with agent `app-worker` and project
+    `my-app` with agent `worker` both name a replica `canyonos-my-app-worker-0`; a
+    container with no project label predates projects and is replaced as before."""
+    labels = _require_controller()._run_cmd(
+        [
+            "docker",
+            "inspect",
+            "-f",
+            f'{{{{index .Config.Labels "{PROJECT_LABEL}"}}}}',
+            runtime_id,
+        ],
+        host,
+        user,
+    )
+    if labels.returncode != 0:
+        if "no such" in (labels.stderr or "").lower():
+            return
+        raise ForeignContainerError(
+            f"Cannot launch {runtime_id}: a container with that name is running but "
+            f"Docker would not say which project owns it: {labels.stderr.strip()}"
+        )
+    owner = labels.stdout.strip()
+    if owner and owner != project_group():
+        raise ForeignContainerError(
+            f"Cannot launch {runtime_id}: a container with that name already runs in "
+            f"Docker group {owner}, not {project_group()}. Rename the agent or the "
+            "project folder so the names no longer collide."
+        )
+
+
 def bootstrap_instance(provisioned, spec, replica_index, agent_id):
     """Start a local replica's Docker container (replacing a leftover one with the same
     name) and return its instance record."""
     agent_name = spec["name"]
     ctrl_type = spec.get("type", "agent")
-    image = f"canyonos-{agent_name.lower()}"
+    image = image_name(agent_name)
     host = provisioned["private_host"]
     host_port = provisioned["host_port"]
     user = provisioned.get("user")
@@ -131,6 +169,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         ["docker", "inspect", "-f", "{{.State.Running}}", runtime_id], host, user
     )
     if inspect.returncode == 0 and inspect.stdout.strip() == "true":
+        _refuse_other_projects_container(runtime_id, host, user)
         logger.warning(
             "No Redis record for %s but a container with that name is already running; "
             "treating it as orphaned and recreating.",
@@ -173,6 +212,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             "docker",
             "run",
             "-d",
+            *project_label_args(),
             *(["--network", NETWORK] if is_local else []),
             "--name",
             runtime_id,
@@ -209,7 +249,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         elif ctrl_type == "database":
             volume_path = spec.get("volume_path")
             if volume_path:
-                cmd.extend(["-v", f"canyonos-{agent_name.lower()}-data:{volume_path}"])
+                cmd.extend(["-v", f"{data_volume_name(agent_name)}:{volume_path}"])
             for key, value in spec.get("env", {}).items():
                 cmd.extend(["-e", f"{key}={value}"])
         # A stock database image capped at the agent defaults gets OOM-killed under load.

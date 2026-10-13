@@ -11,6 +11,13 @@ Agent needs a non-installable package (like git, rust, etc.)
 The skill file misses some required dependencies
 - The skill file, when building the global_controller.yaml file finds the imports that every agent uses and adds that in the requirements section of the .yaml file, but in some occasions, it forgets to find dependencies that
 
+Several projects on one machine: each folder you run `canyonos` from is its own project, with its own Global Controller, containers, images and state. The project name is the folder name, lowercased, with every character other than letters, digits, `_` and `-` turned into `-`, repeated or edge `-` removed, and cut to 24 characters. The name `dashboard` is reserved for the dashboard and becomes `dashboard-project`. Ports are not picked for you: give each project its own `redis_port` and `api_port` in `global_controller.yaml`.
+- Two folders with the same name in different paths are the same project, so deploying one replaces the other.
+- Folder names longer than 24 characters are cut, so two long names that start the same become one project.
+- A folder name with no ASCII letters, digits or `_` (for example `日本語`) becomes `default`.
+- There is one dashboard per machine. Each project registers with it when `canyonos deploy` or `canyonos serve` finds the project's Global Controller running, and the dashboard api keeps that project's Redis port to read its prompts, scaling and monitoring. This is temporary until the project-key design in CAN-521. A project whose registration failed is missing from the dashboard until `canyonos serve` is run again from its folder. `stop` and `quit` leave the dashboard running while another project's Global Controller is up.
+- Names join the project and the agent with `-`, so project `my` with agent `app-worker` and project `my-app` with agent `worker` share the image `canyonos-my-app-worker`, the database volume `canyonos-my-app-worker-data` and the replica name `canyonos-my-app-worker-0`. The image and the volume are overwritten or reused silently; only launching a replica while the other project's replica of that name runs fails, with an error naming both projects. Rename the folder or the agent. The folders `dashboard` and `dashboard-project` are the same project for the same reason.
+
 ## What your app needs before porting
 
 You own your app's code, dependencies, data, credentials, outside services, and whether its answers are correct. CanyonOS owns running it, connecting its containers, and routing its model calls. Check your app against each section below before running `canyonos build`.
