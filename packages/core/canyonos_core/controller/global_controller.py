@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import yaml
@@ -24,14 +25,14 @@ from canyonos_core.controller.controller_context import (
     instance_id,
     instance_id_from_record,
     list_instances,
-    routing_endpoint_for,
 )
 from canyonos_core.controller import scaling
 from canyonos_core.scaling import contract
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
+from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import redis_container_name
-from canyonos_core.reconciler import state
+from canyonos_core.reconciler import providers, state
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
@@ -42,6 +43,7 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 )
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
+from canyonos_core.schema.manifest import load_manifest
 from canyonos_core.schema.yaml_lines import load_yaml_lines
 
 # Add generated grpc_stubs from the local project to the path. Projects using
@@ -71,10 +73,6 @@ CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 # must cover the slowest honest cold start, so the workflow launcher's
 # stub_generator.WORKFLOW_READY_TIMEOUT_SECONDS must not undercut it.
 CONTROLLER_READY_TIMEOUT_SECONDS = 360
-
-# How much of a failed container's own log to show: enough for the traceback that
-# names the failed import, short enough not to bury the summary under it.
-_FAILURE_LOG_TAIL_LINES = 40
 
 # Statuses a container publishes on its way out. Nothing republishes over them, so
 # waiting on one can only ever time out.
@@ -337,9 +335,11 @@ class GlobalController(ControllerContext):
         self.redis.set(self.OTEL_DESTINATIONS_KEY, payload)
 
     def reload_config(self):
-        """Re-read the config, republish the spec, and let the reconciler converge."""
+        """Re-read the config, republish the spec, and let the reconciler converge.
+        If the config fails the schema check, raises SchemaError before changing anything."""
         logger.info("Reloading config from %s", self.config_path)
         # Parse every file before writing anything, so a broken one leaves Redis untouched.
+        load_manifest(self.config_path)
         config_files = self._read_config_folder()
         self.config = self._load_config(self.config_path)
         self.env_file_path = resolve_env_file(self.config)
@@ -805,7 +805,8 @@ class GlobalController(ControllerContext):
         """
         Block until all controllers report healthy in Redis, or fail the deploy.
 
-        A replica that exists but never reports healthy is fatal, and one that
+        A replica that exists but never reports healthy is fatal, as is one left
+        with no record at all because its launch failed, and one that
         reports a terminal status ("failed", "stopped") is fatal at once: the
         rest of the timeout would be dead time before a verdict already decided,
         during which the reconciler may replace the container holding the cause.
@@ -831,7 +832,6 @@ class GlobalController(ControllerContext):
         started = time.time()
         deadline = started + timeout
         ready = set()
-        any_instances_appeared = False
         pending = []
         healthy = {}
 
@@ -843,7 +843,6 @@ class GlobalController(ControllerContext):
 
         while True:
             instances = list_instances(self.redis)
-            any_instances_appeared = any_instances_appeared or bool(instances)
             pending = []
             healthy = {}
             for instance in instances:
@@ -851,7 +850,7 @@ class GlobalController(ControllerContext):
                 host = instance["private_host"]
                 port = instance["host_port"]
                 node_redis = self.node_redis_for_instance(instance)
-                endpoint = routing_endpoint_for(instance)
+                endpoint = instance["routing_endpoint"]
                 status = node_redis.get(f"controller:{endpoint}:status")
                 if status == "healthy":
                     healthy[name] = healthy.get(name, 0) + 1
@@ -875,14 +874,6 @@ class GlobalController(ControllerContext):
             time.sleep(interval)
 
         waited = int(time.time() - started)
-        if not any_instances_appeared:
-            logger.critical(
-                "No controller instances appeared within %ds; the reconciler may "
-                "have failed to provision them.",
-                waited,
-            )
-            return
-
         for instance, status in pending:
             logger.warning(
                 "Controller %s (%s:%s) is %s after %ds.",
@@ -906,9 +897,17 @@ class GlobalController(ControllerContext):
                 want,
                 waited,
             )
-        # An existing unhealthy replica fails startup; a missing one may still be provisioning.
+        # A replica with no record at all failed to launch; an unfinished record may still be launching.
+        recorded = Counter(
+            self.redis.hgetall(key).get("agent_name")
+            for key in self.redis.scan_keys("agent_instance:*")
+        )
         failing = {instance["agent_name"] for instance, _ in pending}
-        failed = {name: counts for name, counts in short.items() if name in failing}
+        failed = {
+            name: (have, want)
+            for name, (have, want) in short.items()
+            if name in failing or recorded[name] < want
+        }
         if not failed:
             return
 
@@ -917,7 +916,9 @@ class GlobalController(ControllerContext):
         # hold nothing yet; a timeout shows every laggard.
         for instance, status in terminal or pending:
             if instance["agent_name"] in failed:
-                self._dump_container_log(instance, status)
+                dump_container_log(
+                    instance, status, providers.get(instance["provider"]).log_tail
+                )
 
         summary = ", ".join(
             f"{name} {have}/{want}" for name, (have, want) in failed.items()
@@ -925,87 +926,6 @@ class GlobalController(ControllerContext):
         raise RuntimeError(
             f"Agent replica(s) failed to become healthy within {waited}s: {summary}"
         )
-
-    def _dump_container_log(self, instance, status):
-        """Log one failed container's own log, bracketed by sentinel lines.
-
-        Everything between `--- begin container log:` and `--- end container
-        log:` is another process's output quoted verbatim, ERROR lines and
-        tracebacks included. `canyonos deploy` decides the deploy has died from
-        exactly those words, so it keys on the sentinels to leave the quoted
-        block alone -- they must stay in step with PhaseTracker in
-        packages/cli/canyonos/deploy.py, which matches them only at the start
-        of a message. Every line inside is therefore indented, so quoted text
-        can never pose as a sentinel, and the block is emitted whole, whatever
-        goes wrong inside it.
-        """
-        name = instance["agent_name"]
-        logger.warning(
-            "--- begin container log: %s (%s:%s) status=%s ---",
-            name,
-            instance["private_host"],
-            instance["host_port"],
-            status or "unknown",
-        )
-        try:
-            self._log_container_output(instance)
-        except Exception as e:
-            # Never fatal: the summary that follows is what the deploy is here to say.
-            logger.warning("  could not read the log of %s: %s", name, e)
-        finally:
-            logger.warning("--- end container log: %s ---", name)
-
-    def _log_container_output(self, instance):
-        """Emit one container's log tail, or the one line saying why it is missing."""
-        name = instance["agent_name"]
-        container = self._docker_container_name(instance)
-        if not container:
-            logger.warning("  could not read the log of %s: no container", name)
-            return
-
-        result = self._run_cmd(
-            ["docker", "logs", "--tail", str(_FAILURE_LOG_TAIL_LINES), container],
-            instance["private_host"],
-            self._ssh_user_for(instance),
-        )
-        if result.returncode != 0:
-            # stderr here is docker's complaint, not the agent's output.
-            logger.warning(
-                "  could not read the log of %s: %s",
-                name,
-                (result.stderr or result.stdout or "").strip(),
-            )
-            return
-
-        lines = [
-            line
-            for stream in (result.stdout, result.stderr)
-            if stream
-            for line in stream.splitlines()
-        ]
-        for line in lines or ["(the container produced no output)"]:
-            logger.warning("  %s", line)
-
-    def _docker_container_name(self, instance):
-        """The name this instance's container answers to under `docker`.
-
-        Not interchangeable with its runtime id: EC2 appends the host's instance
-        id to that, so each provider says which part `docker` was given.
-        """
-        if instance.get("provider", "local").casefold() == "ec2":
-            from canyonos_core.reconciler.providers.EC2 import _runtime as runtime
-        else:
-            from canyonos_core.reconciler.providers.Local import _runtime as runtime
-        return runtime.docker_container_name(instance)
-
-    def _ssh_user_for(self, instance):
-        """The SSH user a command against this instance's host needs.
-
-        EC2 records carry none: that provider reads the user from the deploy
-        config on every call rather than storing it per replica.
-        """
-        # `or {}`, not a default: a bare `ec2:` key in the YAML parses to None.
-        return instance.get("user") or (self.config.get("ec2") or {}).get("ssh_user")
 
     # ------------------------------------------------------------------ #
     #  Polling loop                                                       #
@@ -1060,6 +980,7 @@ class GlobalController(ControllerContext):
         # Polled in parallel, one instance's slow Redis round-trip no longer
         # gates every other instance's poll.
         instances = list_instances(self.redis)
+        self.prune_node_redis(instances)
         instance_samples = []
         if instances:
             with ThreadPoolExecutor(max_workers=len(instances)) as executor:
@@ -1142,7 +1063,7 @@ class GlobalController(ControllerContext):
                 port,
                 e,
             )
-        endpoint = routing_endpoint_for(instance)
+        endpoint = instance["routing_endpoint"]
         status_key = f"controller:{endpoint}:status"
         metrics_key = f"controller:{endpoint}:metrics"
 
@@ -1341,7 +1262,7 @@ class GlobalController(ControllerContext):
         if agent_name not in self.agent_specs:
             logger.warning("Cannot replace an instance of unknown agent %s", agent_name)
             return None
-        provider = self.agent_specs[agent_name].get("provider", "local")
+        provider = self.agent_specs[agent_name]["provider"]
         target = instance_id(provider, agent_name, int(replica_index))
         state.request_replace(self.redis, target)
         self._request_reconcile(agent_name)
@@ -1439,7 +1360,7 @@ class GlobalController(ControllerContext):
             # Container-reachable address (runtime_id:CONTAINER_PORT), not
             # instance["endpoint"] -- that's the host-published port
             # (e.g. localhost:8001), which the GC container can't reach.
-            endpoint = routing_endpoint_for(instance)
+            endpoint = instance["routing_endpoint"]
             try:
                 stub = self._get_lc_stub(endpoint)
                 stub.Cleanup(local_controler_pb2.JsonResponse(resonse=payload))
@@ -1492,7 +1413,8 @@ class GlobalController(ControllerContext):
 
         while True:
             try:
-                remaining = list_instances(self.redis)
+                # Every record, unfinished launches too: one may still hold a machine.
+                remaining = self.redis.scan_keys("agent_instance:*")
             except Exception as e:
                 logger.warning("Failed to read instance records while draining: %s", e)
                 return False
@@ -1501,10 +1423,10 @@ class GlobalController(ControllerContext):
                 return True
             if time.time() >= deadline:
                 logger.warning(
-                    "%d instance(s) still running after %ds; the next startup's "
-                    "reconcile will remove whichever are no longer healthy.",
-                    len(remaining),
+                    "Instance records still in Redis after %ds: %s; the next "
+                    "startup's reconcile removes whichever are unhealthy or unfinished.",
                     timeout,
+                    ", ".join(sorted(remaining)),
                 )
                 return False
             time.sleep(interval)

@@ -41,6 +41,12 @@ dispatch path, identifier scheme, or Redis read-back for the same work.
   `pyproject.toml` so `ty` can resolve them.
 - gRPC output is generated. Edit `.proto` sources, not `*_pb2*.py`; never commit
   `stubs/` or `grpc_stubs/`.
+- Put provider-specific code (Local, EC2, or a new provider) only in that
+  provider's folder under `reconciler/providers/`. Everywhere else, call
+  providers through the interface in `reconciler/providers/__init__.py`
+  (`providers.get(name)` and the functions every provider defines). Never import
+  a provider's module directly or check a provider's name. `ProviderBoundaryTests`
+  in `packages/core/tests/test_providers.py` fails if core code breaks this.
 - Add shipped non-Python files through package-data.
 - New background threads need a name. Failed loop iterations must be logged and
   the loop must continue when recovery is safe.

@@ -20,7 +20,12 @@ from canyonos_core.controller.global_controller import GlobalController
 def _bare_controller(redis_port):
     controller = GlobalController.__new__(GlobalController)
     controller.controllers = [
-        {"name": "IntentAgent", "replicas": 1, "redis_port": redis_port}
+        {
+            "name": "IntentAgent",
+            "provider": "local",
+            "replicas": 1,
+            "redis_port": redis_port,
+        }
     ]
     controller.redis_containers = {}
     controller.redis_ports = {}

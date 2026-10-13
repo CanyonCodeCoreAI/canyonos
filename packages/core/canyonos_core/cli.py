@@ -16,9 +16,10 @@ import shutil
 import subprocess
 import sys
 
-from canyonos_core.controller.controller_context import is_ec2
 from canyonos_core.controller.utils.config_env import load_config
+from canyonos_core.controller.utils.docker_utils import docker_available
 from canyonos_core.controller.utils.env_file import resolve_env_file
+from canyonos_core.reconciler import providers
 from canyonos_core.schema import (
     check_project,
     render_violation,
@@ -80,26 +81,14 @@ def _load_config(config_path):
 
     for agent in agents:
         name = agent["name"]
-        provider = agent.get("provider", "local")
-        if not isinstance(provider, str) or provider.casefold() not in {"local", "ec2"}:
-            raise RuntimeError(
-                f"Agent {name} has unsupported provider {provider!r}; use `local` or `EC2`."
-            )
-        agent["provider"] = "EC2" if provider.casefold() == "ec2" else "local"
+        agent["provider"] = providers.canonical_name(
+            agent.get("provider", providers.DEFAULT)
+        )
 
         replicas = agent.get("replicas", 1)
         if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
             raise RuntimeError(
                 f"Agent {name} must have a positive integer `replicas` value."
-            )
-        if (
-            agent["provider"] == "local"
-            and agent.get("type", "agent") == "workflow"
-            and replicas > 1
-        ):
-            raise RuntimeError(
-                f"Local workflow {name} cannot use replicas > 1 because every replica "
-                "would publish the same `api_port`."
             )
 
         for field in ("host_port", "port", "redis_port", "api_port", "dashboard_port"):
@@ -188,25 +177,6 @@ def _normalize_requirements(agent_cfg):
     return list(agent_cfg.get("requirements") or [])
 
 
-def _docker_available(probe_cmd=("docker", "info")):
-    """Return True if Docker is installed and its daemon answers; checked before
-    building images and before an EC2 deploy."""
-    if not shutil.which("docker"):
-        return False
-
-    try:
-        result = subprocess.run(
-            list(probe_cmd),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return False
-
-    return result.returncode == 0
-
-
 def _write_bake_file(bake_targets, bake_file_path, platform):
     """Write a docker-buildx-bake JSON file describing all build targets.
 
@@ -233,15 +203,6 @@ def _write_bake_file(bake_targets, bake_file_path, platform):
     return bake_file_path
 
 
-def _require_docker_for_ec2(command_name):
-    if _docker_available():
-        return
-    raise RuntimeError(
-        f"EC2-backed `canyonos {command_name}` requires local Docker, but Docker is unavailable "
-        "or unreachable."
-    )
-
-
 def _ensure_grpc_stubs_importable(project_dir):
     grpc_stubs_dir = os.path.join(project_dir, "grpc_stubs")
     if grpc_stubs_dir not in sys.path:
@@ -255,13 +216,6 @@ def _ensure_grpc_stubs_importable(project_dir):
             "Deploy failed: generated grpc_stubs are missing or not importable. "
             "Run `canyonos build` on this host first."
         ) from exc
-
-
-def _preflight_ec2_deploy(config, project_dir):
-    # The required `ec2:` keys are the manifest schema's job, checked before
-    # anything was built; what is left here is the local toolchain.
-    _require_docker_for_ec2("deploy")
-    _ensure_grpc_stubs_importable(project_dir)
 
 
 # ------------------------------------------------------------------ #
@@ -500,7 +454,7 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     if not bake_targets:
         logger.info("No Docker images to build.")
-    elif _docker_available() and _docker_available(("docker", "buildx", "version")):
+    elif docker_available() and docker_available(("docker", "buildx", "version")):
         docker_container_dir = os.path.join(artifact_root, "docker_container")
         os.makedirs(docker_container_dir, exist_ok=True)
         bake_file_path = os.path.join(docker_container_dir, "docker-bake.json")
@@ -575,8 +529,8 @@ def _cmd_deploy(args):
 
     _ensure_grpc_stubs_importable(artifact_root)
 
-    if any(is_ec2(agent) for agent in config.get("agents", [])):
-        _preflight_ec2_deploy(config, artifact_root)
+    for name in dict.fromkeys(agent["provider"] for agent in config.get("agents", [])):
+        providers.get(name).preflight()
 
     from canyonos_core.controller.global_controller import GlobalController
 

@@ -18,7 +18,6 @@ from canyonos_core.schema.functions import BUILTIN_TYPE_NAMES
 from canyonos_core.schema.manifest import (
     AgentService,
     DatabaseService,
-    Ec2Spec,
     Manifest,
     OtelDestination,
     OtelSpec,
@@ -33,7 +32,6 @@ __all__ = [
     "BUILTIN_TYPE_NAMES",
     "DatabaseService",
     "DependencyPinConflict",
-    "Ec2Spec",
     "Manifest",
     "OtelDestination",
     "OtelSpec",

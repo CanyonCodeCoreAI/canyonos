@@ -438,14 +438,17 @@ class OTelExporterQuietFailureTests(unittest.TestCase):
             }
         ]
         boom = RuntimeError("no aws_instance_pricing table")
+        redis_client = MagicMock()
+        redis_client.get.side_effect = boom
         with (
             patch.object(otel_writer.pricing, "compute_token_cost", side_effect=boom),
-            patch.object(otel_writer.pricing, "compute_server_cost", side_effect=boom),
             self.assertLogs(otel_writer.logger, level="WARNING") as captured,
         ):
             for index in range(3):
                 rows[0]["future_id"] = f"001122334455667{index}"
-                otel_writer._trace_write_rows(rows, None, "proj", db_path=self.db_path)
+                otel_writer._trace_write_rows(
+                    rows, redis_client, "proj", db_path=self.db_path
+                )
 
         self.assertEqual(
             len([m for m in captured.output if "Token cost lookup failed" in m]), 1

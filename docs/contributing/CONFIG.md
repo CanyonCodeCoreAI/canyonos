@@ -34,7 +34,7 @@ allows `${VAR}` only in string fields.
 
 - `manifest.py`: `global_controller.yaml`. `load_manifest` parses it into frozen
   dataclasses (`Manifest`, `AgentService`, `WorkflowService`, `DatabaseService`,
-  `RedisSpec`, `OtelSpec`, `Ec2Spec`) and collects every violation before raising one
+  `RedisSpec`, `OtelSpec`) and collects every violation before raising one
   `SchemaError`.
 - `functions.py`: an agent entry's `functions`. Their names become Python source in the
   stub, so argument types are limited to builtins.
@@ -47,9 +47,10 @@ allows `${VAR}` only in string fields.
 The allowed keys are declared once, at the top of `manifest.py`: top-level keys in
 `_MANIFEST_KEYS` and entry keys per type in `_SERVICE_KEYS_BY_TYPE`. Anything else is
 rejected. A key that no longer does anything goes in `_RETIRED_KEYS` with the message
-to show.
+to show. A provider's own section and per-agent keys are declared in its `_schema.py`
+instead; see `packages/core/canyonos_core/reconciler/providers/README.md`.
 
-Cross-field rules live in `_service` and `_ec2`:
+Cross-field rules live in `_service` and `_check_provider_sections`:
 
 - `provider: EC2` needs `instance_type`, and then the `ec2` section.
 - A local workflow can't have more than one replica, since they would share `api_port`.
@@ -67,7 +68,7 @@ config to Redis:
 |---|---|---|
 | Each agent's spec | `agent:{name}:spec` | `write_config_specs` |
 | Desired replicas | `agent:{name}:desired_replicas` | `_apply_configured_replicas` |
-| Policy rules, sorted most specific first | `policy:rules`, on every host | `_load_and_write_policies` |
+| Policy rules, sorted most specific first | `policy:rules`, on every host | `_write_policies` |
 | OTel destinations | `otel:destinations` | `_write_otel_destinations` |
 
 The YAML always wins: every load overwrites replica counts changed at runtime. The
@@ -76,7 +77,8 @@ Reconciler converges running instances onto the new desired counts; see
 
 ## Reloading
 
-`reload_config` runs on `SIGHUP` to the Global Controller. It re-reads the file,
+`reload_config` runs on `SIGHUP` to the Global Controller. It checks the file against the
+schema first and changes nothing if any violation is found. Otherwise it re-reads the file,
 republishes it, deletes the desired count of any agent that was removed, and wakes the
 Reconciler, without restarting the agents that remain. The CLI doesn't send `SIGHUP`
 today, so users apply changes with `canyonos deploy`.

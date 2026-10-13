@@ -9,6 +9,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from canyonos_core.reconciler import providers
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PROTO_DIR = PACKAGE_ROOT / "canyonos_core" / "controller" / "proto"
 STUB_DIR = PACKAGE_ROOT / "build" / "pb"
@@ -30,3 +34,18 @@ def pytest_configure(config):
         check=True,
     )
     sys.path.insert(0, str(STUB_DIR))
+
+
+@pytest.fixture(autouse=True)
+def _unbind_providers():
+    """Start and end every test with no controller bound to any provider, so a test
+    only sees the controller it binds itself."""
+
+    def unbind():
+        providers.bind(None)
+        for name in providers.NAMES:
+            providers.get(name)
+
+    unbind()
+    yield
+    unbind()

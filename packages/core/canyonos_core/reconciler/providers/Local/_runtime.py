@@ -15,6 +15,10 @@ from canyonos_core.controller.utils.container_names import (
 )
 from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.controller.utils.env_file import env_file_args
+from canyonos_core.reconciler.providers.shared_utils.docker_host import (
+    container_log_tail,
+    container_running,
+)
 from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
     transfer_image,
 )
@@ -60,9 +64,24 @@ def _port_bound(port):
     return False
 
 
-def validate_config():
-    """Check `global_controller.yaml` for settings this provider needs; it has none."""
+def preflight():
+    """Do nothing: building the images already needed Docker on this machine."""
     return None
+
+
+def port_claim_host(spec):
+    """Return the agent's host, where each new replica is given a free port."""
+    return spec.get("host", DEFAULT_HOST)
+
+
+def ssh_user(entry):
+    """The SSH user an agent spec or replica record names, if any."""
+    return entry.get("user")
+
+
+def hourly_cost(spec):
+    """Return 0: a local replica has no hourly cost."""
+    return 0
 
 
 def _port_check(host, port):
@@ -75,7 +94,7 @@ def _port_check(host, port):
         return False
 
 
-def provision_instance(spec, replica_index, next_host_port):
+def provision_instance(spec, replica_index, next_host_port, launch_id):
     """Choose where a new local replica runs and its name, without starting it."""
     host = spec.get("host", DEFAULT_HOST)
     host_port = int(spec.get("host_port", spec.get("port", next_host_port(host))))
@@ -239,6 +258,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         "host_port": str(host_port),
         "container_port": str(container_port),
         "endpoint": f"{host}:{host_port}",
+        "routing_endpoint": endpoint,
         "redis_host": redis_host,
         "redis_port": str(redis_port),
         "runtime_id": runtime_id,
@@ -292,9 +312,24 @@ def terminate_instance(instance):
             )
 
 
-def docker_container_name(instance):
-    """The name this instance's container answers to under `docker`.
+def is_running(instance):
+    """True if the replica's container, named by its runtime id, is running on its
+    host; an unreachable host counts as not running."""
+    return container_running(
+        _require_controller(),
+        instance["runtime_id"],
+        instance["private_host"],
+        ssh_user(instance),
+    )
 
-    Here the runtime id is that name: `docker run --name` is given it verbatim.
-    """
-    return instance.get("runtime_id")
+
+def log_tail(instance, lines):
+    """Return the last `lines` lines of the replica container's output. Raises
+    RuntimeError with the reason if they can't be read."""
+    return container_log_tail(
+        _require_controller(),
+        instance.get("runtime_id"),
+        instance["private_host"],
+        ssh_user(instance),
+        lines,
+    )

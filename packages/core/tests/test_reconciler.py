@@ -14,7 +14,6 @@ import yaml
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.controller.controller_context import routing_endpoint_for
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.reconciler import Reconciler
 from fakes import _bare_reconciler, _FakeProvisioner, _FakeRedis, _instance
@@ -27,6 +26,12 @@ class _RaisingRedis(_FakeRedis):
 
 ALPHA_SPEC = {"name": "Alpha", "provider": "local", "replicas": 2}
 BETA_SPEC = {"name": "Beta", "provider": "local", "replicas": 1}
+_MANIFEST = (
+    "agents:\n"
+    "  - name: Alpha\n"
+    "    entrypoint: agents/alpha.py\n"
+    "    functions: [{name: work}]\n"
+)
 
 
 def _fake_context(redis=None, agents=None, node_redis=None):
@@ -56,9 +61,9 @@ class StartupReadinessTests(unittest.TestCase):
         return controller
 
     def _ready(self, controller, instance):
-        """Mark an instance healthy under the key the real endpoint helper builds."""
-        endpoint = routing_endpoint_for(instance)
-        controller.redis.set(f"controller:{endpoint}:status", "healthy")
+        controller.redis.set(
+            f"controller:{instance['routing_endpoint']}:status", "healthy"
+        )
 
     def test_wait_for_healthy_tracks_instances_that_appear_asynchronously(self):
         controller = self._controller(replicas=2)
@@ -91,7 +96,7 @@ class StartupReadinessTests(unittest.TestCase):
             {("localhost", "8000"): "healthy", ("localhost", "8001"): "healthy"},
         )
 
-    def test_wait_for_healthy_returns_normally_when_no_instances_appear(self):
+    def test_wait_for_healthy_fails_when_no_instance_was_ever_recorded(self):
         controller = self._controller(replicas=1)
         self.list_instances.return_value = []
 
@@ -101,15 +106,12 @@ class StartupReadinessTests(unittest.TestCase):
                 side_effect=itertools.chain([0, 0], itertools.repeat(2)),
             ),
             patch("canyonos_core.controller.global_controller.time.sleep") as sleep,
-            self.assertLogs(
-                "canyonos_core.controller.global_controller", level="CRITICAL"
-            ) as logs,
+            self.assertRaisesRegex(RuntimeError, "Alpha 0/1"),
         ):
             controller._wait_for_healthy(timeout=2, interval=2)
 
         self.assertEqual(self.list_instances.call_count, 2)
         sleep.assert_called_once_with(2)
-        self.assertIn("reconciler", logs.output[0])
 
 
 class DesiredStateTests(unittest.TestCase):
@@ -235,6 +237,8 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller.redis = _FakeRedis()
         controller.node_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
+        with open(controller.config_path, "w") as f:
+            f.write(_MANIFEST)
         controller._set_controllers([ALPHA_SPEC])
         controller._apply_configured_replicas()
         controller._load_config = lambda path: {
@@ -254,6 +258,8 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller.redis = _FakeRedis()
         controller.node_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
+        with open(controller.config_path, "w") as f:
+            f.write(_MANIFEST)
         controller._set_controllers([ALPHA_SPEC])
         controller._apply_configured_replicas()
         controller._load_config = lambda path: {
@@ -276,6 +282,8 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller.redis = _FakeRedis()
         controller.node_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
+        with open(controller.config_path, "w") as f:
+            f.write(_MANIFEST)
         controller._set_controllers([ALPHA_SPEC])
         controller._load_config = lambda path: {"agents": [ALPHA_SPEC]}
 
@@ -407,27 +415,6 @@ class ReconcileTests(unittest.TestCase):
                     reconciler._reconcile(["Db"])
 
                 self.assertEqual(manager.removed, expected)
-
-    def test_an_ec2_instance_is_routed_on_its_published_port(self):
-        instance = {
-            "provider": "EC2",
-            "private_host": "10.0.0.5",
-            "host_port": "5433",
-            "container_port": "5432",
-        }
-
-        self.assertEqual(routing_endpoint_for(instance), "10.0.0.5:5433")
-
-    def test_a_local_instance_on_a_remote_host_is_routed_on_its_published_port(self):
-        instance = {
-            "provider": "local",
-            "private_host": "10.0.0.5",
-            "runtime_id": "canyonos-alpha-0",
-            "host_port": "8000",
-            "container_port": "50051",
-        }
-
-        self.assertEqual(routing_endpoint_for(instance), "10.0.0.5:8000")
 
     def test_an_agent_with_non_integer_replicas_is_skipped_not_removed(self):
         redis = _FakeRedis()

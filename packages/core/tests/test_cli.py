@@ -26,7 +26,7 @@ class CliDeployTests(unittest.TestCase):
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.cli._preflight_ec2_deploy")
+    @patch("canyonos_core.reconciler.providers.EC2._runtime.preflight")
     def test_deploy_skips_ec2_preflight_for_local_config(
         self,
         preflight,
@@ -61,10 +61,12 @@ class CliDeployTests(unittest.TestCase):
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.cli._preflight_ec2_deploy")
-    def test_deploy_runs_ec2_preflight_for_ec2_config(
+    @patch("canyonos_core.reconciler.providers.EC2._runtime.preflight")
+    @patch("canyonos_core.reconciler.providers.Local._runtime.preflight")
+    def test_deploy_runs_each_used_providers_preflight_once(
         self,
-        preflight,
+        local_preflight,
+        ec2_preflight,
         ensure_grpc,
         _run_build,
         _signal_patch,
@@ -73,7 +75,13 @@ class CliDeployTests(unittest.TestCase):
         controller = MagicMock()
         controller_module = self._fake_controller_module(controller)
         args = SimpleNamespace(config="config/global_controller.yaml")
-        config = {"agents": [{"name": "Ec2Agent", "provider": "EC2"}]}
+        config = {
+            "agents": [
+                {"name": "Ec2Agent", "provider": "EC2"},
+                {"name": "LocalAgent", "provider": "local"},
+                {"name": "Ec2Worker", "provider": "EC2"},
+            ]
+        }
 
         with (
             patch("canyonos_core.cli.os.path.isfile", return_value=True),
@@ -88,17 +96,16 @@ class CliDeployTests(unittest.TestCase):
             cli._cmd_deploy(args)
 
         ensure_grpc.assert_called_once_with(os.getcwd())
-        preflight.assert_called_once_with(config, os.getcwd())
+        ec2_preflight.assert_called_once_with()
+        local_preflight.assert_called_once_with()
         controller.run.assert_called_once_with()
 
     @patch("atexit.register")
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.cli._preflight_ec2_deploy")
     def test_deploy_exits_with_one_critical_line_when_replicas_never_become_healthy(
         self,
-        _preflight,
         _ensure_grpc,
         _run_build,
         _signal_patch,
@@ -134,9 +141,8 @@ class CliDeployTests(unittest.TestCase):
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.cli._preflight_ec2_deploy")
     def test_deploy_uses_car_when_present(
-        self, preflight, ensure_grpc, _run_build, _signal_patch, _atexit_patch
+        self, ensure_grpc, _run_build, _signal_patch, _atexit_patch
     ):
         controller = MagicMock()
         controller_module = self._fake_controller_module(controller)
@@ -164,24 +170,6 @@ class CliDeployTests(unittest.TestCase):
         ensure_grpc.assert_called_once_with(
             os.path.join(os.path.realpath(tmpdir), ".car")
         )
-        preflight.assert_not_called()
-
-    @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.cli._require_docker_for_ec2")
-    def test_preflight_does_not_require_ssh_fields(self, require_docker, ensure_grpc):
-        config = {
-            "ec2": {
-                "ami_id": "ami-123",
-                "subnet_id": "subnet-123",
-                "security_group_ids": ["sg-123"],
-                "region": "us-east-1",
-            }
-        }
-
-        cli._preflight_ec2_deploy(config, os.getcwd())
-
-        require_docker.assert_called_once_with("deploy")
-        ensure_grpc.assert_called_once_with(os.getcwd())
 
     def test_deploy_rejects_a_bad_config_before_it_builds(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -282,7 +270,7 @@ class CliBuildTests(unittest.TestCase):
                 "canyonos_core.stub_generator.generate_workflow_docker"
             ) as generate_workflow_docker,
             patch("canyonos_core.cli.subprocess.run", side_effect=fake_run),
-            patch("canyonos_core.cli._docker_available", return_value=buildx_available),
+            patch("canyonos_core.cli.docker_available", return_value=buildx_available),
             patch(
                 "canyonos_core.stub_generator.target_docker_platform",
                 return_value=platform,
@@ -681,7 +669,7 @@ class CliBuildTests(unittest.TestCase):
                     "canyonos_core.stub_generator.target_docker_platform",
                     return_value="linux/amd64",
                 ),
-                patch("canyonos_core.cli._docker_available", return_value=False),
+                patch("canyonos_core.cli.docker_available", return_value=False),
             ):
                 cwd = os.getcwd()
                 os.chdir(project_dir)

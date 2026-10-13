@@ -106,7 +106,7 @@ def _normalize_json_text(value):
 def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH):
     """Upsert future rows (as returned by ``_pull_telemetry``) into the traces_waiting
     table. Rows without finished_at are kept (not skipped) -- that's what "waiting" means
-    here. `redis_client` is only used to look up the executing agent's instance type for
+    here. `redis_client` is only used to look up the executing agent's hourly cost for
     server-cost pricing; pass None to skip cost lookups (server_cost stays 0)."""
     if not rows:
         return
@@ -165,11 +165,13 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
                     _log_cost_failure("Token cost", e)
                     token_cost = 0.0
                 try:
-                    server_cost = pricing.compute_server_cost(
-                        redis_client.get(f"agent:{agent_id}:instance_type")
+                    hourly_cost = (
+                        redis_client.get(f"agent:{agent_id}:hourly_cost")
                         if redis_client is not None and agent_id
-                        else None,
-                        finished_at - started_at,
+                        else None
+                    )
+                    server_cost = (
+                        float(hourly_cost or 0) * (finished_at - started_at) / 3600
                     )
                 except Exception as e:
                     _log_cost_failure("Server cost", e)

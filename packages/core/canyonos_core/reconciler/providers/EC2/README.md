@@ -94,7 +94,8 @@ ec2:
   instance_profile_name: ec2launch # For the launched instances, if you want a specific IAM role attached to each instance, pass this variable in.
   ami_id: ami-0123456789abcdef0 # Look at `Creating your own AMI` below
   ssh_user: ubuntu # Look at `Creating your own AMI` below
-  ssh_private_key_path: ~/.ssh/your-own-key # Look at `Private Key` below
+
+ssh_private_key_path: ~/.ssh/your-own-key # Top level, not under ec2. Look at `Private Key` below
 ```
 For the instance_profile_name, you will also need to add a new policy to your IAM role in the host machine, the iam:PassRole policy. JSON below.
 
@@ -113,10 +114,10 @@ For the instance_profile_name, you will also need to add a new policy to your IA
 
 ## [OPTIONAL] Private Key
 
-`ec2.ssh_private_key_path` is optional, defaulting to `~/.ssh/canyonos_ec2`.
+The top-level `ssh_private_key_path` is optional, defaulting to `~/.ssh/canyonos_ec2`.
 If nothing exists at that default path, canyonos generates a fresh ed25519
 keypair there for you on first use (readable only by its owner: `chmod 600`).
-If you set `ec2.ssh_private_key_path` to your own path instead, that file
+If you set `ssh_private_key_path` to your own path instead, that file
 must already exist — canyonos only auto-generates the default, never a
 path you explicitly configured.
 

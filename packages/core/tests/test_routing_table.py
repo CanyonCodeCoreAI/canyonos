@@ -33,6 +33,8 @@ def _seed(redis, agent_name, replica_index):
         "public_host": "localhost",
         "host_port": str(8000 + replica_index),
         "container_port": "50051",
+        "endpoint": f"localhost:{8000 + replica_index}",
+        "routing_endpoint": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
         "runtime_id": f"canyonos-{agent_name.lower()}-{replica_index}",
     }
 

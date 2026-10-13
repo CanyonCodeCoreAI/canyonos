@@ -3,10 +3,7 @@
 import json
 import logging
 
-from canyonos_core.controller.controller_context import (
-    list_instances,
-    routing_endpoint_for,
-)
+from canyonos_core.controller.controller_context import list_instances
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +35,9 @@ def publish_routing_snapshot(agent_specs, primary_redis, node_redis=None):
                     redis_client.hset(ROUTING_STATEFUL_KEY, service, "true")
                 else:
                     redis_client.hdel(ROUTING_STATEFUL_KEY, service)
+                # Each item is one replica's instance record: a str-to-str dict from its Redis hash.
                 endpoints = [
-                    routing_endpoint_for(item)
+                    item["routing_endpoint"]
                     for item in sorted(
                         list_instances(primary_redis, service),
                         key=lambda item: int(item["replica_index"]),

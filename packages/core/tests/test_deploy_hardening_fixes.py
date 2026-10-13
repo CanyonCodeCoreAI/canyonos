@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.reconciler.provisioner import Provisioner
+from canyonos_core.reconciler import providers
 from canyonos_core.controller.local_controller import LocalController
 
 
@@ -82,15 +82,8 @@ class WorkflowPortPreflightTests(unittest.TestCase):
 
 
 class RuntimeReuseScanTests(unittest.TestCase):
-    def _manager(self, run_cmd):
-        controller = SimpleNamespace(
-            containers={},
-            config={},
-            redis=MagicMock(),
-            node_redis={},
-            _run_cmd=run_cmd,
-        )
-        return Provisioner(controller)
+    def _bind(self, run_cmd):
+        providers.bind(SimpleNamespace(config={}, _run_cmd=run_cmd))
 
     def test_an_unreachable_host_is_not_reusable_rather_than_fatal(self):
         def run_cmd(_cmd, host, user=None):
@@ -98,24 +91,31 @@ class RuntimeReuseScanTests(unittest.TestCase):
                 f"Command timed out after 180s on {host}: docker inspect"
             )
 
-        manager = self._manager(run_cmd)
+        self._bind(run_cmd)
         instance = {
             "runtime_id": "canyonos-agent-0",
             "private_host": "10.0.0.5",
             "provider": "EC2",
         }
 
-        with self.assertLogs("canyonos_core.reconciler.provisioner", level="WARNING"):
-            self.assertFalse(manager._runtime_is_running(instance))
+        with self.assertLogs(
+            "canyonos_core.reconciler.providers.shared_utils.docker_host",
+            level="WARNING",
+        ):
+            self.assertFalse(providers.get("EC2").is_running(instance))
 
     def test_a_running_runtime_is_still_reported_as_reusable(self):
         def run_cmd(_cmd, _host, user=None):
             return subprocess.CompletedProcess([], 0, "true\n", "")
 
-        manager = self._manager(run_cmd)
-        instance = {"runtime_id": "canyonos-agent-0", "private_host": "localhost"}
+        self._bind(run_cmd)
+        instance = {
+            "runtime_id": "canyonos-agent-0",
+            "private_host": "localhost",
+            "provider": "local",
+        }
 
-        self.assertTrue(manager._runtime_is_running(instance))
+        self.assertTrue(providers.get("local").is_running(instance))
 
 
 if __name__ == "__main__":

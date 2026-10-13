@@ -31,7 +31,7 @@ def write_config_specs(agents, redis_client):
                 "replicas": json.dumps(replicas),
                 "stateful": json.dumps(agent.get("stateful", False)),
                 "redis_port": str(agent.get("redis_port", 6379)),
-                "provider": agent.get("provider", "local"),
+                "provider": agent["provider"],
             },
         )
         redis_client.hset_multiple(

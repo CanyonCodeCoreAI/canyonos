@@ -67,10 +67,12 @@ GlobalController subclasses and the reconciler constructs directly; cluster boot
 (cleanup, launching Redis, policies, identity) stays the controller's.
 
 The write side (`provisioner.py`, `providers/`, `routing.py`) lives under `reconciler/`, and
-the record readers are plain functions in `controller_context.py`, so **the controller
-cannot create or destroy a container because it does not import the code that can**.
-`routing_endpoint_for` is derived from the record rather than the provider module, or the
-controller would import provisioning code to format an endpoint.
+the record readers are plain functions in `controller_context.py`. The controller uses a
+provider only through `providers.get`, and only to look things up (`ssh_user`, `log_tail`),
+so **only the provisioner ever creates or destroys a replica's container or machine**
+(the Global Controller still runs its own Redis and metrics containers). The provider saves each
+replica's address in its record (`routing_endpoint`), so the controller reads it there
+instead of importing provisioning code.
 
 ## Traps
 
@@ -87,7 +89,10 @@ side effect of provisioning, so an instance created by the *other* process is re
 only there. `node_redis_for_instance(instance)` connects on demand from the record's own
 `private_host`/`redis_port`. The host-keyed accessor it replaced fell back to `self.redis` on a
 miss, which would have the reconciler read a local key, call a remote instance's metrics
-stale, and remove every remote replica on the first pass.
+stale, and remove every remote replica on the first pass. Each process also drops the Redis
+clients of hosts that no configured agent or replica record points to (`prune_node_redis`):
+the GC on every poll, the provisioner before it publishes routing. Without this, a
+terminated EC2 host stays in the map and every later write to it waits on a dead address.
 
 **`attach_local_node_redis()` must run in the reconciler's `__init__`.** GlobalController
 repoints its primary `self.redis` at the local node's Redis after launching that container;
@@ -129,7 +134,14 @@ starting the reconciler, so one stranded by a mid-drain kill cannot poison the n
 what removes instances), then `clear_draining()` (or the live reconciler refills), then
 `_stop_redis_containers()` last, since the reconciler needs Redis to remove instances.
 
-Nothing sweeps at startup, deliberately: the first full `_reconcile()` removes a leftover
+**A launch is recorded before it starts.** Each new replica gets a saved record before
+anything is launched, so a launch that crashes partway through can always be found again.
+The record is marked finished only at the very end, and the rest of the system ignores the
+replica until then. Every pass, the reconciler removes launches that never finished: first
+the container or machine, then the record. If that removal fails, the record stays and the
+slot is not refilled, so a half-started replica is never forgotten and left running.
+
+Nothing else sweeps at startup, deliberately: the first full `_reconcile()` removes a leftover
 record whose container is gone (probe fails, `created_at` is old so no grace) and refills
 the slot in the same pass, while a still-healthy leftover is reused — which an
 unconditional sweep would destroy.
@@ -153,7 +165,8 @@ read impossible without version numbers. The list is one JSON string replaced by
 is the string `[]`, which still exists, so it reads as `[]`. A full pass also removes instances
 of any agent no longer published, and `reload_config` deletes a removed agent's
 `desired_replicas` so a runtime scale does not return if the agent is re-added. Everything outside `agents:` is still
-read from the YAML by both processes at construction.
+read from the YAML by both processes at construction, and again by the reconciler
+(`refresh_config`) when a reload wakes every agent.
 
 ## Known gaps
 

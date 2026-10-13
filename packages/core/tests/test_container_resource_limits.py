@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from canyonos_core.reconciler import providers
 from canyonos_core.reconciler.providers.EC2 import _runtime as ec2_runtime
 from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
@@ -67,7 +68,6 @@ class ResourceLimitArgsTests(unittest.TestCase):
 
 class LocalRuntimeLimitTests(unittest.TestCase):
     def setUp(self):
-        self.original_controller = local_runtime._controller
         self.controller = SimpleNamespace(
             config={"poll_interval": 5},
             redis=MagicMock(),
@@ -75,13 +75,13 @@ class LocalRuntimeLimitTests(unittest.TestCase):
             node_redis={},
             _run_cmd=MagicMock(return_value=SimpleNamespace(returncode=0, stdout="")),
         )
-        local_runtime._controller = self.controller
-
-    def tearDown(self):
-        local_runtime._controller = self.original_controller
+        providers.bind(self.controller)
+        providers.get("local")
 
     def _launch(self, spec):
-        provisioned = local_runtime.provision_instance(spec, 0, lambda host: 8000)
+        provisioned = local_runtime.provision_instance(
+            spec, 0, lambda host: 8000, "launch-1"
+        )
         with patch.object(local_runtime, "_port_bound", return_value=False):
             local_runtime.bootstrap_instance(provisioned, spec, 0, "agent-id-0")
         return self.controller._run_cmd.call_args.args[0]
@@ -139,7 +139,6 @@ class LocalRuntimeLimitTests(unittest.TestCase):
 
 class EC2RuntimeLimitTests(unittest.TestCase):
     def setUp(self):
-        self.original_controller = ec2_runtime._controller
         key_file = tempfile.NamedTemporaryFile(delete=False)
         key_file.close()
         self.key_path = key_file.name
@@ -147,20 +146,19 @@ class EC2RuntimeLimitTests(unittest.TestCase):
         self.controller = SimpleNamespace(
             config={
                 "poll_interval": 5,
-                "ec2": {"ssh_user": "ubuntu", "ssh_private_key_path": self.key_path},
+                "ec2": {"ssh_user": "ubuntu"},
+                "ssh_private_key_path": self.key_path,
             },
-            redis_containers={},
-            node_redis={},
             _ssh_args=lambda host, user=None: ["ssh", f"{user}@{host}"],
             _run_cmd=MagicMock(
                 return_value=SimpleNamespace(returncode=0, stdout="", stderr="")
             ),
         )
-        ec2_runtime._controller = self.controller
+        providers.bind(self.controller)
+        providers.get("EC2")
 
     def tearDown(self):
         os.unlink(self.key_path)
-        ec2_runtime._controller = self.original_controller
 
     def _bootstrap(self, spec):
         with (
@@ -228,7 +226,7 @@ class GlobalControllerRedisLimitTests(unittest.TestCase):
     def test_a_newly_launched_redis_container_is_bounded(self):
         controller = GlobalController.__new__(GlobalController)
         controller.controllers = [
-            {"name": "Workflow", "replicas": 1, "redis_port": 6379}
+            {"name": "Workflow", "provider": "local", "replicas": 1, "redis_port": 6379}
         ]
         controller.redis_containers = {}
         controller.redis_ports = {}

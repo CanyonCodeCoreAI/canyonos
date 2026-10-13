@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
+from canyonos_core.reconciler import providers
 
 
 class RedisContainerRollbackTests(unittest.TestCase):
@@ -70,17 +71,16 @@ class RedisContainerRollbackTests(unittest.TestCase):
                 "name": "First",
                 "provider": "EC2",
                 "host": "10.0.0.1",
-                "user": "runner",
                 "replicas": 1,
             },
             {
                 "name": "Second",
                 "provider": "EC2",
                 "host": "10.0.0.2",
-                "user": "runner",
                 "replicas": 1,
             },
         ]
+        controller.config = {}
         controller.redis_containers = {}
         controller.redis_ports = {}
         controller.node_redis = {}
@@ -98,6 +98,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         controller._run_cmd = fake_run_cmd
+        providers.bind(controller)
 
         with (
             patch(

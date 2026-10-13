@@ -13,12 +13,12 @@ from typing import ClassVar
 import yaml
 from packaging.requirements import InvalidRequirement, Requirement
 
-from canyonos_core.controller.controller_context import DEFAULT_SSH_KEY_PATH
 from canyonos_core.controller.utils.config_env import (
     ENV_REF,
     expand_env_value,
     load_root_dotenv,
 )
+from canyonos_core.reconciler import providers
 from canyonos_core.schema._checks import (
     _ENV_REF_HINT,
     _boolean,
@@ -48,8 +48,13 @@ from canyonos_core.schema.otel_destinations import (
 from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
 
 SERVICE_TYPES = ("agent", "workflow", "database")
-PROVIDERS = ("local", "EC2")
 
+# Every provider's agent keys, all optional here, so any entry may set them.
+_PROVIDER_AGENT_KEYS = {
+    key: (kind, False)
+    for schema in providers.SCHEMAS.values()
+    for key, (kind, _) in schema.AGENT_KEYS.items()
+}
 # Keys every service entry may carry, whatever its type.
 _COMMON_SERVICE_KEYS = frozenset(
     {
@@ -60,13 +65,8 @@ _COMMON_SERVICE_KEYS = frozenset(
         "redis_port",
         "resources",
         "stateful",
-        "instance_type",
-        "market_type",
         "env",
-        "host",
-        "port",
-        "host_port",
-        "user",
+        *_PROVIDER_AGENT_KEYS,
     }
 )
 _AGENT_KEYS = _COMMON_SERVICE_KEYS | {"entrypoint", "requirements", "functions"}
@@ -94,7 +94,8 @@ _MANIFEST_KEYS = frozenset(
         "env_file",
         "logs",
         "otel",
-        "ec2",
+        "ssh_private_key_path",
+        *(schema.SECTION for schema in providers.SCHEMAS.values() if schema.SECTION),
     }
 )
 _REDIS_KEYS = frozenset({"host", "port", "db"})
@@ -104,20 +105,6 @@ _RETIRED_KEYS = {
     "database": "is no longer used; telemetry is configured under otel: -- remove it",
 }
 _OTEL_KEYS = frozenset({"destinations"})
-_EC2_KEYS = frozenset(
-    {
-        "region",
-        "ami_id",
-        "subnet_id",
-        "security_group_ids",
-        "ssh_user",
-        "ssh_private_key_path",
-        "instance_profile_name",
-        "public_ip_timeout",
-        "controller_health_timeout",
-    }
-)
-_EC2_REQUIRED_KEYS = ("region", "subnet_id", "security_group_ids")
 _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
 
 
@@ -164,37 +151,16 @@ class OtelSpec:
 
 
 @dataclass(frozen=True)
-class Ec2Spec:
-    """The `ec2` section of `global_controller.yaml`: how to launch EC2 replicas."""
-
-    region: str
-    subnet_id: str
-    security_group_ids: tuple
-    ami_id: str | None = None
-    ssh_user: str | None = None
-    ssh_private_key_path: str = DEFAULT_SSH_KEY_PATH
-    instance_profile_name: str | None = None
-    public_ip_timeout: int = 120
-    controller_health_timeout: int = 180
-
-
-@dataclass(frozen=True)
 class _Service:
     """Fields shared by every service entry in `agents`."""
 
     name: str
-    provider: str = "local"
+    provider: str = providers.DEFAULT
     replicas: int = 1
     redis_port: int = 6379
     resources: Resources = field(default_factory=Resources)
     stateful: bool = False
-    instance_type: str | None = None
-    market_type: str = "on-demand"
     env: dict = field(default_factory=dict)
-    host: str | None = None
-    port: int | None = None
-    host_port: int | None = None
-    user: str | None = None
 
     type: ClassVar[str] = "agent"
 
@@ -249,7 +215,6 @@ class Manifest:
     # `config.get("logs", True)` by both runtimes, hence the default.
     logs: bool = True
     otel: OtelSpec | None = None
-    ec2: Ec2Spec | None = None
     path: str = ""
 
 
@@ -364,18 +329,18 @@ def _provider(collector, node, prefix):
     the gate in front of it has to as well.
     """
     if "provider" not in node:
-        return "local"
+        return providers.DEFAULT
     value = _resolve(node["provider"])
-    canonical = {p.casefold(): p for p in PROVIDERS}
-    if not isinstance(value, str) or value.casefold() not in canonical:
+    canonical = providers.canonical_name(value)
+    if canonical is None:
         collector.add(
             node,
             "provider",
             _field(prefix, "provider"),
-            f"expected one of {list(PROVIDERS)}, got {_describe(value)}",
+            f"expected one of {list(providers.NAMES)}, got {_describe(value)}",
         )
-        return "local"
-    return canonical[value.casefold()]
+        return providers.DEFAULT
+    return canonical
 
 
 def _service(collector, entries, index):
@@ -409,30 +374,27 @@ def _service(collector, entries, index):
         "redis_port": _port(collector, node, "redis_port", prefix, 6379),
         "resources": _resources(collector, node, prefix),
         "stateful": _boolean(collector, node, "stateful", prefix, False),
-        "instance_type": _string(collector, node, "instance_type", prefix),
-        "market_type": _string(collector, node, "market_type", prefix, "on-demand"),
         "env": _string_mapping(collector, node, "env", prefix),
-        "host": _string(collector, node, "host", prefix),
-        "port": _port(collector, node, "port", prefix, None),
-        "host_port": _port(collector, node, "host_port", prefix, None),
-        "user": _string(collector, node, "user", prefix),
     }
-
-    if common["provider"] == "EC2" and not common["instance_type"]:
-        collector.add(
-            node,
-            "instance_type",
-            _field(prefix, "instance_type"),
-            "is required when provider is 'EC2'",
-        )
+    provider = common["provider"]
+    _check_declared(
+        collector,
+        node,
+        prefix,
+        {**_PROVIDER_AGENT_KEYS, **providers.SCHEMAS[provider].AGENT_KEYS},
+        f"is required when provider is {provider!r}",
+    )
 
     if service_type == "workflow":
-        if common["provider"] == "local" and common["replicas"] > 1:
+        if (
+            providers.SCHEMAS[provider].SINGLE_REPLICA_WORKFLOWS
+            and common["replicas"] > 1
+        ):
             collector.add(
                 node,
                 "replicas",
                 _field(prefix, "replicas"),
-                "a local workflow runs as a single replica: every replica "
+                f"a {provider} workflow runs as a single replica: every replica "
                 "would publish the same api_port",
             )
         service_class = WorkflowService
@@ -585,56 +547,58 @@ def _otel(collector, node):
     return OtelSpec(destinations=tuple(destinations))
 
 
-def _ec2(collector, node, services):
-    """Parse the `ec2` section of `global_controller.yaml`; it is required, and checked,
-    only when a service uses the EC2 provider."""
-    block = _mapping(collector, node, "ec2", "", _EC2_KEYS)
-    if not any(service.provider == "EC2" for service in services):
-        # Only an EC2 deploy reads the block; a local project may carry one
-        # whose variables are unset.
-        return None
-    if block is None:
-        # No `ec2:` to point at, so the violation names the file only.
-        collector.violations.append(
-            SchemaViolation(
-                collector.path,
-                0,
-                "ec2",
-                "is required because a service declares provider 'EC2'; it "
-                f"must set {', '.join(_EC2_REQUIRED_KEYS)}",
-            )
-        )
-        return None
+def _check_declared(collector, node, prefix, keys, missing="is required but missing"):
+    """Add a violation for each key in `keys` that is required but missing (reported with
+    the `missing` message) or has a value of the wrong type."""
+    for key, (kind, required) in keys.items():
+        if required and node.get(key) is None:
+            collector.add(node, key, _field(prefix, key), missing)
+        elif kind == "port":
+            _port(collector, node, key, prefix, None)
+        elif kind is int:
+            _integer(collector, node, key, prefix, None, 1)
+        elif kind is list:
+            _string_list(collector, node, key, prefix, required)
+        else:
+            _string(collector, node, key, prefix, required=required)
 
-    region = _string(collector, block, "region", "ec2", required=True)
-    ami_id = _string(collector, block, "ami_id", "ec2")
-    subnet_id = _string(collector, block, "subnet_id", "ec2", required=True)
-    ssh_user = _string(collector, block, "ssh_user", "ec2")
-    security_group_ids = _string_list(
-        collector, block, "security_group_ids", "ec2", required=True
-    )
-    ssh_private_key_path = (
-        _string(collector, block, "ssh_private_key_path", "ec2", DEFAULT_SSH_KEY_PATH)
-        or DEFAULT_SSH_KEY_PATH
-    )
-    instance_profile_name = _string(collector, block, "instance_profile_name", "ec2")
-    public_ip_timeout = _integer(collector, block, "public_ip_timeout", "ec2", 120, 1)
-    controller_health_timeout = _integer(
-        collector, block, "controller_health_timeout", "ec2", 180, 1
-    )
-    if not (region and subnet_id and security_group_ids):
-        return None
-    return Ec2Spec(
-        region=region,
-        ami_id=ami_id,
-        subnet_id=subnet_id,
-        security_group_ids=security_group_ids,
-        ssh_user=ssh_user,
-        ssh_private_key_path=ssh_private_key_path,
-        instance_profile_name=instance_profile_name,
-        public_ip_timeout=public_ip_timeout,
-        controller_health_timeout=controller_health_timeout,
-    )
+
+def _check_provider_sections(collector, node, services):
+    """Check each provider's top-level section of `global_controller.yaml`, such as
+    `ec2:`. Unknown and retired keys are always reported. The section is required, and
+    its values checked, only when a service uses that provider."""
+    for name, schema in providers.SCHEMAS.items():
+        if not schema.SECTION:
+            continue
+        block = _mapping(
+            collector,
+            node,
+            schema.SECTION,
+            "",
+            schema.SECTION_KEYS.keys() | schema.RETIRED_KEYS.keys(),
+        )
+        for key, message in schema.RETIRED_KEYS.items():
+            if key in (block or {}):
+                collector.add(block, key, _field(schema.SECTION, key), message)
+        if not any(service.provider == name for service in services):
+            # Skip the values when no service uses this provider; their ${VAR}s may be unset.
+            continue
+        if block is None:
+            required = [
+                key for key, (_, needed) in schema.SECTION_KEYS.items() if needed
+            ]
+            # No section to point at, so the violation names the file only.
+            collector.violations.append(
+                SchemaViolation(
+                    collector.path,
+                    0,
+                    schema.SECTION,
+                    f"is required because a service declares provider {name!r}; it "
+                    f"must set {', '.join(required)}",
+                )
+            )
+            continue
+        _check_declared(collector, block, schema.SECTION, schema.SECTION_KEYS)
 
 
 def load_manifest(path):
@@ -682,9 +646,10 @@ def load_manifest(path):
         env_file=_string(collector, document, "env_file", ""),
         logs=_boolean(collector, document, "logs", "", True),
         otel=_otel(collector, document),
-        ec2=_ec2(collector, document, services),
         path=path,
     )
+    _check_provider_sections(collector, document, services)
+    _string(collector, document, "ssh_private_key_path", "")
     if collector.violations:
         raise SchemaError(collector.violations)
     return manifest

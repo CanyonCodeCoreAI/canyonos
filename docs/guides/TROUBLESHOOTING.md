@@ -82,4 +82,4 @@ you can check `canyonos logs`, or one agent's logs with `docker logs canyonos-<a
 | `canyonos clean` deleted `.car/app` and `.car/config` | That is what it does: it removes the whole `.car` and every `canyonos-*` image |
 | Containers remain after `canyonos clean` | `clean` never touches containers. Use `canyonos stop` or `canyonos quit` |
 | Images remain after `canyonos clean` | Docker was unreachable, or the images live on a different Docker context than the one the deploy used |
-| EC2 instances remain after `canyonos stop` | The drain waited 30 seconds and moved on, or provisioning failed before the instance was recorded. See [EC2 deployment](EC2.md) |
+| EC2 instances remain after `canyonos stop` | The drain waited 30 seconds and moved on. See [EC2 deployment](EC2.md) |

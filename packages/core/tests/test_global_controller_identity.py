@@ -108,6 +108,8 @@ class ReloadConfigWritesIdentityTests(unittest.TestCase):
         config_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, config_dir)
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
+        with open(controller.config_path, "w") as f:
+            f.write("agents: []\n")
         controller._load_config = lambda path: {
             "project_id": "22222222-2222-2222-2222-222222222222",
             "agents": [],

@@ -11,6 +11,7 @@ import yaml
 from flask import Flask, jsonify, request
 
 from canyonos_core.cli import _artifact_prefix
+from canyonos_core.controller.controller_context import localhost_redis_port
 from canyonos_core.controller.utils.redis_client import RedisClient
 
 app = Flask("canyonos-server")
@@ -119,10 +120,7 @@ def _primary_redis(config):
     redis_cfg = config.get("redis", {})
     host = redis_cfg.get("host", "localhost")
     port = redis_cfg.get("port", 6379)
-    for agent in config.get("agents") or []:
-        if str(agent.get("provider", "local")).lower() == "local":
-            port = agent.get("redis_port", port)
-            break
+    port = localhost_redis_port(config.get("agents") or []) or port
     if host in ("localhost", "127.0.0.1"):
         host = os.environ.get("CANYONOS_REDIS_HOST", host)
     return RedisClient(host=host, port=int(port))

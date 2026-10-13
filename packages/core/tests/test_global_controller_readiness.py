@@ -1,14 +1,29 @@
 import logging
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from canyonos_core.controller.global_controller import GlobalController
+from canyonos_core.reconciler import providers
 
 
 class _Redis:
+    """No status keys, and one instance record per entry of `records`."""
+
+    def __init__(self, records=()):
+        self.records = {
+            f"agent_instance:{index}": record for index, record in enumerate(records)
+        }
+
     def get(self, _key):
         return None
+
+    def scan_keys(self, _pattern):
+        return list(self.records)
+
+    def hgetall(self, key):
+        return self.records[key]
 
 
 class _StatusRedis:
@@ -33,30 +48,28 @@ def _controller(monkeypatch, instances, node_redis, run_cmd=_no_output):
         "canyonos_core.controller.global_controller.list_instances",
         lambda _redis: instances,
     )
-    monkeypatch.setattr(
-        "canyonos_core.controller.global_controller.routing_endpoint_for",
-        lambda instance: f"{instance['private_host']}:{instance['host_port']}",
-    )
     controller.controllers = [
         {"name": name, "replicas": 1}
         for name in dict.fromkeys(instance["agent_name"] for instance in instances)
     ]
     controller.node_redis = {"127.0.0.1": node_redis}
-    controller.redis = _Redis()
+    controller.redis = _Redis(instances)
     controller.config = {}
     controller._last_status = {}
     controller._run_cmd = run_cmd
+    providers.bind(controller)
     return controller
 
 
-def _replica(agent_name, host_port, runtime_id=None, provider="local"):
+def _replica(agent_name, host_port):
     return {
         "agent_name": agent_name,
-        "provider": provider,
-        "runtime_id": runtime_id or f"canyonos-{agent_name.lower()}-0",
+        "provider": "local",
+        "runtime_id": f"canyonos-{agent_name.lower()}-0",
         "private_host": "127.0.0.1",
         "public_host": "127.0.0.1",
         "host_port": host_port,
+        "routing_endpoint": f"127.0.0.1:{host_port}",
     }
 
 
@@ -86,14 +99,27 @@ def test_surplus_replicas_of_one_agent_do_not_cover_another(monkeypatch):
         controller._wait_for_healthy(timeout=0, interval=0)
 
 
-def test_a_replica_not_created_yet_does_not_fail_startup(monkeypatch):
+def test_a_replica_still_launching_does_not_fail_startup(monkeypatch):
+    controller = _controller(monkeypatch, _alpha_pair(), _StatusRedis())
+    controller.controllers = [
+        {"name": "Alpha", "replicas": 1},
+        {"name": "Beta", "replicas": 1},
+    ]
+    controller.redis = _Redis(_alpha_pair() + [{"agent_name": "Beta"}])
+
+    controller._wait_for_healthy(timeout=0, interval=0)
+
+
+def test_a_replica_whose_launch_failed_fails_startup(monkeypatch):
+    """No record at all: the reconciler removed the failed launch, or never made one."""
     controller = _controller(monkeypatch, _alpha_pair(), _StatusRedis())
     controller.controllers = [
         {"name": "Alpha", "replicas": 1},
         {"name": "Beta", "replicas": 1},
     ]
 
-    controller._wait_for_healthy(timeout=0, interval=0)
+    with pytest.raises(RuntimeError, match="Beta 0/1"):
+        controller._wait_for_healthy(timeout=0, interval=0)
 
 
 def test_a_terminal_status_fails_the_deploy_before_the_timeout(monkeypatch):
@@ -134,39 +160,54 @@ def test_a_replica_still_starting_is_waited_for(monkeypatch):
     assert polls == [1]
 
 
-def test_a_failed_replicas_log_is_shown_between_sentinels(monkeypatch, caplog):
-    commands = []
+@pytest.mark.parametrize(
+    "log_tail, quoted",
+    [
+        (
+            lambda _instance, _lines: [
+                "Traceback (most recent call last):",
+                "ModuleNotFoundError: No module named 'langchain'",
+            ],
+            [
+                "  Traceback (most recent call last):",
+                "  ModuleNotFoundError: No module named 'langchain'",
+            ],
+        ),
+        (lambda _instance, _lines: [], ["  (the container produced no output)"]),
+        (
+            RuntimeError("no container"),
+            ["  could not read the log of Broken: no container"],
+        ),
+    ],
+)
+def test_a_failed_replicas_log_tail_is_shown_between_sentinels(
+    monkeypatch, caplog, log_tail, quoted
+):
+    def run_cmd(*_args, **_kwargs):
+        pytest.fail("the global controller ran a command itself")
 
-    def run_cmd(cmd, host, user=None):
-        commands.append((cmd, host, user))
-        return SimpleNamespace(
-            returncode=0,
-            stdout="Traceback (most recent call last):\nModuleNotFoundError: No module named 'langchain'\n",
-            stderr="",
-        )
-
+    replica = _replica("Broken", 50051)
     controller = _controller(
         monkeypatch,
-        [_replica("Broken", 50051)],
+        [replica],
         _StatusRedis({"controller:127.0.0.1:50051:status": "failed"}),
         run_cmd=run_cmd,
+    )
+    provider = SimpleNamespace(log_tail=MagicMock(side_effect=log_tail))
+    monkeypatch.setattr(
+        "canyonos_core.reconciler.providers.get", lambda _name: provider
     )
 
     with caplog.at_level(logging.WARNING), pytest.raises(RuntimeError):
         controller._wait_for_healthy(timeout=0, interval=0)
 
-    assert commands == [
-        (["docker", "logs", "--tail", "40", "canyonos-broken-0"], "127.0.0.1", None)
-    ]
+    provider.log_tail.assert_called_once_with(replica, 40)
     messages = [record.getMessage() for record in caplog.records]
     begin = messages.index(
         "--- begin container log: Broken (127.0.0.1:50051) status=failed ---"
     )
     end = messages.index("--- end container log: Broken ---")
-    assert messages[begin + 1 : end] == [
-        "  Traceback (most recent call last):",
-        "  ModuleNotFoundError: No module named 'langchain'",
-    ]
+    assert messages[begin + 1 : end] == quoted
 
 
 def test_an_unreadable_log_still_closes_the_block_and_fails(monkeypatch, caplog):
@@ -188,29 +229,6 @@ def test_an_unreadable_log_still_closes_the_block_and_fails(monkeypatch, caplog)
     assert messages.index(complaint) < messages.index(
         "--- end container log: Broken ---"
     )
-
-
-def test_an_ec2_replicas_log_is_read_by_its_container_name_over_ssh(monkeypatch):
-    commands = []
-
-    def run_cmd(cmd, host, user=None):
-        commands.append((cmd, host, user))
-        return _no_output()
-
-    controller = _controller(
-        monkeypatch,
-        [_replica("Broken", 50051, "canyonos-broken-0--i-0abc", provider="EC2")],
-        _StatusRedis({"controller:127.0.0.1:50051:status": "failed"}),
-        run_cmd=run_cmd,
-    )
-    controller.config = {"ec2": {"ssh_user": "ubuntu"}}
-
-    with pytest.raises(RuntimeError):
-        controller._wait_for_healthy(timeout=0, interval=0)
-
-    assert commands == [
-        (["docker", "logs", "--tail", "40", "canyonos-broken-0"], "127.0.0.1", "ubuntu")
-    ]
 
 
 def test_an_early_exit_dumps_only_the_replicas_that_reported_a_terminal_status(

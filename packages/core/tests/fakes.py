@@ -1,10 +1,19 @@
 import contextlib
 import fnmatch
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from botocore.exceptions import ClientError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from canyonos_core.reconciler import providers
 
 
 class _FakeRedis:
@@ -125,6 +134,7 @@ class _FakeRedis:
 
 def _instance(agent_name, replica_index, created_at=None, host_port=None):
     """An agent_instance:* record as the Provisioner writes it."""
+    host_port = str(host_port or 8000 + replica_index)
     return {
         "agent_name": agent_name,
         "provider": "local",
@@ -133,7 +143,9 @@ def _instance(agent_name, replica_index, created_at=None, host_port=None):
         "replica_index": str(replica_index),
         "private_host": "localhost",
         "public_host": "localhost",
-        "host_port": str(host_port or 8000 + replica_index),
+        "host_port": host_port,
+        "endpoint": f"localhost:{host_port}",
+        "routing_endpoint": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
         "created_at": str(created_at if created_at is not None else time.time()),
     }
 
@@ -148,6 +160,7 @@ class _FakeProvisioner:
         self.removed = []
         self.ensure_calls = []
         self.ensure_only = []
+        self.unfinished_removals = 0
 
     def remove_instance(self, instance_id):
         if self.remove_raises:
@@ -158,6 +171,9 @@ class _FakeProvisioner:
         self.ensure_calls.append(agent_specs)
         self.ensure_only.append(only)
         return []
+
+    def remove_unfinished(self):
+        self.unfinished_removals += 1
 
 
 def _seed_instance_records(redis, provisioner):
@@ -194,3 +210,159 @@ def _bare_reconciler(context, provisioner, **overrides):
     for key, value in overrides.items():
         setattr(reconciler, key, value)
     return reconciler
+
+
+def _fake_controller():
+    """Return a fake controller, bound to the providers, whose `_run_cmd` pretends to be
+    Docker: `docker run` adds the container to `running`, `docker rm -f` removes it,
+    and `docker inspect` reports it running while it is there."""
+    redis = _FakeRedis()
+    running = set()
+
+    def fake_run_cmd(cmd, host, user=None):
+        if cmd[:2] == ["docker", "inspect"]:
+            return SimpleNamespace(
+                returncode=0 if cmd[-1] in running else 1,
+                stdout="true\n" if cmd[-1] in running else "",
+                stderr="" if cmd[-1] in running else f"No such object: {cmd[-1]}",
+            )
+        if cmd[:2] == ["docker", "run"]:
+            running.add(cmd[cmd.index("--name") + 1])
+        elif cmd[:3] == ["docker", "rm", "-f"]:
+            if cmd[-1] not in running:
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr=f"Error response from daemon: No such container: {cmd[-1]}",
+                )
+            running.discard(cmd[-1])
+        return SimpleNamespace(returncode=0, stdout="")
+
+    controller = SimpleNamespace(
+        redis=redis,
+        node_redis={},
+        redis_containers={},
+        redis_ports={},
+        running=running,
+        config={"poll_interval": 5},
+        _run_cmd=MagicMock(side_effect=fake_run_cmd),
+        prune_node_redis=MagicMock(),
+    )
+    controller.node_redis_for_instance = lambda instance: controller.node_redis.get(
+        instance["private_host"], redis
+    )
+    providers.bind(controller)
+    return controller
+
+
+class _FakeWaiter:
+    def __init__(self):
+        self.calls = []
+
+    def wait(self, InstanceIds):
+        self.calls.append(list(InstanceIds))
+
+
+class _FakeEC2Client:
+    """Stands in for boto3's EC2 client: instances it launches stay listed after they
+    are terminated, until a test deletes them from `instances`."""
+
+    def __init__(self, public_ip="54.10.20.30", private_ip="10.0.0.30"):
+        self.public_ip = public_ip
+        self.private_ip = private_ip
+        self.instances = {}
+        self.client_calls = []
+        self.run_requests = []
+        self.terminate_requests = []
+        self.import_key_pair_requests = []
+        self.waiter = _FakeWaiter()
+
+    def client(self, service_name, region_name=None):
+        self.client_calls.append(
+            {"service_name": service_name, "region_name": region_name}
+        )
+        assert service_name == "ec2"
+        return self
+
+    def import_key_pair(self, **kwargs):
+        self.import_key_pair_requests.append(kwargs)
+        return {}
+
+    def run_instances(self, **kwargs):
+        self.run_requests.append(kwargs)
+        instance_id = f"i-test{len(self.run_requests)}"
+        self.instances[instance_id] = {
+            "InstanceId": instance_id,
+            "ClientToken": kwargs["ClientToken"],
+            "State": {"Name": "running"},
+            "PrivateIpAddress": self.private_ip,
+            "PublicIpAddress": self.public_ip,
+        }
+        return {"Instances": [{"InstanceId": instance_id}]}
+
+    def get_waiter(self, name):
+        assert name == "instance_running"
+        return self.waiter
+
+    def describe_instances(self, InstanceIds=(), Filters=()):
+        tokens = {value for f in Filters for value in f["Values"]}
+        return {
+            "Reservations": [
+                {"Instances": [instance]}
+                for instance_id, instance in self.instances.items()
+                if instance_id in InstanceIds or instance["ClientToken"] in tokens
+            ]
+        }
+
+    def terminate_instances(self, InstanceIds):
+        self.terminate_requests.append(list(InstanceIds))
+        for instance_id in InstanceIds:
+            if instance_id not in self.instances:
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "InvalidInstanceID.NotFound",
+                            "Message": f"The instance ID '{instance_id}' does not exist",
+                        }
+                    },
+                    "TerminateInstances",
+                )
+            self.instances[instance_id]["State"] = {"Name": "terminated"}
+        return {}
+
+
+def _bind_fake_ec2(testcase):
+    """Bind an EC2 controller, with a fresh SSH key, to the providers and point boto3 at
+    a fake EC2 client. Returns the controller and the client; the key and the boto3
+    patch are removed when the test ends."""
+    key_dir = tempfile.mkdtemp()
+    testcase.addCleanup(shutil.rmtree, key_dir)
+    key_path = os.path.join(key_dir, "id_ed25519")
+    subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", key_path, "-q"], check=True
+    )
+    fake_client = _FakeEC2Client()
+    controller = SimpleNamespace(
+        config={
+            "redis": {"host": "redis.internal", "port": 6379},
+            "ec2": {
+                "ami_id": "ami-123456",
+                "subnet_id": "subnet-123456",
+                "security_group_ids": ["sg-123456"],
+                "region": "us-east-1",
+                "ssh_user": "ubuntu",
+            },
+            "ssh_private_key_path": key_path,
+        },
+        registry_url=None,
+        _run_cmd=MagicMock(
+            return_value=SimpleNamespace(returncode=0, stderr="", stdout="")
+        ),
+        _ssh_args=lambda host, user=None: ["ssh", f"{user}@{host}"],
+    )
+    providers.bind(controller)
+    providers.get("EC2")._imported_key_pairs.clear()
+    client_patch = patch("boto3.client", side_effect=fake_client.client)
+    client_patch.start()
+    testcase.addCleanup(client_patch.stop)
+    return controller, fake_client

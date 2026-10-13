@@ -15,7 +15,6 @@ from canyonos_core.controller.controller_context import (
     _redis_connect_host,
     instance_id_from_record,
     list_instances,
-    routing_endpoint_for,
 )
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.provisioner import Provisioner
@@ -79,6 +78,11 @@ class Reconciler(object):
                 self._remove_instances_of_removed_agents()
             except Exception as e:
                 logger.warning("Failed to remove instances of removed agents: %s", e)
+
+        try:
+            self.provisioner.remove_unfinished()
+        except Exception as e:
+            logger.warning("Failed to remove unfinished launches: %s", e)
 
         # desired_agent_specs falls back to the configured count, so a fill would undo the drain.
         if draining:
@@ -211,7 +215,7 @@ class Reconciler(object):
         """Whether the instance's metrics heartbeat is recent."""
         node_redis = self.context.node_redis_for_instance(instance)
         # The agent writes this key from its own env, under its routing endpoint.
-        key = f"controller:{routing_endpoint_for(instance)}:metrics"
+        key = f"controller:{instance['routing_endpoint']}:metrics"
         try:
             metrics = node_redis.hgetall(key)
         except Exception as e:
@@ -260,8 +264,8 @@ class Reconciler(object):
                 continue
 
             if state.WAKE_ALL in signals:
-                # A config reload wakes all; new replicas need the reloaded env file.
-                self.context.refresh_env_file()
+                # A config reload wakes all; new replicas need the reloaded config.
+                self.context.refresh_config()
                 try:
                     self._reconcile()
                 except Exception as e:

@@ -150,7 +150,7 @@ Keys every entry accepts:
 | `name` | required | Must equal the class name in the entrypoint. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one manifest is a duplicate and the deploy is rejected. |
 | `type` | `agent` | One of `agent`, `workflow`, `database`. |
 | `provider` | `local` | `local` or `EC2`, in any casing. |
-| `replicas` | `1` | Integer, at least 1. A local workflow must be 1. A database must be 1. |
+| `replicas` | `1` | Integer, at least 1. A database must be 1, and so must a `local` workflow. |
 | `redis_port` | `6379` | Host port of the Redis this service talks to. Entries on one host must agree. |
 | `resources.cpu` | `1` | Passed to `docker run --cpus`. |
 | `resources.memory` | `512` | MiB, passed to `--memory`. |
@@ -209,6 +209,7 @@ instead of an in-process store, and the agent no longer needs
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
 | `ec2` | none | Required when any entry uses `provider: EC2`. See [EC2 deployment](EC2.md). |
+| `ssh_private_key_path` | `~/.ssh/canyonos_ec2` | The key every SSH connection to a remote host uses. |
 
 `database` used to be a top-level key. It is retired: the schema rejects it
 with "is no longer used; telemetry is configured under otel:". Remove it.

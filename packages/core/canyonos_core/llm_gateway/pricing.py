@@ -1,8 +1,11 @@
 """Lazily-cached lookups over llm_prices.json's LLM/instance pricing reference data."""
 
 import json
+import logging
 import os
 import re
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PRICES_PATH = os.path.join(os.path.dirname(__file__), "llm_prices.json")
 
@@ -71,13 +74,13 @@ def compute_token_cost(model_id, input_token_count, output_token_count):
     ) / 1_000_000
 
 
-def compute_server_cost(instance_type, execution_time_seconds):
-    """Return the USD cost of occupying an EC2 instance for execution_time_seconds,
-    or 0.0 if the instance_type is unknown."""
-    if not instance_type:
-        return 0.0
+def instance_hourly_cost(instance_type):
+    """Return the USD per hour of an EC2 instance type, or 0.0 if it is unknown."""
     _, instance_costs = _load_cache()
-    hourly_cost = instance_costs.get(instance_type)
-    if hourly_cost is None:
+    if instance_type not in instance_costs:
+        logger.warning(
+            "No hourly price for EC2 instance type %s; its server cost is recorded as 0",
+            instance_type,
+        )
         return 0.0
-    return float(hourly_cost) * execution_time_seconds / 3600
+    return float(instance_costs[instance_type])

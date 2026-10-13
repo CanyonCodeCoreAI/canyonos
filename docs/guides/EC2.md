@@ -30,14 +30,11 @@ Optional, with defaults:
 |---|---|
 | `ami_id` | CanyonOS's own Ubuntu AMI in `us-east-1`. Any AMI with Docker and `zstd` works. |
 | `ssh_user` | `ubuntu` |
-| `ssh_private_key_path` | `~/.ssh/canyonos_ec2`. If nothing is there, CanyonOS generates an ed25519 key on first use. A path you set yourself must already exist. |
 | `instance_profile_name` | none. Attaches an IAM role to each instance; the deploying identity then needs `iam:PassRole`. |
 | `public_ip_timeout` | `120` seconds |
 | `controller_health_timeout` | `180` seconds |
 
-Whichever key is used is imported into AWS on first use as
-`canyonos-ec2-<project_id>-<hash>`, so the AMI does not need it
-pre-authorised.
+The SSH key is the top-level `ssh_private_key_path`. It defaults to `~/.ssh/canyonos_ec2`; if nothing is there, CanyonOS generates an ed25519 key on first use. A path you set yourself must already exist. Whichever key is used is imported into AWS on first use as `canyonos-ec2-<project_id>-<hash>`, so the AMI does not need it pre-authorised.
 
 ## What the deploying machine needs
 
@@ -90,7 +87,8 @@ Redis is terminated through the AWS API. The drain waits 30 seconds; whatever
 is still going after that is left for the next start to reconcile.
 
 An instance whose container fails to start is terminated automatically. The
-one window where an instance can leak is between `RunInstances` and getting a
-public IP: if that times out, nothing is recorded and nothing is terminated.
-Look for instances tagged `Name=canyonos-<agent>-<replica>` and
+launch is recorded in Redis before `RunInstances` is called, under a token AWS
+keeps, so an instance that never got a public IP is still found by that token
+and terminated on the next pass. If `canyonos stop` moved on after its 30
+seconds, look for instances tagged `Name=canyonos-<agent>-<replica>` and
 `CreatedBy=EC2 Fast Launch` in the region and terminate those specifically.

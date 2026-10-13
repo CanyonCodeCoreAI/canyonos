@@ -121,5 +121,6 @@ ec2:
   security_group_ids:
     - ${EC2_SECURITY_GROUP_ID}
   ssh_user: ${EC2_SSH_USER}
-  ssh_private_key_path: ${EC2_SSH_PRIVATE_KEY_PATH}
+
+ssh_private_key_path: ${EC2_SSH_PRIVATE_KEY_PATH}
 

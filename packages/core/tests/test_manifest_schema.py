@@ -434,15 +434,10 @@ class ProviderTests(_ManifestCase):
                 )
 
     def test_an_ec2_service_needs_an_instance_type(self):
-        self.assertIn(
-            "agents[0].instance_type",
-            self.fields(
-                {
-                    "agents": [_agent(provider="EC2")],
-                    "ec2": _EC2_BLOCK,
-                }
-            ),
-        )
+        violation = self.one({"agents": [_agent(provider="EC2")], "ec2": _EC2_BLOCK})
+
+        self.assertEqual(violation.field, "agents[0].instance_type")
+        self.assertEqual(violation.message, "is required when provider is 'EC2'")
 
     def test_an_ec2_service_needs_the_ec2_block(self):
         violation = self.one(
@@ -450,7 +445,11 @@ class ProviderTests(_ManifestCase):
         )
 
         self.assertEqual(violation.field, "ec2")
-        self.assertIn("provider 'EC2'", violation.message)
+        self.assertEqual(
+            violation.message,
+            "is required because a service declares provider 'EC2'; it must set "
+            "region, subnet_id, security_group_ids",
+        )
         self.assertEqual(violation.line, 0)
 
     def test_the_ec2_block_must_be_complete(self):
@@ -485,28 +484,13 @@ class ProviderTests(_ManifestCase):
 
         self.assertEqual(manifest.agents[0].requirements, ())
 
-    def test_the_ec2_block_carries_its_own_defaults(self):
-        manifest = self.load(
-            {
-                "agents": [_agent(provider="EC2", instance_type="t3.micro")],
-                "ec2": _EC2_BLOCK,
-            }
-        )
-
-        self.assertEqual(manifest.ec2.ssh_private_key_path, "~/.ssh/canyonos_ec2")
-        self.assertEqual(manifest.ec2.public_ip_timeout, 120)
-        self.assertEqual(manifest.ec2.controller_health_timeout, 180)
-        self.assertIsNone(manifest.ec2.instance_profile_name)
-
-    def test_the_ec2_block_carries_the_instance_profile(self):
-        manifest = self.load(
+    def test_the_ec2_block_accepts_an_instance_profile(self):
+        self.load(
             {
                 "agents": [_agent(provider="EC2", instance_type="t3.micro")],
                 "ec2": {**_EC2_BLOCK, "instance_profile_name": "my-profile"},
             }
         )
-
-        self.assertEqual(manifest.ec2.instance_profile_name, "my-profile")
 
 
 _EC2_BLOCK = {
@@ -545,7 +529,6 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(manifest.redis.port, 6379)
         self.assertEqual(manifest.redis.db, 0)
         self.assertIsNone(manifest.otel)
-        self.assertIsNone(manifest.ec2)
 
         self.assertIsInstance(agent, AgentService)
         self.assertEqual(agent.provider, "local")
@@ -830,9 +813,7 @@ class EnvExpansionTests(_ManifestCase):
         }
 
         with patch.dict(os.environ, {"CANYONOS_TEST_REGION": "eu-west-2"}):
-            manifest = self.load(config)
-
-        self.assertEqual(manifest.ec2.region, "eu-west-2")
+            self.load(config)
 
     def test_a_string_list_takes_the_variable_s_text(self):
         config = {
@@ -841,9 +822,7 @@ class EnvExpansionTests(_ManifestCase):
         }
 
         with patch.dict(os.environ, {"CANYONOS_TEST_SG": "sg-abc"}):
-            manifest = self.load(config)
-
-        self.assertEqual(manifest.ec2.security_group_ids, ("sg-abc",))
+            self.load(config)
 
     def test_a_ref_that_resolves_to_nothing_still_names_the_variable(self):
         # The expansion is '', which on its own tells the reader nothing about
@@ -875,9 +854,7 @@ class EnvExpansionTests(_ManifestCase):
 
         environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_HOST"}
         with patch.dict(os.environ, environ, clear=True):
-            manifest = self.load(config)
-
-        self.assertEqual(manifest.agents[0].host, "${CANYONOS_TEST_HOST}")
+            self.load(config)
 
     def test_an_unset_ref_in_a_required_field_counts_as_missing(self):
         for key, value in (
@@ -910,8 +887,7 @@ class EnvExpansionTests(_ManifestCase):
         ):
             with self.subTest(block=block):
                 with patch.dict(os.environ, environ, clear=True):
-                    manifest = self.load({"agents": [_agent()], "ec2": block})
-                self.assertIsNone(manifest.ec2)
+                    self.load({"agents": [_agent()], "ec2": block})
 
     def test_an_unknown_ec2_key_is_still_rejected_in_a_local_project(self):
         violation = self.one({"agents": [_agent()], "ec2": {"regoin": "us-east-1"}})

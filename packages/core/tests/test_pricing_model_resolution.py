@@ -49,11 +49,10 @@ class PricingModelResolutionTests(unittest.TestCase):
     def test_missing_model_id_returns_zero(self):
         self.assertEqual(pricing.compute_token_cost(None, 10_000, 10_000), 0.0)
 
-    def test_instance_hourly_cost_resolves(self):
-        self.assertAlmostEqual(pricing.compute_server_cost("m5.large", 3600), 0.096)
-
-    def test_unknown_instance_type_returns_zero(self):
-        self.assertEqual(pricing.compute_server_cost("no-such-instance", 3600), 0.0)
+    def test_an_unpriced_instance_type_costs_nothing_and_says_so(self):
+        with self.assertLogs(pricing.logger, "WARNING") as logs:
+            self.assertEqual(pricing.instance_hourly_cost("x9.unlisted"), 0.0)
+        self.assertIn("x9.unlisted", logs.output[0])
 
 
 if __name__ == "__main__":

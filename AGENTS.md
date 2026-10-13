@@ -48,6 +48,7 @@ Run `bun run check` and `bun run test` before calling a change done.
 - Do not commit generated output: `.car/`, `stubs/`, `grpc_stubs/`, `build/`, `dist/`, `*.egg-info/`.
 - Add or update tests next to the change: `packages/core/tests/`, `packages/cli/tests/`, `src/modules` in `api` and `web`, or `tests/` for cross-package behavior.
 - Keep tool versions pinned exactly (e.g. `ruff==`, `ty==`, SHA-pinned GitHub Actions).
+- Keep provider-specific logic (Local, EC2, and any new provider) inside `packages/core/canyonos_core/reconciler/providers/`. Callers go through `providers/__init__.py`, never a provider module or a provider name; see [its README](packages/core/canyonos_core/reconciler/providers/README.md).
 - Core modules are also imported as flat modules inside container images. Do not "fix" those fallback imports or the `E402` ignore in `pyproject.toml`.
 
 ## Further reading

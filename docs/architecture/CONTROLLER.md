@@ -18,7 +18,7 @@ CLI host:         ──▶          8000
 │        ▲                                                                     │
 │        ├── agent replica: LocalController + agent code                      │
 │        │      gRPC [::]:50051; host publication <host>:<host_port>           │
-│        │      routing_endpoint_for ──▶ <runtime_id>:50051 (local)            │
+│        │      routing_endpoint ──▶ <runtime_id>:50051 (local)                │
 │        │      LLM gateway ──▶ 127.0.0.1:8081                                   │
 │        │                                                                     │
 │        ├── workflow replica: LocalController + deploy(workflow_fn)           │
@@ -50,7 +50,7 @@ canyonos_core.server.deploy
                     ├─ _apply_config
                     │    ├─ write_config_specs
                     │    ├─ _apply_configured_replicas
-                    │    ├─ _load_and_write_policies
+                    │    ├─ _write_policies
                     │    └─ _write_identity
                     ├─ schema.init_db
                     ├─ ProcessSupervisor.start_all
@@ -205,7 +205,7 @@ GlobalController / ControllerContext
   reads  ◀── agent_instance:*, agent:<name>:instances,
              controller:<host>:<port>:status,
              controller:<host>:<port>:metrics, machine:<host>:metrics,
-             future:*, agent:<agent_id>:instance_type, request:completed
+             future:*, agent:<agent_id>:hourly_cost, request:completed
 
 LocalController / LocalControllerServicer
   writes ──▶ controller:<host>:<port>:status,

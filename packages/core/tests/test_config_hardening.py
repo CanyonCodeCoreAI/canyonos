@@ -25,16 +25,6 @@ def test_replicas_must_be_a_positive_integer(tmp_path, replicas):
         _load_config(path)
 
 
-def test_unknown_provider_is_rejected(tmp_path):
-    path = _write_config(
-        tmp_path,
-        [{"name": "Agent", "entrypoint": "agent.py", "provider": "locla"}],
-    )
-
-    with pytest.raises(RuntimeError, match="unsupported provider"):
-        _load_config(path)
-
-
 def test_provider_case_is_normalized(tmp_path):
     path = _write_config(
         tmp_path,
@@ -68,22 +58,4 @@ def test_ports_are_validated(tmp_path, field, value):
     )
 
     with pytest.raises(RuntimeError, match=field):
-        _load_config(path)
-
-
-def test_multiple_local_workflow_replicas_fail_with_an_actionable_error(tmp_path):
-    path = _write_config(
-        tmp_path,
-        [
-            {
-                "name": "Workflow",
-                "type": "workflow",
-                "workflow_file": "workflow.py",
-                "provider": "local",
-                "replicas": 2,
-            }
-        ],
-    )
-
-    with pytest.raises(RuntimeError, match="same `api_port`"):
         _load_config(path)

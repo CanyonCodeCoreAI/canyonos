@@ -173,7 +173,13 @@ class RedisPortTests(unittest.TestCase):
 
         gc = GlobalController.__new__(GlobalController)
         gc.controllers = [
-            {"user": None, "redis_port": 6379, "replicas": 1, "host": "localhost"}
+            {
+                "provider": "local",
+                "user": None,
+                "redis_port": 6379,
+                "replicas": 1,
+                "host": "localhost",
+            }
         ]
         gc.redis_containers = {}
         gc.redis_ports = {}

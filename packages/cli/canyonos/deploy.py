@@ -76,8 +76,8 @@ _ERROR_MARKERS = (
 # retry and recover on their own once the dashboard comes up.
 _BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.", "ERROR:__main__:Destination ")
 
-# The global controller brackets each failed container's log with these
-# (`_dump_container_log`). What sits between them is another process's output
+# The global controller and the reconciler bracket each failed container's log with
+# these (`dump_container_log`). What sits between them is another process's output
 # quoted verbatim -- its own ERROR lines and tracebacks -- so `_ERROR_MARKERS`
 # must not be applied to it: the deploy's verdict belongs to the summary that
 # follows the block, not to a line the block is quoting.

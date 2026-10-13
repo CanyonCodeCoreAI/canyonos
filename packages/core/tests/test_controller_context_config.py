@@ -10,12 +10,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.controller.controller_context import (
-    DEFAULT_AMI_ID,
-    DEFAULT_SSH_USER,
-    ControllerContext,
-)
+from canyonos_core.controller.controller_context import ControllerContext
 from canyonos_core.controller.global_controller import GlobalController
+from canyonos_core.reconciler import providers
 from canyonos_core.controller.utils.config_specs import (
     read_config_specs,
     write_config_specs,
@@ -71,16 +68,11 @@ class ConfigExpansionParityTests(unittest.TestCase):
 
         self.assertEqual(config["ec2"]["ami_id"], "${TEST_EC2_AMI_ID}")
 
-    def test_load_fills_ec2_defaults_only_when_omitted(self):
+    def test_the_ec2_block_is_loaded_as_written(self):
         with open(self.config_path, "w") as f:
-            f.write(_CONFIG.replace("  ami_id: ${TEST_EC2_AMI_ID}\n", ""))
-        with patch.dict(os.environ, self.env):
-            config = ControllerContext._load_config(self.config_path)
-            self.assertEqual(config, GlobalController._load_config(self.config_path))
-
-        self.assertEqual(config["ec2"]["ami_id"], DEFAULT_AMI_ID)
-        self.assertEqual(config["ec2"]["ssh_user"], DEFAULT_SSH_USER)
-        self.assertNotIn("ssh_private_key_path", config["ec2"])
+            f.write("agents: []\nec2:\n  region: us-east-1\n")
+        config = ControllerContext._load_config(self.config_path)
+        self.assertEqual(config["ec2"], {"region": "us-east-1"})
 
     def test_expanded_agents_are_published_without_reparsing_the_manifest(self):
         with patch.dict(os.environ, self.env):
@@ -129,20 +121,47 @@ class ReconcilerContextParityTests(unittest.TestCase):
     def test_context_carries_the_env_file(self):
         self.assertEqual(self._context().env_file_path, self.env_file)
 
-    def test_refresh_env_file_picks_up_a_changed_path_and_keeps_the_old_on_error(self):
+    def test_refresh_config_picks_up_a_changed_config_and_keeps_the_old_on_error(self):
         context = self._context()
         other = os.path.join(self.tmp, "other.env")
         with open(other, "w") as f:
             f.write("API_KEY=xyz\n")
         with open(self.config_path, "w") as f:
-            f.write(f"env_file: {other}\nagents: []\n")
-        context.refresh_env_file()
+            f.write(f"env_file: {other}\nagents: []\nec2:\n  region: us-west-2\n")
+        context.refresh_config()
         self.assertEqual(context.env_file_path, other)
+        self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
 
         with open(self.config_path, "w") as f:
             f.write("env_file: /does/not/exist.env\nagents: []\n")
-        context.refresh_env_file()
+        context.refresh_config()
         self.assertEqual(context.env_file_path, other)
+        self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
+
+    def test_a_specs_ssh_user_comes_from_its_provider(self):
+        context = ControllerContext.__new__(ControllerContext)
+        context.config = {"ec2": {"region": "us-east-1"}}
+        providers.bind(context)
+        self.assertEqual(context._ssh_user({"provider": "ec2"}), "ubuntu")
+        self.assertEqual(
+            context._ssh_user({"provider": "local", "user": "deploy"}), "deploy"
+        )
+
+    def test_every_spec_names_its_provider_as_records_spell_it(self):
+        """Replica ids include the provider name, so an agent written as `ec2` must still
+        find its records saved under `EC2`."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        os.makedirs(os.path.join(tmp, "config"))
+        config_path = os.path.join(tmp, "config", "global_controller.yaml")
+        with open(config_path, "w") as f:
+            f.write("agents:\n  - name: Alpha\n    provider: ec2\n  - name: Beta\n")
+
+        config = ControllerContext._load_config(config_path)
+
+        self.assertEqual(
+            [agent["provider"] for agent in config["agents"]], ["EC2", "local"]
+        )
 
 
 class PushFileTests(unittest.TestCase):

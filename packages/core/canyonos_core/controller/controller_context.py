@@ -23,14 +23,11 @@ from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient
+from canyonos_core.reconciler import providers
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SSH_KEY_PATH = "~/.ssh/canyonos_ec2"
-DEFAULT_SSH_USER = "ubuntu"
-
-# This default AMI is a public AMI created by Canyon Code, containing base Ubuntu + Docker + zstd. Can be overridden manually with your own ami_id
-DEFAULT_AMI_ID = "ami-0101d5f2a2a9cd55c"
 
 _REMOTE_COPY_PATH = re.compile(
     r"(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+/canyonos\.[A-Za-z0-9]+/env"
@@ -46,10 +43,6 @@ def _redis_connect_host(host):
     if _is_local_host(host):
         return os.environ.get("CANYONOS_REDIS_HOST", "localhost")
     return host
-
-
-def is_ec2(service):
-    return service.get("provider", "local").upper() == "EC2"
 
 
 def instance_id(provider, agent_name, replica_index):
@@ -69,13 +62,14 @@ def instance_id_from_record(instance):
     )
 
 
-def routing_endpoint_for(instance):
-    """The address other services reach an instance on: container name on this machine, host:port elsewhere."""
-    if instance.get("provider", "local").casefold() == "local" and _is_local_host(
-        instance["private_host"]
-    ):
-        return f"{instance['runtime_id']}:{instance['container_port']}"
-    return f"{instance['private_host']}:{instance['host_port']}"
+def localhost_redis_port(agents):
+    """Return the port of this machine's Redis container, taken from the first agent with
+    a replica here, or None if no agent runs here."""
+    for ctrl in agents:
+        for host, _port in ControllerContext._get_replica_placements(ctrl):
+            if _is_local_host(host):
+                return int(ctrl.get("redis_port", 6379))
+    return None
 
 
 def list_instances(redis_client, agent_name=None):
@@ -86,11 +80,11 @@ def list_instances(redis_client, agent_name=None):
     else:
         keys = sorted(redis_client.scan_keys("agent_instance:*"))
 
-    # Skips port claims whose runtime hasn't been provisioned yet.
+    # Skips launches that haven't finished: only the final write adds routing_endpoint.
     return [
         instance
         for key in keys
-        if (instance := redis_client.hgetall(key)).get("runtime_id")
+        if (instance := redis_client.hgetall(key)).get("routing_endpoint")
     ]
 
 
@@ -113,21 +107,23 @@ class ControllerContext(object):
 
         self.poll_interval = self.config.get("poll_interval", 5)
         self._set_controllers(self.config.get("agents", []))
-        self.containers = {}  # name -> [runtime_id, ...]
         self.redis_containers = {}  # host -> container_name
         self.redis_ports = {}  # host -> published redis port
         self.node_redis = {}  # host -> RedisClient
+        providers.bind(self)
 
     @staticmethod
     def _load_config(config_path):
-        """Load the YAML config, importing root .env values and expanding ${VAR} refs."""
+        """Load the YAML config, importing root .env values and expanding ${VAR} refs.
+        Also rewrites each agent's provider name to its standard spelling (`ec2` becomes
+        `EC2`), which is how replica records spell it."""
         config = config_env.load_config(config_path)
         if not isinstance(config, dict):
             raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
-        ec2 = config.get("ec2")
-        if isinstance(ec2, dict):
-            ec2.setdefault("ami_id", DEFAULT_AMI_ID)
-            ec2.setdefault("ssh_user", DEFAULT_SSH_USER)
+        for agent in config.get("agents", []):
+            agent["provider"] = providers.canonical_name(
+                agent.get("provider", providers.DEFAULT)
+            )
         return config
 
     # Kept as aliases for callers that use these helpers directly. The parser
@@ -155,20 +151,24 @@ class ControllerContext(object):
         self._set_controllers(specs)
         return True
 
-    def refresh_env_file(self):
-        """Re-read the env file path from the config; keep the old one if the new is unusable."""
+    def refresh_config(self):
+        """Re-read the config and its env file path; keep the old ones if the new config
+        is unusable."""
         try:
-            self.env_file_path = resolve_env_file(self._load_config(self.config_path))
+            config = self._load_config(self.config_path)
+            self.env_file_path = resolve_env_file(config)
         except Exception as e:
             logger.warning(
-                "Keeping env file %s; reloading it failed: %s", self.env_file_path, e
+                "Keeping the current config; reloading %s failed: %s",
+                self.config_path,
+                e,
             )
+            return
+        self.config = config
 
     def _ssh_user(self, ctrl):
-        """SSH user for a service's hosts; EC2 falls back to `ec2.ssh_user`."""
-        if not is_ec2(ctrl):
-            return ctrl.get("user")
-        return ctrl.get("user") or self.config.get("ec2", {}).get("ssh_user")
+        """SSH user for a service's hosts, as its provider decides."""
+        return providers.get(ctrl["provider"]).ssh_user(ctrl)
 
     @staticmethod
     def _get_replica_placements(ctrl):
@@ -186,17 +186,9 @@ class ControllerContext(object):
             ]
         return [(default_host, base_port)]
 
-    def _localhost_redis_port(self):
-        """The Redis port the local node's container was published on, if any."""
-        for ctrl in self.controllers:
-            for host, _port in self._get_replica_placements(ctrl):
-                if _is_local_host(host):
-                    return int(ctrl.get("redis_port", 6379))
-        return None
-
     def attach_local_node_redis(self):
         """Point self.redis at the local node's Redis without launching anything."""
-        port = self._localhost_redis_port()
+        port = localhost_redis_port(self.controllers)
         if port is None:
             return
         client = RedisClient(host=_redis_connect_host("localhost"), port=port)
@@ -215,6 +207,14 @@ class ControllerContext(object):
         client = RedisClient(host=_redis_connect_host(host), port=port)
         self.node_redis[host] = client
         return client
+
+    def prune_node_redis(self, instances):
+        """Drop the Redis clients of hosts that no configured agent or given replica runs on."""
+        hosts = {instance["private_host"] for instance in instances}
+        for ctrl in self.controllers:
+            hosts.update(host for host, _port in self._get_replica_placements(ctrl))
+        for host in set(self.node_redis) - hosts:
+            del self.node_redis[host]
 
     def _run_cmd(self, cmd, host, user=None):
         """Run a command locally, or on a remote host over SSH."""
@@ -278,7 +278,7 @@ class ControllerContext(object):
     def _ssh_args(self, host, user=None):
         """Return the `ssh ... target` prefix used to reach a remote host."""
         ssh_key_path = os.path.expanduser(
-            self.config.get("ec2", {}).get("ssh_private_key_path", DEFAULT_SSH_KEY_PATH)
+            self.config.get("ssh_private_key_path", DEFAULT_SSH_KEY_PATH)
         )
         return [
             "ssh",

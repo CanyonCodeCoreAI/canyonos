@@ -17,15 +17,17 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
+from canyonos_core.reconciler import providers
 
 
 def _bare_controller(controllers):
     controller = GlobalController.__new__(GlobalController)
-    controller.controllers = controllers
+    controller._set_controllers(controllers)
     controller.redis_containers = {}
     controller.redis_ports = {}
     controller.node_redis = {}
     controller.redis = None
+    providers.bind(controller)
     return controller
 
 
@@ -63,7 +65,14 @@ class RedisContainerReuseTests(unittest.TestCase):
 
     def test_a_healthy_existing_container_is_reused_without_becoming_owned(self):
         controller = _bare_controller(
-            [{"name": "Workflow", "replicas": 1, "redis_port": 6379}]
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "replicas": 1,
+                    "redis_port": 6379,
+                }
+            ]
         )
 
         docker_run_calls = self._run(controller, inspect_stdout="true\n")
@@ -85,7 +94,14 @@ class RedisContainerReuseTests(unittest.TestCase):
 
     def test_an_unhealthy_or_missing_container_still_gets_created(self):
         controller = _bare_controller(
-            [{"name": "Workflow", "replicas": 1, "redis_port": 6379}]
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "replicas": 1,
+                    "redis_port": 6379,
+                }
+            ]
         )
 
         docker_run_calls = self._run(controller, inspect_stdout="false\n")
@@ -102,6 +118,7 @@ class RedisContainerReuseTests(unittest.TestCase):
             [
                 {
                     "name": "Workflow",
+                    "provider": "local",
                     "replicas": 1,
                     "redis_port": 6379,
                     "host": "10.0.0.5",
@@ -141,6 +158,7 @@ class RedisContainerReuseTests(unittest.TestCase):
         placements = GlobalController._get_replica_placements(
             {
                 "name": "Workflow",
+                "provider": "local",
                 "host": "10.0.0.5",
                 "replicas": [
                     {"host": "10.0.0.6", "port": 50061},
@@ -167,6 +185,7 @@ class RedisContainerReuseTests(unittest.TestCase):
             [
                 {
                     "name": "Workflow",
+                    "provider": "local",
                     "host": "10.0.0.5",
                     "user": "ubuntu",
                 }
@@ -184,22 +203,16 @@ class RedisContainerReuseTests(unittest.TestCase):
 
     def test_stop_remote_redis_uses_ec2_user(self):
         controller = _bare_controller(
-            [
-                {
-                    "name": "Workflow",
-                    "provider": "EC2",
-                    "host": "10.0.0.5",
-                    "user": "ubuntu",
-                }
-            ]
+            [{"name": "Workflow", "provider": "EC2", "host": "10.0.0.5"}]
         )
+        controller.config = {"ec2": {"ssh_user": "admin"}}
         controller.redis_containers = {"10.0.0.5": "canyonos-redis-10-0-0-5"}
 
         self.assertEqual(
             self._stop_calls(controller),
             [
-                (["docker", "stop", "canyonos-redis-10-0-0-5"], "10.0.0.5", "ubuntu"),
-                (["docker", "rm", "canyonos-redis-10-0-0-5"], "10.0.0.5", "ubuntu"),
+                (["docker", "stop", "canyonos-redis-10-0-0-5"], "10.0.0.5", "admin"),
+                (["docker", "rm", "canyonos-redis-10-0-0-5"], "10.0.0.5", "admin"),
             ],
         )
 
@@ -207,8 +220,8 @@ class RedisContainerReuseTests(unittest.TestCase):
         """One Redis per host, so two different declared ports cannot both hold."""
         controller = _bare_controller(
             [
-                {"name": "A", "replicas": 1, "redis_port": 6379},
-                {"name": "B", "replicas": 1, "redis_port": 6390},
+                {"name": "A", "provider": "local", "replicas": 1, "redis_port": 6379},
+                {"name": "B", "provider": "local", "replicas": 1, "redis_port": 6390},
             ]
         )
 
@@ -218,8 +231,8 @@ class RedisContainerReuseTests(unittest.TestCase):
     def test_matching_redis_ports_on_one_host_are_fine(self):
         controller = _bare_controller(
             [
-                {"name": "A", "replicas": 1, "redis_port": 6390},
-                {"name": "B", "replicas": 1, "redis_port": 6390},
+                {"name": "A", "provider": "local", "replicas": 1, "redis_port": 6390},
+                {"name": "B", "provider": "local", "replicas": 1, "redis_port": 6390},
             ]
         )
 
@@ -230,7 +243,14 @@ class RedisContainerReuseTests(unittest.TestCase):
     def test_redis_listens_on_the_declared_port_inside_the_container_too(self):
         """Agents reach Redis by container name, so the inside port must match."""
         controller = _bare_controller(
-            [{"name": "Workflow", "replicas": 1, "redis_port": 6390}]
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "replicas": 1,
+                    "redis_port": 6390,
+                }
+            ]
         )
 
         docker_run_calls = self._run(controller, inspect_stdout="false\n")
@@ -242,7 +262,14 @@ class RedisContainerReuseTests(unittest.TestCase):
     def test_a_running_container_on_another_port_is_not_adopted(self):
         """The ping alone would pass if an unrelated Redis held the configured port."""
         controller = _bare_controller(
-            [{"name": "Workflow", "replicas": 1, "redis_port": 6379}]
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "replicas": 1,
+                    "redis_port": 6379,
+                }
+            ]
         )
 
         with self.assertRaises(SystemExit):
@@ -253,7 +280,14 @@ class RedisContainerReuseTests(unittest.TestCase):
     ):
         """Relaunching would hit a name conflict and force-remove the live container."""
         controller = _bare_controller(
-            [{"name": "Workflow", "replicas": 1, "redis_port": 6379}]
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "replicas": 1,
+                    "redis_port": 6379,
+                }
+            ]
         )
 
         def fake_run_cmd(cmd, host, user=None):
@@ -278,7 +312,14 @@ class RedisContainerReuseTests(unittest.TestCase):
     def test_a_redis_that_never_becomes_ready_exits_instead_of_raising(self):
         """The timeout message is useful; it shouldn't arrive as a bare traceback."""
         controller = _bare_controller(
-            [{"name": "Workflow", "replicas": 1, "redis_port": 6379}]
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "replicas": 1,
+                    "redis_port": 6379,
+                }
+            ]
         )
 
         def fake_run_cmd(cmd, host, user=None):
@@ -300,7 +341,14 @@ class RedisContainerReuseTests(unittest.TestCase):
 
     def test_a_running_container_publishing_nothing_is_not_adopted(self):
         controller = _bare_controller(
-            [{"name": "Workflow", "replicas": 1, "redis_port": 6379}]
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "replicas": 1,
+                    "redis_port": 6379,
+                }
+            ]
         )
 
         with self.assertRaises(SystemExit):

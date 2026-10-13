@@ -34,7 +34,7 @@ parent_span_id = parent_id
 | `execution_time_ms`, `queue_time_ms` | Timing. |
 | `input_token_count`, `output_token_count`, `token_count` | Token usage. |
 | `errors`, `failed` | Error count / failure flag. |
-| `server_cost`, `token_cost`, `total_cost` | Cost figures (computed at write time via `pricing.py`; only meaningful once finished). |
+| `server_cost`, `token_cost`, `total_cost` | Cost figures: `server_cost` is the replica's hourly rate (saved in Redis by its provider at launch) times the span's duration, `token_cost` comes from `pricing.py`; only meaningful once finished. |
 | `cached_tokens`, `cache_hit_ratio` | Prompt-cache usage. |
 | `error_name`, `error_message` | Exception type/message (type is currently always NULL — CanyonOS records only a message). |
 | `name` | Stable logical `service.method` (the span name). |

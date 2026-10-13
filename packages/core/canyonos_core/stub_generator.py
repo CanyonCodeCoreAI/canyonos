@@ -14,8 +14,9 @@ import subprocess
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
-from canyonos_core.controller.controller_context import _is_local_host, is_ec2
+from canyonos_core.controller.controller_context import _is_local_host
 from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
+from canyonos_core.reconciler import providers
 
 # Lowest versions the image's own code runs on; an app asking for older fails the install.
 BASE_AGENT_REQUIREMENTS = [
@@ -575,8 +576,13 @@ def target_docker_platform(agents):
     explicit = os.environ.get("CANYONOS_DOCKER_PLATFORM")
     if explicit:
         return explicit
+    # port_claim_host gives the host an agent runs on, or None if it gets its own machine.
     if all(
-        not is_ec2(agent) and _is_local_host(agent.get("host", "localhost"))
+        _is_local_host(
+            providers.get(agent.get("provider", providers.DEFAULT)).port_claim_host(
+                agent
+            )
+        )
         for agent in agents
     ):
         return _docker_daemon_platform()
