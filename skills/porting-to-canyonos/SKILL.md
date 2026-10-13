@@ -52,8 +52,10 @@ external stores and concurrency controls; follow the
   Put adapters beside the code they wrap; reuse compatible classes directly.
 - Write one representative input from the source to `.car/config/test_query.txt`
   as raw query text, without labels or Markdown fences.
-- Derive declarations, paths and requirements from the source. Write
-  configuration using the [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md).
+- Derive each agent's `functions` (the methods the workflow calls, with
+  argument and return types built from builtins), paths and requirements from
+  the source. Write configuration using the
+  [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md).
   Preserve existing choices; batch unresolved deployment questions and use
   schema defaults when unanswered or unattended. Leave `resources` at schema
   defaults without asking.

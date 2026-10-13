@@ -32,6 +32,7 @@ SKILL_PATH = f"skills/{SKILL_NAME}"
 SKILL_SOURCE = env.skill_source
 
 REPO_URL = f"https://github.com/{SKILL_OWNER}/{SKILL_REPO}"
+RAW_URL = f"https://raw.githubusercontent.com/{SKILL_OWNER}/{SKILL_REPO}"
 
 
 def _tree_url(ref):
@@ -217,6 +218,23 @@ def _fetch_with_tarball(dest, ref):
     return True
 
 
+def _pin_doc_links(dest, ref):
+    """Point the skill's links at the docs of `ref`, the release it came from,
+    rather than at whatever `main` says by the time it is read."""
+    for root, _, files in os.walk(dest):
+        for name in files:
+            if not name.endswith(".md"):
+                continue
+            path = os.path.join(root, name)
+            with open(path, encoding="utf-8") as source:
+                text = source.read()
+            pinned = text.replace(f"{RAW_URL}/main/", f"{RAW_URL}/{ref}/")
+            if pinned == text:
+                continue
+            with open(path, "w", encoding="utf-8") as target:
+                target.write(pinned)
+
+
 FETCH_STRATEGIES = (
     ("git", _fetch_with_git),
     ("tarball", _fetch_with_tarball),
@@ -243,6 +261,7 @@ def _install_skill(dest, source=SKILL_SOURCE):
     for name, fetch in FETCH_STRATEGIES:
         try:
             if fetch(dest, source):
+                _pin_doc_links(dest, source)
                 ui.ok(f"Fetched the CanyonOS skill via {name}.")
                 return True
         except OSError:

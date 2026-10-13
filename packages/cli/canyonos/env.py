@@ -57,7 +57,7 @@ VERSION = importlib.metadata.version("canyonos")
 PROD_CORE_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-core:{VERSION}"
 PROD_API_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-api:{VERSION}"
 PROD_WEB_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-web:{VERSION}"
-PROD_SKILL_REF = "main"
+PROD_SKILL_REF = f"v{VERSION}"
 
 # `local` artifacts, i.e. what this checkout builds or ships.
 LOCAL_CORE_IMAGE = "canyonos-core:dev"

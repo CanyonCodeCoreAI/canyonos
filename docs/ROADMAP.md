@@ -8,7 +8,6 @@ Work we plan to do next. Nothing here is promised for a specific release.
 We greatly advocate for simplicity in the workflows you build, and we strive for that too. We will be folding in and consolidating pieces of CanyonCode that you currently have to manually configure for runtime, for the eventual code of being able to run pure plain python code on CanyonOS.
 
 Things we will address:
-- agents .yaml files needed for each agent
 - From deploy import deploy and deploy(main,8080) in the workflow code
 - Everything needs to be in a Class
 - Needing to add .value() when you want to call the result of a function

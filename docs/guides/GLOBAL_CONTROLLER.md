@@ -31,6 +31,13 @@ agents:
       cpu: 1
       memory: 256
     requirements: [yfinance]
+    functions:
+      - name: get_price
+        arguments:
+          - name: ticker
+            type: str
+        returns:
+          type: dict
 
   - name: Workflow
     type: workflow
@@ -44,7 +51,7 @@ Reading it top to bottom:
 
 - `PriceAgent` is an agent whose code is in `agents/price_agent.py`. CanyonOS runs two
   copies of it, each with one CPU core and 256 MB of memory, and installs `yfinance`
-  into it.
+  into it. `functions` lists the methods the workflow calls on it, here `get_price`.
 - `Workflow` is the workflow. It's the part of your app that receives requests, on
   port `8080`, and calls your agents to answer them.
 - `env_file` points at a `.env` file. Every piece of your app gets its variables, so
@@ -167,7 +174,7 @@ Agent entries add:
 |---|---|---|
 | `entrypoint` | required | `.py` path relative to `.car/app`, no `..`, not absolute. Holds the class named `name`. |
 | `requirements` | `[]` | One PEP 508 requirement per item. See [Per-image requirements](#per-image-requirements). |
-| `functions` | required | The methods other services can call. See [Agent functions](#agent-functions). |
+| `functions` | `[]` | The methods other services can call; an agent without any cannot be called. See [Agent functions](#agent-functions). |
 
 Workflow entries add:
 
@@ -257,6 +264,13 @@ agents:
     requirements:
       - langgraph
       - langchain-openai
+    functions:
+      - name: draft_reply
+        arguments:
+          - name: thread
+            type: str
+        returns:
+          type: str
 
   - name: Workflow
     type: workflow
@@ -290,8 +304,8 @@ key and saves in place. It does not create the file or fill in defaults.
 
 ### Agent functions
 
-`functions` on an agent entry lists the methods of its stub. Every agent entry
-needs at least one.
+`functions` on an agent entry lists the methods of its stub. An agent that
+declares none gets a stub with nothing to call.
 
 ```yaml
 agents:
@@ -310,17 +324,23 @@ agents:
 
 Only `name`, `arguments`, `returns` and `type` are accepted where shown.
 
-Argument `type` becomes an annotation in a generated stub that imports
-nothing, so it has to be built from builtins: `bool`, `bytearray`, `bytes`,
-`complex`, `dict`, `float`, `frozenset`, `int`, `list`, `object`, `set`,
-`str`, `tuple`, `None`, and compositions like `list[str]`, `dict[str, int]`,
-`tuple[int, ...]` or `int | None`. `List[str]` or `Optional[str]` is a schema
-error. Every declared argument is required at the call site; stubs have no
-defaults.
+Every `name` is written into the stub as Python source, so it has to be a
+Python identifier that is not a keyword. A function name is also rejected
+when it is a builtin type name such as `list` or `str` (it would shadow the
+type inside the class), a dunder such as `__init__`, or already declared on
+the same agent. An argument cannot be `self` or repeat another argument.
 
-`returns.type` is documentation. The runtime JSON-encodes a `dict` or `list`
-result and turns anything else into a string, and a workflow always receives
-text back, so `dict` or `list` tells the caller to `json.loads` it.
+A `type`, on an argument or under `returns`, becomes an annotation in a
+generated stub that imports nothing, so it has to be built from builtins:
+`bool`, `bytearray`, `bytes`, `complex`, `dict`, `float`, `frozenset`, `int`,
+`list`, `object`, `set`, `str`, `tuple`, `None`, and compositions like
+`list[str]`, `dict[str, int]`, `tuple[int, ...]` or `int | None`. `List[str]`
+or `Optional[str]` is a schema error. Every declared argument is required at
+the call site; stubs have no defaults.
+
+At runtime `returns.type` is documentation. The runtime JSON-encodes a `dict`
+or `list` result and turns anything else into a string, and a workflow always
+receives text back, so `dict` or `list` tells the caller to `json.loads` it.
 
 ### Per-image requirements
 

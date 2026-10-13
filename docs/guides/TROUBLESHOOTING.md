@@ -15,7 +15,10 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `is required when provider is 'EC2'` | An EC2 entry has no `instance_type` |
 | `expected an integer >= 1` on `replicas` | `replicas` is a string or zero |
 | `is not a single PEP 508 requirement` | A `requirements` item has several packages or a stray flag |
-| `is not built from builtin types` on an argument `type` | A typing name like `List[str]`; use `list[str]` |
+| `is not built from builtin types` on an argument or `returns` `type` | A typing name like `List[str]`; use `list[str]` |
+| `would shadow the builtin type` on a function `name` | The function is named after a builtin type such as `list`; rename it |
+| `is reserved for Python` on a function `name` | A dunder name such as `__init__`; rename it |
+| `is already a function of this agent` | Two functions of one agent share a name |
 | `database: is no longer used` | The retired top-level `database` key is still in the manifest |
 | `currently requires protobuf<...` during the build | A requirement pins a base package below the platform floor |
 | `Deploy failed: generated grpc_stubs are missing or not importable` | The generated `*_pb2.py` modules do not import in the controller, usually a protobuf runtime mismatch |

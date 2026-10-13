@@ -79,17 +79,10 @@ class FunctionsShapeTests(_FunctionsCase):
         self.assertIn("found duplicate key 'name'", violation.message)
         self.assertNotIn("\n", render_violation(violation))
 
-    def test_an_agent_without_functions_is_rejected(self):
-        violation = self.one({})
-
-        self.assertEqual(violation.field, "agents[0].functions")
-        self.assertEqual(violation.message, "is required but missing")
-
-    def test_an_empty_functions_list_is_rejected(self):
-        violation = self.one({"functions": []})
-
-        self.assertEqual(violation.field, "agents[0].functions")
-        self.assertEqual(violation.message, "is required and must not be empty")
+    def test_an_agent_may_declare_no_functions(self):
+        for document in ({}, {"functions": []}):
+            with self.subTest(document=document):
+                self.assertEqual(self.load(document).functions, ())
 
     def test_a_function_needs_a_name(self):
         violation = self.one({"functions": [{"arguments": []}]})

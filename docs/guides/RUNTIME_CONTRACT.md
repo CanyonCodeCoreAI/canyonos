@@ -33,8 +33,8 @@ found when the container starts: the agent fails to load, the replica reports
 Each agent entry produces one Python stub: a class with the entry's name and
 one method per function in its `functions`. Each method takes the declared
 arguments as keywords, with no defaults, and returns a `Future` right away.
-The stub imports nothing from your code, which is why argument types are
-limited to builtins (see [Manifest reference](GLOBAL_CONTROLLER.md#agent-functions)).
+The stub imports nothing from your code, which is why argument and return
+types are limited to builtins (see [Manifest reference](GLOBAL_CONTROLLER.md#agent-functions)).
 
 The stub is written into every build context, including the agent's own, in
 two places: at the agent's `entrypoint` path, and at the context root under

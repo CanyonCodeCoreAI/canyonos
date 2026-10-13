@@ -175,7 +175,7 @@ def test_an_unset_skill_source_is_the_production_ref(environment, value):
     assert (
         env_module._resolve_skill_source(environment, value)
         == env_module.PROD_SKILL_REF
-        == "main"
+        == f"v{env_module.VERSION}"
     )
 
 

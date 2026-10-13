@@ -86,9 +86,11 @@ class FunctionDecl:
 
 def _is_builtin_annotation(type_name):
     """True when `type_name` evaluates with nothing imported."""
+    # A type nested or chained deeply enough overflows the parser or the
+    # compiler; the stub would fail the same way, so it is not a builtin type.
     try:
         tree = ast.parse(type_name, mode="eval")
-    except SyntaxError:
+    except (SyntaxError, RecursionError):
         return False
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant):
@@ -102,9 +104,26 @@ def _is_builtin_annotation(type_name):
     # what parses but fails when the stub's `def` runs, such as `int[str]`.
     try:
         eval(compile(tree, "<annotation>", "eval"), {"__builtins__": _BUILTIN_TYPES})
-    except TypeError:
+    except (TypeError, RecursionError):
         return False
     return True
+
+
+def _annotation(collector, node, prefix, what):
+    """The `type` of an argument or a return, or None when absent or unusable."""
+    type_name = _string(collector, node, "type", prefix)
+    if type_name is None or _is_builtin_annotation(type_name):
+        return type_name
+    shown = type_name if len(type_name) <= 80 else type_name[:77] + "..."
+    collector.add(
+        node,
+        "type",
+        _field(prefix, "type"),
+        f"{shown!r} is not built from builtin types; the generated stub "
+        f"imports nothing, so {what} type may only use "
+        f"{', '.join(sorted(BUILTIN_TYPE_NAMES))} and None",
+    )
+    return None
 
 
 def _identifier(collector, node, key, prefix, required=False, reserved=()):
@@ -148,7 +167,7 @@ def _returns(collector, node, prefix):
         return None
     _check_keys(collector, block, _field(prefix, "returns"), _RETURNS_KEYS)
     return ReturnsDecl(
-        type=_string(collector, block, "type", _field(prefix, "returns"))
+        type=_annotation(collector, block, _field(prefix, "returns"), "a return")
     )
 
 
@@ -196,31 +215,39 @@ def _arguments(collector, node, prefix):
                 f"{name!r} is already a parameter of the generated method",
             )
             name = None
-        type_name = _string(collector, entry, "type", argument_prefix)
-        if type_name is not None and not _is_builtin_annotation(type_name):
-            collector.add(
-                entry,
-                "type",
-                _field(argument_prefix, "type"),
-                f"{type_name!r} is not built from builtin types; the generated stub "
-                "imports nothing, so an argument type may only use "
-                f"{', '.join(sorted(BUILTIN_TYPE_NAMES))} and None",
-            )
-            type_name = None
+        type_name = _annotation(collector, entry, argument_prefix, "an argument")
         if name:
             seen.add(name)
             arguments.append(ArgumentDecl(name=name, type=type_name))
     return tuple(arguments)
 
 
+def _function_name(collector, entry, prefix, seen):
+    """The method name a function gets on the stub, or None when it would break
+    the class it is written into."""
+    name = _identifier(collector, entry, "name", prefix, required=True)
+    if name is None:
+        return None
+    if name in BUILTIN_TYPE_NAMES:
+        message = (
+            f"{name!r} would shadow the builtin type inside the generated class, "
+            "breaking every annotation after it; choose another"
+        )
+    elif name.startswith("__") and name.endswith("__"):
+        message = f"{name!r} is reserved for Python; choose another"
+    elif name in seen:
+        message = f"{name!r} is already a function of this agent"
+    else:
+        return name
+    collector.add(entry, "name", _field(prefix, "name"), message)
+    return None
+
+
 def _functions(collector, node, parent):
     """Parse the agent's `functions` list, recording violations and skipping any entry
-    that can't be read."""
+    that can't be read. An agent may declare none: its stub is then a bare class."""
     raw = node.get("functions")
     if raw is None:
-        collector.add(
-            node, "functions", _field(parent, "functions"), "is required but missing"
-        )
         return ()
     if not isinstance(raw, list):
         collector.add(
@@ -230,16 +257,9 @@ def _functions(collector, node, parent):
             f"expected a list of functions, got {_describe(raw)}",
         )
         return ()
-    if not raw:
-        collector.add(
-            node,
-            "functions",
-            _field(parent, "functions"),
-            "is required and must not be empty",
-        )
-        return ()
 
     functions = []
+    seen = set()
     for index, entry in enumerate(raw):
         prefix = f"{parent}.functions[{index}]"
         if not isinstance(entry, dict):
@@ -248,10 +268,11 @@ def _functions(collector, node, parent):
             )
             continue
         _check_keys(collector, entry, prefix, _FUNCTION_KEYS)
-        name = _identifier(collector, entry, "name", prefix, required=True)
+        name = _function_name(collector, entry, prefix, seen)
         arguments = _arguments(collector, entry, prefix)
         returns = _returns(collector, entry, prefix)
         if name:
+            seen.add(name)
             functions.append(
                 FunctionDecl(
                     name=name,

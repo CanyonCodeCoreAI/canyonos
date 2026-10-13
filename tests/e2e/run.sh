@@ -86,8 +86,8 @@ docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$
 cd "$PROJECT_DIR"
 
 # The image just built has to stop a manifest whose functions do not match the
-# agent's class, before anything is deployed.
-for mode in rename drop; do
+# agent's class or cannot become a stub, before anything is deployed.
+for mode in rename builtin dunder duplicate returns deep; do
   step "canyonos validate rejects a broken manifest ($mode)"
   broken_car="$(mktemp -d)/.car"
   cp -R "$PROJECT_DIR/.car" "$broken_car"
