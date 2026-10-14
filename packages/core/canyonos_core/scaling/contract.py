@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # The scaling sample schema in Redis: plain functions over a RedisClient.
 
 import json

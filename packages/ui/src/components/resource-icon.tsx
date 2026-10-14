@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { BrainCogIcon, CircuitBoardIcon, CpuIcon, DatabaseIcon, MicrochipIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Custom help screen for the canyonos CLI.
 
 To run type: canyonos -h

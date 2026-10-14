@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The manifest schema: every key `global_controller.yaml` may carry.
 
 Anything not declared here is rejected, so a typo fails the deploy with a line

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos init`, does the following:
 1. Pull the Global Controller image

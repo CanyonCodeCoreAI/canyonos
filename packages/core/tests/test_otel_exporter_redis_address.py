@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The otel_exporter subprocess must talk to the Redis the GC writes destinations to.
 
 It used to hardcode `RedisClient(host="host.docker.internal")`, taking the default port

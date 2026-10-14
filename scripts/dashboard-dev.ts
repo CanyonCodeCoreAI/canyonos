@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Runs the dashboard on the host for the hot-reload loop: local Postgres and Mailpit
  * through Compose, then the API and Vite in watch mode. A variable set in the shell wins over each

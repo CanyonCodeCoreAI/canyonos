@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 const MISSING = '—';
 
 const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });

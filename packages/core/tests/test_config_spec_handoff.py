@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The agent spec is handed off through Redis, not re-parsed from YAML twice."""
 
 import os

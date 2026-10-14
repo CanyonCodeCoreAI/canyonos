@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Show why an agent's container failed, in the output of `canyonos deploy`."""
 
 import logging

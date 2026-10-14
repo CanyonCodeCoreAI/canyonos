@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Field readers shared by the manifest and the agent functions schemas.
 
 Each reader takes the mapping a key lives in, records a violation when the

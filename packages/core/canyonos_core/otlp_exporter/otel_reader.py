@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Consumer side of the OTel export queue: the bookkeeping writes the exporter makes as it
 drains the SQLite queue -- marking rows sent, flushing, and pruning aged-out rows.
 

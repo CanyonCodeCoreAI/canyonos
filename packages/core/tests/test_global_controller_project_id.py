@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """_load_config() must mint a project_id when a config file omits one, and persist it back
 to the file so the same value survives a reload_config() or process restart -- not a fresh
 uuid on every load.

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """POST a query to a deployed workflow, poll its status and print the result.
 
 Talks to the workflow's REST API directly, the way a user of `canyonos deploy`

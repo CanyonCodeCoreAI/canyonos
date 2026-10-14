@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Blocks proxied calls to a model this agent isn't allowed to use, or that could cost more than its cap."""
 
 from __future__ import annotations

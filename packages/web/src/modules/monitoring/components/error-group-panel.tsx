@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { MonitoringErrorGroup } from '@canyonos/api/monitoring';
 
 import { cardVariants } from '@repo/ui/shadcn/card';

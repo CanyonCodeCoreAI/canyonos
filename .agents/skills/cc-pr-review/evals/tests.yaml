@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 - description: 'CanyonOS PR review routing: select for a pull request review'
   metadata: { skill: cc-pr-review, kind: trigger }
   providers: [candidate]

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The scaling policy reads `scaling:config` and the per-agent samples the GC records each poll."""
 
 import json

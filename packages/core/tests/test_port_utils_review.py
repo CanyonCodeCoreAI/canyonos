@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """QA coverage for PR #141 (CAN-386) -- port hardening.
 
 Everything here targets code the PR added or changed. The PR shipped zero tests

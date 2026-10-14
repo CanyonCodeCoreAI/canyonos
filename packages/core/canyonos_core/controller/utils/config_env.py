@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The `.env` import and `${VAR}` expansion the config goes through before it is read.
 
 Shared so the manifest schema checks exactly the values the Global Controller

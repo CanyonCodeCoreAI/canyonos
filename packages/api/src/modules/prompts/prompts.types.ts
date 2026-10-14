@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { z } from 'zod';
 
 /** One stored system prompt: a version of what an agent function is sent. */

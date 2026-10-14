@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Elysia } from 'elysia';
 
 const HEADERS_TO_REMOVE = ['x-powered-by', 'server'] as const;

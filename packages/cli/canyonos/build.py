@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos build`: install the CanyonOS skill on a coding agent,
 then launch that agent with a prompt to apply it to the current project.

@@ -1,4 +1,8 @@
 #!/bin/sh
+
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Installs the canyonos CLI from a prebuilt binary attached to the latest stable
 # "v*" GitHub release.
 # Usage: curl -fsSL <raw-url>/install.sh | sh

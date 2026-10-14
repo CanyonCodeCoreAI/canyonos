@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import * as React from 'react';
 

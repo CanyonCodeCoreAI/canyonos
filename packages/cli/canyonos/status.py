@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos status`: reports whether a deploy is currently running,
 and if so, where the workflow (and, if up, the dashboard) answer.

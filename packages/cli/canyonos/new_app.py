@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos new-app`: scaffold a new project in the current
 directory. Runs locally, no container involved.

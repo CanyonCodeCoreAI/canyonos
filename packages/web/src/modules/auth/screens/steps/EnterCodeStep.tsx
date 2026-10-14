@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useSelector } from '@xstate/react';
 import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';

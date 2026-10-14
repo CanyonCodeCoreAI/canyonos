@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Schema for the files a CanyonOS project declares itself with.
 
 `validate_project` is what the in-container deploy calls before it generates a

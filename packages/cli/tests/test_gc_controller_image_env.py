@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The GC launches the machine metrics collector from CANYONOS_CONTROLLER_IMAGE.
 
 It cannot read its own image from inside the container, so `canyonos deploy` has to

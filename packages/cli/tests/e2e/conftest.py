@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pytest fixtures for isolated, serial CLI end-to-end cases."""
 
 from __future__ import annotations

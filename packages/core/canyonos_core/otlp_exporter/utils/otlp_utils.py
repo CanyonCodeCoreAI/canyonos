@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared low-level helpers for the OTLP conversion pipeline."""
 
 from opentelemetry.trace import TraceFlags

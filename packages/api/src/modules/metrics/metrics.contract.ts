@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // The receiver writes OTLP/JSON, which spells this enum as the proto's own value names.
 export const STATUS_CODE = {
   UNSET: 'STATUS_CODE_UNSET',

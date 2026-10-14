@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { z } from 'zod';
 
 export const ProjectIdParams = z.object({ project_id: z.string().uuid() });

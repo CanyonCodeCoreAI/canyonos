@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 

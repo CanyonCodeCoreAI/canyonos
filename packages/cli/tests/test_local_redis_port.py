@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The dashboard reaches Redis through the host gateway, so it needs the published port."""
 
 import tempfile

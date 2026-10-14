@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Converts a ``metrics_waiting`` row into OTel metric data.
 
 A row is one sample from a Redis metrics hash, discriminated by ``kind``:

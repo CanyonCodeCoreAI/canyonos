@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Every command shares one entrypoint, so a broken import in any module takes down the whole CLI."""
 
 import importlib

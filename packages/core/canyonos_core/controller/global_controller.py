@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Global Controller: deploys a project's agents, runs the reconciler and OTel
 exporter beside it, and tracks controller health in Redis."""
 # Global Controller

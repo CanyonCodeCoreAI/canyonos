@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // I would separate this file, but it's a NIT, iterate on this component complexity as we better define this
 
 import { zodResolver } from '@hookform/resolvers/zod';

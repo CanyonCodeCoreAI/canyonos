@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Policy-Based Routing Rules
 # Each rule defines a match condition (key-value pairs to check against
 # request context) and an access list of allowed services.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Outlet, useRouter } from '@tanstack/react-router';
 

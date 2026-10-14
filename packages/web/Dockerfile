@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # dist is architecture independent, so building it natively instead of under QEMU changes nothing.
 FROM --platform=$BUILDPLATFORM oven/bun:1.3.14-alpine AS builder
 WORKDIR /app

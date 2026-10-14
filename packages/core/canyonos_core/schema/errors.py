@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Violations the schema reports, and the one-line form the deploy log prints.
 
 The host CLI scrapes the in-container deploy's output and treats the *first*

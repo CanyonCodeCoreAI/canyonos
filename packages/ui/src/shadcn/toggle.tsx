@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import * as TogglePrimitive from '@radix-ui/react-toggle';
 import { cva } from 'class-variance-authority';
 import * as React from 'react';

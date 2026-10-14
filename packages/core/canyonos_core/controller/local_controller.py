@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Local Controller: runs inside each agent replica's container, takes requests from
 the queue, and runs them on the agent or forwards them to another controller."""
 # Local Controller

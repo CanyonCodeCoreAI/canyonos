@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Portfolio analysis workflow: an agent the endpoint serves at POST /main.
 #
 # Fan-out / aggregate pipeline:

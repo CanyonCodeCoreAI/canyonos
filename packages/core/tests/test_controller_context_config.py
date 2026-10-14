@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Both processes must resolve the config identically, or an unexpanded ${VAR} reaches AWS."""
 
 import os

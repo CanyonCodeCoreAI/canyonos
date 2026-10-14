@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos doctor`: a checklist of environment checks, split into a
 pre-deploy view (no Global Controller deploy running yet) and a post-deploy

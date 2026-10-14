@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The endpoint container's HTTP server and the controller that forwards its calls.
 
 `main` runs a local controller with no agent, which routes each call to a replica

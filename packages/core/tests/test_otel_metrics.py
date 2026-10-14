@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the OTel *metrics* pipeline: otel_writer.metric_write_rows, metric_convert,
 the per-signal HTTP endpoint, the metric exporter build, _metric_send_pending, and the
 metrics-specific empty-queue tracker. (The trace side is covered by

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Isolated subprocess, terminal, and service ownership for CLI end-to-end tests."""
 
 from __future__ import annotations

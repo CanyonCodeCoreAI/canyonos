@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 export interface ProjectExpansionState {
   readonly is_open: boolean;
   readonly is_active: boolean;

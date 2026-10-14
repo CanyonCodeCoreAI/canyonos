@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Best-effort refresh of llm_prices.json's per-model token costs from an external catalog."""
 
 import json

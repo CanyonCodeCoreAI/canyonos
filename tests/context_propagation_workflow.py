@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Calls HelloAgent from threads, asyncio and reused thread and process pools, and reports the
 # request context each call saw. Swapped in for helloworld's workflow by run_tests.sh.
 

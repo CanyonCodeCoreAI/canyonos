@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Model access — portfolio-analysis pipeline
 # Keyed by a label for each model. An agent missing from a model's agents list is
 # refused; a model not listed here is open to every agent. A cap is the most one

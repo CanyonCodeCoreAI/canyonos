@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bedrock adapter.
 
 TLDR: User code calls boto3 which requires certain format, but sends requests to llm-gateway, which has its own boto3 that makes/recieves requests. But being a middleman, we need to decrypt the messages to get contents, and then re-encrypt so the users boto3 call receives the correct format.

@@ -158,6 +158,18 @@
         "check"
       ]
     },
+    "canyonos-python#license:check": {
+      "command": [
+        "uv",
+        "run",
+        "--active",
+        "--frozen",
+        "reuse",
+        "lint"
+      ],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/**"],
+      "cache": false
+    },
     "canyonos-python#format": {
       "cache": false,
       "command": [

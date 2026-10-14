@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Lazily-cached lookups over llm_prices.json's LLM/instance pricing reference data."""
 
 import json

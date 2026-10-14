@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the OTel *logs* pipeline: log_convert.log_row_to_log_records,
 otel_writer._log_write_rows, otel_reader.log_mark_sent(_many), the log exporter build,
 _log_send_pending, and the logs-specific empty-queue/prune/flush paths. (The trace side is

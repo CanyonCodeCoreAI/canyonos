@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos deploy`: copy the project into the container's /workspace
 volume (via `canyonos sync`), then tell the Global Controller container to

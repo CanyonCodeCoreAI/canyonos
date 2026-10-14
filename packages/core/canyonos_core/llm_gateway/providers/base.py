@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Provider abstraction and shared HTTP plumbing.
 
 A provider's only job is to take the incoming request and produce a

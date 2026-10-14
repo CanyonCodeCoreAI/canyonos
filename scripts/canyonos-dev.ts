@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Builds every CanyonOS image from this checkout, syncs the workspace venv, and opens a shell in
  * which `canyonos` is the CLI from this checkout using those images. `exit` leaves it.

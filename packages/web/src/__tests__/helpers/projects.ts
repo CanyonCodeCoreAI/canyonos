@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { Route } from '@playwright/test';
 
 export const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';

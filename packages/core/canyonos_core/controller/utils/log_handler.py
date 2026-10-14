@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """logging.Handler that streams a running future's own log lines into its `logs` field."""
 
 import logging

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Build and accumulate the OTel Log Data Model-shaped records kept in a future's `logs` field.
 
 `build_failure_entry` and `build_log_entry` are a matched pair with a fixed boundary between

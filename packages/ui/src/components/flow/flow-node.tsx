@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Handle, Position } from '@xyflow/react';
 import { use } from 'react';
 import type { NodeProps } from '@xyflow/react';

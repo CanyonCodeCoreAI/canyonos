@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Intent Agent
 #
 # Stage 0. Turns a free-text portfolio request into the structured input the

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Machine-level metrics poller.
 
 Samples CPU, GPU, disk, memory, and uptime on a fixed interval and writes them to this

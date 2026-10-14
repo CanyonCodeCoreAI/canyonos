@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The metrics seam.
 
 Every proxied call passes through ``on_request`` / ``on_response``, which logs

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """GlobalController.stop() and _drain_instances, not the reconciler itself."""
 
 import os

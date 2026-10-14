@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Unit tests for Hooks._extract_usage's per-provider/op/model dispatch."""
 
 import json

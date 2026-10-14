@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { z } from 'zod';
 
 export const TRACE_VIEWS = ['traces', 'llm_traces', 'llm_calls'] as const;

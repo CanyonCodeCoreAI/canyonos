@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { OTPInput, OTPInputContext } from 'input-otp';
 import { Minus } from 'lucide-react';
 import * as React from 'react';

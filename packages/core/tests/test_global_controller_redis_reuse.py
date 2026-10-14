@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Fix C: a restart must not unconditionally wipe and recreate each node's Redis container.
 
 _launch_redis_containers() used to `docker run` a fresh canyonos-redis-<host> container on every

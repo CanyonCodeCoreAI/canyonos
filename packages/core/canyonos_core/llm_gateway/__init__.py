@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Local LLM gateway.
 
 A transparent, single-machine pass-through for OpenAI, Anthropic, and Bedrock.

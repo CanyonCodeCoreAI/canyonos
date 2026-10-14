@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the `porting-to-canyonos` skill is allowed to ship.
 
 `canyonos build` installs the skill directory wholesale, so whatever sits in it

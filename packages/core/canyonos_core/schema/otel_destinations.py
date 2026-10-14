@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The `otel.destinations` contract, shared by the manifest schema and the exporter.
 
 The Global Controller hands the list to the exporter as written, after `${VAR}`

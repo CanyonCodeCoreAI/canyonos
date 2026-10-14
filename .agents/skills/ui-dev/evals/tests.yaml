@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 - description: 'UI routing: select for a React project dialog'
   metadata: { skill: ui-dev, kind: trigger }
   providers: [candidate]

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Scaling policy: decides which agents should gain or lose replicas on each GC poll.
 
 import json

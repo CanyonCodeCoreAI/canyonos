@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bug E: an agent container's CANYONOS_PROJECT_ID env var is frozen at launch.
 _write_identity() publishes the controller's current project identity to every node's Redis
 (mirroring the existing policy:rules/routing_table:* pattern) so consumers can read it live

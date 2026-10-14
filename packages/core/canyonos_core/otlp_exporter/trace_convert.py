@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Converts a future into an OTel ReadableSpan.
 
 Pure function, no I/O, no batching, no network calls. Futures already finished, so this is just a

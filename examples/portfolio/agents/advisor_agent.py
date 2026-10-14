@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Advisor Agent
 #
 # Final stage. Turns the computed portfolio metrics and risk figures into a

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The routing table: how one agent finds another's gRPC address, published by the reconciler."""
 
 import json

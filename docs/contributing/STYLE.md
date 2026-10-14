@@ -13,6 +13,13 @@
 - Folders: lowercase (`docs/guides/`, not `docs/GUIDES/`).
 - Architecture docs: `docs/architecture/<COMPONENT>.md`.
 - Every folder a reader browses to has a `README.md`.
+- Every new source file starts with this two-line SPDX header, in the file's comment style
+  (shown with `#`; use `//` in TypeScript and Protobuf, `--` in SQL). `reuse lint` enforces it:
+
+  ```text
+  # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+  # SPDX-License-Identifier: AGPL-3.0-only
+  ```
 
 ## Commands, paths, and values
 

@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Create a CanyonOS Core artifact tree from a chosen Python import root.
 
 The script owns the mechanical part of step 1: it creates ``.car/config`` and

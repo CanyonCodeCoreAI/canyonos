@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """`validate_car` over a prepared `.car`, one fixture per contract it checks."""
 
 import io

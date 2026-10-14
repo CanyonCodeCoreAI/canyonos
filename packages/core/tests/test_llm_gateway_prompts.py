@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Unit tests for the gateway setting each LLM call's system prompt from prompts:config."""
 
 import json

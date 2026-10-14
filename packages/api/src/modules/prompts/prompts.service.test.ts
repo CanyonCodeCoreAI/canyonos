@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const store = new Map<string, string>();

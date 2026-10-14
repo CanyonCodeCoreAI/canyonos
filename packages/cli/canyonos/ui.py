@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 The CLI's one output surface: every user-facing line goes through here so the
 whole tool speaks with the same palette, symbols and spinner.

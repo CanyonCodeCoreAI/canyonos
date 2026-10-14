@@ -1,5 +1,6 @@
 {
   "name": "canyonos",
+  "license": "AGPL-3.0-only",
   "private": true,
   "workspaces": [
     "packages/*"
@@ -11,7 +12,8 @@
   "scripts": {
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "check": "turbo run lint typecheck format:check",
+    "license:check": "turbo run license:check",
+    "check": "turbo run lint typecheck format:check license:check",
     "format": "turbo run format",
     "test": "turbo run test",
     "dev": "turbo run dev",

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Single source of truth for the env vars that route an agent's LLM SDK calls
 through the in-container LLM gateway (started by LocalController; see
 canyonos_core/llm_gateway/).

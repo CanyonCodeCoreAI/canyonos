@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { ComponentProps, MouseEvent } from 'react';

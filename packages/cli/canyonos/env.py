@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Where every dev-only knob in this CLI is resolved.
 
 One variable decides the mode -- `CANYONOS_ENV`, read once, here -- and no

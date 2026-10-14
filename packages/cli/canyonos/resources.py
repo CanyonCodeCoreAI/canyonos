@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for the pre-deploy resource picker: every agent's cpu, memory, gpu and
 replicas are shown (and filled with defaults when missing), the user can change

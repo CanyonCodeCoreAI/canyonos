@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for canyonos_core.otlp_exporter.utils.otlp_utils."""
 
 import os

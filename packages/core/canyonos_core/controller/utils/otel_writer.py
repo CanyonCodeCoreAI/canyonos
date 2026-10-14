@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Producer side of the OTel export queue: read telemetry from a node's Redis and write it
 into the SQLite queue tables for the exporter subprocess to drain.
 

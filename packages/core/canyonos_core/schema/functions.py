@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The agent functions schema: the `functions` a stub is generated from.
 
 The stub generator builds from an agent entry's `functions`, so every name

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Price Agent
 #
 # First stage of the portfolio-analysis pipeline. Fetches daily closing-price

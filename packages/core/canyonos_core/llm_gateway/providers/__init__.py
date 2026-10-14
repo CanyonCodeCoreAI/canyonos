@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The LLM providers the gateway forwards to, keyed by the request's first path part."""
 
 from __future__ import annotations

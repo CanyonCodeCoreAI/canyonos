@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Converts a ``logs_waiting`` row into OTel ReadableLogRecord objects.
 
 Each row is one log record exploded from a future's `logs` JSON array by

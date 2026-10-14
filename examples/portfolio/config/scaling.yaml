@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Autoscaling Policy — portfolio-analysis fan-out pipeline
 # One policy for the whole workflow. It applies to every agent separately: each
 # agent is measured on its own load and gains or loses its own replicas, the

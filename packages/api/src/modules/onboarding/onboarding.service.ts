@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { conflict, notFound } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 

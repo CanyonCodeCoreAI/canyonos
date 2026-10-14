@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Risk Agent
 #
 # Aggregation stage. Consumes the per-ticker metrics for the whole portfolio

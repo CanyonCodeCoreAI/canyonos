@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Covers the telemetry feed in controller/utils/otel_writer.py: ``_pull_telemetry`` (scan
 future:* hashes from a node's Redis) and ``send_telemetry`` (pull + queue into the
 ``traces_waiting`` table). Replaces the old test_telemetry_logging.py now that the legacy

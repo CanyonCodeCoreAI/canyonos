@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Break a copied port's manifest so `canyonos validate` has to reject it.
 
 Each mode rewrites the first agent's first function in one way its stub

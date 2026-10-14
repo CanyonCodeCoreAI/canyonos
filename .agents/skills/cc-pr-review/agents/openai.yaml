@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 interface:
   display_name: 'CanyonOS PR Review'
   short_description: 'Judge a CanyonOS PR with real-infra evidence'

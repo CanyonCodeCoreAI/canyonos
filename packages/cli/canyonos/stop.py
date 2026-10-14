@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos stop`: stop the running deploy inside the current project's
 Global Controller container (SIGTERM, same teardown as Ctrl+C would trigger).

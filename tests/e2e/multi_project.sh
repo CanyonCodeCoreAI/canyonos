@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Runs two projects side by side on one machine with the shared dashboard:
 # helloworld and the portfolio fixture are deployed at the same time, each on
 # its own ports, and the dashboard must list both and read each one's Redis.

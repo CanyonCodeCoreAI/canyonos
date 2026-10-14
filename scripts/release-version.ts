@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { join } from 'node:path';
 
 export type Manifest = { path: string; pattern: RegExp };

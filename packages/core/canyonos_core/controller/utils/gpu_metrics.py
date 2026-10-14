@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """GPU utilization reporting via nvidia-smi."""
 # Disclaimer, only works for NVIDIA (obviously but wanted to make note)
 # NVIDIA-smi is inaccurate, will need to change it in the future

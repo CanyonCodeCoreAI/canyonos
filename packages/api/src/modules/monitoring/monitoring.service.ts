@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
 import { monitoring_repo } from './monitoring.repo';
 import { SIGNALS } from './monitoring.signals';

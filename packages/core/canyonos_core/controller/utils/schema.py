@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared SQLite contract for the OTel export queue.
 
 The global controller (producer) and the ``otel_exporter`` subprocess (consumer) are two

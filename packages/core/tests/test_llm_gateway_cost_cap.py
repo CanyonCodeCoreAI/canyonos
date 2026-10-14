@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Unit tests for the LLM proxy's per-agent model allowlist and cost cap."""
 
 import json

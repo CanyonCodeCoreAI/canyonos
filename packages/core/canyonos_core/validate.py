@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Contracts a `.car` has to keep that the schema alone cannot see.
 
 `validate_project` reads the manifest. What it cannot read is the Python

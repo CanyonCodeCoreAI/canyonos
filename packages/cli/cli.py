@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Almost all commands will be executing on the canyonos container spawned by deploy
 Commands like doctor and new_app will not though

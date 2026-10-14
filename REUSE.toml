@@ -1,0 +1,28 @@
+version = 1
+
+[[annotations]]
+path = "packages/api/src/modules/telemetry/proto/opentelemetry/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The OpenTelemetry Authors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+  "**/*.md",
+  "**/*.json",
+  "**/*.lock",
+  "**/*.svg",
+  "**/*.png",
+  "**/*.jpg",
+  "**/*.gif",
+  "**/*.db",
+  "**/*.rb",
+  "**/*.txt",
+  "tests/e2e/portfolio/.car/**",
+  "packages/api/src/db/migrations/**",
+  "packages/web/src/routeTree.gen.ts",
+  "LICENSE",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Canyon Code, Inc."
+SPDX-License-Identifier = "AGPL-3.0-only"

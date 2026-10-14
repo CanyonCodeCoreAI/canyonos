@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // A confirmation modal built on @radix-ui/react-dialog (already a workspace dep, shared with
 // sheet.tsx) rather than @radix-ui/react-alert-dialog to avoid adding another primitive. The
 // alertdialog role and the intentionally omitted close affordance give it the "you must choose"

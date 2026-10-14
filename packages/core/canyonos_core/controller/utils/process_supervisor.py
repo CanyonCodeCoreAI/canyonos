@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Registry for OS processes GlobalController spawns and supervises.
 
 Deliberately GC-agnostic: callers must not call check_and_respawn() during their own shutdown.

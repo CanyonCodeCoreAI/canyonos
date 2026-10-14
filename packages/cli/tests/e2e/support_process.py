@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Executable controlled boundaries used to prove the E2E process harness."""
 
 from __future__ import annotations

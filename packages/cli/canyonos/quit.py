@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Logic for `canyonos quit`: full teardown of the project in the current folder.
 Stops and removes its Global Controller container AND deletes its /workspace

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Test-only stack for the CanyonOS image smoke. Not the published manifest.
 #
 # The API is published on loopback here so the host script can reach it. A real `canyonos serve`

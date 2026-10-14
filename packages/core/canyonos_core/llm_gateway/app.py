@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Flask app: one catch-all route per provider prefix, all funneled through
 ``proxy_request``."""
 

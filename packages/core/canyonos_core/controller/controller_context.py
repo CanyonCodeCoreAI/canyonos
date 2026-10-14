@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Config, Redis clients and command execution shared by GlobalController and the reconciler.
 
 What it holds:

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Fail unless a portfolio workflow result came from the real pipeline.
 
 Every stage of the example has a quiet fallback: PriceAgent switches to

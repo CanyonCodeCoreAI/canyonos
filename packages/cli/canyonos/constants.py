@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared helpers for the canyonos CLI.
 
 Config/data layer. Holds shared values and parsing helpers"""

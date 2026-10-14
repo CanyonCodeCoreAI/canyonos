@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Focused tests for the CanyonOS OTel exporter fan-out configuration."""
 
 import json

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { z } from 'zod';
 
 // `1q` is the trailing quarter (90 days); the other windows are trailing 1/7/30 days. All four

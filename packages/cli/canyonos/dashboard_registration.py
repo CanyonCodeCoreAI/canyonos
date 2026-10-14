@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tell the local dashboard api which Redis port a project's controller uses.
 
 Temporary: applied now so multi-project dashboards work without blocking the flow;

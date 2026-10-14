@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Adds the running future's ID and the agent function making the call to every LLM call
 an agent sends through the LLM gateway, so the gateway can record that call's tokens on the
 future and send the function's live prompt. The Local Controller calls `install` once at

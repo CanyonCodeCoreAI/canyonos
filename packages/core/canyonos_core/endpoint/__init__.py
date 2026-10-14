@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The CanyonOS endpoint: serves the configured agent method over HTTP.
 
 `POST /<method>` queues a root call and answers with its request id;

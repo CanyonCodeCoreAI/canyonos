@@ -1,7 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 [project]
 name = "canyonos"
 version = "0.1.736"
 description = "CanyonOS CLI"
+license = "AGPL-3.0-only"
 requires-python = ">=3.10"
 dependencies = [
     "pyfiglet",
@@ -15,7 +19,7 @@ dependencies = [
 canyonos = "cli:main"
 
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

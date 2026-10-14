@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The reconciler process: starts and removes replicas until each agent runs the count
 recorded in Redis."""
 # Level-triggered process converging running instances onto desired replica counts in Redis.

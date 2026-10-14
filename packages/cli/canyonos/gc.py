@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """
 Shared request helpers for the Global Controller container, so the commands
 that talk to it don't each restate the same routes, payloads and failure modes.

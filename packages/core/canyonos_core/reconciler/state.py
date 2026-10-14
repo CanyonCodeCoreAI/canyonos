@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The reconciler's state in Redis: what each agent should be running, and the signals
 that drive it."""
 # The durable reconciliation schema in Redis: plain functions over a RedisClient.

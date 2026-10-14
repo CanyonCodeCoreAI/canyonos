@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The manifest schema decides what `global_controller.yaml` may say.
 
 Before it existed, an unknown key was ignored and `replicas: "2"` blew up inside

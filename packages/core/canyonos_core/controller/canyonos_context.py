@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Request context the controllers set before running agent code, so futures and the
 LLM gateway can tag their work, and the hooks that carry it into threads and worker
 processes the agent code starts."""

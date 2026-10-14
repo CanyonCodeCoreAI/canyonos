@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Local Controller's gRPC server: accepts Execute requests and results from other
 controllers and hands them to the Local Controller."""
 # Local Controller Frontend - gRPC Server

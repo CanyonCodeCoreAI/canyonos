@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Logic for canyonos clean: remove generated artifacts, skills, managed .env keys and
 the project's agent images."""
 

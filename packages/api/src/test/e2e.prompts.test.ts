@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { RedisClient } from 'bun';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { asc, eq } from 'drizzle-orm';

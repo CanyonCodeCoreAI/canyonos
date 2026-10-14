@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The machine metrics collector runs the image the CLI handed the GC.
 
 It used to default to a hardcoded published image that never contained the poller, so

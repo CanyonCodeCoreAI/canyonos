@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # One CanyonOS deploy per machine: review sessions take this lock before
 # `canyonos deploy` and release it after `canyonos quit`.
 #

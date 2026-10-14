@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { and, eq } from 'drizzle-orm';
 
 import { projects, systemPrompts } from '@api/db/schema';

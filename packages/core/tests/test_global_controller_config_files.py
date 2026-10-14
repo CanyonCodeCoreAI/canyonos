@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Every YAML file in the config folder is published to every node's Redis as `<name>:config`."""
 
 import json

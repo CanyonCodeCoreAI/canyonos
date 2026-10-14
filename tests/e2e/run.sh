@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Runs the README flow against a committed port, with real agents and a real LLM:
 # test, deploy, status, doctor, then a query straight to the deployed REST API.
 #

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """`canyonos build`: where the skill comes from, how the agent is launched, and
 what verdict the port it leaves behind gets."""
 

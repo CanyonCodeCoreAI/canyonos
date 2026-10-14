@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { RedisClient } from 'bun';
 
 import { ENDPOINT_KEY } from '@api/modules/monitoring/monitoring.repo';

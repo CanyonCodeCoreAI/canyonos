@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Example Agent
 # Replace this with your agent implementation.
 # The class name must match the agent's 'name' in config/global_controller.yaml.

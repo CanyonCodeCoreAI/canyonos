@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The agent `functions` schema decides what a stub can be generated from.
 
 An argument's `type` is pasted verbatim into the generated stub as an
