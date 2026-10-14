@@ -36,7 +36,7 @@ from canyonos_core.controller.local_controller import LocalController
 from fakes import _FakeRedis
 
 
-def _build_controller(redis, publish_ready=False):
+def _build_controller(redis, **kwargs):
     servicer = SimpleNamespace(request_queue=[])
     with (
         patch(
@@ -48,23 +48,27 @@ def _build_controller(redis, publish_ready=False):
             return_value=redis,
         ),
         patch("canyonos_core.controller.local_controller.threading.Thread"),
-        patch.object(LocalController, "_start_llm_gateway", return_value=None),
+        patch.object(LocalController, "_start_llm_gateway", MagicMock()),
         patch.object(LocalController, "_load_agent", return_value=None),
     ):
-        return LocalController(port=50051, publish_ready=publish_ready)
+        return LocalController(port=50051, **kwargs)
 
 
 class LocalControllerReadinessTests(unittest.TestCase):
-    def test_publish_ready_false_stays_initializing(self):
+    def test_a_loaded_controller_reports_healthy(self):
         redis = _FakeRedis()
-        _build_controller(redis, publish_ready=False)
+        _build_controller(redis)
+        self.assertEqual(
+            redis.strings, {"controller:localhost:50051:status": "healthy"}
+        )
+
+    def test_a_launcher_that_reports_readiness_itself_leaves_it_initializing(self):
+        redis = _FakeRedis()
+        controller = _build_controller(redis, publish_ready=False)
         self.assertEqual(
             redis.strings, {"controller:localhost:50051:status": "initializing"}
         )
 
-    def test_mark_ready_writes_healthy_to_controller_status_key(self):
-        redis = _FakeRedis()
-        controller = _build_controller(redis, publish_ready=False)
         controller.mark_ready()
         self.assertEqual(
             redis.strings, {"controller:localhost:50051:status": "healthy"}
@@ -72,7 +76,7 @@ class LocalControllerReadinessTests(unittest.TestCase):
 
     def test_mark_failed_writes_failed_to_controller_status_key(self):
         redis = _FakeRedis()
-        controller = _build_controller(redis, publish_ready=False)
+        controller = _build_controller(redis)
         controller.mark_failed()
         self.assertEqual(redis.strings, {"controller:localhost:50051:status": "failed"})
 

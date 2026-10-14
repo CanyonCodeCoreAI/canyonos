@@ -175,14 +175,18 @@ export const MonitoringReplicasResponseSchema = MonitoringScopeSchema.pick({
 });
 
 export const MonitoringEndpointSchema = z.object({
-  name: z.string(),
   url: z.string(),
+  status_url: z.string(),
+  agent: z.string(),
+  method: z.string(),
+  arguments: z.array(z.string()),
+  example_body: z.record(z.string(), z.string()),
 });
 
-export const MonitoringEndpointsResponseSchema = MonitoringScopeSchema.pick({
+export const MonitoringEndpointResponseSchema = MonitoringScopeSchema.pick({
   project_id: true,
 }).extend({
-  endpoints: z.array(MonitoringEndpointSchema),
+  endpoint: MonitoringEndpointSchema.nullable(),
 });
 
 export const MonitoringErrorGroupSchema = z.object({
@@ -226,6 +230,6 @@ export type MonitoringTracesResponse = z.infer<typeof MonitoringTracesResponseSc
 export type MonitoringReplica = z.infer<typeof MonitoringReplicaSchema>;
 export type MonitoringReplicasResponse = z.infer<typeof MonitoringReplicasResponseSchema>;
 export type MonitoringEndpoint = z.infer<typeof MonitoringEndpointSchema>;
-export type MonitoringEndpointsResponse = z.infer<typeof MonitoringEndpointsResponseSchema>;
+export type MonitoringEndpointResponse = z.infer<typeof MonitoringEndpointResponseSchema>;
 export type MonitoringErrorGroup = z.infer<typeof MonitoringErrorGroupSchema>;
 export type MonitoringErrorSummaryResponse = z.infer<typeof MonitoringErrorSummaryResponseSchema>;

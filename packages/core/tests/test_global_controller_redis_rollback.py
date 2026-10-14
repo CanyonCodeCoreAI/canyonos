@@ -44,6 +44,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
                 return_value=MagicMock(),
             ),
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
+            patch("canyonos_core.controller.global_controller.load_manifest"),
             patch.object(GlobalController, "_cleanup_stale_containers"),
             patch.object(GlobalController, "_run_cmd", new=fake_run_cmd),
             patch(
@@ -106,6 +107,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
                 return_value=MagicMock(),
             ),
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
+            patch("canyonos_core.controller.global_controller.load_manifest"),
         ):
             with self.assertRaises(SystemExit):
                 controller._launch_redis_containers()

@@ -55,17 +55,15 @@ def _agents_table(agents):
         "CPU",
         "Mem",
         "Provider",
-        "Port",
+        "Redis port",
         "Entrypoint",
     ):
         table.add_column(col)
 
     for agent in agents:
         resources = agent.get("resources") or {}
-        # Workflows carry `workflow_file` + `api_port`; plain agents carry
-        # `entrypoint` + `redis_port`.
-        entry = agent.get("entrypoint") or agent.get("workflow_file") or "-"
-        port = agent.get("api_port") or agent.get("redis_port")
+        entry = agent.get("entrypoint") or "-"
+        port = agent.get("redis_port")
         table.add_row(
             _fmt(agent.get("name")),
             agent.get("type", "agent"),

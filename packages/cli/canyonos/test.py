@@ -4,7 +4,7 @@ Logic for `canyonos test`: check a project end to end on this machine.
 Three phases, each ending the run if it fails:
 - The project is deployed locally (every agent's `provider` rewritten to `local` for the duration, the original file restored verbatim afterwards)
 - The running containers are checked against what the config declared
-- One prompt is sent to the workflow's `/main` endpoint.
+- One prompt is sent to the endpoint.
 
 A passing run leaves nothing behind. A failing one leaves the Global Controller
 container up, with the tail of its log, so there is something left to debug.
@@ -16,7 +16,6 @@ import json
 import os
 import subprocess
 import time
-import urllib.error
 import urllib.request
 
 from rich.panel import Panel
@@ -24,21 +23,22 @@ from rich.text import Text
 
 from canyonos import ui
 from canyonos.constants import (
-    DEFAULT_QUERY_PARAM,
-    WORKFLOW_ROUTE,
     default_config_path,
+    endpoint_answers,
+    endpoint_api_port,
     round_trip_yaml,
-    workflow_api_port,
-    workflow_entrypoint,
     workspace_relative,
 )
 from canyonos.deploy import (
     STARTUP_TIMEOUT_SECONDS,
+    UP_MARKER,
     PhaseTracker,
+    drain,
+    follow_gc_log,
+    queued_lines,
     run_deploy,
-    workflow_targets,
 )
-from canyonos.gc import deploy_status
+from canyonos.gc import deploy_status, deployed_endpoint
 from canyonos.init import docker_env, load_state, quit_existing
 from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
@@ -67,22 +67,6 @@ def _force_local_providers(config_path):
         yaml_rt.dump(data, f)
 
     return original
-
-
-def _workflow_ready(host, port):
-    """True once the workflow's REST API answers at all.
-
-    Any HTTP response counts -- /status/<unknown id> 404s, which still proves
-    the server is up and listening.
-    """
-    url = f"http://{host}:{port}/status/canyonos-test-probe"
-    try:
-        urllib.request.urlopen(url, timeout=2)
-        return True
-    except urllib.error.HTTPError:
-        return True
-    except OSError:
-        return False
 
 
 def _root_cause(state):
@@ -116,56 +100,42 @@ class _DeployFailed(RuntimeError):
         self.root_cause = root_cause
 
 
-def _wait_for_workflow(state, api_port):
-    """Wait until the workflow answers, for as long as `canyonos deploy` would.
+def _wait_for_endpoint(state, api_port):
+    """Follow the Global Controller's log until it says the deploy is up, which it
+    only says after the agents are, for as long as `canyonos deploy` would; then
+    check the endpoint answers.
 
     Ends early only when the deploy itself stops, so the Root Cause is read from
     the finished deploy's log rather than one still building.
     """
-    deadline = time.time() + READY_TIMEOUT
-    with ui.status("Building images and starting containers..."):
-        while time.time() < deadline:
-            if _workflow_ready("127.0.0.1", api_port):
-                return
-            if not (deploy_status(state["port"]) or {}).get("running", False):
-                raise _DeployFailed(
-                    "The deploy stopped before the workflow came up.",
-                    _root_cause(state),
-                )
-            time.sleep(POLL_INTERVAL)
+    deadline = time.monotonic() + READY_TIMEOUT
+    process = follow_gc_log(state)
+    tracker = PhaseTracker()
+    try:
+        with ui.status("Building images and starting containers..."):
+            for line in drain(queued_lines(process.stdout), state, deadline=deadline):
+                tracker.parse_line(line)
+                if UP_MARKER in line and not tracker.in_container_log:
+                    if endpoint_answers(api_port):
+                        return
+                    raise _DeployFailed(
+                        f"The deploy is up, but nothing answers on port {api_port}.",
+                        _root_cause(state),
+                    )
+    finally:
+        process.terminate()
+    if time.monotonic() < deadline:
+        raise _DeployFailed(
+            "The deploy stopped before the workflow came up.", _root_cause(state)
+        )
     raise _DeployFailed(
         f"Timed out after {READY_TIMEOUT}s waiting for the workflow to come up.",
         _root_cause(state),
     )
 
 
-def _query_route_and_body(config_path, query):
-    """(route, body dict) for the test POST, read from the workflow function's own
-    signature so the body keys match its parameter names.
-
-    The deployed workflow splats the whole JSON body as kwargs
-    (`workflow_fn(**body)`), so a hardcoded `{"query": ...}` 500s on any
-    entrypoint whose first parameter isn't named `query`. We map the test
-    prompt onto the real first parameter and fill the rest from their defaults
-    (falling back to the prompt when a param has none).
-    """
-    entrypoint = workflow_entrypoint(config_path)
-    if not entrypoint:
-        return WORKFLOW_ROUTE, {DEFAULT_QUERY_PARAM: query}
-
-    fn_name, params = entrypoint
-    if not params:
-        return fn_name, {DEFAULT_QUERY_PARAM: query}
-
-    body = {}
-    for i, (name, default) in enumerate(params):
-        body[name] = query if i == 0 else (default if default is not None else query)
-    return fn_name, body
-
-
-def _send_query(host, port, route, body):
-    """POST the test query to the workflow and return the request ID it assigns."""
-    url = f"http://{host}:{port}/{route}"
+def _send_query(url, body):
+    """POST the test query to the endpoint and return the request ID it assigns."""
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"}, method="POST"
@@ -181,10 +151,10 @@ def _send_query(host, port, route, body):
         ) from None
 
 
-def _await_result(host, port, request_id, timeout):
-    """Poll the workflow for the request's result until it is done or errors, or return
+def _await_result(endpoint, request_id, timeout):
+    """Poll the endpoint for the request's result until it is done or errors, or return
     `{"status": "timeout"}`."""
-    url = f"http://{host}:{port}/status/{request_id}"
+    url = f"http://{endpoint['public_host']}:{endpoint['api_port']}/status/{request_id}"
     deadline = time.time() + timeout
     with ui.status("Running query..."):
         while time.time() < deadline:
@@ -194,8 +164,7 @@ def _await_result(host, port, request_id, timeout):
                 if data.get("status") in ("done", "error"):
                     return data
             except (OSError, ValueError):
-                # A network blip or a malformed body while the workflow is busy;
-                # keep polling until the deadline rather than crashing the run.
+                # A network blip or a malformed body while the workflow is busy; keep polling.
                 pass
             time.sleep(POLL_INTERVAL)
     return {"status": "timeout"}
@@ -257,43 +226,37 @@ def _deploy_locally(run, config_path, api_port):
     workflow answers."""
     run.begin("deploy", 1, "Deploy locally")
 
-    # quiet=True: skip `canyonos deploy`'s own log-tail/summary UI; the test
-    # performs its own HTTP readiness check below.
+    # quiet: readiness is checked below.
     state = run_deploy(config_path, serve=False, quiet=True, banner=False)
     run.deploy_started = True
 
-    _wait_for_workflow(state, api_port)
+    _wait_for_endpoint(state, api_port)
     run.done(f"Global Controller on port {state['port']}")
     return state
 
 
-def _verify_runtime(run, config_path, gc_port):
+def _verify_runtime(run, config_path):
     run.begin("verify_runtime", 2, "Verify runtime")
-    run.runtime = verify_runtime(config_path, gc_port)
+    run.runtime = verify_runtime(config_path)
     run.done(f"{len(run.runtime['agents'])} agent(s) up")
 
 
-def _query(run, gc_port, api_port, config_path, timeout, number=3, total=3):
-    """Send the test query to the deployed workflow and store its result on the run;
-    raises if it errors or times out."""
+def _query(run, endpoint, timeout, number=3, total=3):
+    """Send the test query to the deployed endpoint, as every argument of its method,
+    and store the result on the run; raises if it errors or times out."""
     run.begin("query", number, "Query the workflow", total=total)
-    targets = workflow_targets(gc_port, api_port)
-    if not targets:
-        raise RuntimeError("The deploy reported no workflow endpoint to query.")
-
-    _, host, port = targets[0]
-    route, body = _query_route_and_body(config_path, run.query)
-    run.endpoint = f"http://{host}:{port}/{route}"
+    body = {name: run.query for name in endpoint["arguments"]}
+    run.endpoint = endpoint["url"]
     ui.say(f"POST {run.endpoint}  {json.dumps(body)}")
 
     try:
-        request_id = _send_query(host, port, route, body)
+        request_id = _send_query(run.endpoint, body)
     except OSError as e:
         raise RuntimeError(
             f"Could not reach the workflow at {run.endpoint}: {e}"
         ) from None
 
-    data = _await_result(host, port, request_id, timeout)
+    data = _await_result(endpoint, request_id, timeout)
     status = data.get("status")
     if status == "error":
         raise RuntimeError(data.get("error") or "the workflow returned an error.")
@@ -324,29 +287,31 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
     if not os.path.isfile(config_path):
         raise RuntimeError(f"No config at {config_path}. Run `canyonos build` first.")
 
-    api_port = workflow_api_port(config_path)
-    if api_port is None:
-        raise RuntimeError(
-            f"No agent with `type: workflow` in {config_path}; nothing to test."
-        )
-
     existing = _existing_deploy()
     if existing is not None:
         # A deploy is already up: query it exactly as it stands (its own
         # providers, no local flip) instead of tearing it down to stand up our
         # own. This is the only phase, and we leave it running.
+        endpoint = deployed_endpoint(existing["port"])
         run.against_existing = True
         ui.say(
             "A deploy is already up -- querying it as it stands (providers unchanged)."
         )
-        _query(run, existing["port"], api_port, config_path, timeout, number=1, total=1)
+        _query(run, endpoint, timeout, number=1, total=1)
         return
+
+    api_port = endpoint_api_port(config_path)
+    if api_port is None:
+        raise RuntimeError(
+            f"No `endpoint:` block with a port number in {config_path}; "
+            "nothing to test."
+        )
 
     original_config = _force_local_providers(config_path)
     try:
         state = _deploy_locally(run, config_path, api_port)
-        _verify_runtime(run, config_path, state["port"])
-        _query(run, state["port"], api_port, config_path, timeout)
+        _verify_runtime(run, config_path)
+        _query(run, deployed_endpoint(state["port"]), timeout)
     finally:
         with open(config_path, "w") as f:
             f.write(original_config)
@@ -439,9 +404,7 @@ def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
         except KeyboardInterrupt:
             run.error = "cancelled by user"
         except RuntimeError as e:
-            # Every phase raises RuntimeError with a message fit for either output
-            # mode: docker unreachable, validation failure, port in use, workflow
-            # timeout, etc. `--json` needs it inside the payload either way.
+            # Every phase raises RuntimeError with a message fit for the terminal and `--json`.
             run.error = str(e)
             run.root_cause = getattr(e, "root_cause", None)
 

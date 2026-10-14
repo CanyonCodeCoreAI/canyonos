@@ -50,7 +50,7 @@ describe('project access across the /projects tree', () => {
         $query: { time_window: '1d' },
       }),
       api.projects[project_id]!.monitoring.replicas.get(read),
-      api.projects[project_id]!.monitoring.endpoints.get(read),
+      api.projects[project_id]!.monitoring.endpoint.get(read),
       api.projects[project_id]!.prompts.get(read),
       api.projects[project_id]!.scaling.get(read),
     ]);

@@ -15,7 +15,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
 from canyonos_core.controller.controller_context import _is_local_host
-from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
+from canyonos_core.controller.utils.container_names import CONTAINER_PORT
 from canyonos_core.reconciler import providers
 
 # Lowest versions the image's own code runs on; an app asking for older fails the install.
@@ -30,11 +30,7 @@ TESTED_MAJOR_VERSIONS = {
     "grpcio": 1,
     "protobuf": 6,
     "redis": 8,
-    "flask": 3,
 }
-
-# deploy.py serves the workflow's HTTP API from the workflow's own process.
-BASE_WORKFLOW_REQUIREMENTS = BASE_AGENT_REQUIREMENTS + ["flask>=2.3.3"]
 
 # The LLM gateway runs from its own venv, so these exact pins never meet the app's.
 # These requirements are not pinned to a specific version because LLM-gateway is completely managed by CanyonOS, with no user code interacting with the internals
@@ -52,9 +48,7 @@ PROTOBUF_FLOOR = Requirement(
 IMAGE_PYTHON_VERSION = "3.11"
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 
-# Shared runtime modules copied flat into the context root (name -> package path). The
-# copy lists below derive from these, so `canyonos validate` knows every module the
-# image ships can be collided with.
+# Runtime modules copied flat into the context root, which `canyonos validate` checks app files against.
 _AGENT_FLAT_SOURCES = {
     "future.py": ("controller", "future.py"),
     "canyonos_context.py": ("controller", "canyonos_context.py"),
@@ -68,22 +62,7 @@ _AGENT_FLAT_SOURCES = {
     "log_handler.py": ("controller", "utils", "log_handler.py"),
 }
 
-# A workflow image serves HTTP, so it carries one more.
-_WORKFLOW_FLAT_SOURCES = {
-    **_AGENT_FLAT_SOURCES,
-    "deploy.py": ("controller", "deploy.py"),
-}
-
 AGENT_FLAT_MODULES = frozenset(_AGENT_FLAT_SOURCES)
-WORKFLOW_FLAT_MODULES = frozenset(_WORKFLOW_FLAT_SOURCES)
-
-
-def _flat_runtime_files(script_dir, sources):
-    """(source, destination) for each runtime module copied to the context root."""
-    return [
-        (os.path.join(script_dir, *parts), destination)
-        for destination, parts in sources.items()
-    ]
 
 
 def _build_import_nodes():
@@ -336,7 +315,6 @@ RESERVED_CONTEXT_NAMES = frozenset(
     {
         "Dockerfile",
         "requirements.txt",
-        "workflow_launcher.py",
     }
 )
 
@@ -646,10 +624,10 @@ def _below_supported_version(spec, floor):
     return False
 
 
-def too_old_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+def too_old_requirements(requirements):
     """Return (requirement, our_floor) for each requirement that only allows versions older than CanyonOS supports."""
     floors = {}
-    for base in base_requirements:
+    for base in BASE_AGENT_REQUIREMENTS:
         parsed = Requirement(base)
         floors[parsed.name] = (Version(next(iter(parsed.specifier)).version), base)
     unsupported = []
@@ -677,11 +655,10 @@ def _above_tested_version(spec, limit):
     return spec.operator in ("==", "===", ">=", ">", "~=") and version >= limit
 
 
-def too_new_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS):
+def too_new_requirements(requirements):
     """Return (requirement, tested_limit) for each requirement that only allows versions newer than CanyonOS has tested."""
     limits = {
-        name: Version(str(major + 1))
-        for name, major in _tested_majors(base_requirements).items()
+        name: Version(str(major + 1)) for name, major in TESTED_MAJOR_VERSIONS.items()
     }
     too_new = []
     for requirement in requirements:
@@ -697,22 +674,16 @@ def too_new_requirements(requirements, base_requirements=BASE_AGENT_REQUIREMENTS
     return too_new
 
 
-def _tested_majors(base_requirements):
-    """TESTED_MAJOR_VERSIONS narrowed to the packages this image's base list installs."""
-    names = {Requirement(r).name for r in base_requirements}
-    return {n: t for n, t in TESTED_MAJOR_VERSIONS.items() if n in names}
-
-
-def _dockerfile_install_steps(overrides, base_requirements, requirements):
+def _dockerfile_install_steps(overrides, requirements):
     """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM gateway's own separate packages."""
     forced = " ".join(f"'{override}'" for override in overrides)
     asked_newer = {
         Requirement(requirement).name.lower()
-        for requirement, _ in too_new_requirements(requirements, base_requirements)
+        for requirement, _ in too_new_requirements(requirements)
     }
     caps = " ".join(
         f"'{name}<{major + 1}'"
-        for name, major in _tested_majors(base_requirements).items()
+        for name, major in TESTED_MAJOR_VERSIONS.items()
         if name not in asked_newer
     )
     return f"""ENV UV_COMPILE_BYTECODE=1
@@ -779,7 +750,10 @@ def generate_docker(
         files_to_copy += _sweep_project_files(project_dir, exclude_dir=output_dir)
 
     # Copy general agent files
-    files_to_copy += _flat_runtime_files(script_dir, _AGENT_FLAT_SOURCES)
+    files_to_copy += [
+        (os.path.join(script_dir, *parts), destination)
+        for destination, parts in _AGENT_FLAT_SOURCES.items()
+    ]
 
     # Copy provided agent stubs both flat (for `from price_agent import ...` style
     # peer imports) and at their entrypoint-mirrored path (overwriting the swept
@@ -818,177 +792,18 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-{_dockerfile_install_steps(overrides, BASE_AGENT_REQUIREMENTS, requirements or [])}
+{_dockerfile_install_steps(overrides, requirements or [])}
 COPY . .
 
 ENV CANYONOS_AGENT_NAME={agent_name}
 ENV CANYONOS_AGENT_FILE={agent_basename}
 
-EXPOSE 50051
+EXPOSE {CONTAINER_PORT}
 
-CMD ["python", "local_controller.py", "--port", "50051"]
+CMD ["python", "local_controller.py", "--port", "{CONTAINER_PORT}"]
 """
     with open(os.path.join(output_dir, "Dockerfile"), "w") as f:
         f.write(dockerfile)
 
     print(f"Generated Docker context for '{agent_name}' -> {output_dir}")
-    return output_dir
-
-
-def generate_workflow_docker(
-    workflow_file,
-    stub_files,
-    output_dir=None,
-    grpc_stubs_dir=None,
-    project_dir=None,
-    stub_entrypoints=None,
-    requirements=None,
-    workflow_name=None,
-):
-    """
-    Generate a Docker build context for a workflow.
-
-    Creates a directory containing a Dockerfile, requirements.txt,
-    workflow_launcher.py, and all source files needed to run the workflow
-    with its own local controller.
-
-    Args:
-        workflow_file:     Path to the workflow Python file.
-        stub_files:        List of stub file paths to include.
-        output_dir:        Optional output directory (default: docker_container/Workflow/).
-        grpc_stubs_dir:    Optional path to compiled gRPC stubs (default: <repo_root>/grpc_stubs).
-        project_dir:       Optional project root whose files are swept into the context.
-        stub_entrypoints:  Optional {stub_basename: entrypoint} map for exact stub placement.
-        requirements:   Optional list of extra pip packages this workflow needs.
-        workflow_name:  Optional config name of the workflow, recorded on its future.
-    """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.join(script_dir, "..")
-
-    if output_dir is None:
-        output_dir = os.path.join(project_root, "docker_container", "Workflow")
-
-    if grpc_stubs_dir is None:
-        grpc_stubs_dir = os.path.join(project_root, "grpc_stubs")
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    # ---- requirements.txt ------------------------------------------------
-    # Base packages the shared framework files need, plus this workflow's own.
-    overrides = _platform_overrides(requirements or [])
-    requirements_txt = (
-        "\n".join(BASE_WORKFLOW_REQUIREMENTS + list(requirements or [])) + "\n"
-    )
-    with open(os.path.join(output_dir, "requirements.txt"), "w") as f:
-        f.write(requirements_txt)
-
-    # ---- Copy source files into the build context ------------------------
-    workflow_basename = os.path.basename(workflow_file)
-
-    # Sweep the whole project first; the explicit list below is copied on top.
-    files_to_copy = (
-        _sweep_project_files(project_dir, exclude_dir=output_dir) if project_dir else []
-    )
-
-    files_to_copy += _flat_runtime_files(script_dir, _WORKFLOW_FLAT_SOURCES)
-
-    # Copy stub files both flat (for `from price_agent import ...` style imports
-    # in the workflow) and at their entrypoint-mirrored path (overwriting the
-    # swept real agent file there, as before), so both import styles resolve.
-    for stub_file in stub_files:
-        flat_dest = os.path.basename(stub_file)
-        entrypoint_dest = _stub_destination(stub_file, stub_entrypoints or {})
-        files_to_copy.append((os.path.abspath(stub_file), flat_dest))
-        if entrypoint_dest != flat_dest:
-            files_to_copy.append((os.path.abspath(stub_file), entrypoint_dest))
-
-    # Copy gRPC generated stubs if they exist
-    if os.path.isdir(grpc_stubs_dir):
-        for fname in os.listdir(grpc_stubs_dir):
-            if fname.endswith(".py"):
-                files_to_copy.append((os.path.join(grpc_stubs_dir, fname), fname))
-
-    _copy_files(output_dir, files_to_copy)
-    _copy_llm_gateway(output_dir, script_dir)
-
-    # Copy the real workflow entrypoint to the context root.
-    shutil.copy2(
-        os.path.abspath(workflow_file),
-        os.path.join(output_dir, workflow_basename),
-    )
-
-    # ---- workflow_launcher.py --------------------------------------------
-    launcher = f"""import socket
-import sys
-import threading
-import time
-import traceback
-
-from local_controller import LocalController, canyonos_context
-
-canyonos_context.install()
-
-# Matches the global controller's CONTROLLER_READY_TIMEOUT_SECONDS: a shorter
-# deadline here would fail a slow but honest cold start before the deploy did.
-WORKFLOW_READY_TIMEOUT_SECONDS = 360
-
-
-def mark_ready_when_serving():
-    deadline = time.monotonic() + WORKFLOW_READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", {WORKFLOW_CONTAINER_PORT}), timeout=1):
-                controller.mark_ready()
-                return
-        except OSError:
-            time.sleep(0.1)
-    # Never ready, never failed left the container in limbo: the deploy waited
-    # out its whole timeout against a status nobody had written.
-    controller.mark_failed()
-
-
-controller = LocalController(port=50051, publish_ready=False)
-
-# Allows the workflow to have a future
-import deploy as canyonos_deploy
-canyonos_deploy.controller = controller
-canyonos_deploy.workflow_name = {workflow_name!r}
-
-lc_thread = threading.Thread(target=controller.run, daemon=True)
-lc_thread.start()
-
-watcher = threading.Thread(target=mark_ready_when_serving, daemon=True)
-watcher.start()
-
-try:
-    exec(open("{workflow_basename}").read())
-except Exception:
-    controller.mark_failed()
-    traceback.print_exc()
-    sys.exit(1)
-"""
-    with open(os.path.join(output_dir, "workflow_launcher.py"), "w") as f:
-        f.write(launcher)
-
-    # ---- Dockerfile ------------------------------------------------------
-    dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:{IMAGE_PYTHON_VERSION}-slim
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
-WORKDIR /app
-
-ENV PYTHONUNBUFFERED=1
-
-{_dockerfile_install_steps(overrides, BASE_WORKFLOW_REQUIREMENTS, requirements or [])}
-COPY . .
-
-EXPOSE 50051
-EXPOSE {WORKFLOW_CONTAINER_PORT}
-
-CMD ["python", "workflow_launcher.py"]
-"""
-    with open(os.path.join(output_dir, "Dockerfile"), "w") as f:
-        f.write(dockerfile)
-
-    print(f"Generated workflow Docker context -> {output_dir}")
     return output_dir

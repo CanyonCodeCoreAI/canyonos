@@ -19,6 +19,7 @@ from canyonos_core.controller.global_controller import GlobalController
 
 def _bare_controller(redis_port):
     controller = GlobalController.__new__(GlobalController)
+    controller.config = {}
     controller.controllers = [
         {
             "name": "IntentAgent",

@@ -9,5 +9,3 @@ AGENT_KEYS = {
     "host_port": ("port", False),
     "user": (str, False),
 }
-# Every replica would publish the same api_port on the agent's host.
-SINGLE_REPLICA_WORKFLOWS = True

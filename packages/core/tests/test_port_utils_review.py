@@ -9,9 +9,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from canyonos_core.reconciler.providers.Local import (
-    _runtime as local_runtime,
-)
 from canyonos_core.controller.utils import port_utils
 
 
@@ -152,19 +149,6 @@ class TwinModuleDriftTests(unittest.TestCase):
         )
 
 
-class WorkflowApiPortTests(unittest.TestCase):
-    """_port_bound is the PR's fail-fast gate for a user-declared api_port."""
-
-    def _spec(self, **over):
-        spec = {"name": "wf", "type": "workflow", "host": "localhost", "api_port": 8080}
-        spec.update(over)
-        return spec
-
-    def test_string_api_port_crashes_with_typeerror_not_a_clean_error(self):
-        with self.assertRaises(TypeError):
-            local_runtime._port_bound(self._spec(api_port="8080")["api_port"])
-
-
 class RedisPortTests(unittest.TestCase):
     """redis_port is user-declared: publish it as written, or exit."""
 
@@ -172,6 +156,7 @@ class RedisPortTests(unittest.TestCase):
         from canyonos_core.controller.global_controller import GlobalController
 
         gc = GlobalController.__new__(GlobalController)
+        gc.config = {}
         gc.controllers = [
             {
                 "provider": "local",

@@ -47,86 +47,6 @@ def _get_package_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def _load_config(config_path):
-    """Load the config as the schema checked it and the controller will read it.
-
-    The root `.env` is imported and `${VAR}` refs are expanded through the
-    same helper both of those use. Reading the raw YAML here instead let a
-    reference the schema had validated in its expanded form reach the build
-    as the literal `${VAR}`.
-    """
-    config = load_config(config_path)
-    # Everything below here till "return config" is basically just checks to make sure the folder is correct
-    if not isinstance(config, dict):
-        raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
-    agents = config.get("agents", [])
-    if not isinstance(agents, list) or not all(
-        isinstance(agent, dict) for agent in agents
-    ):
-        raise RuntimeError(f"Config `agents` must be a list of mappings: {config_path}")
-    names = [agent.get("name") for agent in agents]
-    if any(not isinstance(name, str) or not name.strip() for name in names):
-        raise RuntimeError(
-            f"Every configured agent must have a non-empty name: {config_path}"
-        )
-    names_by_key = {}
-    for name in names:
-        names_by_key.setdefault(name.casefold(), []).append(name)
-    duplicates = sorted(
-        "/".join(group) for group in names_by_key.values() if len(group) > 1
-    )
-    if duplicates:
-        raise RuntimeError(
-            f"Duplicate agent names in {config_path}: {', '.join(duplicates)}"
-        )
-
-    for agent in agents:
-        name = agent["name"]
-        agent["provider"] = providers.canonical_name(
-            agent.get("provider", providers.DEFAULT)
-        )
-
-        replicas = agent.get("replicas", 1)
-        if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
-            raise RuntimeError(
-                f"Agent {name} must have a positive integer `replicas` value."
-            )
-
-        for field in ("host_port", "port", "redis_port", "api_port", "dashboard_port"):
-            value = agent.get(field)
-            if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or not 1 <= value <= 65535
-            ):
-                raise RuntimeError(
-                    f"Agent {name} must have an integer `{field}` between 1 and 65535."
-                )
-
-        resources = agent.get("resources", {})
-        if not isinstance(resources, dict):
-            raise RuntimeError(f"Agent {name} `resources` must be a mapping.")
-        for field in ("cpu", "memory"):
-            value = resources.get(field)
-            if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or value <= 0
-            ):
-                raise RuntimeError(
-                    f"Agent {name} resource `{field}` must be a positive number."
-                )
-        # gpu: 0 is "no GPU", which the CLI's resource picker writes by default.
-        gpu = resources.get("gpu")
-        if gpu is not None and (
-            isinstance(gpu, bool) or not isinstance(gpu, int) or gpu < 0
-        ):
-            raise RuntimeError(
-                f"Agent {name} resource `gpu` must be a whole number, 0 or more."
-            )
-    return config
-
-
 def _artifact_prefix(root):
     return (
         ARTIFACT_DIR_NAME
@@ -290,13 +210,11 @@ def _run_build(config_path):
     # missing code fails here instead of being skipped from a "successful" deploy.
     manifest = _validate_or_exit(config_path, source_root)
 
-    config = _load_config(config_path)
+    config = load_config(config_path)
     agents = config.get("agents", [])
     package_dir = _get_package_dir()
 
     from canyonos_core.stub_generator import (
-        BASE_AGENT_REQUIREMENTS,
-        BASE_WORKFLOW_REQUIREMENTS,
         too_new_requirements,
         too_old_requirements,
     )
@@ -304,16 +222,11 @@ def _run_build(config_path):
     too_old = []
     for agent in agents:
         requirements = _normalize_requirements(agent)
-        base = (
-            BASE_WORKFLOW_REQUIREMENTS
-            if agent.get("type", "agent") == "workflow"
-            else BASE_AGENT_REQUIREMENTS
-        )
         too_old += [
             f"{agent['name']} currently requires {asked}, but CanyonOS only supports {supported}"
-            for asked, supported in too_old_requirements(requirements, base)
+            for asked, supported in too_old_requirements(requirements)
         ]
-        for asked, tested in too_new_requirements(requirements, base):
+        for asked, tested in too_new_requirements(requirements):
             logger.warning(
                 "%s currently requires %s, but CanyonOS has only tested %s; it may not work",
                 agent["name"],
@@ -334,7 +247,6 @@ def _run_build(config_path):
     from canyonos_core.stub_generator import (
         generate_stub,
         generate_docker,
-        generate_workflow_docker,
         target_docker_platform,
     )
 
@@ -404,43 +316,19 @@ def _run_build(config_path):
         # Every key read below is one the schema requires and has checked,
         # down to the file being on disk -- a service that cannot be built
         # fails the deploy rather than dropping quietly out of it.
-        if agent_type == "workflow":
-            # Workflow container
-            workflow_path = os.path.join(source_root, agent_cfg["workflow_file"])
-            docker_context = os.path.join(artifact_root, "docker_container", agent_name)
-            logger.info("Generating workflow Docker context for '%s'", agent_name)
-            generate_workflow_docker(
-                workflow_path,
-                stub_paths,
-                output_dir=docker_context,
-                grpc_stubs_dir=grpc_stubs_dir,
-                project_dir=source_root,
-                requirements=_normalize_requirements(agent_cfg),
-                # Stubs are placed both flat and at their entrypoint-mirrored path,
-                # so both flat and nested import styles resolve to the stub.
-                stub_entrypoints=stub_entrypoints,
-                # Allows the workflow to have a future
-                workflow_name=agent_name,
-            )
-
-        else:
-            # Agent container
-            agent_file = os.path.join(source_root, agent_cfg["entrypoint"])
-
-            docker_context = os.path.join(artifact_root, "docker_container", agent_name)
-            logger.info("Generating Docker context for '%s'", agent_name)
-            generate_docker(
-                agent_name,
-                agent_file,
-                output_dir=docker_context,
-                grpc_stubs_dir=grpc_stubs_dir,
-                stub_files=stub_paths,
-                project_dir=source_root,
-                requirements=_normalize_requirements(agent_cfg),
-                # Same reasoning as the workflow call above: stubs are placed both
-                # flat and at their entrypoint-mirrored path.
-                stub_entrypoints=stub_entrypoints,
-            )
+        agent_file = os.path.join(source_root, agent_cfg["entrypoint"])
+        docker_context = os.path.join(artifact_root, "docker_container", agent_name)
+        logger.info("Generating Docker context for '%s'", agent_name)
+        generate_docker(
+            agent_name,
+            agent_file,
+            output_dir=docker_context,
+            grpc_stubs_dir=grpc_stubs_dir,
+            stub_files=stub_paths,
+            project_dir=source_root,
+            requirements=_normalize_requirements(agent_cfg),
+            stub_entrypoints=stub_entrypoints,
+        )
 
         bake_targets.append(
             {
@@ -514,7 +402,7 @@ def _cmd_deploy(args):
     # `canyonos build` was merged into `canyonos deploy`.
     _run_build(config_path)
 
-    config = _load_config(config_path)
+    config = load_config(config_path)
     project_dir = os.path.abspath(os.getcwd())
     prefix = _artifact_prefix(project_dir)
     artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
@@ -535,7 +423,12 @@ def _cmd_deploy(args):
 
     from canyonos_core.controller.global_controller import GlobalController
 
-    controller = GlobalController(config_path)
+    try:
+        controller = GlobalController(config_path)
+    except RuntimeError as e:
+        # One CRITICAL line, not a traceback, for `canyonos deploy` to report.
+        logger.critical("%s", e)
+        sys.exit(1)
 
     # Graceful shutdown on Ctrl+C / SIGTERM
     def _signal_handler(sig, frame):

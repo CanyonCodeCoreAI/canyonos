@@ -15,7 +15,7 @@ def deployable(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
     monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)
     monkeypatch.setattr(deploy_cmd, "load_state", lambda: dict(STATE))
-    monkeypatch.setattr(deploy_cmd, "workflow_api_port", lambda _config: 8080)
+    monkeypatch.setattr(deploy_cmd, "endpoint_api_port", lambda _config: 8080)
     monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *_a: None)
     monkeypatch.setattr(deploy_cmd, "_start_dashboard", lambda **_k: None)
@@ -64,7 +64,9 @@ def test_an_occupied_api_port_raises_before_post_deploy(monkeypatch, deployable)
     monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: True)
     monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *a: calls.append(a))
 
-    with pytest.raises(RuntimeError, match="Port 8080 is already in use"):
+    with pytest.raises(
+        RuntimeError, match="Port 8080 is already in use.*`endpoint.api_port`"
+    ):
         deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
 
     assert calls == []
@@ -129,13 +131,11 @@ def test_non_quiet_still_streams_and_returns_state(monkeypatch, deployable):
     monkeypatch.setattr(
         deploy_cmd,
         "_stream_logs_and_autoserve",
-        lambda state, api_port, config_path, serve, verbose, on_ready: calls.append(
-            (state, api_port, config_path, serve, verbose)
-        ),
+        lambda state, serve, verbose, on_ready: calls.append((state, serve, verbose)),
     )
 
     assert deploy_cmd.run_deploy(CONFIG_PATH, serve=False, verbose=True) == STATE
-    assert calls == [(STATE, 8080, CONFIG_PATH, False, True)]
+    assert calls == [(STATE, False, True)]
 
 
 def test_banner_is_forwarded_to_run_init(monkeypatch, deployable):

@@ -46,8 +46,8 @@ export function ScalingScreen({ project_id }: { readonly project_id: string }) {
           Scaling
         </h1>
         <p className="text-muted-foreground max-w-prose text-sm" data-testid="scaling-scope">
-          One policy for the whole workflow. Each agent is measured on its own load and adds or
-          removes its own replicas. The workflow container is never scaled.
+          One policy for the whole project. Each agent is measured on its own load and adds or
+          removes its own replicas. The endpoint container is never scaled.
         </p>
       </header>
       <ScalingBody project_id={project_id} query={query} />

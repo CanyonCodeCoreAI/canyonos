@@ -14,7 +14,7 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 
 | Command | What it does |
 |---|---|
-| `status` | Show live workflow endpoints |
+| `status` | Show whether a deploy is running, its endpoint, and how to query it |
 | `test` | Deploy locally and send one test prompt end to end, or send it to the deploy that's already running |
 | `logs` | Re-attach to the deploy log stream |
 | `serve` | Start the local dashboard separately |

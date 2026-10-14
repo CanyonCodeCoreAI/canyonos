@@ -70,12 +70,9 @@ agents:
 
   # The workflow, exposed as a REST API.
   - name: Workflow
-    type: workflow
-    api_port: 8080         # Flask REST API port
-    dashboard_port: 8081   # Local dashboard's preferred port
     redis_port: 6379
     replicas: 1
-    workflow_file: workflow/portfolio_workflow.py
+    entrypoint: agents/workflow.py
     provider: local
     instance_type: t3.micro
 
@@ -91,6 +88,12 @@ agents:
   #     POSTGRES_DB: canyonos_state_db
   #   provider: local
 
+endpoint:
+  api_port: 8080         # REST API port
+  agent: Workflow
+  method: main
+
+dashboard_port: 8081     # Local dashboard's preferred port
 
 otel:
   # The dashboard api's own OTLP ingest. Base url only -- the exporter appends the

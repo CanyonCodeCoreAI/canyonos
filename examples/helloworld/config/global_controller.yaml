@@ -1,5 +1,5 @@
 # Global Controller Configuration
-# Lists all agents and workflows that CanyonOS manages.
+# Lists all agents that CanyonOS manages.
 
 agents:
   - name: HelloAgent
@@ -21,16 +21,27 @@ agents:
 
   - name: Workflow
     replicas: 1
-    type: workflow
     redis_port: 6380
-    api_port: 8082 # Only needed for workflows, defaults to 8080 if not filled
-    dashboard_port: 8081 # Local dashboard's preferred port, defaults to 8081 if not filled
-    workflow_file: workflow/example_workflow.py
+    entrypoint: agents/workflow.py
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: dict
     provider: local
+
+endpoint:
+  api_port: 8082 # Defaults to 8080 if not filled
+  agent: Workflow
+  method: main
+
+dashboard_port: 8081 # Local dashboard's preferred port, defaults to 8081 if not filled
 
 poll_interval: 5
 
-# Stream failure/log detail into each future's `logs` field; off by default to avoid clogging bandwidth (see FUTURE_SCHEMA.md).
+# Stream failure/log detail into each future's `logs` field; on by default, off here to save bandwidth.
 logs: false
 
 redis:

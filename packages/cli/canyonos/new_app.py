@@ -15,7 +15,7 @@ def run_new_app():
         ui.fail("Directory is not empty. Run `canyonos new-app` in an empty directory.")
         return
 
-    for folder in ("agents", "config", "workflow"):
+    for folder in ("agents", "config"):
         os.makedirs(folder)
     open(".env", "w").close()
 

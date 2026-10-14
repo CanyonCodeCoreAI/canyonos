@@ -273,7 +273,7 @@ describe('project scaling policy', () => {
       {
         scaling: { PriceAgent: POLICY, MetricsAgent: POLICY },
         reason:
-          "the policy is keyed by agent name (PriceAgent, MetricsAgent); scaling.yaml now holds one policy for the whole workflow, so move one agent's fields up to the top level",
+          "the policy is keyed by agent name (PriceAgent, MetricsAgent); scaling.yaml now holds one policy for the whole project, so move one agent's fields up to the top level",
       },
       { scaling: {}, reason: 'min_replicas: Required' },
       { scaling: ['PriceAgent'], reason: 'Expected object, received array' },
@@ -350,7 +350,6 @@ describe('project scaling agents', () => {
     await seed_scaling_agents([
       { name: 'PriceAgent', replicas: 1, desired: 2, sample: SAMPLE },
       { name: 'IntentAgent', replicas: 1 },
-      { name: 'Workflow', type: 'workflow', replicas: 1, sample: SAMPLE },
       { name: 'StateDB', type: 'database' },
     ]);
 

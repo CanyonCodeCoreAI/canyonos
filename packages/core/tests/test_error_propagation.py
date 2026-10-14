@@ -26,16 +26,14 @@ from canyonos_core.controller.utils.log_entry import (
 )
 import canyonos_core.controller.canyonos_context as canyonos_context
 import local_controler_pb2
-from fakes import _FakeRedis
+import grpc
+
+from fakes import _FakeRedis, _ForwardedCall, _RpcError
 
 
 def _bind_failure_marker(controller):
-    controller._mark_future_failed = (
-        lambda future_id, error, origin=None, error_name=None: (
-            LocalController._mark_future_failed(
-                controller, future_id, error, origin, error_name
-            )
-        )
+    controller._mark_future_failed = lambda *a, **k: (
+        LocalController._mark_future_failed(controller, *a, **k)
     )
     controller._fan_out_to_consumers = (
         lambda future_id, result=None, failed=0, error_message="": (
@@ -50,7 +48,10 @@ def _bind_failure_marker(controller):
 class ErrorPropagationTests(unittest.TestCase):
     def test_forward_request_writes_future_error_on_grpc_failure(self):
         redis = _FakeRedis()
-        stub = SimpleNamespace(Execute=MagicMock(side_effect=RuntimeError("boom")))
+        call = _ForwardedCall(_RpcError(grpc.StatusCode.INTERNAL, "boom"))
+        stub = SimpleNamespace(
+            Execute=SimpleNamespace(future=MagicMock(return_value=call))
+        )
         controller = _bind_failure_marker(
             SimpleNamespace(
                 redis=redis,
@@ -59,6 +60,12 @@ class ErrorPropagationTests(unittest.TestCase):
                 _my_endpoint="172.31.19.107:50051",
                 _get_remote_stub=lambda endpoint: stub,
             )
+        )
+        controller._forward_request = lambda endpoint, data: (
+            LocalController._forward_request(controller, endpoint, data)
+        )
+        controller._on_forwarded = lambda call, endpoint, data: (
+            LocalController._on_forwarded(controller, call, endpoint, data)
         )
         data = {
             "future_id": "future-1",
@@ -69,10 +76,10 @@ class ErrorPropagationTests(unittest.TestCase):
         LocalController._forward_request(controller, "172.31.23.135:50051", data)
 
         self.assertEqual(data["origin"], "172.31.19.107:50051")
-        self.assertEqual(redis.hget("future:future-1", "error"), "RuntimeError")
+        self.assertEqual(redis.hget("future:future-1", "error"), "_RpcError")
         logs = json.loads(redis.hget("future:future-1", "logs"))
         self.assertEqual(logs[0]["Body"], "boom")
-        stub.Execute.assert_called_once()
+        stub.Execute.future.assert_called_once()
 
     def test_future_value_raises_runtime_error_when_error_is_present(self):
         redis = _FakeRedis()
@@ -228,7 +235,7 @@ class ErrorPropagationTests(unittest.TestCase):
             "Malformed request: missing service, function, or future_id",
         )
         self.assertEqual(logs[0]["Attributes"]["exception.type"], "MalformedRequest")
-        self.assertEqual(logs[0]["Attributes"]["agent.name"], "Workflow")
+        self.assertEqual(logs[0]["Attributes"]["agent.name"], "Endpoint")
 
     def test_policy_denied_request_is_marked_failed_with_category(self):
         redis = _FakeRedis()

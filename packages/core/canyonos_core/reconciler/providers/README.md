@@ -40,11 +40,10 @@ Every provider module implements:
 
 The record `bootstrap_instance` returns has `agent_name`, `provider`, `replica_index`,
 `private_host`, `public_host`, `host_port`, `container_port`, `endpoint`,
-`routing_endpoint`, `redis_host`, `redis_port` and `runtime_id`, and optionally `user`
-and `api_port`.
+`routing_endpoint`, `redis_host`, `redis_port` and `runtime_id`, and optionally `user`.
 
 `endpoint` is the replica's published `host:port`. `routing_endpoint` is the `host:port`
-other services and the controllers reach it on: for an agent or workflow, the address the
+other services and the controllers reach it on: for an agent or the endpoint, the address the
 provider gives the container as `CANYONOS_AGENT_HOST` and `CANYONOS_AGENT_PORT`; for a
 database, the port the database listens on. The routing table lists it,
 and the replica's status, metrics and agent id keys in Redis are named after it. A record
@@ -62,7 +61,6 @@ Every provider also has a `_schema.py`, which the manifest schema checks
 | `SECTION_KEYS` | That section's keys |
 | `RETIRED_KEYS` | Keys the section no longer takes, each with the message saying what to do instead |
 | `AGENT_KEYS` | Keys any agent entry may set, required only on this provider's agents |
-| `SINGLE_REPLICA_WORKFLOWS` | Whether a workflow on this provider is limited to one replica |
 
 Each key maps to `(type, required)`, where type is `str`, `list` (of strings), `int` (at
 least 1) or `"port"` (1 to 65535). The schema only checks keys; defaults live in the runtime,

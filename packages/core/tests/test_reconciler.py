@@ -31,6 +31,7 @@ _MANIFEST = (
     "  - name: Alpha\n"
     "    entrypoint: agents/alpha.py\n"
     "    functions: [{name: work}]\n"
+    "endpoint: {agent: Alpha, method: work}\n"
 )
 
 

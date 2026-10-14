@@ -27,10 +27,9 @@ manage.
 
 ## From scratch
 
-We have a command, `canyonos new-app` that creates a basic template of a workflow in the project root.
-It creates a blank agents folder, as well as a config folder with the intial config files templated. 
+`canyonos new-app` sets up an empty project in the current folder: an empty `agents` folder, an empty `.env`, and a `config` folder with empty `global_controller.yaml` and `policy.yaml` files.
 
-Look at the rest of the markdwn files in this guides folder for help setting up the config folder, only the global_controller.yaml file is needed for deploy.
+Only `global_controller.yaml` is needed to deploy, and it has to list at least one agent and the `endpoint` block that serves one of its methods. [global_controller.yaml](GLOBAL_CONTROLLER.md#a-small-example) has a minimal example to start from.
 
 ## Converting a existing workflow
 

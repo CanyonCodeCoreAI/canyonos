@@ -13,11 +13,12 @@
 ## AWS-side setup
 
 - **Security group** (everything is inbound, same permissions needed for outbound unless you allow all outbound traffic)
-  - The workflow and dashboard port need to be opened up, they are by default 8080 and 8081, and are referred as such below
-  - Ports 50051, 6379, and 22 need to be accessible by the security group itself. The host must run inside the same VPC, since it reaches every instance over its private IP.
+  - The endpoint and dashboard run on the host, not on an instance. Their ports are by default 8080 and 8081, and are referred as such below
+  - On the instances' security group, ports 50051, 6379, and 22 need to be accessible by the security group itself. The host must run inside the same VPC, since it reaches every instance over its private IP.
     - 50051 and 6379 must be accessible over custom TCP.
     - 22 must be accessible over ssh.
-  - Ports 8080 and 8081 needs be accessible by whoever queries the workflow (0.0.0.0 for example)
+  - On the host, ports 8080 and 8081 need to be accessible by whoever queries the endpoint (0.0.0.0 for example)
+  - On the host, the port the endpoint publishes for its gRPC controller needs to be accessible by the instances' security group over custom TCP. Agents send results back there; without it every request stays "pending".
 
 ## Config (`ec2:` block in `global_controller.yaml`)
 

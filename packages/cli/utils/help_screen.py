@@ -14,7 +14,7 @@ from canyonos.theme import GREEN, WHITE
 # subparser through this table, so a command can't be added to one and missed
 # in the other.
 CORE_COMMANDS = (
-    ("build", "Port an existing project into a CanyonOS workflow"),
+    ("build", "Convert an existing project into a CanyonOS workflow"),
     ("deploy", "Build and launch the workflow, then open the dashboard"),
     ("config", "Configure project settings"),
 )

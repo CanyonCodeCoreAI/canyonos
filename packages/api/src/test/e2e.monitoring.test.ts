@@ -22,7 +22,7 @@ import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitorin
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
-import { reset_controller, seed_agent_instance, seed_running_project } from './redis-test.utils';
+import { reset_controller, seed_endpoint, seed_running_project } from './redis-test.utils';
 
 setupE2ETests();
 
@@ -1334,13 +1334,22 @@ describe('GET /projects/:project_id/monitoring/replicas', () => {
   });
 });
 
-describe('GET /projects/:project_id/monitoring/endpoints', () => {
+describe('GET /projects/:project_id/monitoring/endpoint', () => {
   beforeEach(reset_controller);
 
-  test('a project the controller is not running is 404 canyonos.project_not_running', async () => {
-    const { project_id } = await create_project(token, 'Idle Endpoints');
+  const RECORDED_ENDPOINT = {
+    public_host: '203.0.113.7',
+    api_port: '8080',
+    agent: 'Workflow',
+    method: 'main',
+    arguments: JSON.stringify(['query', 'language']),
+    url: 'http://203.0.113.7:8080/main',
+  };
 
-    const res = await api.projects[project_id]!.monitoring.endpoints.get({
+  test('a project the controller is not running is 404 canyonos.project_not_running', async () => {
+    const { project_id } = await create_project(token, 'Idle Endpoint');
+
+    const res = await api.projects[project_id]!.monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
@@ -1348,32 +1357,63 @@ describe('GET /projects/:project_id/monitoring/endpoints', () => {
     expect((res.error?.value as { error?: string })?.error).toBe('canyonos.project_not_running');
   });
 
-  test('lists only the workflow replicas, which carry an api_port and a public host', async () => {
-    const { project_id } = await create_project(token, 'Endpoints Project');
+  test('returns the endpoint the controller recorded, with its status url and an example body', async () => {
+    const { project_id } = await create_project(token, 'Endpoint Project');
     await seed_running_project(project_id, { prompts: {} });
-    await seed_agent_instance('local-checkout-0', {
-      agent_id: 'local-checkout-0',
-      agent_name: 'Checkout',
-      public_host: '203.0.113.7',
-      api_port: '8080',
-      host_port: '9001',
-    });
-    await seed_agent_instance('local-planner-0', {
-      agent_id: 'local-planner-0',
-      agent_name: 'Planner',
-      public_host: '203.0.113.7',
-      host_port: '9002',
-    });
+    await seed_endpoint(RECORDED_ENDPOINT);
 
-    const res = await api.projects[project_id]!.monitoring.endpoints.get({
+    const res = await api.projects[project_id]!.monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       project_id,
-      endpoints: [{ name: 'Checkout', url: 'http://203.0.113.7:8080' }],
+      endpoint: {
+        url: 'http://203.0.113.7:8080/main',
+        status_url: 'http://203.0.113.7:8080/status',
+        agent: 'Workflow',
+        method: 'main',
+        arguments: ['query', 'language'],
+        example_body: { query: 'your query', language: 'your query' },
+      },
     });
+  });
+
+  test('a running controller with no endpoint has none', async () => {
+    const { project_id } = await create_project(token, 'No Endpoint Project');
+    await seed_running_project(project_id, { prompts: {} });
+
+    const res = await api.projects[project_id]!.monitoring.endpoint.get({
+      $headers: bearer(token),
+    });
+
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual({ project_id, endpoint: null });
+  });
+
+  test('a partial or malformed endpoint record reads as no endpoint', async () => {
+    const { project_id } = await create_project(token, 'Malformed Endpoint Project');
+    await seed_running_project(project_id, { prompts: {} });
+    await seed_endpoint({ ...RECORDED_ENDPOINT, arguments: 'not json' });
+
+    const malformed = await api.projects[project_id]!.monitoring.endpoint.get({
+      $headers: bearer(token),
+    });
+
+    expect(malformed.error).toBeNull();
+    expect(malformed.data).toEqual({ project_id, endpoint: null });
+
+    await reset_controller();
+    await seed_running_project(project_id, { prompts: {} });
+    await seed_endpoint({ public_host: '203.0.113.7', api_port: '8080' });
+
+    const partial = await api.projects[project_id]!.monitoring.endpoint.get({
+      $headers: bearer(token),
+    });
+
+    expect(partial.error).toBeNull();
+    expect(partial.data).toEqual({ project_id, endpoint: null });
   });
 });
 
@@ -1394,7 +1434,7 @@ describe('monitoring access', () => {
         monitoring.errors.summary.get(read),
         monitoring.resources.get(read),
         monitoring.replicas.get({ $headers: headers }),
-        monitoring.endpoints.get({ $headers: headers }),
+        monitoring.endpoint.get({ $headers: headers }),
       ]);
     };
 

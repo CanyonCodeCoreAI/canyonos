@@ -176,7 +176,6 @@ class CleanupRequestTests(unittest.TestCase):
                 "future:fut1:children": "x",
                 "future:fut1:consumers": "x",
                 "request:req1:future": "fut1",
-                "request:req1:error": "x",
                 "request:req1:context": "x",
             },
         )
@@ -188,7 +187,6 @@ class CleanupRequestTests(unittest.TestCase):
         for key in (
             "request:req1:futures",
             "request:req1:future",
-            "request:req1:error",
             "request:req1:context",
             "future:fut1",
             "future:fut2",

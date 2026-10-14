@@ -18,9 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from canyonos_core.stub_generator import (
     AGENT_FLAT_MODULES,
     IMAGE_PYTHON_VERSION,
-    WORKFLOW_FLAT_MODULES,
     generate_docker,
-    generate_workflow_docker,
 )
 from canyonos_core.validate import main, validate_car
 
@@ -35,10 +33,7 @@ agents:
         arguments:
           - name: text
             type: str
-
-  - name: Workflow
-    type: workflow
-    workflow_file: workflow/echo_workflow.py
+endpoint: {agent: EchoAgent, method: echo}
 """
 
 AGENT = """\
@@ -47,21 +42,9 @@ class EchoAgent:
         return text
 """
 
-WORKFLOW = """\
-from agents.echo_agent import EchoAgent
-
-
-def main(query):
-    return {"echo": EchoAgent().echo(text=query).value()}
-
-
-deploy(main, port=8080)
-"""
-
 BASE = {
     "config/global_controller.yaml": CONFIG,
     "app/agents/echo_agent.py": AGENT,
-    "app/workflow/echo_workflow.py": WORKFLOW,
 }
 
 
@@ -100,8 +83,7 @@ class ValidateCarTests(unittest.TestCase):
             root = Path(self.tmpdir) / example.name / ".car"
             (root / "config").mkdir(parents=True)
             shutil.copytree(example / "config", root / "config", dirs_exist_ok=True)
-            for part in ("agents", "workflow"):
-                shutil.copytree(example / part, root / "app" / part)
+            shutil.copytree(example / "agents", root / "app" / "agents")
             manifest = root / "config" / "global_controller.yaml"
 
             with (
@@ -477,224 +459,6 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(findings[0].line, 2)
 
     # -------------------------------------------------------------- #
-    #  The workflow the platform posts to                             #
-    # -------------------------------------------------------------- #
-
-    def test_a_workflow_without_main_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": "def run(query):\n"
-                    "    return query\n\n\n"
-                    "deploy(run)\n"
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-        self.assertIn("no top-level function named `main`", findings[0].summary)
-
-    def test_an_async_main_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": "async def main(query):\n"
-                    "    return query\n\n\n"
-                    "deploy(main)\n"
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-        self.assertIn("`main` is `async def`", findings[0].summary)
-
-    def test_a_first_parameter_other_than_query_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": 'def main(prompt="hi"):\n'
-                    "    return prompt\n\n\n"
-                    "deploy(main)\n"
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-        self.assertIn("first parameter is `prompt`", findings[0].summary)
-
-    def test_a_second_required_parameter_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": "def main(query, depth):\n"
-                    "    return query * depth\n\n\n"
-                    "deploy(main)\n"
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-        self.assertIn("requires depth beyond `query`", findings[0].summary)
-
-    def test_a_query_before_the_slash_is_reported(self):
-        """deploy() passes `query` by keyword; even a defaulted one never gets it."""
-        for signature in (
-            "main(query, /)",
-            "main(query='', /)",
-            "main(query='', /, **body)",
-        ):
-            with self.subTest(signature):
-                findings = validate_car(
-                    self.car(
-                        {
-                            "app/workflow/echo_workflow.py": f"def {signature}:\n"
-                            "    return query\n\n\n"
-                            "deploy(main)\n"
-                        }
-                    )
-                )
-
-                self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-                self.assertIn("`main` takes query positional-only", findings[0].summary)
-
-    def test_a_main_taking_var_keywords_receives_the_query(self):
-        self.assertEqual(
-            self.codes(
-                {
-                    "app/workflow/echo_workflow.py": "def main(**body):\n"
-                    "    return body['query']\n\n\n"
-                    "deploy(main)\n"
-                }
-            ),
-            [],
-        )
-
-    def test_a_workflow_that_never_deploys_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": "def main(query):\n    return query\n"
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-        self.assertIn("never calls `deploy(...)`", findings[0].summary)
-
-    def test_deploy_called_through_its_module_is_fine(self):
-        self.assertEqual(
-            self.codes(
-                {
-                    "app/workflow/echo_workflow.py": WORKFLOW.replace(
-                        "deploy(main, port=8080)",
-                        "import deploy\n\ndeploy.deploy(main, port=8080)",
-                    )
-                }
-            ),
-            [],
-        )
-
-    def test_deploy_imported_under_another_name_is_fine(self):
-        self.assertEqual(
-            self.codes(
-                {
-                    "app/workflow/echo_workflow.py": "from deploy import deploy as serve\n"
-                    + WORKFLOW.replace(
-                        "deploy(main, port=8080)", "serve(main, port=8080)"
-                    )
-                }
-            ),
-            [],
-        )
-
-    def test_a_workflow_the_launcher_cannot_decode_is_reported(self):
-        """The launcher exec()s the file read as UTF-8 text; a cookie is ignored."""
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": b"# -*- coding: latin-1 -*-\n"
-                    b"# caf\xe9\n" + WORKFLOW.encode()
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-        self.assertIn("the workflow does not parse", findings[0].summary)
-
-    def test_a_main_guard_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": "def main(query):\n"
-                    "    return query\n\n\n"
-                    "deploy(main)\n\n"
-                    'if __name__ == "__main__":\n'
-                    '    main("hi")\n'
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-SHAPE"])
-        self.assertIn('`if __name__ == "__main__":`', findings[0].summary)
-
-    def test_an_import_that_bypasses_the_stub_module_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": "from agents import EchoAgent\n\n\n"
-                    "def main(query):\n"
-                    "    return EchoAgent().echo(text=query).value()\n\n\n"
-                    "deploy(main)\n"
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-STUB-IMPORT"])
-        self.assertIn("agents/echo_agent.py", findings[0].summary)
-
-    def test_the_stub_suffixed_class_name_is_reported(self):
-        findings = validate_car(
-            self.car(
-                {
-                    "app/workflow/echo_workflow.py": "from agents.echo_agent import EchoAgentStub\n\n\n"
-                    "def main(query):\n"
-                    "    return EchoAgentStub().echo(text=query).value()\n\n\n"
-                    "deploy(main)\n"
-                }
-            )
-        )
-
-        self.assertEqual([f.code for f in findings], ["CAR-WORKFLOW-STUB-IMPORT"])
-        self.assertIn("not the class it writes", findings[0].summary)
-
-    def test_a_dot_slash_entrypoint_resolves_to_the_same_stub_module(self):
-        """The schema accepts `./agents/x.py`; it is the module `agents.x`."""
-        self.assertEqual(
-            self.codes(
-                {
-                    "config/global_controller.yaml": CONFIG.replace(
-                        "entrypoint: agents/", "entrypoint: ./agents/"
-                    )
-                }
-            ),
-            [],
-        )
-
-    def test_the_flat_import_of_a_stub_is_fine(self):
-        """The stub is written at the context root under its basename too."""
-        self.assertEqual(
-            self.codes(
-                {
-                    "app/workflow/echo_workflow.py": "from echo_agent import EchoAgent\n\n\n"
-                    "def main(query):\n"
-                    "    return EchoAgent().echo(text=query).value()\n\n\n"
-                    "deploy(main)\n"
-                }
-            ),
-            [],
-        )
-
-    # -------------------------------------------------------------- #
     #  What the image copies over the port                            #
     # -------------------------------------------------------------- #
 
@@ -754,25 +518,17 @@ class ValidateCarTests(unittest.TestCase):
 
         findings = validate_car(root)
 
-        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-MISSING"])
-        self.assertEqual(
-            findings[0].summary,
-            f"agents[0].entrypoint: {os.path.join('app', 'agents', 'echo_agent.py')} "
-            "does not exist",
+        self.assertEqual([f.code for f in findings], ["CAR-SCHEMA"])
+        self.assertTrue(findings[0].summary.startswith("agents[0].entrypoint: "))
+        self.assertTrue(
+            findings[0].summary.endswith(
+                f"{os.path.join('app', 'agents', 'echo_agent.py')} does not exist"
+            )
         )
         self.assertEqual(
             findings[0].path, os.path.join("config", "global_controller.yaml")
         )
         self.assertEqual(findings[0].line, 0)
-
-    def test_a_missing_workflow_file_is_reported(self):
-        root = self.car()
-        os.remove(os.path.join(root, "app", "workflow", "echo_workflow.py"))
-
-        findings = validate_car(root)
-
-        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-MISSING"])
-        self.assertIn("agents[1].workflow_file:", findings[0].summary)
 
     def test_an_entrypoint_that_resolves_outside_the_source_is_reported(self):
         """The deploy rejects it; validate must not pass what the deploy refuses."""
@@ -784,7 +540,7 @@ class ValidateCarTests(unittest.TestCase):
 
         findings = validate_car(root)
 
-        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-OUTSIDE"])
+        self.assertEqual([f.code for f in findings], ["CAR-SCHEMA"])
         self.assertIn("agents[0].entrypoint:", findings[0].summary)
         self.assertIn("resolves outside", findings[0].summary)
 
@@ -794,8 +550,8 @@ class ValidateCarTests(unittest.TestCase):
 
         findings = validate_car(root)
 
-        self.assertEqual([f.code for f in findings], ["CAR-ENTRYPOINT-MISSING"])
-        self.assertIn("no `app/` beside `config/`", findings[0].summary)
+        self.assertEqual([f.code for f in findings], ["CAR-SCHEMA"])
+        self.assertIn("the project source directory", findings[0].summary)
 
     # -------------------------------------------------------------- #
     #  The schema, reported as findings of its own                    #
@@ -887,33 +643,15 @@ class RuntimeConstantTests(unittest.TestCase):
             generate_docker("EchoAgent", str(agent_file), output_dir=output_dir)
         return Path(output_dir)
 
-    def _workflow_context(self):
-        workflow_file = Path(self.tmpdir) / "echo_workflow.py"
-        workflow_file.write_text("def main(query):\n    return query\n")
-        output_dir = os.path.join(self.tmpdir, "workflow-out")
-        with redirect_stdout(io.StringIO()):
-            generate_workflow_docker(str(workflow_file), [], output_dir=output_dir)
-        return Path(output_dir)
-
-    def test_the_agent_image_copies_exactly_its_flat_modules(self):
+    def test_the_agent_image_copies_its_flat_modules(self):
         context = self._agent_context()
 
         self.assertTrue(all((context / name).is_file() for name in AGENT_FLAT_MODULES))
-        for name in WORKFLOW_FLAT_MODULES - AGENT_FLAT_MODULES:
-            self.assertFalse((context / name).exists(), name)
 
-    def test_the_workflow_image_copies_exactly_its_flat_modules(self):
-        context = self._workflow_context()
-
-        self.assertTrue(
-            all((context / name).is_file() for name in WORKFLOW_FLAT_MODULES)
-        )
-
-    def test_both_generated_dockerfiles_are_built_on_the_image_python(self):
+    def test_the_generated_dockerfile_is_built_on_the_image_python(self):
         expected = f"FROM python:{IMAGE_PYTHON_VERSION}-slim"
 
         self.assertIn(expected, (self._agent_context() / "Dockerfile").read_text())
-        self.assertIn(expected, (self._workflow_context() / "Dockerfile").read_text())
 
     def test_the_core_image_is_built_on_the_same_python(self):
         """The image `canyonos validate` falls back to runs the same interpreter."""

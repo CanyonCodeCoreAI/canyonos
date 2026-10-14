@@ -66,7 +66,7 @@ const NEW_POLICY: ScalingPolicy = {
 };
 
 /**
- * The workflow's one policy. The server says whether one is stored and whether the controller
+ * The project's one policy. The server says whether one is stored and whether the controller
  * accepts it; the card opens into an editor that mounts fresh each time, and the screen keys the
  * card on the stored policy so a save closes it.
  */

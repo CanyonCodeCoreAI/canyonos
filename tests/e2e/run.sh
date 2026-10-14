@@ -74,11 +74,6 @@ AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 AWS_REGION=us-east-1
 EOF
 QUERY="$(cat "$PROJECT_DIR/.car/config/test_query.txt")"
-API_URL="http://127.0.0.1:$(
-  cd "$PROJECT_DIR" &&
-    uv run --project "$REPO_ROOT" python -c \
-      'from canyonos.constants import default_config_path, workflow_api_port; print(workflow_api_port(default_config_path()))'
-)"
 
 step "Building canyonos-core:dev"
 docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$REPO_ROOT/packages/core"
@@ -86,8 +81,9 @@ docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$
 cd "$PROJECT_DIR"
 
 # The image just built has to stop a manifest whose functions do not match the
-# agent's class or cannot become a stub, before anything is deployed.
-for mode in rename builtin dunder duplicate returns deep; do
+# agent's class or cannot become a stub, or whose agent takes the endpoint's
+# name, before anything is deployed.
+for mode in rename builtin dunder duplicate returns deep endpoint_name; do
   step "canyonos validate rejects a broken manifest ($mode)"
   broken_car="$(mktemp -d)/.car"
   cp -R "$PROJECT_DIR/.car" "$broken_car"
@@ -112,15 +108,20 @@ python3 -c 'import json, sys; json.dump(json.load(sys.stdin)["result"], sys.stdo
 # instead of opening the interactive resource picker, so a local run is unattended too.
 step "canyonos deploy"
 canyonos deploy --serve false </dev/null
+ENDPOINT="$(
+  uv run --project "$REPO_ROOT" python -c \
+    'from canyonos.gc import deployed_endpoint; from canyonos.init import load_state; endpoint = deployed_endpoint(load_state()["port"]); print(endpoint["api_port"], endpoint["method"], endpoint["arguments"][0])'
+)"
+read -r API_PORT ROUTE ARGUMENT <<<"$ENDPOINT"
+API_URL="http://127.0.0.1:$API_PORT"
 
 step "canyonos status"
 canyonos status
 
-# After a deploy, doctor checks the live stack (controller, Redis, agents); before
-# one it would demand a coding agent, which this flow deliberately skips.
+# Run after the deploy, so doctor checks the live stack instead of demanding a coding agent.
 step "canyonos doctor"
 canyonos doctor
 
-step "Query $API_URL"
-python3 "$E2E_DIR/query.py" "$API_URL" "$QUERY" "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/deploy-result.json"
+step "Query $API_URL/$ROUTE"
+python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" "$QUERY" "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/deploy-result.json"
 python3 "$CHECK" <"$ARTIFACTS_DIR/deploy-result.json"

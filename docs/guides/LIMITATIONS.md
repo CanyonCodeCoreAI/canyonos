@@ -11,7 +11,7 @@ Agent needs a non-installable package (like git, rust, etc.)
 The skill file misses some required dependencies
 - The skill file, when building the global_controller.yaml file finds the imports that every agent uses and adds that in the requirements section of the .yaml file, but in some occasions, it forgets to find dependencies that
 
-Several projects on one machine: each folder you run `canyonos` from is its own project, with its own Global Controller, containers, images and state. The project name is the folder name, lowercased, with every character other than letters, digits, `_` and `-` turned into `-`, repeated or edge `-` removed, and cut to 24 characters. The name `dashboard` is reserved for the dashboard and becomes `dashboard-project`. Ports are not picked for you: give each project its own `redis_port` and `api_port` in `global_controller.yaml`.
+Several projects on one machine: each folder you run `canyonos` from is its own project, with its own Global Controller, containers, images and state. The project name is the folder name, lowercased, with every character other than letters, digits, `_` and `-` turned into `-`, repeated or edge `-` removed, and cut to 24 characters. The name `dashboard` is reserved for the dashboard and becomes `dashboard-project`. Ports are not picked for you: give each project its own `redis_port` and `endpoint.api_port` in `global_controller.yaml`.
 - Two folders with the same name in different paths are the same project, so deploying one replaces the other.
 - Folder names longer than 24 characters are cut, so two long names that start the same become one project.
 - A folder name with no ASCII letters, digits or `_` (for example `日本語`) becomes `default`.
@@ -75,9 +75,9 @@ Don't hardcode an API key, an account-specific resource ID, or a model that can'
 
 ### 4. Dependencies declared in `global_controller.yaml`
 
-Each agent image installs only the CanyonOS base packages plus the `requirements` of that agent's entry in `global_controller.yaml`; the Workflow entry works the same way. The app's own `requirements.txt`, `pyproject.toml`, or lockfile is **not** installed, so each entry's `requirements` must list everything its serving path needs.
+Each agent image installs only the CanyonOS base packages plus the `requirements` of that agent's entry in `global_controller.yaml`. The app's own `requirements.txt`, `pyproject.toml`, or lockfile is **not** installed, so each entry's `requirements` must list everything its serving path needs.
 
-The base packages are `BASE_AGENT_REQUIREMENTS` and `BASE_WORKFLOW_REQUIREMENTS` in [`packages/core/canyonos_core/stub_generator.py`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/packages/core/canyonos_core/stub_generator.py). They're installed in the same Python environment as each entry's `requirements`. `PROTOBUF_FLOOR` is forced, while `TESTED_MAJOR_VERSIONS` caps packages unless an entry asks for a newer version.
+The base packages are `BASE_AGENT_REQUIREMENTS` in [`packages/core/canyonos_core/stub_generator.py`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/packages/core/canyonos_core/stub_generator.py). They're installed in the same Python environment as each entry's `requirements`. `PROTOBUF_FLOOR` is forced, while `TESTED_MAJOR_VERSIONS` caps packages unless an entry asks for a newer version.
 
 Each entry's `requirements` must:
 
@@ -95,10 +95,18 @@ agents:
       - pydantic==2.13.3
 
   - name: Workflow
-    type: workflow
-    workflow_file: workflow.py
+    entrypoint: workflow.py
     requirements:
       - httpx==0.28.1
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+
+endpoint:
+  agent: Workflow
+  method: main
 ```
 
 Copy exact versions from the app's lockfile or pinned `requirements.txt`. If it pins nothing, give each fast-moving package a floor and a cap below its next major version, for example `langchain>=0.3,<1.0`.

@@ -21,7 +21,7 @@ const SAVE_ATTEMPTS = 5;
 const ScalingConfigSchema = z.object({ scaling: z.unknown() }).passthrough();
 type ScalingConfig = z.infer<typeof ScalingConfigSchema>;
 
-// The entries the controller publishes for each agent; a workflow or database is never scaled.
+// The entries the controller publishes for each agent; a database is never scaled.
 const AgentSpecSchema = z.object({ type: z.string().optional(), replicas: z.unknown() });
 
 // The newest `agent:<name>:samples` entry, as the controller rolls one up each poll.
@@ -73,7 +73,7 @@ function status_of(stored: unknown): ScalingStatus {
     const names = Object.keys(keyed.data).join(', ');
     return {
       status: 'invalid',
-      reason: `the policy is keyed by agent name (${names}); scaling.yaml now holds one policy for the whole workflow, so move one agent's fields up to the top level`,
+      reason: `the policy is keyed by agent name (${names}); scaling.yaml now holds one policy for the whole project, so move one agent's fields up to the top level`,
     };
   }
   return { status: 'invalid', reason: invalid_reason(result.error) };

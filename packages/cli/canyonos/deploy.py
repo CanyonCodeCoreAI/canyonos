@@ -29,16 +29,12 @@ from rich.text import Text
 
 from canyonos import project, ui
 from canyonos.constants import (
-    DEFAULT_QUERY_PARAM,
-    WORKFLOW_ROUTE,
     default_config_path,
+    endpoint_api_port,
     port_in_use,
-    public_ip,
-    workflow_api_port,
-    workflow_entrypoint,
     workspace_relative,
 )
-from canyonos.gc import GCError, deploy_status, post_deploy, workflow_endpoints
+from canyonos.gc import GCError, deploy_status, deployed_endpoint, post_deploy
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import docker_env, load_state, run_init
 from canyonos.quit import run_quit
@@ -84,10 +80,8 @@ _BENIGN_ERROR_PREFIXES = ("ERROR:opentelemetry.", "ERROR:__main__:Destination ")
 _CONTAINER_LOG_BEGIN = "--- begin container log:"
 _CONTAINER_LOG_END = "--- end container log:"
 
-# The global controller logs this exactly once, as the last thing it does before
-# the polling loop: the workflow is up. Like the markers above, it counts only
-# outside a quoted container log.
-_UP_MARKER = "Global controller started, polling every"
+# The global controller logs this once, when the workflow is up.
+UP_MARKER = "Global controller started, polling every"
 
 # The global controller's verdict when a replica never came up. Its own words
 # only name the agent; the reason is in the container log quoted before it.
@@ -314,14 +308,14 @@ def run_deploy(
         state = load_state()
 
         # Read for display only -- canyonos resolves the path it actually deploys.
-        api_port = workflow_api_port(config_path or default_config_path())
+        api_port = endpoint_api_port(config_path or default_config_path())
 
         # Checked here, after run_init() has already torn down any previous deploy,
         # so a still-live prior run doesn't read as an unrelated conflict.
         if api_port is not None and port_in_use(api_port):
             raise RuntimeError(
-                f"Port {api_port} is already in use, and the workflow needs it. Free it "
-                f"or change `api_port` in {config_path or default_config_path()}."
+                f"Port {api_port} is already in use, and the endpoint needs it. Free it "
+                f"or change `endpoint.api_port` in {config_path or default_config_path()}."
             )
 
         try:
@@ -336,17 +330,13 @@ def run_deploy(
 
         _stream_logs_and_autoserve(
             state,
-            api_port,
-            config_path or default_config_path(),
             serve=serve,
             verbose=verbose,
             on_ready=ready.append,
         )
         return state
     except (Exception, KeyboardInterrupt):
-        # Only a deploy that never came up is torn down. Past that point the
-        # workflow is live and serving, and anything that fails afterwards is
-        # a reporting problem, not a reason to take the stack down.
+        # Torn down only if it never came up; a failure after that is just a reporting problem.
         if not ready:
             try:
                 run_quit()
@@ -355,55 +345,6 @@ def run_deploy(
                 # real deploy error below instead of just supplementing it.
                 ui.fail(f"Teardown after failed deploy also failed: {teardown_error}")
         raise
-
-
-def _display_host(host):
-    """Substitute this machine's own public IP for a loopback host, when discoverable.
-
-    A workflow placed on *this* machine reports `127.0.0.1`/`localhost` -- correct
-    for curling from the box itself, but useless from anywhere else (e.g. an EC2
-    deploy meant to be queried from a laptop). Falls back to `127.0.0.1` off EC2
-    (or if the metadata lookup fails), same as before. A workflow placed on a
-    *different* machine already reports its own real host and passes through
-    unchanged.
-    """
-    if host not in ("127.0.0.1", "localhost"):
-        return host
-    return public_ip() or "127.0.0.1"
-
-
-def workflow_targets(gc_port, api_port):
-    """(name, host, port) for each deployed workflow.
-
-    The container reports the address it actually placed each workflow at, so a
-    workflow running on another machine shows that machine's public IP. The
-    local port mapping is the fallback when it reports nothing.
-    """
-    targets = [
-        (
-            endpoint.get("name"),
-            _display_host(endpoint["host"]),
-            endpoint["port"],
-        )
-        for endpoint in workflow_endpoints(gc_port)
-        if endpoint.get("host") and endpoint.get("port")
-    ]
-    if targets:
-        return targets
-    return [(None, _display_host("127.0.0.1"), api_port)] if api_port else []
-
-
-def _example_route_and_body(config_path):
-    """(route, body dict) for the curl example -- read from the workflow function's
-    own signature when possible, falling back to the historical `main`/`query` shape."""
-    entrypoint = workflow_entrypoint(config_path)
-    if not entrypoint:
-        return WORKFLOW_ROUTE, {DEFAULT_QUERY_PARAM: "your question here"}
-
-    fn_name, params = entrypoint
-    if not params:
-        return fn_name, {DEFAULT_QUERY_PARAM: "your question here"}
-    return fn_name, {name: "your query" for name, _ in params}
 
 
 def _curl_example(url, body):
@@ -420,8 +361,9 @@ def _curl_example(url, body):
     )
 
 
-def _summary_body(dashboard_url, targets, config_path):
-    """The contents that go inside the deploy panel"""
+def summary_body(dashboard_url, endpoint):
+    """Build the deploy panel's text: the dashboard URL, and how to call and poll the
+    endpoint described by its published record, when there is one."""
     body = Text()
     body.append("Dashboard  ", "dim")
     if dashboard_url:
@@ -429,27 +371,27 @@ def _summary_body(dashboard_url, targets, config_path):
     else:
         body.append("not running -- start it with `canyonos serve`", WHITE)
 
-    route, example = _example_route_and_body(config_path)
-    for name, host, port in targets:
-        base = f"http://{host}:{port}"
-        body.append("\n")
-        if name:
-            body.append(f"\n{name}", f"bold {WHITE}")
-        body.append("\n")
-        body.append(_curl_example(f"{base}/{route}", example), WHITE)
+    if endpoint:
+        host, api_port = endpoint["public_host"], endpoint["api_port"]
+        base = f"http://{host}:{api_port}"
+        example = {name: "your query" for name in endpoint["arguments"]}
+        body.append("\n\n")
+        body.append(_curl_example(endpoint["url"], example), WHITE)
         body.append("\npoll       ", "dim")
         body.append(f"curl {base}/status/<request_id>", WHITE)
         if host not in ("127.0.0.1", "localhost"):
-            body.append(f"\n           needs inbound TCP {port} open on {host}", "dim")
+            body.append(
+                f"\n           needs inbound TCP {api_port} open on {host}", "dim"
+            )
     return body
 
 
-def _print_deploy_summary(dashboard_url, targets, config_path):
-    """The one screen printed once everything is up: dashboard and workflow endpoints."""
+def _print_deploy_summary(dashboard_url, endpoint):
+    """The one screen printed once everything is up: the dashboard and the endpoint."""
     ui.blank()
     ui.panel(
         Panel(
-            _summary_body(dashboard_url, targets, config_path),
+            summary_body(dashboard_url, endpoint),
             title=f"[bold {GREEN}]Deploy is live[/]",
             title_align="left",
             border_style=GREEN,
@@ -475,13 +417,17 @@ def _start_dashboard(report_failure=True):
     return result.url
 
 
-def _deploy_summary(state, api_port, config_path, serve, on_ready):
+def _deploy_summary(state, serve, on_ready):
     on_ready(True)
-    summary = (
-        _start_dashboard() if serve else None,
-        workflow_targets(state["port"], api_port),
-        config_path,
-    )
+    dashboard = _start_dashboard() if serve else None
+    try:
+        endpoint = deployed_endpoint(state["port"])
+    except GCError:
+        ui.warn(
+            "Could not read the running deploy's endpoint. Run `canyonos logs` to see why."
+        )
+        endpoint = None
+    summary = (dashboard, endpoint)
     _print_deploy_summary(*summary)
     ui.hint(
         "Run `canyonos logs` to view logs, or `canyonos stop` to stop the workflow."
@@ -495,7 +441,7 @@ def _interrupted():
     ui.hint("To resubscribe to log stream run `canyonos logs`.")
 
 
-def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
+def _tail_verbose(lines, state, serve, on_ready):
     """Every log line, verbatim, until the workflow is up -- what `-v` restores.
 
     Lines are echoed rather than summarized, but the same tracker decides what
@@ -503,7 +449,7 @@ def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
     """
     tracker = PhaseTracker()
     deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
-    for line in _drain(lines, state, deadline=deadline, hide_status_requests=False):
+    for line in drain(lines, state, deadline=deadline, hide_status_requests=False):
         print(line, end="")
         _, _, is_error = tracker.parse_line(line)
         if is_error:
@@ -512,11 +458,8 @@ def _tail_verbose(lines, state, api_port, config_path, serve, on_ready):
                 f"Deploy failed: {tracker.explain_failure(line)} "
                 "Automatic cleanup will be attempted; see the log above for the cause."
             )
-        # Logged exactly once, right after the workflow finishes coming up --
-        # and only when this deploy is the one saying it. Inside a quoted
-        # container log the same words belong to the agent, not to us.
-        if _UP_MARKER in line and not tracker.in_container_log:
-            return _deploy_summary(state, api_port, config_path, serve, on_ready)
+        if UP_MARKER in line and not tracker.in_container_log:
+            return _deploy_summary(state, serve, on_ready)
 
     raise RuntimeError(
         "Deploy stopped or timed out before the workflow became ready. "
@@ -531,9 +474,9 @@ def _echo_until_the_deploy_is_gone(lines, state):
 
     The global controller tears its agents down on the way out, which takes
     seconds; quitting the moment the verdict lands kills it mid-teardown and
-    leaves the agent containers, Redis and the workflow's port behind.
+    leaves the agent containers, Redis and the endpoint's port behind.
     """
-    for line in _drain(
+    for line in drain(
         lines,
         state,
         deadline=time.monotonic() + _REVEAL_GRACE_SECONDS,
@@ -542,7 +485,7 @@ def _echo_until_the_deploy_is_gone(lines, state):
         print(line, end="")
 
 
-def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
+def _tail_quiet(lines, state, serve, on_ready):
     """Only the phase transitions, until the workflow is up or something fails.
 
     Nothing is echoed raw: the buildx transcript, canyonos' bare prints and grpc's
@@ -565,7 +508,7 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
     stalled = False
     with ui.status("Deploying agents...") as spinner:
         deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
-        for line in _drain(lines, state, deadline=deadline, heartbeat=True):
+        for line in drain(lines, state, deadline=deadline, heartbeat=True):
             if line is None:
                 idle = time.monotonic() - last_output
                 if idle > _IDLE_WARN_SECONDS:
@@ -587,10 +530,7 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
                 ui.ok(done)
             if message:
                 spinner.update(message)
-            # Logged exactly once, right after the workflow finishes coming up --
-            # and only when this deploy is the one saying it. Inside a quoted
-            # container log the same words belong to the agent, not to us.
-            if _UP_MARKER in line and not tracker.in_container_log:
+            if UP_MARKER in line and not tracker.in_container_log:
                 summary_line, all_ready = tracker.agents_ready_message()
                 (ui.ok if all_ready else ui.warn)(summary_line)
                 if not all_ready:
@@ -607,7 +547,7 @@ def _tail_quiet(lines, state, api_port, config_path, serve, on_ready):
                 break
 
     if reached_up_marker:
-        return _deploy_summary(state, api_port, config_path, serve, on_ready)
+        return _deploy_summary(state, serve, on_ready)
 
     _reveal_failure(lines, recent, state, root_cause)
     raise RuntimeError(
@@ -641,7 +581,7 @@ def _still_running(tracker, last_line, idle):
     )
 
 
-def _queued_lines(stream):
+def queued_lines(stream):
     """Feed `stream` into a queue, terminated by None, so reads can time out.
 
     A failed build leaves the log stream open and silent -- the deploy is only a
@@ -663,7 +603,7 @@ def _queued_lines(stream):
     return lines
 
 
-def _drain(lines, state, deadline=None, hide_status_requests=True, heartbeat=False):
+def drain(lines, state, deadline=None, hide_status_requests=True, heartbeat=False):
     """Yield log lines until the stream ends, the deploy dies, or `deadline` passes.
 
     With `heartbeat`, also yields None on each silent poll that finds the deploy
@@ -726,7 +666,7 @@ def _reveal_failure(lines, recent, state, root_cause=None):
     for buffered in recent:
         print(buffered, end="")
 
-    for line in _drain(lines, state, deadline=time.monotonic() + _REVEAL_GRACE_SECONDS):
+    for line in drain(lines, state, deadline=time.monotonic() + _REVEAL_GRACE_SECONDS):
         print(line, end="")
 
     if root_cause:
@@ -738,12 +678,9 @@ def _reveal_failure(lines, recent, state, root_cause=None):
     ui.hint("Run `canyonos deploy -v` or `canyonos logs` for the full container log.")
 
 
-def _stream_logs_and_autoserve(state, api_port, config_path, serve, verbose, on_ready):
-    """Tail the GC container's logs until the workflow is up, then start the
-    dashboard (unless disabled via `serve=False`), print where everything
-    lives, and stop tailing.
-    """
-    process = subprocess.Popen(
+def follow_gc_log(state):
+    """Start `docker logs -f` on the Global Controller container and return the process."""
+    return subprocess.Popen(
         # By name, not the id in `state`: a concurrent redeploy/quit can replace
         # the container behind the same name/port before this line runs. The
         # explicit env pins it to the engine that container actually lives on.
@@ -754,12 +691,20 @@ def _stream_logs_and_autoserve(state, api_port, config_path, serve, verbose, on_
         text=True,
         bufsize=1,
     )
+
+
+def _stream_logs_and_autoserve(state, serve, verbose, on_ready):
+    """Tail the GC container's logs until the workflow is up, then start the
+    dashboard (unless disabled via `serve=False`), print where everything
+    lives, and stop tailing.
+    """
+    process = follow_gc_log(state)
     try:
-        lines = _queued_lines(process.stdout)
+        lines = queued_lines(process.stdout)
         if verbose:
-            _tail_verbose(lines, state, api_port, config_path, serve, on_ready)
+            _tail_verbose(lines, state, serve, on_ready)
         else:
-            _tail_quiet(lines, state, api_port, config_path, serve, on_ready)
+            _tail_quiet(lines, state, serve, on_ready)
     except KeyboardInterrupt:
         _interrupted()
     finally:

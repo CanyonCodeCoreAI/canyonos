@@ -114,7 +114,7 @@ curl -X POST http://127.0.0.1:8080/main \
   -d '{"query":"your query"}'
 ```
 
-Then poll `http://127.0.0.1:8080/status/<request_id>`. Workflow containers
+Then poll `http://127.0.0.1:8080/status/<request_id>`. Agent containers
 send their traces to the host API, and the Vite dashboard shows them.
 
 ### A few quirks
@@ -126,9 +126,9 @@ while it runs with `curl -X POST http://localhost:3000/canyonos/projects
 - API and web edits reload while the command is running. Core edits need
 `bun run canyonos:dev` again and a workflow redeploy.
 - The default ports are API `3000`, web `5173`, Postgres `5432`, Mailpit `1025`
-and `8025`, workflow `8080`, and workflow Redis `6379`. Stop or reconfigure
-anything already using one of them. The workflow ports are the `api_port` and
-`redis_port` defaults of its config; if it declares another `redis_port`,
+and `8025`, endpoint `8080`, and workflow Redis `6379`. Stop or reconfigure
+anything already using one of them. The workflow ports are the `endpoint.api_port`
+and `redis_port` defaults of its config; if it declares another `redis_port`,
 register it with that port. `CANYONOS_REDIS_PORT` is only the default Redis:
 the one read at startup and for projects that never registered.
 - This is the fast host-dashboard loop. Use `canyonos deploy` with the image

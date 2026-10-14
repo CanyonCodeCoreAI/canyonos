@@ -1,8 +1,11 @@
 import json
+import queue
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
+from canyonos import deploy as deploy_cmd
 from canyonos import test as test_cmd
 from canyonos import ui, verify
 
@@ -14,12 +17,23 @@ agents:
     replicas: 2
 
   - name: Workflow
-    type: workflow
-    workflow_file: echo_workflow.py
-    api_port: 8080
+    entrypoint: echo_workflow.py
     provider: EC2
     replicas: 1
+
+endpoint:
+  api_port: 8080
+  agent: Workflow
+  method: main
 """
+ENDPOINT = {
+    "public_host": "127.0.0.1",
+    "api_port": 8080,
+    "agent": "Workflow",
+    "method": "main",
+    "arguments": ["query", "n_candidates"],
+    "url": "http://127.0.0.1:8080/main",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -48,8 +62,6 @@ def project(monkeypatch, tmp_path):
 
 @pytest.fixture
 def runtime(monkeypatch):
-    monkeypatch.setattr(verify.gc, "workflow_endpoints", lambda _port: [])
-
     def install(images, containers):
         monkeypatch.setattr(verify, "_built_images", lambda: set(images))
         monkeypatch.setattr(verify, "_running_containers", lambda: list(containers))
@@ -69,7 +81,7 @@ def test_a_complete_deploy_passes(project, runtime):
     runtime(IMAGES, ALL_UP)
 
     result = verify.verify_runtime(
-        str(project / ".car" / "config" / "global_controller.yaml"), 8000
+        str(project / ".car" / "config" / "global_controller.yaml")
     )
 
     assert [(a["name"], a["running"], a["expected"]) for a in result["agents"]] == [
@@ -83,7 +95,7 @@ def test_a_short_replica_count_fails(project, runtime):
 
     with pytest.raises(RuntimeError, match="1 of 2 replicas"):
         verify.verify_runtime(
-            str(project / ".car" / "config" / "global_controller.yaml"), 8000
+            str(project / ".car" / "config" / "global_controller.yaml")
         )
 
 
@@ -94,19 +106,8 @@ def test_an_image_that_was_never_built_fails(project, runtime):
         RuntimeError, match="canyonos-portfolio-echoagent was never built"
     ):
         verify.verify_runtime(
-            str(project / ".car" / "config" / "global_controller.yaml"), 8000
+            str(project / ".car" / "config" / "global_controller.yaml")
         )
-
-
-def test_the_workflow_endpoint_falls_back_to_the_configured_port(project, runtime):
-    runtime(IMAGES, ALL_UP)
-
-    result = verify.verify_runtime(
-        str(project / ".car" / "config" / "global_controller.yaml"), 8000
-    )
-
-    assert result["agents"][0]["endpoint"] is None
-    assert result["agents"][1]["endpoint"] == "127.0.0.1:8080"
 
 
 # ------------------------------------------------------------------ #
@@ -123,11 +124,9 @@ def deployable(monkeypatch, project):
         test_cmd, "load_state", lambda: {"container_id": "abc", "port": 8000}
     )
     monkeypatch.setattr(test_cmd, "deploy_status", lambda *_a: None)
-    monkeypatch.setattr(test_cmd, "_wait_for_workflow", lambda *a: None)
+    monkeypatch.setattr(test_cmd, "_wait_for_endpoint", lambda *a: None)
     monkeypatch.setattr(test_cmd, "verify_runtime", lambda *a: {"agents": []})
-    monkeypatch.setattr(
-        test_cmd, "workflow_targets", lambda *a: [("Workflow", "127.0.0.1", 8080)]
-    )
+    monkeypatch.setattr(test_cmd, "deployed_endpoint", lambda _port: ENDPOINT)
     monkeypatch.setattr(test_cmd, "_send_query", lambda *a: "req-1")
     monkeypatch.setattr(
         test_cmd, "_await_result", lambda *a: {"status": "done", "result": {"r": 1}}
@@ -180,7 +179,7 @@ def test_a_failed_deploy_keeps_the_container_and_reads_its_log(
     def boom(*_a):
         raise RuntimeError("the deploy did not come up")
 
-    monkeypatch.setattr(test_cmd, "_wait_for_workflow", boom)
+    monkeypatch.setattr(test_cmd, "_wait_for_endpoint", boom)
 
     assert test_cmd.run_test("hi", as_json=True) == 1
     payload = json.loads(capsys.readouterr().out)
@@ -214,7 +213,18 @@ def test_queries_the_existing_deploy_instead_of_standing_up_its_own(
 ):
     """When a deploy is already up, `canyonos test` queries it as it stands
     rather than refusing -- and must not deploy or tear anything down."""
+    deployed = {
+        "public_host": "127.0.0.1",
+        "api_port": 9090,
+        "agent": "Other",
+        "method": "run",
+        "arguments": [],
+        "url": "http://127.0.0.1:9090/run",
+    }
+    sent = []
     monkeypatch.setattr(test_cmd, "deploy_status", lambda *_a: {"running": True})
+    monkeypatch.setattr(test_cmd, "deployed_endpoint", lambda _port: deployed)
+    monkeypatch.setattr(test_cmd, "_send_query", lambda *a: sent.append(a) or "req-1")
 
     assert test_cmd.run_test("hi", as_json=True) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -225,6 +235,7 @@ def test_queries_the_existing_deploy_instead_of_standing_up_its_own(
     assert payload["result"] == {"r": 1}
     # The query is the only phase in this path.
     assert [(p["name"], p["ok"]) for p in payload["phases"]] == [("query", True)]
+    assert sent == [("http://127.0.0.1:9090/run", {})]
 
 
 def test_json_mode_prints_one_object_and_nothing_else(deployable, capsys):
@@ -273,55 +284,34 @@ def test_a_flat_layout_project_deploys_fine_with_no_car_directory(
 
 
 # ------------------------------------------------------------------ #
-#  Query body derived from the workflow signature                     #
+#  Query body derived from the endpoint record                        #
 # ------------------------------------------------------------------ #
-
-
-def _write_workflow(project, source):
-    (project / ".car" / "app" / "echo_workflow.py").write_text(source)
-    return str(project / ".car" / "config" / "global_controller.yaml")
-
-
-def test_query_body_uses_the_real_entrypoint_param_name(project):
-    config = _write_workflow(
-        project,
-        "def run(ticker):\n    return {}\n\ndeploy(run)\n",
-    )
-
-    route, body = test_cmd._query_route_and_body(config, "AAPL")
-
-    assert route == "run"
-    assert body == {"ticker": "AAPL"}
-
-
-def test_query_body_maps_prompt_to_first_param_and_keeps_defaults(project):
-    config = _write_workflow(
-        project,
-        "def main(query, n_candidates=5):\n    return {}\n\ndeploy(main)\n",
-    )
-
-    route, body = test_cmd._query_route_and_body(config, "hi")
-
-    assert route == "main"
-    assert body == {"query": "hi", "n_candidates": 5}
-
-
-def test_query_body_falls_back_to_query_when_introspection_fails(project):
-    # No workflow file on disk -> workflow_entrypoint returns None.
-    config = str(project / ".car" / "config" / "global_controller.yaml")
-
-    route, body = test_cmd._query_route_and_body(config, "hi")
-
-    assert route == test_cmd.WORKFLOW_ROUTE
-    assert body == {"query": "hi"}
 
 
 # ------------------------------------------------------------------ #
 #  Docker plumbing                                                    #
 # ------------------------------------------------------------------ #
 
+_GC = "INFO:canyonos_core.controller.global_controller:"
+_UP = f"{_GC}Global controller started, polling every 5s...\n"
 
-def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(monkeypatch):
+
+@pytest.fixture
+def followed_log(monkeypatch):
+    """`docker logs -f` as a queue the test fills; None ends the stream."""
+    lines = queue.Queue()
+    monkeypatch.setattr(
+        test_cmd,
+        "follow_gc_log",
+        lambda _state: SimpleNamespace(stdout=None, terminate=lambda: None),
+    )
+    monkeypatch.setattr(test_cmd, "queued_lines", lambda _stdout: lines)
+    return lines
+
+
+def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(
+    monkeypatch, followed_log
+):
     log = (
         "Building Docker image: echoagent\n"
         "ERROR:opentelemetry.exporter:ingest unreachable\n"
@@ -336,7 +326,7 @@ def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(monkeypatc
     )
 
     with pytest.raises(RuntimeError) as err:
-        test_cmd._wait_for_workflow({"port": 1, "container_id": "cid"}, 2)
+        test_cmd._wait_for_endpoint({"port": 1, "container_id": "cid"}, 2)
 
     assert str(err.value) == "Timed out after 0s waiting for the workflow to come up."
     assert err.value.root_cause == (
@@ -345,7 +335,9 @@ def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(monkeypatc
     )
 
 
-def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(monkeypatch):
+def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(
+    monkeypatch, followed_log
+):
     log = (
         "WARNING:canyonos_core.controller.global_controller:"
         "--- begin container log: Workflow (localhost:8001) status=initializing ---\n"
@@ -353,12 +345,11 @@ def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(monkeypatch):
         "CRITICAL:canyonos_core:Controller readiness failed: Agent replica(s) "
         "failed to become healthy within 361s: Workflow 0/1\n"
     )
-    polls = iter([True] * 40 + [False])
+    polls = iter([True] * 40 + [False] * 2)
     seen = []
-    monkeypatch.setattr(test_cmd, "POLL_INTERVAL", 0)
-    monkeypatch.setattr(test_cmd, "_workflow_ready", lambda *_a: False)
+    monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0)
     monkeypatch.setattr(
-        test_cmd, "deploy_status", lambda _port: {"running": next(polls)}
+        deploy_cmd, "deploy_status", lambda _port: {"running": next(polls)}
     )
 
     def docker_logs(argv, **kwargs):
@@ -369,7 +360,7 @@ def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(monkeypatch):
     state = {"port": 1, "container_id": "cid", "docker_socket": "/tmp/docker.sock"}
 
     with pytest.raises(RuntimeError) as err:
-        test_cmd._wait_for_workflow(state, 2)
+        test_cmd._wait_for_endpoint(state, 2)
 
     assert str(err.value) == "The deploy stopped before the workflow came up."
     assert err.value.root_cause.endswith("Workflow 0/1")

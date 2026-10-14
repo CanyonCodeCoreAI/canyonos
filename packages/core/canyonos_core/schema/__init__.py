@@ -18,12 +18,12 @@ from canyonos_core.schema.functions import BUILTIN_TYPE_NAMES
 from canyonos_core.schema.manifest import (
     AgentService,
     DatabaseService,
+    EndpointSpec,
     Manifest,
     OtelDestination,
     OtelSpec,
     RedisSpec,
     Resources,
-    WorkflowService,
     load_manifest,
 )
 
@@ -32,6 +32,7 @@ __all__ = [
     "BUILTIN_TYPE_NAMES",
     "DatabaseService",
     "DependencyPinConflict",
+    "EndpointSpec",
     "Manifest",
     "OtelDestination",
     "OtelSpec",
@@ -39,7 +40,6 @@ __all__ = [
     "Resources",
     "SchemaError",
     "SchemaViolation",
-    "WorkflowService",
     "check_project",
     "load_manifest",
     "render_violation",
@@ -81,10 +81,9 @@ def _missing_sources(manifest, manifest_path, source_dir):
     violations = []
     real_source_dir = os.path.realpath(source_dir)
     for index, service in enumerate(manifest.agents):
-        key = {"agent": "entrypoint", "workflow": "workflow_file"}.get(service.type)
-        if key is None:
+        if service.type != "agent":
             continue
-        source = os.path.join(source_dir, getattr(service, key))
+        source = os.path.join(source_dir, service.entrypoint)
         if not os.path.isfile(source):
             problem = f"{_as_typed(source)} does not exist"
         elif (
@@ -95,7 +94,7 @@ def _missing_sources(manifest, manifest_path, source_dir):
         else:
             continue
         violations.append(
-            SchemaViolation(manifest_path, 0, f"agents[{index}].{key}", problem)
+            SchemaViolation(manifest_path, 0, f"agents[{index}].entrypoint", problem)
         )
     return violations
 
@@ -107,7 +106,7 @@ def check_project(manifest_path, source_dir=None):
     it did not parse.
 
     `source_dir` is the project root the manifest's paths are relative to.
-    Given one, the entrypoint and workflow file each service declares must
+    Given one, the entrypoint each agent declares must
     exist under it; left out, nothing on disk is checked.
     """
     manifest = None

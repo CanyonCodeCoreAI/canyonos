@@ -1,7 +1,6 @@
-"""Regressions for four independent defects found reviewing the CAN-316 diff."""
+"""Regressions for three independent defects found reviewing the CAN-316 diff."""
 
 import os
-import socket
 import subprocess
 import sys
 import unittest
@@ -10,9 +9,6 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.reconciler.providers.Local import (
-    _runtime as local_runtime,
-)
 from canyonos_core.reconciler import providers
 from canyonos_core.controller.local_controller import LocalController
 
@@ -50,35 +46,6 @@ class AgentStartupOrderTests(unittest.TestCase):
             LocalController()
 
         self.assertEqual(order, ["gateway", "agent"])
-
-
-class WorkflowPortPreflightTests(unittest.TestCase):
-    def test_a_local_port_is_probed_on_the_host_not_our_own_loopback(self):
-        """The controller runs in a container on a bridge network, so its own
-        localhost is not where workflow ports are published."""
-        probed = []
-
-        def fake_connection(address, timeout=None):
-            probed.append(address)
-            raise OSError("refused")
-
-        with patch.object(socket, "create_connection", fake_connection):
-            self.assertFalse(local_runtime._port_check("localhost", 8080))
-            self.assertFalse(local_runtime._port_check("127.0.0.1", 8080))
-
-        self.assertEqual(probed, [(local_runtime.HOST_GATEWAY, 8080)] * 2)
-
-    def test_a_remote_host_is_still_probed_directly(self):
-        probed = []
-
-        def fake_connection(address, timeout=None):
-            probed.append(address)
-            raise OSError("refused")
-
-        with patch.object(socket, "create_connection", fake_connection):
-            self.assertFalse(local_runtime._port_check("10.0.0.5", 8080))
-
-        self.assertEqual(probed, [("10.0.0.5", 8080)])
 
 
 class RuntimeReuseScanTests(unittest.TestCase):

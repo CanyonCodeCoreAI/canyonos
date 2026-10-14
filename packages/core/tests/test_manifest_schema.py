@@ -1,10 +1,8 @@
 """The manifest schema decides what `global_controller.yaml` may say.
 
-Before it existed, an unknown key was ignored, `replicas: "2"` blew up inside
-the instance manager once containers were already being launched, and a
-workflow with no `workflow_file` was warned about and then skipped while the
-deploy reported success. Every test here is one of those turned into a
-rejection with a file, a line and a field.
+Before it existed, an unknown key was ignored and `replicas: "2"` blew up inside
+the instance manager once containers were already being launched. Every test
+here is one of those turned into a rejection with a file, a line and a field.
 """
 
 import glob
@@ -25,7 +23,6 @@ from canyonos_core.schema import (
     DatabaseService,
     SchemaError,
     SchemaViolation,
-    WorkflowService,
     load_manifest,
     render_violation,
 )
@@ -49,9 +46,28 @@ def _agent(**overrides):
     return entry
 
 
+def _endpoint(**overrides):
+    block = {"agent": "ExampleAgent", "method": "work"}
+    block.update(overrides)
+    return {"agents": [_agent()], "endpoint": block}
+
+
+# An agent the required endpoint can serve, so the agent under test is free to be broken.
+SERVED_AGENT = _agent(name="Served", entrypoint="agents/served.py")
+SERVED_ENDPOINT = {"agent": "Served", "method": "work"}
+ENDPOINT_YAML = "endpoint: {agent: ExampleAgent, method: work}\n"
+
+
 class _ManifestCase(unittest.TestCase):
     def load(self, config, filename="global_controller.yaml"):
-        """Write a manifest to a scratch project and load it."""
+        """Write a manifest to a scratch project and load it; one without an
+        `endpoint` gets `SERVED_AGENT` and an endpoint serving it."""
+        if "endpoint" not in config:
+            config = {
+                **config,
+                "agents": [*config["agents"], SERVED_AGENT],
+                "endpoint": SERVED_ENDPOINT,
+            }
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, filename)
             with open(path, "w") as f:
@@ -111,9 +127,9 @@ class UnknownKeyTests(_ManifestCase):
             {
                 "agents": [
                     {
-                        "name": "Workflow",
-                        "type": "workflow",
-                        "workflow_file": "workflow/example_workflow.py",
+                        "name": "StateDB",
+                        "type": "database",
+                        "image": "postgres:16-alpine",
                         "entrypoint": "agents/example_agent.py",
                     }
                 ]
@@ -122,7 +138,7 @@ class UnknownKeyTests(_ManifestCase):
 
         self.assertEqual(violation.field, "agents[0].entrypoint")
         self.assertEqual(
-            violation.message, "key 'entrypoint' is not valid for type 'workflow'"
+            violation.message, "key 'entrypoint' is not valid for type 'database'"
         )
 
     def test_an_unknown_nested_key_is_rejected(self):
@@ -185,29 +201,21 @@ class ServiceIdentityTests(_ManifestCase):
         manifest = self.load(
             {
                 "agents": [
-                    {
-                        "name": "portfolio-workflow",
-                        "type": "workflow",
-                        "workflow_file": "workflow/w.py",
-                    },
                     {"name": "postgres-db", "type": "database", "image": "postgres:16"},
                 ]
             }
         )
 
-        self.assertEqual(
-            [service.name for service in manifest.agents],
-            ["portfolio-workflow", "postgres-db"],
-        )
+        self.assertEqual(manifest.agents[0].name, "postgres-db")
 
     def test_only_an_agent_declares_functions(self):
         violation = self.one(
             {
                 "agents": [
                     {
-                        "name": "Workflow",
-                        "type": "workflow",
-                        "workflow_file": "workflow/w.py",
+                        "name": "StateDB",
+                        "type": "database",
+                        "image": "postgres:16",
                         "functions": [{"name": "work"}],
                     }
                 ]
@@ -217,55 +225,22 @@ class ServiceIdentityTests(_ManifestCase):
         self.assertEqual(violation.field, "agents[0].functions")
 
 
-class LoadConfigParityTests(_ManifestCase):
-    """The gate rejects everything cli._load_config's own checks reject.
-
-    _run_build validates before it loads, so a manifest the schema passed but
-    _load_config then refused would escape as a RuntimeError traceback instead
-    of a one-line violation.
-    """
-
-    def _workflow(self, **overrides):
-        entry = {
-            "name": "Workflow",
-            "type": "workflow",
-            "workflow_file": "workflow/example_workflow.py",
-        }
-        entry.update(overrides)
-        return {"agents": [entry]}
-
+class PortAndResourceTests(_ManifestCase):
     def test_a_port_outside_the_tcp_range_is_rejected(self):
         for field, value in (
-            ("api_port", 0),
             ("redis_port", 65536),
             ("host_port", 70000),
-            ("dashboard_port", 65536),
+            ("host_port", "8000"),
         ):
             with self.subTest(field=field, value=value):
-                violation = self.one(self._workflow(**{field: value}))
+                violation = self.one({"agents": [_agent(**{field: value})]})
                 self.assertEqual(violation.field, f"agents[0].{field}")
                 self.assertIn("between 1 and 65535", violation.message)
 
     def test_the_highest_port_is_accepted(self):
-        manifest = self.load(self._workflow(api_port=65535))
+        manifest = self.load({"agents": [_agent(redis_port=65535)]})
 
-        self.assertEqual(manifest.agents[0].api_port, 65535)
-
-    def test_a_local_workflow_cannot_be_replicated(self):
-        violation = self.one(self._workflow(replicas=2))
-
-        self.assertEqual(violation.field, "agents[0].replicas")
-        self.assertIn("same api_port", violation.message)
-
-    def test_an_ec2_workflow_can_be_replicated(self):
-        manifest = self.load(
-            {
-                **self._workflow(replicas=2, provider="EC2", instance_type="t3.micro"),
-                "ec2": _EC2_BLOCK,
-            }
-        )
-
-        self.assertEqual(manifest.agents[0].replicas, 2)
+        self.assertEqual(manifest.agents[0].redis_port, 65535)
 
     def test_resources_are_positive_numbers(self):
         manifest = self.load({"agents": [_agent(resources={"cpu": 0.5})]})
@@ -316,12 +291,6 @@ class EntrypointTests(_ManifestCase):
         self.assertEqual(violation.field, "agents[0].entrypoint")
         self.assertEqual(violation.message, "is required but missing")
 
-    def test_a_workflow_without_a_workflow_file_is_rejected(self):
-        violation = self.one({"agents": [{"name": "Workflow", "type": "workflow"}]})
-
-        self.assertEqual(violation.field, "agents[0].workflow_file")
-        self.assertEqual(violation.message, "is required but missing")
-
     def test_a_windows_rooted_entrypoint_is_rejected(self):
         # posixpath reads all three as relative names inside the project.
         for entrypoint in (
@@ -333,22 +302,6 @@ class EntrypointTests(_ManifestCase):
                 violation = self.one({"agents": [_agent(entrypoint=entrypoint)]})
                 self.assertEqual(violation.field, "agents[0].entrypoint")
                 self.assertIn("must be relative to the project", violation.message)
-
-    def test_a_windows_rooted_workflow_file_is_rejected(self):
-        violation = self.one(
-            {
-                "agents": [
-                    {
-                        "name": "Workflow",
-                        "type": "workflow",
-                        "workflow_file": "C:\\flows\\workflow.py",
-                    }
-                ]
-            }
-        )
-
-        self.assertEqual(violation.field, "agents[0].workflow_file")
-        self.assertIn("must be relative to the project", violation.message)
 
     def test_an_entrypoint_outside_the_project_is_rejected(self):
         for entrypoint, expected in (
@@ -391,7 +344,7 @@ class DatabaseServiceTests(_ManifestCase):
             self._database(db_port=5433, volume_path="/var/lib/postgresql/data")
         )
 
-        (service,) = manifest.agents
+        service = manifest.agents[0]
         self.assertIsInstance(service, DatabaseService)
         self.assertEqual(service.db_port, 5433)
         self.assertEqual(service.volume_path, "/var/lib/postgresql/data")
@@ -399,8 +352,6 @@ class DatabaseServiceTests(_ManifestCase):
 
 class ProviderTests(_ManifestCase):
     def test_a_provider_in_any_casing_is_normalized(self):
-        # cli._load_config accepts these and rewrites them to the spelling the
-        # runtimes compare against; the gate in front of it does the same.
         for provider, normalized in (("LOCAL", "local"), ("Local", "local")):
             with self.subTest(provider=provider):
                 manifest = self.load({"agents": [_agent(provider=provider)]})
@@ -506,23 +457,19 @@ class DefaultsTests(_ManifestCase):
     def test_every_default_materializes(self):
         manifest = self.load(
             {
+                **_endpoint(),
                 "agents": [
                     _agent(),
-                    {
-                        "name": "Workflow",
-                        "type": "workflow",
-                        "workflow_file": "workflow/example_workflow.py",
-                    },
                     {
                         "name": "StateDB",
                         "type": "database",
                         "image": "postgres:16-alpine",
                     },
-                ]
+                ],
             }
         )
 
-        agent, workflow, database = manifest.agents
+        agent, database = manifest.agents
         self.assertEqual(manifest.poll_interval, 5)
         self.assertEqual(manifest.cleanup_interval, 10)
         self.assertEqual(manifest.redis.host, "localhost")
@@ -540,9 +487,8 @@ class DefaultsTests(_ManifestCase):
         self.assertFalse(agent.stateful)
         self.assertEqual(agent.requirements, ())
 
-        self.assertIsInstance(workflow, WorkflowService)
-        self.assertEqual(workflow.api_port, 8080)
-        self.assertEqual(workflow.dashboard_port, 8081)
+        self.assertEqual(manifest.endpoint.api_port, 8080)
+        self.assertEqual(manifest.dashboard_port, 8081)
 
         self.assertIsInstance(database, DatabaseService)
         self.assertEqual(database.db_port, 5432)
@@ -747,7 +693,7 @@ class RetiredKeyTests(unittest.TestCase):
                 "agents:\n"
                 "  - name: ExampleAgent\n"
                 "    entrypoint: agents/example_agent.py\n"
-                "    functions: [{name: work}]\n" + text
+                "    functions: [{name: work}]\n" + text + ENDPOINT_YAML
             )
             with self.assertRaises(SchemaError) as raised:
                 load_manifest(path)
@@ -776,24 +722,15 @@ class EnvExpansionTests(_ManifestCase):
     """
 
     def test_an_env_ref_in_a_numeric_field_is_rejected_even_when_it_is_set(self):
-        config = {
-            "agents": [
-                {
-                    "name": "Workflow",
-                    "type": "workflow",
-                    "workflow_file": "workflow/example_workflow.py",
-                    "api_port": "${CANYONOS_TEST_API_PORT}",
-                }
-            ]
-        }
+        config = {"agents": [_agent(redis_port="${CANYONOS_TEST_REDIS_PORT}")]}
 
-        with patch.dict(os.environ, {"CANYONOS_TEST_API_PORT": "9000"}):
+        with patch.dict(os.environ, {"CANYONOS_TEST_REDIS_PORT": "6380"}):
             violation = self.one(config)
 
-        self.assertEqual(violation.field, "agents[0].api_port")
+        self.assertEqual(violation.field, "agents[0].redis_port")
         self.assertEqual(
             violation.message,
-            "expected an integer between 1 and 65535, got '${CANYONOS_TEST_API_PORT}' "
+            "expected an integer between 1 and 65535, got '${CANYONOS_TEST_REDIS_PORT}' "
             "(environment references are only supported in string fields)",
         )
 
@@ -955,7 +892,7 @@ class ListItemLineTests(unittest.TestCase):
     def _violations(self, text):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "global_controller.yaml")
-            Path(path).write_text(text)
+            Path(path).write_text(text + ENDPOINT_YAML)
             with self.assertRaises(SchemaError) as raised:
                 load_manifest(path)
         return raised.exception.violations
@@ -1011,7 +948,7 @@ class NonFiniteNumberTests(unittest.TestCase):
                 "agents:\n"
                 "  - name: ExampleAgent\n"
                 "    entrypoint: agents/example_agent.py\n"
-                "    functions: [{name: work}]\n" + field_text
+                "    functions: [{name: work}]\n" + field_text + ENDPOINT_YAML
             )
             with self.assertRaises(SchemaError) as raised:
                 load_manifest(path)
@@ -1113,7 +1050,7 @@ class UnparseableFileTests(unittest.TestCase):
                 "    functions: [{name: work}]\n"
                 "    env:\n"
                 "      1: a\n"
-                "      '1': b\n"
+                "      '1': b\n" + ENDPOINT_YAML
             )
             with self.assertRaises(SchemaError) as raised:
                 load_manifest(path)

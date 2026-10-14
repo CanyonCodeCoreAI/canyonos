@@ -66,7 +66,7 @@ We use the following libraries in CanyonOS and require a minimum version if your
 
 If your code imports any of these, it must allow this version or newer. Older isn't supported, sorry!
 
-`grpcio>=1.76.0` · `protobuf>=6.31.1` · `redis>=3.5` · `flask>=2.3.3` (workflow only)
+`grpcio>=1.76.0` · `protobuf>=6.31.1` · `redis>=3.5`
 
 </details>
 
@@ -87,11 +87,10 @@ Deploy is live
 
 Dashboard  http://127.0.0.1:8081
 
-Workflow
 curl -X POST http://127.0.0.1:8080/main -H "Content-Type: application/json" -d '{"query": "your query"}'
 poll       curl http://127.0.0.1:8080/status/<request_id>
 ```
-- If you forget an endpoint, run `canyonos status` to see them all.
+- If you forget the endpoint, run `canyonos status` to see it.
 - Every `canyonos deploy` automatically tears down any previous deploy on this machine, from any project, so you can also just redeploy directly.
 - If the deploy fails before it comes up, it is torn down automatically (unlike `canyonos test`, which leaves the containers up).
 
@@ -101,7 +100,7 @@ When you deploy, CanyonOS automatically generates a REST API endpoint for the wo
 
 To check that the workflow deployed correctly, run `canyonos test "A test query"` to send a query through it.
 
-To send requests manually, use the printed endpoint (`canyonos status` also shows it). The path is your workflow function's name (`main` below), and the JSON body holds that function's arguments (`query` below):
+To send requests manually, use the printed endpoint (`canyonos status` also shows it). The path is the method name of the agent behind the endpoint (`main` below), and the JSON body holds that method's arguments (`query` below):
 
 ```bash
 curl -X POST http://localhost:8080/main \

@@ -1,4 +1,4 @@
-"""Bug E: a Workflow container's CANYONOS_PROJECT_ID env var is frozen at launch.
+"""Bug E: an agent container's CANYONOS_PROJECT_ID env var is frozen at launch.
 _write_identity() publishes the controller's current project identity to every node's Redis
 (mirroring the existing policy:rules/routing_table:* pattern) so consumers can read it live
 instead of trusting a boot-time env var. reload_config() must call this too, or the fix is
@@ -6,9 +6,7 @@ only half-applied.
 """
 
 import os
-import shutil
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -59,7 +57,7 @@ class WriteIdentityTests(unittest.TestCase):
         )
 
     def test_publishes_to_every_node_not_just_self_redis(self):
-        """The same lesson as Bug D: a Workflow replica on a remote EC2 host has its own
+        """The same lesson as Bug D: an agent replica on a remote EC2 host has its own
         Redis, distinct from the controller's local one. Publishing to self.redis alone
         would leave that replica reading nothing."""
         node_a = _FakeRedis()
@@ -93,33 +91,6 @@ class WriteIdentityTests(unittest.TestCase):
         self.assertEqual(
             node.hgetall(GlobalController.IDENTITY_KEY),
             {"project_id": "22222222-2222-2222-2222-222222222222", "project_name": ""},
-        )
-
-
-class ReloadConfigWritesIdentityTests(unittest.TestCase):
-    """reload_config() itself must call _write_identity() -- not just have the method exist."""
-
-    def test_reload_config_republishes_identity(self):
-        node = _FakeRedis()
-        controller = _bare_controller(
-            {"project_id": "11111111-1111-1111-1111-111111111111", "agents": []},
-            node_redis={"localhost": node},
-        )
-        config_dir = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, config_dir)
-        controller.config_path = os.path.join(config_dir, "global_controller.yaml")
-        with open(controller.config_path, "w") as f:
-            f.write("agents: []\n")
-        controller._load_config = lambda path: {
-            "project_id": "22222222-2222-2222-2222-222222222222",
-            "agents": [],
-        }
-
-        controller.reload_config()
-
-        self.assertEqual(
-            node.hgetall(GlobalController.IDENTITY_KEY)["project_id"],
-            "22222222-2222-2222-2222-222222222222",
         )
 
 

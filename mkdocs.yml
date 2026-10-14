@@ -27,6 +27,7 @@ nav:
       - Overview: architecture/README.md
       - CLI: architecture/CLI.md
       - Controller: architecture/CONTROLLER.md
+      - Endpoint: architecture/ENDPOINT.md
       - LLM gateway: architecture/LLM_GATEWAY.md
       - Machine metrics poller: architecture/MACHINE_METRICS_POLLER.md
       - OTLP exporter: architecture/OTLP_EXPORTER.md
@@ -41,3 +42,4 @@ nav:
 plugins:
   - search
   - include-markdown
+  - mermaid2

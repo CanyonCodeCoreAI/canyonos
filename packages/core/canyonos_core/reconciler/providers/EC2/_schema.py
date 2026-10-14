@@ -19,4 +19,3 @@ AGENT_KEYS = {
     "instance_type": (str, True),
     "market_type": (str, False),
 }
-SINGLE_REPLICA_WORKFLOWS = False

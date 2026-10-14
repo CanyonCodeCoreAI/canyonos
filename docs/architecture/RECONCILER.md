@@ -44,6 +44,7 @@ removing index 1 leaves a hole the same pass's fill step provisions into.
 | `routing_table:services` / `:endpoints` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
 | `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness check |
 | `controller:{host}:{port}:status` | string | the agent's `LocalController` | GlobalController only — deliberately not a health signal |
+| `endpoint:address` | hash | GlobalController — `_apply_config`, deleted once a drain empties the fleet | dashboard API |
 
 The first five are owned here; the rest is pre-existing observed state this reads. Desired
 state and records live on the **primary** client (`context.redis`); `controller:*` metrics

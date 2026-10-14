@@ -20,7 +20,7 @@ REPO_ROOT="$(cd "$E2E_DIR/../.." && pwd)"
 API_URL="http://127.0.0.1:3000"
 DASHBOARD_DB="canyonos-dashboard-db-1"
 DASHBOARD_API="canyonos-dashboard-api-1"
-REDIS_ROUTES="prompts scaling/agents monitoring/replicas monitoring/endpoints"
+REDIS_ROUTES="prompts scaling/agents monitoring/replicas monitoring/endpoint"
 
 if [ -f "$E2E_DIR/.env" ]; then
   set -a
@@ -108,7 +108,7 @@ AWS_REGION=us-east-1
 EOF
 HELLO_REDIS="$(config_port helloworld local_redis_port)"
 PORTFOLIO_REDIS="$(config_port portfolio local_redis_port)"
-HELLO_API="http://127.0.0.1:$(config_port helloworld workflow_api_port)"
+HELLO_API="http://127.0.0.1:$(config_port helloworld endpoint_api_port)"
 [ "$HELLO_REDIS" != "$PORTFOLIO_REDIS" ] || fail "both projects use Redis port $HELLO_REDIS"
 
 step "Building canyonos-core:dev, canyonos-api:dev and canyonos-web:dev"
@@ -166,8 +166,8 @@ api GET "/projects/$HELLO_ID/scaling/agents" >/dev/null
 grep -q '"name":"HelloAgent","replicas_expected":1,"replicas_running":1' "$ARTIFACTS_DIR/api-response.json" ||
   fail "helloworld's scaling agents do not come from its Redis: $(cat "$ARTIFACTS_DIR/api-response.json")"
 
-step "Query the helloworld workflow at $HELLO_API"
-python3 "$E2E_DIR/query.py" "$HELLO_API" "hello" 60 >"$ARTIFACTS_DIR/helloworld-result.json"
+step "Query the helloworld endpoint at $HELLO_API"
+python3 "$E2E_DIR/query.py" "$HELLO_API" main query hello 60 >"$ARTIFACTS_DIR/helloworld-result.json"
 grep -q "greeting" "$ARTIFACTS_DIR/helloworld-result.json" || fail "helloworld returned no greeting"
 
 step "canyonos quit helloworld leaves portfolio and the dashboard"

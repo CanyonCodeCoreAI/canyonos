@@ -98,13 +98,23 @@ agents:
           type: str
 
   - name: Workflow
-    type: workflow
-    workflow_file: workflow/portfolio_workflow.py
-    api_port: 8080
+    entrypoint: agents/workflow.py
     provider: local
     replicas: 1
     redis_port: 6379
     requirements: []
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: dict
+
+endpoint:
+  api_port: 8080
+  agent: Workflow
+  method: main
 
 poll_interval: 4
 

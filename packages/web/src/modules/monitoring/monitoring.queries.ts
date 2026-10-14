@@ -2,7 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 
 import type { MetricsWindow } from '@canyonos/api/metrics';
 import type {
-  MonitoringEndpointsResponse,
+  MonitoringEndpointResponse,
   MonitoringErrorSummaryResponse,
   MonitoringReplicasResponse,
   MonitoringSeriesResponse,
@@ -19,7 +19,7 @@ export const monitoringQueryKeys = {
   series: (project_id: string, time_window: MetricsWindow) =>
     ['projects', project_id, 'monitoring', 'series', time_window] as const,
   replicas: (project_id: string) => ['projects', project_id, 'monitoring', 'replicas'] as const,
-  endpoints: (project_id: string) => ['projects', project_id, 'monitoring', 'endpoints'] as const,
+  endpoint: (project_id: string) => ['projects', project_id, 'monitoring', 'endpoint'] as const,
   errorSummary: (project_id: string, time_window: MetricsWindow) =>
     ['projects', project_id, 'monitoring', 'errors', 'summary', time_window] as const,
 };
@@ -47,12 +47,12 @@ export const replicasQueryOptions = (project_id: string) =>
   });
 
 // Polled so a deploy or a teardown flips the running badge without a reload.
-export const endpointsQueryOptions = (project_id: string) =>
+export const endpointQueryOptions = (project_id: string) =>
   queryOptions({
-    queryKey: monitoringQueryKeys.endpoints(project_id),
+    queryKey: monitoringQueryKeys.endpoint(project_id),
     queryFn: () =>
-      apiCall<MonitoringEndpointsResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.endpoints.get()
+      apiCall<MonitoringEndpointResponse>(() =>
+        forgeAuthApi.projects[project_id]!.monitoring.endpoint.get()
       ),
     refetchInterval: DASHBOARD_POLL_INTERVAL_MS,
     retry: false,

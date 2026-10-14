@@ -15,7 +15,7 @@ behavior; do not invent limits that refuse real calls.
 - Find the active `global_controller.yaml`. Write `llms.yaml` and `scaling.yaml`
   beside it: `.car/config/` for a ported project, or `config/` for the source
   layout. Respect an explicitly chosen destination.
-- Trace each manifest entry's entrypoint and the workflow. For a `.car` project,
+- Trace each manifest entry's entrypoint. For a `.car` project,
   inspect `.car/app`, since that is the deployed source.
 - Read existing `llms.yaml` and `scaling.yaml` first. Keep their entries, names
   and other fields; change only what the source contradicts or the developer asked.
@@ -51,8 +51,6 @@ Follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
 - Write one entry per model, named after the model. List **every** agent that
   calls it. An agent missing from an `agents` list is refused with a 403, so an
   incomplete list breaks the app. If any caller is uncertain, write no entry.
-- Never give a model the workflow calls an `agents` list: the workflow container
-  has no agent name, so the gateway refuses all of its calls to that model.
 - Leave every cap empty unless the developer supplies a dollar amount. A cap is
   checked against the worst case, input bytes / 4 plus the full output limit, so a
   guessed cap refuses calls that would have been cheap.
@@ -67,7 +65,7 @@ Follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
 Follow [Autoscaling](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/SCALING.md).
 
 - Write policies only for `type: agent` entries that step 2 found scalable.
-  Never scale the workflow or a database entry.
+  Never scale a database entry.
 - `min_replicas` is the entry's current `replicas`. Use
   `requests_per_minute_per_replica` for request-bound agents and
   `queue_length_total` for agents whose calls queue behind slow work.

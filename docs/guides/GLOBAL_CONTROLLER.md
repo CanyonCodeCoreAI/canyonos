@@ -20,7 +20,7 @@ Either way, run `canyonos deploy` again to apply the change.
 
 ## A small example
 
-This file runs one agent that looks up stock prices, and the workflow that calls it:
+This file runs one agent that looks up stock prices, and the `Workflow` agent that calls it:
 
 ```yaml
 agents:
@@ -40,9 +40,17 @@ agents:
           type: dict
 
   - name: Workflow
-    type: workflow
-    workflow_file: workflow/portfolio_workflow.py
-    api_port: 8080
+    entrypoint: agents/workflow.py
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+
+endpoint:
+  api_port: 8080
+  agent: Workflow
+  method: main
 
 env_file: .env
 ```
@@ -52,8 +60,10 @@ Reading it top to bottom:
 - `PriceAgent` is an agent whose code is in `agents/price_agent.py`. CanyonOS runs two
   copies of it, each with one CPU core and 256 MB of memory, and installs `yfinance`
   into it. `functions` lists the methods the workflow calls on it, here `get_price`.
-- `Workflow` is the workflow. It's the part of your app that receives requests, on
-  port `8080`, and calls your agents to answer them.
+- `Workflow` is the agent that takes each request and calls your other agents to
+  answer it. Its `functions` list `main`, the method the endpoint serves.
+- `endpoint` is the web address CanyonOS serves for you, on port `8080`. A request to
+  `POST /main` runs the `main` method of the `Workflow` class.
 - `env_file` points at a `.env` file. Every piece of your app gets its variables, so
   that's where API keys go.
 
@@ -65,7 +75,6 @@ Everything CanyonOS runs is one entry in `agents`, and every entry needs a `name
 | `type` | What it is | What it needs |
 |---|---|---|
 | `agent` (the default) | A Python class that does one job in your app | `entrypoint`: the file the class is in |
-| `workflow` | The code that takes a request and calls your agents to answer it | `workflow_file`: the file with its `main` function |
 | `database` | A ready-made database, such as Postgres | `image`: the Docker image to run, for example `postgres:16-alpine` |
 
 An agent's `name` must match its class name, so `PriceAgent` runs the `PriceAgent`
@@ -80,7 +89,7 @@ class in its `entrypoint` file.
 
 ### What to install
 
-- `requirements`: the Python packages your agent or workflow imports, like
+- `requirements`: the Python packages your agent imports, like
   `[yfinance, pandas]`. CanyonOS installs these into that entry only. It does not read
   your app's own `requirements.txt`, so list everything the entry needs here.
 
@@ -96,8 +105,6 @@ class in its `entrypoint` file.
   `env_file`.
 - `stateful`: set to `true` if a copy keeps information in memory between calls in the
   same request. CanyonOS then sends every call in that request to the same copy.
-- For a workflow, `api_port` is where it receives requests (default `8080`), and
-  `dashboard_port` is where the dashboard opens (default `8081`).
 - For a database, `db_port` is the port it listens on (default `5432`), and
   `volume_path` is a folder inside it whose data should survive a redeploy.
 
@@ -107,6 +114,10 @@ These go at the top level of the file, next to `agents`:
 
 - `env_file`: a `.env` file whose variables every entry gets. Put API keys here, not
   in the YAML.
+- `endpoint` (required): the web address requests arrive at. `api_port` is its port
+  (default `8080`), and `agent` and `method` name the agent method served at
+  `POST /<method>`. The method must be listed in that agent's `functions`.
+- `dashboard_port`: where the dashboard opens (default `8081`).
 - `ec2`: the AWS details used for every entry with `provider: EC2`: `region`,
   `subnet_id`, and `security_group_ids` are required; `ami_id` and `ssh_user` have
   defaults. See [EC2 deployment](EC2.md).
@@ -155,9 +166,9 @@ Keys every entry accepts:
 | Key | Default | Notes |
 |---|---|---|
 | `name` | required | Must equal the class name in the entrypoint. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one manifest is a duplicate and the deploy is rejected. |
-| `type` | `agent` | One of `agent`, `workflow`, `database`. |
+| `type` | `agent` | One of `agent`, `database`. |
 | `provider` | `local` | `local` or `EC2`, in any casing. |
-| `replicas` | `1` | Integer, at least 1. A database must be 1, and so must a `local` workflow. |
+| `replicas` | `1` | Integer, at least 1. A database must be 1. |
 | `redis_port` | `6379` | Host port of the Redis this service talks to. Entries on one host must agree. |
 | `resources.cpu` | `1` | Passed to `docker run --cpus`. |
 | `resources.memory` | `512` | MiB, passed to `--memory`. |
@@ -175,15 +186,6 @@ Agent entries add:
 | `entrypoint` | required | `.py` path relative to `.car/app`, no `..`, not absolute. Holds the class named `name`. |
 | `requirements` | `[]` | One PEP 508 requirement per item. See [Per-image requirements](#per-image-requirements). |
 | `functions` | `[]` | The methods other services can call; an agent without any cannot be called. See [Agent functions](#agent-functions). |
-
-Workflow entries add:
-
-| Key | Default | Notes |
-|---|---|---|
-| `workflow_file` | required | `.py` path relative to `.car/app`, same rules as `entrypoint`. |
-| `requirements` | `[]` | Same rules. The agents' lists do not apply here. |
-| `api_port` | `8080` | Host port where the workflow's HTTP API is published. |
-| `dashboard_port` | `8081` | Host port of the local dashboard. |
 
 Database entries add:
 
@@ -216,6 +218,10 @@ instead of an in-process store, and the agent no longer needs
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
 | `ec2` | none | Required when any entry uses `provider: EC2`. See [EC2 deployment](EC2.md). |
+| `endpoint.api_port` | `8080` | Host port of the HTTP endpoint, published on the machine that runs `canyonos deploy`. |
+| `endpoint.agent` | required | The entry of type `agent` the endpoint serves. |
+| `endpoint.method` | required | One of that agent's `functions`, served at `POST /<method>`. |
+| `dashboard_port` | `8081` | Host port of the local dashboard. |
 | `ssh_private_key_path` | `~/.ssh/canyonos_ec2` | The key every SSH connection to a remote host uses. |
 
 `database` used to be a top-level key. It is retired: the schema rejects it
@@ -273,11 +279,19 @@ agents:
           type: str
 
   - name: Workflow
-    type: workflow
-    workflow_file: email_workflow.py
-    api_port: 8080
+    entrypoint: email_workflow.py
     requirements:
       - langgraph
+    functions:
+      - name: main
+        arguments:
+          - name: thread
+            type: str
+
+endpoint:
+  api_port: 8080
+  agent: Workflow
+  method: main
 
 poll_interval: 5
 
@@ -339,16 +353,16 @@ or `Optional[str]` is a schema error. Every declared argument is required at
 the call site; stubs have no defaults.
 
 At runtime `returns.type` is documentation. The runtime JSON-encodes a `dict`
-or `list` result and turns anything else into a string, and a workflow always
+or `list` result and turns anything else into a string, and a calling agent always
 receives text back, so `dict` or `list` tells the caller to `json.loads` it.
 
 ### Per-image requirements
 
 Each image installs the platform's base list plus that entry's
 `requirements`, and nothing else. The base list is `grpcio>=1.76.0`,
-`protobuf>=6.31.1`, `redis>=3.5`, plus `flask>=2.3.3` for the workflow image.
-The build caps those four below the next major it has tested (`grpcio<2`,
-`protobuf<7`, `redis<9`, `flask<4`) unless your list asks for newer, which
+`protobuf>=6.31.1` and `redis>=3.5`.
+The build caps those three below the next major it has tested (`grpcio<2`,
+`protobuf<7`, `redis<9`) unless your list asks for newer, which
 only warns. A pin below the base floor, such as `protobuf<5`, fails the build
 before Docker runs. The LLM gateway has its own virtualenv in the image, so its
 pins never meet yours.
@@ -365,7 +379,7 @@ list. Stop at another service's `entrypoint`: that module is a stub in this
 image, so nothing behind it runs here. A package `__init__.py` on the way is
 real and runs first, so its imports count too.
 
-`requirements: []` on the workflow entry means the workflow module and
-everything it imports at module level needs nothing beyond the base list. The
-workflow container is the only one serving HTTP, so if it dies at import the
-deployment has no entry point.
+`requirements: []` on the endpoint's target agent means its module and
+everything it imports at module level needs nothing beyond the base list. Every
+request starts in that agent, so if it dies at import the deployment cannot
+answer any.

@@ -84,7 +84,7 @@ class Future(object):
         # 64-bit, so there's no 128-bit uuid4 to truncate later.
         self.id = secrets.token_hex(8)
 
-        # Grab the request_id from the thread-local context (set by deploy)
+        # Grab the request_id from the thread-local context (set by the endpoint)
         self.request_id = canyonos_context.get_request_id()
 
         # this provides the funtionality we need to execute

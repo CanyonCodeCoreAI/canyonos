@@ -6,9 +6,9 @@
     "agents/metrics_agent.py": "724fd2ec2c128a3d47964ecfb80e237f549e546ce89883e96bea3ba4a9b55bcc",
     "agents/price_agent.py": "9a9e3429f928a498e2435f1af64ab134e6daba291364b2d898068e449261c674",
     "agents/risk_agent.py": "53c86a0a24fe3967757d1c276300880064741ebd30406ad50b44770afa717733",
-    "config/global_controller.yaml": "a2d13f65cb14ba78e3e9cba6392dafe83002b8cf44dd723a94513493b5f2ab3b",
+    "config/global_controller.yaml": "a1a6d778c34288d541874b62975dcb6177abae81f02f77e30078b9c154c16df4",
     "config/policy.yaml": "bfdb448cc296689df90ef757b0e24c225313b0db6b6f16596721b44d7d21abcd",
-    "workflow/portfolio_workflow.py": "e9daf369db9bdc2975d5fa668f74c123710fc045579465289ae27c2e108a8b96"
+    "agents/workflow.py": "7b34a6ec85cb2d980c8832a98b83c8bdee38b32ca41ae3db899f6d6bdca31d81"
   },
   "version": 1
 }

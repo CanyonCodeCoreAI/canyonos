@@ -27,11 +27,13 @@ from canyonos_core.controller.controller_context import (
     list_instances,
 )
 from canyonos_core.controller import scaling
+from canyonos_core.endpoint import ADDRESS_KEY, endpoint_record
 from canyonos_core.scaling import contract
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import (
+    CONTROLLER_IMAGE,
     metrics_container_name,
     project_label_args,
     redis_container_name,
@@ -47,7 +49,7 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 )
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
-from canyonos_core.schema.manifest import load_manifest
+from canyonos_core.schema import SchemaError, check_project, load_manifest
 from canyonos_core.schema.yaml_lines import load_yaml_lines
 
 # Add generated grpc_stubs from the local project to the path. Projects using
@@ -69,13 +71,7 @@ DRAIN_TIMEOUT_SECONDS = 30
 LOCAL_NETWORK = "canyonos-local"
 GLOBAL_CONTROLLER_LOG_SOURCE = "Global Controller"
 
-# Set by the CLI to the image the GC itself runs. No default: guessing one means
-# silently running a stale image that need not hold the code this GC was built from.
-CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
-
-# How long a replica may stay short of "healthy" before the deploy is called dead. It
-# must cover the slowest honest cold start, so the workflow launcher's
-# stub_generator.WORKFLOW_READY_TIMEOUT_SECONDS must not undercut it.
+# How long a replica may stay short of "healthy" before the deploy is called dead; covers the slowest cold start.
 CONTROLLER_READY_TIMEOUT_SECONDS = 360
 
 # Statuses a container publishes on its way out. Nothing republishes over them, so
@@ -154,7 +150,9 @@ class GlobalController(ControllerContext):
             self._launch_redis_containers()
             # One machine-level metrics collector per host (best-effort, local hosts only).
             self._launch_metrics_collectors()
-            self._apply_config(self._read_config_folder())
+            self._apply_config(
+                self._read_config_folder(), load_manifest(self.config_path)
+            )
             # A teardown killed mid-drain leaves the flag set; clear it or the fleet stays at zero.
             state.clear_draining(self.redis)
             logger.info(
@@ -338,10 +336,12 @@ class GlobalController(ControllerContext):
 
     def reload_config(self):
         """Re-read the config, republish the spec, and let the reconciler converge.
-        If the config fails the schema check, raises SchemaError before changing anything."""
+        Raises SchemaError, changing nothing, when the edited config is invalid."""
         logger.info("Reloading config from %s", self.config_path)
+        manifest, violations = check_project(self.config_path)
+        if violations:
+            raise SchemaError(violations)
         # Parse every file before writing anything, so a broken one leaves Redis untouched.
-        load_manifest(self.config_path)
         config_files = self._read_config_folder()
         self.config = self._load_config(self.config_path)
         self.env_file_path = resolve_env_file(self.config)
@@ -350,7 +350,7 @@ class GlobalController(ControllerContext):
         for name in previous - set(self.agent_specs):
             self.redis.delete(state.desired_key(name))
         self.poll_interval = self.config.get("poll_interval", 5)
-        self._apply_config(config_files)
+        self._apply_config(config_files, manifest)
         self._request_reconcile(state.WAKE_ALL)
 
         # Only meaningful if the exporter was already running.
@@ -360,14 +360,20 @@ class GlobalController(ControllerContext):
         ):
             self._write_otel_destinations(destinations)
 
-    def _apply_config(self, config_files):
-        """Publish the loaded config to Redis: agent specs, replica counts, policies, identity."""
+    def _apply_config(self, config_files, manifest):
+        """Publish the loaded config to Redis: agent specs, replica counts, policies,
+        identity, and where callers reach the endpoint, read from the validated
+        `manifest`."""
         write_config_specs(self.controllers, self.redis)
         # The YAML is authoritative, so this overwrites any runtime scale.
         self._apply_configured_replicas()
         # Overwrites any dashboard edits, except prompts: the dashboard API owns prompts:config.
         self._write_policies(*config_files)
         self._write_identity()
+        record = endpoint_record(manifest)
+        self.redis.hset_multiple(
+            ADDRESS_KEY, {**record, "arguments": json.dumps(record["arguments"])}
+        )
 
     def _load_policy_rules(self):
         """Load policy rules from config/policy.yaml."""
@@ -1410,7 +1416,8 @@ class GlobalController(ControllerContext):
         return self.stop()
 
     def _drain_instances(self, timeout=DRAIN_TIMEOUT_SECONDS, interval=1):
-        """Have the reconciler remove every instance. True once none are left."""
+        """Have the reconciler remove every instance, then forget the endpoint's address.
+        True once none are left."""
         state.set_draining(self.redis)
         state.request_reconcile(self.redis)
         deadline = time.time() + timeout
@@ -1423,6 +1430,7 @@ class GlobalController(ControllerContext):
                 logger.warning("Failed to read instance records while draining: %s", e)
                 return False
             if not remaining:
+                self.redis.delete(ADDRESS_KEY)
                 logger.info("All agent instances drained.")
                 return True
             if time.time() >= deadline:

@@ -22,7 +22,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `database: is no longer used` | The retired top-level `database` key is still in the manifest |
 | `currently requires protobuf<...` during the build | A requirement pins a base package below the platform floor |
 | `Deploy failed: generated grpc_stubs are missing or not importable` | The generated `*_pb2.py` modules do not import in the controller, usually a protobuf runtime mismatch |
-| `Port ... already in use` | The workflow `api_port`, a database `db_port` or the Redis port is taken by something else, often a previous deployment that was killed |
+| `Port ... already in use` | The endpoint `api_port`, a database `db_port` or the Redis port is taken by something else, often a previous deployment that was killed |
 
 ## A container exits or serves nothing
 
@@ -35,11 +35,11 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `ModuleNotFoundError` for a distribution this entry's code never imports | The entrypoint's package `__init__.py` or a sibling module imports it. It ships in this image, so its dependency has to be declared here |
 | `ImportError` in a peer container for a name from another agent's module | That agent's package `__init__.py` re-exports from its entrypoint, which is a stub here. `CAR-PACKAGE-REEXPORT` |
 | `attempted relative import with no known parent package` | The entrypoint uses relative imports. It is loaded as a top-level module. Make its own imports absolute |
-| `SyntaxError` on the workflow's import of an agent | An entrypoint path segment is not a Python identifier |
-| A model call runs at container start, before any request | Module-level code in the entrypoint or workflow performs a real run |
-| An agent runs inside the workflow process instead of its container | The workflow imported the class from a module that is not the agent's `entrypoint` path or its basename at the root. `CAR-WORKFLOW-STUB-IMPORT` |
+| `SyntaxError` on an import of an agent | An entrypoint path segment is not a Python identifier |
+| A model call runs at container start, before any request | Module-level code in the entrypoint performs a real run |
+| An agent runs inside the caller's process instead of its container | The caller imported the class from a module that is not the agent's `entrypoint` path or its basename at the root |
 | Calls meant for one agent reach another | Two entries share an `entrypoint`, or two entrypoints share a basename, so one stub overwrote the other |
-| A module of the application vanished or changed | Its name at the root of the copy matches a platform runtime module (`future.py`, `deploy.py`, `local_controller.py`, ...) and was overwritten. `CAR-FLAT-COLLISION` |
+| A module of the application vanished or changed | Its name at the root of the copy matches a platform runtime module (`future.py`, `local_controller.py`, ...) and was overwritten. `CAR-FLAT-COLLISION` |
 | A file of the application is missing from the image | It is hidden, a symlink, private key material, or one of the reserved root names. The build printed a note or warning about it |
 | `import local_controller` fails on a protobuf version check | The image resolved a protobuf below what the generated modules need. Check the requirement that dragged it down |
 | Missing credentials while the agent loads | `env_file` is unset, points elsewhere, or the code reads a different variable name |
@@ -55,7 +55,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `missing ... required positional argument` | `functions` does not declare a parameter the method requires, or the caller did not send it |
 | `Unauthorized: Policy denied access to service` | The first matching policy rule, or no rule at all, excludes that service |
 | `.value()` returns text that looks like a dict | Expected. Results travel as strings; `json.loads` it |
-| `returned a result that cannot be sent as JSON` | The workflow returned framework objects. Convert to plain types first |
+| `is not JSON serializable` | The agent returned framework objects. Convert to plain types first |
 | The response holds `<...Future object at 0x...>` | `main` formatted a `Future` (`str`, f-string, `json.dumps`) before resolving it. Call `.value()` first |
 | Redis holds a coroutine `repr` instead of a result | The agent method is `async def`. `CAR-ADAPTER-ASYNC` |
 | Fan-out is no faster than sequential | Dispatch and `.value()` were fused in one comprehension |
@@ -63,13 +63,13 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | Wrong results under load | Concurrent calls share one instance; state on `self` is not thread-safe |
 | A model call reaches the provider directly | The SDK is not one of the three the gateway routes (Gemini, Cohere, Azure, ...), or the client was built with an explicit `base_url`. See [LLM gateway](LLM_GATEWAY.md) |
 
-## Workflow endpoint
+## Endpoint
 
 | Symptom | Likely cause |
 |---|---|
-| `404` while the workflow container is healthy | The route is `/<function name>`; the caller posted to a different path. The managed platform posts to `/main` only |
+| `404` while the deploy is up | The route is `/<method>`, with `method` from the `endpoint` block; the caller posted to a different path |
 | `400 Invalid JSON in request body` or `Request body must be a JSON object` | The body is not a JSON object |
-| Function argument missing | The body did not carry it. The managed platform sends only `query` |
+| Method argument missing | The body did not carry it |
 
 ## `canyonos test` fails
 

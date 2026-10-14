@@ -4,7 +4,7 @@ Every model call an agent makes goes through the LLM gateway that runs next to i
 gateway can limit which agents may use a model and how much a single call may cost.
 Without any setup, every agent can call every model.
 
-Every agent and workflow container runs its own copy of `llm_gateway`. OpenAI,
+Every agent container runs its own copy of `llm_gateway`. OpenAI,
 Anthropic and Bedrock calls from your code go through it, which is how
 CanyonOS collects token usage and cost per request without changing the
 calling code.

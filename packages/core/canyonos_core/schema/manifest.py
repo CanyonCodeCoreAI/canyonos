@@ -18,6 +18,7 @@ from canyonos_core.controller.utils.config_env import (
     expand_env_value,
     load_root_dotenv,
 )
+from canyonos_core.endpoint import ENDPOINT_PORT, SERVICE_NAME
 from canyonos_core.reconciler import providers
 from canyonos_core.schema._checks import (
     _ENV_REF_HINT,
@@ -47,7 +48,7 @@ from canyonos_core.schema.otel_destinations import (
 )
 from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
 
-SERVICE_TYPES = ("agent", "workflow", "database")
+SERVICE_TYPES = ("agent", "database")
 
 # Every provider's agent keys, all optional here, so any entry may set them.
 _PROVIDER_AGENT_KEYS = {
@@ -70,17 +71,10 @@ _COMMON_SERVICE_KEYS = frozenset(
     }
 )
 _AGENT_KEYS = _COMMON_SERVICE_KEYS | {"entrypoint", "requirements", "functions"}
-_WORKFLOW_KEYS = _COMMON_SERVICE_KEYS | {
-    "workflow_file",
-    "requirements",
-    "api_port",
-    "dashboard_port",
-}
 _DATABASE_KEYS = _COMMON_SERVICE_KEYS | {"image", "db_port", "volume_path"}
-_ALL_SERVICE_KEYS = _AGENT_KEYS | _WORKFLOW_KEYS | _DATABASE_KEYS
+_ALL_SERVICE_KEYS = _AGENT_KEYS | _DATABASE_KEYS
 _SERVICE_KEYS_BY_TYPE = {
     "agent": _AGENT_KEYS,
-    "workflow": _WORKFLOW_KEYS,
     "database": _DATABASE_KEYS,
 }
 
@@ -96,8 +90,11 @@ _MANIFEST_KEYS = frozenset(
         "otel",
         "ssh_private_key_path",
         *(schema.SECTION for schema in providers.SCHEMAS.values() if schema.SECTION),
+        "endpoint",
+        "dashboard_port",
     }
 )
+_ENDPOINT_KEYS = frozenset({"api_port", "agent", "method"})
 _REDIS_KEYS = frozenset({"host", "port", "db"})
 # Keys that used to mean something and now do nothing, each with the message
 # that tells a user carrying one what to do instead.
@@ -151,6 +148,15 @@ class OtelSpec:
 
 
 @dataclass(frozen=True)
+class EndpointSpec:
+    """The managed HTTP endpoint configuration: the agent method it serves."""
+
+    agent: str
+    method: str
+    api_port: int = ENDPOINT_PORT
+
+
+@dataclass(frozen=True)
 class _Service:
     """Fields shared by every service entry in `agents`."""
 
@@ -178,19 +184,6 @@ class AgentService(_Service):
 
 
 @dataclass(frozen=True)
-class WorkflowService(_Service):
-    """An `agents:` entry of type `workflow`: a workflow file served as an HTTP API."""
-
-    workflow_file: str = ""
-    requirements: tuple = ()
-    requirement_lines: tuple = field(default=(), compare=False, repr=False)
-    api_port: int = 8080
-    dashboard_port: int = 8081
-
-    type: ClassVar[str] = "workflow"
-
-
-@dataclass(frozen=True)
 class DatabaseService(_Service):
     """An `agents:` entry of type `database`: a stock database image."""
 
@@ -215,6 +208,8 @@ class Manifest:
     # `config.get("logs", True)` by both runtimes, hence the default.
     logs: bool = True
     otel: OtelSpec | None = None
+    endpoint: EndpointSpec | None = None
+    dashboard_port: int = 8081
     path: str = ""
 
 
@@ -323,11 +318,7 @@ def _service_type(collector, node, prefix):
 
 
 def _provider(collector, node, prefix):
-    """The provider in any casing, normalized to the spelling the runtimes compare.
-
-    cli._load_config accepts `LOCAL` or `ec2` and rewrites them the same way, so
-    the gate in front of it has to as well.
-    """
+    """The provider in any casing, normalized to the spelling the runtimes compare."""
     if "provider" not in node:
         return providers.DEFAULT
     value = _resolve(node["provider"])
@@ -385,29 +376,7 @@ def _service(collector, entries, index):
         f"is required when provider is {provider!r}",
     )
 
-    if service_type == "workflow":
-        if (
-            providers.SCHEMAS[provider].SINGLE_REPLICA_WORKFLOWS
-            and common["replicas"] > 1
-        ):
-            collector.add(
-                node,
-                "replicas",
-                _field(prefix, "replicas"),
-                f"a {provider} workflow runs as a single replica: every replica "
-                "would publish the same api_port",
-            )
-        service_class = WorkflowService
-        fields = {
-            "workflow_file": _project_relative_py(
-                collector, node, "workflow_file", prefix, required=True
-            ),
-            "requirements": _requirements(collector, node, prefix),
-            "requirement_lines": _item_lines(node, "requirements"),
-            "api_port": _port(collector, node, "api_port", prefix, 8080),
-            "dashboard_port": _port(collector, node, "dashboard_port", prefix, 8081),
-        }
-    elif service_type == "database":
+    if service_type == "database":
         if common["replicas"] != 1:
             collector.add(
                 node,
@@ -453,7 +422,8 @@ def _check_service_keys(collector, node, prefix, service_type):
 
 def _services(collector, node):
     """Parse the `agents` list in `global_controller.yaml`; two names that differ only
-    in case are a violation, since both would get the same image and container name."""
+    in case are a violation, since both would get the same image and container name,
+    and so is `endpoint`, the name of the HTTP endpoint's own replica."""
     if "agents" not in node or node["agents"] is None:
         collector.add(node, "agents", "agents", "is required but missing")
         return ()
@@ -478,7 +448,15 @@ def _services(collector, node):
     seen = {}
     for index, entry, service in parsed:
         key = service.name.lower()
-        if key in seen:
+        if key == SERVICE_NAME:
+            collector.add(
+                entry,
+                "name",
+                f"agents[{index}].name",
+                f"{service.name!r} is reserved for the HTTP endpoint container; "
+                "rename this service",
+            )
+        elif key in seen:
             collector.add(
                 entry,
                 "name",
@@ -545,6 +523,48 @@ def _otel(collector, node):
             )
         )
     return OtelSpec(destinations=tuple(destinations))
+
+
+def _endpoint(collector, node, services):
+    """Parse the required `endpoint` section: the agent method served over HTTP."""
+    if "endpoint" not in node or node["endpoint"] is None:
+        collector.add(
+            node,
+            "endpoint",
+            "endpoint",
+            "is required but missing; add it with the `agent` and `method` to serve "
+            "over HTTP",
+        )
+        return None
+    block = _mapping(collector, node, "endpoint", "", _ENDPOINT_KEYS)
+    if block is None:
+        return None
+    agent = _string(collector, block, "agent", "endpoint", required=True)
+    method = _string(collector, block, "method", "endpoint", required=True)
+    functions = {
+        service.name: {function.name for function in service.functions}
+        for service in services
+        if service.type == "agent"
+    }
+    if agent is not None and agent not in functions:
+        collector.add(
+            block,
+            "agent",
+            "endpoint.agent",
+            f"{agent!r} is not an `agents:` entry of type 'agent'",
+        )
+    elif agent in functions and method is not None and method not in functions[agent]:
+        collector.add(
+            block,
+            "method",
+            "endpoint.method",
+            f"{method!r} is not a `functions:` entry of {agent!r}",
+        )
+    return EndpointSpec(
+        agent=agent,
+        method=method,
+        api_port=_port(collector, block, "api_port", "endpoint", ENDPOINT_PORT),
+    )
 
 
 def _check_declared(collector, node, prefix, keys, missing="is required but missing"):
@@ -646,6 +666,8 @@ def load_manifest(path):
         env_file=_string(collector, document, "env_file", ""),
         logs=_boolean(collector, document, "logs", "", True),
         otel=_otel(collector, document),
+        endpoint=_endpoint(collector, document, services),
+        dashboard_port=_port(collector, document, "dashboard_port", "", 8081),
         path=path,
     )
     _check_provider_sections(collector, document, services)

@@ -19,6 +19,15 @@ agents:
     entrypoint: agents/example_agent.py
     provider: EC2
     instance_type: t3.micro
+    functions:
+      - name: run
+        arguments:
+          - name: query
+            type: str
+
+endpoint:
+  agent: ExampleAgent
+  method: run
 ```
 
 Required: `region`, `subnet_id`, `security_group_ids`, and `instance_type` on
@@ -42,10 +51,13 @@ The machine running `canyonos deploy` needs Docker, AWS credentials with
 `ec2:RunInstances`, `ec2:TerminateInstances`, `ec2:DescribeInstances`,
 `ec2:CreateTags` and `ec2:ImportKeyPair`, and a route to the instances'
 private IPs, which in practice means running inside the same VPC as
-`subnet_id`. The security group has to allow 22, 50051 and 6379 from itself
-and the workflow and dashboard ports (8080 and 8081 by default) from whoever
-calls the workflow. The EC2 provider README in `packages/core` has the exact
-IAM policy JSON.
+`subnet_id`. The instances' security group has to allow 22, 50051 and 6379
+from itself. The endpoint and dashboard run on the deploying machine, so it has
+to allow their ports (8080 and 8081 by default) from whoever calls the
+endpoint, and the gRPC port the endpoint publishes from the instances' security
+group: agents send results back there, and without it every request stays
+pending. The EC2 provider
+README in `packages/core` has the exact IAM policy JSON.
 
 Before provisioning, `canyonos deploy` checks the manifest schema, that the
 local Docker engine is reachable, and that the generated gRPC modules import.

@@ -274,8 +274,7 @@ export const deployments = pgTable(
     status: deployment_status('status').notNull().default('pending'),
     address: text('address'),
     error: text('error'),
-    // Teardown targets. Not `address` — that is the workflow replica's IP, a different host.
-    // Worker-only; absent from the public schemas on purpose.
+    // Teardown targets. Worker-only; absent from the public schemas on purpose.
     controller_instance_id: text('controller_instance_id'),
     controller_ip: text('controller_ip'),
     // Teardown's claim marker — `claimed_at` belongs to the deploy this row succeeded at.

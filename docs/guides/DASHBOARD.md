@@ -10,7 +10,7 @@ When you run `canyonos deploy`, the dashboard starts automatically and the deplo
 canyonos serve
 ```
 
-To use a different port, set `dashboard_port` on the workflow entry in `.car/config/global_controller.yaml`.
+To use a different port, set the top-level `dashboard_port` in `.car/config/global_controller.yaml`.
 
 ## Finding your run
 

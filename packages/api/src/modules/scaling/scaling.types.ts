@@ -34,7 +34,7 @@ export const ScalingPolicySchema = z
   });
 
 /**
- * The workflow's one policy as the controller sees it. `applied` is what the controller enforces
+ * The project's one policy as the controller sees it. `applied` is what the controller enforces
  * on every agent; `invalid` is a stored policy it skips, with the first rule it breaks.
  */
 export const ScalingStatusSchema = z.discriminatedUnion('status', [

@@ -11,14 +11,19 @@ import subprocess
 
 from canyonos import ui
 from canyonos.build import AGENTS
-from canyonos.constants import default_config_path, local_redis_port, port_in_use
+from canyonos.constants import (
+    default_config_path,
+    endpoint_answers,
+    local_redis_port,
+    port_in_use,
+)
 from canyonos.dashboard_stack import (
     _container_health,
     _container_name,
     _endpoint_healthy,
     _existing_dashboard_port,
 )
-from canyonos.gc import deploy_status
+from canyonos.gc import deploy_status, deployed_endpoint
 from canyonos.init import docker_running, docker_start_command, load_state
 from canyonos.verify import _runtime_table, agent_rows
 
@@ -105,7 +110,7 @@ def _redis_check():
     )
 
 
-def _agents_check(gc_port):
+def _agents_check():
     """Prints the workflow-agent readiness table (reusing the same rows and
     table `canyonos test` shows). True if there's nothing to check or every
     agent is ready.
@@ -115,11 +120,23 @@ def _agents_check(gc_port):
         ui.hint(f"No config at {config_path} -- skipping workflow agent checks")
         return True
 
-    rows = agent_rows(config_path, gc_port)
+    rows = agent_rows(config_path)
     if not rows:
         return True
     ui.panel(_runtime_table(rows))
     return all(row["ok"] for row in rows)
+
+
+def _endpoint_check(state):
+    """Any HTTP answer from the running deploy's endpoint counts, the same probe
+    `canyonos test` waits on."""
+    api_port = deployed_endpoint(state["port"])["api_port"]
+    return _print_check(
+        "Endpoint",
+        endpoint_answers(api_port),
+        f"127.0.0.1:{api_port}",
+        f"nothing answers on {api_port} -- run `canyonos deploy` again, or check `canyonos logs`",
+    )
 
 
 def _dashboard_checks():
@@ -168,7 +185,7 @@ def _guard(label, check):
 
 def _print_post_deploy(state, status):
     """Health-check every service the deploy declared, in dependency order:
-    the Global Controller, Redis, each workflow agent, then the dashboard --
+    the Global Controller, Redis, each workflow agent, the endpoint, then the dashboard --
     one readiness table instead of `docker ps`/`docker inspect` by hand.
 
     Every check runs (no short-circuit) and is guarded, so one failing or
@@ -177,7 +194,8 @@ def _print_post_deploy(state, status):
     results = [
         _guard("Global Controller", lambda: _gc_check(state, status)),
         _guard("Redis", _redis_check),
-        _guard("Workflow agents", lambda: _agents_check(state["port"])),
+        _guard("Workflow agents", _agents_check),
+        _guard("Endpoint", lambda: _endpoint_check(state)),
         _guard("Dashboard", _dashboard_checks),
     ]
     return all(results)

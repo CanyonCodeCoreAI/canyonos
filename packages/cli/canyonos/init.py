@@ -19,6 +19,7 @@ import urllib.request
 from pyfiglet import figlet_format
 
 from canyonos import env, project, ui
+from canyonos.constants import private_ip, public_ip
 from canyonos.docker_cmd import (
     DOCKER_PULL_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -294,6 +295,8 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
             f"Could not create Docker network {LOCAL_NETWORK}: "
             f"{network.stderr.strip() or network.stdout.strip()}"
         )
+    host_private_ip = private_ip()
+    host_public_ip = public_ip()
     _create_workspace_volume()
     for _ in range(max_attempts):
         _free_container_name()
@@ -336,6 +339,10 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
             "-e",
             f"{project.DOCKER_PROJECT_ENV}={project.project_name()}",
         ]
+        if host_private_ip:
+            cmd.extend(["-e", f"CANYONOS_PRIVATE_IP={host_private_ip}"])
+        if host_public_ip:
+            cmd.extend(["-e", f"CANYONOS_PUBLIC_IP={host_public_ip}"])
         cmd.append(image)  # image must come after all flags
         result = run_docker(
             cmd,

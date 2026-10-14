@@ -154,16 +154,16 @@ class ApplyScalingTests(unittest.TestCase):
         self.assertEqual(state.get_desired(controller.redis, "Alpha"), 2)
         self.assertEqual(state.get_desired(controller.redis, "Beta"), 1)
 
-    def test_the_workflow_is_not_scaled(self):
+    def test_a_database_is_not_scaled(self):
         controller = _controller(
-            POLICY, {"Workflow": {"name": "Workflow", "type": "workflow"}}
+            POLICY, {"StateDB": {"name": "StateDB", "type": "database"}}
         )
-        state.set_desired(controller.redis, "Workflow", 1)
-        _fill_window(controller, 1, 20, agent="Workflow")
+        state.set_desired(controller.redis, "StateDB", 1)
+        _fill_window(controller, 1, 20, agent="StateDB")
 
         controller._apply_scaling()
 
-        self.assertEqual(state.get_desired(controller.redis, "Workflow"), 1)
+        self.assertEqual(state.get_desired(controller.redis, "StateDB"), 1)
 
     def test_an_agent_without_a_policy_is_left_alone(self):
         controller = _controller(None)

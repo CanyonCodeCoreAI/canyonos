@@ -195,6 +195,8 @@ llm_gateway/llm_prices.json ──▶ pricing.token_prices / compute_token_cost 
         │                                   │
  GC startup: pricing_refresh          routing.worst_case_cost   (cost cap, agent image copy)
  (LiteLLM) rewrites the GC's copy     otel_writer               (dashboard cost, GC copy)
+```
+
 ## Prompts
 
 ```

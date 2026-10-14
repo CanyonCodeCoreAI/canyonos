@@ -49,8 +49,20 @@ def is_port_free(port: int, host: str = "0.0.0.0") -> bool:
     Host-side check only: a bind here cannot detect a port that Docker has
     published from inside a *different* network namespace -- container launchers
     must use `is_port_conflict()` on the docker output instead.
+
+    `SO_REUSEADDR` lets the probe ignore TIME_WAIT sockets left by a server that
+    just closed its connections, while a live listener still fails the bind. On
+    macOS that option also lets a wildcard bind sit beside a listener on one
+    address, so a wildcard probe checks loopback as well.
     """
+    probe_hosts = (host, "127.0.0.1") if host == "0.0.0.0" else (host,)
+    return all(_can_bind(probe_host, port) for probe_host in probe_hosts)
+
+
+def _can_bind(host: str, port: int) -> bool:
+    """Bind a throwaway socket to `host:port` and report whether it worked."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             # Matches docker's 0.0.0.0 publish target; bind-and-close, nothing exposed.
             probe.bind((host, port))  # lgtm[py/bind-socket-all-network-interfaces]

@@ -3,7 +3,7 @@
 Talks to the workflow's REST API directly, the way a user of `canyonos deploy`
 would, instead of going through `canyonos test`.
 
-Usage: query.py <base-url> <query> [timeout-seconds]
+Usage: query.py <base-url> <route> <argument> <query> [timeout-seconds]
 Prints the workflow's return value as JSON; exits 1 on error or timeout.
 """
 
@@ -12,7 +12,6 @@ import sys
 import time
 import urllib.request
 
-ROUTE = "main"
 POLL_INTERVAL = 2
 DEFAULT_TIMEOUT = 300
 
@@ -34,11 +33,12 @@ def get(url):
 
 
 def main():
-    base_url, query = sys.argv[1].rstrip("/"), sys.argv[2]
-    timeout = int(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_TIMEOUT
+    base_url, route, argument, query = sys.argv[1:5]
+    base_url = base_url.rstrip("/")
+    timeout = int(sys.argv[5]) if len(sys.argv) > 5 else DEFAULT_TIMEOUT
 
-    request_id = post(f"{base_url}/{ROUTE}", {"query": query})["request_id"]
-    print(f"POST {base_url}/{ROUTE} -> request {request_id}", file=sys.stderr)
+    request_id = post(f"{base_url}/{route}", {argument: query})["request_id"]
+    print(f"POST {base_url}/{route} -> request {request_id}", file=sys.stderr)
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

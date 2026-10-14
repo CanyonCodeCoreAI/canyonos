@@ -33,13 +33,13 @@ def _error_detail(e):
     return body or f"HTTP {e.code}"
 
 
-def _request(url, action, data=None, method="GET"):
+def _request(url, action, data=None, method="GET", timeout=REQUEST_TIMEOUT_SECONDS):
     """Call the Global Controller container's HTTP API and return its JSON reply; any
     failure is raised as `GCError`."""
     headers = {"Content-Type": "application/json"} if data is not None else {}
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read()
         try:
             parsed = json.loads(body)
@@ -96,28 +96,6 @@ def post_clean(port):
     return _request(f"http://127.0.0.1:{port}/clean", "Stop", method="POST")
 
 
-def workflow_endpoints(port):
-    """Where the deployed workflows answer, per the container's own instance
-    records -- for a workflow placed on another machine that is its public IP,
-    not this host. Empty when the container can't say, which leaves the caller
-    on its local-port fallback.
-
-    These addresses are printed, not acted on, so no failure here is fatal: an
-    older image has no /endpoints route at all, and a current one answers 200
-    with an `error` field when Redis or the config can't be read.
-    """
-    try:
-        data = _request(f"http://127.0.0.1:{port}/endpoints", "Endpoints")
-    except GCError as e:
-        if e.code != 404:
-            ui.warn(f"Could not resolve workflow addresses: {e}")
-        return []
-    if data.get("error"):
-        ui.warn(f"Could not resolve workflow addresses: {data['error']}")
-        return []
-    return data.get("workflows") or []
-
-
 def deploy_status(port):
     """Parsed /status payload, or None when the container can't be read.
 
@@ -131,3 +109,12 @@ def deploy_status(port):
     except (OSError, ValueError, TypeError):
         return None
     return status if isinstance(status, dict) else None
+
+
+def deployed_endpoint(port):
+    """Return the endpoint record the running deploy published (`public_host`,
+    `api_port`, `url`, `agent`, `method`, `arguments`) from GET /endpoint; raise
+    GCError when the container can't say, including when no deploy is running."""
+    return _request(f"http://127.0.0.1:{port}/endpoint", "Read endpoint", timeout=10)[
+        "endpoint"
+    ]

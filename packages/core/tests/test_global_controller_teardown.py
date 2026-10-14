@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
+from canyonos_core.endpoint import ADDRESS_KEY
 from canyonos_core.reconciler import state
 from fakes import _FakeRedis
 
@@ -40,12 +41,17 @@ class TeardownTests(unittest.TestCase):
 
     def test_drain_gives_up_after_the_timeout(self):
         controller = self._controller([[ALPHA_KEY]] * 50)
+        controller.redis.hset_multiple(ADDRESS_KEY, {"public_host": "127.0.0.1"})
 
         with patch("time.sleep"):
             with self.assertLogs(
                 "canyonos_core.controller.global_controller", "WARNING"
             ):
                 self.assertFalse(controller._drain_instances(timeout=0))
+
+        self.assertEqual(
+            controller.redis.hgetall(ADDRESS_KEY), {"public_host": "127.0.0.1"}
+        )
 
     def test_stop_drains_before_killing_the_reconciler(self):
         """The reconciler removes the instances, so it has to outlive the drain."""

@@ -21,12 +21,9 @@ def write_config_specs(agents, redis_client):
         name = agent["name"]
         resources = agent.get("resources", {})
         replicas = agent.get("replicas", 1)
-        spec_class = "WorkflowSpec" if agent.get("type") == "workflow" else "AgentSpec"
         redis_client.hset_multiple(
             f"agent:{name}:",
             {
-                "class": spec_class,
-                "api_port": json.dumps(agent.get("api_port", 8080)),
                 "resources": json.dumps(resources),
                 "replicas": json.dumps(replicas),
                 "stateful": json.dumps(agent.get("stateful", False)),

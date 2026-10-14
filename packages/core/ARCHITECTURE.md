@@ -5,8 +5,8 @@
 ```
 ┌──────────────────────────── GC container ────────────────────────────┐
 │                                                                      │
-│  server.py (Flask :8000)  ◀── POST /deploy /clean, GET /status      │
-│       │ spawns                          /endpoints  (host CLI)       │
+│  server.py (Flask :8000)  ◀── POST /deploy /clean                    │
+│       │ spawns              GET /status /endpoint   (host CLI)       │
 │       ▼                                                              │
 │  cli.py deploy ──▶ GlobalController                                  │
 │                      │  ProcessSupervisor                            │
@@ -17,18 +17,28 @@
 └──────────────────────────────────┬───────────────────────────────────┘
                                    │ host docker.sock / ssh
                                    ▼  (sibling containers, one set per host)
+┌──────────────────────── GC's host (localhost) ───────────────────────┐
+│                                                                      │
+│  ┌────────────────────────────────┐   clients                        │
+│  │ canyonos-<p>-endpoint-0        │◀─ POST /<method>                 │
+│  │  core image, gunicorn + Flask  │   GET  /status/<request_id>      │
+│  │  :api_port ─▶ 8080             │                                  │
+│  │  LocalController (routing only)│                                  │
+│  └───────────────┬────────────────┘                                  │
+│                  ▼                                                   │
+│  canyonos-<p>-redis-localhost (the endpoint's Redis: root futures)   │
+└──────────────────────────────────────────────────────────────────────┘
 ┌──────────────────────────── node (host) ─────────────────────────────┐
 │  <p> = the project, the folder `canyonos deploy` ran from            │
 │  canyonos-<p>-redis-<host>    canyonos-<p>-metrics-<host>            │
 │         ▲  ▲  ▲                 (machine_metrics_poller)             │
 │         │  │  │                                                      │
 │  ┌──────┴──┴──┴───────────────┐  ┌────────────────────────────────┐  │
-│  │ canyonos-<p>-<agent>-<i>   │  │ canyonos-<p>-<workflow>-0      │  │
-│  │  LocalController  :50051   │  │  LocalController (routing only)│  │
-│  │  agent code (real class)   │  │  workflow fn + agent stubs     │  │
-│  │ llm_gateway 127.0.0.1:8081 │  │  deploy.py Flask  :api_port    │  │
-│  └────────────────────────────┘  │  llm_gateway  127.0.0.1:8081   │  │
-│                                  └────────────────────────────────┘  │
+│  │ canyonos-<p>-<agent>-<i>   │  │ canyonos-<p>-<target>-<i>      │  │
+│  │  LocalController  :50051   │  │  LocalController  :50051       │  │
+│  │  agent code (real class)   │  │  target class + agent stubs    │  │
+│  │ llm_gateway 127.0.0.1:8081 │  │  llm_gateway  127.0.0.1:8081   │  │
+│  └────────────────────────────┘  └────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,35 +91,40 @@
   │
   └─ _trigger_cleanup
         ├─ SMEMBERS request:completed          (every node Redis)
-        ├─ gRPC Cleanup(request_ids) ────────▶ every LC
+        ├─ gRPC Cleanup(request_ids) ────────▶ every LC, the endpoint's included
         │                                        └─ EXPIRE future:*, request:<id>:futures
         │                                           DEL affinity:<id>
         └─ SREM request:completed
 ```
 
-## Request lifecycle (workflow API)
+## Request lifecycle (endpoint API)
 
 ```
- client                    workflow container (deploy.py)                Redis
- ──────                    ──────────────────────────────                ─────
- POST /<fn> {body} ──────▶ request_id = new
-                           SET request:<id>:status = pending ──────────▶
- ◀────── 202 {request_id}  thread: _execute_workflow
-                             status = running ─────────────────────────▶
-                             result = workflow_fn(body)
-                               (stub calls create Futures, see below)
-                             resolve every Future in result (.value())
-                             SET request:<id>:result, status = done ───▶
-                             SADD request:completed ───────────────────▶  (GC cleanup)
- GET /status/<id> ───────▶ GET request:<id>:status / :result ◀─────────
- ◀────── {status, result}
+ client                 canyonos-<p>-endpoint-0            target replica                  agents
+ ──────                 ───────────────────────            ──────────────                  ──────
+ POST /<method>
+   {body} ────────────▶ request_id = new
+                        SET request:<id>:context
+                        Future(<agent>.<method>, body,
+                               parent=None)
+                        SET request:<id>:future = <fid>
+ ◀──── 202 {request_id}   └─ gRPC Execute ─▶ own LC ─────▶ LC
+                                                           ├─ <method>(**body)
+                                                           │    stub calls ──────────▶ agent LCs
+                                                           │    (Futures, see below) ◀─ results
+                                                           ├─ resolve every Future in result
+                        LC: HSET future:<fid> ◀ WriteResult┤
+                                                           └─ SADD request:completed  (GC cleanup)
+ GET /status/<id> ────▶ GET request:<id>:future
+                        HGETALL future:<fid>
+ ◀──── {status, result | error}
 ```
 
 ## Future: origin → executor → origin
 
 ```
  ORIGIN container                                          EXECUTOR container
- (workflow or calling agent)                               (target agent)
+ (endpoint or calling agent)                               (target agent)
  ─────────────────────────                                 ──────────────────
 
  stub.method(args)
@@ -145,7 +160,7 @@
 ## Future chaining (a Future passed as an argument)
 
 ```
- workflow:   a = AgentA().f(x)          b = AgentB().g(a)          b.value()
+ caller:     a = AgentA().f(x)          b = AgentB().g(a)          b.value()
 
    origin LC ──Execute f──▶ AgentA LC
    origin LC ──Execute g──▶ AgentB LC      (future:a:consumers += AgentB)

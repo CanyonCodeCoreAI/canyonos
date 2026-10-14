@@ -18,6 +18,7 @@ from canyonos_core.controller.global_controller import GlobalController
 UUID_HEX_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+SERVICES = "agents: []\nendpoint: {agent: Workflow, method: main}\n"
 
 
 def _write_config(body):
@@ -29,7 +30,7 @@ def _write_config(body):
 
 class LoadConfigProjectIdTests(unittest.TestCase):
     def test_generates_and_persists_project_id_when_missing(self):
-        config_path = _write_config("agents: []\npoll_interval: 5\n")
+        config_path = _write_config(SERVICES + "poll_interval: 5\n")
         try:
             config = GlobalController._load_config(config_path)
 
@@ -42,7 +43,7 @@ class LoadConfigProjectIdTests(unittest.TestCase):
             os.unlink(config_path)
 
     def test_reload_reuses_the_persisted_project_id_instead_of_minting_a_new_one(self):
-        config_path = _write_config("agents: []\npoll_interval: 5\n")
+        config_path = _write_config(SERVICES + "poll_interval: 5\n")
         try:
             first = GlobalController._load_config(config_path)
             second = GlobalController._load_config(config_path)
@@ -53,8 +54,8 @@ class LoadConfigProjectIdTests(unittest.TestCase):
 
     def test_a_null_project_id_is_replaced_instead_of_duplicated(self):
         for body in (
-            "agents: []\nproject_id:\npoll_interval: 5\n",
-            "project_id: null\n",
+            SERVICES + "project_id:\npoll_interval: 5\n",
+            SERVICES + "project_id: null\n",
         ):
             with self.subTest(body=body):
                 config_path = _write_config(body)
@@ -73,7 +74,7 @@ class LoadConfigProjectIdTests(unittest.TestCase):
 
     def test_existing_project_id_is_left_untouched(self):
         config_path = _write_config(
-            'agents: []\nproject_id: "11111111-1111-1111-1111-111111111111"\n'
+            SERVICES + 'project_id: "11111111-1111-1111-1111-111111111111"\n'
         )
         try:
             config = GlobalController._load_config(config_path)

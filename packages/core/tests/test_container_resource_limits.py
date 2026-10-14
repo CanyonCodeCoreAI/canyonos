@@ -228,6 +228,7 @@ class GlobalControllerRedisLimitTests(unittest.TestCase):
         controller.controllers = [
             {"name": "Workflow", "provider": "local", "replicas": 1, "redis_port": 6379}
         ]
+        controller.config = {}
         controller.redis_containers = {}
         controller.redis_ports = {}
         controller.node_redis = {}

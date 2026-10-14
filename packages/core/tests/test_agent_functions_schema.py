@@ -15,7 +15,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 import yaml
-from test_manifest_schema import example_environment
+from test_manifest_schema import SERVED_AGENT, SERVED_ENDPOINT, example_environment
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -32,12 +32,19 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 class _FunctionsCase(unittest.TestCase):
     def load(self, agent):
-        """The parsed agent entry of a manifest holding just `agent`."""
+        """The parsed agent entry of a manifest holding `agent` and the agent its endpoint serves."""
         entry = {"name": "ExampleAgent", "entrypoint": "agents/example_agent.py"}
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "global_controller.yaml")
             with open(path, "w") as f:
-                yaml.safe_dump({"agents": [{**entry, **agent}]}, f, sort_keys=False)
+                yaml.safe_dump(
+                    {
+                        "agents": [{**entry, **agent}, SERVED_AGENT],
+                        "endpoint": SERVED_ENDPOINT,
+                    },
+                    f,
+                    sort_keys=False,
+                )
             return load_manifest(path).agents[0]
 
     def violations(self, document):
@@ -152,9 +159,9 @@ class ArgumentTypeTests(_FunctionsCase):
             path = os.path.join(tmpdir, "global_controller.yaml")
             Path(path).write_text(
                 "agents:\n"
-                "  - name: Workflow\n"
-                "    type: workflow\n"
-                "    workflow_file: workflow.py\n"
+                "  - name: StateDB\n"
+                "    type: database\n"
+                "    image: postgres:16-alpine\n"
                 "  - name: ExampleAgent\n"
                 "    entrypoint: agents/example_agent.py\n"
                 "    functions:\n"
@@ -162,6 +169,7 @@ class ArgumentTypeTests(_FunctionsCase):
                 "        arguments:\n"
                 "          - name: value\n"
                 "            type: List[str]\n"
+                "endpoint: {agent: ExampleAgent, method: hello}\n"
             )
             with self.assertRaises(SchemaError) as raised:
                 load_manifest(path)
@@ -248,7 +256,11 @@ class ValidateProjectTests(unittest.TestCase):
                             "entrypoint": "agents/example_agent.py",
                             "functions": list(functions),
                         }
-                    ]
+                    ],
+                    "endpoint": {
+                        "agent": "ExampleAgent",
+                        "method": functions[0]["name"],
+                    },
                 }
             )
         )
@@ -277,7 +289,8 @@ class ValidateProjectTests(unittest.TestCase):
                                     }
                                 ],
                             }
-                        ]
+                        ],
+                        "endpoint": {"agent": "ExampleAgent", "method": "hello"},
                     }
                 )
             )

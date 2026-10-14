@@ -23,6 +23,7 @@ from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient
+from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT, SERVICE_NAME
 from canyonos_core.reconciler import providers
 
 logger = logging.getLogger(__name__)
@@ -114,13 +115,30 @@ class ControllerContext(object):
 
     @staticmethod
     def _load_config(config_path):
-        """Load the YAML config, importing root .env values and expanding ${VAR} refs.
-        Also rewrites each agent's provider name to its standard spelling (`ec2` becomes
+        """Load the YAML config, importing root .env values and expanding ${VAR} refs,
+        and add the `endpoint:` block as one more replica spec after the agents.
+        Also rewrites each spec's provider name to its standard spelling (`ec2` becomes
         `EC2`), which is how replica records spell it."""
         config = config_env.load_config(config_path)
         if not isinstance(config, dict):
             raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
-        for agent in config.get("agents", []):
+        agents = config["agents"]
+        endpoint = config["endpoint"]
+        agents.append(
+            {
+                "name": SERVICE_NAME,
+                "type": "endpoint",
+                "replicas": 1,
+                # One Redis runs per machine, so the endpoint shares the port of the
+                # agents placed here.
+                "redis_port": localhost_redis_port(agents) or 6379,
+                "resources": {"cpu": ENDPOINT_CPUS},
+                "api_port": endpoint.get("api_port", ENDPOINT_PORT),
+                "agent": endpoint["agent"],
+                "method": endpoint["method"],
+            }
+        )
+        for agent in agents:
             agent["provider"] = providers.canonical_name(
                 agent.get("provider", providers.DEFAULT)
             )

@@ -34,7 +34,7 @@ against this contract but is not part of it.
   becomes `/app` in the containers, and the names the platform uses.
 - [`global_controller.yaml`](GLOBAL_CONTROLLER.md): how to write the deploy file,
   and every key in it, with defaults.
-- [Runtime contract](RUNTIME_CONTRACT.md): how agents and workflows are
+- [Runtime contract](RUNTIME_CONTRACT.md): how agents are
   loaded, called, stubbed and torn down.
 - [Images and dependencies](IMAGES_AND_DEPENDENCIES.md): what Python can
   import from `/app`, what gets installed, and what the build leaves out.

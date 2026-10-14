@@ -66,7 +66,7 @@ def _resolve_project_env_file(config, base_dir):
     Resolve the `env_file` a self-hosted deployment points at, or None.
 
     Relative paths resolve against `base_dir` (default: the current working
-    directory), matching how `entrypoint` and `workflow_file` are resolved.
+    directory).
     """
     raw = config.get("env_file")
     if not raw:

@@ -7,7 +7,7 @@ scaling policy, every agent runs the replica count set in `global_controller.yam
 
 Create a `scaling.yaml` file in the project's config folder. A workflow has one policy,
 and it applies to every agent separately: each agent is measured on its own load and
-gains or loses its own replicas. The workflow container itself is never scaled.
+gains or loses its own replicas.
 
 ```yaml
 scaling:

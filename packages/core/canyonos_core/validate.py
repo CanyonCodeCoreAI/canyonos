@@ -1,11 +1,11 @@
 """Contracts a `.car` has to keep that the schema alone cannot see.
 
 `validate_project` reads the manifest. What it cannot read is the Python
-beside it: a class the controller loads by name, a method the executor calls
-without awaiting, the one module the platform posts to. Each of those survives a green build and fails inside a container, or on
-its first request, so they are checked here against the same parsed model the
-deploy uses -- never against a second copy of the pins, the image Python or the
-runtime's module names.
+beside it: a class the controller loads by name, or a method the executor calls
+without awaiting. Each of those survives a green build and fails inside a
+container, or on its first request, so they are checked here against the same
+parsed model the deploy uses -- never against a second copy of the pins, the
+image Python or the runtime's module names.
 
     python -m canyonos_core.validate <artifact_root> [--config PATH] [--json]
 
@@ -19,32 +19,13 @@ import os
 import sys
 from typing import NamedTuple
 
-from canyonos_core.schema import (
-    AgentService,
-    SchemaError,
-    WorkflowService,
-    load_manifest,
-    validate_project,
-)
-from canyonos_core.stub_generator import (
-    AGENT_FLAT_MODULES,
-    RESERVED_CONTEXT_NAMES,
-    WORKFLOW_FLAT_MODULES,
-)
+from canyonos_core.schema import AgentService, check_project
+from canyonos_core.stub_generator import AGENT_FLAT_MODULES
 
 # canyonos_core/cli.py SOURCE_DIR_NAME -- the copy of the application source
 # that becomes /app inside every container.
 SOURCE_DIR_NAME = "app"
 DEFAULT_CONFIG_PATH = os.path.join("config", "global_controller.yaml")
-
-# Modules the build writes at the context root itself. A project module of the
-# same name there is either overwritten by the runtime's copy or dropped before
-# the copy runs.
-_FLAT_MODULES = frozenset(
-    name
-    for name in AGENT_FLAT_MODULES | WORKFLOW_FLAT_MODULES | RESERVED_CONTEXT_NAMES
-    if name.endswith(".py")
-)
 
 
 class Finding(NamedTuple):
@@ -62,19 +43,16 @@ class Finding(NamedTuple):
 # ------------------------------------------------------------------ #
 
 
-def _parse(path, as_text=False):
+def _parse(path):
     """`(AST, None)` or `(None, error)`, without importing the file.
 
     Decoded the way the runtime decodes it. An import honours the coding
-    cookie, so by default the bytes go to the parser. The workflow launcher
-    exec()s the file read as UTF-8 text, cookie ignored: `as_text` does that.
+    cookie, so the bytes go to the parser.
     """
     try:
         with open(path, "rb") as handle:
             source = handle.read()
-        if as_text:
-            source = source.decode("utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
+    except OSError as exc:
         return None, str(exc)
     try:
         return ast.parse(source, filename=path), None
@@ -419,307 +397,10 @@ def _check_method(report, class_path, class_name, function, methods, complete):
         )
 
 
-def _check_workflow(report, workflow_path, stub_modules):
-    """The module the platform posts to, and how it reaches an agent."""
-    tree, error = _parse(workflow_path, as_text=True)
-    if tree is None:
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            0,
-            f"the workflow does not parse: {error}",
-            "workflow_launcher.py exec's this file at container start; the "
-            "container comes up serving nothing.",
-        )
-        return
-
-    main = next(
-        (
-            node
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "main"
-        ),
-        None,
-    )
-    if main is None:
-        defined = [
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ]
-        found = ", ".join(defined) if defined else "no top-level functions"
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            1,
-            f"no top-level function named `main` (found: {found})",
-            "CanyonOS Core serves POST /<fn.__name__>, but the platform's test "
-            "endpoint posts to a hardcoded /main. A differently named workflow "
-            "builds, deploys and stays unreachable -- 404, container healthy.",
-        )
-    else:
-        _check_main_signature(report, workflow_path, main)
-
-    if not any(
-        isinstance(node, ast.Call) and _calls_deploy(node.func, tree)
-        for node in ast.walk(tree)
-    ):
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            1,
-            "the workflow never calls `deploy(...)`",
-            "workflow_launcher.py exec's this file and nothing else starts the "
-            "HTTP server; the container comes up serving nothing.",
-        )
-
-    _check_main_guard(report, workflow_path, tree)
-    _check_stub_imports(report, workflow_path, tree, stub_modules)
-
-
-def _deploy_names(tree):
-    """`(names bound to deploy(), names bound to the deploy module)`."""
-    functions, modules = {"deploy"}, set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "deploy":
-            functions.update(
-                alias.asname or alias.name
-                for alias in node.names
-                if alias.name == "deploy"
-            )
-        elif isinstance(node, ast.Import):
-            modules.update(
-                alias.asname or alias.name
-                for alias in node.names
-                if alias.name == "deploy"
-            )
-    return functions, modules
-
-
-def _calls_deploy(func, tree):
-    """Whether a call's target is deploy(), by any name the workflow gave it."""
-    functions, modules = _deploy_names(tree)
-    if isinstance(func, ast.Name):
-        return func.id in functions
-    return (
-        isinstance(func, ast.Attribute)
-        and func.attr == "deploy"
-        and isinstance(func.value, ast.Name)
-        and func.value.id in modules
-    )
-
-
-def _check_main_signature(report, workflow_path, main):
-    """The platform sends exactly {"query": ...}."""
-    if isinstance(main, ast.AsyncFunctionDef):
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            main.lineno,
-            "`main` is `async def`",
-            "deploy() calls workflow_fn(**kwargs) on a Flask worker thread with "
-            "no await; the response body would be a coroutine repr.",
-        )
-
-    positional_only = _positional_only(main, ["query"])
-    if positional_only:
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            main.lineno,
-            f"`main` takes {', '.join(positional_only)} positional-only (before `/`)",
-            'deploy() splats the posted {"query": "..."} in as kwargs, so a '
-            "parameter before `/` never receives it -- TypeError on every "
-            "request, or with **kwargs the query lands there and is ignored.",
-        )
-        return
-
-    params = _parameter_names(main)
-    if not params and main.args.kwarg is not None:
-        return
-    if not params:
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            main.lineno,
-            "`main` takes no arguments",
-            'The platform posts {"query": "..."} and deploy() splats the body '
-            "in as kwargs -- TypeError on every request.",
-        )
-        return
-
-    if params[0] != "query":
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            main.lineno,
-            f"`main`'s first parameter is `{params[0]}`, not `query`",
-            "The platform's body schema is strictly validated as "
-            "{query: string}; any other key is rejected with 400 in the control "
-            "plane, before the request reaches the host.",
-        )
-
-    extra = [name for name in _required_parameters(main) if name != "query"]
-    if extra:
-        report.add(
-            "CAR-WORKFLOW-SHAPE",
-            workflow_path,
-            main.lineno,
-            f"`main` requires {', '.join(extra)} beyond `query`",
-            "Only `query` is ever sent, so every other parameter needs a "
-            "default or the call raises on every request. Pack richer input "
-            "into `query`.",
-        )
-
-
-def _check_main_guard(report, workflow_path, tree):
-    """The launcher exec()s the workflow, so `__name__` IS `__main__` here."""
-    for node in tree.body:
-        test = node.test if isinstance(node, ast.If) else None
-        if (
-            isinstance(test, ast.Compare)
-            and isinstance(test.left, ast.Name)
-            and test.left.id == "__name__"
-            and any(
-                isinstance(other, ast.Constant) and other.value == "__main__"
-                for other in test.comparators
-            )
-        ):
-            report.add(
-                "CAR-WORKFLOW-SHAPE",
-                workflow_path,
-                node.lineno,
-                '`if __name__ == "__main__":` block in the workflow',
-                "workflow_launcher.py runs exec(open(<workflow>).read()), so "
-                "__name__ IS '__main__' here and this block executes in "
-                "production, at container start.",
-            )
-            return
-
-
-def _check_stub_imports(report, workflow_path, tree, stub_modules):
-    """The workflow must reach each agent through the module its stub owns.
-
-    The build writes an agent's stub over its `entrypoint` path and at the
-    context root under that path's basename. Those two modules are the whole of
-    it: an import that reaches the class through a package re-export or a second
-    copy resolves to the real class, and the workflow runs the agent in-process
-    with none of the deployment behind it.
-    """
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or not node.module:
-            continue
-        for alias in node.names:
-            name = alias.name
-            base = name.removesuffix("Stub")
-            expected = stub_modules.get(base)
-            if expected is None:
-                continue
-            flat = expected.rsplit(".", 1)[-1]
-            if name.endswith("Stub"):
-                report.add(
-                    "CAR-WORKFLOW-STUB-IMPORT",
-                    workflow_path,
-                    node.lineno,
-                    f"`{name}` is the name the build prints, not the class it writes",
-                    "generate_stub sets class_name = agent_config['name'] and "
-                    "then recomputes it with a 'Stub' suffix for the log line "
-                    "only. The message names a class that does not exist; the "
-                    f"class is `{base}`.",
-                )
-            elif node.module not in (expected, flat):
-                report.add(
-                    "CAR-WORKFLOW-STUB-IMPORT",
-                    workflow_path,
-                    node.lineno,
-                    f"`from {node.module} import {name}` -- the stub for {name} "
-                    f"is written to {expected.replace('.', '/')}.py and to "
-                    f"{flat}.py at the context root, nowhere else",
-                    "This import reaches the real class instead, and runs the "
-                    "agent in this process with none of the deployment behind "
-                    f"it. Import it from `{expected}`, where the source already "
-                    "keeps it.",
-                )
-
-
-_MISSING_ROOT = (
-    f"Every `entrypoint` and `workflow_file` is resolved under `{SOURCE_DIR_NAME}/`, "
-    "and the build copies that directory into each image. Without it no service "
-    "has any source to run."
-)
-_MISSING_AGENT = (
-    "The build copies this file into the agent's image and the controller loads "
-    "the agent class out of it. Without it the agent has no image to build, and "
-    "nothing answers for it."
-)
-_MISSING_WORKFLOW = (
-    "The build copies this file into the workflow image and the launcher execs "
-    "it to start the HTTP server. Without it the workflow has no image to build, "
-    "and the deployment has nothing to serve."
-)
-
-_OUTSIDE = (
-    "The in-container deploy follows the link and rejects a service whose file "
-    "is not in the project, before it builds anything."
-)
-
-
-def _check_entrypoints(report, manifest, source_dir, config_path):
-    """Every file the manifest points at is in the source copy."""
-    if not os.path.isdir(source_dir):
-        report.add(
-            "CAR-ENTRYPOINT-MISSING",
-            config_path,
-            0,
-            f"no `{SOURCE_DIR_NAME}/` beside `config/`",
-            _MISSING_ROOT,
-        )
-        return
-
-    for index, service in enumerate(manifest.agents):
-        if isinstance(service, AgentService):
-            field, declared, mechanism = (
-                "entrypoint",
-                service.entrypoint,
-                _MISSING_AGENT,
-            )
-        elif isinstance(service, WorkflowService):
-            field, declared, mechanism = (
-                "workflow_file",
-                service.workflow_file,
-                _MISSING_WORKFLOW,
-            )
-        else:
-            continue
-        # An absent value is the schema's to report, not this check's.
-        if not declared:
-            continue
-        path = os.path.join(source_dir, declared)
-        shown = os.path.join(SOURCE_DIR_NAME, declared)
-        if not os.path.isfile(path):
-            report.add(
-                "CAR-ENTRYPOINT-MISSING",
-                config_path,
-                0,
-                f"agents[{index}].{field}: {shown} does not exist",
-                mechanism,
-            )
-        elif not _inside(source_dir, path):
-            report.add(
-                "CAR-ENTRYPOINT-OUTSIDE",
-                config_path,
-                0,
-                f"agents[{index}].{field}: {shown} resolves outside "
-                f"`{SOURCE_DIR_NAME}/`",
-                _OUTSIDE,
-            )
-
-
 def _check_flat_collisions(report, source_dir):
     """A project module at the source root the runtime's own copy lands on."""
     for entry in sorted(os.listdir(source_dir)):
-        if entry not in _FLAT_MODULES:
+        if entry not in AGENT_FLAT_MODULES:
             continue
         path = os.path.join(source_dir, entry)
         if not os.path.isfile(path):
@@ -771,9 +452,8 @@ def _check_package_reexport(report, source_dir, service):
             node.lineno,
             f"`{package}/__init__.py` re-exports from `{module}`, the "
             f"entrypoint for {service.name}",
-            f"Any peer image that imports anything from `{package}` -- the "
-            "workflow importing the agent class included -- re-runs this "
-            "re-export against the stub and dies at container startup with "
+            f"Any peer image that imports anything from `{package}` re-runs "
+            "this re-export against the stub and dies at container startup with "
             f"ImportError. Point `entrypoint` at a module `{package}/"
             "__init__.py` does not re-export from; add one that imports the "
             "real module if every existing module is re-exported.",
@@ -823,7 +503,8 @@ def validate_car(artifact_root, config_path=None):
     source_dir = os.path.join(artifact_root, SOURCE_DIR_NAME)
 
     report = _Report(artifact_root)
-    for violation in validate_project(config_path):
+    manifest, violations = check_project(config_path, source_dir)
+    for violation in violations:
         report.add(
             "CAR-SCHEMA",
             violation.path,
@@ -835,35 +516,19 @@ def validate_car(artifact_root, config_path=None):
             "single stub, and rejects the project rather than building it.",
         )
 
-    try:
-        manifest = load_manifest(config_path)
-    except SchemaError:
+    if manifest is None or not os.path.isdir(source_dir):
         return _sorted(report.findings)
 
-    _check_entrypoints(report, manifest, source_dir, config_path)
-    if not os.path.isdir(source_dir):
-        # Already reported, and there is no Python to check without it.
-        return _sorted(report.findings)
-
-    stub_modules = {}
     for service in manifest.agents:
-        if not isinstance(service, AgentService) or not service.entrypoint:
+        if not isinstance(service, AgentService):
             continue
         entrypoint_path = os.path.join(source_dir, service.entrypoint)
         if not os.path.isfile(entrypoint_path) or not _inside(
             source_dir, entrypoint_path
         ):
-            continue  # reported by _check_entrypoints
-        stub_modules[service.name] = _module_path(service.entrypoint)
+            continue  # reported by check_project
         _check_adapter(report, source_dir, entrypoint_path, service)
         _check_package_reexport(report, source_dir, service)
-
-    for service in manifest.agents:
-        if not isinstance(service, WorkflowService) or not service.workflow_file:
-            continue
-        workflow_path = os.path.join(source_dir, service.workflow_file)
-        if os.path.isfile(workflow_path) and _inside(source_dir, workflow_path):
-            _check_workflow(report, workflow_path, stub_modules)
 
     _check_flat_collisions(report, source_dir)
     return _sorted(report.findings)

@@ -1,8 +1,8 @@
 # Autoscaling Policy — portfolio-analysis fan-out pipeline
 # One policy for the whole workflow. It applies to every agent separately: each
-# agent is measured on its own load and gains or loses its own replicas. The
-# Workflow container itself is never autoscaled. Without a policy here, every
-# agent holds the replica count set in global_controller.yaml.
+# agent is measured on its own load and gains or loses its own replicas, the
+# Workflow agent included. Without a policy here, every agent holds the replica
+# count set in global_controller.yaml.
 #
 # Thresholds are read on the controller's poll interval and act on a sustained
 # breach, not a single sample: an agent gains (or loses) one replica only when

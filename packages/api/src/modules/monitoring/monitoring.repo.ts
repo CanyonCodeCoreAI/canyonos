@@ -1,11 +1,11 @@
 import { sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type { RedisClient } from 'bun';
 import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { otelLogs, otelMetrics } from '@api/db/schema';
 
-import { scan_keys } from '../canyonos/canyonos.redis';
 import { window_floor_nanos, WINDOW_INTERVALS } from '../metrics/metrics.scope';
 import {
   isModelSpan,
@@ -84,7 +84,31 @@ const UNKNOWN_HOST = 'unknown';
 
 const GROUP_LIMIT = 10;
 
-const AGENT_INSTANCE_PATTERN = 'agent_instance:*';
+export const ENDPOINT_KEY = 'endpoint:address';
+
+const JsonArgumentNames = z
+  .string()
+  .transform((raw, ctx) => {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'arguments is not JSON' });
+      return z.NEVER;
+    }
+  })
+  .pipe(z.array(z.string()));
+
+/** The endpoint:address hash as the GlobalController writes it while the endpoint runs. */
+const EndpointAddressSchema = z.object({
+  public_host: z.string().min(1),
+  api_port: z.string().regex(/^\d+$/),
+  agent: z.string().min(1),
+  method: z.string().min(1),
+  arguments: JsonArgumentNames,
+  url: z.string().url(),
+});
+
+export type EndpointAddress = z.infer<typeof EndpointAddressSchema>;
 
 const REPLICA_ID = `nullif(m.resource_attributes ->> 'service.instance.id', '')`;
 
@@ -508,9 +532,10 @@ export const monitoring_repo = {
     return rows as unknown as MonitoringReplica[];
   },
 
-  async agent_instances(redis: RedisClient): Promise<Record<string, string>[]> {
-    const keys = await scan_keys(redis, AGENT_INSTANCE_PATTERN);
-    return Promise.all(keys.sort().map((key) => redis.hgetall(key)));
+  /** The recorded address, or null when none is recorded or the record is incomplete. */
+  async endpoint(redis: RedisClient): Promise<EndpointAddress | null> {
+    const result = EndpointAddressSchema.safeParse(await redis.hgetall(ENDPOINT_KEY));
+    return result.success ? result.data : null;
   },
 
   async error_summary(

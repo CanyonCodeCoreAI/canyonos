@@ -4,7 +4,7 @@ import { resolveAuth } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { ProjectIdParams } from '../projects/projects.types';
 import {
-  get_endpoints,
+  get_endpoint,
   get_error_summary,
   get_llm_calls,
   get_log_sources,
@@ -15,7 +15,7 @@ import {
   get_traces,
 } from './monitoring.service';
 import {
-  MonitoringEndpointsResponseSchema,
+  MonitoringEndpointResponseSchema,
   MonitoringErrorSummaryResponseSchema,
   MonitoringListQuerySchema,
   MonitoringLlmCallsResponseSchema,
@@ -105,8 +105,8 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     response: { 200: MonitoringReplicasResponseSchema },
     detail: { ...doc, summary: 'Replicas reporting up, with their queue lengths' },
   })
-  .get('/:project_id/monitoring/endpoints', ({ params }) => get_endpoints(params.project_id), {
+  .get('/:project_id/monitoring/endpoint', ({ params }) => get_endpoint(params.project_id), {
     params: ProjectIdParams,
-    response: { 200: MonitoringEndpointsResponseSchema },
-    detail: { ...doc, summary: 'Where the running workflow answers' },
+    response: { 200: MonitoringEndpointResponseSchema },
+    detail: { ...doc, summary: 'Where the running endpoint answers' },
   });

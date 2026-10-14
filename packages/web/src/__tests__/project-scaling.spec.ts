@@ -347,7 +347,7 @@ test.describe('screen states', () => {
       await expect(card.getByTestId('policy-edit')).toBeEnabled();
       await expect(card.getByTestId('policy-delete')).toBeEnabled();
       await expect(page.getByTestId('scaling-scope')).toContainText(
-        'One policy for the whole workflow'
+        'One policy for the whole project'
       );
     });
   }

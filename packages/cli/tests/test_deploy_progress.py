@@ -128,7 +128,7 @@ def test_coming_up_short_of_the_announced_replicas_fails_the_deploy(monkeypatch)
     monkeypatch.setattr(
         deploy_cmd, "_deploy_summary", lambda *a: pytest.fail("no summary")
     )
-    lines = deploy_cmd._queued_lines(
+    lines = deploy_cmd.queued_lines(
         iter(
             [
                 "INFO:canyonos_core.controller.global_controller:Waiting for 3 replica(s) to become healthy (timeout=300s)...\n",
@@ -143,8 +143,6 @@ def test_coming_up_short_of_the_announced_replicas_fails_the_deploy(monkeypatch)
         deploy_cmd._tail_quiet(
             lines,
             {"port": 1},
-            8080,
-            "config/global_controller.yaml",
             serve=False,
             on_ready=lambda _ready: None,
         )
@@ -154,7 +152,7 @@ def test_incomplete_readiness_replays_the_buffered_diagnostics(monkeypatch, caps
     monkeypatch.setattr(
         deploy_cmd, "_deploy_summary", lambda *a: pytest.fail("no summary")
     )
-    lines = deploy_cmd._queued_lines(
+    lines = deploy_cmd.queued_lines(
         iter(
             [
                 "Waiting for 2 replica(s) to become healthy (timeout=300s)...\n",
@@ -168,8 +166,6 @@ def test_incomplete_readiness_replays_the_buffered_diagnostics(monkeypatch, caps
         deploy_cmd._tail_quiet(
             lines,
             {"port": 1},
-            8080,
-            "config/global_controller.yaml",
             serve=False,
             on_ready=lambda _ready: None,
         )
@@ -249,7 +245,7 @@ def test_the_clis_own_status_requests_are_not_shown_or_buffered(monkeypatch):
     monkeypatch.setattr(deploy_cmd.ui, "warn", lambda m: shown.append(m))
     monkeypatch.setattr(deploy_cmd, "_deploy_summary", lambda *a: ("url", []))
 
-    lines = deploy_cmd._queued_lines(
+    lines = deploy_cmd.queued_lines(
         iter(
             [
                 '172.17.0.1 - - [04/Sep/2026 21:00:00] "GET /status HTTP/1.1" 200 -\n',
@@ -261,8 +257,6 @@ def test_the_clis_own_status_requests_are_not_shown_or_buffered(monkeypatch):
     summary = deploy_cmd._tail_quiet(
         lines,
         {"port": 1},
-        8080,
-        "config/global_controller.yaml",
         serve=False,
         on_ready=lambda _ready: None,
     )
@@ -279,7 +273,7 @@ def test_a_build_that_dies_silently_does_not_hang(monkeypatch, capsys):
     monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0.5)
     monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": False})
 
-    lines = deploy_cmd._queued_lines(
+    lines = deploy_cmd.queued_lines(
         iter(["INFO:canyonos_core:Building 2 Docker image(s) via `x`.\n"])
     )
     # The queue never yields None: the stream stays open, as it does in reality.
@@ -289,8 +283,6 @@ def test_a_build_that_dies_silently_does_not_hang(monkeypatch, capsys):
         deploy_cmd._tail_quiet(
             lines,
             {"port": 1},
-            8080,
-            "config/global_controller.yaml",
             serve=False,
             on_ready=lambda _ready: None,
         )
@@ -303,14 +295,12 @@ def test_a_live_child_that_never_becomes_ready_times_out(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0)
     monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": True})
 
-    lines = deploy_cmd._queued_lines(iter(()))
+    lines = deploy_cmd.queued_lines(iter(()))
 
     with pytest.raises(RuntimeError, match="stopped or timed out"):
         deploy_cmd._tail_quiet(
             lines,
             {"port": 1},
-            8080,
-            "config/global_controller.yaml",
             serve=False,
             on_ready=lambda _ready: None,
         )
@@ -322,10 +312,10 @@ def test_a_log_reader_error_fails_promptly(monkeypatch):
             raise OSError("pipe closed")
 
     monkeypatch.setattr(deploy_cmd, "STARTUP_TIMEOUT_SECONDS", 10)
-    lines = deploy_cmd._queued_lines(BrokenStream())
+    lines = deploy_cmd.queued_lines(BrokenStream())
 
     with pytest.raises(RuntimeError, match="Could not read.*pipe closed"):
-        list(deploy_cmd._drain(lines, {"port": 1}))
+        list(deploy_cmd.drain(lines, {"port": 1}))
 
 
 def test_verbose_stops_tailing_once_the_workflow_is_up(monkeypatch):
@@ -336,7 +326,7 @@ def test_verbose_stops_tailing_once_the_workflow_is_up(monkeypatch):
         deploy_cmd, "_deploy_summary", lambda *_a: ("url", [], "config.yaml")
     )
     after_ready = "this line arrives after the workflow is up\n"
-    lines = deploy_cmd._queued_lines(
+    lines = deploy_cmd.queued_lines(
         iter(
             [
                 "INFO:canyonos_core:Build complete.\n",
@@ -349,8 +339,6 @@ def test_verbose_stops_tailing_once_the_workflow_is_up(monkeypatch):
     summary = deploy_cmd._tail_verbose(
         lines,
         {"port": 1},
-        8080,
-        "config/global_controller.yaml",
         serve=False,
         on_ready=lambda _ready: None,
     )
@@ -366,7 +354,7 @@ def test_reveal_failure_reprints_the_cause_after_unrelated_noise(capsys):
     """
     noise = "ERROR:__main__:Failed to read otel:destinations from Redis; keeping the current 1 destination(s)\n"
     cause = "CRITICAL:canyonos_core:Failed to launch configured runtimes: Unable to locate credentials\n"
-    lines = deploy_cmd._queued_lines(iter([noise, noise, noise]))
+    lines = deploy_cmd.queued_lines(iter([noise, noise, noise]))
 
     deploy_cmd._reveal_failure(lines, [cause], {"port": 1}, cause)
 
@@ -381,7 +369,7 @@ def test_reveal_failure_prints_no_cause_line_when_nothing_tripped_it(capsys):
     single line to point back to -- the "Cause:" reprint should stay absent
     rather than print a hollow one.
     """
-    lines = deploy_cmd._queued_lines(iter([]))
+    lines = deploy_cmd.queued_lines(iter([]))
 
     deploy_cmd._reveal_failure(lines, [], {"port": 1})
 
@@ -437,7 +425,7 @@ def test_an_up_marker_quoted_from_a_container_log_is_not_the_deploys_own(monkeyp
     monkeypatch.setattr(deploy_cmd, "_STATUS_POLL_SECONDS", 0.01)
     monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0)
     monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": False})
-    lines = deploy_cmd._queued_lines(
+    lines = deploy_cmd.queued_lines(
         iter(
             [
                 _BEGIN,
@@ -452,8 +440,6 @@ def test_an_up_marker_quoted_from_a_container_log_is_not_the_deploys_own(monkeyp
         deploy_cmd._tail_quiet(
             lines,
             {"port": 1},
-            8080,
-            "config/global_controller.yaml",
             serve=False,
             on_ready=lambda _ready: None,
         )
@@ -470,7 +456,7 @@ def test_verbose_fails_on_a_fatal_line_instead_of_waiting_for_the_timeout(
     monkeypatch.setattr(deploy_cmd, "_REVEAL_GRACE_SECONDS", 0)
     monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: {"running": True})
     verdict = "CRITICAL:canyonos_core.cli:Agent replica(s) failed to become healthy within 4s: Broken 0/1\n"
-    lines = deploy_cmd._queued_lines(iter([_BEGIN, *_QUOTED_TRACEBACK, _END, verdict]))
+    lines = deploy_cmd.queued_lines(iter([_BEGIN, *_QUOTED_TRACEBACK, _END, verdict]))
 
     with pytest.raises(
         RuntimeError,
@@ -479,8 +465,6 @@ def test_verbose_fails_on_a_fatal_line_instead_of_waiting_for_the_timeout(
         deploy_cmd._tail_verbose(
             lines,
             {"port": 1},
-            8080,
-            "config/global_controller.yaml",
             serve=False,
             on_ready=lambda _ready: None,
         )
@@ -494,7 +478,7 @@ def test_verbose_echoes_a_quoted_log_without_failing_on_it(monkeypatch, capsys):
     monkeypatch.setattr(
         deploy_cmd, "_deploy_summary", lambda *_a: ("url", [], "config.yaml")
     )
-    lines = deploy_cmd._queued_lines(
+    lines = deploy_cmd.queued_lines(
         iter(
             [
                 _BEGIN,
@@ -508,8 +492,6 @@ def test_verbose_echoes_a_quoted_log_without_failing_on_it(monkeypatch, capsys):
     summary = deploy_cmd._tail_verbose(
         lines,
         {"port": 1},
-        8080,
-        "config/global_controller.yaml",
         serve=False,
         on_ready=lambda _ready: None,
     )
@@ -531,15 +513,13 @@ def test_verbose_keeps_echoing_after_a_fatal_line_until_the_deploy_is_gone(
     teardown = (
         "INFO:canyonos_core.reconciler.reconciler:Removing instance local:Broken:0\n"
     )
-    lines = deploy_cmd._queued_lines(iter([verdict, teardown]))
+    lines = deploy_cmd.queued_lines(iter([verdict, teardown]))
     lines.put = lambda *a, **k: None
 
     with pytest.raises(RuntimeError, match="Deploy failed: CRITICAL"):
         deploy_cmd._tail_verbose(
             lines,
             {"port": 1},
-            8080,
-            "config/global_controller.yaml",
             serve=False,
             on_ready=lambda _ready: None,
         )
@@ -564,10 +544,8 @@ def test_a_quiet_deploy_keeps_waiting_and_names_the_running_step(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "_deploy_summary", lambda *_a: "summary")
 
     summary = deploy_cmd._tail_quiet(
-        deploy_cmd._queued_lines(stream()),
+        deploy_cmd.queued_lines(stream()),
         {"port": 1},
-        8080,
-        "config/global_controller.yaml",
         serve=False,
         on_ready=lambda _ready: None,
     )

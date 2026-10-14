@@ -22,9 +22,9 @@ import time
 from typing import Any
 
 from canyonos_core.controller.controller_context import DEFAULT_SSH_KEY_PATH
-from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import (
+    CONTAINER_PORT,
     container_name,
     data_volume_name,
     image_name,
@@ -52,7 +52,6 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 
 logger = logging.getLogger(__name__)
 
-CONTAINER_PORT = 50051
 DEFAULT_SSH_USER = "ubuntu"
 # This default AMI is a public AMI created by Canyon Code, containing base Ubuntu + Docker + zstd. Can be overridden manually with your own ami_id
 DEFAULT_AMI_ID = "ami-0101d5f2a2a9cd55c"
@@ -282,7 +281,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
 
     if not (instance and instance.get("PublicIpAddress")):
         raise RuntimeError(f"EC2 instance {instance_id} never got a public IP address.")
-    # The control plane reaches the instance over the private IP; the public IP is only handed to outside workflow callers.
+    # The control plane reaches the instance over the private IP; the public IP is only recorded.
     private_host = instance["PrivateIpAddress"]
     public_host = instance["PublicIpAddress"]
 
@@ -312,9 +311,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         "redis_port": str(redis_port),
         "runtime_id": runtime_id,
     }
-    if spec.get("type") == "workflow":
-        instance["api_port"] = str(spec.get("api_port", 8080))
-    elif spec.get("type") == "database":
+    if spec.get("type") == "database":
         db_port = str(spec.get("db_port", 5432))
         instance["container_port"] = "5432"
         instance["host_port"] = db_port
@@ -385,11 +382,6 @@ def _bootstrap_instance(
         port_args = ["-p", f"{spec.get('db_port', 5432)}:5432"]
     else:
         port_args = ["-p", f"{CONTAINER_PORT}:{CONTAINER_PORT}"]
-        if spec.get("type") == "workflow":
-            port_args += [
-                "-p",
-                f"{spec.get('api_port', 8080)}:{WORKFLOW_CONTAINER_PORT}",
-            ]
 
     volume_args = []
     if spec.get("type") == "database":
@@ -429,11 +421,7 @@ def _bootstrap_instance(
         "-e",
         f"CANYONOS_LOGS_ENABLED={str(bool(_controller.config.get('logs', True))).lower()}",
     ]
-    if spec.get("type") == "workflow":
-        project_id = _controller.config.get("project_id")
-        if project_id:
-            cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
-    elif spec.get("type") == "database":
+    if spec.get("type") == "database":
         for key, value in spec.get("env", {}).items():
             cmd.extend(["-e", f"{key}={value}"])
 

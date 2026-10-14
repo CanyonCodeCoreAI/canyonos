@@ -7,9 +7,14 @@ the Provisioner stay focused on orchestration and persistence.
 """
 
 import logging
+import os
+import re
 import socket
+from contextlib import contextmanager
 
 from canyonos_core.controller.utils.container_names import (
+    CONTAINER_PORT,
+    CONTROLLER_IMAGE,
     PROJECT_LABEL,
     ForeignContainerError,
     container_name,
@@ -19,8 +24,8 @@ from canyonos_core.controller.utils.container_names import (
     project_label_args,
     redis_container_name,
 )
-from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
 from canyonos_core.controller.utils.env_file import env_file_args
+from canyonos_core.endpoint import ENDPOINT_PORT
 from canyonos_core.reconciler.providers.shared_utils.docker_host import (
     container_log_tail,
     container_running,
@@ -39,11 +44,13 @@ from canyonos_core.controller.utils.port_utils import is_port_conflict
 logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "localhost"
-CONTAINER_PORT = 50051
 PROVIDER = "local"
 MAX_PORT_ATTEMPTS = 50
 NETWORK = "canyonos-local"
 HOST_GATEWAY = "host.docker.internal"
+# The host port in Docker's "Bind for 0.0.0.0:8080 failed" and "listen tcp
+# 0.0.0.0:8080: bind" messages.
+_CLASHED_PORT = re.compile(r"(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]*\]):(\d+)")
 _controller = None
 
 
@@ -88,16 +95,6 @@ def ssh_user(entry):
 def hourly_cost(spec):
     """Return 0: a local replica has no hourly cost."""
     return 0
-
-
-def _port_check(host, port):
-    """Preflight check to test if the port (8080) is available, fails immediately if not instead of failing later"""
-    probe_host = HOST_GATEWAY if _is_local_host(host) else host
-    try:
-        with socket.create_connection((probe_host, int(port)), timeout=0.25):
-            return True
-    except OSError:
-        return False
 
 
 def provision_instance(spec, replica_index, next_host_port, launch_id):
@@ -177,12 +174,6 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         )
         _require_controller()._run_cmd(["docker", "rm", "-f", runtime_id], host, user)
 
-    if ctrl_type == "workflow" and _port_check(host, spec.get("api_port", 8080)):
-        raise RuntimeError(
-            f"Cannot launch {runtime_id}: workflow api_port "
-            f"{spec.get('api_port', 8080)} is already in use on {host}."
-        )
-
     container_port = CONTAINER_PORT
     if ctrl_type == "database":
         host_port, container_port = int(spec.get("db_port", 5432)), 5432
@@ -199,11 +190,14 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
     if not is_local:
         transfer_image(_require_controller(), image, host, user)
 
+    callback_host = _callback_host(spec)
     for attempt in range(MAX_PORT_ATTEMPTS):
-        # Other machines can't resolve container names, so a remote agent is reached on its published port.
-        agent_host, agent_port = (
-            (runtime_id, container_port) if is_local else (host, host_port)
-        )
+        # Other machines can't resolve container names, so they reach a replica on its
+        # published port: a remote one at its host, the endpoint at the private IP.
+        if is_local and not callback_host:
+            agent_host, agent_port = runtime_id, container_port
+        else:
+            agent_host, agent_port = callback_host or host, host_port
         endpoint = f"{agent_host}:{agent_port}"
         # Last thing before `docker run`, after any orphan under this name is gone.
         _clear_stale_status(host, endpoint, runtime_id)
@@ -238,15 +232,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             f"CANYONOS_LOGS_ENABLED={str(bool(_require_controller().config.get('logs', True))).lower()}",
         ]
 
-        if ctrl_type == "workflow":
-            cmd.extend(
-                ["-p", f"{spec.get('api_port', 8080)}:{WORKFLOW_CONTAINER_PORT}"]
-            )
-            config = _require_controller().config
-            project_id = config.get("project_id")
-            if project_id:
-                cmd.extend(["-e", f"CANYONOS_PROJECT_ID={project_id}"])
-        elif ctrl_type == "database":
+        if ctrl_type == "database":
             volume_path = spec.get("volume_path")
             if volume_path:
                 cmd.extend(["-v", f"{data_volume_name(agent_name)}:{volume_path}"])
@@ -259,13 +245,8 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             )
         )
 
-        # User secrets from `env_file`. Explicit -e flags above still win, so a
-        # stray CANYONOS_* line in someone's .env cannot break agent wiring.
-        with env_file_args(
-            _require_controller(), host, user, _is_local_host(host)
-        ) as env_args:
-            cmd.extend(env_args)
-            cmd.append(image)
+        with _image_args(spec, image, host, user) as image_args:
+            cmd.extend(image_args)
             result = _require_controller()._run_cmd(cmd, host, user)
 
         if result.returncode == 0:
@@ -276,6 +257,13 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             _require_controller()._run_cmd(
                 ["docker", "rm", "-f", runtime_id], host, user
             )
+            clashed = _clashed_port(result.stderr)
+            if clashed not in (None, host_port):
+                raise RuntimeError(
+                    f"Port {clashed} is already in use on {host}. Free it or change "
+                    "the setting that publishes it in global_controller.yaml (the "
+                    "endpoint's `api_port`)."
+                )
             host_port += 1
             continue
         raise RuntimeError(f"Failed to launch {runtime_id}: {result.stderr}")
@@ -305,10 +293,58 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
     }
     if user:
         instance["user"] = user
-    if ctrl_type == "workflow":
-        instance["api_port"] = str(spec.get("api_port", 8080))
     logger.info("Runtime ready: %s -> %s", runtime_id, instance["endpoint"])
     return instance
+
+
+def _callback_host(spec):
+    """Return the address agents on other machines call the endpoint's controller
+    back on, this machine's private IP, or None for any other service or when the
+    CLI found no private IP."""
+    if spec.get("type") != "endpoint":
+        return None
+    return os.environ.get("CANYONOS_PRIVATE_IP") or None
+
+
+@contextmanager
+def _image_args(spec, image, host, user):
+    """Yield the `docker run` args that end the command and pick what runs.
+
+    The endpoint runs the controller image as `python -m canyonos_core.endpoint`,
+    publishing its HTTP port on `api_port` and serving one agent method. Any other
+    service runs its own image with the user's `env_file`; explicit -e flags before
+    it still win, so a stray CANYONOS_* line in someone's .env cannot break agent
+    wiring.
+    """
+    if spec.get("type") == "endpoint":
+        if not CONTROLLER_IMAGE:
+            raise RuntimeError(
+                "CANYONOS_CONTROLLER_IMAGE is unset, so the endpoint has no image to "
+                "run. Redeploy with `canyonos deploy`."
+            )
+        yield [
+            "-p",
+            f"{spec['api_port']}:{ENDPOINT_PORT}",
+            "-e",
+            f"CANYONOS_ENDPOINT_AGENT={spec['agent']}",
+            "-e",
+            f"CANYONOS_ENDPOINT_METHOD={spec['method']}",
+            "--entrypoint",
+            "python",
+            CONTROLLER_IMAGE,
+            "-m",
+            "canyonos_core.endpoint",
+        ]
+        return
+    with env_file_args(_require_controller(), host, user, _is_local_host(host)) as args:
+        yield [*args, image]
+
+
+def _clashed_port(stderr):
+    """Return the host port a failed `docker run` could not publish, or None when
+    Docker's message does not name one."""
+    match = _CLASHED_PORT.search(stderr or "")
+    return int(match.group(1)) if match else None
 
 
 def _clear_stale_status(host, endpoint, runtime_id):

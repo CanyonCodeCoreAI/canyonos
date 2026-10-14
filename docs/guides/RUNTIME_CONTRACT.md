@@ -13,7 +13,7 @@ rules apply under every provider.
 | manifest | `.car/config/global_controller.yaml`, or the file given with `-c` |
 | agent functions | `functions` on an agent entry |
 | entrypoint | `entrypoint` on an agent entry, relative to `.car/app` |
-| workflow | `workflow_file` on the `type: workflow` entry, relative to `.car/app` |
+| endpoint | `endpoint:` in the manifest, naming the agent method served over HTTP |
 | policy | `policy.yaml` next to the manifest |
 | generated files | `stubs/`, `grpc_stubs/`, `docker_container/` under `.car` |
 
@@ -44,7 +44,7 @@ context root last, in that agent's own context only. So for
 
 | Image | `/app/pkg/agent.py` | `/app/agent.py` |
 |---|---|---|
-| any peer, and the workflow | stub | stub |
+| any peer | stub | stub |
 | the agent's own | stub | real module |
 
 The agent container loads `/app/agent.py`. Anything else in that image that
@@ -104,7 +104,7 @@ imports.
 
 An entrypoint path segment that is not a Python identifier (`06_agent.py`,
 `travel-planner.py`) loads fine, since the controller loads by file path,
-but the workflow's `from steps.06_agent import X` is a `SyntaxError`.
+but a calling agent's `from steps.06_agent import X` is a `SyntaxError`.
 
 If the import or the constructor raises, the controller marks the replica
 `failed`, stops its gRPC server, kills the gateway, and exits. Readiness is
@@ -112,63 +112,78 @@ published only after the agent has loaded. Under `canyonos deploy` you see
 the last lines of the container log between `--- begin container log` and
 `--- end container log`.
 
-## Workflow shape
+## Endpoint
 
-The workflow file is executed, not imported. Its module-level code runs at
-container start with `__name__ == "__main__"`, so a `if __name__ ==
-"__main__":` guard runs too, and its `deploy(fn, port=...)` call blocks in
-the web server.
+The endpoint serves an agent method over HTTP. A typical target is an agent that
+takes the request and calls the others:
 
 ```python
 import json
-from deploy import deploy
 from pkg.agent import Agent
 
-agent = Agent()
 
-def main(query: str):
-    futures = [agent.work(item=item) for item in query.split(",")]
-    return [json.loads(f.value()) for f in futures]
-
-deploy(main, port=8080)
+class Workflow:
+    def main(self, query: str):
+        agent = Agent()
+        futures = [agent.work(item=item) for item in query.split(",")]
+        return [json.loads(f.value()) for f in futures]
 ```
 
-`deploy` and the agents are the workflow's only imports of the platform.
-`canyonos_core` inside the image holds the LLM gateway only, so
-`from canyonos_core import deploy` raises `ImportError` at start.
+```yaml
+agents:
+  - name: Workflow
+    entrypoint: workflow.py
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: list
+```
 
-Requests arrive as `POST /<function name>` with a JSON object body. Every
-key becomes a keyword argument; `_context` is popped first and used for
-policy. An empty body is a call with no arguments. A body that is not a JSON
-object is a `400`. `canyonos test` and the curl example `canyonos deploy`
-prints derive the route and the parameter from your function. The managed
-platform's test endpoint posts to `/main` with `{"query": "..."}` only, so a
-workflow meant for it needs a function named `main` with a single `query`
-parameter, and everything else carried inside that string. Parse richer
-input out of it inside `main` (`int(query)`, `json.loads(query)`); a session
-or conversation id travels inside `query` too.
+The top-level `endpoint:` block in the manifest picks the method served
+over HTTP:
 
-Each request runs `main` once as a future on the local controller, the same
-way an agent call runs, so it takes one of the controller's
+```yaml
+endpoint:
+  api_port: 8080
+  agent: Workflow
+  method: main
+```
+
+CanyonOS runs the endpoint itself, in its own container on the machine that
+runs `canyonos deploy`, and publishes it on `api_port` (default 8080).
+[Endpoint](../architecture/ENDPOINT.md) shows how a request travels through it.
+The agents' stubs are the target agent's only imports of the platform.
+`canyonos_core` inside the image holds the LLM gateway only, so importing
+anything else from it raises `ImportError` at start.
+
+Requests arrive as `POST /<method>` (`POST /main` above)
+with a JSON object body. Every key becomes a keyword argument; `_context` is
+popped first and used for policy. An empty body is a call with no
+arguments. A body that is not a JSON object is a `400`. `canyonos test`, the
+curl example `canyonos deploy` prints, and the dashboard take the argument
+names from that method's `functions[].arguments`, not from its signature.
+
+Each request runs the method as a future on a replica of the target agent, at
+most once per delivery the replica accepts. A replica that dies mid-run loses
+the request. The method takes one of that replica's
 `CANYONOS_MAX_AGENT_INSTANCES` slots (default 16) and waits in line when all
 are busy. `GET /status/<request_id>` reads that future: `pending` until it
 finishes, then `done` with the result or `error` with the message. A
 `Future` left in the returned value, at any depth of a dict, list or tuple,
 is resolved before serialising. Only the
 `Future` object itself is resolved: `str(f)`, an f-string or
-`json.dumps(...)` inside `main` turns it into its `repr` first, so call
+`json.dumps(...)` inside the method turns it into its `repr` first, so call
 `.value()` on anything you format or parse. A result that is
 not a dict is wrapped as `{"value": result}`. A result that cannot be
-serialised as JSON fails the request with `workflow '<name>' returned a
-result that cannot be sent as JSON`.
+serialised as JSON fails the request with `... is not JSON serializable`.
 
 Each stub method returns a `Future` immediately and `.value()` blocks. The
 value is the text the agent stored, so a dict comes back as a JSON string.
 Dispatching and resolving inside one comprehension serialises the calls
 without any error; dispatch everything first, then resolve.
-
-The workflow container also runs the local controller that runs `main` and
-its own LLM gateway, so a failure there can differ from one in an agent image.
 
 ## Build context
 
@@ -182,7 +197,7 @@ names that get overwritten.
 ## Dependencies and protobuf
 
 Each image installs `grpcio>=1.76.0`, `protobuf>=6.31.1`, `redis>=3.5`,
-plus `flask>=2.3.3` for the workflow, plus the entry's own `requirements`.
+plus the entry's own `requirements`.
 The `*_pb2.py` modules are generated by the controller image's `protoc` and
 copied into every image. They check the protobuf floor at import, so the
 build forces `protobuf>=6.31.1` and fails early if a requirement pins below
@@ -231,7 +246,7 @@ a failed deploy, tears the deployment down.
 `canyonos stop` asks the controller to drain and remove every instance it
 recorded. A hard kill of the controller can leave containers behind; the
 next `canyonos deploy` removes stale Redis and metrics containers and
-recreates orphaned agent containers, but a workflow `api_port`, a database
+recreates orphaned agent containers, but an endpoint `api_port`, a database
 `db_port` or a Redis port still in use is a hard error.
 
 `canyonos clean` deletes the entire `.car` directory in the current

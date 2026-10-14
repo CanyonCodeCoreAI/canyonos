@@ -185,7 +185,7 @@ def _validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     except OSError:
         raise PhaseFailure("validate", "dashboard state directory is not writable")
 
-    # Hop past a squatter (e.g. a deployed Workflow's api_port) rather than block serve.
+    # Hop past a squatter (e.g. the endpoint's api_port) rather than block serve.
     try:
         web_port = _existing_dashboard_port() or find_free_port(preferred_port)
     except RuntimeError as e:

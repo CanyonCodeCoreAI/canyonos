@@ -7,9 +7,6 @@ is no universal name to standardize on, so all of them still have to be set.
 What this module collapses is the VALUE: one GATEWAY_HOST constant, one place
 that lists the var names, used by both the Local and EC2 runtime backends
 instead of two independently hand-maintained copies of the same six lines.
-
-See company-memory: "LLM gateway can infer the provider from the request; the
-six base-URL variable names still cannot be collapsed" (CAN-343 analysis).
 """
 
 # The gateway always runs on localhost inside the agent's own container.

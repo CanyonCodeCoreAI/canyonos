@@ -11,11 +11,10 @@ This file will also need lots of iteration based on what is needed, will expect 
 
 import subprocess
 
-import yaml
 from rich.table import Table
 
-from canyonos import gc, project, ui
-from canyonos.constants import DEFAULT_API_PORT
+from canyonos import project, ui
+from canyonos.constants import read_config
 from canyonos.theme import GREEN
 
 
@@ -55,7 +54,7 @@ def _runtime_table(rows):
     table = Table(
         border_style=GREEN, header_style=f"bold {GREEN}", title_style=f"bold {GREEN}"
     )
-    for column in ("Agent", "Image", "Replicas", "Endpoint"):
+    for column in ("Agent", "Image", "Replicas"):
         table.add_column(column)
     for row in rows:
         replicas = f"{row['running']}/{row['expected']}"
@@ -64,27 +63,20 @@ def _runtime_table(rows):
             row["name"],
             row["image"] if row["image_built"] else f"{row['image']} (missing)",
             replicas,
-            row["endpoint"] or "-",
             style=style,
         )
     return table
 
 
-def agent_rows(config_path, gc_port):
+def agent_rows(config_path):
     """Per-agent readiness rows for the config's declared agents: image built,
-    replicas running, endpoint. Pure data -- no printing, nothing raised, so
+    replicas running. Pure data -- no printing, nothing raised, so
     both `verify_runtime` and `canyonos doctor` can build on it.
     """
-    with open(config_path) as f:
-        config = yaml.safe_load(f) or {}
+    config = read_config(config_path)
 
     images = _built_images()
     containers = _running_containers()
-    endpoints = {
-        endpoint.get("name"): f"{endpoint['host']}:{endpoint['port']}"
-        for endpoint in gc.workflow_endpoints(gc_port)
-        if endpoint.get("host") and endpoint.get("port")
-    }
 
     rows = []
     for agent in config.get("agents") or []:
@@ -98,12 +90,6 @@ def agent_rows(config_path, gc_port):
         )
         image_built = image in images
 
-        endpoint = endpoints.get(name)
-        if endpoint is None and agent.get("type") == "workflow":
-            # The container only reports endpoints it has instance records for;
-            # locally the published port is the one the config asked for.
-            endpoint = f"127.0.0.1:{agent.get('api_port', DEFAULT_API_PORT)}"
-
         rows.append(
             {
                 "name": name,
@@ -111,7 +97,6 @@ def agent_rows(config_path, gc_port):
                 "image_built": image_built,
                 "expected": expected,
                 "running": running,
-                "endpoint": endpoint,
                 "ok": image_built and running >= expected,
             }
         )
@@ -119,9 +104,9 @@ def agent_rows(config_path, gc_port):
     return rows
 
 
-def verify_runtime(config_path, gc_port):
+def verify_runtime(config_path):
     """Check the running deploy against the config. Raises RuntimeError on a gap."""
-    rows = agent_rows(config_path, gc_port)
+    rows = agent_rows(config_path)
 
     ui.panel(_runtime_table(rows))
 

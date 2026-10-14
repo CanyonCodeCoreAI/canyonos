@@ -9,8 +9,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from canyonos_core.reconciler.providers.Local import (
     _runtime as local_runtime,
 )
-from canyonos_core.controller.controller_context import list_instances
-from canyonos_core.controller.deploy import WORKFLOW_CONTAINER_PORT
+from canyonos_core.controller.controller_context import (
+    list_instances,
+)
 from canyonos_core.reconciler.provisioner import Provisioner
 from fakes import _FakeRedis, _fake_controller
 
@@ -296,21 +297,19 @@ class ProvisionerRuntimeTests(unittest.TestCase):
         index = cmd.index("CANYONOS_LOGS_ENABLED=false")
         self.assertEqual(cmd[index - 1], "-e")
 
-    def test_local_workflow_and_resource_flags_stay_the_same(self):
+    def test_local_agent_and_resource_flags_stay_the_same(self):
         controller = _fake_controller()
         manager = Provisioner(controller)
 
-        with patch.object(local_runtime, "_port_check", return_value=False):
-            manager.ensure_instances(
-                [
-                    {
-                        "name": "Workflow",
-                        "provider": "local",
-                        "type": "workflow",
-                        "resources": {"cpu": 2, "memory": 1024, "gpu": 1},
-                    }
-                ]
-            )
+        manager.ensure_instances(
+            [
+                {
+                    "name": "Workflow",
+                    "provider": "local",
+                    "resources": {"cpu": 2, "memory": 1024, "gpu": 1},
+                }
+            ]
+        )
 
         self.assertNotIn(
             "-it",
@@ -358,8 +357,6 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                     "ANTHROPIC_API_BASE=http://127.0.0.1:8081/anthropic",
                     "-e",
                     "CANYONOS_LOGS_ENABLED=true",
-                    "-p",
-                    "8080:8080",
                     "--cpus",
                     "2",
                     "--memory",
@@ -372,54 +369,6 @@ class ProvisionerRuntimeTests(unittest.TestCase):
                 None,
             ),
         )
-
-    def test_local_workflow_publishes_api_port_onto_the_container_port(self):
-        controller = _fake_controller()
-        manager = Provisioner(controller)
-
-        with patch.object(local_runtime, "_port_check", return_value=False):
-            manager.ensure_instances(
-                [
-                    {
-                        "name": "Workflow",
-                        "provider": "local",
-                        "type": "workflow",
-                        "api_port": 8090,
-                    }
-                ]
-            )
-
-        run_cmd = controller._run_cmd.call_args.args[0]
-        self.assertIn(f"8090:{WORKFLOW_CONTAINER_PORT}", run_cmd)
-
-    def test_workflow_bootstrap_fails_fast_on_an_occupied_api_port(self):
-        controller = _fake_controller()
-        manager = Provisioner(controller)
-
-        with patch.object(local_runtime, "_port_check", return_value=True):
-            with self.assertRaises(RuntimeError) as ctx:
-                manager.ensure_instances(
-                    [{"name": "Workflow", "provider": "local", "type": "workflow"}]
-                )
-
-        self.assertIn("api_port 8080", str(ctx.exception))
-        # The orphan-container `docker inspect` probe still runs -- only `docker run` is skipped.
-        run_calls = [
-            c
-            for c in controller._run_cmd.call_args_list
-            if c.args[0][:2] == ["docker", "run"]
-        ]
-        self.assertEqual(run_calls, [])
-
-    def test_plain_agent_bootstrap_ignores_api_port_conflicts(self):
-        """Only `type: workflow` publishes api_port -- a plain agent has nothing to conflict on."""
-        controller = _fake_controller()
-        manager = Provisioner(controller)
-
-        with patch.object(local_runtime, "_port_check", return_value=True):
-            manager.ensure_instances([{"name": "Alpha", "provider": "local"}])
-
-        controller._run_cmd.assert_called()
 
     def test_agent_id_is_stable_across_repeated_ensure_instances_calls(self):
         controller = _fake_controller()
@@ -760,6 +709,19 @@ class PortClaimTests(unittest.TestCase):
         record = controller.redis.hgetall("agent_instance:local:Alpha:0")
         self.assertEqual(record["runtime_id"], "canyonos-alpha-0--i-1")
         runtime.terminate_instance.assert_not_called()
+
+
+ENDPOINT_SPEC = {
+    "name": "endpoint",
+    "type": "endpoint",
+    "replicas": 1,
+    "redis_port": 6379,
+    "host_port": 50051,
+    "resources": {"cpu": 2},
+    "api_port": 9090,
+    "agent": "Workflow",
+    "method": "main",
+}
 
 
 if __name__ == "__main__":

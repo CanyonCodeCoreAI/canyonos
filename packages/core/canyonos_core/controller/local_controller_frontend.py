@@ -182,7 +182,6 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
             keys_to_expire = [
                 futures_key,
                 f"request:{request_id}:future",
-                f"request:{request_id}:error",
                 f"request:{request_id}:context",
             ]
             for fid in future_ids:
@@ -222,8 +221,9 @@ def start_server(port=50051, my_endpoint="unknown"):
 
     servicer = LocalControllerServicer(my_endpoint=my_endpoint)
 
+    # Several, so incoming calls and returning results do not wait on each other.
     server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=1), options=GRPC_SERVER_OPTIONS
+        futures.ThreadPoolExecutor(max_workers=8), options=GRPC_SERVER_OPTIONS
     )
     local_controler_pb2_grpc.add_LocalControllerServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")

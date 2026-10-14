@@ -64,3 +64,23 @@ def test_deploy_rejects_a_non_string_project_name(monkeypatch, tmp_path):
     assert response.status_code == 400
     assert "project_name" in response.get_json()["error"]
     assert calls == []
+
+
+AGENTS_YAML = (
+    "agents:\n"
+    "  - name: Workflow\n"
+    "    functions:\n"
+    "      - name: main\n"
+    "        arguments:\n"
+    "          - name: query\n"
+    "            type: str\n"
+)
+
+
+def _get_endpoint(monkeypatch, tmp_path, config_yaml):
+    config = tmp_path / "global_controller.yaml"
+    config.write_text(config_yaml)
+    monkeypatch.setattr(server, "_config_path", str(config))
+    monkeypatch.setattr(server, "_gc_process", SimpleNamespace(poll=lambda: None))
+    monkeypatch.delenv("CANYONOS_PUBLIC_IP", raising=False)
+    return server.app.test_client().get("/endpoint").get_json()

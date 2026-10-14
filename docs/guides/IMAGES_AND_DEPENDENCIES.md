@@ -18,7 +18,7 @@ Python resolves names rooted at `/app`:
 `/app/source/pkg` is not `import pkg`. There is exactly one import root, and
 it is the top of `.car/app`. If the application imports `tools` from a `src/`
 directory, `.car/app` has to be a copy of `src/`, not of the repository, and
-`entrypoint` and `workflow_file` are then relative to that. If the source
+`entrypoint` is then relative to that. If the source
 imports both `tools` and `src.tools`, no single root serves both.
 
 ## Packaging metadata is not installed
@@ -50,7 +50,7 @@ The sweep leaves out:
 - `node_modules`, `venv`, `site-packages`, `*.egg-info`
 - PEM private keys and `.p12`, `.pfx`, `.jks` files, wherever they are
 - at the root of the copy only: `Dockerfile`, `requirements.txt`,
-  `workflow_launcher.py`, `stubs/`, `grpc_stubs/`, `docker_container/`
+  `stubs/`, `grpc_stubs/`, `docker_container/`
 
 The build prints one `Note:` per category for hidden paths and symlinks with
 up to five examples, and one `Warning:` per private key and per reserved name.
@@ -65,13 +65,13 @@ After the sweep the build writes on top of it, and later writes win:
 - the platform's runtime modules at the context root (`future.py`,
   `canyonos_context.py`, `local_controller.py`, `local_controller_frontend.py`,
   `redis_client.py`, `grpc_options.py`, `log_entry.py`, `gpu_metrics.py`,
-  `log_handler.py`, plus `deploy.py` in the workflow image)
+  `log_handler.py`)
 - the generated `*_pb2.py` and `*_pb2_grpc.py` modules
 - `canyonos_core/`, holding only the LLM gateway and an `__init__.py` that sets
   `__version__`
 - every agent's stub, at its entrypoint path and at the root under its
   basename
-- the service's own entrypoint (or the workflow file), at the root
+- the service's own entrypoint, at the root
 
 A module of your own at the root of the copy with one of those names is
 overwritten. `canyonos validate` reports it as `CAR-FLAT-COLLISION`.
@@ -83,16 +83,13 @@ fail later, when the first agent or task is used, not at import.
 ## What `canyonos validate` checks
 
 `canyonos validate` reads `.car` and never builds an image, installs a
-package or serves a request. It checks the schema of the manifest
-(`CAR-SCHEMA`), that every entrypoint exists inside `app/`
-(`CAR-ENTRYPOINT-MISSING`, `CAR-ENTRYPOINT-OUTSIDE`), that the entrypoint has
+package or serves a request. It checks the schema of the manifest and
+that every entrypoint exists inside `app/` (`CAR-SCHEMA`), that the entrypoint has
 a module-level class named after the entry with a no-argument constructor and
 synchronous methods matching its `functions` (`CAR-ADAPTER-CLASS`,
 `CAR-ADAPTER-INIT`, `CAR-ADAPTER-SIGNATURE`, `CAR-ADAPTER-ASYNC`), that a
 package `__init__.py` does not re-export from a stubbed entrypoint
-(`CAR-PACKAGE-REEXPORT`), that the workflow file has the expected shape and
-imports agents from their declared entrypoints (`CAR-WORKFLOW-SHAPE`,
-`CAR-WORKFLOW-STUB-IMPORT`), and the root-name collision above
+(`CAR-PACKAGE-REEXPORT`), and the root-name collision above
 (`CAR-FLAT-COLLISION`). Exit code 0 means nothing found, 1 means findings,
 2 means the check could not run.
 

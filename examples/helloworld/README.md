@@ -15,8 +15,8 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 | File | What it does |
 |---|---|
 | `agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
-| `workflow/example_workflow.py` | `main(query)` calls `HelloAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. `deploy(main, port=8080)` serves it at `POST /main` inside its container; `api_port: 8082` in the config publishes it on the host. |
-| `config/global_controller.yaml` | What to run: the agent and workflow, both on `provider: local`. The agent's `functions` hold the signature of `hello`, and its `name` must match the class name. |
+| `agents/workflow.py` | `Workflow.main(query)` calls `HelloAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. |
+| `config/global_controller.yaml` | What to run: the two agents, both on `provider: local`, and the `endpoint` that serves `Workflow.main` at `POST /main`, published on the host at `api_port: 8082`. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
 | `config/policy.yaml` | Which callers can reach which agents. |
 
 ## Before you start
@@ -64,7 +64,6 @@ Deploy is live
 
 Dashboard  http://127.0.0.1:8081
 
-Workflow
 curl -X POST http://127.0.0.1:8082/main -H "Content-Type: application/json" -d '{"query": "your query"}'
 poll       curl http://127.0.0.1:8082/status/<request_id>
 ```
@@ -94,12 +93,12 @@ curl http://127.0.0.1:8082/status/<request_id>
 ```
 
 - The JSON body is passed to `main` as arguments, so `{"query": "Ada"}` returns `Hello, Ada! ...`, and `{}` falls back to `World`.
-- The path is the function's name. `POST /hello` returns `404`.
+- The path is the method name. `POST /hello` returns `404`, since only the `endpoint` method is served.
 - A body that isn't JSON returns `{"error": "Invalid JSON in request body"}`.
 
 ## 4. Find it in the dashboard
 
-Open the dashboard URL, then **Projects** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see the workflow call `HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
+Open the dashboard URL, then **Projects** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see `Workflow` call `HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
 
 Each redeploy starts the dashboard's history fresh.
 
@@ -140,5 +139,5 @@ canyonos quit   # remove everything CanyonOS started
 
 ## If something goes wrong
 
-- `Port 8082 is already in use`: another deploy or app holds it. Run `canyonos quit`, or change `api_port` on the workflow entry.
+- `Port 8082 is already in use`: another deploy or app holds it. Run `canyonos quit`, or change `api_port` under `endpoint` in `config/global_controller.yaml`.
 - More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

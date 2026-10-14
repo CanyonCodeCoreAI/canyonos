@@ -14,7 +14,7 @@ Preserve prompt content and application behavior; do not invent or improve promp
 - Find the active `global_controller.yaml`. Write `prompts.yaml` beside it:
   `.car/config/prompts.yaml` for a ported project, or `config/prompts.yaml` for
   the source layout. Respect an explicitly chosen destination.
-- Trace the manifest's agent entrypoints and workflow to their LLM calls. For a
+- Trace the manifest's agent entrypoints to their LLM calls. For a
   `.car` project, inspect `.car/app`, since that is the deployed source.
 - Search for message roles, prompt constants, template constructors, formatting
   functions, and referenced prompt files. Follow imports and builders to the text

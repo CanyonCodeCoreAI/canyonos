@@ -197,10 +197,8 @@ class Provisioner(object):
             # Lets the reconciler tell a starting replica from one that stopped answering.
             "created_at": str(time.time()),
         }
-        # api_port: workflow replicas only.
-        for field in ("user", "api_port"):
-            if instance.get(field):
-                mapping[field] = str(instance[field])
+        if instance.get("user"):
+            mapping["user"] = str(instance["user"])
 
         node_redis = self.controller.node_redis_for_instance(instance)
         node_redis.set(

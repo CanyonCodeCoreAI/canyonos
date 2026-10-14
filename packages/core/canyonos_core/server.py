@@ -7,12 +7,17 @@ import subprocess
 import sys
 import threading
 
+import redis
 import yaml
 from flask import Flask, jsonify, request
 
 from canyonos_core.cli import _artifact_prefix
-from canyonos_core.controller.controller_context import localhost_redis_port
+from canyonos_core.controller.controller_context import (
+    _redis_connect_host,
+    localhost_redis_port,
+)
 from canyonos_core.controller.utils.redis_client import RedisClient
+from canyonos_core.endpoint import read_endpoint_record
 
 app = Flask("canyonos-server")
 
@@ -20,7 +25,6 @@ app = Flask("canyonos-server")
 # `canyonos deploy`. Deploy builds and launches against this path.
 WORKSPACE_DIR = "/workspace"
 
-DEFAULT_API_PORT = 8080
 CLEAN_TIMEOUT_SECONDS = 45
 
 _gc_process = None
@@ -69,12 +73,12 @@ def deploy():
     with _gc_lock:
         if _gc_running():
             return jsonify({"error": "already running"}), 409
+        _config_path = full_path
         _gc_process = subprocess.Popen(
             [sys.executable, "-m", "canyonos_core.cli", "deploy", "-c", config_path],
             cwd=WORKSPACE_DIR,
             env={**os.environ, "CANYONOS_PROJECT_NAME": project_name},
         )
-        _config_path = full_path
         return jsonify({"status": "started", "pid": _gc_process.pid}), 200
 
 
@@ -115,63 +119,32 @@ def status():
     return jsonify({"running": _gc_running()}), 200
 
 
-def _primary_redis(config):
-    """Client for the node Redis holding instance records, as reached from inside the GC container."""
-    redis_cfg = config.get("redis", {})
-    host = redis_cfg.get("host", "localhost")
-    port = redis_cfg.get("port", 6379)
-    port = localhost_redis_port(config.get("agents") or []) or port
-    if host in ("localhost", "127.0.0.1"):
-        host = os.environ.get("CANYONOS_REDIS_HOST", host)
-    return RedisClient(host=host, port=int(port))
+def _deploy_redis(config_path):
+    """Return a client for the Redis the running deploy's Global Controller publishes
+    to: this machine's node Redis, on the port its config gives the agents here."""
+    # Raw YAML, not load_config: importing the project's .env here would leak into the
+    # next deploy's environment. Ports cannot be ${VAR} references, so none is missed.
+    with open(config_path) as f:
+        config = yaml.safe_load(f) or {}
+    port = localhost_redis_port(config.get("agents") or []) or 6379
+    return RedisClient(host=_redis_connect_host("localhost"), port=port)
 
 
-def _workflow_endpoints(config):
-    """Address of every workflow replica recorded in Redis, as the caller should reach it."""
-    ports = {
-        agent["name"]: agent.get("api_port", DEFAULT_API_PORT)
-        for agent in config.get("agents") or []
-        if agent.get("type") == "workflow" and agent.get("name")
-    }
-    if not ports:
-        return []
-
-    redis_client = _primary_redis(config)
-    endpoints = []
-    for key in sorted(redis_client.scan_keys("agent_instance:*")):
-        record = redis_client.hgetall(key)
-        name = record.get("agent_name")
-        if name not in ports:
-            continue
-        # Callers of a workflow sit outside the deployment's network.
-        host = record.get("public_host")
-        if not host:
-            continue
-        endpoints.append(
-            {
-                "name": name,
-                "host": host,
-                "port": int(record.get("api_port") or ports[name]),
-            }
-        )
-    return endpoints
-
-
-@app.route("/endpoints", methods=["GET"])
-def endpoints():
-    """Where the deployed workflows answer, so the CLI can print real addresses."""
-    if _config_path is None or not os.path.isfile(_config_path):
-        return jsonify({"workflows": []}), 200
-
+@app.route("/endpoint", methods=["GET"])
+def endpoint():
+    """Return the endpoint record the running deploy's Global Controller published, so
+    the CLI can find it from any directory; 409 if no deploy is running, 503 while it is
+    not published yet or Redis cannot be read."""
+    config_path = _config_path
+    if config_path is None or not _gc_running():
+        return jsonify({"error": "not running"}), 409
     try:
-        with open(_config_path) as f:
-            config = yaml.safe_load(f) or {}
-        return jsonify({"workflows": _workflow_endpoints(config)}), 200
-    except Exception:
-        # Don't hand the exception message back to the caller -- it can carry
-        # local paths or Redis details. Log it here, keep the response generic.
-        app.logger.exception("Failed to resolve workflow endpoints")
-        return jsonify({"workflows": [], "error": "failed to resolve endpoints"}), 200
+        record = read_endpoint_record(_deploy_redis(config_path))
+    except (OSError, yaml.YAMLError, redis.RedisError) as e:
+        return jsonify({"error": f"Could not read the endpoint record: {e}"}), 503
+    if record is None:
+        return jsonify({"error": "The endpoint is not published yet"}), 503
+    return jsonify({"endpoint": record}), 200
 
 
 if __name__ == "__main__":

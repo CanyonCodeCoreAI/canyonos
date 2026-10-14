@@ -1,4 +1,4 @@
-"""Docker names and labels for everything CanyonOS launches.
+"""Docker names, labels, the controller port and image for everything CanyonOS launches.
 
 Every place that creates, bootstraps, or cleans up a container, image, or volume
 derives the name from here, so the provider runtimes and the controller's
@@ -12,6 +12,14 @@ label falls back to the plain `canyonos-...` form used before projects existed.
 """
 
 import os
+
+# The gRPC port a local controller listens on inside every agent and endpoint container.
+CONTAINER_PORT = 50051
+
+# Set by the CLI to the image the GC itself runs; the endpoint and the metrics
+# collectors run it too. No default: guessing one means silently running a stale
+# image that need not hold the code this GC was built from.
+CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
 
 DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
 PROJECT_LABEL = "com.docker.compose.project"

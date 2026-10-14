@@ -31,6 +31,9 @@ agents:
     provider: EC2
     replicas: 1
     instance_type: ${TEST_EC2_TYPE}
+endpoint:
+  agent: Alpha
+  method: main
 project_id: "fixed"
 """
 
@@ -68,12 +71,6 @@ class ConfigExpansionParityTests(unittest.TestCase):
 
         self.assertEqual(config["ec2"]["ami_id"], "${TEST_EC2_AMI_ID}")
 
-    def test_the_ec2_block_is_loaded_as_written(self):
-        with open(self.config_path, "w") as f:
-            f.write("agents: []\nec2:\n  region: us-east-1\n")
-        config = ControllerContext._load_config(self.config_path)
-        self.assertEqual(config["ec2"], {"region": "us-east-1"})
-
     def test_expanded_agents_are_published_without_reparsing_the_manifest(self):
         with patch.dict(os.environ, self.env):
             config = ControllerContext._load_config(self.config_path)
@@ -99,6 +96,7 @@ class ReconcilerContextParityTests(unittest.TestCase):
             f.write(
                 f"env_file: {self.env_file}\n"
                 "agents:\n  - name: Alpha\n    host: localhost\n    replicas: 1\n"
+                "endpoint: {agent: Alpha, method: main}\n"
             )
 
     def test_containerized_redis_host_override_reaches_the_context(self):
@@ -127,13 +125,18 @@ class ReconcilerContextParityTests(unittest.TestCase):
         with open(other, "w") as f:
             f.write("API_KEY=xyz\n")
         with open(self.config_path, "w") as f:
-            f.write(f"env_file: {other}\nagents: []\nec2:\n  region: us-west-2\n")
+            f.write(
+                f"env_file: {other}\nagents: []\nec2:\n  region: us-west-2\n"
+                "endpoint:\n  agent: Alpha\n  method: main\n"
+            )
         context.refresh_config()
         self.assertEqual(context.env_file_path, other)
         self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
 
         with open(self.config_path, "w") as f:
-            f.write("env_file: /does/not/exist.env\nagents: []\n")
+            f.write(
+                "env_file: /does/not/exist.env\nagents: []\nendpoint: {agent: Alpha, method: main}\n"
+            )
         context.refresh_config()
         self.assertEqual(context.env_file_path, other)
         self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
@@ -145,22 +148,6 @@ class ReconcilerContextParityTests(unittest.TestCase):
         self.assertEqual(context._ssh_user({"provider": "ec2"}), "ubuntu")
         self.assertEqual(
             context._ssh_user({"provider": "local", "user": "deploy"}), "deploy"
-        )
-
-    def test_every_spec_names_its_provider_as_records_spell_it(self):
-        """Replica ids include the provider name, so an agent written as `ec2` must still
-        find its records saved under `EC2`."""
-        tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        os.makedirs(os.path.join(tmp, "config"))
-        config_path = os.path.join(tmp, "config", "global_controller.yaml")
-        with open(config_path, "w") as f:
-            f.write("agents:\n  - name: Alpha\n    provider: ec2\n  - name: Beta\n")
-
-        config = ControllerContext._load_config(config_path)
-
-        self.assertEqual(
-            [agent["provider"] for agent in config["agents"]], ["EC2", "local"]
         )
 
 

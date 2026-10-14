@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
 import type {
-  MonitoringEndpointsResponse,
+  MonitoringEndpointResponse,
   MonitoringErrorSummaryResponse,
   MonitoringReplica,
 } from '@canyonos/api/monitoring';
@@ -14,7 +14,8 @@ import { PROJECT, stubFleetSpend, stubProjectDashboard, stubProjectsList } from 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const STATUS_PATH = `/projects/${PROJECT.id}/status`;
 const MONITORING_PATH = `/projects/${PROJECT.id}/monitoring`;
-const WORKFLOW_URL = 'http://203.0.113.7:8080';
+const ENDPOINT_URL = 'http://203.0.113.7:8080/main';
+const STATUS_URL = 'http://203.0.113.7:8080/status';
 
 const REPLICAS: MonitoringReplica[] = [
   { agent: 'fraud_workflow', replica: 'fraud_workflow-1', queue_length: 2, active_requests: 3 },
@@ -22,9 +23,16 @@ const REPLICAS: MonitoringReplica[] = [
   { agent: 'ScoringAgent', replica: 'ScoringAgent-2', queue_length: null, active_requests: null },
 ];
 
-const ENDPOINTS: MonitoringEndpointsResponse = {
+const ENDPOINT: MonitoringEndpointResponse = {
   project_id: PROJECT.id,
-  endpoints: [{ name: 'fraud_workflow', url: WORKFLOW_URL }],
+  endpoint: {
+    url: ENDPOINT_URL,
+    status_url: STATUS_URL,
+    agent: 'fraud_workflow',
+    method: 'main',
+    arguments: ['transaction'],
+    example_body: { transaction: 'your query' },
+  },
 };
 
 const ERROR_SUMMARY: MonitoringErrorSummaryResponse = {
@@ -38,7 +46,7 @@ const ERROR_SUMMARY: MonitoringErrorSummaryResponse = {
 type Handler = (route: Route) => Promise<void>;
 
 interface StatusStub {
-  readonly endpoints?: Handler;
+  readonly endpoint?: Handler;
   readonly replicas?: Handler;
 }
 
@@ -50,7 +58,7 @@ async function openStatus(page: Page, stub: StatusStub = {}): Promise<void> {
   await stubFleetSpend(page);
 
   const handlers: Record<string, Handler> = {
-    [`${MONITORING_PATH}/endpoints`]: stub.endpoints ?? ((route) => fulfillJson(route, ENDPOINTS)),
+    [`${MONITORING_PATH}/endpoint`]: stub.endpoint ?? ((route) => fulfillJson(route, ENDPOINT)),
     [`${MONITORING_PATH}/replicas`]:
       stub.replicas ??
       ((route) => fulfillJson(route, { project_id: PROJECT.id, replicas: REPLICAS })),
@@ -82,14 +90,20 @@ test('a running project shows its endpoint, the summary tiles and the containers
 
   await expect(page.getByTestId('status-badge')).toHaveText('Running');
   await expect(page.getByTestId('status-badge')).toHaveAttribute('data-state', 'running');
-  await expect(page.getByTestId('status-endpoint-url')).toHaveText(`${WORKFLOW_URL}/main`);
+  await expect(page.getByTestId('status-endpoint-url')).toHaveText(ENDPOINT_URL);
   await expect(page.getByTestId('status-endpoint-curl')).toContainText(
-    `curl -X POST ${WORKFLOW_URL}/main`
+    `curl -X POST ${ENDPOINT_URL}`
+  );
+  await expect(page.getByTestId('status-endpoint-curl')).toContainText(
+    `-d '{"transaction":"your query"}'`
+  );
+  await expect(page.getByTestId('status-endpoint-status-curl')).toHaveText(
+    `curl ${STATUS_URL}/<request_id>`
   );
 
   await expect(page.getByTestId('status-tile-replicas-value')).toHaveText('3');
   await expect(page.getByTestId('status-tile-agents-value')).toHaveText('2');
-  // Only the workflow replica's requests count; the agent replicas serve those same requests.
+  // Only the endpoint agent's replicas count; the other agents serve those same requests.
   await expect(page.getByTestId('status-tile-active-value')).toHaveText('3');
   await expect(page.getByTestId('status-tile-errors-value')).toHaveText('7');
 
@@ -105,7 +119,7 @@ test('a running project shows its endpoint, the summary tiles and the containers
 test('a project with no running controller says so and still counts what reports up', async ({
   page,
 }) => {
-  await openStatus(page, { endpoints: notRunning });
+  await openStatus(page, { endpoint: notRunning });
 
   await expect(page.getByTestId('status-badge')).toHaveText('Not running');
   await expect(page.getByTestId('status-endpoint-message')).toHaveText(
@@ -120,11 +134,11 @@ test('a project with no running controller says so and still counts what reports
 test('an endpoint read that fails for another reason does not claim the project is down', async ({
   page,
 }) => {
-  await openStatus(page, { endpoints: (route) => failJson(route) });
+  await openStatus(page, { endpoint: (route) => failJson(route) });
 
   await expect(page.getByTestId('status-badge')).toHaveText('Status unknown');
   await expect(page.getByTestId('status-endpoint-message')).toHaveText(
-    'Could not read the workflow endpoint.'
+    'Could not read the endpoint.'
   );
 });
 

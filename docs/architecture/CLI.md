@@ -40,8 +40,8 @@ terminal is the CLI *narrating* what the container is doing.
 │         │ docker compose. (creates it                 │ docker.sock     │
 │         ▼                                            ▼ (spawns siblings)│
 │   ┌───────────────────────┐              ┌───────────────────────────┐  │
-│   │  Dashboard stack      │◀── traces ───│  Redis + your agent /      │  │
-│   │  web · api            │  (OTLP)      │  workflow containers       │  │
+│   │  Dashboard stack      │◀── traces ───│  Redis + your agent        │  │
+│   │  web · api            │  (OTLP)      │  containers                │  │
 │   └───────────────────────┘              └───────────────────────────┘  │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -49,7 +49,7 @@ terminal is the CLI *narrating* what the container is doing.
 
 Three things worth internalizing about this diagram:
 
-1. **The container talks to the host Docker daemon.** The GC mounts the host's `docker.sock`, so the Redis and agent/workflow containers it launches are **siblings on your machine**, not nested inside it. (This is why teardown has to be explicit — see `stop` vs `quit` below.)
+1. **The container talks to the host Docker daemon.** The GC mounts the host's `docker.sock`, so the Redis and agent containers it launches are **siblings on your machine**, not nested inside it. (This is why teardown has to be explicit — see `stop` vs `quit` below.)
 2. **The dashboard is separate.** It's its own compose stack that just *renders* the OTLP traces your workflow emits — it isn't in the deploy critical path. A failure for this command doesn't stop the deployment nor the traces, just prevents automatic trace collection and visualization.
 
 State connecting the CLI to its container is a single file per project:

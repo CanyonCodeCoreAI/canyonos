@@ -1,5 +1,5 @@
 # Global Controller Configuration — portfolio-analysis fan-out pipeline
-# Lists all agents and the workflow that CanyonOS manages.
+# Lists all agents that CanyonOS manages, and the one the endpoint serves.
 #
 # The pipeline fans out per-ticker metrics computation, then aggregates into
 # portfolio-level risk, then generates an LLM briefing. Resource classes below
@@ -120,18 +120,22 @@ agents:
     provider: local
     instance_type: t3.micro
 
-  # The workflow, exposed as a REST API.
+  # The agent the endpoint serves over HTTP; it calls the stages above.
   - name: Workflow
-    type: workflow
-    api_port: 8080         # Flask REST API port
-    dashboard_port: 8081   # Local dashboard's preferred port
     redis_port: 6379
     replicas: 1
     resources:
       cpu: 1
       memory: 512
       gpu: 0
-    workflow_file: workflow/portfolio_workflow.py
+    entrypoint: agents/workflow.py
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: dict
     provider: local
     instance_type: t3.micro
 
@@ -147,6 +151,12 @@ agents:
   #     POSTGRES_DB: canyonos_state_db
   #   provider: local
 
+endpoint:
+  api_port: 8080         # REST API port
+  agent: Workflow
+  method: main
+
+dashboard_port: 8081     # Local dashboard's preferred port
 
 otel:
   # The dashboard api's own OTLP ingest. Base url only -- the exporter appends the

@@ -18,17 +18,15 @@ sys.path.insert(
     ),
 )
 
-from canyonos_core.controller.local_controller import LocalController
+from canyonos_core.controller.local_controller import (
+    LocalController,
+)
 from fakes import _FakeRedis
 
 
 def _bind_failure_marker(controller):
-    controller._mark_future_failed = (
-        lambda future_id, error, origin=None, error_name=None: (
-            LocalController._mark_future_failed(
-                controller, future_id, error, origin, error_name
-            )
-        )
+    controller._mark_future_failed = lambda *a, **k: (
+        LocalController._mark_future_failed(controller, *a, **k)
     )
     controller._send_result_callback = (
         lambda origin, future_id, result="", failed=0, error_message="": (
@@ -115,7 +113,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             patch.object(LocalController, "_start_llm_gateway", return_value=None),
             patch.object(LocalController, "_load_agent", load_agent),
         ):
-            controller = LocalController(publish_ready=False)
+            controller = LocalController()
         controller._metrics_stop_event.set()
         controller._metrics_thread.join(timeout=2)
 
@@ -230,7 +228,12 @@ class LocalControllerMetricsTests(unittest.TestCase):
             return_value=17.5,
         ):
             LocalController._execute_locally(
-                controller, "Greeter", "greet", {"name": "world"}, "future-1"
+                controller,
+                "Greeter",
+                "greet",
+                {"name": "world"},
+                "future-1",
+                parent="future-0",
             )
 
         self.assertEqual(redis.hget("future:future-1", "gpu_resource"), 17.5)

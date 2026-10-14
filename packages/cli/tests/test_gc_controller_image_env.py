@@ -42,6 +42,8 @@ def docker(monkeypatch, tmp_path):
     fake = FakeDocker()
     monkeypatch.setattr(init_cmd.subprocess, "run", fake)
     monkeypatch.setattr(init_cmd, "_port_reachable", lambda _port: True)
+    monkeypatch.setattr(init_cmd, "private_ip", lambda: None)
+    monkeypatch.setattr(init_cmd, "public_ip", lambda: None)
     return fake
 
 

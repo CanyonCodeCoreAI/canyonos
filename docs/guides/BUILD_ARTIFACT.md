@@ -32,7 +32,7 @@ next to them, never inside `app/`. `canyonos clean` deletes the whole `.car`,
 including `app/` and `config/`, and removes the local Docker image of each
 agent listed in `config/global_controller.yaml`.
 
-Every path in the manifest (`entrypoint`, `workflow_file`) is relative to
+Every path in the manifest (`entrypoint`) is relative to
 `app/`. It has to be a `.py` file, it cannot be absolute, and it cannot use
 `..` to climb out. A symlink that resolves outside `app/` is rejected too.
 

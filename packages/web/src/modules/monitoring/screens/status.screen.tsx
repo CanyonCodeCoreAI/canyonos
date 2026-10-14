@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { MonitoringEndpointsResponse } from '@canyonos/api/monitoring';
+import type { MonitoringEndpoint, MonitoringEndpointResponse } from '@canyonos/api/monitoring';
 
 import { cardVariants } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
@@ -9,25 +9,22 @@ import { cn } from '@repo/ui/utils';
 import { ApiResponseError } from '@/api';
 import { ContainersSection } from '@/modules/monitoring/components/containers-section';
 import {
-  endpointsQueryOptions,
+  endpointQueryOptions,
   errorSummaryQueryOptions,
   replicasQueryOptions,
 } from '@/modules/monitoring/monitoring.queries';
 import { projectDetailQueryOptions } from '@/modules/projects/projects.queries';
 
 const CARD = cardVariants({ className: 'min-w-0 p-5' });
-// deploy() serves POST /<workflow function name> and the API does not report that name, so this
-// shows the `main` entry the runtime contract and `canyonos test` both post to.
-const CONVENTIONAL_WORKFLOW_ROUTE = 'main';
 
 type Deployment = 'checking' | 'running' | 'not_running' | 'unknown';
 
-function deploymentOf(endpoints: UseQueryResult<MonitoringEndpointsResponse>): Deployment {
-  if (endpoints.isPending) return 'checking';
-  if (endpoints.isSuccess) return 'running';
+function deploymentOf(endpoint: UseQueryResult<MonitoringEndpointResponse>): Deployment {
+  if (endpoint.isPending) return 'checking';
+  if (endpoint.isSuccess) return 'running';
   const is_not_running =
-    endpoints.error instanceof ApiResponseError &&
-    endpoints.error.code === 'canyonos.project_not_running';
+    endpoint.error instanceof ApiResponseError &&
+    endpoint.error.code === 'canyonos.project_not_running';
   return is_not_running ? 'not_running' : 'unknown';
 }
 
@@ -46,19 +43,19 @@ interface StatusScreenProps {
 
 export function StatusScreen({ project_id }: StatusScreenProps) {
   const project = useQuery(projectDetailQueryOptions(project_id));
-  const endpoints = useQuery(endpointsQueryOptions(project_id));
+  const endpoint = useQuery(endpointQueryOptions(project_id));
   const replicas_query = useQuery(replicasQueryOptions(project_id));
   const errors = useQuery(errorSummaryQueryOptions(project_id, '1d'));
 
-  const deployment = deploymentOf(endpoints);
-  // Agent replicas also run calls, but each one serves a workflow request already counted.
-  const workflows = new Set(endpoints.data?.endpoints.map((endpoint) => endpoint.name));
-  const workflow_requests = readout(replicas_query, ({ replicas }) =>
+  const deployment = deploymentOf(endpoint);
+  // Agent replicas also run calls, but each one serves an endpoint request already counted.
+  const endpoint_agent = endpoint.data?.endpoint?.agent;
+  const endpoint_requests = readout(replicas_query, ({ replicas }) =>
     replicas
-      .filter((replica) => workflows.has(replica.agent))
+      .filter((replica) => replica.agent === endpoint_agent)
       .reduce((total, replica) => total + (replica.active_requests ?? 0), 0)
   );
-  const active_requests = deployment === 'checking' ? undefined : workflow_requests;
+  const active_requests = deployment === 'checking' ? undefined : endpoint_requests;
 
   return (
     <main className="flex min-h-full shrink-0 flex-col gap-7 p-7" data-testid="status-screen">
@@ -69,7 +66,7 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
         <StatusBadge deployment={deployment} />
       </header>
 
-      <EndpointCard deployment={deployment} url={endpoints.data?.endpoints[0]?.url} />
+      <EndpointCard deployment={deployment} endpoint={endpoint.data?.endpoint} />
 
       <section
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
@@ -137,20 +134,20 @@ function StatusBadge({ deployment }: { readonly deployment: Deployment }) {
 }
 
 const ENDPOINT_MESSAGES: Record<Deployment, string> = {
-  checking: 'Looking up the workflow…',
-  running: 'No workflow endpoint reported yet.',
+  checking: 'Looking up the endpoint…',
+  running: 'No endpoint reported yet.',
   not_running: 'Deploy the project to get an endpoint.',
-  unknown: 'Could not read the workflow endpoint.',
+  unknown: 'Could not read the endpoint.',
 };
 
 function EndpointCard({
   deployment,
-  url,
+  endpoint,
 }: {
   readonly deployment: Deployment;
-  readonly url: string | undefined;
+  readonly endpoint: MonitoringEndpoint | null | undefined;
 }) {
-  if (!url) {
+  if (!endpoint) {
     return (
       <section className={CARD} data-testid="status-endpoint">
         <h2 className="text-foreground text-sm font-semibold">Endpoint</h2>
@@ -161,7 +158,7 @@ function EndpointCard({
     );
   }
 
-  const workflow_url = `${url}/${CONVENTIONAL_WORKFLOW_ROUTE}`;
+  const { url, status_url, example_body } = endpoint;
   return (
     <section className={CARD} data-testid="status-endpoint">
       <h2 className="text-foreground text-sm font-semibold">Endpoint</h2>
@@ -169,20 +166,23 @@ function EndpointCard({
         className="text-foreground mt-3 font-mono text-sm select-all"
         data-testid="status-endpoint-url"
       >
-        {workflow_url}
+        {url}
       </p>
-      <p className="text-muted-foreground mt-4 text-xs">Query the workflow</p>
+      <p className="text-muted-foreground mt-4 text-xs">Query the endpoint</p>
       <pre
         className="bg-muted/50 mt-1.5 overflow-x-auto rounded-lg p-3 font-mono text-xs"
         data-testid="status-endpoint-curl"
       >
-        {`curl -X POST ${workflow_url} \\
+        {`curl -X POST ${url} \\
   -H "Content-Type: application/json" \\
-  -d '{"query": "your question here"}'`}
+  -d '${JSON.stringify(example_body)}'`}
       </pre>
       <p className="text-muted-foreground mt-4 text-xs">Check a request&apos;s result</p>
-      <pre className="bg-muted/50 mt-1.5 overflow-x-auto rounded-lg p-3 font-mono text-xs">
-        {`curl ${url}/status/<request_id>`}
+      <pre
+        className="bg-muted/50 mt-1.5 overflow-x-auto rounded-lg p-3 font-mono text-xs"
+        data-testid="status-endpoint-status-curl"
+      >
+        {`curl ${status_url}/<request_id>`}
       </pre>
     </section>
   );

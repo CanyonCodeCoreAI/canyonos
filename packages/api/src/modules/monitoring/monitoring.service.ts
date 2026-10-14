@@ -2,8 +2,10 @@ import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
 import { monitoring_repo } from './monitoring.repo';
 import { SIGNALS } from './monitoring.signals';
 import { MonitoringSignalSchema } from './monitoring.types';
+import type { EndpointAddress } from './monitoring.repo';
 import type {
-  MonitoringEndpointsResponse,
+  MonitoringEndpoint,
+  MonitoringEndpointResponse,
   MonitoringErrorSummaryResponse,
   MonitoringListQuery,
   MonitoringLlmCallsResponse,
@@ -126,17 +128,26 @@ export async function get_replicas(project_id: string): Promise<MonitoringReplic
   return { project_id, replicas: await monitoring_repo.replicas(project_id) };
 }
 
-// Only workflow replicas carry an api_port; callers reach them on the public host.
-export async function get_endpoints(project_id: string): Promise<MonitoringEndpointsResponse> {
+const EXAMPLE_ARGUMENT_VALUE = 'your query';
+
+function describe_endpoint(address: EndpointAddress): MonitoringEndpoint {
+  return {
+    url: address.url,
+    status_url: `http://${address.public_host}:${address.api_port}/status`,
+    agent: address.agent,
+    method: address.method,
+    arguments: address.arguments,
+    example_body: Object.fromEntries(
+      address.arguments.map((name) => [name, EXAMPLE_ARGUMENT_VALUE])
+    ),
+  };
+}
+
+// The controller records its endpoint's address only while it runs one.
+export async function get_endpoint(project_id: string): Promise<MonitoringEndpointResponse> {
   return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
-    const instances = await monitoring_repo.agent_instances(redis);
-    const endpoints = instances
-      .filter((instance) => instance.api_port && instance.public_host)
-      .map((instance) => ({
-        name: instance.agent_name ?? 'Workflow',
-        url: `http://${instance.public_host}:${instance.api_port}`,
-      }));
-    return { project_id, endpoints };
+    const address = await monitoring_repo.endpoint(redis);
+    return { project_id, endpoint: address ? describe_endpoint(address) : null };
   });
 }

@@ -58,6 +58,11 @@ gateway_headers.install(
 import local_controler_pb2
 import local_controler_pb2_grpc
 
+try:
+    from canyonos_core.controller.future import Future
+except ImportError:
+    from future import Future
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,12 +71,33 @@ ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
 POLICY_RULES_KEY = "policy:rules"
 EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5
-WORKFLOW_LOG_SOURCE = "Workflow"
+# A replica only queues a request forwarded to it, so one slower than this to
+# accept it is stuck.
+FORWARD_TIMEOUT_SECONDS = 2
+# How long routing skips a replica after forwarding a request to it failed; the
+# reconciler replaces it meanwhile.
+REPLICA_DOWN_SECONDS = 30
+FORWARD_RETRIES = 8
+FUTURE_RESULT_TIMEOUT_SECONDS = 300
+ENDPOINT_LOG_SOURCE = "Endpoint"
 
 
 def log_source_name(agent_name):
-    """The name a replica's logs report as their source; the workflow replica has no agent name."""
-    return agent_name or WORKFLOW_LOG_SOURCE
+    """Return the source name a replica's logs report: its agent, or `Endpoint` for the
+    endpoint's controller, which has no agent."""
+    return agent_name or ENDPOINT_LOG_SOURCE
+
+
+def _resolved(value):
+    """Wait on every Future in `value`, at any depth of dicts, lists and tuples, and
+    return a copy with each one replaced by its result."""
+    if isinstance(value, Future):
+        return value.value(timeout=FUTURE_RESULT_TIMEOUT_SECONDS)
+    if isinstance(value, dict):
+        return {k: _resolved(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_resolved(v) for v in value)
+    return value
 
 
 class LocalController(object):
@@ -82,6 +108,8 @@ class LocalController(object):
         self.agent_host = os.environ.get("CANYONOS_AGENT_HOST", "localhost")
         self.agent_name = os.environ.get("CANYONOS_AGENT_NAME")
         self.agent_file = os.environ.get("CANYONOS_AGENT_FILE")
+        # The endpoint's controller runs no agent: it only forwards calls.
+        runs_agent = bool(self.agent_name or self.agent_file)
 
         # Public port is how the routing table and other nodes know us;
         # internally the gRPC server binds to `port` (50051 inside Docker).
@@ -100,17 +128,19 @@ class LocalController(object):
         redis_host = os.environ.get("CANYONOS_REDIS_HOST", "localhost")
         redis_port = int(os.environ.get("CANYONOS_REDIS_PORT", 6379))
         self.redis = RedisClient(host=redis_host, port=redis_port)
+        self._load_routing()
         self._status_key = f"controller:{self.agent_host}:{self.public_port}:status"
 
-        # Every LLM call in this container is routed through the gateway, so it must be
-        # up before we report ready. The status key has no TTL: pin it to "failed" or
-        # a stale "healthy" keeps GlobalController seeing a container that has died.
-        try:
-            self._gateway_process = self._start_llm_gateway(redis_host, redis_port)
-        except Exception:
-            self.redis.set(self._status_key, "failed")
-            self.server.stop(0)
-            raise
+        # Agent LLM calls go through the gateway, so it starts before ready.
+        if runs_agent:
+            try:
+                self._gateway_process = self._start_llm_gateway(redis_host, redis_port)
+            except Exception:
+                # The status key has no TTL, so a stale "healthy" would outlive
+                # this container.
+                self.redis.set(self._status_key, "failed")
+                self.server.stop(0)
+                raise
 
         # Written by the Provisioner; stamps completed requests with the replica that ran them.
         self.agent_id = self.redis.get(
@@ -161,6 +191,9 @@ class LocalController(object):
         # Cache for gRPC stubs to remote controllers
         self._remote_channels = {}  # endpoint -> grpc.Channel
         self._remote_stubs = {}  # endpoint -> LocalControllerStub
+        # Result callbacks on executor and gRPC threads create stubs too, not just
+        # the loop that forwards requests.
+        self._remote_stubs_lock = threading.Lock()
 
         # Policy rules cache (loaded lazily from Redis)
         self._policy_rules = None
@@ -172,6 +205,8 @@ class LocalController(object):
         self._executor = ThreadPoolExecutor(max_workers=max_instances)
         self._executor_futures = {}
         self._executor_futures_lock = threading.Lock()
+        # endpoint -> time.monotonic() until which new picks skip it
+        self._down_until = {}
 
         # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
         self._metrics_thread.start()
@@ -180,11 +215,9 @@ class LocalController(object):
         # launches, since a container can't see the host (esp. the GPU). This keeps only
         # in-process metrics: queue length, counters, and health heartbeat.
 
-        # After the gateway, since an agent constructor may build an LLM client against
-        # it. Workflow containers run routing-only with neither set; agent containers
-        # must not advertise readiness if constructing the agent failed.
+        # After the gateway, which an agent constructor may call.
         self.agent = self._load_agent()
-        if (self.agent_name or self.agent_file) and self.agent is None:
+        if runs_agent and self.agent is None:
             self._metrics_stop_event.set()
             self._metrics_thread.join(timeout=2)
             self.mark_failed()
@@ -341,6 +374,7 @@ class LocalController(object):
                     if self._ready.is_set():
                         self.redis.set(self._status_key, "healthy")
                 self._load_policy_rules(reload=True)
+                self._load_routing()
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             self._metrics_stop_event.wait(self._metrics_interval)
@@ -445,6 +479,18 @@ class LocalController(object):
     #  Endpoint resolution (affinity / load balancing)                      #
     # ------------------------------------------------------------------ #
 
+    def _load_routing(self):
+        """Copy the routing table from Redis into memory, where requests read it."""
+        self._routing = {
+            service: json.loads(endpoints)
+            for service, endpoints in self.redis.hgetall(ROUTING_ENDPOINTS_KEY).items()
+        }
+        self._stateful = {
+            service
+            for service, flag in self.redis.hgetall(ROUTING_STATEFUL_KEY).items()
+            if flag == "true"
+        }
+
     def _resolve_endpoint(self, service, request_id):
         """Pick the correct endpoint for a service.
 
@@ -459,16 +505,23 @@ class LocalController(object):
             The chosen endpoint string, or ``None`` if the service is not
             in the routing table.
         """
-        endpoints_json = self.redis.hget(ROUTING_ENDPOINTS_KEY, service)
-        if not endpoints_json:
-            return None
-
-        endpoints = json.loads(endpoints_json)
+        endpoints = self._routing.get(service)
+        if endpoints is None:
+            # Published since the last refresh, e.g. agents provisioned after this
+            # controller started.
+            self._load_routing()
+            endpoints = self._routing.get(service)
         if not endpoints:
             return None
+        now = time.monotonic()
+        # Every replica is still a candidate when all are marked down, so the call
+        # has somewhere to go.
+        available_endpoint = [
+            e for e in endpoints if self._down_until.get(e, 0) <= now
+        ] or endpoints
 
         # Check if this agent is stateful
-        is_stateful = self.redis.hget(ROUTING_STATEFUL_KEY, service) == "true"
+        is_stateful = service in self._stateful
 
         if is_stateful and request_id:
             affinity_key = f"affinity:{request_id}"
@@ -479,7 +532,7 @@ class LocalController(object):
                 )
                 return existing
             # No existing binding — pick randomly and persist to Hash
-            chosen = random.choice(endpoints)
+            chosen = random.choice(available_endpoint)
             self.redis.hset(affinity_key, service, chosen)
             logger.info(
                 "Affinity set: %s -> %s (request %s)", service, chosen, request_id
@@ -487,7 +540,7 @@ class LocalController(object):
             return chosen
         else:
             # Stateless: pick randomly
-            return random.choice(endpoints)
+            return random.choice(available_endpoint)
 
     # ------------------------------------------------------------------ #
     #  Request processing                                                  #
@@ -528,10 +581,11 @@ class LocalController(object):
                 f"future:{future_id}",
                 {"error": name, "failed": 1},
             )
-            # A workflow run rejected before it started still needs its request cleaned up
-            request_id = self.redis.hget(f"future:{future_id}", "request_id")
-            if request_id and self.redis.hget(f"future:{future_id}", "parent") == "":
-                self.redis.sadd("request:completed", request_id)
+            # A root call, one with no parent, rejected before it started still
+            # needs its request cleaned up.
+            record = self.redis.hgetall(f"future:{future_id}")
+            if record.get("request_id") and not record.get("parent"):
+                self.redis.sadd("request:completed", record["request_id"])
 
             # logs_enabled only gates this richer entry -- the error/failed fields above and
             # the fan-out/relay below must never be made conditional on it.
@@ -573,7 +627,7 @@ class LocalController(object):
         parent = data.get("parent")
         future_id = data.get("future_id")
         origin = data.get("origin")  # endpoint of the LC that originated this request
-        request_id = data.get("request_id")  # tracing ID from deploy module
+        request_id = data.get("request_id")  # tracing ID set by the endpoint
         created_at = data.get("created_at")  # origin's true submission time
         baggage = data.get("baggage", {})
 
@@ -613,7 +667,10 @@ class LocalController(object):
             err_msg = f"Unauthorized: Policy denied access to service '{service}'"
             logger.warning(err_msg)
             self._mark_future_failed(
-                future_id, err_msg, origin, error_name="PolicyDenied"
+                future_id,
+                err_msg,
+                origin,
+                error_name="PolicyDenied",
             )
             return
 
@@ -770,7 +827,12 @@ class LocalController(object):
         parent=None,
         created_at=None,
     ):
-        """Execute a request on the local agent and write the result to Redis."""
+        """Execute a request on the local agent and write the result to Redis.
+
+        A root call, one with no parent, waits on any Futures in the returned value,
+        stores a non-dict result as {"value": ...}, and marks the request finished.
+        """
+        is_root = not parent
         wall_start = time.time()
         thread_cpu_start = time.thread_time()
 
@@ -800,7 +862,10 @@ class LocalController(object):
         if self.agent is None:
             logger.error("No agent loaded, cannot execute %s.%s", service, function)
             self._mark_future_failed(
-                future_id, "No agent loaded", origin, error_name="NoAgentLoaded"
+                future_id,
+                "No agent loaded",
+                origin,
+                error_name="NoAgentLoaded",
             )
             return
 
@@ -827,6 +892,10 @@ class LocalController(object):
                 "Executing %s.%s (future=%s) locally", service, function, future_id
             )
             result = method(**args)
+            if is_root:
+                result = _resolved(result)
+                if not isinstance(result, dict):
+                    result = {"value": result}
 
             # Serialize the result
             if isinstance(result, (dict, list)):
@@ -852,6 +921,10 @@ class LocalController(object):
         except Exception as e:
             logger.error("Failed to execute %s.%s: %s", service, function, e)
 
+            # `error` holds only the type name; the callback snapshot carries this
+            # text to the origin.
+            if is_root:
+                self.redis.hset(f"future:{future_id}", "error_message", str(e))
             self._mark_future_failed(future_id, e)
             self.redis.hincrby(self._metrics_key, "full_failures", 1)
         finally:
@@ -900,6 +973,9 @@ class LocalController(object):
                         origin, future_id, failed=1, error_message=error_message or ""
                     )
 
+            if is_root:
+                self.redis.sadd("request:completed", request_id)
+
             canyonos_context.set_current_future_id(parent or "")
 
     # ------------------------------------------------------------------ #
@@ -908,32 +984,75 @@ class LocalController(object):
 
     def _get_remote_stub(self, endpoint):
         """Get or create a cached gRPC stub for a remote controller."""
-        if endpoint not in self._remote_stubs:
-            self._remote_channels[endpoint] = grpc.insecure_channel(
-                endpoint, options=GRPC_CHANNEL_OPTIONS
-            )
-            self._remote_stubs[endpoint] = local_controler_pb2_grpc.LocalControllerStub(
-                self._remote_channels[endpoint]
-            )
-            logger.info("Created gRPC connection to remote controller at %s", endpoint)
-        return self._remote_stubs[endpoint]
+        with self._remote_stubs_lock:
+            if endpoint not in self._remote_stubs:
+                self._remote_channels[endpoint] = grpc.insecure_channel(
+                    endpoint, options=GRPC_CHANNEL_OPTIONS
+                )
+                self._remote_stubs[endpoint] = (
+                    local_controler_pb2_grpc.LocalControllerStub(
+                        self._remote_channels[endpoint]
+                    )
+                )
+                logger.info(
+                    "Created gRPC connection to remote controller at %s", endpoint
+                )
+            return self._remote_stubs[endpoint]
 
     def _forward_request(self, endpoint, data):
-        """Forward a request to a remote controller via gRPC."""
+        """Send a request to a remote controller without waiting for its answer, so a
+        slow or dead replica never holds up the next request."""
         # Tag the request with our endpoint so the remote LC can call back
         data["origin"] = self._my_endpoint
         # Pin the routing decision so the destination executes the request
         # instead of re-resolving it (which would let stateless requests
         # ping-pong between replicas).
         data["route_to"] = endpoint
-        stub = self._get_remote_stub(endpoint)
         request = local_controler_pb2.JsonResponse(resonse=json.dumps(data))
-        try:
-            call_with_retry(lambda: stub.Execute(request), endpoint)
-            logger.debug("Forwarded request to %s", endpoint)
-        except Exception as e:
-            logger.error("Failed to forward request to %s: %s", endpoint, e)
-            self._mark_future_failed(data.get("future_id"), e)
+        call = self._get_remote_stub(endpoint).Execute.future(
+            request, timeout=FORWARD_TIMEOUT_SECONDS
+        )
+        call.add_done_callback(lambda done: self._on_forwarded(done, endpoint, data))
+
+    def _on_forwarded(self, call, endpoint, data):
+        """When the replica was unreachable or did not answer in time, mark it down and
+        put the request back on the request queue; any other failure, or running out
+        of retries, fails the request."""
+        error = call.exception()
+        if error is None:
+            return
+        retries = data.get("retries", 0) + 1
+        if (
+            error.code()
+            not in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED)
+            or retries > FORWARD_RETRIES
+        ):
+            logger.error("Failed to forward request to %s: %s", endpoint, error)
+            self._mark_future_failed(data.get("future_id"), error)
+            return
+        self._down_until[endpoint] = time.monotonic() + REPLICA_DOWN_SECONDS
+        data["retries"] = retries
+        if error.code() == grpc.StatusCode.UNAVAILABLE:
+            # Never reached, so routing picks again; a timed-out one may have queued
+            # it, and its duplicate check drops a resend.
+            data.pop("route_to")
+        logger.warning(
+            "Forwarding a request to %s failed (%s); queueing it again.",
+            endpoint,
+            error.code().name,
+        )
+        # The first retry goes out at once; later ones back off so a replica being
+        # replaced has time to come up.
+        payload = json.dumps(data)
+        if retries == 1:
+            self.request_queue.put(payload)
+            return
+        retry = threading.Timer(
+            min(0.5 * 2 ** (retries - 2), 8), self.request_queue.put, [payload]
+        )
+        retry.name = f"forward-retry-{data.get('future_id')}"
+        retry.daemon = True
+        retry.start()
 
     def _send_result_callback(
         self, origin, future_id, result="", failed=0, error_message=""

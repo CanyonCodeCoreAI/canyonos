@@ -9,6 +9,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import grpc
 from botocore.exceptions import ClientError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -366,3 +367,36 @@ def _bind_fake_ec2(testcase):
     client_patch.start()
     testcase.addCleanup(client_patch.stop)
     return controller, fake_client
+
+
+class _RpcError(grpc.RpcError, grpc.Call):
+    """A failed gRPC call with the given status code."""
+
+    def __init__(self, code, details=""):
+        self._code = code
+        self._details = details
+
+    def code(self):
+        return self._code
+
+    def details(self):
+        return self._details
+
+    def __str__(self):
+        return self._details
+
+    initial_metadata = trailing_metadata = is_active = time_remaining = None
+    cancel = add_callback = None
+
+
+class _ForwardedCall:
+    """What `stub.Execute.future` returns: done at once, failed with `error` if given."""
+
+    def __init__(self, error=None):
+        self.error = error
+
+    def exception(self):
+        return self.error
+
+    def add_done_callback(self, callback):
+        callback(self)

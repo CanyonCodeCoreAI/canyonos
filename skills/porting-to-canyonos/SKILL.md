@@ -39,8 +39,10 @@ Keep the agent's internal execution intact; do not redefine its boundary by
 looking for a model/tools loop. Expose its existing callable through the
 service adapter.
 
-Move orchestration between agents into the workflow, preserving the source
-behavior. The workflow uses its own `llm_gateway` for model calls. If the source has no agent, wrap its existing entrypoint as one service.
+Move orchestration between agents into the agent the endpoint serves,
+preserving the source behavior. That agent uses its own `llm_gateway` for model
+calls. If the source has no agent, wrap its existing entrypoint as one service
+and serve it.
 
 Use `replicas: 1` for in-process state shared across requests. Preserve existing
 external stores and concurrency controls; follow the
@@ -48,14 +50,17 @@ external stores and concurrency controls; follow the
 
 ## 3. Implement
 
-- Write adapters and the workflow against the [Runtime contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/RUNTIME_CONTRACT.md).
+- Write adapters and the agent the endpoint serves against the [Runtime contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/RUNTIME_CONTRACT.md).
   Put adapters beside the code they wrap; reuse compatible classes directly.
 - Write one representative input from the source to `.car/config/test_query.txt`
   as raw query text, without labels or Markdown fences.
-- Derive each agent's `functions` (the methods the workflow calls, with
-  argument and return types built from builtins), paths and requirements from
-  the source. Write configuration using the
+- Derive each agent's `functions` (the methods other agents or the endpoint
+  call, with argument and return types built from builtins), paths and
+  requirements from the source. Write configuration using the
   [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md).
+- Declare the top-level `endpoint: {agent, method}` block naming the agent the
+  endpoint serves and its entry method. That method must be listed in the
+  agent's `functions`, with the arguments the request body carries.
   Preserve existing choices; batch unresolved deployment questions and use
   schema defaults when unanswered or unattended. Leave `resources` at schema
   defaults without asking.

@@ -33,8 +33,8 @@ allows `${VAR}` only in string fields.
 `validate_project` is what the in-container deploy calls.
 
 - `manifest.py`: `global_controller.yaml`. `load_manifest` parses it into frozen
-  dataclasses (`Manifest`, `AgentService`, `WorkflowService`, `DatabaseService`,
-  `RedisSpec`, `OtelSpec`) and collects every violation before raising one
+  dataclasses (`Manifest`, `AgentService`, `DatabaseService`, `RedisSpec`, `OtelSpec`,
+  `EndpointSpec`) and collects every violation before raising one
   `SchemaError`.
 - `functions.py`: an agent entry's `functions`. Their names become Python source in the
   stub, so argument types are limited to builtins.
@@ -42,7 +42,7 @@ allows `${VAR}` only in string fields.
 - `yaml_lines.py`: a YAML loader that keeps line numbers, so each violation names its
   line.
 - `__init__.py`: `check_project` ties them together. It also checks that every
-  `entrypoint` and `workflow_file` exists inside the project.
+  `entrypoint` exists inside the project.
 
 The allowed keys are declared once, at the top of `manifest.py`: top-level keys in
 `_MANIFEST_KEYS` and entry keys per type in `_SERVICE_KEYS_BY_TYPE`. Anything else is
@@ -50,10 +50,10 @@ rejected. A key that no longer does anything goes in `_RETIRED_KEYS` with the me
 to show. A provider's own section and per-agent keys are declared in its `_schema.py`
 instead; see `packages/core/canyonos_core/reconciler/providers/README.md`.
 
-Cross-field rules live in `_service` and `_check_provider_sections`:
+Cross-field rules live in `_service`, `_check_provider_sections` and `_endpoint`:
 
 - `provider: EC2` needs `instance_type`, and then the `ec2` section.
-- A local workflow can't have more than one replica, since they would share `api_port`.
+- The `endpoint` names an entry of type `agent` and one of its `functions`.
 - A database always has one replica.
 - Two entry names that differ only in case collide, since image and container names
   are lowercased.

@@ -21,8 +21,10 @@ CLI host:         ──▶          8000
 │        │      routing_endpoint ──▶ <runtime_id>:50051 (local)                │
 │        │      LLM gateway ──▶ 127.0.0.1:8081                                   │
 │        │                                                                     │
-│        ├── workflow replica: LocalController + deploy(workflow_fn)           │
-│        │      host <api_port> ──▶ container 8080                             │
+│        ├── canyonos-<project>-endpoint-0 (GC's machine): routing-only        │
+│        │      LocalController + gunicorn; host <api_port> ──▶ container 8080 │
+│        │      routing_endpoint ──▶ <runtime_id>:50051, or                    │
+│        │        <CANYONOS_PRIVATE_IP>:<host_port> when that is set           │
 │        │                                                                     │
 │        └── canyonos-<project>-metrics-<host>                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -42,6 +44,7 @@ canyonos_core.server.deploy
               └─ GlobalController(config_path)
                     ├─ ControllerContext.__init__
                     │    ├─ _load_config ──▶ .env + global_controller.yaml
+                    │    │                    + endpoint spec after the agents
                     │    ├─ resolve_env_file
                     │    └─ RedisClient
                     ├─ _cleanup_stale_containers
@@ -51,7 +54,8 @@ canyonos_core.server.deploy
                     │    ├─ write_config_specs
                     │    ├─ _apply_configured_replicas
                     │    ├─ _write_policies
-                    │    └─ _write_identity
+                    │    ├─ _write_identity
+                    │    └─ HSET endpoint:address
                     ├─ schema.init_db
                     ├─ ProcessSupervisor.start_all
                     │    ├─ reconciler
@@ -63,14 +67,16 @@ canyonos_core.server.deploy
 ## Local Controller startup
 
 ```
-agent image                              workflow image
-python local_controller.py --port 50051  python workflow_launcher.py
+agent image                              core image (canyonos-<project>-endpoint-0)
+python local_controller.py --port 50051  python -m canyonos_core.endpoint
              │                                      ├─ LocalController(
              │                                      │    publish_ready=False)
-             │                                      ├─ threading.Thread(
-             │                                      │    target=controller.run)
-             │                                      ├─ mark_ready_when_serving
-             │                                      └─ exec(<workflow_file>)
+             │                                      ├─ gunicorn :8080 (2 workers × 16 threads)
+             │                                      │    └─ worker_app ──▶ create_app(agent, method)
+             │                                      ├─ threading.Thread(target=run_controller)
+             │                                      │    └─ controller.run stops ──▶ terminate gunicorn
+             │                                      ├─ mark_ready once :8080 answers
+             │                                      └─ gunicorn exits ──▶ mark_failed, exit
              └──────────────────┬─────────────────────────────────────────
                                 ▼
                       LocalController.__init__
@@ -78,47 +84,50 @@ python local_controller.py --port 50051  python workflow_launcher.py
                                 │                    └─ queue.Queue()
                                 ├─ RedisClient(CANYONOS_REDIS_HOST,
                                 │              CANYONOS_REDIS_PORT)
-                                ├─ _start_llm_gateway ──▶ 127.0.0.1:8081
+                                ├─ _start_llm_gateway ──▶ 127.0.0.1:8081 (agent only)
                                 │                         └─ canyonos_core.llm_gateway
                                 ├─ GET controller:<host>:<port>:agent_id
                                 ├─ SET status = initializing
                                 ├─ _metrics_loop
                                 ├─ _load_agent
-                                └─ mark_ready ──▶ status = healthy
+                                └─ mark_ready ──▶ status = healthy (publish_ready)
 ```
 
-## Workflow serving
+## Endpoint serving
+
+[Endpoint](ENDPOINT.md) covers the endpoint container end to end.
 
 ```
-workflow_launcher.py ──▶ exec(<workflow_file>)
-                              └─▶ deploy(workflow_fn, port=8080, host="0.0.0.0")
-                                         └─ Flask
-                         ┌────────────────┴────────────────┐
-                         ▼                                 ▼
-              POST /<workflow_fn_name>          GET /status/<request_id>
-                         │                                 ├─ GET status
-                         ├─ kwargs.pop("_context", {})     ├─ done  ──▶ GET result
-                         ├─ uuid.uuid4().hex               ├─ error ──▶ GET error
-                         ├─ SET status = pending           └─ missing ──▶ 404
-                         ├─ threading.Thread(target=_execute_workflow)
+gunicorn worker (×2) ─────────────▶ create_app(CANYONOS_ENDPOINT_AGENT, CANYONOS_ENDPOINT_METHOD)
+                                              └─ Flask :8080
+                         ┌────────────────────┴─────────────────────┐
+                         ▼                                          ▼
+                  POST /<method>                         GET /status/<request_id>
+                         │                                          ├─ GET request:<id>:future
+                         ├─ kwargs.pop("_context", {})              │    └─ missing ──▶ 404
+                         ├─ uuid.uuid4().hex                        └─ HGETALL future:<future_id>
+                         ├─ SET request:<id>:context                     ├─ failed ──▶ error (error_message)
+                         ├─ set_request_id                               ├─ result ──▶ done
+                         ├─ Future(parent=None, agent, method,           └─ else   ──▶ pending
+                         │         args=kwargs)
+                         ├─ SET request:<id>:future = <future_id>
                          └─ 202 {"request_id": <id>}
-                                  │
+                                  │ Execute ──▶ target agent replica
                                   ▼
-                           _execute_workflow
-                                  ├─ status = running
-                                  ├─ SET context
-                                  ├─ set_request_id
-                                  ├─ workflow_fn(**kwargs) ──▶ _resolved
-                                  ├─ result + status = done
-                                  └─ error + status = error
-                                           ├─ SADD request:completed
-                                           └─ _expire_request_keys (300s)
+                           _execute_locally (parent is None)
+                                  ├─ <method>(**kwargs) ──▶ _resolved
+                                  ├─ non-dict result ──▶ {"value": result}
+                                  ├─ error ──▶ HSET error_message
+                                  ├─ WriteResult ──▶ endpoint LocalController
+                                  └─ SADD request:completed
 ```
+
+A root call is one whose Future has no parent. `_execute_locally` resolves every nested Future in its result, wraps a non-dict result in `{"value": ...}`, stores `error_message` on failure, and adds the request to `request:completed`.
 
 ## Request lifecycle
 
 ```
-workflow_fn ──▶ generated agent stub ──▶ Future.__init__
+calling agent   ──▶ generated agent stub ──▶ Future.__init__
                                               │
                          origin Redis ◀────────┤ HSET future:<future_id>
                                               ├─ SADD request:<request_id>:futures
@@ -132,13 +141,16 @@ workflow_fn ──▶ generated agent stub ──▶ Future.__init__
                                       LocalController.run ──▶ _process_request
                                                                │
                       policy:rules ──▶ _check_policy            │
-          routing_table:endpoints ──▶ _resolve_endpoint ◀── routing_table:stateful
+   routing_table:* ──▶ _load_routing ──▶ _resolve_endpoint (memory, skips replicas marked down)
                                                                │
                          ┌─────────────────────────────────────┴──────────────┐
                          │ endpoint == _my_endpoint                         │ remote
                          ▼                                                  ▼
              ThreadPoolExecutor.submit                              _forward_request
-                         │                                          Execute
+                         │                                          Execute.future (2 s)
+                         │                                          └─ unreachable / timeout ──▶ mark down 30 s
+                         │                                               └─ request_queue.put again (Timer backoff,
+                         │                                                  unreachable: picks again; ≤ 8 retries)
                          ▼                                                  │
                   _execute_locally                                          ▼
                          ├─ _resolve_future_args                executor _execute_locally
@@ -151,7 +163,7 @@ workflow_fn ──▶ generated agent stub ──▶ Future.__init__
                                                                             ├─ HSET future:<id>
                                                                             └─ _fan_out_to_consumers
 Future.value ◀── poll origin future:<id> ◀───────────────────────────────────────────┘
-     └─▶ request:<request_id>:result + status = done
+     └─ root future: GET /status/<request_id> reads future:<id>
 ```
 
 ## Futures and cleanup
@@ -175,7 +187,7 @@ dependency Future arg ──▶ SADD future:<id>:consumers
 future:<id>:children ──▶ Future._children_key
                      └─▶ _cleanup_request EXPIRE
 
-request status = done | error ──▶ SADD request:completed
+root future (parent=None) done ──▶ SADD request:completed
                                          │
                                          ▼
                             GlobalController._trigger_cleanup
@@ -201,7 +213,7 @@ GlobalController / ControllerContext
   writes ──▶ agents:active, agent:<name>:spec, agent:<name>:,
              agent:<name>:resources, agent:<name>:desired_replicas,
              reconciler:wake, policy:rules, controller:identity,
-             otel:destinations, request:completed
+             otel:destinations, request:completed, endpoint:address
   reads  ◀── agent_instance:*, agent:<name>:instances,
              controller:<host>:<port>:status,
              controller:<host>:<port>:metrics, machine:<host>:metrics,
@@ -213,20 +225,19 @@ LocalController / LocalControllerServicer
              request:<request_id>:context, request:<request_id>:futures,
              request:<request_id>:cleanup_lock, future:<future_id>,
              future:<future_id>:children, future:<future_id>:consumers,
-             affinity:<request_id>, execute:<endpoint>:<future_id>:accepted
+             affinity:<request_id>, execute:<endpoint>:<future_id>:accepted,
+             request:completed
   reads  ◀── controller:<host>:<port>:agent_id,
              routing_table:endpoints, routing_table:stateful, policy:rules,
              request:<request_id>:context, request:<request_id>:futures,
              future:<future_id>, future:<future_id>:consumers,
              affinity:<request_id>
 
-deploy / Future
-  writes ──▶ request:<request_id>:status, request:<request_id>:result,
-             request:<request_id>:error, request:<request_id>:context,
-             request:<request_id>:futures, request:completed,
-             future:<future_id>, future:<future_id>:consumers
-  reads  ◀── request:<request_id>:status, request:<request_id>:result,
-             request:<request_id>:error, future:<future_id>
+endpoint / Future
+  writes ──▶ request:<request_id>:context, request:<request_id>:future,
+             request:<request_id>:futures, future:<future_id>,
+             future:<future_id>:consumers
+  reads  ◀── request:<request_id>:future, future:<future_id>
 
 reconciler
   writes ──▶ agent_instance:*, agent:<name>:instances,

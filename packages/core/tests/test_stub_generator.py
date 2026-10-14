@@ -13,19 +13,14 @@ from packaging.requirements import Requirement
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core import stub_generator
-from canyonos_core.controller.global_controller import (
-    CONTROLLER_READY_TIMEOUT_SECONDS,
-)
 from canyonos_core.schema import load_manifest
 from canyonos_core.stub_generator import (
     BASE_AGENT_REQUIREMENTS,
-    BASE_WORKFLOW_REQUIREMENTS,
     PROTOBUF_FLOOR,
     TESTED_MAJOR_VERSIONS,
     _stub_destination,
     _sweep_project_files,
     generate_docker,
-    generate_workflow_docker,
 )
 
 
@@ -79,114 +74,22 @@ class GenerateDockerRequirementsTests(unittest.TestCase):
 
         self.assertEqual(requirements, BASE_AGENT_REQUIREMENTS + ["yfinance"])
 
-
-class GenerateWorkflowDockerRequirementsTests(unittest.TestCase):
-    def _write_workflow_file(self, tmpdir):
-        workflow_file = Path(tmpdir) / "workflow.py"
-        workflow_file.write_text("print('ok')\n")
-        return str(workflow_file)
-
-    def test_base_only_when_requirements_omitted(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = self._write_workflow_file(tmpdir)
-            output_dir = os.path.join(tmpdir, "out")
-
-            generate_workflow_docker(workflow_file, [], output_dir=output_dir)
-
-            requirements = _read_requirements(output_dir)
-
-        self.assertEqual(requirements, BASE_WORKFLOW_REQUIREMENTS)
-        self.assertNotIn("yfinance", requirements)
-
-    def test_launcher_hands_its_controller_and_name_to_deploy(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = self._write_workflow_file(tmpdir)
-            output_dir = os.path.join(tmpdir, "out")
-
-            generate_workflow_docker(
-                workflow_file, [], output_dir=output_dir, workflow_name="Workflow"
-            )
-
-            with open(os.path.join(output_dir, "workflow_launcher.py")) as f:
-                launcher = f.read()
-
-        self.assertIn("canyonos_deploy.controller = controller", launcher)
-        self.assertIn("canyonos_deploy.workflow_name = 'Workflow'", launcher)
-
-    def test_per_workflow_requirements_are_appended_to_base(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = self._write_workflow_file(tmpdir)
-            output_dir = os.path.join(tmpdir, "out")
-
-            generate_workflow_docker(
-                workflow_file, [], output_dir=output_dir, requirements=["yfinance"]
-            )
-
-            requirements = _read_requirements(output_dir)
-
-        self.assertEqual(requirements, BASE_WORKFLOW_REQUIREMENTS + ["yfinance"])
-
-    def test_log_entry_is_copied_into_the_workflow_context(self):
+    def test_log_entry_is_copied_into_the_agent_context(self):
         """local_controller.py unconditionally imports log_entry -- if the
         generator's source path for it is wrong, the file is silently skipped
-        (a warning, not an error) and the Workflow container fails at import
-        time on every deploy, not just when logs_enabled is set."""
+        (a warning, not an error) and the container fails at import time on
+        every deploy, not just when logs_enabled is set."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = self._write_workflow_file(tmpdir)
+            agent_file = self._write_agent_file(tmpdir)
             output_dir = os.path.join(tmpdir, "out")
 
-            generate_workflow_docker(workflow_file, [], output_dir=output_dir)
+            generate_docker("ExampleAgent", agent_file, output_dir=output_dir)
 
             self.assertTrue(
                 os.path.isfile(os.path.join(output_dir, "log_entry.py")),
-                "log_entry.py was not copied into the workflow's Docker context",
+                "log_entry.py was not copied into the agent's Docker context",
             )
             self.assertTrue(os.path.isfile(os.path.join(output_dir, "log_handler.py")))
-
-
-class GenerateWorkflowDockerLauncherTests(unittest.TestCase):
-    def test_launcher_reports_ready_only_after_the_workflow_port_accepts_connections(
-        self,
-    ):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = Path(tmpdir) / "workflow.py"
-            workflow_file.write_text("raise RuntimeError('broken')\n")
-            output_dir = os.path.join(tmpdir, "out")
-
-            generate_workflow_docker(str(workflow_file), [], output_dir=output_dir)
-
-            launcher = (Path(output_dir) / "workflow_launcher.py").read_text()
-            dockerfile = (Path(output_dir) / "Dockerfile").read_text()
-
-        self.assertIn(
-            "controller = LocalController(port=50051, publish_ready=False)", launcher
-        )
-        self.assertIn("target=controller.run", launcher)
-        self.assertLess(
-            launcher.index("canyonos_context.install()"),
-            launcher.index("exec(open("),
-        )
-        # The probe targets the in-container port every runtime publishes the
-        # configured api_port onto, never api_port itself (a host-side port).
-        self.assertIn('socket.create_connection(("127.0.0.1", 8080)', launcher)
-        self.assertIn("EXPOSE 8080", dockerfile)
-        self.assertIn("controller.mark_ready()", launcher)
-        self.assertIn(
-            f"WORKFLOW_READY_TIMEOUT_SECONDS = {CONTROLLER_READY_TIMEOUT_SECONDS}",
-            launcher,
-        )
-        # The watcher gives up as failed, not silently: a port that never opens
-        # must not leave the deploy waiting on a status nobody wrote.
-        watcher = launcher[
-            launcher.index("def mark_ready_when_serving") : launcher.index(
-                "controller = LocalController("
-            )
-        ]
-        self.assertIn("controller.mark_failed()", watcher)
-        self.assertIn("except Exception:", launcher)
-        self.assertIn("controller.mark_failed()", launcher)
-        self.assertIn("traceback.print_exc()", launcher)
-        self.assertIn("sys.exit(1)", launcher)
 
 
 def _write(path, content="x"):
@@ -312,24 +215,6 @@ class ProjectSweepTests(unittest.TestCase):
             copied = Path(output_dir) / "data" / "handbook.pdf"
 
             self.assertEqual(copied.read_text(), "%PDF-1.4")
-
-    def test_workflow_context_receives_the_swept_project(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            project = Path(tmpdir)
-            workflow_file = _write(project / "workflow.py", "print('ok')\n")
-            _write(project / "config" / "langgraph.json", "{}")
-            output_dir = os.path.join(tmpdir, "out")
-
-            generate_workflow_docker(
-                str(workflow_file),
-                [],
-                output_dir=output_dir,
-                project_dir=str(project),
-            )
-
-            copied = Path(output_dir) / "config" / "langgraph.json"
-
-            self.assertEqual(copied.read_text(), "{}")
 
     def test_private_keys_are_recognized_by_armor_not_by_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -486,21 +371,22 @@ class StubDestinationTests(unittest.TestCase):
             )
 
 
-class GenerateWorkflowDockerStubPlacementTests(unittest.TestCase):
+class GenerateDockerStubPlacementTests(unittest.TestCase):
     def test_stub_lands_both_flat_and_at_its_entrypoint_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = Path(tmpdir) / "workflow.py"
-            workflow_file.write_text("from agents.split_agent import SplitAgent\n")
+            agent_file = Path(tmpdir) / "caller_agent.py"
+            agent_file.write_text("from agents.split_agent import SplitAgent\n")
 
             stub_file = Path(tmpdir) / "stubs" / "split_agent.py"
             stub_file.parent.mkdir()
             stub_file.write_text("class SplitAgent:\n    pass\n")
 
             output_dir = os.path.join(tmpdir, "out")
-            generate_workflow_docker(
-                str(workflow_file),
-                [str(stub_file)],
+            generate_docker(
+                "CallerAgent",
+                str(agent_file),
                 output_dir=output_dir,
+                stub_files=[str(stub_file)],
                 stub_entrypoints={"split_agent.py": "agents/split_agent.py"},
             )
 
@@ -513,28 +399,19 @@ class GenerateWorkflowDockerStubPlacementTests(unittest.TestCase):
 class PlatformPinTests(unittest.TestCase):
     """Only protobuf is forced, intersected with whatever bound the app declares."""
 
-    def _context(self, requirements, workflow=False):
+    def _context(self, requirements):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
             output_dir = os.path.join(tmpdir, "out")
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                if workflow:
-                    workflow_file = _write(project / "workflow.py", "print('ok')\n")
-                    generate_workflow_docker(
-                        str(workflow_file),
-                        [],
-                        output_dir=output_dir,
-                        requirements=requirements,
-                    )
-                else:
-                    agent_file = _write(project / "agent.py", "print('ok')\n")
-                    generate_docker(
-                        "ExampleAgent",
-                        str(agent_file),
-                        output_dir=output_dir,
-                        requirements=requirements,
-                    )
+                agent_file = _write(project / "agent.py", "print('ok')\n")
+                generate_docker(
+                    "ExampleAgent",
+                    str(agent_file),
+                    output_dir=output_dir,
+                    requirements=requirements,
+                )
             dockerfile = _read_dockerfile(output_dir)
         written = dockerfile.split("printf '%s\\n' ")[1]
         written = written.split(" > /tmp/overrides.txt")[0]
@@ -573,97 +450,67 @@ class PlatformPinTests(unittest.TestCase):
         self.assertNotIn("6.31.5", forced)
         self.assertIn("6.33.5", forced)
 
-    def test_other_base_packages_are_left_to_the_resolver(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = _write(Path(tmpdir) / "workflow.py", "print('ok')\n")
-            output_dir = os.path.join(tmpdir, "out")
-            with redirect_stdout(io.StringIO()):
-                generate_workflow_docker(
-                    str(workflow_file),
-                    [],
-                    output_dir=output_dir,
-                    requirements=["flask==2.3.3"],
-                )
-            requirements = _read_requirements(output_dir)
-
-        self.assertIn("flask>=2.3.3", requirements)
-        self.assertIn("flask==2.3.3", requirements)
-
     def test_base_requirements_carry_no_upper_bound(self):
-        for requirement in BASE_WORKFLOW_REQUIREMENTS:
+        for requirement in BASE_AGENT_REQUIREMENTS:
             with self.subTest(requirement=requirement):
                 self.assertNotIn("<", requirement)
 
     def test_every_base_package_has_a_tested_major_version(self):
-        names = {Requirement(r).name for r in BASE_WORKFLOW_REQUIREMENTS}
+        names = {Requirement(r).name for r in BASE_AGENT_REQUIREMENTS}
         self.assertEqual(names, set(TESTED_MAJOR_VERSIONS))
 
-    def _dockerfile(self, workflow, requirements=None):
+    def _dockerfile(self, requirements=None):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
             output_dir = os.path.join(tmpdir, "out")
             with redirect_stdout(io.StringIO()):
-                if workflow:
-                    wf = _write(project / "workflow.py", "print('ok')\n")
-                    generate_workflow_docker(
-                        str(wf), [], output_dir=output_dir, requirements=requirements
-                    )
-                else:
-                    agent = _write(project / "agent.py", "print('ok')\n")
-                    generate_docker(
-                        "ExampleAgent",
-                        str(agent),
-                        output_dir=output_dir,
-                        requirements=requirements,
-                    )
+                agent = _write(project / "agent.py", "print('ok')\n")
+                generate_docker(
+                    "ExampleAgent",
+                    str(agent),
+                    output_dir=output_dir,
+                    requirements=requirements,
+                )
             return _read_dockerfile(output_dir)
 
     def test_the_gateway_gets_its_own_venv_after_the_app_install(self):
-        for workflow in (False, True):
-            with self.subTest(workflow=workflow):
-                dockerfile = self._dockerfile(workflow)
-                app_install = dockerfile.index("uv pip install --system")
-                gateway_install = dockerfile.index("uv venv /opt/canyonos-gateway")
-                self.assertLess(app_install, gateway_install)
-                gateway_stage = dockerfile[gateway_install:]
-                for pin in stub_generator.GATEWAY_REQUIREMENTS:
-                    self.assertIn(pin, gateway_stage)
-                self.assertIn(
-                    'if python -c "import boto3" 2>/dev/null; then uv pip install '
-                    f"--python /opt/canyonos-gateway/bin/python {stub_generator.GATEWAY_BEDROCK_REQUIREMENT}; fi",
-                    gateway_stage,
-                )
+        dockerfile = self._dockerfile()
+        app_install = dockerfile.index("uv pip install --system")
+        gateway_install = dockerfile.index("uv venv /opt/canyonos-gateway")
+        self.assertLess(app_install, gateway_install)
+        gateway_stage = dockerfile[gateway_install:]
+        for pin in stub_generator.GATEWAY_REQUIREMENTS:
+            self.assertIn(pin, gateway_stage)
+        self.assertIn(
+            'if python -c "import boto3" 2>/dev/null; then uv pip install '
+            f"--python /opt/canyonos-gateway/bin/python {stub_generator.GATEWAY_BEDROCK_REQUIREMENT}; fi",
+            gateway_stage,
+        )
 
-    def test_both_images_compile_bytecode_for_every_install(self):
-        for workflow in (False, True):
-            with self.subTest(workflow=workflow):
-                dockerfile = self._dockerfile(workflow)
-                self.assertLess(
-                    dockerfile.index("ENV UV_COMPILE_BYTECODE=1"),
-                    dockerfile.index("uv pip install --system"),
-                )
+    def test_the_image_compiles_bytecode_for_every_install(self):
+        dockerfile = self._dockerfile()
+        self.assertLess(
+            dockerfile.index("ENV UV_COMPILE_BYTECODE=1"),
+            dockerfile.index("uv pip install --system"),
+        )
 
-    def test_images_leave_the_python_install_unpatched(self):
-        for workflow in (False, True):
-            with self.subTest(workflow=workflow):
-                self.assertNotIn("RUN python", self._dockerfile(workflow))
+    def test_the_image_leaves_the_python_install_unpatched(self):
+        self.assertNotIn("RUN python", self._dockerfile())
 
-    def test_installs_are_held_below_each_images_tested_majors(self):
-        for workflow, caps in (
-            (False, "'grpcio<2' 'protobuf<7' 'redis<9'"),
-            (True, "'grpcio<2' 'protobuf<7' 'redis<9' 'flask<4'"),
-        ):
-            with self.subTest(workflow=workflow):
-                dockerfile = self._dockerfile(workflow)
-                self.assertIn(f"printf '%s\\n' {caps} > /tmp/tested.txt", dockerfile)
-                self.assertIn(
-                    "uv pip install --system -r requirements.txt "
-                    "--overrides /tmp/overrides.txt -c /tmp/tested.txt",
-                    dockerfile,
-                )
+    def test_installs_are_held_below_the_tested_majors(self):
+        dockerfile = self._dockerfile()
+        self.assertIn(
+            "printf '%s\\n' 'grpcio<2' 'protobuf<7' 'redis<9' > /tmp/tested.txt",
+            dockerfile,
+        )
+        self.assertIn(
+            "uv pip install --system -r requirements.txt "
+            "--overrides /tmp/overrides.txt -c /tmp/tested.txt",
+            dockerfile,
+        )
 
     def test_a_package_the_app_asks_newer_for_is_left_uncapped(self):
-        dockerfile = self._dockerfile(False, requirements=["protobuf>=7"])
+        dockerfile = self._dockerfile(requirements=["protobuf>=7"])
         self.assertIn(
             "printf '%s\\n' 'grpcio<2' 'redis<9' > /tmp/tested.txt", dockerfile
         )
@@ -676,17 +523,14 @@ class PlatformPinTests(unittest.TestCase):
                     "protobuf==7.1",
                     "protobuf==7.*",
                     "protobuf~=7.0",
-                    "flask>4",
                     "grpcio>=2",
-                ],
-                BASE_WORKFLOW_REQUIREMENTS,
+                ]
             ),
             [
                 ("protobuf>=7", "protobuf<7"),
                 ("protobuf==7.1", "protobuf<7"),
                 ("protobuf==7.*", "protobuf<7"),
                 ("protobuf~=7.0", "protobuf<7"),
-                ("flask>4", "flask<4"),
                 ("grpcio>=2", "grpcio<2"),
             ],
         )
@@ -694,8 +538,7 @@ class PlatformPinTests(unittest.TestCase):
     def test_requirements_that_still_allow_a_tested_version_are_not_reported(self):
         self.assertEqual(
             stub_generator.too_new_requirements(
-                ["protobuf>6.9", "protobuf>=6,<8", "redis", "yfinance>=9"],
-                BASE_WORKFLOW_REQUIREMENTS,
+                ["protobuf>6.9", "protobuf>=6,<8", "redis", "yfinance>=9"]
             ),
             [],
         )
@@ -714,19 +557,18 @@ class PlatformPinTests(unittest.TestCase):
         self.assertEqual(
             stub_generator.too_old_requirements(
                 [
-                    "flask==1.9",
-                    "flask<2.3",
-                    "flask~=2.2.0",
-                    "flask==2.2.*",
+                    "protobuf==6.30",
+                    "protobuf<6.31",
+                    "protobuf~=6.30.0",
+                    "protobuf==6.30.*",
                     "protobuf<5",
-                ],
-                BASE_WORKFLOW_REQUIREMENTS,
+                ]
             ),
             [
-                ("flask==1.9", "flask>=2.3.3"),
-                ("flask<2.3", "flask>=2.3.3"),
-                ("flask~=2.2.0", "flask>=2.3.3"),
-                ("flask==2.2.*", "flask>=2.3.3"),
+                ("protobuf==6.30", "protobuf>=6.31.1"),
+                ("protobuf<6.31", "protobuf>=6.31.1"),
+                ("protobuf~=6.30.0", "protobuf>=6.31.1"),
+                ("protobuf==6.30.*", "protobuf>=6.31.1"),
                 ("protobuf<5", "protobuf>=6.31.1"),
             ],
         )
@@ -735,13 +577,12 @@ class PlatformPinTests(unittest.TestCase):
         self.assertEqual(
             stub_generator.too_old_requirements(
                 [
-                    "flask~=2.2",
-                    "flask>=2",
-                    "flask!=2.3.3",
-                    "flask==2.3.3",
+                    "protobuf~=6.30",
+                    "protobuf>=6",
+                    "protobuf!=6.31.1",
+                    "protobuf==6.31.1",
                     "yfinance==0.1",
-                ],
-                BASE_WORKFLOW_REQUIREMENTS,
+                ]
             ),
             [],
         )
@@ -767,10 +608,6 @@ class PlatformPinTests(unittest.TestCase):
 
         self.assertEqual(requirements[-2:], ["protobuf>=7", "Protobuf>=7.1"])
 
-    def test_the_workflow_context_decides_the_same_way(self):
-        overrides, _ = self._context(["protobuf>=6.32"], workflow=True)
-        self.assertEqual(overrides, self._context(["protobuf>=6.32"])[0])
-
     def test_override_entries_are_quoted_for_the_shell(self):
         # An unquoted `protobuf>=7` would be a redirect, not an argument.
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -788,27 +625,13 @@ class PlatformPinTests(unittest.TestCase):
 
         self.assertIn("'protobuf>=6.31.1,>=6.32'", dockerfile)
 
-    def test_both_dockerfiles_install_with_the_overrides_and_report(self):
-        for workflow in (False, True):
-            with self.subTest(workflow=workflow):
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    project = Path(tmpdir)
-                    output_dir = os.path.join(tmpdir, "out")
-                    with redirect_stdout(io.StringIO()):
-                        if workflow:
-                            wf = _write(project / "workflow.py", "print('ok')\n")
-                            generate_workflow_docker(str(wf), [], output_dir=output_dir)
-                        else:
-                            agent = _write(project / "agent.py", "print('ok')\n")
-                            generate_docker(
-                                "ExampleAgent", str(agent), output_dir=output_dir
-                            )
-                    dockerfile = _read_dockerfile(output_dir)
+    def test_the_dockerfile_installs_with_the_overrides_and_reports(self):
+        dockerfile = self._dockerfile()
 
-                install = dockerfile.split("RUN uv pip check")[0]
-                self.assertIn("--overrides /tmp/overrides.txt", install)
-                self.assertIn("uv pip check --system", dockerfile)
-                self.assertIn(str(PROTOBUF_FLOOR), dockerfile.split("NOTE:")[1])
+        install = dockerfile.split("RUN uv pip check")[0]
+        self.assertIn("--overrides /tmp/overrides.txt", install)
+        self.assertIn("uv pip check --system", dockerfile)
+        self.assertIn(str(PROTOBUF_FLOOR), dockerfile.split("NOTE:")[1])
 
 
 if __name__ == "__main__":
@@ -824,6 +647,7 @@ class GenerateStubTests(unittest.TestCase):
             manifest_path.write_text(
                 "agents:\n  - name: Hello\n    entrypoint: hello.py\n    functions:\n"
                 + functions
+                + "endpoint: {agent: Hello, method: hello}\n"
             )
             output_path = Path(tmpdir) / "stubs" / "hello.py"
             with (
