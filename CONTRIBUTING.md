@@ -72,3 +72,11 @@ AI usage is allowed on our project, as long as it follows our [AI Policy](docs/c
 
 By contributing, you agree that your contributions are licensed under the
 [GNU AGPL v3.0](LICENSE).
+
+CanyonOS is developed with commercial intent. By contributing, you also agree that
+Canyon Code may use your contributions in its commercial products and services.
+
+If you contribute as part of your job, your employer likely owns your work. Before
+contributing, get your employer's permission to do so. By contributing, you confirm
+that you have this permission and that ownership of your contributions transfers to
+Canyon Code.
