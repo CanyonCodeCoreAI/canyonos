@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# OpenRCA: one root-cause-analysis agent that runs IPython over telemetry
+# datasets. The datasets are a separate download the port does not include, and
+# RCAAgent asks for 16 GB of memory, so this project documents what CanyonOS does
+# with a port that cannot fully run on a CI machine.
+repo: CanyonCodeCoreAI/workflows
+ref: 1451a7ca216af420fc20b41b4e14fc05d274dee6
+path: OpenRCA
+secrets: [OPENAI_API_KEY]
+traits: []
+timeout: 900

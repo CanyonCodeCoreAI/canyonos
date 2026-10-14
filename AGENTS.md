@@ -37,6 +37,7 @@ uv run canyonos <cmd>    # run the checkout's CLI from anywhere in the workspace
 
 bun run api:test:e2e     # API end-to-end tests
 bun run ui:test:e2e      # dashboard Playwright tests
+uv run pytest tests/ecosystem/cases --project=<name>   # ecosystem check of one real project
 tests/run_tests.sh       # full integration and performance run
 ```
 

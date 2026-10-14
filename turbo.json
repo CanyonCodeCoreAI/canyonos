@@ -128,11 +128,13 @@
         "--active",
         "--frozen",
         "pytest",
-        "tests"
+        "tests",
+        "--ignore=tests/ecosystem"
       ],
       "inputs": [
         "tests/**",
         "!tests/**/__pycache__/**",
+        "!tests/ecosystem/**",
         "pyproject.toml",
         "uv.lock"
       ]

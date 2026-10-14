@@ -17,6 +17,8 @@ members = [
 dev = [
     { name = "canyonos", editable = "packages/cli" },
     { name = "canyonos-core", editable = "packages/core" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "requests", specifier = ">=2.34.2" },
     { name = "reuse", specifier = "==6.2.0" },
     { name = "ruff", specifier = "==0.16.7" },
     { name = "ty", specifier = "==0.0.81" },

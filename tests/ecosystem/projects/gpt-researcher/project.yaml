@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# GPT Researcher: the single researcher agent plus the multi-agent editorial team
+# (chief editor, researcher, writer, reviewer, reviser, publisher...). Searches the
+# web through Tavily.
+repo: CanyonCodeCoreAI/workflows
+ref: 1451a7ca216af420fc20b41b4e14fc05d274dee6
+path: gpt-researcher
+secrets: [OPENAI_API_KEY, TAVILY_API_KEY]
+traits: []
+timeout: 1800

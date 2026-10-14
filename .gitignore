@@ -38,6 +38,7 @@ Thumbs.db
 # verified by hand that the e2e workflow runs against.
 .car/
 !tests/e2e/*/.car/
+tests/ecosystem/.env
 
 # Generated stubs
 stubs/

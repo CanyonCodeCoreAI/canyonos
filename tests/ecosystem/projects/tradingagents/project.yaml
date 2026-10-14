@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# TradingAgents: 13 LangGraph agents (analysts, researchers, trader, risk debate,
+# portfolio manager) behind one Workflow endpoint. The port's .env caps the debate
+# rounds so one query stays within the timeout.
+repo: CanyonCodeCoreAI/workflows
+ref: 1451a7ca216af420fc20b41b4e14fc05d274dee6
+path: TradingAgents
+secrets: [OPENAI_API_KEY]
+traits: []
+timeout: 1800

@@ -42,3 +42,6 @@ python test_performance.py --concurrent 10 --total 50
 Checks that agent calls made from a thread, a raw `_thread.start_new_thread` thread, an asyncio task, asyncio's default executor, a `multiprocessing.Process`, and a reused thread pool, process pool and `multiprocessing.Pool` keep the request they belong to.
 - `run_tests.sh` redeploys helloworld with `context_propagation_workflow.py` as its `Workflow` agent.
 - Sends two rounds of three concurrent requests and checks each caller saw the request's ID and the workflow's future ID, and that Redis recorded its agent call under that request and parent.
+
+## 5. Ecosystem check (`ecosystem/`)
+Clones real projects and deploys their committed ports with the CLI from this checkout; see [ecosystem/README.md](ecosystem/README.md).
