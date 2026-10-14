@@ -5,7 +5,7 @@
 # portfolio manager) behind one Workflow endpoint. The port's .env caps the debate
 # rounds so one query stays within the timeout.
 repo: CanyonCodeCoreAI/workflows
-ref: 1451a7ca216af420fc20b41b4e14fc05d274dee6
+ref: 85a307015672e940c14ac2ee734d686246ac0da0
 path: TradingAgents
 secrets: [OPENAI_API_KEY]
 traits: []
