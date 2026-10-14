@@ -11,10 +11,11 @@ COPY packages/web/package.json ./packages/web/package.json
 COPY packages/tsconfig/package.json ./packages/tsconfig/package.json
 # Bun omits packages/api/node_modules when it fully hoists deps to the root, which would break the
 # COPY in the runner stage.
-RUN bun install --frozen-lockfile --production --ignore-scripts \
+RUN bun install --frozen-lockfile --production --ignore-scripts --filter @canyonos/api \
     && mkdir -p packages/api/node_modules
 
 FROM oven/bun:1.3.14-alpine AS runner
+RUN apk upgrade --no-cache
 WORKDIR /app
 ENV NODE_ENV=production \
     HOST=0.0.0.0
