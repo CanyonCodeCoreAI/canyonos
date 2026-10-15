@@ -41,8 +41,9 @@ class Call:
         return _json.loads(self.output)
 
     def as_dict(self) -> dict:
-        """The call as a plain dict, ready for a JSON line."""
-        return asdict(self)
+        """The call as a plain dict, ready for a JSON line, with a long output
+        clipped to its head and tail."""
+        return {**asdict(self), "output": _clip(self.output)}
 
 
 class CallFailed(AssertionError):
@@ -143,7 +144,7 @@ def run(
             kind=kind,
             label=" ".join(argv),
             input=stdin or "",
-            output=_clip(output),
+            output=output,
             code=code,
             seconds=round(time.monotonic() - started, 2),
         )
@@ -207,7 +208,7 @@ def http(
             kind="http",
             label=f"{method.upper()} {url}",
             input=body,
-            output=_clip(output),
+            output=output,
             code=code,
             seconds=round(time.monotonic() - started, 2),
         )

@@ -47,6 +47,16 @@ def test_dump_writes_json_lines(tmp_path):
     assert lines[0]["output"].strip() == "a"
 
 
+def test_long_output_is_kept_whole_and_clipped_only_in_the_trace():
+    recorder = Recorder()
+    script = "import json; print(json.dumps({'text': 'x' * 50_000}))"
+    call = run(recorder, [sys.executable, "-c", script], cwd=".")
+    assert len(call.json()["text"]) == 50_000
+    recorded = call.as_dict()["output"]
+    assert "characters cut" in recorded
+    assert len(recorded) < len(call.output)
+
+
 def test_case_slug_is_filesystem_safe():
     assert case_slug("test_3_api", "test_distribution[tokens_per_request]") == (
         "test_3_api__test_distribution_tokens_per_request_"
