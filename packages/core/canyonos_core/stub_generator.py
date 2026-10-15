@@ -94,7 +94,7 @@ def _build_stub_method(function, agent_name):
 
     Generates:
         def get_stock_price(self, ticker: str) -> Future:
-            args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker}
+            args = {"ticker": ticker}
             return Future(parent=inspect.stack()[1].filename, service="FinanceAgent",
                           method="get_stock_price", args=args, grpc_stub=self.stub)
     """
@@ -123,25 +123,10 @@ def _build_stub_method(function, agent_name):
     # Build the function body
     body = []
 
-    # Build the args dict with Future replacement:
-    # args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker, ...}
     arg_dict_keys = [ast.Constant(value=a.name) for a in arguments]
-    arg_dict_values = []
-    for a in arguments:
-        # value.id if isinstance(value, Future) else value
-        arg_dict_values.append(
-            ast.IfExp(
-                test=ast.Call(
-                    func=ast.Name(id="isinstance"),
-                    args=[ast.Name(id=a.name), ast.Name(id="Future")],
-                    keywords=[],
-                ),
-                body=ast.Attribute(value=ast.Name(id=a.name), attr="id"),
-                orelse=ast.Name(id=a.name),
-            )
-        )
+    arg_dict_values = [ast.Name(id=a.name) for a in arguments]
 
-    # args = {"ticker": ticker.id if isinstance(ticker, Future) else ticker, ...}
+    # args = {"ticker": ticker, ...}
     body.append(
         ast.Assign(
             targets=[ast.Name(id="args")],

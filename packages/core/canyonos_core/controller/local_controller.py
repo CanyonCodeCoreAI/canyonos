@@ -696,6 +696,21 @@ class LocalController(object):
                 )
                 return
 
+        future_args = {key: args[key] for key in data.get("future_args", [])}
+        # Only the first hop's Redis holds the producer's record; later hops trust this check.
+        if not route_to:
+            for key, arg_future_id in future_args.items():
+                if self.redis.hget(f"future:{arg_future_id}", "request_id") != (
+                    request_id or ""
+                ):
+                    self._mark_future_failed(
+                        future_id,
+                        f"Arg '{key}' is not a future of this request",
+                        origin,
+                        error_name="InvalidFutureArg",
+                    )
+                    return
+
         if endpoint == self._my_endpoint:
             submitted_at = time.time()
             executor_future = self._executor.submit(
@@ -709,6 +724,7 @@ class LocalController(object):
                 submitted_at,
                 parent,
                 created_at,
+                future_args,
             )
             with self._executor_futures_lock:
                 self._executor_futures[executor_future] = future_id
@@ -716,34 +732,28 @@ class LocalController(object):
         else:
             # Register the target as a consumer for any Future args
             # so results get pushed to its Redis via WriteResult.
-            for key, value in args.items():
-                if (
-                    isinstance(value, str)
-                    and len(value) == 16
-                    and all(c in "0123456789abcdefABCDEF" for c in value)
-                ):
-                    future_key = f"future:{value}"
-                    if self.redis.hget(future_key, "id") is not None:
-                        self.redis.sadd(f"{future_key}:consumers", endpoint)
-                        logger.info(
-                            "Registered %s as consumer of future %s (arg '%s')",
-                            endpoint,
-                            value,
-                            key,
-                        )
+            for key, value in future_args.items():
+                future_key = f"future:{value}"
+                self.redis.sadd(f"{future_key}:consumers", endpoint)
+                logger.info(
+                    "Registered %s as consumer of future %s (arg '%s')",
+                    endpoint,
+                    value,
+                    key,
+                )
 
-                        # Push the result now if the producer resolved the future before
-                        # this consumer registered, since _fan_out_to_consumers couldn't
-                        # have seen it.
-                        existing_result = self.redis.hget(future_key, "result")
-                        if existing_result is not None and existing_result != "":
-                            logger.info(
-                                "Future %s already resolved, pushing value %s to %s",
-                                value,
-                                existing_result,
-                                endpoint,
-                            )
-                            self._send_result_callback(endpoint, value, existing_result)
+                # Push the result now if the producer resolved the future before
+                # this consumer registered, since _fan_out_to_consumers couldn't
+                # have seen it.
+                existing_result = self.redis.hget(future_key, "result")
+                if existing_result is not None and existing_result != "":
+                    logger.info(
+                        "Future %s already resolved, pushing value %s to %s",
+                        value,
+                        existing_result,
+                        endpoint,
+                    )
+                    self._send_result_callback(endpoint, value, existing_result)
 
             # Build comprehensive outward baggage so the receiver gets all context and routing descisions
             outbound_baggage = {"context": context} if context else {}
@@ -771,23 +781,18 @@ class LocalController(object):
             )
             self._forward_request(endpoint, data)
 
-    def _resolve_future_args(self, args, poll_interval=0.01, timeout=300):
+    def _resolve_future_args(self, args, future_args, poll_interval=0.01, timeout=300):
         """
-        Check each arg value. If it is a 32-character hex string, assume it's
-        a Future ID. Poll Redis until the result is available and replace
-        the arg with the resolved value.
+        Replace each arg named in future_args (its value is a Future id) with
+        that Future's result, polling Redis until it is available. Other args
+        pass through unchanged.
         """
         resolved = {}
         for key, value in args.items():
-            # Check if this arg value is a UUID hex string identifying a future
-            if (
-                isinstance(value, str)
-                and len(value) == 16
-                and all(c in "0123456789abcdefABCDEF" for c in value)
-            ):
+            if key in future_args:
                 future_key = f"future:{value}"
                 logger.info(
-                    "Arg '%s' looks like a Future UUID (%s), waiting for result...",
+                    "Arg '%s' is Future %s, waiting for result...",
                     key,
                     value,
                 )
@@ -829,6 +834,7 @@ class LocalController(object):
         submitted_at=None,
         parent=None,
         created_at=None,
+        future_args=(),
     ):
         """Execute a request on the local agent and write the result to Redis.
 
@@ -889,7 +895,7 @@ class LocalController(object):
         serialized = None
         try:
             # Resolve any Future IDs in the args before executing
-            args = self._resolve_future_args(args)
+            args = self._resolve_future_args(args, future_args)
 
             logger.info(
                 "Executing %s.%s (future=%s) locally", service, function, future_id

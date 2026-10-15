@@ -97,7 +97,10 @@ class Future(object):
         self.parent = canyonos_context.get_current_future_id()
         self.service = service
         self.method = method
-        self.args = args or {}
+        args = args or {}
+        # Send Future args as their ids, listing which arg names are Futures for the controller to resolve.
+        self.future_args = [k for k, v in args.items() if isinstance(v, Future)]
+        self.args = {k: v.id if isinstance(v, Future) else v for k, v in args.items()}
         self.children = []
         self.consumers = []
         # For simplicity I am making a decision here, the future value only be sent back to the parent
@@ -133,6 +136,7 @@ class Future(object):
         request_data["future_id"] = request_data.pop("id")
         request_data["function"] = request_data.pop("method")
         request_data["args"] = self.args
+        request_data["future_args"] = self.future_args
 
         request = local_controler_pb2.JsonResponse(resonse=json.dumps(request_data))
         try:

@@ -707,7 +707,8 @@ class GenerateStubTests(unittest.TestCase):
 
         self.assertEqual(sent["service"], "Hello")
         self.assertEqual(sent["method"], "hello")
-        self.assertEqual(sent["args"], {"who": "world", "earlier": "upstream-id"})
+        self.assertEqual(sent["args"]["who"], "world")
+        self.assertIsInstance(sent["args"]["earlier"], FakeFuture)
 
 
 class TargetDockerPlatformTests(unittest.TestCase):

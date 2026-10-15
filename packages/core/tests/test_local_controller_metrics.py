@@ -222,7 +222,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 agent_id="1f2e3d4c5b6a7988fedcba9876543210",
                 _my_endpoint="localhost:50051",
                 _metrics_key="controller:localhost:50051:metrics",
-                _resolve_future_args=lambda args: args,
+                _resolve_future_args=lambda args, future_args: args,
             )
         )
 
@@ -265,7 +265,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 agent_id="aabbccddeeff00112233445566778899",
                 _my_endpoint="localhost:50051",
                 _metrics_key="controller:localhost:50051:metrics",
-                _resolve_future_args=lambda args: args,
+                _resolve_future_args=lambda args, future_args: args,
             )
         )
 
@@ -333,7 +333,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 agent_id="agent-1",
                 _my_endpoint="target:50051",
                 _metrics_key="controller:target:50051:metrics",
-                _resolve_future_args=lambda args: args,
+                _resolve_future_args=lambda args, future_args: args,
                 _get_remote_stub=lambda endpoint: stub,
             )
         )
@@ -389,7 +389,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             agent_id="agent-1",
             _my_endpoint="target:50051",
             _metrics_key="controller:target:50051:metrics",
-            _resolve_future_args=lambda args: args,
+            _resolve_future_args=lambda args, future_args: args,
             _mark_future_failed=lambda future_id, error, origin=None: None,
             _send_result_callback=spy_send_result_callback,
         )

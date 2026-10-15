@@ -129,3 +129,18 @@ canyonos doctor
 step "Query $API_URL/$ROUTE"
 python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" "$QUERY" "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/deploy-result.json"
 python3 "$CHECK" <"$ARTIFACTS_DIR/deploy-result.json"
+
+# A 16-hex-character argument is a plain string, not a Future id. Before CAN-452
+# the workflow's own request waited 300s for `future:deadbeefdeadbeef` and timed
+# out, so the request has to reach done or error quickly and nothing may wait on
+# a Future: the portfolio workflow never passes one as an argument.
+step "Query $API_URL/$ROUTE with a 16-hex-character string"
+python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" deadbeefdeadbeef 60 \
+  >"$ARTIFACTS_DIR/hex-result.json" 2>"$ARTIFACTS_DIR/hex-query.log" || true
+cat "$ARTIFACTS_DIR/hex-query.log"
+if grep -q "did not finish" "$ARTIFACTS_DIR/hex-query.log"; then exit 1; fi
+workflow="$(docker ps --filter name=-workflow- --format '{{.Names}}' | head -n 1)"
+if docker logs "$workflow" 2>&1 | grep -E "waiting for result|Timed out waiting for future"; then
+  echo "the workflow treated the 16-hex-character argument as a Future"
+  exit 1
+fi

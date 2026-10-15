@@ -411,7 +411,7 @@ class ErrorPropagationTests(unittest.TestCase):
             agent_id="executor-agent",
             _my_endpoint="executor:50051",
             _metrics_key="controller:executor:50051:metrics",
-            _resolve_future_args=lambda args: args,
+            _resolve_future_args=lambda args, future_args: args,
             _get_remote_stub=lambda endpoint: stub,
         )
         executor._mark_future_failed = lambda future_id, error, origin=None: (
@@ -491,7 +491,7 @@ class ErrorPropagationTests(unittest.TestCase):
             agent_id="replica-a",
             _my_endpoint="localhost:8001",
             _metrics_key="controller:localhost:8001:metrics",
-            _resolve_future_args=lambda args: args,
+            _resolve_future_args=lambda args, future_args: args,
             _get_remote_stub=lambda endpoint: stub,
         )
         executor._mark_future_failed = lambda future_id, error, origin=None: (
