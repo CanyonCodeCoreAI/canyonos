@@ -10,12 +10,15 @@ import {
   deduplicatePullRequests,
   extractCanIdentifiers,
   isInternalPullRequest,
+  isSecurityChange,
   packagesForPullRequest,
   packagesTouchedBy,
   pickPreviousRelease,
   queryLinearIssues,
   releasablePackages,
+  releaseDate,
   releaseLine,
+  releaseNotesPrompt,
   releaseTagPattern,
   runReleaseNotesPipeline,
 } from './release-notes';
@@ -54,7 +57,7 @@ function dependencies(overrides: Partial<PipelineDependencies> = {}) {
   const calls: {
     linear: number;
     claude: Array<{
-      packageName: string;
+      section: string;
       issues: string[];
       fallbackPullRequests: FallbackPullRequest[];
     }>;
@@ -74,13 +77,15 @@ function dependencies(overrides: Partial<PipelineDependencies> = {}) {
       calls.linear += 1;
       return [issue()];
     },
-    generateClaudeNotes: async (packageName, issues, fallbackPullRequests) => {
+    generateClaudeNotes: async (section, issues, fallbackPullRequests) => {
       calls.claude.push({
-        packageName,
+        section: section.name,
         issues: issues.map((entry) => entry.identifier),
         fallbackPullRequests,
       });
-      return `### Improved\n\n- ${packageName} change.`;
+      return section.kind === 'security'
+        ? `- ${section.name} change.`
+        : `### Improved\n\n- ${section.name} change.`;
     },
     writeFile: async (path, content) => {
       files.set(path, content);
@@ -91,6 +96,7 @@ function dependencies(overrides: Partial<PipelineDependencies> = {}) {
 
 const options = {
   targetTag: 'v0.1.733',
+  targetPublishedAt: '2026-09-25T23:30:00Z',
   repository: 'CanyonCodeCoreAI/canyonos',
   outputDirectory: '/output',
 };
@@ -274,12 +280,43 @@ describe('release tags', () => {
 });
 
 describe('pull request classification', () => {
-  test('treats CI, chore, build, test, docs, style and refactor pull requests as internal', () => {
+  test('treats CI, chore, build, test, docs, style, refactor and release pull requests as internal', () => {
     expect(isInternalPullRequest({ title: 'ci(dashboard): release the images' })).toBe(true);
     expect(isInternalPullRequest({ title: 'chore: point URLs at the renamed repo' })).toBe(true);
     expect(isInternalPullRequest({ title: 'refactor!: move the loader' })).toBe(true);
+    expect(isInternalPullRequest({ title: 'release: Homebrew formula 0.1.736' })).toBe(true);
     expect(isInternalPullRequest({ title: 'feat(cli): add --version' })).toBe(false);
     expect(isInternalPullRequest({ title: 'CLI fails to start' })).toBe(false);
+  });
+
+  test('recognises a security fix from its title or a Security label', () => {
+    const fromTitle = (title: string) => isSecurityChange({ title }, []);
+
+    expect(fromTitle('fix(images): clear critical and high CVEs in the core and web images')).toBe(
+      true
+    );
+    expect(fromTitle('fix(core): patch CVE-2026-1234 in the proxy')).toBe(true);
+    expect(fromTitle('fix(cli): close a path traversal vulnerability')).toBe(true);
+    expect(fromTitle('feat(security): rotate the dashboard session key')).toBe(true);
+    expect(fromTitle('feat(cli): add --version')).toBe(false);
+    expect(fromTitle('fix(core): secure the socket permissions')).toBe(false);
+    expect(isSecurityChange({ title: 'fix(core): reject expired tokens' }, [issue()])).toBe(false);
+    expect(
+      isSecurityChange({ title: 'fix(core): reject expired tokens' }, [
+        issue({ labels: ['security'] }),
+      ])
+    ).toBe(true);
+  });
+
+  test('asks for bullets without headings in the Security section', () => {
+    const security = releaseNotesPrompt({ name: 'Security', kind: 'security' }, [], []);
+    const cli = releaseNotesPrompt({ name: 'CLI', kind: 'package' }, [], []);
+
+    expect(security).toContain('Security section');
+    expect(security).toContain('no headings');
+    expect(security).not.toContain('### New');
+    expect(cli).toContain('CLI package');
+    expect(cli).toContain('### New, ### Improved, ### Fixed');
   });
 
   test('reads conventional commit scopes', () => {
@@ -342,9 +379,9 @@ describe('release-notes pipeline', () => {
 
     expect(result.ok).toBe(true);
     expect(testRun.calls.claude).toEqual([
-      { packageName: 'CLI', issues: ['CAN-42'], fallbackPullRequests: [] },
+      { section: 'CLI', issues: ['CAN-42'], fallbackPullRequests: [] },
       {
-        packageName: 'Core',
+        section: 'Core',
         issues: [],
         fallbackPullRequests: [
           { title: 'Faster agent startup', body: 'Agents boot twice as fast.' },
@@ -353,7 +390,7 @@ describe('release-notes pipeline', () => {
     ]);
     expect(testRun.files.get('/output/release-notes.md')).toBe(
       [
-        '# Release notes for v0.1.733',
+        '# Release notes for v0.1.733 - 2026-09-25',
         '',
         '## CLI',
         '',
@@ -433,7 +470,21 @@ describe('release-notes pipeline', () => {
     expect(result.ok).toBe(true);
     expect(refs).not.toContain('v0.1.733');
     expect(testRun.files.get('/output/release-notes.md')).toStartWith(
-      '# Release notes for v0.1.733'
+      '# Release notes for v0.1.733 - 2026-09-25'
+    );
+  });
+
+  test('dates a draft with the day the notes are written', async () => {
+    const testRun = dependencies();
+
+    const result = await runReleaseNotesPipeline(
+      { ...options, targetPublishedAt: null },
+      testRun.dependencies
+    );
+
+    expect(result.ok).toBe(true);
+    expect(testRun.files.get('/output/release-notes.md')).toStartWith(
+      `# Release notes for v0.1.733 - ${new Date().toISOString().slice(0, 10)}`
     );
   });
 
@@ -478,9 +529,94 @@ describe('release-notes pipeline', () => {
     const result = await runReleaseNotesPipeline(options, testRun.dependencies);
 
     expect(result.ok).toBe(true);
-    expect(testRun.calls.claude.map((call) => call.packageName)).toEqual(['CLI']);
+    expect(testRun.calls.claude.map((call) => call.section)).toEqual(['CLI']);
     expect(testRun.files.get('/output/release-notes.md')).not.toContain('## Core');
     expect(result.audit.packages).toEqual([{ name: 'CLI', pullRequests: [42] }]);
+  });
+
+  test('opens the notes with a Security section and keeps those fixes out of the packages', async () => {
+    const testRun = dependencies({
+      listAssociatedPullRequests: async () => [
+        pullRequest(),
+        pullRequest({
+          number: 43,
+          title: 'fix(api): clear critical and high CVEs in the API image',
+          body: 'Rebuilds the image on a patched base.',
+          headRefName: 'fix/api-image-cves',
+        }),
+        pullRequest({
+          number: 44,
+          title: 'build(deps): bump werkzeug for a security advisory',
+          body: null,
+          headRefName: 'dependabot/uv/werkzeug',
+        }),
+        pullRequest({
+          number: 45,
+          title: 'fix(core): reject expired tokens CAN-77',
+          body: null,
+          headRefName: 'fix/can-77-expired-tokens',
+        }),
+      ],
+      listPullRequestFiles: async (number) =>
+        ({
+          42: ['packages/cli/src/canyonos/deploy.py'],
+          43: ['packages/api/Dockerfile'],
+          44: ['packages/core/pyproject.toml'],
+          45: ['packages/core/canyonos_core/auth.py'],
+        })[number] ?? [],
+      queryLinearIssues: async () => [
+        issue(),
+        issue({ identifier: 'CAN-77', title: 'Expired tokens', labels: ['Security'] }),
+      ],
+    });
+
+    const result = await runReleaseNotesPipeline(options, testRun.dependencies);
+
+    expect(result.ok).toBe(true);
+    expect(testRun.calls.claude).toEqual([
+      {
+        section: 'Security',
+        issues: ['CAN-77'],
+        fallbackPullRequests: [
+          {
+            title: 'fix(api): clear critical and high CVEs in the API image',
+            body: 'Rebuilds the image on a patched base.',
+            packages: ['API'],
+          },
+          {
+            title: 'build(deps): bump werkzeug for a security advisory',
+            body: null,
+            packages: ['Core'],
+          },
+          { title: 'fix(core): reject expired tokens CAN-77', body: null, packages: ['Core'] },
+        ],
+      },
+      { section: 'CLI', issues: ['CAN-42'], fallbackPullRequests: [] },
+    ]);
+    expect(testRun.files.get('/output/release-notes.md')).toBe(
+      [
+        '# Release notes for v0.1.733 - 2026-09-25',
+        '',
+        '## Security',
+        '',
+        '- Security change.',
+        '',
+        '## CLI',
+        '',
+        '### Improved',
+        '',
+        '- CLI change.',
+        '',
+      ].join('\n')
+    );
+    expect(result.audit.security).toEqual([43, 44, 45]);
+    expect(result.audit.packages).toEqual([{ name: 'CLI', pullRequests: [42] }]);
+    expect(result.audit.pullRequests).toEqual([
+      expect.objectContaining({ number: 42, security: false, source: 'linear' }),
+      expect.objectContaining({ number: 43, security: true, source: 'fallback' }),
+      expect.objectContaining({ number: 44, security: true, source: 'fallback' }),
+      expect.objectContaining({ number: 45, security: true, source: 'linear' }),
+    ]);
   });
 
   test.each([
@@ -499,14 +635,19 @@ describe('release-notes pipeline', () => {
 });
 
 describe('composing notes', () => {
-  test('writes a heading per section without tag links', () => {
+  test('dates the notes by the publish day, or today for a draft', () => {
+    expect(releaseDate('2026-10-13T18:56:43Z')).toBe('2026-10-13');
+    expect(releaseDate(null, new Date('2026-10-15T03:00:00Z'))).toBe('2026-10-15');
+  });
+
+  test('writes a dated title and a heading per section without tag links', () => {
     expect(
-      composeReleaseNotes('v0.1.733', [
+      composeReleaseNotes('v0.1.733', '2026-09-25', [
         { name: 'CLI', markdown: '### New\n\n- Thing.\n' },
         { name: 'Web', markdown: 'No user-facing changes.' },
       ])
     ).toBe(
-      '# Release notes for v0.1.733\n\n## CLI\n\n### New\n\n- Thing.\n\n## Web\n\nNo user-facing changes.\n'
+      '# Release notes for v0.1.733 - 2026-09-25\n\n## CLI\n\n### New\n\n- Thing.\n\n## Web\n\nNo user-facing changes.\n'
     );
   });
 });

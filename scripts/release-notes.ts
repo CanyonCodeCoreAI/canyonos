@@ -30,17 +30,20 @@ export type LinearIssue = {
   cycle: { name: string; number: number | null } | null;
 };
 export type ReleasablePackage = { name: string; paths: string[]; scopes: string[] };
-export type FallbackPullRequest = Pick<PullRequest, 'title' | 'body'>;
+export type FallbackPullRequest = Pick<PullRequest, 'title' | 'body'> & { packages?: string[] };
+export type NotesSection = { name: string; kind: 'package' | 'security' };
 export type ReleaseNotesAudit = {
   targetTag: string;
   previousTag?: string;
   status: 'failed' | 'generated';
   failure?: string;
+  security: number[];
   packages: Array<{ name: string; pullRequests: number[] }>;
   pullRequests: Array<
     Omit<PullRequest, 'body'> & {
       identifiers: string[];
       packages: string[];
+      security: boolean;
       source: 'linear' | 'fallback' | 'internal' | 'excluded';
     }
   >;
@@ -59,7 +62,7 @@ export type PipelineDependencies = {
   listPullRequestFiles: (pullRequestNumber: number) => Promise<string[]>;
   queryLinearIssues: (identifiers: string[]) => Promise<LinearIssue[]>;
   generateClaudeNotes: (
-    packageName: string,
+    section: NotesSection,
     issues: LinearIssue[],
     fallbackPullRequests: FallbackPullRequest[]
   ) => Promise<string>;
@@ -194,10 +197,25 @@ export function packagesTouchedBy<T extends ReleasablePackage>(
   );
 }
 
-const internalTypePattern = /^(ci|chore|build|test|tests|docs|style|refactor)(\([^)]*\))?!?:/i;
+const internalTypePattern =
+  /^(ci|chore|build|test|tests|docs|style|refactor|release)(\([^)]*\))?!?:/i;
 
 export function isInternalPullRequest(pullRequest: Pick<PullRequest, 'title'>): boolean {
   return internalTypePattern.test(pullRequest.title.trim());
+}
+
+const securityTitlePattern = /\b(?:security|cves?|cve-\d{4}-\d+|vulnerabilit(?:y|ies))\b/i;
+
+// A security fix is announced in its own section, whatever the pull request type says, so a
+// dependency bump or image rebuild that closes a CVE is never filed as internal.
+export function isSecurityChange(
+  pullRequest: Pick<PullRequest, 'title'>,
+  issues: Pick<LinearIssue, 'labels'>[]
+): boolean {
+  return (
+    securityTitlePattern.test(pullRequest.title) ||
+    issues.some((issue) => issue.labels.some((label) => label.toLowerCase() === 'security'))
+  );
 }
 
 export function conventionalScopes(title: string): string[] {
@@ -223,14 +241,20 @@ export function packagesForPullRequest<T extends ReleasablePackage>(
     : packagesTouchedBy(files, packages);
 }
 
+// A draft has no publish date yet, so its notes carry the day they were written.
+export function releaseDate(publishedAt: string | null, now = new Date()): string {
+  return (publishedAt ? new Date(publishedAt) : now).toISOString().slice(0, 10);
+}
+
 export function composeReleaseNotes(
   targetTag: string,
+  date: string,
   sections: Array<{ name: string; markdown: string }>
 ): string {
   const body = sections
     .map(({ name, markdown }) => `## ${name}\n\n${markdown.trim()}\n`)
     .join('\n');
-  return `# Release notes for ${targetTag}\n\n${body}`;
+  return `# Release notes for ${targetTag} - ${date}\n\n${body}`;
 }
 
 export async function runReleaseNotesPipeline(
@@ -240,6 +264,7 @@ export async function runReleaseNotesPipeline(
   const audit: ReleaseNotesAudit = {
     targetTag: options.targetTag,
     status: 'failed',
+    security: [],
     packages: [],
     pullRequests: [],
     issues: [],
@@ -286,49 +311,67 @@ export async function runReleaseNotesPipeline(
     previousTag: string,
     collected: CollectedPullRequest[]
   ): Promise<string> {
-    const references = collected.map(({ pullRequest, files }) => ({
-      pullRequest,
-      internal: isInternalPullRequest(pullRequest),
-      identifiers: extractCanIdentifiers(pullRequest),
-      packages: isInternalPullRequest(pullRequest)
-        ? []
-        : packagesForPullRequest(pullRequest, files, releasablePackages),
-    }));
-    audit.pullRequests = references.map(({ pullRequest, internal, identifiers, packages }) => ({
-      ...auditPullRequest(pullRequest),
-      identifiers,
-      packages: packages.map((releasable) => releasable.name),
-      source: internal
-        ? 'internal'
-        : packages.length === 0
-          ? 'excluded'
-          : identifiers.length === 0
-            ? 'fallback'
-            : 'linear',
-    }));
-    const changed = releasablePackages
-      .map((releasable) => ({
-        releasable,
-        references: references.filter(({ packages }) => packages.includes(releasable)),
-      }))
-      .filter(({ references }) => references.length > 0);
-    audit.packages = changed.map(({ releasable, references }) => ({
-      name: releasable.name,
-      pullRequests: references.map(({ pullRequest }) => pullRequest.number),
-    }));
-    if (changed.length === 0) {
+    const references = collected.map(({ pullRequest, files }) => {
+      const internal = isInternalPullRequest(pullRequest) && !isSecurityChange(pullRequest, []);
+      return {
+        pullRequest,
+        internal,
+        identifiers: extractCanIdentifiers(pullRequest),
+        packages: internal ? [] : packagesForPullRequest(pullRequest, files, releasablePackages),
+      };
+    });
+    const included = references.filter(({ packages }) => packages.length > 0);
+    if (included.length === 0) {
       throw new Error(
         `No pull request changed a package between ${previousTag} and ${options.targetTag}.`
       );
     }
 
-    const included = references.filter(({ packages }) => packages.length > 0);
     const identifiers = [...new Set(included.flatMap(({ identifiers }) => identifiers))].sort();
     const linearIssues =
       identifiers.length === 0
         ? []
         : deduplicateIssues(await dependencies.queryLinearIssues(identifiers));
     audit.issues = validateLinearIssues(identifiers, linearIssues);
+    const issuesOf = (ids: string[]) =>
+      linearIssues.filter((issue) => ids.includes(issue.identifier.toUpperCase()));
+
+    const classified = references.map((reference) => ({
+      ...reference,
+      security:
+        reference.packages.length > 0 &&
+        isSecurityChange(reference.pullRequest, issuesOf(reference.identifiers)),
+    }));
+    audit.pullRequests = classified.map(
+      ({ pullRequest, internal, identifiers, packages, security }) => ({
+        ...auditPullRequest(pullRequest),
+        identifiers,
+        packages: packages.map((releasable) => releasable.name),
+        security,
+        source: internal
+          ? 'internal'
+          : packages.length === 0
+            ? 'excluded'
+            : identifiers.length === 0
+              ? 'fallback'
+              : 'linear',
+      })
+    );
+    const securityReferences = classified.filter(({ security }) => security);
+    audit.security = securityReferences.map(({ pullRequest }) => pullRequest.number);
+    const changed = releasablePackages
+      .map((releasable) => ({
+        releasable,
+        references: classified.filter(
+          ({ packages, security }) => !security && packages.includes(releasable)
+        ),
+      }))
+      .filter(({ references }) => references.length > 0);
+    audit.packages = changed.map(({ releasable, references }) => ({
+      name: releasable.name,
+      pullRequests: references.map(({ pullRequest }) => pullRequest.number),
+    }));
+
     const failedIssues = audit.issues.filter((issue) => issue.status !== 'validated');
     if (failedIssues.length > 0) {
       throw new Error(
@@ -336,12 +379,30 @@ export async function runReleaseNotesPipeline(
       );
     }
 
-    const sections = await Promise.all(
+    // Every security fix is passed with its packages, so the notes can say what each one
+    // affects; the package sections only pass the pull requests with no Linear issue.
+    const securitySection =
+      securityReferences.length === 0
+        ? []
+        : [
+            {
+              name: 'Security',
+              markdown: await dependencies.generateClaudeNotes(
+                { name: 'Security', kind: 'security' },
+                issuesOf(securityReferences.flatMap(({ identifiers }) => identifiers)),
+                securityReferences.map(({ pullRequest, packages }) => ({
+                  title: pullRequest.title,
+                  body: pullRequest.body,
+                  packages: packages.map((releasable) => releasable.name),
+                }))
+              ),
+            },
+          ];
+    const packageSections = await Promise.all(
       changed.map(async ({ releasable, references }) => {
-        const packageIdentifiers = new Set(references.flatMap(({ identifiers }) => identifiers));
         const markdown = await dependencies.generateClaudeNotes(
-          releasable.name,
-          linearIssues.filter((issue) => packageIdentifiers.has(issue.identifier.toUpperCase())),
+          { name: releasable.name, kind: 'package' },
+          issuesOf(references.flatMap(({ identifiers }) => identifiers)),
           references
             .filter(({ identifiers }) => identifiers.length === 0)
             .map(({ pullRequest }) => ({ title: pullRequest.title, body: pullRequest.body }))
@@ -349,7 +410,10 @@ export async function runReleaseNotesPipeline(
         return { name: releasable.name, markdown };
       })
     );
-    return composeReleaseNotes(options.targetTag, sections);
+    return composeReleaseNotes(options.targetTag, releaseDate(options.targetPublishedAt ?? null), [
+      ...securitySection,
+      ...packageSections,
+    ]);
   }
 }
 
@@ -485,13 +549,25 @@ export async function queryLinearIssues(
   return issues.filter((issue): issue is LinearIssue => issue !== null);
 }
 
+export function releaseNotesPrompt(
+  section: NotesSection,
+  issues: LinearIssue[],
+  fallbackPullRequests: FallbackPullRequest[]
+): string {
+  const instructions =
+    section.kind === 'security'
+      ? `Write concise user-facing Markdown release notes for the Security section of a CanyonOS release from validated Linear issues and the security pull requests, each listed with the packages it changed. Write one bullet per fix and no headings. Start each bullet with the packages it affects, then say what was vulnerable and what the fix does. Name a CVE identifier, package, or component when the source names it. Do not add an introduction, pull requests, implementation details, or a severity, exploitability, or impact the source does not state.`
+      : `Write concise user-facing Markdown release notes for the ${section.name} package from validated Linear issues and fallback pull request context. Use only these headings, in this order, and leave out a heading that has no entries: ### New, ### Improved, ### Fixed. Do not add other headings, an introduction, pull requests, or implementation details. Include every change a user of the package would notice, including fixes to reliability, resource use, costs, validation, and dependency requirements. Omit only changes users cannot notice: CI, release process, version bumps, tests, and repository tooling. State only what the source says: do not add platforms, benefits, audiences, or other details it does not state. If nothing is user-facing, reply with exactly: No user-facing changes.`;
+  return `${instructions}\n\n${JSON.stringify({ issues, fallbackPullRequests })}`;
+}
+
 async function generateClaudeNotes(
-  packageName: string,
+  section: NotesSection,
   issues: LinearIssue[],
   fallbackPullRequests: FallbackPullRequest[]
 ): Promise<string> {
   let markdown: string | null = null;
-  const prompt = `Write concise user-facing Markdown release notes for the ${packageName} package from validated Linear issues and fallback pull request context. Use only these headings, in this order, and leave out a heading that has no entries: ### New, ### Improved, ### Fixed. Do not add other headings, an introduction, pull requests, or implementation details. Include every change a user of the package would notice, including fixes to reliability, resource use, costs, validation, and dependency requirements. Omit only changes users cannot notice: CI, release process, version bumps, tests, and repository tooling. State only what the source says: do not add platforms, benefits, audiences, or other details it does not state. If nothing is user-facing, reply with exactly: No user-facing changes.\n\n${JSON.stringify({ issues, fallbackPullRequests })}`;
+  const prompt = releaseNotesPrompt(section, issues, fallbackPullRequests);
   for await (const message of query({
     prompt,
     options: {
