@@ -18,8 +18,8 @@ canyonos = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "ruff==0.16.7",
-    "ty==0.0.81",
+    "ruff==0.16.10",
+    "ty==0.0.85",
     "canyonos-core",
     "canyonos",
     "reuse==6.2.0",
@@ -28,7 +28,7 @@ dev = [
 ]
 
 [tool.ruff]
-required-version = "==0.16.7"
+required-version = "==0.16.10"
 # Ruff 0.16.7 formats fenced examples too; CI checks Python sources, not docs.
 extend-exclude = ["*.md"]
 
