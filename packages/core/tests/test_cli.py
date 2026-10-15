@@ -109,6 +109,42 @@ class CliDeployTests(unittest.TestCase):
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
+    @patch("canyonos_core.reconciler.providers.EC2._runtime.preflight")
+    @patch("canyonos_core.reconciler.providers.Local._runtime.preflight")
+    def test_deploy_treats_a_missing_provider_as_local(
+        self,
+        local_preflight,
+        ec2_preflight,
+        _ensure_grpc,
+        _run_build,
+        _signal_patch,
+        _atexit_patch,
+    ):
+        controller = MagicMock()
+        controller_module = self._fake_controller_module(controller)
+        args = SimpleNamespace(config="config/global_controller.yaml")
+        config = {"agents": [{"name": "Agent"}, {"name": "Other"}]}
+
+        with (
+            patch("canyonos_core.cli.os.path.isfile", return_value=True),
+            patch("canyonos_core.cli.load_config", return_value=config),
+            patch("canyonos_core.cli.resolve_env_file", return_value=None),
+            patch("canyonos_core.cli._validate_or_exit"),
+            patch.dict(
+                sys.modules,
+                {"canyonos_core.controller.global_controller": controller_module},
+            ),
+        ):
+            cli._cmd_deploy(args)
+
+        local_preflight.assert_called_once_with()
+        ec2_preflight.assert_not_called()
+        controller.run.assert_called_once_with()
+
+    @patch("atexit.register")
+    @patch("signal.signal")
+    @patch("canyonos_core.cli._run_build")
+    @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
     def test_deploy_exits_with_one_critical_line_when_replicas_never_become_healthy(
         self,
         _ensure_grpc,

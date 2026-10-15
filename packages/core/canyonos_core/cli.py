@@ -421,7 +421,9 @@ def _cmd_deploy(args):
 
     _ensure_grpc_stubs_importable(artifact_root)
 
-    for name in dict.fromkeys(agent["provider"] for agent in config.get("agents", [])):
+    for name in dict.fromkeys(
+        agent.get("provider", providers.DEFAULT) for agent in config.get("agents", [])
+    ):
         providers.get(name).preflight()
 
     from canyonos_core.controller.global_controller import GlobalController
