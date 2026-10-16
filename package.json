@@ -38,6 +38,7 @@
     "cli:usage:dev": "bun run ./packages/cli-usage-api/scripts/dev.ts",
     "cli:usage:reset": "bun run --cwd packages/cli-usage-api reset",
     "cli:usage:test:e2e": "bun run --cwd packages/cli-usage-api test:e2e",
+    "cli:usage:test:cli-e2e": "CANYONOS_CLI_USAGE_E2E=1 uv run pytest tests/cli_usage",
     "skills:test": "bun test scripts/skills-check.test.ts",
     "skills:check": "bun run skills:test && promptfoo validate config -c evals/promptfooconfig.js && bun run scripts/skills-promptfoo-smoke.ts",
     "skills:eval": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo eval -c evals/promptfooconfig.js --env-file .env",

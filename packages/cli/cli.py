@@ -31,6 +31,11 @@ from canyonos.status import run_status
 from canyonos.stop import run_stop
 from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
 from canyonos.upgrade import notify_if_outdated, run_upgrade
+from canyonos.usage.delivery import (
+    DELIVERY_ARGUMENT,
+    deliver_pending_events,
+    start_delivery,
+)
 from canyonos.usage.outbox import recording_usage
 from canyonos.validate import DEFAULT_ARTIFACT_ROOT, run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
@@ -54,7 +59,18 @@ class _RootParser(argparse.ArgumentParser):
 
 def main():
     """Run the `canyonos` command you typed, showing the help screen if there is none
-    and any error in the terminal."""
+    and any error in the terminal, then start sending waiting usage events in the
+    background. The CLI restarts itself with a hidden argument to be that sender."""
+    if sys.argv[1:] == [DELIVERY_ARGUMENT]:
+        deliver_pending_events()
+        return
+    try:
+        _run_command()
+    finally:
+        start_delivery()
+
+
+def _run_command():
     parser = _RootParser(prog="canyonos")
     parser.add_argument(
         "-v",

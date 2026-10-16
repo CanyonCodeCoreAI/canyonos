@@ -26,6 +26,7 @@ from __future__ import annotations
 import importlib.metadata
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -44,6 +45,7 @@ SKILL_SOURCE_VAR = "CANYONOS_SKILL_SOURCE"
 # Already the names `dashboard.compose.yml` interpolates.
 API_IMAGE_VAR = "CANYONOS_API_IMAGE"
 WEB_IMAGE_VAR = "CANYONOS_WEB_IMAGE"
+USAGE_URL_VAR = "CANYONOS_USAGE_URL"
 
 # This file is packages/cli/canyonos/env.py, so `packages/cli/` is two levels up
 # and the workspace root is two above that -- the same walk as from
@@ -145,3 +147,26 @@ web_image = _resolve_dashboard_image(
     LOCAL_WEB_IMAGE,
     WEB_IMAGE_VAR,
 )
+
+
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _resolve_usage_url(value):
+    """The usage API that `CANYONOS_USAGE_URL` points at, without a trailing slash, or
+    None when it is unset or unsafe: anything but https, or plain http to a host other
+    than this machine. There is no production usage API yet, so unset sends nothing."""
+    setting = (value or "").strip().rstrip("/")
+    try:
+        parts = urlsplit(setting)
+        host, _port = parts.hostname, parts.port
+    except ValueError:
+        return None
+    if not host or parts.username or parts.password or "?" in setting or "#" in setting:
+        return None
+    if parts.scheme == "https" or (parts.scheme == "http" and host in LOOPBACK_HOSTS):
+        return setting
+    return None
+
+
+usage_url = _resolve_usage_url(os.environ.get(USAGE_URL_VAR))

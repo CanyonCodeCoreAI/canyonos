@@ -8,17 +8,25 @@ on:
     branches: [main, master]
     paths:
       - 'packages/cli-usage-api/**'
+      - 'packages/cli/**'
       - 'packages/tsconfig/**'
+      - 'tests/cli_usage/**'
       - '.github/workflows/cli-usage-api-e2e.yml'
       - 'package.json'
       - 'bun.lock'
+      - 'pyproject.toml'
+      - 'uv.lock'
   pull_request:
     paths:
       - 'packages/cli-usage-api/**'
+      - 'packages/cli/**'
       - 'packages/tsconfig/**'
+      - 'tests/cli_usage/**'
       - '.github/workflows/cli-usage-api-e2e.yml'
       - 'package.json'
       - 'bun.lock'
+      - 'pyproject.toml'
+      - 'uv.lock'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -52,6 +60,21 @@ jobs:
       # packages/cli-usage-api/docker-compose.yml, so they can take it down mid-run.
       - name: Run E2E Tests
         run: bun run cli:usage:test:e2e
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.15"
+          enable-cache: true
+
+      # --locked fails the job when uv.lock is stale.
+      - name: Sync the Python workspace
+        run: uv sync --locked
+
+      # Runs the real `canyonos` CLI against the real API; tests/cli_usage starts and
+      # removes its own DynamoDB Local container.
+      - name: Run CLI feature E2E Tests
+        run: bun run cli:usage:test:cli-e2e
 
       - name: Build the Lambda bundle
         run: bun run --cwd packages/cli-usage-api build

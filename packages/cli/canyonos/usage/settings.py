@@ -42,7 +42,9 @@ def outbox_dir() -> Path:
     return usage_dir() / "outbox"
 
 
-def _is_uuid4(value: object) -> bool:
+def is_uuid4(value: object) -> bool:
+    """Whether `value` is a random id written the way the usage API accepts it: a
+    version 4 UUID in lowercase."""
     if not isinstance(value, str):
         return False
     try:
@@ -64,7 +66,7 @@ def load_settings() -> UsageSettings | None:
 
     reporting = raw.get("usage_reporting")
     installation_id = raw.get("installation_id")
-    if reporting is True and _is_uuid4(installation_id):
+    if reporting is True and is_uuid4(installation_id):
         return UsageSettings(True, installation_id)
     if reporting is False and installation_id is None:
         return UsageSettings(False, None)
