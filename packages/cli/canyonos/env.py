@@ -63,6 +63,7 @@ PROD_CORE_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-core:{VERSION}"
 PROD_API_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-api:{VERSION}"
 PROD_WEB_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-web:{VERSION}"
 PROD_SKILL_REF = f"v{VERSION}"
+PROD_USAGE_URL = "https://lgfqg03dz2.execute-api.us-east-1.amazonaws.com"
 
 # `local` artifacts, i.e. what this checkout builds or ships.
 LOCAL_CORE_IMAGE = "canyonos-core:dev"
@@ -152,10 +153,13 @@ web_image = _resolve_dashboard_image(
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
-def _resolve_usage_url(value):
+def _resolve_usage_url(environment, value):
     """The usage API that `CANYONOS_USAGE_URL` points at, without a trailing slash, or
-    None when it is unset or unsafe: anything but https, or plain http to a host other
-    than this machine. There is no production usage API yet, so unset sends nothing."""
+    None when it is explicitly empty or unsafe: anything but https, or plain http to a
+    host other than this machine. An unset value uses the production API only in a
+    released CLI; development and test environments have no remote default."""
+    if value is None and environment == PRODUCTION:
+        value = PROD_USAGE_URL
     setting = (value or "").strip().rstrip("/")
     try:
         parts = urlsplit(setting)
@@ -169,4 +173,4 @@ def _resolve_usage_url(value):
     return None
 
 
-usage_url = _resolve_usage_url(os.environ.get(USAGE_URL_VAR))
+usage_url = _resolve_usage_url(environment, os.environ.get(USAGE_URL_VAR))

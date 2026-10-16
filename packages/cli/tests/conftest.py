@@ -8,10 +8,10 @@ from canyonos import env, upgrade
 
 @pytest.fixture(autouse=True)
 def no_usage_api(monkeypatch):
-    """Keep a developer's CANYONOS_USAGE_URL from sending test events anywhere: the CLI
-    runs in these tests, in process or as a child, would start delivering to it."""
+    """Keep CLI tests from sending events to any selected usage API: runs in process or
+    as a child would otherwise start delivery."""
     monkeypatch.setattr(env, "usage_url", None)
-    monkeypatch.delenv(env.USAGE_URL_VAR, raising=False)
+    monkeypatch.setenv(env.USAGE_URL_VAR, "")
 
 
 @pytest.fixture(autouse=True)

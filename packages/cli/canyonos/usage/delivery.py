@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Sends the usage events waiting in `~/.canyonos/usage/outbox/` to the usage API that
-`CANYONOS_USAGE_URL` points at. Every `canyonos` run ends by starting a background copy
-of the CLI that does the sending, so it never slows a command down, shows anything or
-changes how the command exits. Events stay in the outbox until the API has stored them.
+Sends the usage events waiting in `~/.canyonos/usage/outbox/` to the usage API selected
+by `canyonos.env`. Every `canyonos` run ends by starting a background copy of the CLI
+that does the sending, so it never slows a command down, shows anything or changes how
+the command exits. Events stay in the outbox until the API has stored them.
 """
 
 import fcntl
@@ -67,8 +67,8 @@ def _reporting_is_on() -> bool:
 
 def start_delivery() -> None:
     """Start sending the waiting usage events in the background as a `canyonos` run
-    ends, when usage reporting is on, events are waiting and `CANYONOS_USAGE_URL` is
-    set. Return at once without waiting for it; never show anything or raise."""
+    ends, when usage reporting is on, events are waiting and a usage API is selected.
+    Return at once without waiting for it; never show anything or raise."""
     try:
         if env.usage_url is None or not _reporting_is_on() or not pending_events():
             return

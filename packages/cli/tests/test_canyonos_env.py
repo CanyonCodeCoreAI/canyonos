@@ -8,6 +8,7 @@ import importlib
 import importlib.metadata
 import os
 import subprocess
+import sys
 import urllib.request
 
 import dotenv
@@ -47,6 +48,7 @@ def reloaded(monkeypatch):
             env_module.SKILL_SOURCE_VAR,
             env_module.API_IMAGE_VAR,
             env_module.WEB_IMAGE_VAR,
+            env_module.USAGE_URL_VAR,
         ):
             os.environ.pop(key, None)
         os.environ.update(variables)
@@ -122,6 +124,70 @@ def test_importing_env_touches_neither_docker_nor_the_network(reloaded, monkeypa
     monkeypatch.setattr(urllib.request, "urlopen", forbidden)
 
     assert reloaded(CANYONOS_ENV=TEST).is_test
+
+
+def test_the_no_usage_api_fixture_disables_a_fresh_child_process():
+    result = subprocess.run(
+        [sys.executable, "-c", "from canyonos import env; print(env.usage_url)"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "None\n"
+
+
+@pytest.mark.parametrize(
+    "variables, expected",
+    [
+        ({}, env_module.PROD_USAGE_URL),
+        ({"CANYONOS_ENV": PROD}, env_module.PROD_USAGE_URL),
+        ({"CANYONOS_ENV": DEV}, None),
+        ({"CANYONOS_ENV": TEST}, None),
+        ({"CANYONOS_USAGE_URL": ""}, None),
+        ({"CANYONOS_USAGE_URL": "   "}, None),
+        ({"CANYONOS_USAGE_URL": "http://localhost:8787/"}, "http://localhost:8787"),
+        ({"CANYONOS_USAGE_URL": "http://usage.example.com"}, None),
+    ],
+    ids=[
+        "production-unset",
+        "explicit-production-unset",
+        "development-unset",
+        "test-unset",
+        "empty",
+        "whitespace",
+        "override",
+        "invalid",
+    ],
+)
+def test_usage_url_selection_in_a_fresh_python_process(variables, expected):
+    environment = {
+        **os.environ,
+        env_module.CORE_IMAGE_VAR: "",
+        env_module.SKILL_SOURCE_VAR: "",
+        env_module.API_IMAGE_VAR: "",
+        env_module.WEB_IMAGE_VAR: "",
+        "PYTHON_DOTENV_DISABLED": "1",
+    }
+    for variable in (env_module.ENV_VAR, env_module.USAGE_URL_VAR):
+        environment.pop(variable, None)
+    environment.update(variables)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from canyonos import env; print(env.usage_url)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(expected)
 
 
 # ------------------------------------------------------------------ #

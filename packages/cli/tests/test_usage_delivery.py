@@ -134,13 +134,12 @@ def test_the_batch_limits_match_the_usage_api_contract():
     ],
 )
 def test_https_or_loopback_http_usage_urls_are_used(value, expected):
-    assert env._resolve_usage_url(value) == expected
+    assert env._resolve_usage_url(env.PRODUCTION, value) == expected
 
 
 @pytest.mark.parametrize(
     "value",
     [
-        None,
         "",
         "   ",
         "http://usage.example.com",
@@ -161,7 +160,7 @@ def test_https_or_loopback_http_usage_urls_are_used(value, expected):
     ],
 )
 def test_any_other_usage_url_sends_nothing(value):
-    assert env._resolve_usage_url(value) is None
+    assert env._resolve_usage_url(env.PRODUCTION, value) is None
 
 
 class Spawned:
