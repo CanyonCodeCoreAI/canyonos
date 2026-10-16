@@ -9,6 +9,7 @@ COPY package.json bun.lock ./
 COPY packages/web/package.json ./packages/web/package.json
 COPY packages/api/package.json ./packages/api/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
+COPY packages/cli-usage-api/package.json ./packages/cli-usage-api/package.json
 COPY packages/tsconfig/package.json ./packages/tsconfig/package.json
 RUN bun install --frozen-lockfile --ignore-scripts
 

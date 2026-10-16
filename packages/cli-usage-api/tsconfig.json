@@ -1,0 +1,9 @@
+{
+  "extends": "@canyonos/tsconfig/base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["bun-types"]
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "e2e/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

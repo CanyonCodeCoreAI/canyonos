@@ -1,0 +1,27 @@
+{
+  "name": "@canyonos/cli-usage-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:server": "bun run --watch src/server.ts",
+    "reset": "docker compose -p canyonos-cli-usage -f docker-compose.yml down --volumes",
+    "build": "bun run scripts/build-lambda.ts",
+    "test": "bun test ./src",
+    "test:e2e": "bun test --timeout 120000 ./e2e",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",
+    "format": "prettier --ignore-path ../../.gitignore --write .",
+    "format:check": "prettier --ignore-path ../../.gitignore --check ."
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1136.0",
+    "elysia": "1.4.28",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@canyonos/tsconfig": "workspace:*",
+    "@types/aws-lambda": "8.10.163",
+    "bun-types": "1.4.2",
+    "typescript": "5.9.3"
+  }
+}

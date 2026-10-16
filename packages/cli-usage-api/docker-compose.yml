@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# DynamoDB Local for `bun run cli:usage:dev`. Its own Compose project and volume keep it apart
+# from the dashboard stack in .docker/docker-compose.yml; `bun run cli:usage:reset` removes both.
+name: canyonos-cli-usage
+
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:3.3.1@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+    container_name: canyonos-cli-usage-dynamodb
+    # The image has no data directory, so a fresh volume mounts owned by root.
+    user: root
+    command: ['-jar', 'DynamoDBLocal.jar', '-sharedDb', '-dbPath', '/home/dynamodblocal/data']
+    ports:
+      - '127.0.0.1:8010:8000'
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+
+volumes:
+  dynamodb-data:
+    name: canyonos-cli-usage-dynamodb-data
