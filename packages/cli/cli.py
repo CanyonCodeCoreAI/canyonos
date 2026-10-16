@@ -31,6 +31,7 @@ from canyonos.status import run_status
 from canyonos.stop import run_stop
 from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
 from canyonos.upgrade import notify_if_outdated, run_upgrade
+from canyonos.usage.outbox import recording_usage
 from canyonos.validate import DEFAULT_ARTIFACT_ROOT, run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
 
@@ -215,7 +216,8 @@ def main():
         notify_if_outdated()
 
     try:
-        args.func(args)
+        with recording_usage(args.command):
+            args.func(args)
     except RuntimeError as e:
         ui.fail(e)
         sys.exit(1)
