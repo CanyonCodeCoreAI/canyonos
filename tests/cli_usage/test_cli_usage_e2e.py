@@ -67,8 +67,7 @@ class Cli:
         }
         environment.update({"HOME": str(self.home), **(extra_env or {})})
         url = self.usage_url if usage_url is None else usage_url
-        if url:
-            environment["CANYONOS_USAGE_URL"] = url
+        environment["CANYONOS_USAGE_URL"] = url or ""
         return subprocess.run(
             [str(CANYONOS), *argv],
             cwd=cwd or self.home,
