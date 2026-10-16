@@ -21,8 +21,8 @@ sys.path.insert(0, ".")
 sys.path.insert(0, "/app")
 sys.path.insert(0, os.path.abspath("grpc_stubs"))
 
-import local_controler_pb2
-import local_controler_pb2_grpc
+import local_controller_pb2
+import local_controller_pb2_grpc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ FUTURE_CLEANUP_GRACE_SECONDS = math.ceil(
 EXECUTE_DEDUP_TTL_SECONDS = 3600
 
 
-class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
+class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer):
     """gRPC servicer that accepts requests and pushes them into a queue."""
 
     def __init__(self, my_endpoint="unknown"):
@@ -61,12 +61,12 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
 
     def Execute(self, request, context):
         """Accept an Execute request and push it into the queue."""
-        logger.info(f"Received request: {request.resonse}")
-        if self._already_accepted(request.resonse):
+        logger.info(f"Received request: {request.response}")
+        if self._already_accepted(request.response):
             logger.info("Execute: duplicate delivery of a queued request, skipping.")
         else:
-            self.request_queue.put(request.resonse)
-        return local_controler_pb2.JsonResponse(resonse="Request queued successfully")
+            self.request_queue.put(request.response)
+        return local_controller_pb2.JsonResponse(response="Request queued successfully")
 
     def _already_accepted(self, payload):
         """Tells Execute whether this replica has already accepted a given request, so a request delivered twice isn't run twice."""
@@ -88,7 +88,7 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
     def WriteResult(self, request, context):
         """Accept a result or error from a remote controller and write it to local Redis."""
         try:
-            data = json.loads(request.resonse)
+            data = json.loads(request.response)
             future_id = data.get("future_id")
             result = data.get("result")
             failed = int(bool(data.get("failed", 0)))
@@ -127,12 +127,12 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                 logger.error("WriteResult: missing future_id in %s", data)
         except Exception as e:
             logger.error("WriteResult failed: %s", e)
-        return local_controler_pb2.JsonResponse(resonse="Result written")
+        return local_controller_pb2.JsonResponse(response="Result written")
 
     def Cleanup(self, request, context):
         """Trigger async cleanup for one or more completed requests."""
         try:
-            data = json.loads(request.resonse)
+            data = json.loads(request.response)
             request_ids = data.get("request_ids")
 
             if request_ids:
@@ -151,7 +151,7 @@ class LocalControllerServicer(local_controler_pb2_grpc.LocalControllerServicer):
                 logger.warning("Cleanup: missing request_id(s) in payload")
         except Exception as e:
             logger.error("Cleanup: failed to parse payload: %s", e)
-        return local_controler_pb2.JsonResponse(resonse="Cleanup triggered")
+        return local_controller_pb2.JsonResponse(response="Cleanup triggered")
 
     def _cleanup_request(self, request_id):
         """Expire a request's consolidated future hashes and bookkeeping, once the GC
@@ -228,7 +228,7 @@ def start_server(port=50051, my_endpoint="unknown"):
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=8), options=GRPC_SERVER_OPTIONS
     )
-    local_controler_pb2_grpc.add_LocalControllerServicer_to_server(servicer, server)
+    local_controller_pb2_grpc.add_LocalControllerServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     logger.info(f"Local controller frontend started on port {port}")

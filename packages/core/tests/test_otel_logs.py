@@ -33,8 +33,8 @@ from utils import otlp_utils  # noqa: E402
 # otel_exporter imports the generated local-controller protobufs at module load only via
 # trace_convert/global_controller paths it doesn't touch here; stub them like the fanout test.
 for _name, _attr in (
-    ("local_controler_pb2", "JsonResponse"),
-    ("local_controler_pb2_grpc", "LocalControllerStub"),
+    ("local_controller_pb2", "JsonResponse"),
+    ("local_controller_pb2_grpc", "LocalControllerStub"),
 ):
     if _name not in sys.modules:
         _mod = types.ModuleType(_name)

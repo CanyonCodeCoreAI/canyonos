@@ -32,14 +32,14 @@ from canyonos_core.schema.otel_destinations import SUPPORTED_PROTOCOLS  # noqa: 
 # The generated local-controller protobuf modules are build artifacts and are
 # not present in a source checkout.  The static config helper does not use them,
 # so provide the tiny import-time surface needed to test it in isolation.
-if "local_controler_pb2" not in sys.modules:
-    local_pb2 = types.ModuleType("local_controler_pb2")
+if "local_controller_pb2" not in sys.modules:
+    local_pb2 = types.ModuleType("local_controller_pb2")
     local_pb2.JsonResponse = object
-    sys.modules["local_controler_pb2"] = local_pb2
-if "local_controler_pb2_grpc" not in sys.modules:
-    local_pb2_grpc = types.ModuleType("local_controler_pb2_grpc")
+    sys.modules["local_controller_pb2"] = local_pb2
+if "local_controller_pb2_grpc" not in sys.modules:
+    local_pb2_grpc = types.ModuleType("local_controller_pb2_grpc")
     local_pb2_grpc.LocalControllerStub = object
-    sys.modules["local_controler_pb2_grpc"] = local_pb2_grpc
+    sys.modules["local_controller_pb2_grpc"] = local_pb2_grpc
 
 
 class OTelExporterFanoutTests(unittest.TestCase):

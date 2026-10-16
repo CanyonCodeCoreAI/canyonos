@@ -248,11 +248,11 @@ reconciler
 ## gRPC services
 
 ```
-proto/local_controler.proto: service LocalController
+proto/local_controller.proto: service LocalController
   Execute(JsonResponse) returns (JsonResponse)
     Future._submit_request ───────────▶ local LocalControllerServicer
     LocalController._forward_request ─▶ remote LocalControllerServicer
-    action ──▶ request_queue.put(request.resonse)
+    action ──▶ request_queue.put(request.response)
 
   WriteResult(JsonResponse) returns (JsonResponse)
     LocalController._send_result_callback ──▶ origin / consumer
@@ -263,9 +263,9 @@ proto/local_controler.proto: service LocalController
     GlobalController._trigger_cleanup ──▶ every LocalControllerServicer
     action ──▶ Thread(target=_cleanup_batch)
 
-  message JsonResponse ──▶ string resonse
+  message JsonResponse ──▶ string response
 
 proto/global_controller.proto: service GlobalController
   Execute(JsonResponse) returns (JsonResponse) ──▶ declaration only
-  message JsonResponse ──▶ string resonse
+  message JsonResponse ──▶ string response
 ```

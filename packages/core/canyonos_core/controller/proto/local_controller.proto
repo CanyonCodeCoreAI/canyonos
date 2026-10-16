@@ -12,5 +12,5 @@ service LocalController {
 }
 
 message JsonResponse{
-    string resonse = 1;
+    string response = 1;
 }

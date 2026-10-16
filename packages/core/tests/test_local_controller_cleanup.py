@@ -19,7 +19,7 @@ from canyonos_core.controller.local_controller_frontend import (
     LocalControllerServicer,
 )
 from fakes import _FakeRedis
-import local_controler_pb2
+import local_controller_pb2
 
 
 class ExecuteDedupTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class ExecuteDedupTests(unittest.TestCase):
         return servicer
 
     def _execute(self, servicer, payload):
-        request = local_controler_pb2.JsonResponse(resonse=json.dumps(payload))
+        request = local_controller_pb2.JsonResponse(response=json.dumps(payload))
         return LocalControllerServicer.Execute(servicer, request, context=None)
 
     def test_a_retried_delivery_of_the_same_future_is_queued_once(self):
@@ -45,7 +45,7 @@ class ExecuteDedupTests(unittest.TestCase):
         second = self._execute(servicer, {"future_id": "f1", "function": "run"})
 
         self.assertEqual(servicer.request_queue.qsize(), 1)
-        self.assertEqual(first.resonse, second.resonse)
+        self.assertEqual(first.response, second.response)
 
     def test_the_acceptance_key_is_created_with_its_expiry(self):
         servicer = self._servicer()
@@ -97,8 +97,8 @@ class CleanupDispatchTests(unittest.TestCase):
     def test_batched_request_ids_dispatches_cleanup_for_each(self):
         cleaned = []
         servicer = SimpleNamespace(_cleanup_request=lambda rid: cleaned.append(rid))
-        request = local_controler_pb2.JsonResponse(
-            resonse=json.dumps({"request_ids": ["req1", "req2", "req3"]})
+        request = local_controller_pb2.JsonResponse(
+            response=json.dumps({"request_ids": ["req1", "req2", "req3"]})
         )
 
         with patch(
@@ -111,7 +111,7 @@ class CleanupDispatchTests(unittest.TestCase):
     def test_missing_ids_does_not_dispatch(self):
         cleaned = []
         servicer = SimpleNamespace(_cleanup_request=lambda rid: cleaned.append(rid))
-        request = local_controler_pb2.JsonResponse(resonse=json.dumps({}))
+        request = local_controller_pb2.JsonResponse(response=json.dumps({}))
 
         with patch(
             "canyonos_core.controller.local_controller_frontend.Thread", _SyncThread
@@ -126,8 +126,8 @@ class CleanupDispatchTests(unittest.TestCase):
         # intentionally treated the same as a missing/empty payload, not dispatched.
         cleaned = []
         servicer = SimpleNamespace(_cleanup_request=lambda rid: cleaned.append(rid))
-        request = local_controler_pb2.JsonResponse(
-            resonse=json.dumps({"request_id": "req-legacy"})
+        request = local_controller_pb2.JsonResponse(
+            response=json.dumps({"request_id": "req-legacy"})
         )
 
         with patch(
@@ -146,8 +146,8 @@ class CleanupDispatchTests(unittest.TestCase):
             cleaned.append(rid)
 
         servicer = SimpleNamespace(_cleanup_request=_cleanup_request)
-        request = local_controler_pb2.JsonResponse(
-            resonse=json.dumps({"request_ids": ["req1", "req2", "req3"]})
+        request = local_controller_pb2.JsonResponse(
+            response=json.dumps({"request_ids": ["req1", "req2", "req3"]})
         )
 
         with patch(

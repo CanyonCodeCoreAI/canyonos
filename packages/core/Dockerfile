@@ -58,7 +58,7 @@ RUN python -m grpc_tools.protoc \
     -I/src/canyonos_core/controller/proto \
     --python_out=/usr/local/lib/python3.11/site-packages \
     --grpc_python_out=/usr/local/lib/python3.11/site-packages \
-    /src/canyonos_core/controller/proto/local_controler.proto
+    /src/canyonos_core/controller/proto/local_controller.proto
 
 EXPOSE 8000
 

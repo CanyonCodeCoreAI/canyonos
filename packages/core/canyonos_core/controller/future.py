@@ -43,8 +43,8 @@ try:
     from canyonos_core.controller.utils.redis_client import RedisClient
 except ImportError:
     from redis_client import RedisClient
-import local_controler_pb2
-import local_controler_pb2_grpc
+import local_controller_pb2
+import local_controller_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class Future(object):
         if cls._stub is None:
             endpoint = f"{cls._lc_host}:{cls._lc_port}"
             cls._channel = grpc.insecure_channel(endpoint, options=GRPC_CHANNEL_OPTIONS)
-            cls._stub = local_controler_pb2_grpc.LocalControllerStub(cls._channel)
+            cls._stub = local_controller_pb2_grpc.LocalControllerStub(cls._channel)
             logger.info("Connected to local controller at %s", endpoint)
         return cls._stub
 
@@ -138,7 +138,7 @@ class Future(object):
         request_data["args"] = self.args
         request_data["future_args"] = self.future_args
 
-        request = local_controler_pb2.JsonResponse(resonse=json.dumps(request_data))
+        request = local_controller_pb2.JsonResponse(response=json.dumps(request_data))
         try:
             self.response = call_with_retry(
                 lambda: stub.Execute(request), f"{self._lc_host}:{self._lc_port}"
@@ -249,9 +249,9 @@ class Future(object):
                         endpoint,
                     )
                 channel = grpc.insecure_channel(endpoint, options=GRPC_CHANNEL_OPTIONS)
-                stub = local_controler_pb2_grpc.LocalControllerStub(channel)
+                stub = local_controller_pb2_grpc.LocalControllerStub(channel)
                 payload = json.dumps({"future_id": self.id, "result": self.result})
-                request = local_controler_pb2.JsonResponse(resonse=payload)
+                request = local_controller_pb2.JsonResponse(response=payload)
                 stub.WriteResult(request)
                 logger.info(
                     "Notified consumer %s with result for future %s", endpoint, self.id

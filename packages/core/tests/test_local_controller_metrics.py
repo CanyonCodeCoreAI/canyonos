@@ -352,7 +352,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             )
 
         self.assertEqual(redis.hget("future:future-4", "error"), "ValueError")
-        payload = json.loads(stub.WriteResult.call_args.args[0].resonse)
+        payload = json.loads(stub.WriteResult.call_args.args[0].response)
         self.assertEqual(payload["future_id"], "future-4")
         self.assertEqual(payload["result"], "")
         self.assertEqual(payload["failed"], 1)

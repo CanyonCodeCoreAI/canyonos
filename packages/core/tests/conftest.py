@@ -4,7 +4,7 @@
 """Compile the controller protos before collection, and keep the developer's
 shell from changing the Docker names the tests expect.
 
-canyonos_core.controller bare-imports local_controler_pb2. The container
+canyonos_core.controller bare-imports local_controller_pb2. The container
 images put protoc's output on sys.path; a checkout has to generate it.
 """
 

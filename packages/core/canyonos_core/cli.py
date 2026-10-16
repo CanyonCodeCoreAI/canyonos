@@ -126,8 +126,8 @@ def _ensure_grpc_stubs_importable(project_dir):
         sys.path.insert(0, grpc_stubs_dir)
 
     try:
-        __import__("local_controler_pb2")
-        __import__("local_controler_pb2_grpc")
+        __import__("local_controller_pb2")
+        __import__("local_controller_pb2_grpc")
     except ImportError as exc:
         raise RuntimeError(
             "Deploy failed: generated grpc_stubs are missing or not importable. "

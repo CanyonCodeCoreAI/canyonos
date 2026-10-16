@@ -58,8 +58,8 @@ gateway_headers.install(
     canyonos_context.get_current_future_id, canyonos_context.get_current_function
 )
 
-import local_controler_pb2
-import local_controler_pb2_grpc
+import local_controller_pb2
+import local_controller_pb2_grpc
 
 try:
     from canyonos_core.controller.future import Future
@@ -999,7 +999,7 @@ class LocalController(object):
                     endpoint, options=GRPC_CHANNEL_OPTIONS
                 )
                 self._remote_stubs[endpoint] = (
-                    local_controler_pb2_grpc.LocalControllerStub(
+                    local_controller_pb2_grpc.LocalControllerStub(
                         self._remote_channels[endpoint]
                     )
                 )
@@ -1017,7 +1017,7 @@ class LocalController(object):
         # instead of re-resolving it (which would let stateless requests
         # ping-pong between replicas).
         data["route_to"] = endpoint
-        request = local_controler_pb2.JsonResponse(resonse=json.dumps(data))
+        request = local_controller_pb2.JsonResponse(response=json.dumps(data))
         call = self._get_remote_stub(endpoint).Execute.future(
             request, timeout=FORWARD_TIMEOUT_SECONDS
         )
@@ -1088,7 +1088,7 @@ class LocalController(object):
         )
         payload = json.dumps(snapshot)
         logger.info("Payload: Future %s,Sent %s ", future_id, payload)
-        request = local_controler_pb2.JsonResponse(resonse=payload)
+        request = local_controller_pb2.JsonResponse(response=payload)
         try:
             call_with_retry(lambda: stub.WriteResult(request), origin)
             logger.info(

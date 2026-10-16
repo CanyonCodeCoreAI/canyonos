@@ -21,19 +21,19 @@ sys.path.insert(
 
 
 class _JsonResponse:
-    def __init__(self, resonse=""):
-        self.resonse = resonse
+    def __init__(self, response=""):
+        self.response = response
 
 
-if "local_controler_pb2" not in sys.modules:
-    local_pb2 = types.ModuleType("local_controler_pb2")
+if "local_controller_pb2" not in sys.modules:
+    local_pb2 = types.ModuleType("local_controller_pb2")
     local_pb2.JsonResponse = _JsonResponse
-    sys.modules["local_controler_pb2"] = local_pb2
-if "local_controler_pb2_grpc" not in sys.modules:
-    local_pb2_grpc = types.ModuleType("local_controler_pb2_grpc")
+    sys.modules["local_controller_pb2"] = local_pb2
+if "local_controller_pb2_grpc" not in sys.modules:
+    local_pb2_grpc = types.ModuleType("local_controller_pb2_grpc")
     local_pb2_grpc.LocalControllerServicer = object
     local_pb2_grpc.LocalControllerStub = object
-    sys.modules["local_controler_pb2_grpc"] = local_pb2_grpc
+    sys.modules["local_controller_pb2_grpc"] = local_pb2_grpc
 
 from canyonos_core.controller.local_controller import LocalController
 from fakes import _FakeRedis

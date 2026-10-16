@@ -28,7 +28,7 @@ from canyonos_core.controller.utils.log_entry import (
     build_failure_entry,
 )
 import canyonos_core.controller.canyonos_context as canyonos_context
-import local_controler_pb2
+import local_controller_pb2
 import grpc
 
 from fakes import _FakeRedis, _ForwardedCall, _RpcError
@@ -147,7 +147,7 @@ class ErrorPropagationTests(unittest.TestCase):
             error_message="agent exploded",
         )
 
-        payload = stub.WriteResult.call_args.args[0].resonse
+        payload = stub.WriteResult.call_args.args[0].response
         self.assertEqual(
             json.loads(payload),
             {
@@ -161,8 +161,8 @@ class ErrorPropagationTests(unittest.TestCase):
     def test_write_result_persists_remote_error_as_terminal_failure(self):
         redis = _FakeRedis()
         servicer = SimpleNamespace(redis=redis, on_result=None)
-        request = local_controler_pb2.JsonResponse(
-            resonse=json.dumps(
+        request = local_controller_pb2.JsonResponse(
+            response=json.dumps(
                 {
                     "future_id": "future-1",
                     "failed": 1,
@@ -187,8 +187,8 @@ class ErrorPropagationTests(unittest.TestCase):
             redis=redis,
             on_result=lambda future_id, **kwargs: relayed.append((future_id, kwargs)),
         )
-        request = local_controler_pb2.JsonResponse(
-            resonse=json.dumps(
+        request = local_controller_pb2.JsonResponse(
+            response=json.dumps(
                 {
                     "future_id": "future-1",
                     "failed": 1,
@@ -400,7 +400,7 @@ class ErrorPropagationTests(unittest.TestCase):
         callback_payloads = []
 
         def capture_write_result(request):
-            callback_payloads.append(request.resonse)
+            callback_payloads.append(request.response)
 
         stub.WriteResult.side_effect = capture_write_result
 
@@ -431,7 +431,7 @@ class ErrorPropagationTests(unittest.TestCase):
         # Feed the captured callback into the origin's WriteResult receiver.
         origin_servicer = SimpleNamespace(redis=origin_redis, on_result=None)
         for payload in callback_payloads:
-            request = local_controler_pb2.JsonResponse(resonse=payload)
+            request = local_controller_pb2.JsonResponse(response=payload)
             context = SimpleNamespace(peer=lambda: "executor:50051")
             LocalControllerServicer.WriteResult(origin_servicer, request, context)
 
@@ -481,7 +481,7 @@ class ErrorPropagationTests(unittest.TestCase):
         stub = SimpleNamespace(WriteResult=MagicMock())
         callback_payloads = []
         stub.WriteResult.side_effect = lambda request: callback_payloads.append(
-            request.resonse
+            request.response
         )
 
         executor = SimpleNamespace(
@@ -507,7 +507,7 @@ class ErrorPropagationTests(unittest.TestCase):
 
         origin_servicer = SimpleNamespace(redis=shared_redis)
         for payload in callback_payloads:
-            request = local_controler_pb2.JsonResponse(resonse=payload)
+            request = local_controller_pb2.JsonResponse(response=payload)
             context = SimpleNamespace(peer=lambda: "localhost:8001")
             LocalControllerServicer.WriteResult(origin_servicer, request, context)
 

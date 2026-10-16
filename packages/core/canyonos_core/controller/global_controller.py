@@ -60,8 +60,8 @@ from canyonos_core.schema.yaml_lines import load_yaml_lines
 # keep it at the project root.
 _artifact_prefix = ".car" if os.path.isdir(".car") else ""
 sys.path.insert(0, os.path.abspath(os.path.join(_artifact_prefix, "grpc_stubs")))
-import local_controler_pb2
-import local_controler_pb2_grpc
+import local_controller_pb2
+import local_controller_pb2_grpc
 import grpc
 
 logging.basicConfig(level=logging.INFO)
@@ -1317,7 +1317,7 @@ class GlobalController(ControllerContext):
         """Get or create a cached gRPC stub for a local controller endpoint."""
         if endpoint not in self._lc_stubs:
             channel = grpc.insecure_channel(endpoint, options=GRPC_CHANNEL_OPTIONS)
-            self._lc_stubs[endpoint] = local_controler_pb2_grpc.LocalControllerStub(
+            self._lc_stubs[endpoint] = local_controller_pb2_grpc.LocalControllerStub(
                 channel
             )
         return self._lc_stubs[endpoint]
@@ -1376,7 +1376,7 @@ class GlobalController(ControllerContext):
             endpoint = instance["routing_endpoint"]
             try:
                 stub = self._get_lc_stub(endpoint)
-                stub.Cleanup(local_controler_pb2.JsonResponse(resonse=payload))
+                stub.Cleanup(local_controller_pb2.JsonResponse(response=payload))
                 logger.debug(
                     "Sent Cleanup batch of %d request(s) to %s",
                     len(delivered),

@@ -16,7 +16,7 @@ sys.path.insert(
 from canyonos_core.controller.global_controller import GlobalController
 from canyonos_core.reconciler import providers
 from fakes import _FakeRedis
-import local_controler_pb2
+import local_controller_pb2
 
 
 class _FakeStub:
@@ -24,8 +24,8 @@ class _FakeStub:
         self.calls = []
 
     def Cleanup(self, request):
-        self.calls.append(json.loads(request.resonse))
-        return local_controler_pb2.JsonResponse(resonse="Cleanup triggered")
+        self.calls.append(json.loads(request.response))
+        return local_controller_pb2.JsonResponse(response="Cleanup triggered")
 
 
 class _SpyRedis(_FakeRedis):
