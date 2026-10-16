@@ -44,6 +44,17 @@ class PricingModelResolutionTests(unittest.TestCase):
             12.0,
         )
 
+    def test_direct_openai_id_resolves_to_its_global_bedrock_row(self):
+        self.assertAlmostEqual(
+            pricing.compute_token_cost("gpt-5.4", 1_000_000, 1_000_000), 17.5
+        )
+
+    def test_dated_direct_openai_id_resolves_to_its_global_bedrock_row(self):
+        self.assertEqual(
+            pricing.compute_token_cost("gpt-5.4-2026-03-05", 1_000, 500),
+            pricing.compute_token_cost("global.openai.gpt-5.4", 1_000, 500),
+        )
+
     def test_unknown_model_still_returns_zero(self):
         self.assertEqual(
             pricing.compute_token_cost("no-such-model", 10_000, 10_000), 0.0

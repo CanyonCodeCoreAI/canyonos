@@ -45,6 +45,13 @@ def _candidate_model_ids(model_id):
     undated = re.sub(r"-\d{4}-?\d{2}-?\d{2}$", "", model_id)
     if undated != model_id:
         yield undated
+    if model_id.startswith("gpt-"):
+        # Newer OpenAI models reach the table only through their Bedrock ids; the
+        # global entry carries OpenAI's own list price, the regional ones a markup.
+        for prefix in ("openai.", "global.openai."):
+            yield f"{prefix}{model_id}"
+            if undated != model_id:
+                yield f"{prefix}{undated}"
     if not model_id.startswith("claude-"):
         return
     # Direct-API Anthropic ids carry no vendor prefix or version suffix, and the
