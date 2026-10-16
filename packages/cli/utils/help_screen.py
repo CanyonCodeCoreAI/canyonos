@@ -24,6 +24,7 @@ CORE_COMMANDS = (
 
 UTIL_COMMANDS = (
     ("clean", "Delete .car, project skill, serve's .env keys, the agents' images"),
+    ("contact", "See or change whether the CLI shares usage with Canyon Code"),
     ("doctor", "Check Docker, git and a coding agent are all available"),
     ("logs", "Follow the running deploy's logs"),
     ("new-app", "Create a barebones CanyonOS project"),

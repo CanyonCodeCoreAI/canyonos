@@ -20,6 +20,7 @@ from canyonos.build import (
 )
 from canyonos.clean import run_clean
 from canyonos.config import run_config
+from canyonos.contact import run_contact
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos.logs import run_logs
@@ -108,6 +109,13 @@ def main():
     add("logs", lambda args: run_logs())
     add("quit", lambda args: run_quit())
     add("config", lambda args: run_config())
+    contact = add("contact", lambda args: run_contact(usage=args.usage))
+    contact.add_argument(
+        "--usage",
+        choices=("on", "off"),
+        metavar="on|off",
+        help="Turn usage reporting on or off without being asked (default: show and ask)",
+    )
 
     # Build has args: --agent, --scope, -y. With none of them it is the
     # original two-menu interactive command.

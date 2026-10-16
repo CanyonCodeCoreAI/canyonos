@@ -44,6 +44,7 @@ from canyonos.quit import run_quit
 from canyonos.resources import configure_resources
 from canyonos.serve import serve_dashboard
 from canyonos.sync import run_sync
+from canyonos.usage.consent import offer_after_first_deploy
 
 # Test seams: a failed-build test monkeypatches both down so it doesn't have to
 # wait out the real poll/grace windows.
@@ -337,7 +338,6 @@ def run_deploy(
             verbose=verbose,
             on_ready=ready.append,
         )
-        return state
     except (Exception, KeyboardInterrupt):
         # Torn down only if it never came up; a failure after that is just a reporting problem.
         if not ready:
@@ -348,6 +348,12 @@ def run_deploy(
                 # real deploy error below instead of just supplementing it.
                 ui.fail(f"Teardown after failed deploy also failed: {teardown_error}")
         raise
+
+    # Ctrl+C while tailing logs still returns state, so only a workflow that came up
+    # counts as the successful deploy the usage question waits for.
+    if ready:
+        offer_after_first_deploy()
+    return state
 
 
 def _curl_example(url, body):
