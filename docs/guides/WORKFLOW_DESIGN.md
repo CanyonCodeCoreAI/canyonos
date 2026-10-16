@@ -27,9 +27,9 @@ manage.
 
 ## From scratch
 
-`canyonos new-app` sets up an empty project in the current folder: an empty `agents` folder, an empty `.env`, and a `config` folder with empty `global_controller.yaml` and `policy.yaml` files.
+`canyonos new-app` creates a starter project in an empty folder: an `agents` folder with one agent and a workflow that calls it, and a `config` folder with every config file templated.
 
-Only `global_controller.yaml` is needed to deploy, and it has to list at least one agent and the `endpoint` block that serves one of its methods. [global_controller.yaml](GLOBAL_CONTROLLER.md#a-small-example) has a minimal example to start from.
+Only `global_controller.yaml` is needed to deploy, and it has to list at least one agent and the `endpoint` block that serves one of its methods. The starter's `config/global_controller.yaml` is a working example; [global_controller.yaml](GLOBAL_CONTROLLER.md) explains every key.
 
 ## Converting a existing workflow
 

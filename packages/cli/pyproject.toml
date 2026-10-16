@@ -29,7 +29,7 @@ include = ["canyonos*", "utils*"]
 py-modules = ["cli"]
 
 [tool.setuptools.package-data]
-canyonos = ["dashboard.compose.yml"]
+canyonos = ["dashboard.compose.yml", "new_app_template/**/*", "new_app_template/**/.*"]
 
 [dependency-groups]
 dev = [

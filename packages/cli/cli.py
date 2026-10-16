@@ -90,8 +90,7 @@ def _run_command():
         command.set_defaults(func=run)
         return command
 
-    # New-app can be fleshed out more, keeping it bare for now
-    add("new-app", lambda args: run_new_app())
+    add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
 
     # Deploy has three args: -v, -c, --serve
     deploy = add(

@@ -39,12 +39,6 @@ def _gc_running():
     return _gc_process is not None and _gc_process.poll() is None
 
 
-@app.route("/new-project", methods=["POST"])
-def new_project():
-    """Always returns 400: new projects are created locally with `canyonos new-app`."""
-    return jsonify({"error": "new-project runs locally via the CLI"}), 400
-
-
 @app.route("/deploy", methods=["POST"])
 def deploy():
     """Start building and deploying the project synced into `/workspace` in a background

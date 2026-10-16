@@ -23,5 +23,5 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `clean` | Remove the generated `.car` folder, the project's CanyonOS skill, the `.env` keys `serve` wrote, and the Docker images of the agents in this project's `global_controller.yaml` |
 | `validate` | Check a converted `.car` against the CanyonOS contract |
 | `doctor` | Check that your environment is ready |
-| `new-app` | Scaffold a new project |
+| `new-app` | Create a starter project with one agent in an empty folder |
 | `-v`, `--version` | Print the installed version |

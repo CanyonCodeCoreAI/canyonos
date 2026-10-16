@@ -7,6 +7,12 @@ SPDX-FileCopyrightText = "The OpenTelemetry Authors"
 SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
+path = "packages/cli/canyonos/new_app_template/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Canyon Code, Inc."
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
 path = [
   "**/*.md",
   "**/*.json",

@@ -1,0 +1,9 @@
+# Autoscaling for every agent. Without a policy each agent keeps its replicas
+# from global_controller.yaml.
+#
+# scaling:
+#   min_replicas: 1
+#   max_replicas: 4
+#   metric: requests_per_minute_per_replica
+#   scale_up_above: 10
+#   scale_down_below: 1

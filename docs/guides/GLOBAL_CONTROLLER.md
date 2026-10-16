@@ -183,7 +183,7 @@ Agent entries add:
 
 | Key | Default | Notes |
 |---|---|---|
-| `entrypoint` | required | `.py` path relative to `.car/app`, no `..`, not absolute. Holds the class named `name`. |
+| `entrypoint` | required | `.py` path relative to the project root, or to `.car/app` in a ported artifact; no `..`, not absolute. Holds the class named `name`. |
 | `requirements` | `[]` | One PEP 508 requirement per item. See [Per-image requirements](#per-image-requirements). |
 | `functions` | `[]` | The methods other services can call; an agent without any cannot be called. See [Agent functions](#agent-functions). |
 

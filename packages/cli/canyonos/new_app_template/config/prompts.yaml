@@ -1,0 +1,6 @@
+# System prompts, named <Agent>.<function>, sent on that function's model calls.
+#
+# prompts:
+#   MyAgent.run:
+#     - version: MyAgent-run-1a2b3c4d-v1
+#       content: You are a helpful assistant.

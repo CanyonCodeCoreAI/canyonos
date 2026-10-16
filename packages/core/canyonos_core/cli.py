@@ -5,7 +5,6 @@
 CanyonOS CLI
 
 Entry point for the `canyonos` command. Provides these subcommands:
-    canyonos new-project <name>   — Scaffold a new CanyonOS project
     canyonos deploy               — Build (stubs + Docker images) then launch
                                   agents via the Global Controller
 """
@@ -15,7 +14,6 @@ import glob
 import json
 import logging
 import os
-import shutil
 import subprocess
 import sys
 
@@ -38,11 +36,6 @@ SOURCE_DIR_NAME = "app"
 # ------------------------------------------------------------------ #
 #  Helpers                                                             #
 # ------------------------------------------------------------------ #
-
-
-def _get_templates_dir():
-    """Return the absolute path to the bundled templates directory."""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 
 def _get_package_dir():
@@ -140,53 +133,6 @@ def _ensure_grpc_stubs_importable(project_dir):
             "Deploy failed: generated grpc_stubs are missing or not importable. "
             "Run `canyonos build` on this host first."
         ) from exc
-
-
-# ------------------------------------------------------------------ #
-#  canyonos new-project                                                  #
-# ------------------------------------------------------------------ #
-
-
-def _cmd_new_project(args):
-    """Scaffold a new CanyonOS project."""
-    project_name = args.name
-    project_dir = os.path.abspath(project_name)
-
-    if os.path.exists(project_dir):
-        logger.error("Directory '%s' already exists.", project_name)
-        sys.exit(1)
-
-    templates_dir = _get_templates_dir()
-    if not os.path.isdir(templates_dir):
-        logger.error("Templates directory not found at %s", templates_dir)
-        sys.exit(1)
-
-    # Copy the entire templates tree into .car/app, then pull config up into
-    # .car/config, keeping generated artifacts (stubs, grpc_stubs,
-    # docker_container) siblings of the source under .car/.
-    artifact_root = os.path.join(project_dir, ARTIFACT_DIR_NAME)
-    source_root = os.path.join(artifact_root, SOURCE_DIR_NAME)
-    shutil.copytree(templates_dir, source_root)
-
-    source_config = os.path.join(source_root, "config")
-    artifact_config = os.path.join(artifact_root, "config")
-    if os.path.isdir(source_config):
-        shutil.move(source_config, artifact_root)
-    else:
-        os.makedirs(artifact_config)
-
-    readme = os.path.join(source_root, "README.md")
-    if os.path.isfile(readme):
-        shutil.move(readme, project_dir)
-
-    # Create empty output directories
-    os.makedirs(os.path.join(artifact_root, "stubs"), exist_ok=True)
-    os.makedirs(os.path.join(artifact_root, "grpc_stubs"), exist_ok=True)
-
-    logger.info("Created new CanyonOS project: %s", project_dir)
-    logger.info("")
-    logger.info("  cd %s", project_name)
-    logger.info("  canyonos deploy")
 
 
 # ------------------------------------------------------------------ #
@@ -515,14 +461,6 @@ def main():
         description="CanyonOS — Distributed Agent Orchestration Framework",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    # canyonos new-project <name>
-    new_proj = subparsers.add_parser(
-        "new-project",
-        help="Scaffold a new CanyonOS project",
-    )
-    new_proj.add_argument("name", help="Name of the project directory to create")
-    new_proj.set_defaults(func=_cmd_new_project)
 
     # canyonos deploy
     deploy = subparsers.add_parser(

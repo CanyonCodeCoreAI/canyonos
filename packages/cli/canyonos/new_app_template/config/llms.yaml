@@ -1,0 +1,8 @@
+# The models each agent may call and the most one call may cost, in US dollars.
+# A model not listed here is open to every agent.
+#
+# my-model:
+#   model_id: meta.llama3-8b-instruct-v1:0
+#   max_tokens: 400
+#   agents:
+#     MyAgent: 0.01

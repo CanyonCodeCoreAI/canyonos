@@ -1,0 +1,5 @@
+# Which services a request may reach. Each rule's match is checked against the
+# request's _context and the most specific match wins; {} matches every request.
+rules:
+  - match: {}
+    access: all

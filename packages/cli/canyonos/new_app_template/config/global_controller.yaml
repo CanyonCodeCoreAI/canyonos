@@ -1,0 +1,37 @@
+# The agents CanyonOS runs for this project, and the HTTP endpoint it serves.
+agents:
+  - name: MyAgent
+    entrypoint: agents/my_agent.py
+    functions:
+      - name: run
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: str
+
+  - name: Workflow
+    entrypoint: agents/workflow.py
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: dict
+
+# `POST /main` on this port runs `Workflow.main`.
+endpoint:
+  api_port: 8080
+  agent: Workflow
+  method: main
+
+# env_file: .env
+
+# Sends traces, metrics and logs to the local dashboard.
+otel:
+  destinations:
+    - name: local
+      protocol: http
+      endpoint: http://host.docker.internal:3000
+      headers: {}

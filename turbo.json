@@ -76,6 +76,7 @@
         "--mode=onefile",
         "--output-dir=dist",
         "--include-data-file=canyonos/dashboard.compose.yml=canyonos/dashboard.compose.yml",
+        "--include-data-dir=canyonos/new_app_template=canyonos/new_app_template",
         "--include-distribution-metadata=canyonos",
         "--assume-yes-for-downloads",
         "cli.py"

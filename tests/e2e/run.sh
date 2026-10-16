@@ -42,6 +42,7 @@ export CANYONOS_CORE_IMAGE=local
 
 PROJECT_DIR="$(mktemp -d)/$FIXTURE"
 ARTIFACTS_DIR="${E2E_ARTIFACTS_DIR:-$(mktemp -d)}"
+STARTER_DIR=""
 mkdir -p "$ARTIFACTS_DIR"
 
 canyonos() { uv run --project "$REPO_ROOT" canyonos "$@"; }
@@ -59,6 +60,7 @@ finish() {
   local status=$?
   collect_logs
   (cd "$PROJECT_DIR" && canyonos quit) || true
+  [ -d "$STARTER_DIR" ] && (cd "$STARTER_DIR" && canyonos quit) || true
   if [ "$status" -eq 0 ]; then
     step "PASS: $FIXTURE"
   else
@@ -96,6 +98,15 @@ for mode in rename builtin dunder duplicate returns deep endpoint_name; do
   canyonos validate "$broken_car" --json >"$out" && status=0 || status=$?
   [ "$status" -eq 1 ] && grep -qF "$expected" "$out" || { cat "$out"; exit 1; }
 done
+
+# The starter `canyonos new-app` writes has to deploy and answer as it is, with no
+# LLM: `canyonos test` deploys it, queries its endpoint and reports the answer.
+step "canyonos new-app writes a project that deploys and answers"
+STARTER_DIR="$(mktemp -d)/starter"
+mkdir "$STARTER_DIR"
+out="$ARTIFACTS_DIR/new-app-test.json"
+(cd "$STARTER_DIR" && canyonos new-app && canyonos test --json >"$out") || { cat "$out"; exit 1; }
+grep -q '"MyAgent got: hello"' "$out" || { cat "$out"; exit 1; }
 
 # `canyonos test` queries a deploy that is already up instead of standing up its
 # own, so start from nothing to make it deploy this fixture.
