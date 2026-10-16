@@ -58,6 +58,7 @@ _AGENT_FLAT_SOURCES = {
     "gateway_headers.py": ("controller", "gateway_headers.py"),
     "local_controller.py": ("controller", "local_controller.py"),
     "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),
+    "memory.py": ("controller", "memory.py"),
     "redis_client.py": ("controller", "utils", "redis_client.py"),
     "grpc_options.py": ("controller", "utils", "grpc_options.py"),
     "log_entry.py": ("controller", "utils", "log_entry.py"),
