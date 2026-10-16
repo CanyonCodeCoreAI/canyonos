@@ -1,27 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { queryOptions } from '@tanstack/react-query';
-import { createFileRoute, Outlet } from '@tanstack/react-router';
+import { createFileRoute, Outlet, redirect } from '@tanstack/react-router';
 
-import type { User } from '@canyonos/api/auth';
-
-import { apiCall, forgeAuthApi } from '@/api';
+import { profileQuery } from '@/modules/auth/auth.queries';
 import { authActions, useAuthStore } from '@/modules/auth/auth.store';
 import { AppLayout } from '@/modules/core/components/AppLayout';
 
 export const Route = createFileRoute('/_authenticated')({
-  loader: ({ context }) => {
-    void context.queryClient
-      .fetchQuery(
-        queryOptions({
-          queryKey: ['auth', 'profile'],
-          queryFn: () => apiCall<User>(() => forgeAuthApi.auth.profile.get()),
-          staleTime: 0,
-        })
-      )
-      .then((user) => authActions.setUser(user))
-      .catch(() => useAuthStore.getState().logout());
+  loader: async ({ context, location }) => {
+    const token = authActions.getToken() ?? '';
+    const user = await context.queryClient.ensureQueryData(profileQuery(token)).catch(() => null);
+    if (user) {
+      authActions.setUser(user);
+      return;
+    }
+    useAuthStore.getState().logout();
+    throw redirect({ to: '/login', search: { redirect: location.href } });
   },
   component: () => (
     <AppLayout>

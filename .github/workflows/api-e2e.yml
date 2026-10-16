@@ -36,12 +36,6 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      mailpit:
-        image: axllent/mailpit:latest
-        ports:
-          - 1025:1025
-          - 8025:8025
-
       redis:
         image: redis:7-alpine
         ports:
@@ -80,7 +74,6 @@ jobs:
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
           JWT_SECRET: test-jwt-secret-not-for-production
-          AUTH_EMAIL_FROM: noreply@canyonos.test
           CANYONOS_REDIS_HOST: 127.0.0.1
           CANYONOS_REDIS_PORT: '6379'
 
@@ -91,34 +84,22 @@ jobs:
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
           JWT_SECRET: test-jwt-secret-not-for-production
-          AUTH_EMAIL_FROM: noreply@canyonos.test
 
-      - name: Run CanyonOS self-hosted (AUTH_MODE=fixed_code) tests
+      - name: Run CanyonOS self-hosted bootstrap tests
         run: cd packages/api && bun run test:canyonos
         env:
           NODE_ENV: test
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
           JWT_SECRET: test-jwt-secret-not-for-production
-          AUTH_EMAIL_FROM: noreply@canyonos.test
 
-      - name: Run AUTH_MODE=email_otp tests (real SMTP via Mailpit)
-        run: cd packages/api && bun run test:auth-email
+      - name: Run migration tests on a populated database
+        run: cd packages/api && bun run test:migration
         env:
           NODE_ENV: test
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
           JWT_SECRET: test-jwt-secret-not-for-production
-          AUTH_EMAIL_FROM: noreply@canyonos.test
-
-      - name: Run AUTH_MODE=email_otp mail-failure test (SMTP unreachable)
-        run: cd packages/api && bun run test:auth-email-mail-failure
-        env:
-          NODE_ENV: test
-          CI: true
-          DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
-          JWT_SECRET: test-jwt-secret-not-for-production
-          AUTH_EMAIL_FROM: noreply@canyonos.test
 
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

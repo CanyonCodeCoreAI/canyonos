@@ -38,11 +38,10 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://canyonos:canyonos@postgres:5432/canyonos
-      AUTH_MODE: fixed_code
       CANYONOS_REDIS_HOST: redis
       CANYONOS_REDIS_PORT: '6379'
-      # AUTH_MODE=fixed_code signs real tokens too. A real stack gets a random per-stack value from the CLI.
-      JWT_SECRET: canyonos-smoke-secret
+      # Fixed for the smoke run only. A real stack gets a random per-stack value from the CLI.
+      JWT_SECRET: canyonos-smoke-secret-not-for-production-0123456789
       LOG_LEVEL: info
     ports:
       - '127.0.0.1:${SMOKE_API_PORT:-53000}:3000'

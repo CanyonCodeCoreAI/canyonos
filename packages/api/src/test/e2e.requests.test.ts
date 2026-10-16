@@ -361,15 +361,15 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
     expect(ids(day.items)).not.toContain('win-ancient');
   });
 
-  test("another company reads the project's requests", async () => {
+  test("another user reads the project's requests", async () => {
     const owner = await authenticate('req-list-owner@canyonos.test');
     const project_id = await create_project(owner);
     await seed(project_id, listing_spans('guard'));
 
-    const other_company = await authenticate('req-list-intruder@canyonos.test');
+    const other_user = await authenticate('req-list-intruder@canyonos.test');
     const res = await api.projects[project_id]!.requests.get({
       $query: { limit: 20, offset: 0 },
-      $headers: bearer(other_company),
+      $headers: bearer(other_user),
     });
 
     expect(res.error).toBeNull();

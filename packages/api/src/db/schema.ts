@@ -43,69 +43,30 @@ export const deployment_status = pgEnum('deployment_status', [
   'stop_failed',
 ]);
 
-export const companies = pgTable('companies', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
-});
-
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email').notNull().unique(),
-  name: text('name'),
-  companyId: uuid('company_id').references(() => companies.id),
-  status: varchar('status', { length: 32 }).notNull().default('PENDING'),
-  activatedAt: timestamp('activated_at', { withTimezone: true, mode: 'string' }),
-  lockedAt: timestamp('locked_at', { withTimezone: true, mode: 'string' }),
-  lockedReason: text('locked_reason'),
+  password_hash: text('password_hash').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
 });
 
-export const authChallenges = pgTable(
-  'auth_challenges',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id),
-    destination: text('destination').notNull(),
-    purpose: varchar('purpose', { length: 64 }).notNull(),
-    codeHash: text('code_hash').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }).notNull(),
-    consumedAt: timestamp('consumed_at', { withTimezone: true, mode: 'string' }),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [index('idx_auth_challenges_user').on(table.userId)]
-);
-
 // snake_case column keys so `$inferSelect` matches the snake_case API payload directly — the repos
-// select the exact shape without a rename mapper. Owned by a company; `created_by` is audit only.
-export const projects = pgTable(
-  'projects',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    company_id: uuid('company_id')
-      .notNull()
-      .references(() => companies.id),
-    created_by: uuid('created_by')
-      .notNull()
-      .references(() => users.id),
-    name: text('name').notNull(),
-    // Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
-    // with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
-    redis_port: integer('redis_port'),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
-      .notNull()
-      .defaultNow(),
-    updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [index('idx_projects_company').on(table.company_id)]
-);
+// select the exact shape without a rename mapper. Every signed-in user reaches every project;
+// `created_by` is audit only and empties when that user is deleted.
+export const projects = pgTable('projects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  name: text('name').notNull(),
+  // Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
+  // with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
+  redis_port: integer('redis_port'),
+  created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
+    .notNull()
+    .defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+    .notNull()
+    .defaultNow(),
+});
 
 // One row per stored version of an agent function's system prompt. The first versions come from
 // the project's prompts.yaml; dashboard saves add the rest. `live` marks the version agents are sent.
@@ -147,19 +108,14 @@ export const fileBlobs = pgTable('file_blobs', {
     .defaultNow(),
 });
 
-// Generic file store owned by a company. `project_id` is nullable so non-project files fit later;
-// `created_by` is audit only. Bytes are addressed through `content_hash`.
+// Generic file store. `project_id` is nullable so non-project files fit later; `created_by` is
+// audit only. Bytes are addressed through `content_hash`.
 export const files = pgTable(
   'files',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    company_id: uuid('company_id')
-      .notNull()
-      .references(() => companies.id),
     project_id: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
-    created_by: uuid('created_by')
-      .notNull()
-      .references(() => users.id),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     path: text('path').notNull(),
     name: text('name').notNull(),
     content_hash: text('content_hash')
@@ -176,7 +132,6 @@ export const files = pgTable(
       .defaultNow(),
   },
   (table) => [
-    index('idx_files_company').on(table.company_id),
     index('idx_files_project').on(table.project_id),
     index('idx_files_project_component_path').on(
       table.project_id,
@@ -235,12 +190,7 @@ export const deploySetups = pgTable('deploy_setups', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   provider: text('provider').notNull().default('AWS'),
-  company_id: uuid('company_id')
-    .notNull()
-    .references(() => companies.id),
-  created_by: uuid('created_by')
-    .notNull()
-    .references(() => users.id),
+  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   region: text('region').notNull(),
   ami_id: text('ami_id').notNull(),
   instance_type: text('instance_type').notNull(),
@@ -265,12 +215,7 @@ export const deployments = pgTable(
     project_id: uuid('project_id')
       .notNull()
       .references(() => projects.id),
-    company_id: uuid('company_id')
-      .notNull()
-      .references(() => companies.id),
-    created_by: uuid('created_by')
-      .notNull()
-      .references(() => users.id),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     deploy_setup_id: uuid('deploy_setup_id')
       .notNull()
       .references(() => deploySetups.id),

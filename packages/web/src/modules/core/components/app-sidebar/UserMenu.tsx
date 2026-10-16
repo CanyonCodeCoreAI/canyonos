@@ -1,23 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import {
-  Building2Icon,
-  ChevronsUpDownIcon,
-  LogOutIcon,
-  RefreshCwIcon,
-  UserIcon,
-} from 'lucide-react';
-
-import type { Company } from '@canyonos/api/companies';
+import { ChevronsUpDownIcon, LogOutIcon } from 'lucide-react';
 
 import { Avatar, AvatarFallback } from '@repo/ui/shadcn/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -25,42 +15,17 @@ import {
 } from '@repo/ui/shadcn/dropdown-menu';
 import { SidebarSeparator } from '@repo/ui/shadcn/sidebar';
 import { cn } from '@repo/ui/utils';
-import { apiCall, forgeAuthApi } from '@/api';
 import { authSelectors, useAuthStore } from '@/modules/auth/auth.store';
 
 export function UserMenu() {
   const navigate = useNavigate();
   const user = useAuthStore(authSelectors.user);
-  const companyId = user?.company_id;
-  const {
-    data: company,
-    isPending: isCompanyPending,
-    isError: isCompanyError,
-    refetch: refetchCompany,
-  } = useQuery({
-    queryKey: ['company', companyId],
-    queryFn: () => {
-      if (!companyId) throw new Error('Company ID is missing');
-      return apiCall<Company>(() => forgeAuthApi.companies[companyId]!.get());
-    },
-    enabled: Boolean(companyId),
-    staleTime: 5 * 60 * 1000,
-  });
-
   if (!user) return null;
 
-  const displayName = user.name?.trim() || user.email;
-  const initials = (user.name || user.email)
-    .split(/[\s@]+/)
-    .filter(Boolean)
-    .slice(0, 2)
+  const initials = user.email
+    .split('@')
     .map((part) => part[0]?.toUpperCase())
     .join('');
-
-  let companyLabel = company?.name ?? 'Company unavailable';
-  if (!companyId) companyLabel = 'No company linked';
-  else if (isCompanyPending) companyLabel = 'Loading company…';
-  else if (isCompanyError) companyLabel = 'Unable to load company';
 
   const logout = () => {
     useAuthStore.getState().logout();
@@ -82,17 +47,12 @@ export function UserMenu() {
           )}
         >
           <Avatar>
-            <AvatarFallback>{initials || <UserIcon className="size-4" />}</AvatarFallback>
+            <AvatarFallback>{initials}</AvatarFallback>
           </Avatar>
           <span className="app-sidebar-hide-when-collapsed min-w-0 flex-1">
             <span className="text-foreground block truncate text-[0.8125rem] font-semibold">
-              {displayName}
+              {user.email}
             </span>
-            {user.name ? (
-              <span className="text-muted-foreground block truncate text-[0.6875rem]">
-                {user.email}
-              </span>
-            ) : null}
           </span>
           <ChevronsUpDownIcon
             className="app-sidebar-hide-when-collapsed text-muted-foreground size-3.5 shrink-0"
@@ -110,30 +70,11 @@ export function UserMenu() {
         <DropdownMenuLabel className="font-normal">
           <div className="flex items-center gap-2">
             <Avatar>
-              <AvatarFallback>{initials || <UserIcon className="size-4" />}</AvatarFallback>
+              <AvatarFallback>{initials}</AvatarFallback>
             </Avatar>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{displayName}</p>
-              <p className="text-muted-foreground truncate text-xs">{user.email}</p>
-            </div>
+            <p className="min-w-0 truncate text-sm font-medium">{user.email}</p>
           </div>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel
-            className="text-muted-foreground flex items-center gap-2 text-xs font-normal"
-            data-testid="sidebar-company"
-          >
-            <Building2Icon className="size-3.5" />
-            {companyLabel}
-          </DropdownMenuLabel>
-        </DropdownMenuGroup>
-        {isCompanyError ? (
-          <DropdownMenuItem onSelect={() => void refetchCompany()}>
-            <RefreshCwIcon />
-            Retry company lookup
-          </DropdownMenuItem>
-        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={logout} variant="destructive" data-testid="sidebar-logout">
           <LogOutIcon />

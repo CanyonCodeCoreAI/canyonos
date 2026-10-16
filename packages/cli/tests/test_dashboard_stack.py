@@ -394,13 +394,7 @@ def _shipped_manifest() -> dict:
 def test_manifest_gives_the_api_its_self_hosted_environment():
     environment = _shipped_manifest()["services"]["api"]["environment"]
 
-    assert environment["AUTH_MODE"] == "fixed_code"
-    assert set(environment) == {
-        "DATABASE_URL",
-        "JWT_SECRET",
-        "AUTH_MODE",
-        "LOG_LEVEL",
-    }
+    assert set(environment) == {"DATABASE_URL", "JWT_SECRET", "LOG_LEVEL"}
 
 
 def test_manifest_publishes_the_web_on_every_interface():

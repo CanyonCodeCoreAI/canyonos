@@ -1,17 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { authChallenges, users } from '@api/db/schema';
-import { internalError } from '@core/errors';
+import { users } from '@api/db/schema';
 
 export type UserRow = typeof users.$inferSelect;
-export type ChallengeRow = typeof authChallenges.$inferSelect;
-export type NewChallenge = typeof authChallenges.$inferInsert;
 
 export const authRepo = {
+  async hasUsers(): Promise<boolean> {
+    const [row] = await db.select({ id: users.id }).from(users).limit(1);
+    return row !== undefined;
+  },
+
   async findUserByEmail(email: string): Promise<UserRow | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     return user;
@@ -22,43 +24,27 @@ export const authRepo = {
     return user;
   },
 
-  async createUser(email: string): Promise<UserRow> {
-    const [row] = await db.insert(users).values({ email }).returning();
-    if (!row) throw internalError('auth.user_create_failed', 'Failed to create user');
-    return row;
-  },
-
-  async insertChallenge(values: NewChallenge): Promise<ChallengeRow> {
-    const [row] = await db.insert(authChallenges).values(values).returning();
-    if (!row) throw internalError('auth.challenge_create_failed', 'Failed to create challenge');
-    return row;
-  },
-
-  async findValidChallenge(
-    userId: string,
-    codeHash: string,
-    nowIso: string
-  ): Promise<ChallengeRow | undefined> {
-    const [challenge] = await db
-      .select()
-      .from(authChallenges)
-      .where(
-        and(
-          eq(authChallenges.userId, userId),
-          eq(authChallenges.codeHash, codeHash),
-          isNull(authChallenges.consumedAt),
-          gt(authChallenges.expiresAt, nowIso)
-        )
-      )
-      .limit(1);
-    return challenge;
-  },
-
-  async consumeChallenge(id: string, nowIso: string): Promise<void> {
-    await db.update(authChallenges).set({ consumedAt: nowIso }).where(eq(authChallenges.id, id));
-  },
-
-  async startOnboarding(id: string): Promise<void> {
-    await db.update(users).set({ status: 'ONBOARDING' }).where(eq(users.id, id));
+  /**
+   * Inserts the account only while the table is empty; `undefined` means a user already existed.
+   * NOT EXISTS alone lets two concurrent first registrations both insert under READ COMMITTED,
+   * so the table lock serializes writers while leaving reads (login, status) unblocked.
+   */
+  async createFirstUser({
+    email,
+    passwordHash,
+  }: {
+    email: string;
+    passwordHash: string;
+  }): Promise<UserRow | undefined> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`LOCK TABLE ${users} IN SHARE ROW EXCLUSIVE MODE`);
+      const [row] = await tx.execute<UserRow>(sql`
+        INSERT INTO ${users} (email, password_hash)
+        SELECT ${email}, ${passwordHash}
+        WHERE NOT EXISTS (SELECT 1 FROM ${users})
+        RETURNING id, email, password_hash, created_at AS "createdAt"
+      `);
+      return row;
+    });
   },
 };

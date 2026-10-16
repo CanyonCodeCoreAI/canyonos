@@ -11,40 +11,32 @@ export interface BrandCopy {
 export function CanyonBrandPanel({ eyebrow, title, description, footnote }: BrandCopy) {
   return (
     <section
-      className="absolute inset-y-0 left-0 hidden w-[70%] flex-col justify-between overflow-hidden p-12 lg:flex"
+      className="relative hidden w-[55%] shrink-0 flex-col justify-between overflow-hidden p-12 lg:flex xl:p-16"
       aria-hidden
     >
-      <img
-        src="/canyon-bg.jpg"
-        alt=""
-        className="absolute inset-0 z-0 h-full w-full object-cover"
-      />
-      <div
-        className="absolute inset-0 z-[1]"
-        style={{
-          background:
-            'linear-gradient(165deg, rgba(11,42,26,0.86) 0%, rgba(15,58,35,0.72) 45%, rgba(21,82,49,0.55) 100%)',
-        }}
-      />
+      <img src="/canyon-bg.jpg" alt="" className="absolute inset-0 size-full object-cover" />
+      <div className="absolute inset-0 bg-linear-to-t from-[#06140c]/90 via-[#06140c]/35 to-[#06140c]/30" />
 
-      <div className="relative z-[2] flex items-center gap-3">
-        <img src="/cc-favicon.svg" alt="" className="size-9 shrink-0" />
-        <span className="text-lg font-semibold tracking-tight text-white">
-          Canyon<span className="font-normal opacity-80"> Code</span>
+      <div className="relative flex items-center gap-2.5">
+        <img src="/cc-favicon.svg" alt="" className="size-7 shrink-0" />
+        <span className="text-sm font-semibold tracking-tight text-white">
+          Canyon<span className="font-normal text-white/70"> Code</span>
         </span>
       </div>
 
-      <div className="relative z-[2] max-w-md">
-        <span className="text-brand-mint mb-5 inline-flex items-center gap-2 font-mono text-xs font-medium tracking-[0.2em] uppercase">
-          <span className="bg-brand-mint h-px w-6" />
+      <div className="relative max-w-md">
+        <span className="text-brand-mint mb-4 inline-flex items-center gap-2 font-mono text-[0.6875rem] font-medium tracking-[0.18em] uppercase">
+          <span className="bg-brand-mint h-px w-5" />
           {eyebrow}
         </span>
-        <h1 className="mb-5 text-5xl leading-tight font-semibold tracking-tight text-balance text-white">
+        <h2 className="mb-3 text-2xl leading-[1.2] font-semibold tracking-tight text-balance text-white xl:text-3xl">
           {title}
-        </h1>
-        <p className="mb-6 text-base leading-relaxed text-white/85">{description}</p>
-        <p className="flex items-center gap-2.5 text-lg font-semibold text-white">
-          <span className="bg-brand-bright size-2 rounded-full" />
+        </h2>
+        <p className="mb-4 max-w-sm text-sm leading-relaxed text-pretty text-white/75">
+          {description}
+        </p>
+        <p className="flex items-center gap-2 text-[13px] font-medium text-white">
+          <span className="bg-brand-bright size-1.5 rounded-full" />
           {footnote}
         </p>
       </div>

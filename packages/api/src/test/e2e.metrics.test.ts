@@ -674,10 +674,10 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another company reads the project's timeseries", async () => {
-    const other_company = await authenticate('metrics-series-intruder@canyonos.test');
+  test("another user reads the project's timeseries", async () => {
+    const other_user = await authenticate('metrics-series-intruder@canyonos.test');
     const res = await api.projects[project_id]!.metrics.timeseries.get({
-      $headers: bearer(other_company),
+      $headers: bearer(other_user),
       $query: { time_window: '30d' },
     });
     expect(res.error).toBeNull();
@@ -851,10 +851,10 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another company reads the project's blocks", async () => {
-    const other_company = await authenticate('metrics-blocks-intruder@canyonos.test');
+  test("another user reads the project's blocks", async () => {
+    const other_user = await authenticate('metrics-blocks-intruder@canyonos.test');
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
-      $headers: bearer(other_company),
+      $headers: bearer(other_user),
       $query: { time_window: '30d' },
     });
     expect(res.error).toBeNull();
@@ -1146,11 +1146,11 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another company reads the agent's metrics", async () => {
-    const other_company = await authenticate('metrics-agent-details-intruder@canyonos.test');
+  test("another user reads the agent's metrics", async () => {
+    const other_user = await authenticate('metrics-agent-details-intruder@canyonos.test');
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
       $query: {},
-      $headers: bearer(other_company),
+      $headers: bearer(other_user),
     });
     expect(res.error).toBeNull();
     expect(res.data!.agent.block_count).toBeGreaterThan(0);
@@ -1632,10 +1632,10 @@ describe('metrics auth & access', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another company reads the project's metrics", async () => {
-    const other_company = await authenticate('metrics-intruder@canyonos.test');
+  test("another user reads the project's metrics", async () => {
+    const other_user = await authenticate('metrics-intruder@canyonos.test');
     const res = await api.projects[project_id]!.metrics.kpis.get({
-      $headers: bearer(other_company),
+      $headers: bearer(other_user),
     });
     expect(res.error).toBeNull();
     expect(res.data!.windows['30d'].block_count).toBeGreaterThan(0);

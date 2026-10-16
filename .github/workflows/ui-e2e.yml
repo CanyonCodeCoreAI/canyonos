@@ -29,7 +29,6 @@ jobs:
       CI: true
       DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
       JWT_SECRET: test-jwt-secret-not-for-production
-      AUTH_EMAIL_FROM: noreply@canyonos.test
 
     services:
       postgres:

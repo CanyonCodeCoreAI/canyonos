@@ -21,14 +21,6 @@
       "types": "./dist/auth.d.ts",
       "import": "./dist/auth.js"
     },
-    "./companies": {
-      "types": "./dist/companies.d.ts",
-      "import": "./dist/companies.js"
-    },
-    "./onboarding": {
-      "types": "./dist/onboarding.d.ts",
-      "import": "./dist/onboarding.js"
-    },
     "./resources": {
       "types": "./dist/resources.d.ts",
       "import": "./dist/resources.js"
@@ -68,14 +60,12 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "dev:emails": "email dev -d ./src/emails/templates -p 8888",
     "test": "bun test --isolate --env-file .env.example src/modules",
     "test:all": "bun test --env-file .env --preload ./src/test/setup.ts",
     "test:unit": "bun test --isolate --env-file .env src/modules",
     "test:e2e": "bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/e2e.*.test.ts",
-    "test:canyonos": "AUTH_MODE=fixed_code SMTP_HOST= SMTP_PORT= CANYONOS_REDIS_HOST=127.0.0.1 CANYONOS_REDIS_PORT=1 PORT=3002 API_URL=http://localhost:3002 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/self-host.bootstrap.test.ts",
-    "test:auth-email": "AUTH_MODE=email_otp SMTP_HOST=localhost SMTP_PORT=1025 CANYONOS_REDIS_HOST=127.0.0.1 CANYONOS_REDIS_PORT=1 PORT=3003 API_URL=http://localhost:3003 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/auth-email.test.ts",
-    "test:auth-email-mail-failure": "AUTH_MODE=email_otp SMTP_HOST=localhost SMTP_PORT=1 PORT=3005 API_URL=http://localhost:3005 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/auth-email-mail-failure.test.ts",
+    "test:canyonos": "CANYONOS_REDIS_HOST=127.0.0.1 CANYONOS_REDIS_PORT=1 PORT=3002 API_URL=http://localhost:3002 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/self-host.bootstrap.test.ts",
+    "test:migration": "PORT=3004 API_URL=http://localhost:3004 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/migration.populated.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",
     "format": "prettier --ignore-path ../../.gitignore --write .",
@@ -88,18 +78,13 @@
   "dependencies": {
     "@elysiajs/cors": "1.4.2",
     "@elysiajs/openapi": "1.4.15",
-    "@react-email/components": "^1.0.12",
-    "@react-email/render": "^2.0.9",
     "diff": "^7.0.0",
     "drizzle-orm": "^0.45.2",
     "elysia": "1.4.29",
     "jose": "^6.2.3",
-    "nodemailer": "^10.1.0",
     "pino": "^10.1.1",
     "postgres": "^3.4.9",
     "protobufjs": "^8.8.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
     "tree-sitter-wasms": "^0.1.13",
     "web-tree-sitter": "0.20.8",
     "zod": "^3.25.3",
@@ -109,13 +94,10 @@
     "@canyonos/tsconfig": "workspace:*",
     "@elysiajs/eden": "^1.4.9",
     "@types/diff": "^7.0.0",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
     "bun-types": "^1.3.2",
     "concurrently": "^9.1.2",
     "drizzle-kit": "^0.31.10",
     "pino-pretty": "^13.1.3",
-    "react-email": "^6.6.3",
     "tsup": "^8.5.1",
     "typescript": "5.9.3"
   }

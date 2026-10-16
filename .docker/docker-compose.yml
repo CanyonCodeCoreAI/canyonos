@@ -22,18 +22,6 @@ services:
       timeout: 5s
       retries: 10
 
-  mailpit:
-    image: axllent/mailpit:latest
-    container_name: canyonos-mailpit
-    restart: unless-stopped
-    ports:
-      - '${MAILPIT_SMTP_PORT:-1025}:1025'
-      - '${MAILPIT_UI_PORT:-8025}:8025'
-    environment:
-      MP_MAX_MESSAGES: 5000
-      MP_SMTP_AUTH_ACCEPT_ANY: 1
-      MP_SMTP_AUTH_ALLOW_INSECURE: 1
-
 volumes:
   postgres-data:
     name: ${POSTGRES_VOLUME:-canyonos-postgres-data}

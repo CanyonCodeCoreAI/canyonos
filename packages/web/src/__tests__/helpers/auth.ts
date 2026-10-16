@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { Page } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
+
+import type { AuthToken } from '@canyonos/api/auth';
 
 const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';
+
+/** The account the API's dev seed creates when it starts with `SEED_DEV_DATA=true`. */
+export const TEST_EMAIL = 'e2e@canyonos.test';
+export const TEST_PASSWORD = 'e2e-password-1';
 
 const base64Url = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
 
@@ -12,10 +18,7 @@ const makeToken = (expSeconds: number) =>
 
 const nowSeconds = Math.floor(Date.now() / 1000);
 
-// Synthetic (unsigned) tokens for exercising the client-side auth guard in isolation. The
-// guard only decodes `exp`, so it never needs a real signature — these let the auth-routing
-// specs assert accept/redirect behaviour without a live session. Specs that actually talk to
-// the API must authenticate for real via `authenticate()`.
+/** Unexpired but unsigned: the client-side guard accepts it, the API's profile check does not. */
 export const validToken = makeToken(nowSeconds + 3600);
 
 export const setToken = (token: string) =>
@@ -24,26 +27,22 @@ export const setToken = (token: string) =>
     JSON.stringify({ state: { user: { id: '1', email: 'test@canyonos.test' }, token }, version: 0 })
   );
 
-const persistAuth = (session: { user: unknown; token: string }) =>
+const persistAuth = (session: AuthToken) =>
   localStorage.setItem('cc-auth-storage', JSON.stringify({ state: session, version: 0 }));
 
-export interface AuthSession {
-  readonly user: unknown;
-  readonly token: string;
-}
-
-// Authenticate through the real API using the `@canyonos.test` OTP bypass (code `111111`),
-// then seed the returned token so the app boots already signed in. The token is genuinely
-// signed, so the authenticated layout's `/auth/profile` lookup succeeds on its own — no
-// route stubbing, and the session survives client-side navigation.
-export async function authenticate(page: Page, email = 'e2e@canyonos.test'): Promise<AuthSession> {
-  const response = await page.request.post(`${apiBaseUrl}/auth/verify`, {
-    data: { email, code: '111111' },
+export async function signIn(request: APIRequestContext): Promise<AuthToken> {
+  const response = await request.post(`${apiBaseUrl}/auth/login`, {
+    data: { email: TEST_EMAIL, password: TEST_PASSWORD },
   });
   if (!response.ok()) {
-    throw new Error(`Test authentication failed (${response.status()}): ${await response.text()}`);
+    throw new Error(`Test sign-in failed (${response.status()}): ${await response.text()}`);
   }
-  const session = (await response.json()) as AuthSession;
+  return (await response.json()) as AuthToken;
+}
+
+/** Sign the seeded user in through the real API and boot the app with that session stored. */
+export async function authenticate(page: Page): Promise<AuthToken> {
+  const session = await signIn(page.request);
   await page.addInitScript(persistAuth, session);
   return session;
 }

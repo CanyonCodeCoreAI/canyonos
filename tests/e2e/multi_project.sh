@@ -119,7 +119,7 @@ step "Building canyonos-core:dev, canyonos-api:dev and canyonos-web:dev"
 docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$REPO_ROOT/packages/core"
 docker build -q -f "$REPO_ROOT/packages/api/Dockerfile" -t canyonos-api:dev "$REPO_ROOT"
 docker build -q -f "$REPO_ROOT/packages/web/Dockerfile" --target canyonos \
-  --build-arg VITE_API_URL=/api --build-arg VITE_CANYONOS_LOCAL_MODE=true \
+  --build-arg VITE_API_URL=/api \
   -t canyonos-web:dev "$REPO_ROOT"
 
 step "canyonos quit (any previous deploy of either project)"
@@ -151,7 +151,13 @@ grep -q 'canyonos-portfolio-global-controller.canyonos-portfolio$' "$ARTIFACTS_D
 API_CREATED="$(docker inspect -f '{{.Created}}' "$DASHBOARD_API")"
 
 step "The dashboard lists both projects with their own Redis ports"
-[ "$(api POST /auth/verify '{"email":"e2e@canyonos.test","code":"111111"}')" = 200 ] || fail "sign-in failed"
+E2E_CREDENTIALS='"email":"e2e@canyonos.test","password":"e2e-password-1"'
+registered="$(api POST /auth/register "{$E2E_CREDENTIALS,\"password_confirmation\":\"e2e-password-1\"}")"
+if [ "$registered" = 403 ]; then
+  [ "$(api POST /auth/login "{$E2E_CREDENTIALS}")" = 200 ] || fail "login failed"
+else
+  [ "$registered" = 201 ] || fail "registration failed with HTTP $registered"
+fi
 TOKEN="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])' <"$ARTIFACTS_DIR/api-response.json")"
 [ "$(api GET /projects)" = 200 ] || fail "GET /projects failed"
 [ "$(project_names)" = "helloworld portfolio" ] || fail "projects listed: $(project_names)"

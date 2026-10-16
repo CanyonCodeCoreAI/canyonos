@@ -235,8 +235,6 @@ def images(recorder) -> None:
             "canyonos",
             "--build-arg",
             "VITE_API_URL=/api",
-            "--build-arg",
-            "VITE_CANYONOS_LOCAL_MODE=true",
             "-t",
             "canyonos-web:dev",
             ".",

@@ -21,7 +21,7 @@ const SEED_PROJECT_NAMESPACE = 'canyon-code/dev-seed/project';
 const MINUTE_NANOS = 60_000_000_000n;
 
 // Reserve this global advisory-lock key for the dev seed.
-export const SEED_ADVISORY_LOCK_KEY = 4021749;
+const SEED_ADVISORY_LOCK_KEY = 4021749;
 
 interface SeedSpan {
   readonly suffix: string;
@@ -131,11 +131,8 @@ const SEED_SPANS: readonly SeedSpan[] = [
 type SeedTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 // Identity is derived, never matched by display name; version 8 is the RFC 9562 custom slot.
-function seedProjectId(company_id: string): string {
-  const bytes = createHash('sha256')
-    .update(`${SEED_PROJECT_NAMESPACE}:${company_id}`)
-    .digest()
-    .subarray(0, 16);
+function seedProjectId(): string {
+  const bytes = createHash('sha256').update(SEED_PROJECT_NAMESPACE).digest().subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x80;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString('hex');
@@ -148,15 +145,11 @@ function seedProjectId(company_id: string): string {
   ].join('-');
 }
 
-async function ensureDemoProject(
-  tx: SeedTx,
-  company_id: string,
-  created_by: string
-): Promise<string> {
-  const id = seedProjectId(company_id);
+async function ensureDemoProject(tx: SeedTx): Promise<string> {
+  const id = seedProjectId();
   await tx
     .insert(projects)
-    .values({ id, company_id, created_by, name: DEMO_PROJECT_NAME })
+    .values({ id, created_by: null, name: DEMO_PROJECT_NAME })
     .onConflictDoNothing();
   return id;
 }
@@ -178,11 +171,11 @@ function span_attributes(span: SeedSpan, project_id: string): Record<string, unk
   return attributes;
 }
 
-/** Returns the demo project id, which the seed derives from the company rather than the name. */
-export async function seedDevTelemetry(company_id: string, created_by: string): Promise<string> {
+/** Returns the demo project id, which the seed derives from its namespace rather than the name. */
+export async function seedDevTelemetry(): Promise<string> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEED_ADVISORY_LOCK_KEY}::bigint)`);
-    const project_id = await ensureDemoProject(tx, company_id, created_by);
+    const project_id = await ensureDemoProject(tx);
     const now = BigInt(Date.now()) * 1_000_000n;
     const span_id = (suffix: string) => `seed-${project_id}-${suffix}`;
 

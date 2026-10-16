@@ -13,19 +13,10 @@ import { authenticate, bearer, create_test_project } from './project-test.utils'
 
 setupE2ETests();
 
-async function seeded_company(email: string) {
-  const token = await authenticate(email);
-  const profile = await api.auth.profile.get({ $headers: bearer(token) });
-  const company_id = profile.data?.company_id;
-  const created_by = profile.data?.id;
-  if (!company_id || !created_by) throw new Error('Seed fixture could not resolve a company');
-  return { token, company_id, created_by };
-}
-
 describe('otel dev seed', () => {
   test('the seeded project reports its spans through the KPI endpoint', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-kpis@canyonos.test');
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-kpis@canyonos.test');
+    const project_id = await seedDevTelemetry();
 
     const listed = await api.projects.get({ $headers: bearer(token) });
     expect(listed.data!.map((project) => project.id)).toContain(project_id);
@@ -39,14 +30,14 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun duplicates neither the project nor the telemetry counts', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-rerun@canyonos.test');
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-rerun@canyonos.test');
+    const project_id = await seedDevTelemetry();
 
     const first_projects = await api.projects.get({ $headers: bearer(token) });
     const before = (await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) }))
       .data!.windows['7d'];
 
-    expect(await seedDevTelemetry(company_id, created_by)).toBe(project_id);
+    expect(await seedDevTelemetry()).toBe(project_id);
 
     const after_projects = await api.projects.get({ $headers: bearer(token) });
     expect(after_projects.data).toHaveLength(first_projects.data!.length);
@@ -58,8 +49,8 @@ describe('otel dev seed', () => {
   });
 
   test('the queries listing shows several seeded queries, one of them failed', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-list@canyonos.test');
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-list@canyonos.test');
+    const project_id = await seedDevTelemetry();
 
     const listing = await api.projects[project_id]!.requests.get({
       $headers: bearer(token),
@@ -72,8 +63,8 @@ describe('otel dev seed', () => {
   });
 
   test('a seeded query carries its own input and output', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-trace@canyonos.test');
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-trace@canyonos.test');
+    const project_id = await seedDevTelemetry();
     const listing = await api.projects[project_id]!.requests.get({
       $headers: bearer(token),
       $query: { limit: 20, offset: 0, time_window: '7d' },
@@ -89,10 +80,8 @@ describe('otel dev seed', () => {
   });
 
   test('the window reports an unpriced block rather than a free one', async () => {
-    const { token, company_id, created_by } = await seeded_company(
-      'otel-seed-unpriced@canyonos.test'
-    );
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-unpriced@canyonos.test');
+    const project_id = await seedDevTelemetry();
 
     const window = (await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) }))
       .data!.windows['7d'];
@@ -102,10 +91,8 @@ describe('otel dev seed', () => {
   });
 
   test('the agent drawer reports an agent that answered under more than one id', async () => {
-    const { token, company_id, created_by } = await seeded_company(
-      'otel-seed-replicas@canyonos.test'
-    );
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-replicas@canyonos.test');
+    const project_id = await seedDevTelemetry();
 
     const blocks = await api.projects[project_id]!.metrics.blocks.get({
       $headers: bearer(token),
@@ -126,10 +113,9 @@ describe('otel dev seed', () => {
     expect(replica_counts.some((count) => count > 1)).toBe(true);
   });
 
-  test('another company reads the seeded project and its spans', async () => {
-    const seeded = await seeded_company('otel-seed-owner@canyonos.test');
-    const project_id = await seedDevTelemetry(seeded.company_id, seeded.created_by);
-    const other = await seeded_company('otel-seed-outsider@canyonos.test');
+  test('any signed-in user reads the seeded project and its spans', async () => {
+    const project_id = await seedDevTelemetry();
+    const other = { token: await authenticate('otel-seed-outsider@canyonos.test') };
 
     const projects = await api.projects.get({ $headers: bearer(other.token) });
     expect(projects.data!.map((project) => project.id)).toContain(project_id);
@@ -148,10 +134,8 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun refreshes the seed spans and leaves every other span untouched', async () => {
-    const { token, company_id, created_by } = await seeded_company(
-      'otel-seed-refresh@canyonos.test'
-    );
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-refresh@canyonos.test');
+    const project_id = await seedDevTelemetry();
 
     const stale = 1_600_000_000_000_000_000n;
     await db
@@ -174,7 +158,7 @@ describe('otel dev seed', () => {
       .data!.windows['7d'];
     expect(aged.block_count).toBe(0);
 
-    await seedDevTelemetry(company_id, created_by);
+    await seedDevTelemetry();
 
     const refreshed = (
       await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) })
@@ -186,13 +170,12 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun restores a seed span field, not only its timestamps', async () => {
-    const { company_id, created_by } = await seeded_company('otel-seed-stale@canyonos.test');
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const project_id = await seedDevTelemetry();
     const writer = eq(otelSpans.span_id, `seed-${project_id}-writer-a`);
     const [original] = await db.select().from(otelSpans).where(writer);
 
     await db.update(otelSpans).set({ name: 'Stale', attributes: {}, output: null }).where(writer);
-    await seedDevTelemetry(company_id, created_by);
+    await seedDevTelemetry();
 
     const [restored] = await db.select().from(otelSpans).where(writer);
     expect(restored!.name).toBe(original!.name);
@@ -201,9 +184,9 @@ describe('otel dev seed', () => {
   });
 
   test('the seed owns a deterministic version 8 project id', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-id@canyonos.test');
-    const project_id = await seedDevTelemetry(company_id, created_by);
-    expect(await seedDevTelemetry(company_id, created_by)).toBe(project_id);
+    const token = await authenticate('otel-seed-id@canyonos.test');
+    const project_id = await seedDevTelemetry();
+    expect(await seedDevTelemetry()).toBe(project_id);
 
     expect(project_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -213,12 +196,12 @@ describe('otel dev seed', () => {
   });
 
   test('a project the user named after the demo stays separate from the seeded one', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-name@canyonos.test');
+    const token = await authenticate('otel-seed-name@canyonos.test');
     const { project_id: my_project_id } = await create_test_project(token, {
       name: 'Canyon Code Demo Flow',
     });
 
-    const seeded_id = await seedDevTelemetry(company_id, created_by);
+    const seeded_id = await seedDevTelemetry();
     expect(seeded_id).not.toBe(my_project_id);
 
     const mine_kpis = await api.projects[my_project_id]!.metrics.kpis.get({
@@ -233,8 +216,8 @@ describe('otel dev seed', () => {
   });
 
   test('the fleet overview counts the seeded project', async () => {
-    const { token, company_id, created_by } = await seeded_company('otel-seed-fleet@canyonos.test');
-    const project_id = await seedDevTelemetry(company_id, created_by);
+    const token = await authenticate('otel-seed-fleet@canyonos.test');
+    const project_id = await seedDevTelemetry();
 
     const overview = await api.resources.overview.get({
       $headers: bearer(token),

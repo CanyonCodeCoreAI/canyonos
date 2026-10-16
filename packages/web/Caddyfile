@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# CanyonOS local-mode dashboard. Selected by the `canyonos` stage in Dockerfile.web.
+# CanyonOS self-hosted dashboard. Selected by the `canyonos` stage in Dockerfile.web.
 
 :{$PORT:8080}
 

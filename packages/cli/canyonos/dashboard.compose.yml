@@ -33,9 +33,6 @@ services:
     environment:
       DATABASE_URL: postgresql://canyonos:canyonos@db:5432/canyonos
       JWT_SECRET: ${CANYONOS_JWT_SECRET}
-      # The image always sets NODE_ENV=production, where the api refuses to
-      # boot unless AUTH_MODE is named.
-      AUTH_MODE: fixed_code
       LOG_LEVEL: info
     extra_hosts:
       - host.docker.internal:host-gateway

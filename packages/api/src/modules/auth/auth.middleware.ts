@@ -3,6 +3,7 @@
 
 import { unauthorized } from '@core/errors';
 
+import { authRepo } from './auth.repo';
 import { jwtManager } from './lib/jwt';
 import type { TokenPayload } from './lib/jwt';
 
@@ -11,5 +12,9 @@ export async function resolveAuth(request: Request): Promise<TokenPayload> {
   if (!header?.startsWith('Bearer ')) {
     throw unauthorized('auth.missing_token', 'Authorization header required');
   }
-  return jwtManager.verify(header.slice(7));
+  const payload = await jwtManager.verify(header.slice(7));
+  if (!(await authRepo.findUserById(payload.sub))) {
+    throw unauthorized('auth.invalid_token', 'Invalid or expired token');
+  }
+  return payload;
 }

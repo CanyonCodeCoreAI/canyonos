@@ -19,7 +19,7 @@ $.cwd(ROOT);
 
 await $`docker build -f packages/core/Dockerfile -t canyonos-core:dev packages/core`;
 await $`docker build -f packages/api/Dockerfile -t canyonos-api:dev .`;
-await $`docker build -f packages/web/Dockerfile --target canyonos --build-arg VITE_API_URL=/api --build-arg VITE_CANYONOS_LOCAL_MODE=true -t canyonos-web:dev .`;
+await $`docker build -f packages/web/Dockerfile --target canyonos --build-arg VITE_API_URL=/api -t canyonos-web:dev .`;
 
 if (!existsSync(CLI_ENV)) await $`cp packages/cli/.env.example ${CLI_ENV}`;
 

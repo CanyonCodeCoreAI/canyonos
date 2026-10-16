@@ -3,7 +3,7 @@
 
 import { expect, test } from '@playwright/test';
 
-import { authenticate } from './helpers/auth';
+import { authenticate, TEST_EMAIL } from './helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/projects';
 import {
   expectPath,
@@ -13,14 +13,14 @@ import {
   stubProjectsList,
 } from './helpers/session';
 
-test('account menu reveals company details and logs out', async ({ page }) => {
+test('account menu shows the signed-in email and logs out', async ({ page }) => {
   await authenticate(page);
   await page.goto('/projects');
 
   const trigger = page.getByTestId('sidebar-user-menu');
   await trigger.click();
   await expect(page.getByTestId('sidebar-user-menu-content')).toBeVisible();
-  await expect(page.getByTestId('sidebar-company')).toBeVisible();
+  await expect(page.getByTestId('sidebar-user-menu-content')).toContainText(TEST_EMAIL);
   await page.getByTestId('sidebar-logout').click();
   await expect(page).toHaveURL(/\/login/);
 });

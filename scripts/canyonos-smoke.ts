@@ -14,8 +14,8 @@ import { $ } from 'bun';
 const COMPOSE_FILE = '.docker/canyonos-smoke.compose.yml';
 const PROJECT_ID = 'f1e2d3c4-b5a6-4798-8a9b-0c1d2e3f4a5b';
 const TRACE_ID = 'smoke-trace';
-const ADMIN_EMAIL = 'admin@canyonos.invalid';
-const BYPASS_CODE = '111111';
+const SMOKE_EMAIL = 'smoke@canyonos.test';
+const SMOKE_PASSWORD = 'smoke-password-1';
 const API_PORT = Bun.env.SMOKE_API_PORT ?? '53000';
 const WEB_PORT = Bun.env.SMOKE_WEB_PORT ?? '58080';
 const BASE_URL = `http://127.0.0.1:${API_PORT}`;
@@ -56,18 +56,32 @@ const getJson = async (path: string, token?: string): Promise<{ status: number; 
   return { status: response.status, body: await response.json().catch(() => null) };
 };
 
-/** Sign in the way the dashboard does: the bootstrapped admin plus the bypass code. */
-async function signInAsAdmin(): Promise<string> {
-  const response = await fetch(`${BASE_URL}/auth/verify`, {
+const postJson = async (url: string, payload: unknown): Promise<{ status: number; body: any }> => {
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: ADMIN_EMAIL, code: BYPASS_CODE }),
+    body: JSON.stringify(payload),
   });
-  const body = await response.json().catch(() => null);
-  equal(response.status, 200, 'the admin verifies with the bypass code and no prior challenge');
-  check(body?.token, 'the admin sign-in returns a token');
-  equal(body.user.email, ADMIN_EMAIL, 'the token belongs to the bootstrapped admin');
-  return body.token as string;
+  return { status: response.status, body: await response.json().catch(() => null) };
+};
+
+/** Register the smoke account, or log in once registration is closed by an earlier step. */
+async function signIn(apiUrl: string): Promise<string> {
+  const credentials = { email: SMOKE_EMAIL, password: SMOKE_PASSWORD };
+  const registered = await postJson(`${apiUrl}/auth/register`, {
+    ...credentials,
+    password_confirmation: SMOKE_PASSWORD,
+  });
+  const closed = registered.status === 403;
+  const session = closed ? await postJson(`${apiUrl}/auth/login`, credentials) : registered;
+  equal(
+    session.status,
+    closed ? 200 : 201,
+    'the smoke account registers, or logs in once registration is closed'
+  );
+  check(session.body?.token, 'the sign-in returns a token');
+  equal(session.body.user.email, SMOKE_EMAIL, 'the token belongs to the smoke account');
+  return session.body.token as string;
 }
 
 const waitForHealth = () =>
@@ -85,24 +99,6 @@ const getProxiedJson = async (
   });
   return { status: response.status, body: await response.json().catch(() => null) };
 };
-
-/**
- * The dashboard's own sign-in, over its own origin.
- *
- * Same pair as `signInAsAdmin`, but through `/api` rather than straight at the API: this is the
- * only check that exercises the path a browser actually takes.
- */
-async function signInThroughProxy(): Promise<string> {
-  const response = await fetch(`${WEB_URL}/api/auth/verify`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: ADMIN_EMAIL, code: BYPASS_CODE }),
-  });
-  const body = await response.json().catch(() => null);
-  equal(response.status, 200, 'the admin signs in through the dashboard origin');
-  check(body?.token, 'the proxied sign-in returns a token');
-  return body.token as string;
-}
 
 const waitForWeb = () =>
   waitFor(`${WEB_URL}/healthz`, 120_000, async () => {
@@ -170,18 +166,17 @@ async function main() {
   await compose('up', '-d', 'api');
   await waitForHealth();
 
-  log('signing in as the bootstrapped admin');
-  const token = await signInAsAdmin();
+  log('registering the smoke account');
+  const token = await signIn(BASE_URL);
   const profile = await getJson('/auth/profile', token);
-  equal(profile.status, 200, 'the profile route accepts the admin token');
-  equal(profile.body.email, ADMIN_EMAIL, 'the profile is the bootstrapped admin');
-  check(profile.body.company_id, 'the admin belongs to the bootstrapped company');
+  equal(profile.status, 200, 'the profile route accepts the new token');
+  equal(profile.body.email, SMOKE_EMAIL, 'the profile is the smoke account');
 
   equal((await getJson('/projects')).status, 401, 'the project list still needs a token');
 
   log('checking the bootstrapped project');
   const projects = await getJson('/projects', token);
-  equal(projects.status, 200, 'the admin lists the bootstrapped project');
+  equal(projects.status, 200, 'the user lists the bootstrapped project');
   const project = findProject(projects.body);
   check(project, 'the bootstrap used the controller id to create the project row');
   equal(project.name, 'project_1', 'the bootstrapped project uses the default name');
@@ -192,7 +187,7 @@ async function main() {
 
   log('reading the fixture back through the image');
   const listing = await getJson(`/projects/${PROJECT_ID}/requests`, token);
-  equal(listing.status, 200, 'the admin reads the request listing');
+  equal(listing.status, 200, 'the user reads the request listing');
   equal(listing.body.total, 1, 'the inserted trace is listed');
   equal(listing.body.items[0].session_id, TRACE_ID, 'the listed trace is the inserted one');
 
@@ -221,13 +216,13 @@ async function main() {
     'the proxy forwards to the real API, which still refuses an unauthenticated read'
   );
 
-  log('signing in through the web proxy, the way the dashboard does');
-  const proxied_token = await signInThroughProxy();
+  log('logging in through the web proxy, the way the dashboard does');
+  const proxied_token = await signIn(`${WEB_URL}/api`);
   const proxied_profile = await getProxiedJson('/auth/profile', proxied_token);
   equal(proxied_profile.status, 200, 'the proxied profile route accepts the token it just issued');
-  equal(proxied_profile.body.email, ADMIN_EMAIL, 'the proxied session is the bootstrapped admin');
+  equal(proxied_profile.body.email, SMOKE_EMAIL, 'the proxied session is the smoke account');
   const proxied_projects = await getProxiedJson('/projects', proxied_token);
-  equal(proxied_projects.status, 200, 'the admin lists projects through the proxy');
+  equal(proxied_projects.status, 200, 'the user lists projects through the proxy');
   equal(
     findProject(proxied_projects.body)?.id,
     PROJECT_ID,
@@ -237,7 +232,7 @@ async function main() {
   log('restarting to prove the bootstrap is idempotent');
   await compose('restart', 'api');
   await waitForHealth();
-  const after = await getJson('/projects', await signInAsAdmin());
+  const after = await getJson('/projects', await signIn(BASE_URL));
   equal(
     after.body.filter((row: any) => row.id === PROJECT_ID).length,
     1,

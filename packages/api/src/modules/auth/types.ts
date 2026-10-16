@@ -3,33 +3,30 @@
 
 import { z } from 'zod';
 
-export enum UserStatusEnum {
-  PENDING = 'PENDING',
-  ONBOARDING = 'ONBOARDING',
-  ACTIVE = 'ACTIVE',
-  LOCKED = 'LOCKED',
-}
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 128;
 
 export const UserSchema = z.object({
   id: z.string(),
   email: z.string().email(),
-  name: z.string().nullable().optional(),
-  company_id: z.string().nullable().optional(),
-  status: z.nativeEnum(UserStatusEnum),
-  activated_at: z.string().nullable().optional(),
-  locked_at: z.string().nullable().optional(),
   created_at: z.string(),
 });
 export type User = z.infer<typeof UserSchema>;
 
-export const ChallengeRequestSchema = z.object({ email: z.string().email() });
-export type ChallengeRequest = z.infer<typeof ChallengeRequestSchema>;
-
-export const ChallengeVerifySchema = z.object({
-  email: z.string().email(),
-  code: z.string(),
+export const LoginSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
 });
-export type ChallengeVerify = z.infer<typeof ChallengeVerifySchema>;
+export type LoginInput = z.infer<typeof LoginSchema>;
+
+export const RegisterSchema = LoginSchema.extend({ password_confirmation: z.string() }).refine(
+  (input) => input.password === input.password_confirmation,
+  { message: 'Passwords do not match', path: ['password_confirmation'] }
+);
+export type RegisterInput = z.infer<typeof RegisterSchema>;
+
+export const AuthStatusSchema = z.object({ has_users: z.boolean() });
+export type AuthStatus = z.infer<typeof AuthStatusSchema>;
 
 export const AuthTokenSchema = z.object({
   token: z.string(),

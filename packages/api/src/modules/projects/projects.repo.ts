@@ -47,13 +47,13 @@ export const projects_repo = {
     return row;
   },
 
-  async find_project_company(project_id: string): Promise<string | undefined> {
+  async exists(project_id: string): Promise<boolean> {
     const [row] = await db
-      .select({ company_id: projects.company_id })
+      .select({ id: projects.id })
       .from(projects)
       .where(eq(projects.id, project_id))
       .limit(1);
-    return row?.company_id;
+    return row !== undefined;
   },
 
   async get_component_counts(project_id: string): Promise<ProjectComponentCounts | undefined> {

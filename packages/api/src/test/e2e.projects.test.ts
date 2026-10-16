@@ -8,12 +8,7 @@ import { db } from '@api/db/client';
 import { projectWorkflows } from '@api/db/schema';
 
 import { api, setupE2ETests } from './e2e.setup';
-import {
-  add_company_member,
-  authenticate,
-  bearer,
-  create_test_project,
-} from './project-test.utils';
+import { authenticate, bearer, create_test_project } from './project-test.utils';
 import type { TestProjectFile } from './project-test.utils';
 
 setupE2ETests();
@@ -53,13 +48,12 @@ describe('project list and detail', () => {
     expect(detail.data?.file_count).toBe(0);
   });
 
-  test('lets a company member and a user from another company list and read a project', async () => {
+  test('lets another user list and read a project', async () => {
     const owner = await authenticate('project-owner@canyonos.test');
     const { project_id } = await create_test_project(owner, { name: 'Shared', files: FILES });
-    const member = await add_company_member(owner, 'project-member@canyonos.test');
-    const other_company = await authenticate('project-outsider@canyonos.test');
+    const other_user = await authenticate('project-outsider@canyonos.test');
 
-    for (const token of [member, other_company]) {
+    for (const token of [owner, other_user]) {
       const list = await api.projects.get({ $headers: bearer(token) });
       expect(list.data?.some(({ id }) => id === project_id)).toBe(true);
       const detail = await api.projects[project_id]!.get({ $headers: bearer(token) });

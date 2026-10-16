@@ -26,7 +26,7 @@ describe('project access across the /projects tree', () => {
 
   // The resolver is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling), so
   // reaching every sub-resource proves the new rule fires in each composed plugin.
-  test('a user from another company reaches every project sub-resource', async () => {
+  test('another user reaches every project sub-resource', async () => {
     const owner = await authenticate('access-owner2@canyonos.test');
     const project_id = await create_project(owner);
     await seed_running_project(project_id, { prompts: {} });

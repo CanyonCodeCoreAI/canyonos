@@ -95,10 +95,11 @@ canyonos deploy --serve false
 bun run dashboard:dev
 ```
 
-That command ensures local Postgres and Mailpit are running, then starts the
-API at `http://localhost:3000` and Vite at `http://localhost:5173`. It uses
-local defaults: fixed-code auth, no deploy worker, and `127.0.0.1:6379` as the
-default workflow Redis. The defaults are in `scripts/dashboard-dev.ts`. A variable
+That command ensures local Postgres is running, then starts the API at
+`http://localhost:3000` and Vite at `http://localhost:5173`. It uses local
+defaults: no deploy worker and `127.0.0.1:6379` as the default workflow Redis.
+The dashboard asks you to create the first account on an empty database; with
+`SEED_DEV_DATA=true` it also seeds `e2e@canyonos.test` / `e2e-password-1`. The defaults are in `scripts/dashboard-dev.ts`. A variable
 set in your shell wins over them, but they win over the same variables in
 `packages/api/.env` and `packages/web/.env`.
 
@@ -125,8 +126,8 @@ while it runs with `curl -X POST http://localhost:3000/canyonos/projects
 -H 'Content-Type: application/json' -d '{"redis_port":6379}'`.
 - API and web edits reload while the command is running. Core edits need
 `bun run canyonos:dev` again and a workflow redeploy.
-- The default ports are API `3000`, web `5173`, Postgres `5432`, Mailpit `1025`
-and `8025`, endpoint `8080`, and workflow Redis `6379`. Stop or reconfigure
+- The default ports are API `3000`, web `5173`, Postgres `5432`, endpoint
+`8080`, and workflow Redis `6379`. Stop or reconfigure
 anything already using one of them. The workflow ports are the `endpoint.api_port`
 and `redis_port` defaults of its config; if it declares another `redis_port`,
 register it with that port. `CANYONOS_REDIS_PORT` is only the default Redis:
@@ -156,7 +157,7 @@ cp packages/web/.env.example packages/web/.env
 
 | Suite | Command | Needs |
 |---|---|---|
-| API | `bun run api:test:e2e` | Postgres and Mailpit (`bun run docker:up`); resets the `canyonos_test` database |
+| API | `bun run api:test:e2e` | Postgres (`bun run docker:up`); resets the `canyonos_test` database |
 | Dashboard | `bun run ui:test:e2e` | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite itself, or reuses ones already running |
 | Workflow | `tests/run_tests.sh` | Run inside the `bun run canyonos:dev` shell; deploys `examples/helloworld` to port `8082`, then runs the integration and load tests |
 

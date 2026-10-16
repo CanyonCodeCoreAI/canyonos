@@ -33,11 +33,7 @@ function greetingForHour(hour: number): Greeting {
 }
 
 function firstNameFor(user: User | null): string | undefined {
-  const named = user?.name?.trim();
-  if (named) return named.split(/\s+/)[0];
-  const email = user?.email?.trim();
-  if (email) return email.split('@')[0];
-  return undefined;
+  return user?.email.split('@')[0];
 }
 
 function heroSummary(projectCount: number | undefined): string {

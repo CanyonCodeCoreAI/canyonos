@@ -4,19 +4,12 @@
 import { expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
-import { UserStatusEnum } from '@canyonos/api/auth';
-import type { User } from '@canyonos/api/auth';
 import type { KpiWindow, MetricsWindow } from '@canyonos/api/metrics';
 import type { ProjectSummary } from '@canyonos/api/projects';
 
-import { validToken } from './auth';
 import { apiBaseUrl, failJson, fulfillJson } from './projects';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
-
-/** The address and code `signInAsCanyonOsAdmin` is expected to send, spelled out independently. */
-export const ADMIN_EMAIL = 'admin@canyonos.invalid';
-export const BYPASS_CODE = '111111';
 
 export const PROJECT: ProjectSummary = {
   id: '44444444-4444-4444-8444-444444444401',
@@ -24,17 +17,6 @@ export const PROJECT: ProjectSummary = {
   file_count: 5,
   created_at: '2026-07-01T12:00:00.000Z',
   updated_at: '2026-07-01T12:00:00.000Z',
-};
-
-// `company_id` is null so the sidebar's account menu has no company to look up: one fewer endpoint
-// standing between these specs and what they are actually about.
-const ADMIN_USER: User = {
-  id: '55555555-5555-4555-8555-555555555501',
-  email: ADMIN_EMAIL,
-  name: 'CanyonOS Admin',
-  company_id: null,
-  status: UserStatusEnum.ACTIVE,
-  created_at: '2026-01-01T00:00:00.000Z',
 };
 
 export async function expectPath(page: Page, expected: string): Promise<void> {
@@ -52,45 +34,6 @@ async function routePath(
     (url) => url.origin === apiOrigin && url.pathname === pathname,
     (route) => (isGet(route) ? handler(route, new URL(route.request().url())) : route.continue())
   );
-}
-
-export interface LocalSession {
-  /** Every body posted to `/auth/verify`, in order, so a spec can assert both shape and count. */
-  readonly verify_bodies: unknown[];
-  /** Flipped by a spec to make the next sign-in attempt succeed or fail. */
-  fails: boolean;
-}
-
-/**
- * Answer the two calls the dashboard makes to open its own session.
- *
- * Fulfilled rather than seeded: the account this signs in as belongs to the machine image, so a
- * spec that needed the real one could only run on a box that already is one.
- */
-export async function stubLocalSession(
-  page: Page,
-  { fails = false }: { readonly fails?: boolean } = {}
-): Promise<LocalSession> {
-  const session: LocalSession = { verify_bodies: [], fails };
-
-  await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/auth/verify',
-    (route) => {
-      if (route.request().method() !== 'POST') return route.continue();
-      session.verify_bodies.push(route.request().postDataJSON());
-      if (session.fails) {
-        return fulfillJson(
-          route,
-          { error: 'auth.invalid_code', message: 'Invalid or expired code' },
-          401
-        );
-      }
-      return fulfillJson(route, { token: validToken, user: ADMIN_USER });
-    }
-  );
-  await routePath(page, '/auth/profile', (route) => fulfillJson(route, ADMIN_USER));
-
-  return session;
 }
 
 export async function stubProjectsList(

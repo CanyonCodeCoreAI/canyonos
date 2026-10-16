@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 API_URL = "http://127.0.0.1:3000"
 OUTPUT_LIMIT = 20_000
 SIGN_IN_EMAIL = "ecosystem@canyonos.test"
-FIXED_CODE = "111111"
+SIGN_IN_PASSWORD = "ecosystem-password-1"
 
 
 @dataclass
@@ -268,13 +268,20 @@ class Api:
 
 
 def sign_in(recorder: Recorder, base_url: str) -> str:
-    """Sign in to the dashboard with the fixed code and return the bearer token."""
+    """Register the ecosystem account, or log in once registration is closed, and
+    return the bearer token."""
+    credentials = {"email": SIGN_IN_EMAIL, "password": SIGN_IN_PASSWORD}
     call = http(
         recorder,
         "POST",
-        f"{base_url}/auth/verify",
-        json={"email": SIGN_IN_EMAIL, "code": FIXED_CODE},
+        f"{base_url}/auth/register",
+        json={**credentials, "password_confirmation": SIGN_IN_PASSWORD},
+        check=False,
     )
+    if call.code == 403:
+        call = http(recorder, "POST", f"{base_url}/auth/login", json=credentials)
+    elif call.code != 201:
+        raise CallFailed(call)
     return call.json()["token"]
 
 

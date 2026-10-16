@@ -11,8 +11,6 @@ import { seedDevData } from '@api/db/seed';
 import { authRoutes } from '@api/modules/auth/auth.routes';
 import { bootstrap_canyonos } from '@api/modules/canyonos/canyonos.bootstrap';
 import { canyonosRoutes } from '@api/modules/canyonos/canyonos.routes';
-import { companiesRoutes } from '@api/modules/companies/companies.routes';
-import { onboardingRoutes } from '@api/modules/onboarding/onboarding.routes';
 import { projectsRoutes } from '@api/modules/projects/projects.routes';
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
@@ -90,8 +88,6 @@ export const createApp = () =>
       { detail: { summary: 'Health Check', tags: ['system'] } }
     )
     .use(authRoutes)
-    .use(companiesRoutes)
-    .use(onboardingRoutes)
     .use(resourcesRoutes)
     .use(projectsRoutes)
     // Deliberately unauthenticated in every mode: the OTLP emitter is an agent process, not a person.

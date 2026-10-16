@@ -1,86 +1,52 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { config } from '@core/env';
-import { badGateway, forbidden, unauthorized } from '@core/errors';
-import { LOG_DOMAINS, logger } from '@core/logger';
+import { forbidden, unauthorized } from '@core/errors';
 
 import { authRepo } from './auth.repo';
 import { jwtManager } from './lib/jwt';
-import { generateNumericCode, hashCode, isFixedCodeSignIn } from './lib/otp';
-import { UserStatusEnum } from './types';
+import { DUMMY_HASH, hashPassword, verifyPassword } from './lib/password';
 import type { UserRow } from './auth.repo';
-import type { AuthToken, User } from './types';
+import type { AuthStatus, AuthToken, User } from './types';
 
-const authLogger = logger.child({ domain: LOG_DOMAINS.AUTH });
+const normalizeEmail = (email: string): string => email.trim().toLowerCase();
+
+const registrationClosed = () =>
+  forbidden('auth.registration_closed', 'Registration is closed; sign in with an existing account');
 
 const toUser = (row: UserRow): User => ({
   id: row.id,
   email: row.email,
-  name: row.name,
-  company_id: row.companyId,
-  status: (row.status as UserStatusEnum) ?? UserStatusEnum.PENDING,
-  activated_at: row.activatedAt,
-  locked_at: row.lockedAt,
   created_at: row.createdAt,
 });
 
-export const authService = {
-  async requestChallenge(email: string): Promise<{ ok: true }> {
-    const normalized = email.trim().toLowerCase();
-    const existingUser = await authRepo.findUserByEmail(normalized);
-    const user = existingUser ?? (await authRepo.createUser(normalized));
-    const code = generateNumericCode(config.auth.codeLength);
-    const expiresAt = new Date(Date.now() + config.auth.challengeTtlSeconds * 1000).toISOString();
-    await authRepo.insertChallenge({
-      userId: user.id,
-      destination: normalized,
-      purpose: 'login',
-      codeHash: hashCode(code),
-      expiresAt,
-    });
-    if (config.auth.mode !== 'email_otp') return { ok: true };
+const issueToken = async (row: UserRow): Promise<AuthToken> => ({
+  token: await jwtManager.sign(row.id, { email: row.email }),
+  user: toUser(row),
+});
 
-    const { sendEmail } = await import('@core/mailer');
-    const result = await sendEmail({
-      from: config.auth.emailFrom,
-      to: normalized,
-      subject: 'Your Canyon Code sign-in code',
-      html: `<p>Your code is <strong>${code}</strong>. It expires in ${Math.round(
-        config.auth.challengeTtlSeconds / 60
-      )} minutes.</p>`,
-    });
-    if (!result.ok) {
-      authLogger.error('verification code email failed to send', { email: normalized });
-      throw badGateway('auth.email_delivery_failed', 'Could not send the verification code email');
-    }
-    return { ok: true };
+export const authService = {
+  async status(): Promise<AuthStatus> {
+    return { has_users: await authRepo.hasUsers() };
   },
 
-  async verifyChallenge(email: string, code: string): Promise<AuthToken> {
-    const normalized = email.trim().toLowerCase();
-    const fixed_code_sign_in = isFixedCodeSignIn(config.auth.mode, code);
-    let user = await authRepo.findUserByEmail(normalized);
-    if (!user && fixed_code_sign_in) user = await authRepo.createUser(normalized);
-    if (!user) throw unauthorized('auth.invalid_credentials', 'Invalid code');
-    if (user.status === UserStatusEnum.LOCKED) {
-      throw forbidden('auth.account_locked', 'Account locked');
-    }
+  async register(email: string, password: string): Promise<AuthToken> {
+    if (await authRepo.hasUsers()) throw registrationClosed();
+    const created = await authRepo.createFirstUser({
+      email: normalizeEmail(email),
+      passwordHash: await hashPassword(password),
+    });
+    if (!created) throw registrationClosed();
+    return issueToken(created);
+  },
 
-    const now = new Date().toISOString();
-    if (!fixed_code_sign_in) {
-      const challenge = await authRepo.findValidChallenge(user.id, hashCode(code.trim()), now);
-      if (!challenge) throw unauthorized('auth.invalid_credentials', 'Invalid or expired code');
-      await authRepo.consumeChallenge(challenge.id, now);
+  async login(email: string, password: string): Promise<AuthToken> {
+    const user = await authRepo.findUserByEmail(normalizeEmail(email));
+    const valid = await verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
+    if (!user || !valid) {
+      throw unauthorized('auth.invalid_credentials', 'Invalid email or password');
     }
-
-    if (user.status === UserStatusEnum.PENDING) {
-      await authRepo.startOnboarding(user.id);
-      user = { ...user, status: UserStatusEnum.ONBOARDING };
-    }
-
-    const token = await jwtManager.sign(user.id, { email: user.email });
-    return { token, user: toUser(user) };
+    return issueToken(user);
   },
 
   async getProfile(userId: string): Promise<User> {
