@@ -11,6 +11,8 @@ Agent needs a non-installable package (like git, rust, etc.)
 The skill file misses some required dependencies
 - The skill file, when building the global_controller.yaml file finds the imports that every agent uses and adds that in the requirements section of the .yaml file, but in some occasions, it forgets to find dependencies that
 
+Python versions: we only support Python 3.11 and 3.12.
+
 Several projects on one machine: each folder you run `canyonos` from is its own project, with its own Global Controller, containers, images and state. The project name is the folder name, lowercased, with every character other than letters, digits, `_` and `-` turned into `-`, repeated or edge `-` removed, and cut to 24 characters. The name `dashboard` is reserved for the dashboard and becomes `dashboard-project`. Ports are not picked for you: give each project its own `redis_port` and `endpoint.api_port` in `global_controller.yaml`.
 - Two folders with the same name in different paths are the same project, so deploying one replaces the other.
 - Folder names longer than 24 characters are cut, so two long names that start the same become one project.
