@@ -21,6 +21,7 @@ from canyonos_core.stub_generator import (
     BASE_AGENT_REQUIREMENTS,
     PROTOBUF_FLOOR,
     TESTED_MAJOR_VERSIONS,
+    UV_IMAGE,
     _stub_destination,
     _sweep_project_files,
     generate_docker,
@@ -631,10 +632,17 @@ class PlatformPinTests(unittest.TestCase):
     def test_the_dockerfile_installs_with_the_overrides_and_reports(self):
         dockerfile = self._dockerfile()
 
-        install = dockerfile.split("RUN uv pip check")[0]
+        install = dockerfile.split("uv pip check")[0]
         self.assertIn("--overrides /tmp/overrides.txt", install)
         self.assertIn("uv pip check --system", dockerfile)
         self.assertIn(str(PROTOBUF_FLOOR), dockerfile.split("NOTE:")[1])
+
+    def test_uv_is_mounted_into_its_build_steps_not_copied_into_the_image(self):
+        dockerfile = self._dockerfile()
+
+        self.assertNotIn("COPY --from", dockerfile)
+        for step in dockerfile.split("\nRUN ")[1:]:
+            self.assertIn(f"--mount=from={UV_IMAGE},source=/uv,target=/bin/uv", step)
 
 
 if __name__ == "__main__":

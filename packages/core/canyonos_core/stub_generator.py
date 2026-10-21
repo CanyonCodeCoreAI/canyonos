@@ -48,6 +48,9 @@ PROTOBUF_FLOOR = Requirement(
     next(pin for pin in BASE_AGENT_REQUIREMENTS if pin.startswith("protobuf"))
 )
 
+# Mounted only in the build steps that run it, so agent images never carry uv.
+UV_IMAGE = "ghcr.io/astral-sh/uv:latest"
+
 IMAGE_PYTHON_VERSION = "3.11"
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 
@@ -676,11 +679,11 @@ def _dockerfile_install_steps(overrides, requirements):
     )
     return f"""ENV UV_COMPILE_BYTECODE=1
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
+RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
  && printf '%s\\n' {caps} > /tmp/tested.txt \\
  && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
-RUN uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
-RUN --mount=type=cache,target=/root/.cache/uv uv venv /opt/canyonos-gateway \\
+RUN --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
+RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv venv /opt/canyonos-gateway \\
  && uv pip install --python /opt/canyonos-gateway/bin/python {" ".join(GATEWAY_REQUIREMENTS)} \\
  && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
 """
@@ -774,7 +777,6 @@ def generate_docker(
     agent_basename = os.path.basename(agent_file)
     dockerfile = f"""# syntax=docker/dockerfile:1
 FROM python:{IMAGE_PYTHON_VERSION}-slim
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
