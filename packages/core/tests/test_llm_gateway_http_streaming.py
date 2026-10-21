@@ -71,7 +71,7 @@ def _upstream(chunks, content_type="text/event-stream; charset=utf-8", status=20
 class HttpProviderStreamingTests(unittest.TestCase):
     def _forward(self, provider, upstream, body=b'{"stream": true}'):
         with patch.object(
-            base_module.requests, "request", return_value=upstream
+            base_module._SESSION, "request", return_value=upstream
         ) as request:
             pr = provider.forward(_Req(), "v1/messages", body)
         self.assertTrue(request.call_args.kwargs["stream"])

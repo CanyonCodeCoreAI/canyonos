@@ -114,7 +114,7 @@ core.proxy_request
               │                             │                      boto3 bedrock-runtime
               └──────────────┬──────────────┘                              │
                              ▼                            ┌─────────┬──────┴──┬──────────────┐
-                requests.request(stream=True)          invoke   converse  converse-  invoke-with-
+                Session.request(stream=True)           invoke   converse  converse-  invoke-with-
                              │                                             stream    response-stream
               ┌──────────────┴──────────────┐
     text/event-stream?                 anything else

@@ -17,8 +17,16 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import requests
+from requests.adapters import HTTPAdapter
 
 log = logging.getLogger(__name__)
+
+# Shared by every call so connections to each provider stay open between calls instead of a new TLS handshake each time.
+_SESSION = requests.Session()
+# Keeps one connection per call a replica runs at once (16 by default) instead of urllib3's 10.
+_ADAPTER = HTTPAdapter(pool_maxsize=16)
+_SESSION.mount("https://", _ADAPTER)
+_SESSION.mount("http://", _ADAPTER)
 
 # Request headers we never forward: hop-by-hop (RFC 7230), ones we rewrite, and
 # accept-encoding (we let the HTTP client negotiate + decode, then re-frame the
@@ -140,7 +148,7 @@ class HttpProvider(Provider):
         """Send the request upstream and return the response; server-sent-event replies
         are streamed back as they arrive."""
         up = self.target(req, subpath, body)
-        resp = requests.request(
+        resp = _SESSION.request(
             up.method,
             up.url,
             headers=up.headers,
