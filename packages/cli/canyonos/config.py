@@ -58,7 +58,6 @@ def _agents_table(agent_specs):
         "CPU",
         "Mem",
         "Provider",
-        "Redis port",
         "Entrypoint",
     ):
         table.add_column(col)
@@ -66,7 +65,6 @@ def _agents_table(agent_specs):
     for agent_spec in agent_specs:
         resources = agent_spec.get("resources") or {}
         entry = agent_spec.get("entrypoint") or "-"
-        port = agent_spec.get("redis_port")
         table.add_row(
             _fmt(agent_spec.get("name")),
             agent_spec.get("type", "agent"),
@@ -74,7 +72,6 @@ def _agents_table(agent_specs):
             _fmt(resources.get("cpu")),
             _fmt(resources.get("memory")),
             _fmt(agent_spec.get("provider")),
-            _fmt(port),
             entry,
         )
     return table

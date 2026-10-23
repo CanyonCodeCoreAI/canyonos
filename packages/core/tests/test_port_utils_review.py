@@ -153,28 +153,18 @@ class TwinModuleDriftTests(unittest.TestCase):
 
 
 class RedisPortTests(unittest.TestCase):
-    """redis_port is user-declared: publish it as written, or exit."""
+    """`redis.port` is user-declared: publish it as written, or exit."""
 
     def _controller(self, run_cmd):
         from canyonos_core.controller.global_controller import GlobalController
 
         gc = GlobalController.__new__(GlobalController)
         gc.config = {}
-        gc.agent_specs = [
-            {
-                "provider": "local",
-                "user": None,
-                "redis_port": 6379,
-                "replicas": 1,
-                "host": "localhost",
-            }
-        ]
         gc.redis_containers = {}
         gc.redis_ports = {}
         gc.machine_redis = {}
         gc.redis = None
         gc._run_cmd = run_cmd
-        gc._get_replica_placements = lambda agent_spec: [("localhost", 5001)]
         return gc
 
     def _run_cmd_factory(self, conflicts):
@@ -243,17 +233,6 @@ class RedisPortTests(unittest.TestCase):
         ):
             gc._launch_redis_containers()
         self.assertIn(["docker", "rm", "-f", "canyonos-redis-localhost"], run_cmd.calls)
-
-    def test_string_redis_port_is_coerced_not_crashed_on(self):
-        run_cmd = self._run_cmd_factory(conflicts=0)
-        gc = self._controller(run_cmd)
-        gc.agent_specs[0]["redis_port"] = "6379"
-        with (
-            patch("canyonos_core.controller.global_controller.RedisClient"),
-            patch("canyonos_core.controller.global_controller._wait_for_redis"),
-        ):
-            gc._launch_redis_containers()
-        self.assertEqual(run_cmd.published, "6379:6379")
 
     def test_container_name_conflict_still_hard_exits(self):
         def run_cmd(cmd, host=None, user=None):

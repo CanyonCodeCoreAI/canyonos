@@ -65,16 +65,6 @@ def replica_id_from_record(replica):
     return replica_id(replica["agent_name"], replica["replica_index"])
 
 
-def localhost_redis_port(agent_specs):
-    """Return the port of this machine's Redis container, taken from the first agent with
-    a replica here, or None if no agent runs here."""
-    for agent_spec in agent_specs:
-        for host, _port in ControllerContext._get_replica_placements(agent_spec):
-            if _is_local_host(host):
-                return int(agent_spec.get("redis_port", 6379))
-    return None
-
-
 def list_replicas(redis_client, agent_name=None):
     """Replica records straight from Redis."""
     if agent_name:
@@ -129,9 +119,6 @@ class ControllerContext(object):
                 "name": ENDPOINT_AGENT_NAME,
                 "type": "endpoint",
                 "replicas": 1,
-                # One Redis runs per machine, so the endpoint shares the port of the
-                # agents placed here.
-                "redis_port": localhost_redis_port(agent_specs) or 6379,
                 "resources": {"cpu": ENDPOINT_CPUS},
                 "api_port": endpoint.get("api_port", ENDPOINT_PORT),
                 "agent": endpoint["agent"],
@@ -186,31 +173,10 @@ class ControllerContext(object):
             return
         self.config = config
 
-    def _ssh_user(self, agent_spec):
-        """SSH user for an agent's hosts, as its provider decides."""
-        return providers.get(agent_spec["provider"]).ssh_user(agent_spec)
-
-    @staticmethod
-    def _get_replica_placements(agent_spec):
-        """Normalize replicas into a list of (host, port) placements."""
-        replicas = agent_spec.get("replicas", 1)
-        default_host = agent_spec.get("host", "localhost")
-        base_port = agent_spec.get("port", 50051)
-
-        if isinstance(replicas, int):
-            return [(default_host, base_port + i) for i in range(replicas)]
-        if isinstance(replicas, list):
-            return [
-                (r.get("host", default_host), r.get("port", base_port))
-                for r in replicas
-            ]
-        return [(default_host, base_port)]
-
     def attach_local_machine_redis(self):
-        """Point self.redis at the local machine's Redis without launching anything."""
-        port = localhost_redis_port(self.agent_specs)
-        if port is None:
-            return
+        """Point self.redis at this machine's Redis without launching anything."""
+        port = self.config.get("redis", {}).get("port", 6379)
+        self.redis_ports["localhost"] = port
         client = RedisClient(host=_redis_connect_host("localhost"), port=port)
         self.machine_redis["localhost"] = client
         self.redis = client
@@ -229,12 +195,8 @@ class ControllerContext(object):
         return client
 
     def remove_unused_redis_clients(self, replicas):
-        """Drop the Redis clients of hosts that no configured agent or given replica runs on."""
-        hosts = {replica["private_host"] for replica in replicas}
-        for agent_spec in self.agent_specs:
-            hosts.update(
-                host for host, _port in self._get_replica_placements(agent_spec)
-            )
+        """Drop the Redis clients of machines other than this one that no given replica runs on."""
+        hosts = {"localhost"} | {replica["private_host"] for replica in replicas}
         for host in set(self.machine_redis) - hosts:
             del self.machine_redis[host]
 

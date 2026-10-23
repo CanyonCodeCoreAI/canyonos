@@ -5,18 +5,13 @@
 
 import os
 import sys
-import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.reconciler import providers
-from canyonos_core.reconciler.providers.EC2 import _provider as ec2_provider
-from canyonos_core.reconciler.providers.Local import (
-    _provider as local_provider,
-)
+from canyonos_core.reconciler import replicas
 from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
     resource_limit_args,
 )
@@ -69,24 +64,25 @@ class ResourceLimitArgsTests(unittest.TestCase):
                 self.assertNotIn("--gpus", resource_limit_args(resources))
 
 
-class LocalRuntimeLimitTests(unittest.TestCase):
+def _launch_controller():
+    return SimpleNamespace(
+        config={"poll_interval": 5},
+        redis_ports={},
+        machine_redis_for_replica=lambda _replica: MagicMock(),
+        _run_cmd=MagicMock(
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr="")
+        ),
+    )
+
+
+class LocalProviderLimitTests(unittest.TestCase):
     def setUp(self):
-        self.controller = SimpleNamespace(
-            config={"poll_interval": 5},
-            redis=MagicMock(),
-            redis_ports={},
-            machine_redis={},
-            _run_cmd=MagicMock(return_value=SimpleNamespace(returncode=0, stdout="")),
-        )
-        providers.bind(self.controller)
-        providers.get("local")
+        self.controller = _launch_controller()
 
     def _launch(self, spec):
-        provisioned = local_provider.provision_replica(
-            spec, 0, lambda host: 8000, "launch-1"
-        )
-        with patch.object(local_provider, "_port_bound", return_value=False):
-            local_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
+        machine = {"private_host": "localhost", "public_host": "localhost"}
+        with patch.object(replicas, "_port_bound", return_value=False):
+            replicas.launch(self.controller, machine, spec, 0, 8000, "agent-id-0")
         return self.controller._run_cmd.call_args.args[0]
 
     def test_an_agent_without_a_resources_block_is_still_bounded(self):
@@ -142,47 +138,20 @@ class LocalRuntimeLimitTests(unittest.TestCase):
 
 class EC2ProviderLimitTests(unittest.TestCase):
     def setUp(self):
-        key_file = tempfile.NamedTemporaryFile(delete=False)
-        key_file.close()
-        self.key_path = key_file.name
-        os.chmod(self.key_path, 0o600)
-        self.controller = SimpleNamespace(
-            config={
-                "poll_interval": 5,
-                "ec2": {"ssh_user": "ubuntu"},
-                "ssh_private_key_path": self.key_path,
-            },
-            _ssh_args=lambda host, user=None: ["ssh", f"{user}@{host}"],
-            _run_cmd=MagicMock(
-                return_value=SimpleNamespace(returncode=0, stdout="", stderr="")
-            ),
-        )
-        providers.bind(self.controller)
-        providers.get("EC2")
-
-    def tearDown(self):
-        os.unlink(self.key_path)
+        self.controller = _launch_controller()
 
     def _bootstrap(self, spec):
+        machine = {
+            "machine_id": "i-test1",
+            "private_host": "10.0.0.30",
+            "public_host": "54.10.20.30",
+            "user": "ubuntu",
+        }
         with (
-            patch.object(ec2_provider.time, "sleep"),
-            patch.object(
-                ec2_provider.subprocess,
-                "run",
-                return_value=SimpleNamespace(returncode=0, stderr="", stdout=""),
-            ),
-            patch.object(ec2_provider, "RedisClient", return_value=MagicMock()),
-            patch.object(ec2_provider, "_wait_for_redis"),
+            patch.object(replicas, "transfer_image"),
+            patch.object(replicas, "_wait_for_redis"),
         ):
-            ec2_provider._bootstrap_replica(
-                "10.0.0.30",
-                spec,
-                0,
-                self.controller.config["ec2"],
-                redis_host="10.0.0.30",
-                redis_port=6379,
-                replica_id="agent-id-0",
-            )
+            replicas.launch(self.controller, machine, spec, 0, None, "agent-id-0")
         redis_cmd, agent_cmd = (
             call.args[0]
             for call in self.controller._run_cmd.call_args_list

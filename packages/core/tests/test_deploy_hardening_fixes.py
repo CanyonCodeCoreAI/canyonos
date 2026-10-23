@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.reconciler import providers
+from canyonos_core.reconciler import replicas
 from canyonos_core.controller.local_controller import LocalController
 
 
@@ -51,17 +51,13 @@ class AgentStartupOrderTests(unittest.TestCase):
         self.assertEqual(order, ["gateway", "agent"])
 
 
-class RuntimeReuseScanTests(unittest.TestCase):
-    def _bind(self, run_cmd):
-        providers.bind(SimpleNamespace(config={}, _run_cmd=run_cmd))
-
+class ContainerReuseScanTests(unittest.TestCase):
     def test_an_unreachable_host_is_not_reusable_rather_than_fatal(self):
         def run_cmd(_cmd, host, user=None):
             raise RuntimeError(
                 f"Command timed out after 180s on {host}: docker inspect"
             )
 
-        self._bind(run_cmd)
         replica = {
             "container_name": "canyonos-agent-0",
             "private_host": "10.0.0.5",
@@ -72,20 +68,21 @@ class RuntimeReuseScanTests(unittest.TestCase):
             "canyonos_core.reconciler.providers.shared_utils.docker_host",
             level="WARNING",
         ):
-            self.assertFalse(providers.get("EC2").is_running(replica))
+            self.assertFalse(
+                replicas.is_running(SimpleNamespace(_run_cmd=run_cmd), replica)
+            )
 
     def test_a_running_container_is_still_reported_as_reusable(self):
         def run_cmd(_cmd, _host, user=None):
             return subprocess.CompletedProcess([], 0, "true\n", "")
 
-        self._bind(run_cmd)
         replica = {
             "container_name": "canyonos-agent-0",
             "private_host": "localhost",
             "provider": "local",
         }
 
-        self.assertTrue(providers.get("local").is_running(replica))
+        self.assertTrue(replicas.is_running(SimpleNamespace(_run_cmd=run_cmd), replica))
 
 
 if __name__ == "__main__":

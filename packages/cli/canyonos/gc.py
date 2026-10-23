@@ -14,6 +14,8 @@ from canyonos import project, ui
 from canyonos.init import load_state
 
 REQUEST_TIMEOUT_SECONDS = 60
+# Longer than the server's wait for the deploy to stop, which drains every replica first.
+CLEAN_REQUEST_TIMEOUT_SECONDS = 270
 
 
 class GCError(RuntimeError):
@@ -96,7 +98,12 @@ def post_clean(port):
     returns. This is what actually removes the local controller and Redis
     containers a deploy spawned via docker-outside-of-docker.
     """
-    return _request(f"http://127.0.0.1:{port}/clean", "Stop", method="POST")
+    return _request(
+        f"http://127.0.0.1:{port}/clean",
+        "Stop",
+        method="POST",
+        timeout=CLEAN_REQUEST_TIMEOUT_SECONDS,
+    )
 
 
 def deploy_status(port):

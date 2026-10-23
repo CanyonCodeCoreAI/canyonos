@@ -129,7 +129,7 @@ while it runs with `curl -X POST http://localhost:3000/canyonos/projects
 - The default ports are API `3000`, web `5173`, Postgres `5432`, endpoint
 `8080`, and workflow Redis `6379`. Stop or reconfigure
 anything already using one of them. The workflow ports are the `endpoint.api_port`
-and `redis_port` defaults of its config; if it declares another `redis_port`,
+and `redis.port` defaults of its config; if it declares another `redis.port`,
 register it with that port. `CANYONOS_REDIS_PORT` is only the default Redis:
 the one read at startup and for projects that never registered.
 - This is the fast host-dashboard loop. Use `canyonos deploy` with the image

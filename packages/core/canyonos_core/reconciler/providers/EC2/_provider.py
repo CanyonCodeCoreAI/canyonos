@@ -7,17 +7,16 @@ EC2 provider for CanyonOS.
 This module is the EC2-specific backend for `provider: EC2` agents.
 It does three things:
 1. create an EC2 machine
-2. start the agent container on that machine
+2. wait until that machine can run containers
 3. terminate the EC2 machine
 
 `providers.bind` sets `_controller` before any of these helpers run, so
-they can read config and reuse the controller's Docker/Redis logic.
+they can read config and run commands over SSH.
 """
 
 import hashlib
 import logging
 import os
-import socket
 import stat
 import subprocess
 import threading
@@ -25,39 +24,15 @@ import time
 from typing import Any
 
 from canyonos_core.controller.controller_context import DEFAULT_SSH_KEY_PATH
-from canyonos_core.controller.utils.container_log import dump_container_log
-from canyonos_core.controller.utils.container_names import (
-    CONTAINER_PORT,
-    container_name,
-    data_volume_name,
-    image_name,
-    project_label_args,
-    redis_container_name,
-)
 from canyonos_core.controller.utils.docker_utils import docker_available
-from canyonos_core.controller.utils.env_file import env_file_args
-from canyonos_core.controller.utils.redis_utils import _wait_for_redis
-from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.llm_gateway import pricing
-from canyonos_core.reconciler.providers.shared_utils.docker_host import (
-    container_log_tail,
-    container_running,
-)
-from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
-    transfer_image,
-)
-from canyonos_core.reconciler.providers.shared_utils.llm_gateway_env import (
-    llm_gateway_docker_env_args,
-)
-from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
-    resource_limit_args,
-)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SSH_USER = "ubuntu"
 # This default AMI is a public AMI created by Canyon Code, containing base Ubuntu + Docker + zstd. Can be overridden manually with your own ami_id
 DEFAULT_AMI_ID = "ami-0101d5f2a2a9cd55c"
+MACHINE_PLATFORM = "linux/amd64"
 # AWS can take minutes to list a machine it just launched.
 LAUNCH_LISTING_GRACE_SECONDS = 300
 _controller: Any = None
@@ -118,20 +93,14 @@ def preflight():
         )
 
 
-def port_claim_host(agent_spec):
-    """Return None: each replica gets its own machine, so there is no shared host to
-    pick a free port on."""
-    return None
+def machine_platform():
+    """The Docker platform EC2 machines run: the default AMI is x86."""
+    return MACHINE_PLATFORM
 
 
-def ssh_user(entry):
-    """The SSH user for every EC2 host: `ec2.ssh_user`, else `ubuntu`."""
-    return _controller.config.get("ec2", {}).get("ssh_user", DEFAULT_SSH_USER)
-
-
-def hourly_cost(agent_spec):
-    """The USD per hour of the agent's `machine_type`, or 0 if it has no listed price."""
-    return pricing.machine_hourly_cost(agent_spec["machine_type"])
+def hourly_cost(machine):
+    """The USD per hour of the machine's `machine_type`, or 0 if it has no listed price."""
+    return pricing.machine_hourly_cost(machine["machine_type"])
 
 
 def _ec2_config():
@@ -178,17 +147,17 @@ def _ensure_key_pair_imported(cfg, key_path, client):
     return key_name
 
 
-def provision_replica(agent_spec, replica_index, next_host_port, launch_id):
-    """Launch one EC2 machine for an agent replica, without waiting for it to boot."""
+def start_machine(machine_spec, launch_id):
+    """Launch one EC2 machine of the spec's `machine_type`, without waiting for it to
+    boot, and return its EC2 id as `machine_id`."""
     import boto3
 
     cfg = _ec2_config()
     client = boto3.client("ec2", region_name=cfg["region"])
     key_name = _ensure_key_pair_imported(cfg, _ssh_key_path(), client)
-    agent_name = agent_spec["name"]
     request = {
         "ImageId": cfg.get("ami_id", DEFAULT_AMI_ID),
-        "InstanceType": agent_spec["machine_type"],
+        "InstanceType": machine_spec["machine_type"],
         "NetworkInterfaces": [
             {
                 "DeviceIndex": 0,
@@ -198,7 +167,7 @@ def provision_replica(agent_spec, replica_index, next_host_port, launch_id):
             }
         ],
         "KeyName": key_name,
-        # Lets terminate_replica find this machine before its id is saved.
+        # Lets terminate_machine find this machine before its id is saved.
         "ClientToken": launch_id,
         "MinCount": 1,
         "MaxCount": 1,
@@ -206,7 +175,7 @@ def provision_replica(agent_spec, replica_index, next_host_port, launch_id):
             {
                 "ResourceType": "instance",
                 "Tags": [
-                    {"Key": "Name", "Value": f"canyonos-{agent_name}-{replica_index}"},
+                    {"Key": "Name", "Value": f"canyonos-{launch_id[:8]}"},
                     {"Key": "CreatedBy", "Value": "EC2 Fast Launch"},
                 ],
             },
@@ -224,34 +193,23 @@ def provision_replica(agent_spec, replica_index, next_host_port, launch_id):
     if cfg.get("iam_profile_name"):
         request["IamInstanceProfile"] = {"Name": cfg["iam_profile_name"]}
 
-    market_type = agent_spec.get("market_type", "on-demand")
+    market_type = machine_spec.get("market_type", "on-demand")
     # AWS has no "on-demand" MarketType; omitting InstanceMarketOptions is how on-demand is requested.
     if market_type != "on-demand":
         request["InstanceMarketOptions"] = {"MarketType": market_type}
 
     response = client.run_instances(**request)
-    machine_id = response["Instances"][0]["InstanceId"]
-    redis_port = agent_spec.get(
-        "redis_port", _controller.config.get("redis", {}).get("port", 6379)
-    )
-    return {
-        "container_name": f"{container_name(agent_name, replica_index)}--{machine_id}",
-        "redis_host": "host.docker.internal",
-        "redis_port": redis_port,
-    }
+    return {"machine_id": response["Instances"][0]["InstanceId"]}
 
 
-def bootstrap_replica(provisioned, agent_spec, replica_index, replica_id):
-    """Wait for the new EC2 host to boot, start the agent container on it, and return
-    its record."""
+def wait_for_machine(machine):
+    """Wait until the new EC2 machine is running, has a public IP and answers SSH, and
+    return its addresses, its SSH user and how long its container gets to start."""
     import boto3
     from botocore.exceptions import WaiterError
 
     cfg = _ec2_config()
-    container = provisioned["container_name"]
-    redis_host = provisioned["redis_host"]
-    redis_port = provisioned["redis_port"]
-    machine_id = container.rsplit("--", 1)[1]
+    machine_id = machine["machine_id"]
     client = boto3.client("ec2", region_name=cfg["region"])
     try:
         client.get_waiter("instance_running").wait(InstanceIds=[machine_id])
@@ -267,77 +225,25 @@ def bootstrap_replica(provisioned, agent_spec, replica_index, replica_id):
         ) from e
 
     deadline = time.time() + cfg.get("public_ip_timeout", 120)
-    machine = None
+    described = None
     while time.time() < deadline:
         response = client.describe_instances(InstanceIds=[machine_id])
         for reservation in response.get("Reservations", []):
             for candidate in reservation.get("Instances", []):
                 if candidate.get("InstanceId") == machine_id:
-                    machine = candidate
+                    described = candidate
                     break
-            if machine:
+            if described:
                 break
-        if machine and machine.get("PublicIpAddress"):
+        if described and described.get("PublicIpAddress"):
             break
         time.sleep(2)
 
-    if not (machine and machine.get("PublicIpAddress")):
+    if not (described and described.get("PublicIpAddress")):
         raise RuntimeError(f"EC2 machine {machine_id} never got a public IP address.")
     # The control plane reaches the machine over the private IP; the public IP is only recorded.
-    private_host = machine["PrivateIpAddress"]
-    public_host = machine["PublicIpAddress"]
-
-    _bootstrap_replica(
-        private_host,
-        agent_spec,
-        replica_index,
-        cfg,
-        redis_host=redis_host,
-        redis_port=redis_port,
-        replica_id=replica_id,
-    )
-    health_port = (
-        agent_spec.get("db_port", 5432)
-        if agent_spec.get("type") == "database"
-        else CONTAINER_PORT
-    )
-    replica = {
-        "agent_name": agent_spec["name"],
-        "provider": "EC2",
-        "replica_index": str(replica_index),
-        "private_host": private_host,
-        "public_host": public_host,
-        "host_port": str(CONTAINER_PORT),
-        "container_port": str(CONTAINER_PORT),
-        "published_address": f"{private_host}:{CONTAINER_PORT}",
-        "address": f"{private_host}:{health_port}",
-        "redis_host": redis_host,
-        "redis_port": str(redis_port),
-        "container_name": container,
-    }
-    if agent_spec.get("type") == "database":
-        db_port = str(agent_spec.get("db_port", 5432))
-        replica["container_port"] = "5432"
-        replica["host_port"] = db_port
-        replica["published_address"] = f"{private_host}:{db_port}"
-    try:
-        _check_controller_health(
-            replica["address"],
-            timeout=cfg.get("controller_health_timeout", 180),
-        )
-    except TimeoutError:
-        # Show the log now: removing the failed launch terminates the host and its log.
-        dump_container_log(replica, "unreachable", log_tail)
-        raise
-    return replica
-
-
-def _bootstrap_replica(
-    private_host, agent_spec, replica_index, cfg, redis_host, redis_port, replica_id
-):
-    """Run the agent container over SSH."""
-    user = cfg.get("ssh_user", DEFAULT_SSH_USER)
-
+    private_host = described["PrivateIpAddress"]
+    user = _controller.config.get("ec2", {}).get("ssh_user", DEFAULT_SSH_USER)
     for _ in range(20):
         result = _controller._run_cmd(["true"], private_host, user=user)
         if result.returncode == 0:
@@ -348,129 +254,28 @@ def _bootstrap_replica(
             f"SSH never became ready on {user}@{private_host}: "
             f"{(result.stderr or '').strip()}"
         )
-
-    redis_container = redis_container_name(private_host)
-    result = _controller._run_cmd(
-        [
-            "docker",
-            "run",
-            "-d",
-            *project_label_args(),
-            "--name",
-            redis_container,
-            *resource_limit_args(),
-            "-p",
-            f"{redis_port}:{redis_port}",
-            "redis:alpine",
-            "redis-server",
-            "--port",
-            str(redis_port),
-        ],
-        private_host,
-        user=user,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to start Redis on {private_host}: {(result.stderr or result.stdout or '').strip()}"
-        )
-    machine_redis = RedisClient(host=private_host, port=int(redis_port))
-
-    _wait_for_redis(machine_redis, private_host, redis_port)
-
-    machine_redis.set(
-        f"controller:{private_host}:{CONTAINER_PORT}:replica_id", replica_id
-    )
-
-    agent_name = agent_spec["name"]
-    image = image_name(agent_name)
-    container = container_name(agent_name, replica_index)
-    if agent_spec.get("type") == "database":
-        port_args = ["-p", f"{agent_spec.get('db_port', 5432)}:5432"]
-    else:
-        port_args = ["-p", f"{CONTAINER_PORT}:{CONTAINER_PORT}"]
-
-    volume_args = []
-    if agent_spec.get("type") == "database":
-        volume_path = agent_spec.get("volume_path")
-        if volume_path:
-            volume_args = ["-v", f"{data_volume_name(agent_name)}:{volume_path}"]
-
-    transfer_image(_controller, image, private_host, user)
-
-    cmd = [
-        "docker",
-        "run",
-        "-d",
-        *project_label_args(),
-        "--restart",
-        "unless-stopped",
-        "--add-host=host.docker.internal:host-gateway",
-        "--name",
-        container,
-        *port_args,
-        *volume_args,
-        *resource_limit_args(
-            agent_spec.get("resources"),
-            apply_defaults=agent_spec.get("type") != "database",
-        ),
-        "-e",
-        f"CANYONOS_REDIS_HOST={redis_host}",
-        "-e",
-        f"CANYONOS_REDIS_PORT={redis_port}",
-        "-e",
-        f"CANYONOS_AGENT_HOST={private_host}",
-        "-e",
-        f"CANYONOS_AGENT_PORT={CONTAINER_PORT}",
-        "-e",
-        f"CANYONOS_POLL_INTERVAL={_controller.config.get('poll_interval', 5)}",
-        # Route the agent's LLM SDK calls through the in-container gateway for telemetry.
-        *llm_gateway_docker_env_args(),
-        "-e",
-        f"CANYONOS_LOGS_ENABLED={str(bool(_controller.config.get('logs', True))).lower()}",
-    ]
-    if agent_spec.get("type") == "database":
-        for key, value in agent_spec.get("env", {}).items():
-            cmd.extend(["-e", f"{key}={value}"])
-
-    # User secrets from `env_file`. Explicit -e flags above still win over
-    # anything in the file.
-    with env_file_args(_controller, private_host, user, is_local=False) as env_args:
-        cmd.extend(env_args)
-        cmd.append(image)
-        result = _controller._run_cmd(cmd, private_host, user=user)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"SSH bootstrap failed on {private_host}: {(result.stderr or result.stdout or '').strip()}"
-        )
+    return {
+        "private_host": private_host,
+        "public_host": described["PublicIpAddress"],
+        "user": user,
+        "container_timeout": cfg.get("controller_health_timeout", 180),
+    }
 
 
-def _check_controller_health(address, timeout):
-    """Wait until the launched container accepts TCP connections."""
-    host, port = address.split(":")
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with socket.create_connection((host, int(port)), timeout=2):
-                return True
-        except OSError:
-            time.sleep(2)
-    raise TimeoutError(f"Replica address never became reachable at {address}.")
-
-
-def terminate_replica(replica):
-    """Terminate the EC2 machine behind a replica's record. If the launch stopped before
-    its container name was saved, the machine is found by its launch id instead. A machine
-    that is already gone is not an error. A recent launch that AWS doesn't list yet
-    raises, so the record is kept and removal is tried again later."""
+def terminate_machine(machine):
+    """Terminate an EC2 machine. If the launch stopped before its machine id was saved,
+    the machine is found by its launch id instead. A machine that is already gone is not
+    an error. A recent launch that AWS doesn't list yet raises, so the record is kept
+    and removal is tried again later."""
     import boto3
     from botocore.exceptions import ClientError
 
     client = boto3.client("ec2", region_name=_ec2_config()["region"])
-    if replica.get("container_name"):
-        machine_ids = [replica["container_name"].rsplit("--", 1)[1]]
+    if machine.get("machine_id"):
+        machine_ids = [machine["machine_id"]]
     else:
         response = client.describe_instances(
-            Filters=[{"Name": "client-token", "Values": [replica["launch_id"]]}]
+            Filters=[{"Name": "client-token", "Values": [machine["launch_id"]]}]
         )
         machine_ids = [
             found["InstanceId"]
@@ -479,11 +284,11 @@ def terminate_replica(replica):
         ]
         if not machine_ids:
             if (
-                time.time() - float(replica["launched_at"])
+                time.time() - float(machine["launched_at"])
                 < LAUNCH_LISTING_GRACE_SECONDS
             ):
                 raise RuntimeError(
-                    f"AWS does not list launch {replica['launch_id']} yet"
+                    f"AWS does not list launch {machine['launch_id']} yet"
                 )
             return
     try:
@@ -492,37 +297,3 @@ def terminate_replica(replica):
         # AWS stops listing a terminated machine after about an hour.
         if e.response["Error"]["Code"] != "InvalidInstanceID.NotFound":
             raise
-
-
-def _container_name(replica):
-    """The name this replica's container answers to on its EC2 host.
-
-    The record's `container_name` is `<container name>--<ec2 machine id>`, since
-    removing the replica means terminating its machine; only the part before the
-    separator was ever passed to `docker run --name`.
-    """
-    container = replica.get("container_name")
-    return container.rsplit("--", 1)[0] if container else None
-
-
-def is_running(replica):
-    """True if the replica's container is running on its EC2 host; an unreachable
-    host counts as not running."""
-    return container_running(
-        _controller,
-        _container_name(replica),
-        replica["private_host"],
-        ssh_user(replica),
-    )
-
-
-def log_tail(replica, lines):
-    """Return the last `lines` lines of the replica container's output, read over SSH.
-    Raises RuntimeError with the reason if they can't be read."""
-    return container_log_tail(
-        _controller,
-        _container_name(replica),
-        replica["private_host"],
-        ssh_user(replica),
-        lines,
-    )

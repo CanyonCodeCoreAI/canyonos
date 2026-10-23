@@ -16,19 +16,29 @@ from canyonos_core.reconciler import state
 from fakes import _FakeRedis
 
 ALPHA_KEY = "agent_instance:Alpha-0"
+MACHINE_KEY = "machine_record:launch-1"
 
 
 class TeardownTests(unittest.TestCase):
     def _controller(self, snapshots):
-        """Return a controller whose `redis.scan_keys` returns the next snapshot of
-        record keys on each call."""
+        """Return a controller whose `redis.scan_keys` reads the next snapshot of record
+        keys on each pass, returning those that match the pattern."""
         controller = GlobalController.__new__(GlobalController)
         controller.running = True
         controller._stopping = False
         controller.redis = _FakeRedis()
         controller.redis_containers = {}
         controller.process_supervisor = MagicMock()
-        controller.redis.scan_keys = MagicMock(side_effect=list(snapshots))
+        passes = iter(snapshots)
+        current = []
+
+        def scan_keys(pattern):
+            nonlocal current
+            if pattern == "agent_instance:*":
+                current = next(passes)
+            return [key for key in current if key.startswith(pattern[:-1])]
+
+        controller.redis.scan_keys = MagicMock(side_effect=scan_keys)
         controller._stop_redis_containers = MagicMock()
         controller._stop_metrics_collectors = MagicMock()
         return controller
@@ -43,6 +53,20 @@ class TeardownTests(unittest.TestCase):
 
         self.assertTrue(state.is_stopping(controller.redis))
         self.assertEqual(controller.redis.lists[state.WAKE_QUEUE_KEY], [state.WAKE_ALL])
+
+    def test_remove_all_replicas_waits_for_the_machines_after_the_replicas(self):
+        controller = self._controller([[ALPHA_KEY, MACHINE_KEY], [MACHINE_KEY], []])
+
+        with patch("time.sleep") as sleep:
+            self.assertTrue(controller._remove_all_replicas(timeout=5))
+
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_machine_metrics_keys_do_not_hold_up_the_stop(self):
+        controller = self._controller([["machine:localhost:metrics"]])
+
+        with patch("time.sleep"):
+            self.assertTrue(controller._remove_all_replicas(timeout=5))
 
     def test_remove_all_replicas_gives_up_after_the_timeout(self):
         controller = self._controller([[ALPHA_KEY]] * 50)

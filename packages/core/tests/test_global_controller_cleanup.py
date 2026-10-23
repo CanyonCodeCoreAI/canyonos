@@ -14,7 +14,6 @@ sys.path.insert(
 )
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.reconciler import providers
 from fakes import _FakeRedis
 import local_controller_pb2
 
@@ -391,10 +390,8 @@ class StaleContainerNameTests(unittest.TestCase):
         controller.config = {}
         controller._set_agent_specs(agents)
         controller.removed = []
-        controller.command_targets = []
 
         def run_cmd(cmd, host, user=None):
-            controller.command_targets.append((host, user))
             if cmd[:2] == ["docker", "inspect"] and running:
                 return subprocess.CompletedProcess(cmd, 0, "true\n", "")
             if cmd[:2] == ["docker", "rm"]:
@@ -402,7 +399,6 @@ class StaleContainerNameTests(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
         controller._run_cmd = run_cmd
-        providers.bind(controller)
         return controller
 
     def test_cleanup_removes_only_redis_and_metrics_containers(self):
@@ -426,37 +422,6 @@ class StaleContainerNameTests(unittest.TestCase):
         controller._remove_stale_containers()
 
         self.assertEqual(controller.removed, [])
-
-    def test_local_cleanup_uses_host_and_user_overrides(self):
-        agents = [
-            {
-                "name": "IntentAgent",
-                "provider": "local",
-                "host": "10.0.0.5",
-                "user": "ubuntu",
-                "replicas": [{"host": "10.0.0.6", "port": 50061}],
-            }
-        ]
-        controller = self._controller(agents)
-
-        controller._remove_stale_containers()
-
-        self.assertEqual(set(controller.command_targets), {("10.0.0.6", "ubuntu")})
-
-    def test_ec2_cleanup_uses_the_ec2_ssh_user_even_when_an_agent_names_one(self):
-        agents = [
-            {"name": "Alpha", "provider": "EC2", "host": "10.0.0.5"},
-            {"name": "Beta", "provider": "EC2", "host": "10.0.0.6", "user": "admin"},
-        ]
-        controller = self._controller(agents)
-        controller.config = {"ec2": {"ssh_user": "ec2-user"}}
-
-        controller._remove_stale_containers()
-
-        self.assertEqual(
-            set(controller.command_targets),
-            {("10.0.0.5", "ec2-user"), ("10.0.0.6", "ec2-user")},
-        )
 
 
 class ShutdownCleanupTests(unittest.TestCase):

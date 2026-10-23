@@ -6,7 +6,7 @@
 One rule for the whole codebase:
   - Internal service ports (the Global Controller, the dashboard's web/API
     containers) preflight-and-hop to the next free port on a conflict.
-  - A user-declared port -- `api_port`, and `redis_port` from
+  - A user-declared port -- `api_port`, and `redis.port` from
     global_controller.yaml -- fails fast, because it is read back statically
     and must not be silently moved.
 

@@ -4,7 +4,7 @@
 """The otel_exporter subprocess must talk to the Redis the GC writes destinations to.
 
 It used to hardcode `RedisClient(host="host.docker.internal")`, taking the default port
-6379 regardless of the deployment's redis_port. On any other port it read no
+6379 regardless of the deployment's `redis.port`. On any other port it read no
 destinations, stayed in flush mode, and deleted every queued span and metric each poll
 -- silently, at INFO -- while the GC wrote to the real one.
 """
@@ -22,15 +22,7 @@ from canyonos_core.controller.global_controller import GlobalController
 
 def _bare_controller(redis_port):
     controller = GlobalController.__new__(GlobalController)
-    controller.config = {}
-    controller.agent_specs = [
-        {
-            "name": "IntentAgent",
-            "provider": "local",
-            "replicas": 1,
-            "redis_port": redis_port,
-        }
-    ]
+    controller.config = {"redis": {"port": redis_port}}
     controller.redis_containers = {}
     controller.redis_ports = {}
     controller.machine_redis = {}

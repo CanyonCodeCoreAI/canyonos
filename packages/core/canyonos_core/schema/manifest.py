@@ -66,7 +66,6 @@ _COMMON_AGENT_KEYS = frozenset(
         "type",
         "provider",
         "replicas",
-        "redis_port",
         "resources",
         "stateful",
         "env",
@@ -166,7 +165,6 @@ class _Agent:
     name: str
     provider: str = providers.DEFAULT
     replicas: int = 1
-    redis_port: int = 6379
     resources: Resources = field(default_factory=Resources)
     stateful: bool = False
     env: dict = field(default_factory=dict)
@@ -364,7 +362,6 @@ def _agent(collector, entries, index):
         "name": name,
         "provider": _provider(collector, node, prefix),
         "replicas": _integer(collector, node, "replicas", prefix, 1, 1),
-        "redis_port": _port(collector, node, "redis_port", prefix, 6379),
         "resources": _resources(collector, node, prefix),
         "stateful": _boolean(collector, node, "stateful", prefix, False),
         "env": _string_mapping(collector, node, "env", prefix),

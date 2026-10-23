@@ -30,7 +30,6 @@ def write_config_specs(agent_specs, redis_client):
                 "resources": json.dumps(resources),
                 "replicas": json.dumps(replicas),
                 "stateful": json.dumps(agent_spec.get("stateful", False)),
-                "redis_port": str(agent_spec.get("redis_port", 6379)),
                 "provider": agent_spec["provider"],
             },
         )

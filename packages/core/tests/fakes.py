@@ -157,19 +157,30 @@ def _replica(agent_name, replica_index, created_at=None, host_port=None):
 class _FakeProvisioner:
     """Records what the reconciler asked for without touching Docker."""
 
-    def __init__(self, replicas=None, raise_for=None, remove_raises=False):
+    def __init__(self, replicas=None, raise_for=None, remove_raises=False, idle=True):
         self.replicas = replicas or {}
         self.raise_for = raise_for
         self.remove_raises = remove_raises
+        # Whether a replica asked to drain reports idle, so removal goes through.
+        self.idle = idle
         self.removed = []
+        self.draining = []
+        self.machine_terminations = 0
         self.ensure_calls = []
         self.ensure_only = []
         self.unfinished_removals = 0
 
-    def remove_replica(self, replica_id):
+    def remove_replica(self, replica_id, drain=True):
         if self.remove_raises:
-            raise RuntimeError("terminate failed")
+            raise RuntimeError("remove failed")
+        if drain and not self.idle:
+            self.draining.append(replica_id)
+            return False
         self.removed.append(replica_id)
+        return True
+
+    def terminate_machines(self):
+        self.machine_terminations += 1
 
     def ensure_replicas(self, agent_specs, only=None):
         self.ensure_calls.append(agent_specs)

@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from canyonos_core.controller.controller_context import ControllerContext
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.reconciler import providers
 from canyonos_core.controller.utils.config_specs import (
     read_config_specs,
     write_config_specs,
@@ -143,15 +142,6 @@ class ReconcilerContextParityTests(unittest.TestCase):
         context.refresh_config()
         self.assertEqual(context.env_file_path, other)
         self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
-
-    def test_a_specs_ssh_user_comes_from_its_provider(self):
-        context = ControllerContext.__new__(ControllerContext)
-        context.config = {"ec2": {"region": "us-east-1"}}
-        providers.bind(context)
-        self.assertEqual(context._ssh_user({"provider": "ec2"}), "ubuntu")
-        self.assertEqual(
-            context._ssh_user({"provider": "local", "user": "deploy"}), "deploy"
-        )
 
 
 class PushFileTests(unittest.TestCase):

@@ -10,22 +10,13 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.reconciler import providers
 
 
 class RedisContainerRollbackTests(unittest.TestCase):
     def test_constructor_failure_removes_an_already_launched_redis_container(self):
         config = {
             "project_id": "test-project",
-            "agents": [
-                {
-                    "name": "First",
-                    "provider": "EC2",
-                    "host": "10.0.0.1",
-                    "user": "runner",
-                    "replicas": 1,
-                }
-            ],
+            "agents": [{"name": "First", "provider": "local", "replicas": 1}],
         }
         calls = []
         failure = RuntimeError("spec write failed")
@@ -60,76 +51,13 @@ class RedisContainerRollbackTests(unittest.TestCase):
 
         self.assertIs(raised.exception, failure)
         self.assertIn(
-            ("10.0.0.1", ["docker", "stop", "canyonos-redis-10-0-0-1"]),
+            ("localhost", ["docker", "stop", "canyonos-redis-localhost"]),
             calls,
         )
         self.assertIn(
-            ("10.0.0.1", ["docker", "rm", "canyonos-redis-10-0-0-1"]),
+            ("localhost", ["docker", "rm", "canyonos-redis-localhost"]),
             calls,
         )
-
-    def test_later_launch_failure_rolls_back_an_earlier_owned_container(self):
-        controller = GlobalController.__new__(GlobalController)
-        controller.agent_specs = [
-            {
-                "name": "First",
-                "provider": "EC2",
-                "host": "10.0.0.1",
-                "replicas": 1,
-            },
-            {
-                "name": "Second",
-                "provider": "EC2",
-                "host": "10.0.0.2",
-                "replicas": 1,
-            },
-        ]
-        controller.config = {}
-        controller.redis_containers = {}
-        controller.redis_ports = {}
-        controller.machine_redis = {}
-        controller.redis = None
-        calls = []
-
-        def fake_run_cmd(cmd, host, user=None):
-            calls.append((host, cmd[:]))
-            if cmd[:2] == ["docker", "inspect"]:
-                return subprocess.CompletedProcess(cmd, 1, "", "not found")
-            if cmd[:2] == ["docker", "run"] and host == "10.0.0.2":
-                return subprocess.CompletedProcess(
-                    cmd, 1, "", "temporary launch failure"
-                )
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-
-        controller._run_cmd = fake_run_cmd
-        providers.bind(controller)
-
-        with (
-            patch(
-                "canyonos_core.controller.global_controller.RedisClient",
-                return_value=MagicMock(),
-            ),
-            patch("canyonos_core.controller.global_controller._wait_for_redis"),
-            patch("canyonos_core.controller.global_controller.load_manifest"),
-        ):
-            with self.assertRaises(SystemExit):
-                controller._launch_redis_containers()
-
-        second_host_runs = [
-            cmd
-            for host, cmd in calls
-            if host == "10.0.0.2" and cmd[:2] == ["docker", "run"]
-        ]
-        self.assertEqual(len(second_host_runs), 1)
-        self.assertIn(
-            ("10.0.0.1", ["docker", "stop", "canyonos-redis-10-0-0-1"]),
-            calls,
-        )
-        self.assertIn(
-            ("10.0.0.1", ["docker", "rm", "canyonos-redis-10-0-0-1"]),
-            calls,
-        )
-        self.assertEqual(controller.redis_containers, {})
 
 
 if __name__ == "__main__":

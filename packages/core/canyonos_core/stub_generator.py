@@ -17,7 +17,6 @@ import subprocess
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
-from canyonos_core.controller.controller_context import _is_local_host
 from canyonos_core.controller.utils.container_names import CONTAINER_PORT
 from canyonos_core.reconciler import providers
 
@@ -52,7 +51,6 @@ PROTOBUF_FLOOR = Requirement(
 UV_IMAGE = "ghcr.io/astral-sh/uv:latest"
 
 IMAGE_PYTHON_VERSION = "3.11"
-DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 
 # Runtime modules copied flat into the context root, which `canyonos validate` checks app files against.
 _AGENT_FLAT_SOURCES = {
@@ -541,22 +539,16 @@ def _copy_files(output_dir, files_to_copy):
 # Bandage: revisit once resources are pooled and agents no longer declare a provider.
 def target_docker_platform(agent_specs):
     """Return the platform `canyonos deploy` builds and pulls every image for:
-    `CANYONOS_DOCKER_PLATFORM` when set, else this Docker daemon's own when every
-    agent runs on this machine, else the portable one EC2 and remote hosts run."""
+    `CANYONOS_DOCKER_PLATFORM` when set, else the one the agents' providers run their
+    machines on, else this Docker daemon's own, since every replica runs here."""
     explicit = os.environ.get("CANYONOS_DOCKER_PLATFORM")
     if explicit:
         return explicit
-    # port_claim_host gives the host an agent runs on, or None if it gets its own machine.
-    if all(
-        _is_local_host(
-            providers.get(
-                agent_spec.get("provider", providers.DEFAULT)
-            ).port_claim_host(agent_spec)
-        )
+    named = {
+        providers.get(agent_spec.get("provider", providers.DEFAULT)).machine_platform()
         for agent_spec in agent_specs
-    ):
-        return _docker_daemon_platform()
-    return DEFAULT_DOCKER_PLATFORM
+    } - {None}
+    return named.pop() if named else _docker_daemon_platform()
 
 
 def _docker_daemon_platform():

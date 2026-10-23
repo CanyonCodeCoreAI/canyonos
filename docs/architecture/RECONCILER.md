@@ -22,7 +22,8 @@ latency and serializes reconciles into one worker, so two cannot race on a slot.
 `replicas` through `_set_replicas`, overwriting whatever Redis holds, so a changed config
 always takes effect. A runtime `_set_replicas` holds only until the next reload or redeploy.
 Each pass removes, then fills. A replica that is no longer wanted drains gracefully
-before it is removed; an unhealthy one is still removed at once.
+before it is removed; a database or an unhealthy one is removed at once. A stop drains
+every replica the same way, then terminates every machine.
 
 The removal rule is on the **index**, not "remove the last N": that makes scale-down
 deterministic and idempotent (5→2 always removes 2, 3, 4) and removes orphans a count-based
@@ -41,10 +42,11 @@ removing index 1 leaves a hole the same pass's fill step provisions into.
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
 | `agents:active` | string (JSON list) | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
 | `agent:{name}:instances` | set | `Provisioner` | both |
-| `agent_instance:{name}-{index}` | hash | `Provisioner`; `draining_at`: Reconciler — `_drain_replica` | both |
+| `agent_instance:{name}-{index}` | hash | `Provisioner`; `draining_at`: `Provisioner.remove_replica` with drain | both |
+| `machine_record:{launch_id}` | hash | `Provisioner`, before `start_machine` | `Provisioner.terminate_machines`, at stop |
 | `routing_table:agents` / `:addresses` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
 | `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness and idle checks |
-| `controller:{host}:{port}:draining` | string | Reconciler — `_drain_replica` | the agent's `LocalController`, each metrics interval |
+| `controller:{host}:{port}:draining` | string | `Provisioner.remove_replica` with drain | the agent's `LocalController`, each metrics interval |
 | `controller:{host}:{port}:status` | string | the agent's `LocalController` | GlobalController only — deliberately not a health signal |
 | `endpoint:address` | hash | GlobalController — `_apply_config`, deleted once a stop empties the fleet | dashboard API |
 
@@ -69,11 +71,12 @@ never import it. The slice provisioning needs is `ControllerContext`, which
 GlobalController subclasses and the reconciler constructs directly; cluster bootstrap
 (cleanup, launching Redis, policies, identity) stays the controller's.
 
-The write side (`provisioner.py`, `providers/`, `routing.py`) lives under `reconciler/`, and
+The write side (`provisioner.py`, `replicas.py`, `providers/`, `routing.py`) lives under `reconciler/`, and
 the record readers are plain functions in `controller_context.py`. The controller uses a
-provider only through `providers.get`, and only to look things up (`ssh_user`, `log_tail`),
-so **only the provisioner ever creates or destroys a replica's container or machine**
-(the Global Controller still runs its own Redis and metrics containers). The provider saves each
+provider only through `providers.get`, and only to look things up (`ssh_user`), and reads a
+failed replica's log with `replicas.log_tail`,
+so **only the provisioner ever creates or removes a replica's container, or starts or terminates its machine**
+(the Global Controller still runs its own Redis and metrics containers). The provisioner saves each
 replica's address in its record (`address`), so the controller reads it there
 instead of importing provisioning code.
 
@@ -93,7 +96,7 @@ only there. `machine_redis_for_replica(replica)` connects on demand from the rec
 `private_host`/`redis_port`. The host-keyed accessor it replaced fell back to `self.redis` on a
 miss, which would have the reconciler read a local key, call a remote replica's metrics
 stale, and remove every remote replica on the first pass. Each process also drops the Redis
-clients of hosts that no configured agent or replica record points to (`remove_unused_redis_clients`):
+clients of machines other than this one that no replica record points to (`remove_unused_redis_clients`):
 the GC on every poll, the provisioner before it publishes routing. Without this, a
 terminated EC2 host stays in the map and every later write to it waits on a dead address.
 
@@ -131,15 +134,16 @@ another, forever. Going down there is no debounce: replacement is cheap, downtim
 flowchart TD
     unwanted["_remove_unwanted<br/>surplus · replacement requested · drain in progress"] --> drain
     gone["_remove_replicas_of_removed_agents<br/>agent removed from config"] --> drain
-    drain{"_drain_replica<br/>one step per pass"} -->|fleet stopping| now["_remove_replica"]
+    stop["_terminate_machines<br/>deployment stopping"] --> drain
+    drain{"_drain_replica<br/>one step per pass"} -->|database| now["_remove_replica"]
     drain -->|not _is_healthy| unhealthy["_remove_replica (unhealthy)"]
-    drain -->|otherwise| mark["HSET agent_instance:{id} draining_at<br/>first pass only"]
+    drain -->|otherwise| mark["remove_replica(drain=True): HSET agent_instance:{id}<br/>draining_at, first pass only"]
     mark --> flag["SET controller:{address}:draining = removal time<br/>on the replica's Redis, every pass"]
     flag --> idle{"_is_idle, or 180 s<br/>since draining_at?"}
     idle -->|no| next(["next pass"])
-    idle -->|yes| drained["_remove_replica (drained)<br/>record deleted, slot free"]
+    idle -->|yes| drained["container removed, record deleted, slot free<br/>machine kept until stop"]
     drained --> refill["ensure_replicas refills the slot if still wanted"]
-    refill --> clear["Local launch: _clear_stale_status deletes<br/>the slot's old :status and :draining keys"]
+    refill --> clear["replicas.launch: _clear_stale_status deletes<br/>the slot's old :status and :draining keys"]
 ```
 
 ### The draining replica
@@ -204,8 +208,10 @@ what removes replicas), then `clear_stopping()` (or the live reconciler refills)
 anything is launched, so a launch that crashes partway through can always be found again.
 The record is marked finished only at the very end, and the rest of the system ignores the
 replica until then. Every pass, the reconciler removes launches that never finished: first
-the container or machine, then the record. If that removal fails, the record stays and the
-slot is not refilled, so a half-started replica is never forgotten and left running.
+the container, then the record. If that removal fails, the record stays and the slot is not
+refilled, so a half-started replica is never forgotten and left running. Machines have their
+own records, saved before they start, and are terminated only at stop, once every replica
+record is gone.
 
 Nothing else sweeps at startup, deliberately: the first full `_reconcile()` removes a leftover
 record whose container is gone (probe fails, `created_at` is old so no grace) and refills

@@ -17,7 +17,7 @@ import yaml
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.reconciler import reconciler as reconciler_module, state
+from canyonos_core.reconciler import state
 from canyonos_core.reconciler.reconciler import Reconciler
 from fakes import _bare_reconciler, _FakeProvisioner, _FakeRedis, _replica
 
@@ -339,19 +339,15 @@ class ReconcileTests(unittest.TestCase):
     def test_surplus_replicas_start_draining_and_the_kept_one_is_left_alone(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
-        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", i) for i in range(3)]})
+        manager = _FakeProvisioner(
+            {"Alpha": [_replica("Alpha", i) for i in range(3)]}, idle=False
+        )
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         reconciler._reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, [])
-        self.assertNotIn("draining_at", redis.hgetall("agent_instance:Alpha-0"))
-        self.assertIsNone(redis.get("controller:canyonos-alpha-0:50051:draining"))
-        for index in (1, 2):
-            self.assertIn("draining_at", redis.hgetall(f"agent_instance:Alpha-{index}"))
-            self.assertIsNotNone(
-                redis.get(f"controller:canyonos-alpha-{index}:50051:draining")
-            )
+        self.assertEqual(manager.draining, ["Alpha-1", "Alpha-2"])
 
     def test_a_pass_provisions_specs_for_every_configured_agent(self):
         """A single-spec call would drop every other agent from the routing table."""
@@ -463,14 +459,15 @@ class ReconcileTests(unittest.TestCase):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 2)
         state.request_replace(redis, "Alpha-1")
-        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", i) for i in range(2)]})
+        manager = _FakeProvisioner(
+            {"Alpha": [_replica("Alpha", i) for i in range(2)]}, idle=False
+        )
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        with patch.object(Reconciler, "_is_idle", return_value=False):
-            reconciler._reconcile(["Alpha"])
+        reconciler._reconcile(["Alpha"])
         self.assertEqual(state.replace_requests(redis, "Alpha"), {"Alpha-1"})
-        with patch.object(Reconciler, "_is_idle", return_value=True):
-            reconciler._reconcile(["Alpha"])
+        manager.idle = True
+        reconciler._reconcile(["Alpha"])
 
         self.assertEqual(manager.removed, ["Alpha-1"])
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
@@ -484,10 +481,7 @@ class ReconcileTests(unittest.TestCase):
         )
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
-        with (
-            patch.object(Reconciler, "_is_idle", return_value=True),
-            self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"),
-        ):
+        with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
             reconciler._reconcile(["Alpha"])
             reconciler._reconcile(["Alpha"])
 
@@ -508,19 +502,19 @@ class ReconcileTests(unittest.TestCase):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
         manager = _FakeProvisioner(
-            {"Alpha": [_replica("Alpha", 0)], "Gone": [_replica("Gone", 0)]}
+            {"Alpha": [_replica("Alpha", 0)], "Gone": [_replica("Gone", 0)]},
+            idle=False,
         )
         context = _fake_context(redis, agent_specs=[{**ALPHA_SPEC, "replicas": 1}])
         reconciler = self._healthy(_bare_reconciler(context, manager))
 
         reconciler._reconcile(["Alpha"])
-        self.assertEqual(manager.removed, [])
+        self.assertEqual(manager.draining, [])
 
-        with patch.object(Reconciler, "_is_idle", return_value=False):
-            reconciler._reconcile()
-        self.assertEqual(manager.removed, [])
-        with patch.object(Reconciler, "_is_idle", return_value=True):
-            reconciler._reconcile()
+        reconciler._reconcile()
+        self.assertEqual((manager.draining, manager.removed), (["Gone-0"], []))
+        manager.idle = True
+        reconciler._reconcile()
         self.assertEqual(manager.removed, ["Gone-0"])
 
     def test_full_pass_keeps_going_when_one_agent_raises(self):
@@ -537,90 +531,46 @@ class ReconcileTests(unittest.TestCase):
 
 
 class ReplicaDrainTests(unittest.TestCase):
+    """Which way the reconciler removes a replica; the drain itself is the provisioner's."""
+
     def setUp(self):
-        self.redis = _FakeRedis()
-        self.manager = _FakeProvisioner()
-        self.reconciler = _bare_reconciler(_fake_context(self.redis), self.manager)
+        self.manager = _FakeProvisioner(idle=False)
+        self.reconciler = _bare_reconciler(_fake_context(_FakeRedis()), self.manager)
         self.replica = _replica("Alpha", 1)
-        self.replica_id = "Alpha-1"
-        self.redis.hset_multiple(f"agent_instance:{self.replica_id}", self.replica)
-        self.redis.sadd("agent:Alpha:instances", self.replica_id)
         patcher = patch.object(Reconciler, "_is_healthy", return_value=True)
         self.is_healthy = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _drain(self, replica):
-        return self.reconciler._drain_replica(
-            self.replica_id, replica, "surplus", False
-        )
+    def _drain(self):
+        return self.reconciler._drain_replica("Alpha-1", self.replica, "surplus")
 
-    def _saved(self):
-        return self.redis.hgetall(f"agent_instance:{self.replica_id}")
-
-    def test_drain_marks_the_record_and_tells_the_replica_to_take_no_new_work(self):
-        with patch.object(Reconciler, "_is_idle", return_value=False):
-            self.assertFalse(self._drain(self.replica))
-
-        saved = self._saved()
-        # The flag holds the removal time, so the replica can fail leftovers before it.
+    def test_a_healthy_replica_is_removed_only_once_its_drain_finishes(self):
+        self.assertFalse(self._drain())
         self.assertEqual(
-            self.redis.get(f"controller:{self.replica['address']}:draining"),
-            str(float(saved["draining_at"]) + reconciler_module.DRAIN_TIMEOUT_SECONDS),
+            (self.manager.draining, self.manager.removed), (["Alpha-1"], [])
         )
-        self.assertEqual(self.manager.removed, [])
 
-    def test_drain_removes_the_replica_once_it_reports_idle(self):
-        with patch.object(Reconciler, "_is_idle", return_value=True):
-            self.assertTrue(self._drain({**self.replica, "draining_at": "1"}))
-        self.assertEqual(self.manager.removed, [self.replica_id])
+        self.manager.idle = True
+        self.assertTrue(self._drain())
+        self.assertEqual(self.manager.removed, ["Alpha-1"])
 
-    def test_drain_timeout_removes_a_replica_that_never_becomes_idle(self):
-        replica = {
-            **self.replica,
-            "draining_at": str(
-                time.time() - reconciler_module.DRAIN_TIMEOUT_SECONDS - 1
-            ),
-        }
-        with patch.object(Reconciler, "_is_idle", return_value=False):
-            self.assertTrue(self._drain(replica))
-        self.assertEqual(self.manager.removed, [self.replica_id])
-
-    def test_a_draining_replica_that_stops_answering_is_removed_at_once(self):
+    def test_a_replica_that_stops_answering_is_removed_at_once(self):
         self.is_healthy.return_value = False
 
-        self.assertTrue(self._drain({**self.replica, "draining_at": "1"}))
-        self.assertEqual(self.manager.removed, [self.replica_id])
-
-    def test_a_stopping_fleet_removes_at_once(self):
-        self.assertTrue(
-            self.reconciler._drain_replica(
-                self.replica_id, self.replica, "fleet stopping", True
-            )
+        self.assertTrue(self._drain())
+        self.assertEqual(
+            (self.manager.draining, self.manager.removed), ([], ["Alpha-1"])
         )
-        self.assertEqual(self.manager.removed, [self.replica_id])
 
-    def test_idle_needs_the_replica_to_report_draining_with_nothing_left(self):
-        key = f"controller:{self.replica['address']}:metrics"
-        idle = {
-            "draining": "1",
-            "queue_length": "0",
-            "open_requests": "0",
-            "pending_requests": "0",
-            "requests_served": "5",
-            "requests_completed": "5",
+    def test_a_database_is_removed_at_once_since_it_cannot_report_idle(self):
+        self.reconciler.context.agent_specs_by_name = {
+            "Alpha": {"name": "Alpha", "type": "database"}
         }
-        cases = [
-            ("has not seen the flag yet", {"draining": "0"}, False),
-            ("work queued", {"queue_length": "1"}, False),
-            ("work running", {"requests_completed": "4"}, False),
-            ("a bound request still open", {"open_requests": "1"}, False),
-            ("a request still to send on", {"pending_requests": "1"}, False),
-            ("idle", {}, True),
-        ]
-        for name, change, expected in cases:
-            with self.subTest(name):
-                self.redis.hset_multiple(key, {**idle, **change})
-                self.assertEqual(self.reconciler._is_idle(self.replica), expected)
+
+        self.assertTrue(self._drain())
+        self.assertEqual(
+            (self.manager.draining, self.manager.removed), ([], ["Alpha-1"])
+        )
 
 
 class ConnectionProbeTests(unittest.TestCase):
@@ -746,6 +696,20 @@ class StopReconcileTests(unittest.TestCase):
         self.assertEqual(manager.removed, ["Alpha-0", "Alpha-1", "Alpha-2"])
         # desired_agent_specs falls back to the configured count, so a fill would undo it.
         self.assertEqual(manager.ensure_calls, [])
+        self.assertEqual(manager.machine_terminations, 1)
+
+    def test_stopping_drains_every_replica_instead_of_removing_it_at_once(self):
+        redis = _FakeRedis()
+        state.set_stopping(redis)
+        manager = _FakeProvisioner(
+            {"Alpha": [_replica("Alpha", i) for i in range(2)]}, idle=False
+        )
+
+        self._reconciler(redis, manager)._reconcile()
+
+        self.assertEqual(
+            (manager.draining, manager.removed), (["Alpha-0", "Alpha-1"], [])
+        )
 
     def test_full_pass_while_stopping_removes_every_agent_and_fills_nothing(self):
         redis = _FakeRedis()
@@ -782,6 +746,7 @@ class StopReconcileTests(unittest.TestCase):
 
         self.assertEqual(manager.removed, [])
         self.assertEqual(len(manager.ensure_calls), 1)
+        self.assertEqual(manager.machine_terminations, 0)
 
 
 if __name__ == "__main__":

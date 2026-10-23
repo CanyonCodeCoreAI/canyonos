@@ -6,6 +6,7 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -124,15 +125,10 @@ class EC2ProviderTests(unittest.TestCase):
         with self.assertRaises(ClientError):
             self._import_key_pair()
 
-    def test_provision_uses_ec2_client(self):
-        spec = {
-            "name": "Tagged",
-            "provider": "EC2",
-            "machine_type": "t3.small",
-            "redis_port": 6390,
-        }
+    def test_start_machine_uses_ec2_client(self):
+        spec = {"machine_type": "t3.small"}
 
-        provisioned = ec2_provider.provision_replica(spec, 2, None, "launch-1")
+        machine = ec2_provider.start_machine(spec, "launch-1")
 
         request = self.fake_client.run_requests[0]
         self.assertEqual(request["ImageId"], "ami-123456")
@@ -158,17 +154,17 @@ class EC2ProviderTests(unittest.TestCase):
         )
         self.assertEqual(
             request["TagSpecifications"][0]["Tags"][0],
-            {"Key": "Name", "Value": "canyonos-Tagged-2"},
+            {"Key": "Name", "Value": "canyonos-launch-1"},
         )
         self.assertEqual(request["ClientToken"], "launch-1")
         self.assertEqual(self.fake_client.waiter.calls, [])
-        self.assertEqual(provisioned["container_name"], "canyonos-tagged-2--i-test1")
+        self.assertEqual(machine, {"machine_id": "i-test1"})
         self.assertEqual(
             self.fake_client.client_calls,
             [{"service_name": "ec2", "region_name": "us-east-1"}],
         )
 
-    def test_provision_requests_spot_market_type(self):
+    def test_start_machine_requests_spot_market_type(self):
         spec = {
             "name": "Spot",
             "provider": "EC2",
@@ -176,91 +172,70 @@ class EC2ProviderTests(unittest.TestCase):
             "market_type": "spot",
         }
 
-        ec2_provider.provision_replica(spec, 0, None, "launch-1")
+        ec2_provider.start_machine(spec, "launch-1")
 
         self.assertEqual(
             self.fake_client.run_requests[0]["InstanceMarketOptions"],
             {"MarketType": "spot"},
         )
 
-    def test_bootstrap_fails_when_no_public_ip_arrives(self):
+    def test_wait_fails_when_no_public_ip_arrives(self):
         self.fake_client.public_ip = None
         self.controller.config["ec2"]["public_ip_timeout"] = 0
         spec = {"name": "Tagged", "provider": "EC2", "machine_type": "t3.small"}
-        provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
+        machine = ec2_provider.start_machine(spec, "launch-1")
 
         with self.assertRaisesRegex(RuntimeError, "never got a public IP"):
-            ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
+            ec2_provider.wait_for_machine(machine)
 
-    def test_provision_attaches_iam_profile_when_configured(self):
+    def test_start_machine_attaches_iam_profile_when_configured(self):
         self.controller.config["ec2"]["iam_profile_name"] = "my-custom-profile"
         spec = {"name": "Tagged", "provider": "EC2", "machine_type": "t3.small"}
 
-        ec2_provider.provision_replica(spec, 0, None, "launch-1")
+        ec2_provider.start_machine(spec, "launch-1")
 
         request = self.fake_client.run_requests[0]
         self.assertEqual(request["IamInstanceProfile"], {"Name": "my-custom-profile"})
 
-    def test_provision_and_bootstrap_replica_return_replica_record(self):
-        spec = {
-            "name": "Tagged",
-            "provider": "EC2",
-            "machine_type": "t3.small",
-            "redis_port": 6390,
-        }
+    def test_wait_for_machine_returns_its_addresses_user_and_container_timeout(self):
+        spec = {"name": "Tagged", "provider": "EC2", "machine_type": "t3.small"}
+        machine = ec2_provider.start_machine(spec, "launch-1")
 
-        with (
-            patch.object(ec2_provider, "_bootstrap_replica"),
-            patch.object(ec2_provider, "_check_controller_health", return_value=True),
-        ):
-            provisioned = ec2_provider.provision_replica(spec, 2, None, "launch-1")
-            replica = ec2_provider.bootstrap_replica(provisioned, spec, 2, "agent-id-2")
+        waited = ec2_provider.wait_for_machine(machine)
 
-        self.assertEqual(replica["private_host"], "10.0.0.30")
-        self.assertEqual(replica["public_host"], "54.10.20.30")
-        self.assertEqual(replica["published_address"], "10.0.0.30:50051")
-        self.assertEqual(replica["address"], "10.0.0.30:50051")
-        self.assertEqual(replica["redis_host"], "host.docker.internal")
-        self.assertEqual(replica["redis_port"], "6390")
-        self.assertIn("--i-test1", replica["container_name"])
+        self.assertEqual(
+            waited,
+            {
+                "private_host": "10.0.0.30",
+                "public_host": "54.10.20.30",
+                "user": "ubuntu",
+                "container_timeout": 180,
+            },
+        )
+        self.assertEqual(self.fake_client.waiter.calls, [["i-test1"]])
+        self.controller._run_cmd.assert_called_once_with(
+            ["true"], "10.0.0.30", user="ubuntu"
+        )
 
-    def test_a_database_is_routed_on_its_published_db_port(self):
-        spec = {
-            "name": "Pg",
-            "provider": "EC2",
-            "machine_type": "t3.small",
-            "type": "database",
-            "db_port": 5433,
-        }
-
-        with (
-            patch.object(ec2_provider, "_bootstrap_replica"),
-            patch.object(ec2_provider, "_check_controller_health", return_value=True),
-        ):
-            provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
-            replica = ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
-
-        self.assertEqual(replica["host_port"], "5433")
-        self.assertEqual(replica["address"], "10.0.0.30:5433")
-
-    def test_a_failed_bootstrap_leaves_the_machine_for_the_provisioner(self):
+    def test_a_machine_that_never_answers_ssh_is_left_for_the_provisioner(self):
         """The provisioner terminates it from the saved record, so it is never done twice."""
+        self.controller._run_cmd.return_value = SimpleNamespace(
+            returncode=255, stderr="Connection refused", stdout=""
+        )
         spec = {"name": "Broken", "provider": "EC2", "machine_type": "t3.small"}
-        provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
+        machine = ec2_provider.start_machine(spec, "launch-1")
 
         with (
-            patch.object(
-                ec2_provider, "_bootstrap_replica", side_effect=RuntimeError("boom")
-            ),
-            self.assertRaisesRegex(RuntimeError, "boom"),
+            patch.object(ec2_provider.time, "sleep"),
+            self.assertRaisesRegex(TimeoutError, "SSH never became ready"),
         ):
-            ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
+            ec2_provider.wait_for_machine(machine)
 
         self.assertEqual(self.fake_client.terminate_requests, [])
 
     def test_a_machine_that_never_runs_says_why(self):
         spec = {"name": "Broken", "provider": "EC2", "machine_type": "t3.small"}
-        provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
+        machine = ec2_provider.start_machine(spec, "launch-1")
         self.fake_client.waiter.wait = MagicMock(
             side_effect=WaiterError(
                 "InstanceRunning",
@@ -276,7 +251,7 @@ class EC2ProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError, "i-test1 never reached running: spot reclaimed"
         ):
-            ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
+            ec2_provider.wait_for_machine(machine)
 
     def test_a_config_without_an_ec2_section_says_so(self):
         """Records can outlive the config that made them, e.g. across a restart."""
@@ -286,79 +261,27 @@ class EC2ProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError, "/app/global_controller.yaml has no ec2: section"
         ):
-            ec2_provider.terminate_replica(
-                {"container_name": "canyonos-tagged-0--i-test1"}
-            )
+            ec2_provider.terminate_machine({"machine_id": "i-test1"})
 
-    def test_bootstrap_uses_ssh_user(self):
-        spec = {"name": "Tagged", "provider": "EC2", "redis_port": 6390}
-        with (
-            patch.object(ec2_provider.time, "sleep"),
-            patch.object(
-                ec2_provider.subprocess,
-                "run",
-                return_value=SimpleNamespace(returncode=0, stderr="", stdout=""),
-            ),
-            patch.object(
-                ec2_provider, "RedisClient", return_value=MagicMock()
-            ) as redis_client,
-        ):
-            ec2_provider._bootstrap_replica(
-                "10.0.0.30",
-                spec,
-                2,
-                self.controller.config["ec2"],
-                redis_host="10.0.0.30",
-                redis_port=6390,
-                replica_id="agent-id-2",
-            )
+    def test_terminate_machine_terminates_by_machine_id(self):
+        ec2_provider.start_machine({"name": "A", "machine_type": "t3.small"}, "l-1")
 
-        self.assertTrue(self.controller._run_cmd.called)
-        for call in self.controller._run_cmd.call_args_list:
-            self.assertEqual(call.args[1], "10.0.0.30")
-            self.assertEqual(call.kwargs["user"], "ubuntu")
-        redis_client.assert_called_once_with(host="10.0.0.30", port=6390)
-        agent_cmd = self.controller._run_cmd.call_args_list[-1].args[0]
-        self.assertIn("CANYONOS_AGENT_HOST=10.0.0.30", agent_cmd)
-        # SSH wait + Redis container + agent container
-        self.assertEqual(self.controller._run_cmd.call_count, 3)
-        self.assertEqual(
-            self.controller._run_cmd.call_args_list[-1].args[0][0], "docker"
-        )
-        self.assertNotIn(
-            "-it",
-            self.controller._run_cmd.call_args_list[-1].args[0],
-            "non-interactive agent containers must be created with stdin closed",
-        )
+        ec2_provider.terminate_machine({"machine_id": "i-test1"})
+        self.assertEqual(self.fake_client.terminate_requests, [["i-test1"]])
 
-    def test_bootstrap_passes_logs_enabled_env_var_with_its_flag(self):
-        """CANYONOS_LOGS_ENABLED must be preceded by its own '-e' -- a bare
-        'KEY=value' string with no flag is treated by `docker run` as the IMAGE
-        positional argument, breaking the launch entirely."""
-        self.controller.config["logs"] = True
-        spec = {"name": "Tagged", "provider": "EC2", "redis_port": 6390}
-        with (
-            patch.object(ec2_provider.time, "sleep"),
-            patch.object(
-                ec2_provider.subprocess,
-                "run",
-                return_value=SimpleNamespace(returncode=0, stderr="", stdout=""),
-            ),
-            patch.object(ec2_provider, "RedisClient", return_value=MagicMock()),
-        ):
-            ec2_provider._bootstrap_replica(
-                "10.0.0.30",
-                spec,
-                2,
-                self.controller.config["ec2"],
-                redis_host="10.0.0.30",
-                redis_port=6390,
-                replica_id="agent-id-2",
-            )
+    def test_an_unfinished_launch_is_found_by_its_launch_id(self):
+        """A launch that died before its machine id was saved still gets terminated."""
+        ec2_provider.start_machine({"name": "A", "machine_type": "t3.small"}, "l-1")
+        record = {"launch_id": "l-1", "launched_at": str(time.time())}
 
-        cmd = self.controller._run_cmd.call_args_list[-1].args[0]
-        index = cmd.index("CANYONOS_LOGS_ENABLED=true")
-        self.assertEqual(cmd[index - 1], "-e")
+        ec2_provider.terminate_machine(record)
+        self.assertEqual(self.fake_client.terminate_requests, [["i-test1"]])
+
+    def test_a_recent_launch_aws_does_not_list_yet_is_retried(self):
+        record = {"launch_id": "l-1", "launched_at": str(time.time())}
+
+        with self.assertRaisesRegex(RuntimeError, "AWS does not list launch l-1 yet"):
+            ec2_provider.terminate_machine(record)
 
     def test_terminating_a_machine_aws_no_longer_knows_succeeds(self):
         self.fake_client.terminate_instances = MagicMock(
@@ -368,14 +291,7 @@ class EC2ProviderTests(unittest.TestCase):
             )
         )
 
-        ec2_provider.terminate_replica({"container_name": "canyonos-tagged-0--i-test1"})
-
-    def test_health_check_error_message_mentions_the_replica_address(self):
-        with patch.object(ec2_provider.time, "time", side_effect=[0, 999]):
-            with self.assertRaisesRegex(
-                TimeoutError, "Replica address never became reachable"
-            ):
-                ec2_provider._check_controller_health("10.0.0.30:50051", timeout=1)
+        ec2_provider.terminate_machine({"machine_id": "i-test1"})
 
 
 if __name__ == "__main__":

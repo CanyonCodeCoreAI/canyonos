@@ -85,5 +85,5 @@ lists the project's containers. Run `canyonos quit` to remove them.
 | Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
 | `canyonos clean` deleted `.car/app` and `.car/config` | That is what it does: it removes the whole `.car` and the images of the agents in `global_controller.yaml` |
 | Containers remain after `canyonos clean` | `clean` never touches containers. Use `canyonos stop` or `canyonos quit` |
-| EC2 machines remain after `canyonos stop` | The stop waited 30 seconds and moved on. See [EC2 deployment](EC2.md) |
+| EC2 machines remain after `canyonos stop` | The stop waited 4 minutes and moved on. See [EC2 deployment](EC2.md) |
 | Images remain after `canyonos clean` | Docker was unreachable, the images live on a different Docker context than the one the deploy used, or the agent was removed from `global_controller.yaml` before `clean` ran |

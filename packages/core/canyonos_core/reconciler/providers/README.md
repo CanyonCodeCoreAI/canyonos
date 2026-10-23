@@ -29,22 +29,24 @@ Every provider module implements:
 | Function | Purpose | Called | Must |
 | --- | --- | --- | --- |
 | `preflight()` | Stops a deploy this machine can't run before anything is launched | Once per provider the agents use, by `canyonos deploy` before the controller starts | Raise if this machine can't deploy with this provider. No `_controller` is bound |
-| `port_claim_host(agent_spec)` | Keeps replicas that share a host off each other's ports | Before each launch | Return the host to claim a free port on, or `None` if the provider picks its own ports |
-| `provision_replica(agent_spec, replica_index, next_host_port, launch_id)` | Gets `container_name` saved before the slow startup, so a launch that dies partway can still be found and removed | To start a launch | Create what the replica runs on and, without waiting, return a dict with at least `container_name`; the dict is passed to `bootstrap_replica`. Make anything it creates findable by `launch_id` (EC2 sends it as the `ClientToken`) |
-| `bootstrap_replica(provisioned, agent_spec, replica_index, replica_id)` | Turns what was created into a running replica the controllers can route to | Right after | Wait for it, start the container, return the replica's record. On failure, just raise |
-| `terminate_replica(replica)` | Frees what a replica used, half-finished launches included, so nothing is left running or billing | On removal, and for any launch that never finished | Remove it by `container_name`, or by `launch_id` (saved with `launched_at`) if none was saved. Already gone is not an error; raising keeps the record for the next pass |
-| `is_running(replica)` | Decides whether a redeploy keeps an existing replica or replaces it | Before reusing a replica that already has a record | Return whether the replica is running. An unreachable host counts as not running |
-| `log_tail(replica, lines)` | Shows in the deploy log why a replica failed to start, without SSHing in | When a replica fails to become healthy at deploy | Return its last `lines` lines of output as a list of strings. Raise `RuntimeError` with the reason if they can't be read |
-| `ssh_user(entry)` | Lets shared code SSH into any provider's hosts without knowing how that provider logs in | Before SSH to an agent's or replica's host | The SSH user for an agent spec or replica record |
-| `hourly_cost(agent_spec)` | Prices compute: a call's cost is this rate times how long the call ran | Before each launch | Return the USD per hour one replica of the agent costs; it prices the replica's calls |
+| `machine_platform()` | Builds images for the platform the machines run | Once per deploy, by `canyonos deploy` | Return the Docker platform, e.g. `linux/amd64`, or `None` for this machine's own |
+| `start_machine(machine_spec, launch_id)` | Gets the machine saved before the slow startup, so a launch that dies partway can still be found and freed | To start a launch | Start the machine without waiting and return a dict that is saved to its machine record right away. Make it findable by `launch_id` (EC2 sends it as the `ClientToken`) |
+| `wait_for_machine(machine)` | Gets the machine ready for `replicas.launch` to start the container on | Right after | Wait until it can run containers and return `private_host`, `public_host`, and optionally `user` and `container_timeout`. On failure, just raise |
+| `terminate_machine(machine)` | Frees a machine, half-finished launches included, so nothing is left running or billing | At stop, once every replica is removed | Free it by `machine_id`, or by `launch_id` (saved with `launched_at`). Already gone is not an error; raising keeps the record for the next pass |
+| `hourly_cost(machine)` | Prices compute: a call's cost is this rate times how long the call ran | Before each launch, with the machine spec | Return the USD per hour of the machine |
 
-The record `bootstrap_replica` returns has `agent_name`, `provider`, `replica_index`,
-`private_host`, `public_host`, `host_port`, `container_port`, `published_address`,
-`address`, `redis_host`, `redis_port` and `container_name`, and optionally `user`.
+`machine_spec` is the agent's keys from the provider's `AGENT_KEYS`.
+
+A replica's record has `agent_name`, `provider`, `replica_index`, `private_host`,
+`public_host`, `host_port`, `container_port`, `published_address`, `address`, `redis_host`,
+`redis_port`, `container_name` and `launch_id`, and optionally `user`. Its machine's record,
+`machine_record:<launch_id>`, holds what `start_machine` and `wait_for_machine` return.
+`replicas.launch` starts the container on the machine and builds the replica's record.
+Removing a replica drains it and removes only its container; machines go at stop.
 
 `published_address` is the replica's published `host:port`. `address` is the `host:port`
 other agents and the controllers reach it on: for an agent or the endpoint, the address the
-provider gives the container as `CANYONOS_AGENT_HOST` and `CANYONOS_AGENT_PORT`; for a
+container is given as `CANYONOS_AGENT_HOST` and `CANYONOS_AGENT_PORT`; for a
 database, the port the database listens on. The routing table lists it,
 and the replica's status, metrics and agent id keys in Redis are named after it. A record
 counts as finished once it has `address`.
@@ -72,7 +74,7 @@ add a row to the Providers table.
 
 ## Keep provider code here
 
-This folder owns everything that depends on which provider runs a replica: how it is launched, reached, checked, removed and priced, its SSH user, and its config keys and defaults. The rest of CanyonOS (the provisioner, reconciler, Global Controller, CLI, manifest schema and server) does not know which provider it is talking to, and reaches one only through `providers/__init__.py`.
+This folder owns everything that depends on which provider a replica's machine comes from: how the machine is started, waited for, freed and priced, its SSH user, and its config keys and defaults. Running the container is the same for every provider and lives in `reconciler/replicas.py`. The rest of CanyonOS (the provisioner, reconciler, Global Controller, CLI, manifest schema and server) does not know which provider it is talking to, and reaches one only through `providers/__init__.py`.
 
 When you change provider behaviour:
 

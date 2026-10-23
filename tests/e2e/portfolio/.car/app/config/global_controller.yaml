@@ -10,7 +10,6 @@ agents:
   # window (calls Bedrock via boto3, routed through the CanyonOS LLM proxy). Cheap CPU, one
   # call per request, on the critical path before the fan-out.
   - name: IntentAgent
-    redis_port: 6379
     replicas: 1
     resources:
       cpu: 1
@@ -22,7 +21,6 @@ agents:
   # Stage 0b: price history fetch. Network/IO-bound, cheap CPU. Called by
   # MetricsAgent, one fetch per ticker — high fan-out, so multiple replicas.
   - name: PriceAgent
-    redis_port: 6379
     replicas: 1
     resources:
       cpu: 1
@@ -35,7 +33,6 @@ agents:
   # Stage 1: per-ticker metrics. Cheap CPU, high fan-out (one call per holding).
   # Calls PriceAgent remotely, then computes return/vol/Sharpe/drawdown.
   - name: MetricsAgent
-    redis_port: 6379
     replicas: 1
     resources:
       cpu: 1
@@ -47,7 +44,6 @@ agents:
   # Stage 2: portfolio-level risk aggregation. Single call per request; needs
   # every ticker's metrics (the barrier).
   - name: RiskAgent
-    redis_port: 6379
     replicas: 1
     resources:
       cpu: 1
@@ -59,7 +55,6 @@ agents:
   # Stage 3: LLM briefing via Bedrock. On the critical path, one call per
   # request.
   - name: AdvisorAgent
-    redis_port: 6379
     replicas: 1
     resources:
       cpu: 1
@@ -70,7 +65,6 @@ agents:
 
   # The workflow, exposed as a REST API.
   - name: Workflow
-    redis_port: 6379
     replicas: 1
     entrypoint: agents/workflow.py
     provider: local

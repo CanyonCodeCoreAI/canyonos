@@ -720,8 +720,8 @@ class GenerateStubTests(unittest.TestCase):
 
 
 class TargetDockerPlatformTests(unittest.TestCase):
-    """An explicit platform wins; otherwise images run natively when every agent is
-    on this machine, and portably when any runs on EC2 or a remote host."""
+    """An explicit platform wins; otherwise images are built for the platform the agents'
+    machines run, or for this Docker daemon's when every agent runs here."""
 
     def _platform(self, agents, explicit=None):
         daemon = unittest.mock.Mock(returncode=0, stdout="linux/arm64\n", stderr="")
@@ -745,25 +745,17 @@ class TargetDockerPlatformTests(unittest.TestCase):
 
     def test_agents_on_this_machine_build_for_the_daemons_platform(self):
         platform, run = self._platform(
-            [
-                {"name": "A", "provider": "local"},
-                {"name": "B", "provider": "local", "host": "127.0.0.1"},
-            ]
+            [{"name": "A", "provider": "local"}, {"name": "B", "provider": "local"}]
         )
         self.assertEqual(platform, "linux/arm64")
         run.assert_called_once()
 
-    def test_an_ec2_or_remote_agent_builds_for_the_portable_platform(self):
-        for agent in (
-            {"name": "B", "provider": "EC2"},
-            {"name": "B", "provider": "local", "host": "10.0.0.5"},
-        ):
-            with self.subTest(agent=agent):
-                platform, run = self._platform(
-                    [{"name": "A", "provider": "local"}, agent]
-                )
-                self.assertEqual(platform, stub_generator.DEFAULT_DOCKER_PLATFORM)
-                run.assert_not_called()
+    def test_an_ec2_agent_builds_for_its_machines_platform(self):
+        platform, run = self._platform(
+            [{"name": "A", "provider": "local"}, {"name": "B", "provider": "EC2"}]
+        )
+        self.assertEqual(platform, "linux/amd64")
+        run.assert_not_called()
 
     def test_a_daemon_that_cannot_answer_fails_with_dockers_message(self):
         refused = unittest.mock.Mock(

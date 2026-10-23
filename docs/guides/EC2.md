@@ -94,13 +94,15 @@ Ctrl+C only stops the tail; the deployment keeps running and `canyonos logs`
 reattaches. Ctrl+C while the project is still syncing or starting, or a
 deploy that fails, tears everything down.
 
-`canyonos stop` asks the controller to remove every replica. Every machine it recorded in
-Redis is terminated through the AWS API. The stop waits 30 seconds; whatever
-is still going after that is left for the next start to reconcile.
+`canyonos stop` asks the controller to drain every replica, then terminates every
+machine it recorded in Redis through the AWS API. The stop waits 4 minutes, enough for
+the 180-second drain; whatever is still going after that is left for the next start to
+reconcile.
 
-A machine whose container fails to start is terminated automatically. The
-launch is recorded in Redis before `RunInstances` is called, under a token AWS
-keeps, so a machine that never got a public IP is still found by that token
-and terminated on the next pass. If `canyonos stop` moved on after its 30
-seconds, look for machines tagged `Name=canyonos-<agent>-<replica>` and
+Until then a machine keeps running, and billing, after its replica is gone: when its
+container fails to start, or when its replica is scaled away. A scale-up starts a new
+machine. Each machine is recorded in Redis before `RunInstances` is called, under a token
+AWS keeps, so a machine that never got a public IP is still found by that token and
+terminated at stop. If `canyonos stop` moved on after its 4
+minutes, look for machines tagged `Name=canyonos-<launch id>` and
 `CreatedBy=EC2 Fast Launch` in the region and terminate those specifically.

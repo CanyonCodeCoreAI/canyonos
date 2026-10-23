@@ -39,6 +39,9 @@ def example_environment(manifest_path):
     return {name: f"example-{name.lower()}" for name in names}
 
 
+_DATABASE = {"name": "StateDB", "type": "database", "image": "postgres:16-alpine"}
+
+
 def _agent(**overrides):
     entry = {
         "name": "ExampleAgent",
@@ -230,20 +233,16 @@ class AgentIdentityTests(_ManifestCase):
 
 class PortAndResourceTests(_ManifestCase):
     def test_a_port_outside_the_tcp_range_is_rejected(self):
-        for field, value in (
-            ("redis_port", 65536),
-            ("host_port", 70000),
-            ("host_port", "8000"),
-        ):
-            with self.subTest(field=field, value=value):
-                violation = self.one({"agents": [_agent(**{field: value})]})
-                self.assertEqual(violation.field, f"agents[0].{field}")
+        for value in (0, 70000, "8000"):
+            with self.subTest(value=value):
+                violation = self.one({"agents": [{**_DATABASE, "db_port": value}]})
+                self.assertEqual(violation.field, "agents[0].db_port")
                 self.assertIn("between 1 and 65535", violation.message)
 
     def test_the_highest_port_is_accepted(self):
-        manifest = self.load({"agents": [_agent(redis_port=65535)]})
+        manifest = self.load({"agents": [{**_DATABASE, "db_port": 65535}]})
 
-        self.assertEqual(manifest.agents[0].redis_port, 65535)
+        self.assertEqual(manifest.agents[0].db_port, 65535)
 
     def test_resources_are_positive_numbers(self):
         manifest = self.load({"agents": [_agent(resources={"cpu": 0.5})]})
@@ -483,7 +482,6 @@ class DefaultsTests(_ManifestCase):
         self.assertIsInstance(agent, CodeAgent)
         self.assertEqual(agent.provider, "local")
         self.assertEqual(agent.replicas, 1)
-        self.assertEqual(agent.redis_port, 6379)
         self.assertEqual(agent.resources.cpu, 1)
         self.assertEqual(agent.resources.memory, 512)
         self.assertIsNone(agent.resources.gpu)
@@ -725,15 +723,15 @@ class EnvExpansionTests(_ManifestCase):
     """
 
     def test_an_env_ref_in_a_numeric_field_is_rejected_even_when_it_is_set(self):
-        config = {"agents": [_agent(redis_port="${CANYONOS_TEST_REDIS_PORT}")]}
+        config = {"agents": [{**_DATABASE, "db_port": "${CANYONOS_TEST_DB_PORT}"}]}
 
-        with patch.dict(os.environ, {"CANYONOS_TEST_REDIS_PORT": "6380"}):
+        with patch.dict(os.environ, {"CANYONOS_TEST_DB_PORT": "5433"}):
             violation = self.one(config)
 
-        self.assertEqual(violation.field, "agents[0].redis_port")
+        self.assertEqual(violation.field, "agents[0].db_port")
         self.assertEqual(
             violation.message,
-            "expected an integer between 1 and 65535, got '${CANYONOS_TEST_REDIS_PORT}' "
+            "expected an integer between 1 and 65535, got '${CANYONOS_TEST_DB_PORT}' "
             "(environment references are only supported in string fields)",
         )
 
@@ -790,9 +788,9 @@ class EnvExpansionTests(_ManifestCase):
     def test_an_unset_ref_in_an_optional_field_is_left_literal_as_the_controller_leaves_it(
         self,
     ):
-        config = {"agents": [_agent(host="${CANYONOS_TEST_HOST}")]}
+        config = {"agents": [{**_DATABASE, "volume_path": "${CANYONOS_TEST_VOLUME}"}]}
 
-        environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_HOST"}
+        environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_VOLUME"}
         with patch.dict(os.environ, environ, clear=True):
             self.load(config)
 

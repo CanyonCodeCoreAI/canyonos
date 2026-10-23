@@ -19,11 +19,11 @@ import time
 import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import yaml
 from canyonos_core.controller.controller_context import (
     ControllerContext,
-    _is_local_host,
     _redis_connect_host,
     replica_id,
     replica_id_from_record,
@@ -41,7 +41,8 @@ from canyonos_core.controller.utils.container_names import (
     project_label_args,
     redis_container_name,
 )
-from canyonos_core.reconciler import providers, state
+from canyonos_core.reconciler import state
+from canyonos_core.reconciler.replicas import log_tail
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
@@ -67,9 +68,9 @@ import grpc
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Teardown waits this long for the reconciler to remove every replica; any left
-# over keep Redis up so the next startup can reconcile their records.
-STOP_TIMEOUT_SECONDS = 30
+# Teardown waits this long for the reconciler to drain every replica and terminate every
+# machine: the 180-second drain plus removal; any left over keep Redis up for the next startup.
+STOP_TIMEOUT_SECONDS = 240
 
 LOCAL_NETWORK = "canyonos-local"
 GLOBAL_CONTROLLER_LOG_SOURCE = "Global Controller"
@@ -247,43 +248,22 @@ class GlobalController(ControllerContext):
     # ------------------------------------------------------------------ #
 
     def _remove_stale_containers(self):
-        """Remove stopped Redis and metrics containers left from previous runs."""
+        """Remove this machine's Redis and metrics containers left stopped by previous runs."""
         logger.info("Checking for stale containers from previous runs...")
-
-        # Collect all expected container names and the hosts they run on
-        # { host: (user, [container_names]) }
-        host_containers = {}
-
-        for agent_spec in self.agent_specs:
-            user = self._ssh_user(agent_spec)
-            placements = self._get_replica_placements(agent_spec)
-
-            for host, _port in placements:
-                if host not in host_containers:
-                    host_containers[host] = (user, set())
-                host_containers[host][1].add(redis_container_name(host))
-                host_containers[host][1].add(metrics_container_name(host))
-
-        # Try to remove each one on its respective host
-        for host, (user, container_names) in host_containers.items():
-            for container_name in container_names:
-                try:
-                    inspect = self._run_cmd(
-                        [
-                            "docker",
-                            "inspect",
-                            "-f",
-                            "{{.State.Running}}",
-                            container_name,
-                        ],
-                        host,
-                        user,
-                    )
-                    if inspect.returncode == 0 and inspect.stdout.strip() == "true":
-                        continue  # already running -- a live replica, not stale
-                    self._run_cmd(["docker", "rm", "-f", container_name], host, user)
-                except Exception:
-                    pass  # Container didn't exist, that's fine
+        for container_name in (
+            redis_container_name("localhost"),
+            metrics_container_name("localhost"),
+        ):
+            try:
+                inspect = self._run_cmd(
+                    ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                    "localhost",
+                )
+                if inspect.returncode == 0 and inspect.stdout.strip() == "true":
+                    continue  # already running -- reused, not stale
+                self._run_cmd(["docker", "rm", "-f", container_name], "localhost")
+            except Exception:
+                pass  # Container didn't exist, that's fine
 
         logger.info("Stale container removal complete.")
 
@@ -473,19 +453,18 @@ class GlobalController(ControllerContext):
     #  Redis container management                                         #
     # ------------------------------------------------------------------ #
 
-    def _redis_container_running(self, container_name, host, user):
+    def _redis_container_running(self, container_name, host):
         """Whether a Redis container by this name exists and is running."""
         inspect = self._run_cmd(
             ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
             host,
-            user,
         )
         return inspect.returncode == 0 and inspect.stdout.strip() == "true"
 
-    def _redis_container_serves_port(self, container_name, host, user, redis_port):
+    def _redis_container_serves_port(self, container_name, host, redis_port):
         """Whether the Redis container is serving this port."""
         result = self._run_cmd(
-            ["docker", "port", container_name, f"{redis_port}/tcp"], host, user
+            ["docker", "port", container_name, f"{redis_port}/tcp"], host
         )
         return result.returncode == 0
 
@@ -499,158 +478,122 @@ class GlobalController(ControllerContext):
             return False
 
     def _launch_redis_containers(self):
-        """Launch a Redis container on each unique machine, reusing one that's already healthy."""
-        # Collect unique machines from all replica placements
-        machines = {}
-        for agent_spec in self.agent_specs:
-            user = self._ssh_user(agent_spec)
-            redis_port = int(agent_spec.get("redis_port", 6379))
-            for host, _port in self._get_replica_placements(agent_spec):
-                claimed = machines.setdefault(
-                    host,
-                    {
-                        "user": user,
-                        "redis_port": redis_port,
-                        "agent": agent_spec.get("name"),
-                    },
-                )
-                if claimed["redis_port"] != redis_port:
-                    logger.critical(
-                        "Agents %s and %s are both placed on %s but declare "
-                        "different redis_port values (%d and %d). One Redis runs "
-                        "per host -- give them the same `redis_port` in "
-                        "global_controller.yaml.",
-                        claimed["agent"],
-                        agent_spec.get("name"),
-                        host,
-                        claimed["redis_port"],
-                        redis_port,
-                    )
-                    sys.exit(1)
+        """Launch this machine's Redis container, reusing one that's already healthy.
+        A machine started for replicas gets its Redis when its first replica launches."""
+        host = "localhost"
+        redis_port = self.config.get("redis", {}).get("port", 6379)
+        container_name = redis_container_name(host)
+        connect_host = _redis_connect_host(host)
 
-        for host, machine_cfg in machines.items():
-            redis_port = machine_cfg["redis_port"]
-            user = machine_cfg["user"]
-            container_name = redis_container_name(host)
-            connect_host = _redis_connect_host(host)
+        running = self._redis_container_running(container_name, host)
+        # Without this the ping below could be answered by an unrelated Redis
+        # on that port, and the GC would adopt it as its own.
+        if running and not self._redis_container_serves_port(
+            container_name, host, redis_port
+        ):
+            logger.critical(
+                "Redis container %s on %s is not serving port %d. Remove it "
+                "with `docker rm -f %s`, or change `redis.port` in "
+                "global_controller.yaml.",
+                container_name,
+                host,
+                redis_port,
+                container_name,
+            )
+            sys.exit(1)
 
-            running = self._redis_container_running(container_name, host, user)
-            # Without this the ping below could be answered by an unrelated Redis
-            # on that port, and the GC would adopt it as its own.
-            if running and not self._redis_container_serves_port(
-                container_name, host, user, redis_port
-            ):
+        if running:
+            if not self._redis_responds(host, connect_host, redis_port):
                 logger.critical(
-                    "Redis container %s on %s is not serving port %d. Remove it "
-                    "with `docker rm -f %s`, or change `redis_port` in "
-                    "global_controller.yaml.",
+                    "Redis container %s on %s is running but not answering on "
+                    "port %d. Remove it with `docker rm -f %s` and redeploy.",
                     container_name,
                     host,
                     redis_port,
                     container_name,
                 )
                 sys.exit(1)
+            logger.info(
+                "Reusing existing Redis container %s on %s", container_name, host
+            )
+            self.redis_ports[host] = redis_port
+        else:
+            self._run_cmd(["docker", "network", "create", LOCAL_NETWORK], host)
 
-            if running:
-                if not self._redis_responds(host, connect_host, redis_port):
-                    logger.critical(
-                        "Redis container %s on %s is running but not answering on "
-                        "port %d. Remove it with `docker rm -f %s` and redeploy.",
-                        container_name,
-                        host,
-                        redis_port,
-                        container_name,
-                    )
-                    sys.exit(1)
-                logger.info(
-                    "Reusing existing Redis container %s on %s", container_name, host
-                )
-                self.redis_ports[host] = redis_port
-            else:
-                if _is_local_host(host):
-                    self._run_cmd(
-                        ["docker", "network", "create", LOCAL_NETWORK], host, user
-                    )
-                network_args = (
-                    ["--network", LOCAL_NETWORK] if _is_local_host(host) else []
-                )
-
-                # Redis listens on the declared port inside the container too, so
-                # agents reaching it by container name over the local network use
-                # the same number the host does.
-                cmd = [
-                    "docker",
-                    "run",
-                    "-d",
-                    *project_label_args(),
-                    "--name",
-                    container_name,
-                    *network_args,
-                    *resource_limit_args(),
-                    "-p",
-                    f"{redis_port}:{redis_port}",
-                    "redis:alpine",
-                    "redis-server",
-                    "--port",
-                    str(redis_port),
-                ]
-                try:
-                    result = self._run_cmd(cmd, host, user)
-                except FileNotFoundError:
-                    logger.critical(
-                        "Docker is not installed or not in PATH. Cannot launch Redis."
-                    )
-                    self._stop_redis_containers()
-                    sys.exit(1)
-                except Exception as e:
-                    logger.critical("Failed to launch Redis on %s: %s", host, e)
-                    self._stop_redis_containers()
-                    sys.exit(1)
-
-                if result.returncode != 0:
-                    if is_port_conflict(result.stderr):
-                        # A publish failure leaves the fixed-name container in
-                        # `Created` state -- remove it, or the next deploy fails
-                        # on the name instead of reporting the real problem.
-                        self._run_cmd(
-                            ["docker", "rm", "-f", container_name], host, user
-                        )
-                        logger.critical(
-                            "Redis port %d on %s is already in use. Free it or change "
-                            "`redis_port` in global_controller.yaml.",
-                            redis_port,
-                            host,
-                        )
-                    else:
-                        logger.critical(
-                            "Failed to launch Redis on %s: %s",
-                            host,
-                            result.stderr.strip(),
-                        )
-                    self._stop_redis_containers()
-                    sys.exit(1)
-
-                self.redis_containers[host] = container_name
-                self.redis_ports[host] = redis_port
-                logger.info(
-                    "Launched Redis container %s on %s:%d",
-                    container_name,
-                    host,
-                    redis_port,
-                )
-
-            # Create a RedisClient for this machine
-            redis_client = RedisClient(host=connect_host, port=redis_port)
+            # Redis listens on the declared port inside the container too, so
+            # agents reaching it by container name over the local network use
+            # the same number the host does.
+            cmd = [
+                "docker",
+                "run",
+                "-d",
+                *project_label_args(),
+                "--name",
+                container_name,
+                "--network",
+                LOCAL_NETWORK,
+                *resource_limit_args(),
+                "-p",
+                f"{redis_port}:{redis_port}",
+                "redis:alpine",
+                "redis-server",
+                "--port",
+                str(redis_port),
+            ]
             try:
-                _wait_for_redis(redis_client, host, redis_port)
-            except TimeoutError as e:
-                logger.critical("%s", e)
+                result = self._run_cmd(cmd, host)
+            except FileNotFoundError:
+                logger.critical(
+                    "Docker is not installed or not in PATH. Cannot launch Redis."
+                )
+                self._stop_redis_containers()
                 sys.exit(1)
-            self.machine_redis[host] = redis_client
-            if _is_local_host(host):
-                self._redis_addr = (connect_host, redis_port)
-                # Update the primary redis client to the local machine's Redis
-                self.redis = redis_client
+            except Exception as e:
+                logger.critical("Failed to launch Redis on %s: %s", host, e)
+                self._stop_redis_containers()
+                sys.exit(1)
+
+            if result.returncode != 0:
+                if is_port_conflict(result.stderr):
+                    # A publish failure leaves the fixed-name container in
+                    # `Created` state -- remove it, or the next deploy fails
+                    # on the name instead of reporting the real problem.
+                    self._run_cmd(["docker", "rm", "-f", container_name], host)
+                    logger.critical(
+                        "Redis port %d on %s is already in use. Free it or change "
+                        "`redis.port` in global_controller.yaml.",
+                        redis_port,
+                        host,
+                    )
+                else:
+                    logger.critical(
+                        "Failed to launch Redis on %s: %s",
+                        host,
+                        result.stderr.strip(),
+                    )
+                self._stop_redis_containers()
+                sys.exit(1)
+
+            self.redis_containers[host] = container_name
+            self.redis_ports[host] = redis_port
+            logger.info(
+                "Launched Redis container %s on %s:%d",
+                container_name,
+                host,
+                redis_port,
+            )
+
+        # Create a RedisClient for this machine
+        redis_client = RedisClient(host=connect_host, port=redis_port)
+        try:
+            _wait_for_redis(redis_client, host, redis_port)
+        except TimeoutError as e:
+            logger.critical("%s", e)
+            sys.exit(1)
+        self.machine_redis[host] = redis_client
+        self._redis_addr = (connect_host, redis_port)
+        # Update the primary redis client to the local machine's Redis
+        self.redis = redis_client
 
         logger.info(
             "Redis ready on %d machine(s); %d owned by this controller.",
@@ -659,12 +602,11 @@ class GlobalController(ControllerContext):
         )
 
     def _launch_metrics_collectors(self):
-        """Start one machine-level metrics collector per unique host, as a sibling
-        container -- launched the same way as Redis and the agents (`docker run` via
-        _run_cmd, i.e. the local docker socket or remote SSH).
+        """Start this machine's metrics collector as a sibling container, launched the
+        same way as Redis and the agents.
 
         Best-effort and idempotent, mirroring _launch_redis_containers: a collector
-        already running on a host is reused; a launch failure is logged, not fatal.
+        already running is reused; a launch failure is logged, not fatal.
         """
         if not CONTROLLER_IMAGE:
             logger.error(
@@ -673,103 +615,83 @@ class GlobalController(ControllerContext):
             )
             return
 
-        # Unique-host dedup (like _launch_redis_containers), tracking per host whether any
-        # agent placed there requests a GPU -- so --gpus is only added where it's wanted
-        # (it fails `docker run` on hosts without the nvidia container runtime).
-        machines = {}
-        for agent_spec in self.agent_specs:
-            user = self._ssh_user(agent_spec)
-            redis_port = agent_spec.get("redis_port", 6379)
-            wants_gpu = bool(agent_spec.get("resources", {}).get("gpu"))
-            for host, _port in self._get_replica_placements(agent_spec):
-                machine = machines.setdefault(
-                    host, {"user": user, "redis_port": redis_port, "gpu": False}
-                )
-                machine["gpu"] = machine["gpu"] or wants_gpu
+        host = "localhost"
+        # --gpus fails `docker run` on a machine without the nvidia container runtime.
+        wants_gpu = any(
+            agent_spec.get("resources", {}).get("gpu")
+            for agent_spec in self.agent_specs
+        )
+        container_name = metrics_container_name(host)
+        try:
+            inspect = self._run_cmd(
+                ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                host,
+            )
+            if inspect.returncode == 0 and inspect.stdout.strip() == "true":
+                logger.info("Metrics collector already running on %s; reusing.", host)
+                self._metrics_collectors[host] = container_name
+                return
+            # Clear any stale (stopped) container of the same name before recreating.
+            self._run_cmd(["docker", "rm", "-f", container_name], host)
 
-        for host, machine_cfg in machines.items():
-            user = machine_cfg["user"]
-            container_name = metrics_container_name(host)
-            try:
-                inspect = self._run_cmd(
-                    ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
-                    host,
-                    user,
-                )
-                if inspect.returncode == 0 and inspect.stdout.strip() == "true":
-                    logger.info(
-                        "Metrics collector already running on %s; reusing.", host
-                    )
-                    self._metrics_collectors[host] = container_name
-                    continue
-                # Clear any stale (stopped) container of the same name before recreating.
-                self._run_cmd(["docker", "rm", "-f", container_name], host, user)
-
-                cmd = [
-                    "docker",
-                    "run",
-                    "-d",
-                    *project_label_args(),
-                    "--name",
+            cmd = [
+                "docker",
+                "run",
+                "-d",
+                *project_label_args(),
+                "--name",
+                container_name,
+                "--restart",
+                "unless-stopped",
+                "--pid=host",
+                "--network=host",
+                "-v",
+                "/:/host:ro",
+            ]
+            if wants_gpu:
+                cmd += ["--gpus", "all"]
+            cmd += [
+                # With --network=host the collector reaches the host's published Redis
+                # port on loopback.
+                "-e",
+                "CANYONOS_REDIS_HOST=localhost",
+                "-e",
+                f"CANYONOS_REDIS_PORT={self.config.get('redis', {}).get('port', 6379)}",
+                "-e",
+                f"CANYONOS_METRICS_KEY=machine:{host}:metrics",
+                "-e",
+                f"CANYONOS_POLL_INTERVAL={self.config.get('poll_interval', 5)}",
+                # The controller image's entrypoint launches the GC; override it to run
+                # the collector instead.
+                "--entrypoint",
+                "python",
+                CONTROLLER_IMAGE,
+                "-m",
+                "canyonos_core.machine_metrics_poller",
+            ]
+            result = self._run_cmd(cmd, host)
+            if result.returncode == 0:
+                self._metrics_collectors[host] = container_name
+                logger.info(
+                    "Started machine metrics collector %s on %s (key=machine:%s:metrics).",
                     container_name,
-                    "--restart",
-                    "unless-stopped",
-                    "--pid=host",
-                    "--network=host",
-                    "-v",
-                    "/:/host:ro",
-                ]
-                if machine_cfg["gpu"]:
-                    cmd += ["--gpus", "all"]
-                cmd += [
-                    # With --network=host the collector reaches the host's published Redis
-                    # port on loopback.
-                    "-e",
-                    "CANYONOS_REDIS_HOST=localhost",
-                    "-e",
-                    f"CANYONOS_REDIS_PORT={machine_cfg['redis_port']}",
-                    "-e",
-                    f"CANYONOS_METRICS_KEY=machine:{host}:metrics",
-                    "-e",
-                    f"CANYONOS_POLL_INTERVAL={self.config.get('poll_interval', 5)}",
-                    # The controller image's entrypoint launches the GC; override it to run
-                    # the collector instead.
-                    "--entrypoint",
-                    "python",
-                    CONTROLLER_IMAGE,
-                    "-m",
-                    "canyonos_core.machine_metrics_poller",
-                ]
-                result = self._run_cmd(cmd, host, user)
-                if result.returncode == 0:
-                    self._metrics_collectors[host] = container_name
-                    logger.info(
-                        "Started machine metrics collector %s on %s (key=machine:%s:metrics).",
-                        container_name,
-                        host,
-                        host,
-                    )
-                else:
-                    logger.warning(
-                        "Failed to start metrics collector on %s: %s",
-                        host,
-                        (result.stderr or "").strip(),
-                    )
-            except Exception as e:
-                logger.warning("Failed to start metrics collector on %s: %s", host, e)
+                    host,
+                    host,
+                )
+            else:
+                logger.warning(
+                    "Failed to start metrics collector on %s: %s",
+                    host,
+                    (result.stderr or "").strip(),
+                )
+        except Exception as e:
+            logger.warning("Failed to start metrics collector on %s: %s", host, e)
 
     def _stop_metrics_collectors(self):
-        """Stop and remove the machine metrics collector container on each host."""
-        users = {}
-        for agent_spec in self.agent_specs:
-            user = self._ssh_user(agent_spec)
-            for host, _port in self._get_replica_placements(agent_spec):
-                users.setdefault(host, user)
+        """Stop and remove the machine metrics collector container."""
         for host, container_name in self._metrics_collectors.items():
             try:
-                self._run_cmd(
-                    ["docker", "rm", "-f", container_name], host, users.get(host)
-                )
+                self._run_cmd(["docker", "rm", "-f", container_name], host)
             except Exception as e:
                 logger.warning("Failed to stop metrics collector on %s: %s", host, e)
         self._metrics_collectors.clear()
@@ -777,20 +699,11 @@ class GlobalController(ControllerContext):
     def _stop_redis_containers(self):
         """Stop and remove all Redis containers owned by this controller."""
         failures = []
-        machines = {}
-        for agent_spec in self.agent_specs:
-            user = self._ssh_user(agent_spec)
-            redis_port = agent_spec.get("redis_port", 6379)
-            for host, _port in self._get_replica_placements(agent_spec):
-                machines.setdefault(host, {"user": user, "redis_port": redis_port})
         for host, container_name in list(self.redis_containers.items()):
-            user = machines.get(host, {}).get("user")
             errors = []
             for action in ("stop", "rm"):
                 try:
-                    result = self._run_cmd(
-                        ["docker", action, container_name], host, user
-                    )
+                    result = self._run_cmd(["docker", action, container_name], host)
                     if (
                         result.returncode != 0
                         and "no such container" not in (result.stderr or "").lower()
@@ -931,9 +844,7 @@ class GlobalController(ControllerContext):
         # hold nothing yet; a timeout shows every laggard.
         for replica, status in terminal or pending:
             if replica["agent_name"] in failed:
-                dump_container_log(
-                    replica, status, providers.get(replica["provider"]).log_tail
-                )
+                dump_container_log(replica, status, partial(log_tail, self))
 
         summary = ", ".join(
             f"{name} {have}/{want}" for name, (have, want) in failed.items()
@@ -1015,51 +926,26 @@ class GlobalController(ControllerContext):
         )
 
     def _poll_machine_metrics(self):
-        """Read each host's machine-level metrics hash (written by the per-machine
-        collector, see _launch_metrics_collectors) and persist one time-series row per
-        host into metrics_waiting. Best-effort: a host that hasn't reported yet or whose
-        Redis is unreachable is skipped, never fatal.
+        """Read this machine's metrics hash (written by its collector, see
+        _launch_metrics_collectors) and persist it as one time-series row in
+        metrics_waiting. Best-effort: a hash not written yet or an unreachable Redis is
+        skipped, never fatal.
         """
-        project_id = self.config.get("project_id")
-        hosts = {
-            host
-            for agent_spec in self.agent_specs
-            for host, _port in self._get_replica_placements(agent_spec)
-        }
-        if not hosts:
-            return
-
-        def _read_host_metrics(host):
-            try:
-                metrics = self.machine_redis.get(host, self.redis).hgetall(
-                    f"machine:{host}:metrics"
+        try:
+            metrics = self.redis.hgetall("machine:localhost:metrics")
+            if metrics:
+                otel_writer.metric_write_rows(
+                    [
+                        {
+                            "kind": "machine",
+                            "host": "localhost",
+                            "project_id": self.config.get("project_id"),
+                            "metrics": metrics,
+                        }
+                    ]
                 )
-                if metrics:
-                    return {
-                        "kind": "machine",
-                        "host": host,
-                        "project_id": project_id,
-                        "metrics": metrics,
-                    }
-            except Exception as e:
-                logger.warning(
-                    "Failed to read machine metrics for host %s (non-fatal): %s",
-                    host,
-                    e,
-                )
-            return None
-
-        # Read hosts in parallel, mirroring the per-replica poll above, so one host's
-        # slow Redis round-trip doesn't gate the others.
-        with ThreadPoolExecutor(max_workers=len(hosts)) as executor:
-            rows = [row for row in executor.map(_read_host_metrics, hosts) if row]
-        if rows:
-            try:
-                otel_writer.metric_write_rows(rows)
-            except Exception as e:
-                logger.warning(
-                    "Failed to write machine metrics rows (non-fatal): %s", e
-                )
+        except Exception as e:
+            logger.warning("Failed to record machine metrics (non-fatal): %s", e)
 
     def _poll_one_replica(self, replica):
         """Poll and persist one replica's runtime/metrics/health data and return its scaling sample; never raises."""
@@ -1423,27 +1309,30 @@ class GlobalController(ControllerContext):
         return self.stop()
 
     def _remove_all_replicas(self, timeout=STOP_TIMEOUT_SECONDS, interval=1):
-        """Have the reconciler remove every replica, then forget the endpoint's address.
-        True once none are left."""
+        """Have the reconciler remove every replica and then terminate every machine, then
+        forget the endpoint's address. True once none are left."""
         state.set_stopping(self.redis)
         state.request_reconcile(self.redis)
         deadline = time.time() + timeout
 
         while True:
             try:
-                # Every record, unfinished launches too: one may still hold a machine.
-                remaining = self.redis.scan_keys("agent_instance:*")
+                # Unfinished launches too; machines go only once every replica has.
+                remaining = self.redis.scan_keys(
+                    "agent_instance:*"
+                ) + self.redis.scan_keys("machine_record:*")
             except Exception as e:
-                logger.warning("Failed to read replica records while stopping: %s", e)
+                logger.warning("Failed to read records while stopping: %s", e)
                 return False
             if not remaining:
                 self.redis.delete(ADDRESS_KEY)
-                logger.info("All agent replicas removed.")
+                logger.info("All agent replicas and machines removed.")
                 return True
             if time.time() >= deadline:
                 logger.warning(
-                    "Replica records still in Redis after %ds: %s; the next "
-                    "startup's reconcile removes whichever are unhealthy or unfinished.",
+                    "Records still in Redis after %ds: %s; the next startup's "
+                    "reconcile removes whichever replicas are unhealthy or unfinished, "
+                    "and the next stop terminates the machines.",
                     timeout,
                     ", ".join(sorted(remaining)),
                 )

@@ -169,15 +169,12 @@ Keys every entry accepts:
 | `type` | `agent` | One of `agent`, `database`. |
 | `provider` | `local` | `local` or `EC2`, in any casing. |
 | `replicas` | `1` | Integer, at least 1. A database must be 1. |
-| `redis_port` | `6379` | Host port of the Redis this agent talks to. Entries on one host must agree. |
 | `resources.cpu` | `1` | Passed to `docker run --cpus`. |
 | `resources.memory` | `512` | MiB, passed to `--memory`. |
 | `resources.gpu` | none | Integer. `0` means no GPU. Passed to `--gpus`. |
 | `stateful` | `false` | Marks the agent stateful in the routing table, so every call within one request goes to the same replica. |
 | `machine_type` | none | Required when `provider: EC2`. |
 | `env` | `{}` | Extra `-e` variables. Only applied to `database` entries today. |
-| `host`, `user` | this machine, none | For the local provider: run the container on another Docker host reached over SSH as `user`. |
-| `host_port` (or `port`) | next free port | Host port published for the agent's gRPC server. |
 
 Agent entries add:
 

@@ -35,7 +35,7 @@ def test_gc_requests_are_bounded(monkeypatch):
 
     gc.post_clean(8000)
 
-    assert seen == {"timeout": gc.REQUEST_TIMEOUT_SECONDS}
+    assert seen == {"timeout": gc.CLEAN_REQUEST_TIMEOUT_SECONDS}
 
 
 @pytest.mark.parametrize("body", [b"not-json", b"[]", b"null"])

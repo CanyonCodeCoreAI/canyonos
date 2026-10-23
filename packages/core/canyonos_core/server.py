@@ -15,10 +15,7 @@ import yaml
 from flask import Flask, jsonify, request
 
 from canyonos_core.cli import _artifact_prefix
-from canyonos_core.controller.controller_context import (
-    _redis_connect_host,
-    localhost_redis_port,
-)
+from canyonos_core.controller.controller_context import _redis_connect_host
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.endpoint import read_endpoint_record
 
@@ -28,7 +25,8 @@ app = Flask("canyonos-server")
 # `canyonos deploy`. Deploy builds and launches against this path.
 WORKSPACE_DIR = "/workspace"
 
-CLEAN_TIMEOUT_SECONDS = 45
+# Longer than the Global Controller's own teardown wait, so a stop that drains finishes.
+CLEAN_TIMEOUT_SECONDS = 255
 
 _gc_process = None
 _config_path = None
@@ -118,12 +116,12 @@ def status():
 
 def _deploy_redis(config_path):
     """Return a client for the Redis the running deploy's Global Controller publishes
-    to: this machine's Redis, on the port its config gives the agents here."""
+    to: this machine's Redis, on its config's `redis.port`."""
     # Raw YAML, not load_config: importing the project's .env here would leak into the
     # next deploy's environment. Ports cannot be ${VAR} references, so none is missed.
     with open(config_path) as f:
         config = yaml.safe_load(f) or {}
-    port = localhost_redis_port(config.get("agents") or []) or 6379
+    port = (config.get("redis") or {}).get("port", 6379)
     return RedisClient(host=_redis_connect_host("localhost"), port=port)
 
 

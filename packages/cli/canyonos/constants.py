@@ -117,18 +117,10 @@ def endpoint_answers(api_port):
 
 
 def local_redis_port(config_path):
-    """Host port the local machine's Redis is published on, or the default."""
+    """Host port this machine's Redis is published on: `redis.port`, or the default."""
     config = read_config(config_path)
     if not isinstance(config, dict):
         return DEFAULT_REDIS_PORT
-
-    agent_specs = config.get("agents")
-    for agent_spec in agent_specs if isinstance(agent_specs, list) else []:
-        if isinstance(agent_spec, dict) and agent_spec.get("host", "localhost") in (
-            "localhost",
-            "127.0.0.1",
-        ):
-            return _port_or_default(agent_spec.get("redis_port", DEFAULT_REDIS_PORT))
     redis = config.get("redis")
     if not isinstance(redis, dict):
         return DEFAULT_REDIS_PORT

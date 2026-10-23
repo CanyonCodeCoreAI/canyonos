@@ -196,15 +196,16 @@ def test_a_failed_replicas_log_tail_is_shown_between_sentinels(
         _StatusRedis({"controller:127.0.0.1:50051:status": "failed"}),
         run_cmd=run_cmd,
     )
-    provider = SimpleNamespace(log_tail=MagicMock(side_effect=log_tail))
+    read_log = MagicMock(side_effect=log_tail)
     monkeypatch.setattr(
-        "canyonos_core.reconciler.providers.get", lambda _name: provider
+        "canyonos_core.controller.global_controller.log_tail",
+        lambda _controller, replica, lines: read_log(replica, lines),
     )
 
     with caplog.at_level(logging.WARNING), pytest.raises(RuntimeError):
         controller._wait_for_healthy(timeout=0, interval=0)
 
-    provider.log_tail.assert_called_once_with(replica, 40)
+    read_log.assert_called_once_with(replica, 40)
     messages = [record.getMessage() for record in caplog.records]
     begin = messages.index(
         "--- begin container log: Broken (127.0.0.1:50051) status=failed ---"
