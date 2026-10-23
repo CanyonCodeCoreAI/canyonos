@@ -227,7 +227,7 @@ LocalController / LocalControllerServicer
              future:<future_id>:children, future:<future_id>:consumers,
              affinity:<request_id>, execute:<address>:<future_id>:accepted,
              request:completed
-  reads  ◀── controller:<host>:<port>:replica_id,
+  reads  ◀── controller:<host>:<port>:replica_id, controller:<host>:<port>:draining,
              routing_table:addresses, routing_table:stateful, policy:rules,
              request:<request_id>:context, request:<request_id>:futures,
              future:<future_id>, future:<future_id>:consumers,
@@ -240,7 +240,7 @@ endpoint / Future
   reads  ◀── request:<request_id>:future, future:<future_id>
 
 reconciler
-  writes ──▶ agent_instance:*, agent:<name>:instances,
+  writes ──▶ agent_instance:*, agent:<name>:instances, controller:<host>:<port>:draining,
              routing_table:agents, routing_table:addresses,
              routing_table:stateful
 ```

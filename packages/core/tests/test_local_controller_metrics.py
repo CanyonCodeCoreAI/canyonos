@@ -4,6 +4,7 @@
 import os
 import sys
 import threading
+import time
 import unittest
 import json
 from unittest.mock import MagicMock
@@ -28,6 +29,7 @@ from fakes import _FakeRedis
 
 
 def _bind_failure_marker(controller):
+    controller._cut_off = set()
     controller._mark_future_failed = lambda *a, **k: (
         LocalController._mark_future_failed(controller, *a, **k)
     )
@@ -131,36 +133,60 @@ class LocalControllerMetricsTests(unittest.TestCase):
         controller = SimpleNamespace(
             _executor=ThreadPoolExecutor(max_workers=1),
             _metrics_interval=5,
+            _draining=True,
+            servicer=SimpleNamespace(open_requests={"r1"}),
+            request_queue=__import__("queue").Queue(),
+            _unsent=1,
         )
+        controller.request_queue.put("{}")
         metrics = LocalController._collect_metrics(controller)
         self.assertEqual(metrics["status"], "healthy")
         self.assertEqual(
             set(metrics.keys()),
-            {"status", "queue_length", "observed_at"},
+            {
+                "status",
+                "queue_length",
+                "draining",
+                "open_requests",
+                "pending_requests",
+                "observed_at",
+            },
         )
+        self.assertEqual(metrics["pending_requests"], "2")
         int(metrics["queue_length"])
         float(metrics["observed_at"])
+        self.assertEqual(metrics["draining"], "1")
+        self.assertEqual(metrics["open_requests"], "1")
 
-    def _run_one_metrics_tick(self, redis, ready):
+    def _run_one_metrics_tick(self, redis, ready, stateful=(), controller=None):
         stop_event = threading.Event()
         ready_event = threading.Event()
         if ready:
             ready_event.set()
-        controller = SimpleNamespace(
+        controller = controller or SimpleNamespace(
             redis=redis,
+            agent_name="Alpha",
+            _stateful=set(stateful),
+            servicer=SimpleNamespace(refusing=False),
+            _failed_leftovers=False,
+            failed_leftovers=[],
             _metrics_key="controller:localhost:50051:metrics",
             _status_key="controller:localhost:50051:status",
+            _draining_key="controller:localhost:50051:draining",
             _metrics_stop_event=stop_event,
             _metrics_interval=5,
             _ready=ready_event,
             _status_lock=threading.Lock(),
-            _collect_metrics=lambda: {
-                "status": "healthy",
-                "queue_length": "3",
-                "observed_at": "100.0",
-            },
             _load_policy_rules=lambda reload=False: None,
         )
+        controller._metrics_stop_event = stop_event
+        controller._fail_unfinished = lambda: controller.failed_leftovers.append(True)
+        controller._collect_metrics = lambda: {
+            "status": "healthy",
+            "queue_length": "3",
+            "draining": str(int(controller._draining)),
+            "observed_at": "100.0",
+        }
 
         def stop_after_one_tick(timeout):
             stop_event.set()
@@ -168,6 +194,131 @@ class LocalControllerMetricsTests(unittest.TestCase):
         stop_event.wait = stop_after_one_tick
 
         LocalController._metrics_loop(controller)
+        return controller
+
+    def test_a_drain_flag_turns_new_work_away_before_the_heartbeat_reports_it(self):
+        redis = _FakeRedis()
+        redis.set("controller:localhost:50051:draining", str(time.time() + 180))
+
+        controller = self._run_one_metrics_tick(redis, ready=True)
+
+        self.assertTrue(controller.servicer.refusing)
+        self.assertEqual(controller.failed_leftovers, [])
+        self.assertEqual(
+            redis.hgetall("controller:localhost:50051:metrics")["draining"], "1"
+        )
+
+    def test_a_draining_stateful_replica_keeps_taking_calls(self):
+        redis = _FakeRedis()
+        redis.set("controller:localhost:50051:draining", str(time.time() + 180))
+
+        controller = self._run_one_metrics_tick(redis, ready=True, stateful={"Alpha"})
+
+        self.assertFalse(controller.servicer.refusing)
+        self.assertEqual(
+            redis.hgetall("controller:localhost:50051:metrics")["draining"], "1"
+        )
+
+    def test_leftover_calls_are_failed_once_two_heartbeats_before_removal(self):
+        redis = _FakeRedis()
+        # Removal in 9 s is within two 5 s heartbeats.
+        redis.set("controller:localhost:50051:draining", str(time.time() + 9))
+
+        controller = self._run_one_metrics_tick(redis, ready=True)
+        self._run_one_metrics_tick(redis, ready=True, controller=controller)
+
+        self.assertEqual(controller.failed_leftovers, [True])
+
+    def test_fail_unfinished_fails_running_and_queued_calls_back_to_their_callers(self):
+        failed = []
+        controller = SimpleNamespace(
+            _my_address="10.0.0.1:50051",
+            _executor_futures={object(): ("running", "10.0.0.9:50051")},
+            _executor_futures_lock=threading.Lock(),
+            request_queue=__import__("queue").Queue(),
+            _cut_off=set(),
+            _mark_future_failed=lambda future_id, error, origin: failed.append(
+                (future_id, origin, type(error).__name__)
+            ),
+        )
+        controller.request_queue.put(
+            json.dumps({"future_id": "queued", "origin": "10.0.0.8:50051"})
+        )
+
+        LocalController._fail_unfinished(controller)
+
+        self.assertEqual(
+            sorted(failed),
+            [
+                ("queued", "10.0.0.8:50051", "ReplicaRemovedError"),
+                ("running", "10.0.0.9:50051", "ReplicaRemovedError"),
+            ],
+        )
+        self.assertTrue(controller.request_queue.empty())
+        self.assertEqual(controller._cut_off, {"running", "queued"})
+
+    def test_a_call_the_drain_failed_reports_nothing_when_it_finishes(self):
+        redis = _FakeRedis()
+        stub = SimpleNamespace(WriteResult=MagicMock())
+        controller = _bind_failure_marker(
+            SimpleNamespace(
+                redis=redis,
+                agent=SimpleNamespace(greet=lambda: "late"),
+                agent_name="Greeter",
+                replica_id="agent-1",
+                _my_address="target:50051",
+                _metrics_key="controller:target:50051:metrics",
+                _resolve_future_args=lambda args, future_args: args,
+                _get_remote_stub=lambda endpoint: stub,
+            )
+        )
+        controller._cut_off.add("future-5")
+
+        with patch(
+            "canyonos_core.controller.local_controller.read_gpu_percent",
+            return_value=0.0,
+        ):
+            LocalController._execute_locally(
+                controller, "Greeter", "greet", {}, "future-5", origin="origin:50051"
+            )
+
+        # Its caller already got ReplicaRemovedError; that answer stands.
+        self.assertEqual(redis.hget("future:future-5", "result"), "")
+        stub.WriteResult.assert_not_called()
+
+    def test_a_stateful_request_run_here_is_held_open_until_cleanup(self):
+        for stateful, expected in (({"Alpha"}, {"r1"}), (set(), set())):
+            with self.subTest(stateful=stateful):
+                executor = MagicMock()
+                controller = SimpleNamespace(
+                    redis=_FakeRedis(),
+                    agent=SimpleNamespace(run=lambda: None),
+                    agent_name="Alpha",
+                    _my_address="localhost:50051",
+                    _metrics_key="controller:localhost:50051:metrics",
+                    _stateful=stateful,
+                    servicer=SimpleNamespace(open_requests=set()),
+                    _check_policy=lambda service, context: True,
+                    _executor=executor,
+                    _executor_futures={},
+                    _executor_futures_lock=threading.Lock(),
+                    _forget_executor_future=lambda future: None,
+                    _execute_locally=lambda *args: None,
+                )
+
+                LocalController._process_request(
+                    controller,
+                    {
+                        "service": "Alpha",
+                        "function": "run",
+                        "future_id": "f1",
+                        "request_id": "r1",
+                        "route_to": "localhost:50051",
+                    },
+                )
+
+                executor.submit.assert_called_once()
+                self.assertEqual(controller.servicer.open_requests, expected)
 
     def test_metrics_loop_writes_hash_and_refreshes_status_once_ready(self):
         redis = _FakeRedis()
@@ -389,6 +540,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             replica_id="agent-1",
             _my_address="target:50051",
             _metrics_key="controller:target:50051:metrics",
+            _cut_off=set(),
             _resolve_future_args=lambda args, future_args: args,
             _mark_future_failed=lambda future_id, error, origin=None: None,
             _send_result_callback=spy_send_result_callback,

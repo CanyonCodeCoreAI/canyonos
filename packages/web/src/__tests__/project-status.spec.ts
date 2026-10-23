@@ -21,9 +21,34 @@ const ENDPOINT_URL = 'http://203.0.113.7:8080/main';
 const STATUS_URL = 'http://203.0.113.7:8080/status';
 
 const REPLICAS: MonitoringReplica[] = [
-  { agent: 'fraud_workflow', replica: 'fraud_workflow-1', queue_length: 2, active_requests: 3 },
-  { agent: 'ScoringAgent', replica: 'ScoringAgent-1', queue_length: 4, active_requests: 5 },
-  { agent: 'ScoringAgent', replica: 'ScoringAgent-2', queue_length: null, active_requests: null },
+  {
+    agent: 'fraud_workflow',
+    replica: 'fraud_workflow-1',
+    queue_length: 2,
+    active_requests: 3,
+    draining: false,
+  },
+  {
+    agent: 'ScoringAgent',
+    replica: 'ScoringAgent-1',
+    queue_length: 4,
+    active_requests: 5,
+    draining: false,
+  },
+  {
+    agent: 'ScoringAgent',
+    replica: 'ScoringAgent-2',
+    queue_length: null,
+    active_requests: null,
+    draining: false,
+  },
+  {
+    agent: 'ScoringAgent',
+    replica: 'ScoringAgent-3',
+    queue_length: 1,
+    active_requests: 1,
+    draining: true,
+  },
 ];
 
 const ENDPOINT: MonitoringEndpointResponse = {
@@ -110,11 +135,17 @@ test('a running project shows its endpoint, the summary tiles and the containers
   await expect(page.getByTestId('status-tile-active-value')).toHaveText('3');
   await expect(page.getByTestId('status-tile-errors-value')).toHaveText('7');
 
+  // A draining replica is shown, but only serving ones are counted.
   await expect(page.getByTestId('metrics-containers-count')).toHaveText('3');
+  await expect(page.getByTestId('metrics-containers-draining')).toHaveText('1 draining');
   const scoring = page.getByTestId('metrics-containers-agent-ScoringAgent');
   await expect(scoring.getByTestId('metrics-containers-agent-count-ScoringAgent')).toHaveText('2');
   await expect(scoring.getByTestId('metrics-containers-replica-ScoringAgent-1')).toHaveText('4');
   await expect(scoring.getByTestId('metrics-containers-replica-ScoringAgent-2')).toHaveText('0');
+  await expect(scoring.getByTestId('metrics-containers-replica-ScoringAgent-3')).toHaveAttribute(
+    'data-state',
+    'draining'
+  );
   const workflow = page.getByTestId('metrics-containers-agent-fraud_workflow');
   await expect(workflow.getByTestId('metrics-containers-replica-fraud_workflow-1')).toHaveText('2');
 });

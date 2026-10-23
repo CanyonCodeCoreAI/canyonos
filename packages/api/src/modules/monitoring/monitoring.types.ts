@@ -169,6 +169,7 @@ export const MonitoringReplicaSchema = z.object({
   replica: z.string(),
   queue_length: z.number().int().nullable(),
   active_requests: z.number().int().nullable(),
+  draining: z.boolean(),
 });
 
 export const MonitoringReplicasResponseSchema = MonitoringScopeSchema.pick({

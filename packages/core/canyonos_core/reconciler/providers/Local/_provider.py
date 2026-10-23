@@ -353,22 +353,25 @@ def _clashed_port(stderr):
 
 
 def _clear_stale_status(host, address, container):
-    """Delete the status key the container about to start will own.
+    """Delete the status and drain keys the container about to start will own.
 
-    The key has no TTL and the address is derived from the container name, so
+    The keys have no TTL and the address is derived from the container name, so
     whatever the last container at this address said -- in this run or one
     that crashed -- is still there, and the readiness wait would read it as the
-    new container's. Fails closed: a launch that cannot clear it must not
-    proceed, or a stale "healthy" passes for a container that never came up.
+    new container's. Fails closed: a launch that cannot clear them must not
+    proceed, or a stale "healthy" passes for a container that never came up, and
+    a stale drain flag has the new container turn requests away.
     """
     controller = _require_controller()
     machine_redis = controller.machine_redis.get(host) or controller.redis
     try:
-        machine_redis.delete(f"controller:{address}:status")
+        machine_redis.delete(
+            f"controller:{address}:status", f"controller:{address}:draining"
+        )
     except Exception as e:
         raise RuntimeError(
-            f"Cannot launch {container}: could not clear the stale readiness "
-            f"status at {address} on {host}: {e}"
+            f"Cannot launch {container}: could not clear the stale status "
+            f"keys at {address} on {host}: {e}"
         ) from e
 
 

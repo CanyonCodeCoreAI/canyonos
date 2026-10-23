@@ -31,6 +31,9 @@ export const SATURATION_METRIC = MACHINE_UTILIZATION_METRICS.cpu;
 
 export const AGENT_UP_METRIC = 'canyonos.agent.up';
 
+// 1 while the reconciler drains the replica: it finishes its requests but gets no new ones.
+export const AGENT_DRAINING_METRIC = 'canyonos.agent.draining';
+
 export const QUEUE_LENGTH_METRIC = 'canyonos.agent.queue.length';
 
 export const REQUESTS_STARTED_METRIC = 'canyonos.agent.requests';

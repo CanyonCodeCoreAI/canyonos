@@ -3,11 +3,13 @@
 
 import logging
 import os
+import queue
 import sys
+import threading
 import unittest
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.path.insert(
@@ -35,8 +37,14 @@ from fakes import _FakeRedis, _ForwardedCall, _RpcError
 
 
 def _bind_failure_marker(controller):
+    controller._cut_off = set()
     controller._mark_future_failed = lambda *a, **k: (
         LocalController._mark_future_failed(controller, *a, **k)
+    )
+    controller._unsent = 0
+    controller._unsent_lock = threading.Lock()
+    controller._count_unsent = lambda change: LocalController._count_unsent(
+        controller, change
     )
     controller._fan_out_to_consumers = (
         lambda future_id, result=None, failed=0, error_message="": (
@@ -79,6 +87,7 @@ class ErrorPropagationTests(unittest.TestCase):
         LocalController._forward_request(controller, "172.31.23.135:50051", data)
 
         self.assertEqual(data["origin"], "172.31.19.107:50051")
+        self.assertEqual(controller._unsent, 0)
         self.assertEqual(redis.hget("future:future-1", "error"), "_RpcError")
         logs = json.loads(redis.hget("future:future-1", "logs"))
         self.assertEqual(logs[0]["Body"], "boom")
@@ -411,6 +420,7 @@ class ErrorPropagationTests(unittest.TestCase):
             replica_id="executor-agent",
             _my_address="executor:50051",
             _metrics_key="controller:executor:50051:metrics",
+            _cut_off=set(),
             _resolve_future_args=lambda args, future_args: args,
             _get_remote_stub=lambda address: stub,
         )
@@ -491,6 +501,7 @@ class ErrorPropagationTests(unittest.TestCase):
             replica_id="replica-a",
             _my_address="localhost:8001",
             _metrics_key="controller:localhost:8001:metrics",
+            _cut_off=set(),
             _resolve_future_args=lambda args, future_args: args,
             _get_remote_stub=lambda address: stub,
         )
@@ -536,6 +547,67 @@ class ErrorPropagationTests(unittest.TestCase):
             controller._mark_future_failed("future-1", ValueError("boom"))
         except Exception as e:
             self.fail(f"_mark_future_failed raised unexpectedly: {e}")
+
+
+class _PendingCall(_ForwardedCall):
+    """A forwarded call whose answer arrives only when the test says so."""
+
+    def add_done_callback(self, callback):
+        self.callback = callback
+
+
+class UnsentCountTests(unittest.TestCase):
+    """A drain waits on this count, so a request must never drop out of it early."""
+
+    def _forward(self, call, data):
+        stub = SimpleNamespace(
+            Execute=SimpleNamespace(future=MagicMock(return_value=call))
+        )
+        controller = _bind_failure_marker(
+            SimpleNamespace(
+                redis=_FakeRedis(),
+                replica_id=None,
+                agent_name=None,
+                _my_address="10.0.0.1:50051",
+                _get_remote_stub=lambda endpoint: stub,
+                _down_until={},
+                request_queue=queue.Queue(),
+            )
+        )
+        controller._on_forwarded = lambda call, endpoint, data: (
+            LocalController._on_forwarded(controller, call, endpoint, data)
+        )
+        controller._resend = lambda payload: LocalController._resend(
+            controller, payload
+        )
+        LocalController._forward_request(controller, "10.0.0.2:50051", data)
+        return controller
+
+    def test_a_forward_is_counted_until_the_target_takes_it(self):
+        call = _PendingCall()
+        controller = self._forward(call, {"future_id": "f1"})
+        self.assertEqual(controller._unsent, 1)
+
+        call.callback(call)
+
+        self.assertEqual(controller._unsent, 0)
+
+    def test_a_retry_waiting_on_its_backoff_stays_counted_until_it_is_queued(self):
+        call = _PendingCall(_RpcError(grpc.StatusCode.UNAVAILABLE, "draining"))
+        controller = self._forward(call, {"future_id": "f1", "retries": 1})
+
+        # A mock Timer holds the retry until the test fires it.
+        with patch(
+            "canyonos_core.controller.local_controller.threading.Timer"
+        ) as timer:
+            call.callback(call)
+
+        self.assertEqual(controller._unsent, 1)
+        self.assertTrue(controller.request_queue.empty())
+        _, function, args = timer.call_args.args
+        function(*args)
+        self.assertEqual(controller._unsent, 0)
+        self.assertEqual(controller.request_queue.qsize(), 1)
 
 
 if __name__ == "__main__":

@@ -58,10 +58,18 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
         # Set by LocalController: fans a just-arrived result out to this machine's
         # consumers. Signature: on_result(future_id, result, failed, error_message).
         self.on_result = None
+        # Set by LocalController while a stateless replica drains: forwarded work is refused.
+        self.refusing = False
+        # Requests with calls bound here by affinity, until the GC reports them done.
+        self.open_requests = set()
 
     def Execute(self, request, context):
         """Accept an Execute request and push it into the queue."""
         logger.info(f"Received request: {request.response}")
+        # Only forwarded work is turned away; this replica's own calls still run.
+        if self.refusing and "route_to" in json.loads(request.response):
+            # Never queued, so the sender's retry picks another replica.
+            context.abort(grpc.StatusCode.UNAVAILABLE, "Replica is draining")
         if self._already_accepted(request.response):
             logger.info("Execute: duplicate delivery of a queued request, skipping.")
         else:
@@ -139,6 +147,7 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
                 # Process the cleanup batch asynchronously so the RPC returns immediately.
                 def _cleanup_batch():
                     for request_id in request_ids:
+                        self.open_requests.discard(request_id)
                         try:
                             self._cleanup_request(request_id)
                         except Exception as e:

@@ -30,6 +30,9 @@ WAKE_TIMEOUT_SECONDS = 1
 
 TCP_PROBE_TIMEOUT_SECONDS = 2
 
+# How long a draining replica may keep running before it is removed anyway.
+DRAIN_TIMEOUT_SECONDS = 180
+
 _running = True
 
 
@@ -80,7 +83,7 @@ class Reconciler(object):
                 logger.warning("Failed to remove unwanted replicas of %s: %s", name, e)
         if agent_names is None:
             try:
-                self._remove_replicas_of_removed_agents()
+                self._remove_replicas_of_removed_agents(stopping)
             except Exception as e:
                 logger.warning("Failed to remove replicas of removed agents: %s", e)
 
@@ -109,7 +112,7 @@ class Reconciler(object):
     # ------------------------------------------------------------------ #
 
     def _remove_unwanted(self, agent_name, stopping=False):
-        """Remove an agent's surplus, unhealthy and replaced replicas."""
+        """Remove an agent's unhealthy replicas and drain its surplus and replaced ones."""
         agent_spec = self.context.agent_specs_by_name.get(agent_name)
         if agent_spec is None:
             logger.warning(
@@ -148,12 +151,19 @@ class Reconciler(object):
             )
             if reason is None:
                 continue
-            self._remove_replica(replica_id, reason)
+            if reason == "unhealthy":
+                self._remove_replica(replica_id, reason)
+            # Still draining: a replace request stays pending until the replica is gone.
+            elif not self._drain_replica(replica_id, replica, reason, stopping):
+                continue
             if replica_id in replace_requested:
                 state.clear_replace_requests(redis_client, replica_id)
         return True
 
     def _removal_reason(self, replica, replica_id, desired, replace_requested):
+        # Once started, a drain runs to the end even if the replica is wanted again.
+        if "draining_at" in replica:
+            return "drain in progress"
         if replica_id in replace_requested:
             return "replacement requested"
         if int(replica["replica_index"]) >= desired:
@@ -167,15 +177,70 @@ class Reconciler(object):
         self._seen_healthy.discard(replica_id)
         self.provisioner.remove_replica(replica_id)
 
-    def _remove_replicas_of_removed_agents(self):
-        """Remove replicas of agents that are no longer in the published specs."""
+    def _remove_replicas_of_removed_agents(self, stopping):
+        """Drain replicas of agents that are no longer in the published specs."""
         for replica in list_replicas(self.context.redis):
             if replica["agent_name"] in self.context.agent_specs_by_name:
                 continue
             self.context.machine_redis_for_replica(replica)
-            self._remove_replica(
-                replica_id_from_record(replica), "agent removed from config"
+            self._drain_replica(
+                replica_id_from_record(replica),
+                replica,
+                "agent removed from config",
+                stopping,
             )
+
+    # ------------------------------------------------------------------ #
+    #  Draining                                                          #
+    # ------------------------------------------------------------------ #
+
+    def _drain_replica(self, replica_id, replica, reason, stopping):
+        """Advance one step towards removing a replica: tell it to take no new requests,
+        then remove it once it reports idle or after DRAIN_TIMEOUT_SECONDS. It is removed
+        at once while the fleet is stopping or once it stops answering. Returns True
+        once removed."""
+        if stopping:
+            self._remove_replica(replica_id, reason)
+            return True
+        # One that stopped answering has no requests left to finish.
+        if not self._is_healthy(replica, replica_id):
+            self._remove_replica(replica_id, "unhealthy")
+            return True
+
+        draining_at = replica.get("draining_at")
+        if draining_at is None:
+            logger.info("Draining replica %s (%s)", replica_id, reason)
+            draining_at = str(time.time())
+            self.context.redis.hset(
+                f"agent_instance:{replica_id}", "draining_at", draining_at
+            )
+        # The removal time, written every pass so a failed write is retried.
+        self.context.machine_redis_for_replica(replica).set(
+            f"controller:{replica['address']}:draining",
+            str(float(draining_at) + DRAIN_TIMEOUT_SECONDS),
+        )
+        if (
+            self._is_idle(replica)
+            or time.time() - float(draining_at) >= DRAIN_TIMEOUT_SECONDS
+        ):
+            self._remove_replica(replica_id, "drained")
+            return True
+        return False
+
+    def _is_idle(self, replica):
+        """Whether the replica has seen its drain flag and has nothing queued, running,
+        still bound to it, or still to send on."""
+        metrics = self.context.machine_redis_for_replica(replica).hgetall(
+            f"controller:{replica['address']}:metrics"
+        )
+        return (
+            metrics.get("draining") == "1"
+            and metrics.get("queue_length") == "0"
+            and metrics.get("open_requests") == "0"
+            and metrics.get("pending_requests") == "0"
+            # Served counts calls started here, completed those finished: equal means none running.
+            and metrics.get("requests_served") == metrics.get("requests_completed")
+        )
 
     # ------------------------------------------------------------------ #
     #  Health checks                                                     #

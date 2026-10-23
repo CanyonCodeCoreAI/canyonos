@@ -21,7 +21,8 @@ latency and serializes reconciles into one worker, so two cannot race on a slot.
 **The YAML is the source of truth.** Startup and every reload write each agent's configured
 `replicas` through `_set_replicas`, overwriting whatever Redis holds, so a changed config
 always takes effect. A runtime `_set_replicas` holds only until the next reload or redeploy.
-Each pass removes, then fills.
+Each pass removes, then fills. A replica that is no longer wanted drains gracefully
+before it is removed; an unhealthy one is still removed at once.
 
 The removal rule is on the **index**, not "remove the last N": that makes scale-down
 deterministic and idempotent (5→2 always removes 2, 3, 4) and removes orphans a count-based
@@ -40,9 +41,10 @@ removing index 1 leaves a hole the same pass's fill step provisions into.
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
 | `agents:active` | string (JSON list) | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
 | `agent:{name}:instances` | set | `Provisioner` | both |
-| `agent_instance:{name}-{index}` | hash | `Provisioner` | both |
+| `agent_instance:{name}-{index}` | hash | `Provisioner`; `draining_at`: Reconciler — `_drain_replica` | both |
 | `routing_table:agents` / `:addresses` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
-| `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness check |
+| `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness and idle checks |
+| `controller:{host}:{port}:draining` | string | Reconciler — `_drain_replica` | the agent's `LocalController`, each metrics interval |
 | `controller:{host}:{port}:status` | string | the agent's `LocalController` | GlobalController only — deliberately not a health signal |
 | `endpoint:address` | hash | GlobalController — `_apply_config`, deleted once a stop empties the fleet | dashboard API |
 
@@ -120,6 +122,67 @@ the replica; treating it as unhealthy turns one hiccup into a fleet-wide rebuild
 first seen healthy, after which it is judged on live probes alone. Without this the loop
 provisions a container, probes it while it is still booting, removes it, and provisions
 another, forever. Going down there is no debounce: replacement is cheap, downtime is not.
+
+## Draining a replica
+
+### One reconcile pass
+
+```mermaid
+flowchart TD
+    unwanted["_remove_unwanted<br/>surplus · replacement requested · drain in progress"] --> drain
+    gone["_remove_replicas_of_removed_agents<br/>agent removed from config"] --> drain
+    drain{"_drain_replica<br/>one step per pass"} -->|fleet stopping| now["_remove_replica"]
+    drain -->|not _is_healthy| unhealthy["_remove_replica (unhealthy)"]
+    drain -->|otherwise| mark["HSET agent_instance:{id} draining_at<br/>first pass only"]
+    mark --> flag["SET controller:{address}:draining = removal time<br/>on the replica's Redis, every pass"]
+    flag --> idle{"_is_idle, or 180 s<br/>since draining_at?"}
+    idle -->|no| next(["next pass"])
+    idle -->|yes| drained["_remove_replica (drained)<br/>record deleted, slot free"]
+    drained --> refill["ensure_replicas refills the slot if still wanted"]
+    refill --> clear["Local launch: _clear_stale_status deletes<br/>the slot's old :status and :draining keys"]
+```
+
+### The draining replica
+
+```mermaid
+sequenceDiagram
+    participant RC as Reconciler
+    participant NR as Replica's Redis
+    participant D as Draining replica (LocalController)
+    participant S as Another replica (sender)
+
+    RC->>NR: SET controller:{address}:draining = removal time
+    loop every metrics interval
+        D->>NR: GET controller:{address}:draining
+        Note over D: stateless: servicer.refusing = True<br/>stateful: keeps taking every call, holds each request it runs<br/>in servicer.open_requests until Cleanup names it
+        D->>NR: heartbeat: draining = 1, open_requests, pending_requests
+    end
+    S->>D: Execute with route_to
+    D-->>S: UNAVAILABLE, never queued
+    Note over S: _on_forwarded marks it down<br/>and resolves another replica
+    Note over D: two heartbeats before the removal time: fail every call it<br/>still runs or has queued with ReplicaRemovedError, then report<br/>nothing those calls do afterwards
+    RC->>NR: HGETALL controller:{address}:metrics (_is_idle)
+    Note over RC: _remove_replica once idle,<br/>or at the 180 s limit
+```
+
+### When it counts as idle
+
+| Heartbeat field | Idle when | Covers |
+| --- | --- | --- |
+| `draining` | `1` | the replica has seen its drain flag |
+| `queue_length` | `0` | calls waiting in its executor |
+| `requests_served`, `requests_completed` | equal | calls running |
+| `open_requests` | `0` | stateful requests bound to it |
+| `pending_requests` | `0` | its incoming queue, the request in hand, sends not yet taken or waiting to retry |
+
+### Who reads draining_at
+
+```mermaid
+flowchart LR
+    da[("agent_instance:{id}<br/>draining_at")] --> pub["publish_routing_snapshot<br/>leaves the replica out of routing, a hint"]
+    da --> reason["_removal_reason<br/>drain in progress"]
+    da --> poll["GlobalController._poll_controllers<br/>leaves it out of the scaling samples"]
+```
 
 ## Teardown
 

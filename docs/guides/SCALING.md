@@ -43,8 +43,8 @@ for each agent.
    measurements in a row, with every replica up. That wait also acts as a cooldown
    after each change.
 3. It then averages the metric over those 4 measurements. Above `scale_up_above`, it
-   adds one replica. Below `scale_down_below`, it removes one. Replicas change one at
-   a time.
+   adds one replica. Below `scale_down_below`, it removes one, which drains gracefully
+   instead of being terminated. Replicas change one at a time.
 
 With the default poll interval, an agent changes by at most one replica about every
 50 seconds.

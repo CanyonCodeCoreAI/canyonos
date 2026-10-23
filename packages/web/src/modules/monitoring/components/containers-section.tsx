@@ -7,6 +7,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import type { MonitoringReplica, MonitoringReplicasResponse } from '@canyonos/api/monitoring';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
+import { cn } from '@repo/ui/utils';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { replicasQueryOptions } from '@/modules/monitoring/monitoring.queries';
 
@@ -24,6 +25,7 @@ function groupByAgent(
 
 export function ContainersSection({ project_id }: { readonly project_id: string }) {
   const query = useQuery(replicasQueryOptions(project_id));
+  const draining = query.data?.replicas.filter((replica) => replica.draining).length ?? 0;
 
   return (
     <section className="flex min-w-0 flex-col" data-testid="metrics-containers">
@@ -31,14 +33,25 @@ export function ContainersSection({ project_id }: { readonly project_id: string 
         <div>
           <h2 className="text-foreground text-sm font-semibold">Containers</h2>
           <p className="text-muted-foreground mt-1 text-xs">
-            Every replica reporting up, with the requests queued on it.
+            Every replica reporting up, with the requests queued on it. A grey one is draining: it
+            finishes its requests but gets no new ones.
           </p>
         </div>
-        <span
-          className="text-foreground text-2xl font-semibold tabular-nums"
-          data-testid="metrics-containers-count"
-        >
-          {query.data?.replicas.length}
+        <span className="flex items-baseline gap-2">
+          {draining > 0 && (
+            <span
+              className="text-muted-foreground text-xs"
+              data-testid="metrics-containers-draining"
+            >
+              {draining} draining
+            </span>
+          )}
+          <span
+            className="text-foreground text-2xl font-semibold tabular-nums"
+            data-testid="metrics-containers-count"
+          >
+            {query.data && query.data.replicas.length - draining}
+          </span>
         </span>
       </header>
       <ContainersBody query={query} />
@@ -78,9 +91,15 @@ function ContainersBody({ query }: { readonly query: UseQueryResult<MonitoringRe
             {replicas.map((replica) => (
               <span
                 key={replica.replica}
-                title={`${replica.replica}: ${replica.queue_length ?? 0} queued`}
+                title={`${replica.replica}: ${replica.queue_length ?? 0} queued${replica.draining ? ', draining' : ''}`}
                 data-testid={`metrics-containers-replica-${replica.replica}`}
-                className="bg-primary/70 text-primary-foreground dark:text-foreground flex size-8 items-center justify-center rounded-md text-xs font-medium tabular-nums"
+                data-state={replica.draining ? 'draining' : 'serving'}
+                className={cn(
+                  'flex size-8 items-center justify-center rounded-md text-xs font-medium tabular-nums',
+                  replica.draining
+                    ? 'bg-muted text-muted-foreground'
+                    : 'bg-primary/70 text-primary-foreground dark:text-foreground'
+                )}
               >
                 {replica.queue_length ?? 0}
               </span>
@@ -90,7 +109,7 @@ function ContainersBody({ query }: { readonly query: UseQueryResult<MonitoringRe
             className="text-foreground text-right text-xs tabular-nums"
             data-testid={`metrics-containers-agent-count-${agent}`}
           >
-            {replicas.length}
+            {replicas.filter((replica) => !replica.draining).length}
           </span>
         </li>
       ))}

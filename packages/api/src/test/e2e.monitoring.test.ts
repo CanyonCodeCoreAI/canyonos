@@ -12,6 +12,7 @@ import {
   STATUS_CODE,
 } from '@api/modules/metrics/metrics.contract';
 import {
+  AGENT_DRAINING_METRIC,
   AGENT_UP_METRIC,
   MACHINE_UTILIZATION_METRICS,
   QUEUE_LENGTH_METRIC,
@@ -1287,7 +1288,7 @@ async function write_replica_samples(
 }
 
 describe('GET /projects/:project_id/monitoring/replicas', () => {
-  test('lists identified replicas whose latest up sample is fresh and 1, with their load', async () => {
+  test('lists identified replicas whose latest up sample is fresh and 1, with their load and drain state', async () => {
     const { project_id } = await create_project(token, 'Replicas Project');
     const { project_id: other_project_id } = await create_project(token, 'Foreign Replicas');
     const stale_ms = (REPLICA_UP_SECONDS + 30) * 1000;
@@ -1306,6 +1307,9 @@ describe('GET /projects/:project_id/monitoring/replicas', () => {
       sample('Planner', null, QUEUE_LENGTH_METRIC, 4, 1_000),
       sample('Worker', 'worker-0', AGENT_UP_METRIC, 1, 1_000),
       sample('Worker', 'worker-0', REQUESTS_STARTED_METRIC, 5, 1_000),
+      sample('Worker', 'worker-1', AGENT_UP_METRIC, 1, 1_000),
+      sample('Worker', 'worker-1', AGENT_DRAINING_METRIC, 0, 8_000),
+      sample('Worker', 'worker-1', AGENT_DRAINING_METRIC, 1, 1_000),
     ]);
     await write_replica_samples(other_project_id, [
       sample('Planner', 'foreign-0', AGENT_UP_METRIC, 1, 1_000),
@@ -1319,8 +1323,27 @@ describe('GET /projects/:project_id/monitoring/replicas', () => {
     expect(res.data).toEqual({
       project_id,
       replicas: [
-        { agent: 'Planner', replica: 'planner-0', queue_length: 3, active_requests: 3 },
-        { agent: 'Worker', replica: 'worker-0', queue_length: null, active_requests: null },
+        {
+          agent: 'Planner',
+          replica: 'planner-0',
+          queue_length: 3,
+          active_requests: 3,
+          draining: false,
+        },
+        {
+          agent: 'Worker',
+          replica: 'worker-0',
+          queue_length: null,
+          active_requests: null,
+          draining: false,
+        },
+        {
+          agent: 'Worker',
+          replica: 'worker-1',
+          queue_length: null,
+          active_requests: null,
+          draining: true,
+        },
       ],
     });
   });

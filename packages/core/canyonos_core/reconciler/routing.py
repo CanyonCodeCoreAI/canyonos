@@ -16,7 +16,8 @@ AGENTS_SET_KEY = "routing_table:agents"
 
 
 def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
-    """Write every agent's replica addresses to each machine's Redis, removing agents not in agent_specs."""
+    """Write every agent's replica addresses to each machine's Redis, leaving out agents
+    not in agent_specs and draining replicas."""
     agent_names = {agent_spec["name"] for agent_spec in agent_specs}
     stateful = {
         agent_spec["name"]
@@ -45,6 +46,7 @@ def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
                         list_replicas(primary_redis, agent_name),
                         key=lambda item: int(item["replica_index"]),
                     )
+                    if "draining_at" not in item
                 ]
                 if addresses:
                     redis_client.hset(

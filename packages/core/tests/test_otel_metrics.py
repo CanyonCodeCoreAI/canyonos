@@ -102,6 +102,16 @@ class MetricConvertAgentTests(unittest.TestCase):
             by["canyonos.agent.requests.completed"].data.data_points[0].value, 40
         )
 
+    def test_draining_is_a_gauge(self):
+        for draining in (0, 1):
+            with self.subTest(draining=draining):
+                gauge = {
+                    m.name: m
+                    for m in self._convert(draining=draining).scope_metrics[0].metrics
+                }["canyonos.agent.draining"]
+                self.assertIsInstance(gauge.data, Gauge)
+                self.assertEqual(gauge.data.data_points[0].value, draining)
+
     def test_health_gauge_reflects_status(self):
         up = {m.name: m for m in self._convert().scope_metrics[0].metrics}[
             "canyonos.agent.up"

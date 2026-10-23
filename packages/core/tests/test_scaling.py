@@ -337,6 +337,38 @@ class RecordSamplesTests(unittest.TestCase):
         self.assertEqual(sample["queue_length_total"], 6)
         self.assertEqual(sample["requests_per_minute_per_replica"], 6.0)
 
+    def test_a_draining_replica_is_polled_but_not_counted_for_scaling(self):
+        controller = _controller(None)
+        controller.running = False
+        controller.agent_specs = []
+        controller.machine_redis = {}
+        for index, extra in ((0, {}), (1, {"draining_at": "100.0"})):
+            controller.redis.hset_multiple(
+                f"agent_instance:Alpha-{index}",
+                {
+                    "private_host": "localhost",
+                    "address": f"canyonos-alpha-{index}:50051",
+                    **extra,
+                },
+            )
+        polled = []
+
+        def poll(replica):
+            polled.append(replica["address"])
+            return {"address": replica["address"]}
+
+        controller._poll_one_replica = poll
+        controller._poll_machine_metrics = lambda: None
+        recorded = []
+        controller._record_agent_samples = recorded.extend
+
+        controller._poll_controllers()
+
+        self.assertEqual(
+            sorted(polled), ["canyonos-alpha-0:50051", "canyonos-alpha-1:50051"]
+        )
+        self.assertEqual(recorded, [{"address": "canyonos-alpha-0:50051"}])
+
 
 if __name__ == "__main__":
     unittest.main()

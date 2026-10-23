@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import unittest
+
+import grpc
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -28,6 +30,7 @@ class ExecuteDedupTests(unittest.TestCase):
             my_address=address,
             redis=redis if redis is not None else _FakeRedis(),
             request_queue=__import__("queue").Queue(),
+            refusing=False,
         )
         servicer._already_accepted = lambda payload: (
             LocalControllerServicer._already_accepted(servicer, payload)
@@ -77,6 +80,41 @@ class ExecuteDedupTests(unittest.TestCase):
         self.assertEqual(servicer.request_queue.qsize(), 2)
 
 
+class _AbortContext:
+    def abort(self, code, details):
+        self.code = code
+        raise RuntimeError(details)
+
+
+class DrainRefusalTests(unittest.TestCase):
+    def setUp(self):
+        self.servicer = ExecuteDedupTests._servicer(self)
+        self.servicer.refusing = True
+
+    def test_a_forwarded_request_is_refused_before_it_is_queued(self):
+        context = _AbortContext()
+        request = local_controller_pb2.JsonResponse(
+            response=json.dumps({"future_id": "f1", "route_to": "10.0.0.1:50051"})
+        )
+
+        with self.assertRaises(RuntimeError):
+            LocalControllerServicer.Execute(self.servicer, request, context)
+
+        # UNAVAILABLE is what the sender treats as "never reached, pick again".
+        self.assertEqual(context.code, grpc.StatusCode.UNAVAILABLE)
+        self.assertEqual(self.servicer.request_queue.qsize(), 0)
+        self.assertEqual(self.servicer.redis.strings, {})
+
+    def test_its_own_calls_are_still_queued(self):
+        request = local_controller_pb2.JsonResponse(
+            response=json.dumps({"future_id": "f1"})
+        )
+
+        LocalControllerServicer.Execute(self.servicer, request, context=None)
+
+        self.assertEqual(self.servicer.request_queue.qsize(), 1)
+
+
 class _SyncThread:
     """Stand-in for threading.Thread that runs its target immediately, inline.
 
@@ -96,7 +134,10 @@ class _SyncThread:
 class CleanupDispatchTests(unittest.TestCase):
     def test_batched_request_ids_dispatches_cleanup_for_each(self):
         cleaned = []
-        servicer = SimpleNamespace(_cleanup_request=lambda rid: cleaned.append(rid))
+        servicer = SimpleNamespace(
+            _cleanup_request=lambda rid: cleaned.append(rid),
+            open_requests={"req1", "req2", "other"},
+        )
         request = local_controller_pb2.JsonResponse(
             response=json.dumps({"request_ids": ["req1", "req2", "req3"]})
         )
@@ -107,6 +148,8 @@ class CleanupDispatchTests(unittest.TestCase):
             LocalControllerServicer.Cleanup(servicer, request, context=None)
 
         self.assertEqual(cleaned, ["req1", "req2", "req3"])
+        # A finished request no longer holds this replica's drain.
+        self.assertEqual(servicer.open_requests, {"other"})
 
     def test_missing_ids_does_not_dispatch(self):
         cleaned = []
@@ -145,7 +188,9 @@ class CleanupDispatchTests(unittest.TestCase):
                 raise ConnectionError("redis unreachable")
             cleaned.append(rid)
 
-        servicer = SimpleNamespace(_cleanup_request=_cleanup_request)
+        servicer = SimpleNamespace(
+            _cleanup_request=_cleanup_request, open_requests=set()
+        )
         request = local_controller_pb2.JsonResponse(
             response=json.dumps({"request_ids": ["req1", "req2", "req3"]})
         )

@@ -77,8 +77,11 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
       >
         <StatusTile
           test_id="status-tile-replicas"
-          label="Replicas up"
-          value={readout(replicas_query, ({ replicas }) => replicas.length)}
+          label="Replicas serving"
+          value={readout(
+            replicas_query,
+            ({ replicas }) => replicas.filter((replica) => !replica.draining).length
+          )}
         />
         <StatusTile
           test_id="status-tile-agents"

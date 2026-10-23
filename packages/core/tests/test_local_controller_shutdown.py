@@ -34,7 +34,7 @@ class LocalControllerShutdownTests(unittest.TestCase):
             _metrics_stop_event=MagicMock(),
             _metrics_thread=MagicMock(),
             _executor=executor,
-            _executor_futures={executor_future: "future-hung"},
+            _executor_futures={executor_future: ("future-hung", None)},
             _executor_futures_lock=threading.Lock(),
             redis=MagicMock(),
             _status_key="controller:localhost:50051:status",

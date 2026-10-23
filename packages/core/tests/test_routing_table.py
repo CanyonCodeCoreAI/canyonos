@@ -75,6 +75,19 @@ class PublishTests(unittest.TestCase):
             ],
         )
 
+    def test_a_draining_replica_is_left_out(self):
+        redis = _FakeRedis()
+        _seed(redis, "Alpha", 0)
+        _seed(redis, "Alpha", 1)
+        redis.hset("agent_instance:local:Alpha:1", "draining_at", "2")
+
+        publish_routing_snapshot([ALPHA], redis)
+
+        self.assertEqual(
+            json.loads(redis.hget(ROUTING_ADDRESSES_KEY, "Alpha")),
+            ["canyonos-alpha-0:50051"],
+        )
+
     def test_an_agent_missing_from_the_specs_is_removed_everywhere(self):
         """The spec list is the complete world, so the fill step must pass every agent's."""
         redis = _FakeRedis()

@@ -26,6 +26,7 @@ import {
   spanStart,
 } from '../metrics/metrics.sql';
 import {
+  AGENT_DRAINING_METRIC,
   AGENT_UP_METRIC,
   MACHINE_UTILIZATION_METRICS,
   QUEUE_LENGTH_METRIC,
@@ -513,7 +514,8 @@ export const monitoring_repo = {
       select l.agent, l.replica,
         ${latest_of(QUEUE_LENGTH_METRIC)}::int as queue_length,
         (${latest_of(REQUESTS_STARTED_METRIC)} - ${latest_of(REQUESTS_COMPLETED_METRIC)})::int
-          as active_requests
+          as active_requests,
+        coalesce(${latest_of(AGENT_DRAINING_METRIC)}, 0) = 1 as draining
       from (
         select distinct on (replica, m.metric_name)
           m.service_name as agent,
@@ -522,7 +524,7 @@ export const monitoring_repo = {
           m.value
         from ${otelMetrics} m
         where m.metric_name in (${AGENT_UP_METRIC}, ${QUEUE_LENGTH_METRIC},
-            ${REQUESTS_STARTED_METRIC}, ${REQUESTS_COMPLETED_METRIC})
+            ${REQUESTS_STARTED_METRIC}, ${REQUESTS_COMPLETED_METRIC}, ${AGENT_DRAINING_METRIC})
           and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
           and ${sql.raw(REPLICA_ID)} is not null
           and ${sql.raw(metricTime('m'))} >= now() - make_interval(secs => ${REPLICA_UP_SECONDS})

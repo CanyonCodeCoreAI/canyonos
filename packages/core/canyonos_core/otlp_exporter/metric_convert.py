@@ -63,11 +63,12 @@ _CAPACITY_GAUGES = {
     "disk_total_bytes": ("canyonos.machine.disk.total", "By"),
 }
 
-# Per-agent (per-replica) metrics. queue_length is a point-in-time gauge; the request
-# counters are cumulative monotonic Sums (LocalController never resets them, so each
+# Per-agent (per-replica) metrics. queue_length and draining are point-in-time gauges; the
+# request counters are cumulative monotonic Sums (LocalController never resets them, so each
 # agent lifetime is one series and a restart is a natural reset via a new started_at).
 _AGENT_GAUGES = {
     "queue_length": ("canyonos.agent.queue.length", "{item}"),
+    "draining": ("canyonos.agent.draining", "1"),
 }
 _AGENT_SUMS = {
     "requests_served": ("canyonos.agent.requests", "{request}"),

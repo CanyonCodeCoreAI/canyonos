@@ -87,6 +87,7 @@ semconv, kept as-is), `host.name`, `canyonos.agent.port`, `canyonos.project.id`.
 | Field | Metric | Instrument | Unit |
 | --- | --- | --- | --- |
 | `queue_length` | `canyonos.agent.queue.length` | Gauge | `{item}` |
+| `draining` | `canyonos.agent.draining` | Gauge (`1` once the replica has seen its drain flag, else `0`) | `1` |
 | `requests_served` | `canyonos.agent.requests` | Sum (monotonic, cumulative) | `{request}` |
 | `requests_completed` | `canyonos.agent.requests.completed` | Sum (monotonic, cumulative) | `{request}` |
 | `full_failures` | `canyonos.agent.failures` | Sum (monotonic, cumulative) | `{failure}` |

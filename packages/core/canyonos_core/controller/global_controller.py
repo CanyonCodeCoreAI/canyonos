@@ -1005,7 +1005,14 @@ class GlobalController(ControllerContext):
         # than inside the per-replica loop above (N replicas on a box would otherwise
         # re-read and re-write the same machine sample N times).
         self._poll_machine_metrics()
-        self._record_agent_samples([s for s in replica_samples if s])
+        # A draining replica is on its way out, so it must not count towards scaling.
+        self._record_agent_samples(
+            [
+                sample
+                for replica, sample in zip(replicas, replica_samples)
+                if sample and "draining_at" not in replica
+            ]
+        )
 
     def _poll_machine_metrics(self):
         """Read each host's machine-level metrics hash (written by the per-machine

@@ -10,6 +10,7 @@ the queue, and runs them on the agent or forwards them to another controller."""
 import json
 import logging
 import os
+import queue
 import random
 import sys
 import threading
@@ -83,6 +84,10 @@ REPLICA_DOWN_SECONDS = 30
 FORWARD_RETRIES = 8
 FUTURE_RESULT_TIMEOUT_SECONDS = 300
 ENDPOINT_LOG_SOURCE = "Endpoint"
+
+
+class ReplicaRemovedError(RuntimeError):
+    """A call could not finish before its replica was removed at the end of a drain."""
 
 
 def log_source_name(agent_name):
@@ -168,6 +173,15 @@ class LocalController(object):
         # Periodically publish replica metrics, on the same cadence
         # GlobalController polls with (via CANYONOS_POLL_INTERVAL).
         self._metrics_key = f"controller:{self.agent_host}:{self.public_port}:metrics"
+        # Written by the reconciler when it starts draining this replica.
+        self._draining_key = f"controller:{self.agent_host}:{self.public_port}:draining"
+        self._draining = False
+        self._failed_leftovers = False
+        # Calls the drain failed back to their callers; nothing they do later is reported.
+        self._cut_off = set()
+        # Requests taken off the queue or sent on, not yet with their next holder.
+        self._unsent = 0
+        self._unsent_lock = threading.Lock()
         self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
         # One transaction, so a reader never sees "initializing" without a heartbeat to judge it by.
         # Cumulative request counters are always increasing, never reset. It is the consumers job to get the delta between polls to get the specific metrics.
@@ -364,6 +378,9 @@ class LocalController(object):
         return {
             "status": "healthy",
             "queue_length": str(self._executor._work_queue.qsize()),
+            "draining": str(int(self._draining)),
+            "open_requests": str(len(self.servicer.open_requests)),
+            "pending_requests": str(self.request_queue.qsize() + self._unsent),
             "observed_at": str(time.time()),
         }
 
@@ -371,6 +388,21 @@ class LocalController(object):
         """Background thread: periodically publish replica metrics and refresh status."""
         while not self._metrics_stop_event.is_set():
             try:
+                # Read before collecting, so a heartbeat saying draining comes after refusals began.
+                remove_at = self.redis.get(self._draining_key)
+                self._draining = remove_at is not None
+                # A stateful replica keeps taking calls; open_requests holds its drain instead.
+                self.servicer.refusing = (
+                    self._draining and self.agent_name not in self._stateful
+                )
+                # Two heartbeats before removal, so every caller gets an error, not silence.
+                if (
+                    self._draining
+                    and not self._failed_leftovers
+                    and time.time() >= float(remove_at) - 2 * self._metrics_interval
+                ):
+                    self._failed_leftovers = True
+                    self._fail_unfinished()
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
                 with self._status_lock:
@@ -560,6 +592,8 @@ class LocalController(object):
         try:
             while True:
                 if not self.request_queue.empty():
+                    # Before the get, so a heartbeat never misses it between the two.
+                    self._count_unsent(1)
                     raw = self.request_queue.get()
                     data = None
                     try:
@@ -573,6 +607,8 @@ class LocalController(object):
                             self._mark_future_failed(
                                 data.get("future_id"), e, data.get("origin")
                             )
+                    finally:
+                        self._count_unsent(-1)
                 else:
                     time.sleep(0.001)
         except KeyboardInterrupt:
@@ -717,6 +753,9 @@ class LocalController(object):
                     return
 
         if address == self._my_address:
+            # This request's later calls are bound here, so a drain waits for it to finish.
+            if request_id and agent_name in self._stateful:
+                self.servicer.open_requests.add(request_id)
             submitted_at = time.time()
             executor_future = self._executor.submit(
                 self._execute_locally,
@@ -732,7 +771,7 @@ class LocalController(object):
                 future_args,
             )
             with self._executor_futures_lock:
-                self._executor_futures[executor_future] = future_id
+                self._executor_futures[executor_future] = (future_id, origin)
             executor_future.add_done_callback(self._forget_executor_future)
         else:
             # Register the target as a consumer for any Future args
@@ -917,6 +956,8 @@ class LocalController(object):
             else:
                 serialized = str(result)
 
+            if future_id in self._cut_off:
+                return
             # Write result to local Redis
             self.redis.hset(f"future:{future_id}", "result", serialized)
             self.redis.hset(f"future:{future_id}", "failed", 0)
@@ -976,7 +1017,7 @@ class LocalController(object):
 
             # Send the completion callback only now that every final metric
             # has been written, so the snapshot sent to origin is complete.
-            if origin and origin != self._my_address:
+            if origin and origin != self._my_address and future_id not in self._cut_off:
                 if succeeded:
                     self._send_result_callback(
                         origin, future_id, result=serialized, failed=0, error_message=""
@@ -1026,7 +1067,20 @@ class LocalController(object):
         call = self._get_remote_stub(address).Execute.future(
             request, timeout=FORWARD_TIMEOUT_SECONDS
         )
+        # Before the callback is added, since it may run at once and count it back down.
+        self._count_unsent(1)
         call.add_done_callback(lambda done: self._on_forwarded(done, address, data))
+
+    def _count_unsent(self, change):
+        """Adjust the count of requests this replica took on but has not handed on yet,
+        which a drain waits for."""
+        with self._unsent_lock:
+            self._unsent += change
+
+    def _resend(self, payload):
+        """Put a forward back on the request queue once its backoff is over."""
+        self.request_queue.put(payload)
+        self._count_unsent(-1)
 
     def _on_forwarded(self, call, address, data):
         """When the replica was unreachable or did not answer in time, mark it down and
@@ -1034,6 +1088,7 @@ class LocalController(object):
         of retries, fails the request."""
         error = call.exception()
         if error is None:
+            self._count_unsent(-1)
             return
         retries = data.get("retries", 0) + 1
         if (
@@ -1043,6 +1098,7 @@ class LocalController(object):
         ):
             logger.error("Failed to forward request to %s: %s", address, error)
             self._mark_future_failed(data.get("future_id"), error)
+            self._count_unsent(-1)
             return
         self._down_until[address] = time.monotonic() + REPLICA_DOWN_SECONDS
         data["retries"] = retries
@@ -1060,9 +1116,11 @@ class LocalController(object):
         payload = json.dumps(data)
         if retries == 1:
             self.request_queue.put(payload)
+            self._count_unsent(-1)
             return
+        # Stays counted until _resend puts it back on the queue.
         retry = threading.Timer(
-            min(0.5 * 2 ** (retries - 2), 8), self.request_queue.put, [payload]
+            min(0.5 * 2 ** (retries - 2), 8), self._resend, [payload]
         )
         retry.name = f"forward-retry-{data.get('future_id')}"
         retry.daemon = True
@@ -1142,6 +1200,27 @@ class LocalController(object):
     #  Shutdown                                                            #
     # ------------------------------------------------------------------ #
 
+    def _fail_unfinished(self):
+        """Fail every call still running or queued here, so its caller gets an error
+        instead of waiting on a replica that is about to be removed."""
+        error = ReplicaRemovedError(
+            f"Replica {self._my_address} was removed before the call finished"
+        )
+        with self._executor_futures_lock:
+            unfinished = list(self._executor_futures.values())
+        while True:
+            try:
+                data = json.loads(self.request_queue.get_nowait())
+            except queue.Empty:
+                break
+            except ValueError:
+                continue
+            unfinished.append((data.get("future_id"), data.get("origin")))
+        self._cut_off.update(future_id for future_id, _ in unfinished)
+        for future_id, origin in unfinished:
+            logger.warning("Failing %s: its replica's drain timed out.", future_id)
+            self._mark_future_failed(future_id, error, origin)
+
     def _forget_executor_future(self, executor_future):
         with self._executor_futures_lock:
             self._executor_futures.pop(executor_future, None)
@@ -1157,7 +1236,9 @@ class LocalController(object):
         if outstanding:
             _, unfinished = wait(outstanding, timeout=EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS)
             if unfinished:
-                future_ids = sorted(str(outstanding[future]) for future in unfinished)
+                future_ids = sorted(
+                    str(outstanding[future][0]) for future in unfinished
+                )
                 logger.warning(
                     "Executor shutdown timed out with requests still running: %s",
                     ", ".join(future_ids),
