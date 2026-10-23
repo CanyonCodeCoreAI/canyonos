@@ -87,8 +87,9 @@ Deploy is live
 
 Dashboard  http://127.0.0.1:8081
 
-curl -X POST http://127.0.0.1:8080/main -H "Content-Type: application/json" -d '{"query": "your query"}'
-poll       curl http://127.0.0.1:8080/status/<request_id>
+message           curl -X POST http://127.0.0.1:8080/main -H "Content-Type: application/json" -d '{"query": "your query"}'
+respond to agent  curl -X POST http://127.0.0.1:8080/answer/<request_id> -H "Content-Type: application/json" -d '{"input": "your answer"}'
+check result      curl http://127.0.0.1:8080/status/<request_id>
 ```
 - If you forget the endpoint, run `canyonos status` to see it.
 - Every `canyonos deploy` automatically tears down any previous deploy on this machine, from any project, so you can also just redeploy directly.
@@ -116,8 +117,9 @@ To get the result, run:
 curl http://localhost:8080/status/<request_id>
 ```
 
-- There are three statuses that can be shown:
+- There are four statuses that can be shown:
   - `"status": "pending"` while the workflow runs.
+  - `"status": "input_required"` when an agent asks you a question, with the question and the `input_schema` of the answer it expects in `question`, such as `{"input": "str"}`. Answer with those keys at `POST /answer/<request_id>`, such as `{"input": "yes"}`.
   - `"status": "done"` when it finishes, with your workflow's return value in `result`.
   - `"status": "error"` if it failed.
 - Periodically we clean up all finished requests. Once a finished request is cleaned up, this returns `404` with `Request not found`.

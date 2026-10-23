@@ -7,7 +7,8 @@ Read this only for CanyonOS Python changes. Read the matching document in
 
 - Python 3.10 uses synchronous code. Concurrency is `threading` and
   `concurrent.futures.ThreadPoolExecutor`; child processes use `subprocess`.
-  Do not introduce asyncio.
+  Do not introduce asyncio, except to wrap a library's own async API (as
+  `human_input` does with `asyncio.to_thread`).
 - Controllers communicate through gRPC in `controller/proto/`; the LLM Gateway
   is Flask. Redis is shared state and telemetry uses OpenTelemetry.
 - The CLI is argparse plus Rich. Add dependencies with `uv add`, never by hand.

@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
+import io
 import json
 import queue
 import subprocess
+import urllib.error
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +39,7 @@ ENDPOINT = {
     "arguments": ["query", "n_candidates"],
     "url": "http://127.0.0.1:8080/main",
 }
+ANSWER_URL = "http://127.0.0.1:8080/answer/req-1"
 
 
 @pytest.fixture(autouse=True)
@@ -266,6 +269,128 @@ def test_a_workflow_error_is_reported_as_a_failure(monkeypatch, deployable, caps
     assert test_cmd.run_test("hi", as_json=True) == 1
 
     assert json.loads(capsys.readouterr().out)["error"] == "agent blew up"
+
+
+def _ask(monkeypatch, input_schema, *typed):
+    """Make the workflow ask one question whose answer has `input_schema`, have the
+    person type each of `typed` in turn, and return the calls sent to the endpoint."""
+    statuses = iter(
+        [
+            {
+                "status": "input_required",
+                "question": {"question": "Sell TSLA?", "input_schema": input_schema},
+            },
+            {"status": "done", "result": {"r": 2}},
+        ]
+    )
+    sent = []
+    lines = iter(typed)
+    monkeypatch.setattr(test_cmd, "_await_result", lambda *a: next(statuses))
+    monkeypatch.setattr(test_cmd, "_send_query", lambda *a: sent.append(a) or "req-1")
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(lines))
+    return sent
+
+
+@pytest.mark.parametrize(
+    "input_schema, typed, prompts, body",
+    [
+        ({"input": "str"}, ["false"], ["Your answer: "], {"input": "false"}),
+        ({"input": "bool"}, ["true"], ["Your answer (bool): "], {"input": True}),
+        ({"input": "int"}, ["42"], ["Your answer (int): "], {"input": 42}),
+        ({"input": "float"}, ["2.5"], ["Your answer (float): "], {"input": 2.5}),
+        (
+            {"input": "any"},
+            ['{"approve": true}'],
+            ["Your answer (any): "],
+            {"input": {"approve": True}},
+        ),
+        (
+            {"approved": "bool", "draft": "str | None"},
+            ["true", "null"],
+            ["approved (bool): ", "draft (str | None): "],
+            {"approved": True, "draft": None},
+        ),
+        (
+            {"approve": "bool", "message": "str"},
+            ["false", "Not today"],
+            ["approve (bool): ", "message (str): "],
+            {"approve": False, "message": "Not today"},
+        ),
+    ],
+)
+def test_a_question_is_answered_key_by_key_as_the_types_it_expects(
+    monkeypatch, deployable, input_schema, typed, prompts, body
+):
+    sent = _ask(monkeypatch, input_schema)
+    asked, lines = [], iter(typed)
+    monkeypatch.setattr(
+        "builtins.input", lambda prompt: asked.append(prompt) or next(lines)
+    )
+
+    assert test_cmd.run_test("hi") == 0
+
+    assert asked == prompts
+    assert sent[-1] == (ANSWER_URL, body)
+
+
+def test_an_answer_that_is_not_json_is_sent_as_typed(monkeypatch, deployable):
+    sent = _ask(monkeypatch, {"input": "bool"}, "yes")
+
+    assert test_cmd.run_test("hi") == 0
+
+    assert sent[1:] == [(ANSWER_URL, {"input": "yes"})]
+
+
+def _http_error(code, error):
+    """The endpoint's answer to a refused POST, carrying `error`."""
+    body = io.BytesIO(json.dumps({"error": error}).encode())
+    return urllib.error.HTTPError(ANSWER_URL, code, "", {}, body)
+
+
+def test_a_refused_answer_reports_the_endpoint_reason(monkeypatch, deployable):
+    _ask(monkeypatch, {"input": "str"}, "sell")
+    errors = []
+
+    def send(*a):
+        if a[0] == ANSWER_URL:
+            raise _http_error(409, "Request req-1 is not waiting for input")
+        return "req-1"
+
+    monkeypatch.setattr(test_cmd, "_send_query", send)
+    monkeypatch.setattr(
+        test_cmd, "_print_summary", lambda run: errors.append(run.error)
+    )
+
+    assert test_cmd.run_test("hi") == 1
+
+    assert errors[0].endswith(": Request req-1 is not waiting for input")
+
+
+def test_a_question_without_a_terminal_fails_the_run(monkeypatch, deployable):
+    _ask(monkeypatch, {"input": "str"})
+    errors = []
+
+    def no_terminal(_prompt):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", no_terminal)
+    monkeypatch.setattr(
+        test_cmd, "_print_summary", lambda run: errors.append(run.error)
+    )
+
+    assert test_cmd.run_test("hi") == 1
+
+    assert "no terminal" in errors[0]
+
+
+def test_a_question_fails_a_json_run_without_prompting(monkeypatch, deployable, capsys):
+    sent = _ask(monkeypatch, {"input": "str"})
+
+    assert test_cmd.run_test("hi", as_json=True) == 1
+
+    assert "without --json" in json.loads(capsys.readouterr().out)["error"]
+    # Only the query went out; no answer was asked for or sent.
+    assert len(sent) == 1
 
 
 def test_a_flat_layout_project_deploys_fine_with_no_car_directory(

@@ -4,7 +4,9 @@
 """The CanyonOS endpoint: serves the configured agent method over HTTP.
 
 `POST /<method>` queues a root call and answers with its request id;
-`GET /status/<request_id>` reports the call's result once it is done.
+`POST /answer/<request_id>` answers that request's oldest waiting question; and
+`GET /status/<request_id>` reports the call's result once it is done, or the
+question it is waiting on.
 """
 
 import json

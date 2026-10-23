@@ -108,8 +108,8 @@ gunicorn worker (×2) ─────────────▶ create_app(CANY
                          ├─ uuid.uuid4().hex                        └─ HGETALL future:<future_id>
                          ├─ SET request:<id>:context                     ├─ failed ──▶ error (error_message)
                          ├─ set_request_id                               ├─ result ──▶ done
-                         ├─ Future(parent=None, agent, method,           └─ else   ──▶ pending
-                         │         args=kwargs)
+                         ├─ Future(parent=None, agent, method,           ├─ oldest of request:<id>:waiting ──▶ input_required (question)
+                         │         args=kwargs)                          └─ else   ──▶ pending
                          ├─ SET request:<id>:future = <future_id>
                          └─ 202 {"request_id": <id>}
                                   │ Execute ──▶ target agent replica
@@ -120,6 +120,27 @@ gunicorn worker (×2) ─────────────▶ create_app(CANY
                                   ├─ error ──▶ HSET error_message
                                   ├─ WriteResult ──▶ endpoint LocalController
                                   └─ SADD request:completed
+
+input() | LangGraph interrupt() | Agents SDK approval   (human_input.install)
+     └─ ask_human(question, input_schema) ──▶ Future(agent_name="endpoint", method="ask_human") ──▶ routed like any call
+                                              ▼
+                        endpoint LocalController._process_request
+                              └─ agent_name is "endpoint"
+                                   ├─ HSET future:<qid> ◀── the asker's record fields
+                                   ├─ SADD request:<id>:futures ◀── qid, future:<qid>:consumers ◀── asking replica
+                                   ├─ LPUSH request:<id>:waiting {future_id, question}
+                                   └─ request already finished ──▶ _fail_waiting_questions
+
+POST /answer/<request_id>
+     ├─ RPOP request:<id>:waiting
+     │    └─ empty ──▶ 409
+     ├─ WriteResult {future_id, result, finished_at} ──▶ endpoint LocalController
+     │    └─ HSET future:<qid> ──▶ _fan_out_to_consumers ──▶ asking replica
+     └─ 202 {"request_id": <id>}
+
+root result arrives at the endpoint (WriteResult, no parent)
+     └─ on_request_done, on its own thread ──▶ _fail_waiting_questions
+                                                    └─ RPOP each ──▶ _mark_future_failed ──▶ _fan_out_to_consumers ──▶ asking replica
 ```
 
 A root call is one whose Future has no parent. `_execute_locally` resolves every nested Future in its result, wraps a non-dict result in `{"value": ...}`, stores `error_message` on failure, and adds the request to `request:completed`.
@@ -226,18 +247,20 @@ LocalController / LocalControllerServicer
              request:<request_id>:cleanup_lock, future:<future_id>,
              future:<future_id>:children, future:<future_id>:consumers,
              affinity:<request_id>, execute:<address>:<future_id>:accepted,
-             request:completed
+             request:completed, request:<request_id>:waiting
   reads  ◀── controller:<host>:<port>:replica_id, controller:<host>:<port>:draining,
              routing_table:addresses, routing_table:stateful, policy:rules,
              request:<request_id>:context, request:<request_id>:futures,
+             request:<request_id>:future,
              future:<future_id>, future:<future_id>:consumers,
              affinity:<request_id>
 
 endpoint / Future
   writes ──▶ request:<request_id>:context, request:<request_id>:future,
              request:<request_id>:futures, future:<future_id>,
-             future:<future_id>:consumers
-  reads  ◀── request:<request_id>:future, future:<future_id>
+             future:<future_id>:consumers, request:<request_id>:waiting (RPOP)
+  reads  ◀── request:<request_id>:future, future:<future_id>,
+             request:<request_id>:waiting
 
 reconciler
   writes ──▶ agent_instance:*, agent:<name>:instances, controller:<host>:<port>:draining,

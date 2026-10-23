@@ -70,13 +70,44 @@ sequenceDiagram
     LC->>R: HSET future:{future_id} result / failed
     C->>E: GET /status/{id}
     E->>R: GET request:{id}:future, HGETALL future:{future_id}
-    E-->>C: pending | done + result | error + error
+    E-->>C: pending | input_required + question | done + result | error + error
 ```
 
 The body must be a JSON object. Each key becomes a keyword argument, and `_context` is
 taken out first and kept for policy. An empty body is a call with no arguments; anything
 else is a `400`. A finished request's keys expire after cleanup, and `GET /status` then
 answers `404`.
+
+## Answering a question
+
+An agent's `ask_human` call is routed to the endpoint's Local Controller, which keeps it
+in `request:<id>:waiting` instead of running it, with the asking replica as the call's
+consumer. While a question waits, `GET /status` answers `input_required` with
+`{"question": ..., "input_schema": ...}` in `question`, `input_schema` mapping each key
+the answer takes to its Python type name, such as `{"input": "str"}`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as HTTP client
+    participant E as Endpoint (Flask)
+    participant LC as Endpoint LocalController
+    participant R as Redis
+    participant A as Asking replica
+
+    A->>LC: gRPC Execute (endpoint.ask_human)
+    LC->>R: SADD future:{qid}:consumers, LPUSH request:{id}:waiting
+    C->>E: POST /answer/{id} {"input": "..."}
+    E->>R: RPOP request:{id}:waiting
+    E->>LC: gRPC WriteResult (localhost:50051)
+    LC->>R: HSET future:{qid} result
+    LC->>A: gRPC WriteResult, as to any consumer
+    E-->>C: 202 {"request_id": {id}}
+```
+
+`POST /answer/<request_id>` starts no call: it answers the request's oldest question, or
+is a `409` when none is waiting. When the request finishes first, its waiting questions
+fail the same way, so each asking call raises.
 
 ## Forwarding and retries
 

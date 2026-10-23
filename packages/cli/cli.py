@@ -194,7 +194,10 @@ def _run_command():
         type=int,
         default=REQUEST_TIMEOUT,
         metavar="SECONDS",
-        help=f"Seconds to wait for the workflow to finish (default: {REQUEST_TIMEOUT}).",
+        help=(
+            "Seconds to wait for the workflow to finish; the wait restarts after each "
+            f"answer (default: {REQUEST_TIMEOUT})."
+        ),
     )
 
     # Validate has args: artifact_root, -c/--config, --json.

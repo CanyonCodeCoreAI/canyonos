@@ -175,6 +175,8 @@ sequenceDiagram
 | `open_requests` | `0` | stateful requests bound to it |
 | `pending_requests` | `0` | its incoming queue, the request in hand, sends not yet taken or waiting to retry |
 
+A call waiting for a person's answer counts as running, so a drain that reaches the 180 s limit fails it with `ReplicaRemovedError` and its request ends as `error`.
+
 ### Who reads draining_at
 
 ```mermaid

@@ -117,7 +117,7 @@
                                                            └─ SADD request:completed  (GC cleanup)
  GET /status/<id> ────▶ GET request:<id>:future
                         HGETALL future:<fid>
- ◀──── {status, result | error}
+ ◀──── {status, result | error | question}
 ```
 
 ## Future: origin → executor → origin

@@ -48,6 +48,9 @@ import local_controller_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
+# Agent images don't ship canyonos_core.endpoint, whose ENDPOINT_AGENT_NAME this matches.
+ENDPOINT_AGENT_NAME = "endpoint"
+
 
 # defines the future object which will be returned by each function call
 class Future(object):

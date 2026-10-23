@@ -89,7 +89,7 @@ So:
 - Methods are called synchronously. An `async def` is not awaited, and its
   coroutine's `repr` is what lands in Redis. `canyonos validate` reports
   `CAR-ADAPTER-ASYNC`.
-- Calls run on a thread pool of eight workers against one instance, so the
+- Calls run on a thread pool of 16 workers against one instance, so the
   instance is shared between concurrent requests. State on `self` needs to
   be safe for that, or the entry needs `replicas: 1` and `stateful: true`.
 - A `dict` or `list` result is JSON-encoded before it enters Redis. Anything
@@ -155,7 +155,7 @@ endpoint:
 CanyonOS runs the endpoint itself, in its own container on the machine that
 runs `canyonos deploy`, and publishes it on `api_port` (default 8080).
 [Endpoint](../architecture/ENDPOINT.md) shows how a request travels through it.
-The agents' stubs are the target agent's only imports of the platform.
+The agents' stubs and `ask_human` are the target agent's only imports of the platform.
 `canyonos_core` inside the image holds the LLM gateway only, so importing
 anything else from it raises `ImportError` at start.
 
@@ -171,9 +171,13 @@ most once per delivery the replica accepts. A replica that dies mid-run loses
 the request. The method takes one of that replica's
 `CANYONOS_MAX_AGENT_INSTANCES` slots (default 16) and waits in line when all
 are busy. `GET /status/<request_id>` reads that future: `pending` until it
-finishes, then `done` with the result or `error` with the message. A
+finishes, then `done` with the result or `error` with the message, and
+`input_required` with the question while an agent waits for the person. A
 `Future` left in the returned value, at any depth of a dict, list or tuple,
-is resolved before serialising. Only the
+is resolved before serialising. CanyonOS waits up to 65 minutes for the result
+of a `Future` passed as an argument or left in the returned value, so a call
+whose result is lost, for example because its replica died, fails after 65
+minutes. Only the
 `Future` object itself is resolved: `str(f)`, an f-string or
 `json.dumps(...)` inside the method turns it into its `repr` first, so call
 `.value()` on anything you format or parse. A result that is
@@ -184,6 +188,45 @@ Each stub method returns a `Future` immediately and `.value()` blocks. The
 value is the text the agent stored, so a dict comes back as a JSON string.
 Dispatching and resolving inside one comprehension serialises the calls
 without any error; dispatch everything first, then resolve.
+
+### Asking the person
+
+Agent code asks the person who sent the request a question the way it already
+does, with no changes. During a request each of these waits for the person's reply:
+
+| Code | `input_schema` | What it gets back |
+|---|---|---|
+| `input(prompt)` | `{"input": "str"}` | the reply's `input`, as JSON text when it isn't a string |
+| LangGraph `interrupt(value)` | `{"input": "any"}` | the reply's `input`; no checkpointer or `Command(resume=...)` needed |
+| LangGraph `interrupt(value, response_schema=bool)`, or any other type that isn't a model | `{"input": "bool"}` | the reply's `input`, checked as that type |
+| LangGraph `interrupt(value, response_schema=Review)` with a pydantic model, TypedDict or dataclass, and LangChain's human-in-the-loop middleware (`HITLResponse`) | each field's type, such as `{"approved": "bool", "draft": "str \| None"}` | the reply built into the model |
+| OpenAI Agents SDK 0.12.1 or later: `Runner.run` / `Runner.run_sync` with tools that need approval | `{"approve": "bool", "message": "str \| None"}` | a finished run: each pending tool call is asked about, `{"approve": true}` approves it, `{"approve": false}` rejects it with the reply's `message`, or the SDK's own message when there is none |
+| `ask_human(question, input_schema)` from `human_input` | `input_schema` | the whole reply as a dict, unchecked |
+
+Each of these but `ask_human` asks again when a reply is missing a key or has a
+value that doesn't fit its type. Types show as a Python developer writes them;
+unions, `Literal`s and nested models can show less precisely, and the agent still
+checks the reply. A JSON Schema `response_schema` shows its `properties`, or `input`
+when it has none, and the reply isn't checked against it. The agent images run
+Python 3.11, so a TypedDict schema needs `typing_extensions.TypedDict`, not
+`typing.TypedDict`; LangGraph itself requires this.
+
+While it waits, `GET /status/<request_id>` answers `input_required`, with
+`{"question": ..., "input_schema": ...}` in its `question` field: the question, and
+each key the answer takes with its type. The person answers with a JSON object of
+those keys at `POST /answer/<request_id>`, such as `{"input": "1042"}`; the agent gets
+that body, and the request carries on. The endpoint answers `202` once it passes the
+answer on, `409` when nothing is waiting, and `400` when the body isn't a JSON object.
+Questions waiting in the same request are answered oldest first. If the request
+finishes or fails before a question is answered, that question fails and the waiting
+call raises. A question with no answer after an hour makes the waiting call raise
+`TimeoutError`. CanyonOS waits at most 65 minutes for a `Future` passed as an argument
+or left in the returned value, so a call that runs longer, for example by asking two
+questions that each take 40 minutes, makes that wait raise `TimeoutError`. The asking
+agent, and every call waiting on it, keep their slots until the answer comes. A
+replica that dies meanwhile loses the request, and an answer sent to it is lost too.
+A scale-down that drains the asking replica fails the request with
+`ReplicaRemovedError` once the drain's 180 s limit passes.
 
 ## Build context
 
@@ -229,7 +272,8 @@ No `policy.yaml` means every caller may reach every agent. With a file,
 `rules` is a list of `{match: {...}, access: [...] | all}`. The controller
 sorts rules by how many keys `match` has, most specific first, and takes the
 first rule whose keys all equal the request's `_context`. `access: all`
-allows everything; otherwise the agent has to be listed. No matching rule
+allows everything; otherwise the agent has to be listed. Calls to
+`endpoint`, which `ask_human` makes, are always allowed. No matching rule
 denies. A denied call fails after the request was accepted, with
 `Unauthorized: Policy denied access to agent`.
 

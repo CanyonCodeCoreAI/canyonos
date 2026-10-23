@@ -55,17 +55,22 @@ except ImportError:
     import canyonos_context
 
 canyonos_context.install()
-gateway_headers.install(
-    canyonos_context.get_current_future_id, canyonos_context.get_current_function
-)
 
 import local_controller_pb2
 import local_controller_pb2_grpc
 
 try:
-    from canyonos_core.controller.future import Future
+    from canyonos_core.controller.future import ENDPOINT_AGENT_NAME, Future
+    from canyonos_core.controller.utils import human_input
 except ImportError:
-    from future import Future
+    from future import ENDPOINT_AGENT_NAME, Future
+    import human_input
+
+human_input.install()
+# After human_input: httpx loads click, which keeps the input() it imports with.
+gateway_headers.install(
+    canyonos_context.get_current_future_id, canyonos_context.get_current_function
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -82,7 +87,8 @@ FORWARD_TIMEOUT_SECONDS = 2
 # reconciler replaces it meanwhile.
 REPLICA_DOWN_SECONDS = 30
 FORWARD_RETRIES = 8
-FUTURE_RESULT_TIMEOUT_SECONDS = 300
+# One question's wait plus 5 minutes; a call that asks several can still outrun it.
+FUTURE_RESULT_TIMEOUT_SECONDS = human_input.QUESTION_TIMEOUT_SECONDS + 300
 ENDPOINT_LOG_SOURCE = "Endpoint"
 
 
@@ -130,6 +136,7 @@ class LocalController(object):
         # Let the gRPC servicer fan a result out to this machine's consumers as
         # soon as it arrives via WriteResult (see _fan_out_to_consumers).
         self.servicer.on_result = self._fan_out_to_consumers
+        self.servicer.on_request_done = self._fail_waiting_questions
 
         # Connect to Redis. Readiness is published only after a configured
         # agent has loaded successfully.
@@ -487,6 +494,9 @@ class LocalController(object):
         Iterates through rules (sorted most-specific first) and returns True
         if a matching rule grants access to the agent.
         """
+        # Any agent may ask the human a question through the endpoint.
+        if agent_name == ENDPOINT_AGENT_NAME:
+            return True
         rules = self._load_policy_rules()
         if not rules:
             # No policy rules -> allow everything
@@ -643,8 +653,7 @@ class LocalController(object):
                 )
                 append_log_entry(self.redis, f"future:{future_id}", entry)
 
-            # Unblock any consumers waiting on this future so a failed dependency
-            # surfaces as an error instead of a 300s timeout.
+            # Unblock any consumers waiting on this future so a failed dependency surfaces as an error.
             self._fan_out_to_consumers(future_id, failed=1, error_message=name)
 
             if origin and origin != self._my_address:
@@ -657,6 +666,19 @@ class LocalController(object):
         except Exception as e:
             # Never let the failure-recording path itself raise -- callers rely on this being a safe sink.
             logger.error("Failed to record failure for future %s: %s", future_id, e)
+
+    def _fail_waiting_questions(self, request_id):
+        """Fail every question a finished request still has waiting, so each agent that
+        asked stops waiting and the request can be cleaned up."""
+        while (waiting := self.redis.rpop(f"request:{request_id}:waiting")) is not None:
+            future_id = json.loads(waiting)["future_id"]
+            # Telemetry exports only finished spans.
+            self.redis.hset(f"future:{future_id}", "finished_at", time.time())
+            self._mark_future_failed(
+                future_id,
+                "Request finished before the question was answered",
+                error_name="RequestFinished",
+            )
 
     def _process_request(self, data):
         """
@@ -753,6 +775,35 @@ class LocalController(object):
                     return
 
         if address == self._my_address:
+            # The endpoint runs no agent code: a call to it is a question for the human.
+            if agent_name == ENDPOINT_AGENT_NAME:
+                # The asker's own record, so telemetry ties the answer written here to its request.
+                self.redis.hset_multiple(
+                    f"future:{future_id}",
+                    {
+                        "id": future_id,
+                        "request_id": request_id,
+                        "parent": parent,
+                        "service": agent_name,
+                        "method": function,
+                        "args": json.dumps(args),
+                        "created_at": created_at,
+                    },
+                )
+                self.redis.sadd(f"request:{request_id}:futures", future_id)
+                # Before listing the question, so its answer or failure always reaches the asker.
+                self.redis.sadd(f"future:{future_id}:consumers", origin)
+                self.redis.lpush(
+                    f"request:{request_id}:waiting",
+                    json.dumps({"future_id": future_id, "question": args["question"]}),
+                )
+                # A question can arrive after its request finished; checking after holding closes the race.
+                root = self.redis.hgetall(
+                    f"future:{self.redis.get(f'request:{request_id}:future')}"
+                )
+                if root.get("result") or str(root.get("failed")) == "1":
+                    self._fail_waiting_questions(request_id)
+                return
             # This request's later calls are bound here, so a drain waits for it to finish.
             if request_id and agent_name in self._stateful:
                 self.servicer.open_requests.add(request_id)
@@ -825,7 +876,13 @@ class LocalController(object):
             )
             self._forward_request(address, data)
 
-    def _resolve_future_args(self, args, future_args, poll_interval=0.01, timeout=300):
+    def _resolve_future_args(
+        self,
+        args,
+        future_args,
+        poll_interval=0.01,
+        timeout=FUTURE_RESULT_TIMEOUT_SECONDS,
+    ):
         """
         Replace each arg named in future_args (its value is a Future id) with
         that Future's result, polling Redis until it is available. Other args
@@ -1163,13 +1220,15 @@ class LocalController(object):
 
         except Exception as e:
             logger.error("Failed to send result callback to %s: %s", origin, e)
+            # Otherwise marking it failed sends to the same unreachable consumer again.
+            self.redis.srem(f"future:{future_id}:consumers", origin)
             self._mark_future_failed(
                 future_id,
                 f"Result callback failed: {e}",
                 error_name="ResultCallbackFailed",
             )
 
-    def _fan_out_to_consumers(self, future_id, result=None, failed=0, error_message=""):
+    def _fan_out_to_consumers(self, future_id, result="", failed=0, error_message=""):
         """Push a completed future (result or failure) to every address registered
         as a consumer on THIS machine's Redis.
 

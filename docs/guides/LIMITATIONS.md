@@ -4,7 +4,7 @@
 We currently have areas that are not supported, and will be listing them below. When building your workflow, take heed of these issues.
 
 Database Scaling: We currently do not support scaling for the `type: database`
-Human-in-the-Loop: We do not support cases where the workflow asks the human for guidance
+Human-in-the-Loop: only `input()`, LangGraph's `interrupt()`, OpenAI Agents SDK approvals (0.12.1 or later) and `ask_human()` ask the person who sent the request. LangGraph's `interrupt()` in an `async def` node blocks that node's event loop until the person answers.
 Docker-in-Docker: We do not support cases where the workflow calls docker commands.
 - You will need to explicitely program your workflow to run Docker-in-Docker commands rather than ordinary docker.
 Agent needs a non-installable package (like git, rust, etc.)
@@ -24,9 +24,9 @@ Several projects on one machine: each folder you run `canyonos` from is its own 
 
 You own your app's code, dependencies, data, credentials, outside services, and whether its answers are correct. CanyonOS owns running it, connecting its containers, and routing its model calls. Check your app against each section below before running `canyonos build`.
 
-### 1. A way to call it without a person
+### 1. A way to call it
 
-Provide a function or class that takes a request and returns a result, with no UI or human input:
+Provide a function or class that takes a request and returns a result:
 
 ```python
 class SupportAgent:
@@ -36,13 +36,12 @@ class SupportAgent:
 
 The serving path can't depend on:
 
-- `input()` or terminal prompts;
+- terminal UIs beyond `input()`;
 - a microphone, speaker, browser, or desktop UI;
-- a person approving an action while the request runs;
 - an interactive CLI loop;
 - starting another web server instead of exposing the app's logic.
 
-If an action needs confirmation, make that confirmation part of the request or the app's workflow state.
+If an action needs a person's answer while the request runs, `input()`, LangGraph's `interrupt()` and OpenAI Agents SDK approvals ask the person who sent the request ([Runtime contract](RUNTIME_CONTRACT.md#asking-the-person)).
 
 ### 2. No Docker inside the app
 

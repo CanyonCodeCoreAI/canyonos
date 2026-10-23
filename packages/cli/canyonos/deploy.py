@@ -371,8 +371,8 @@ def _curl_example(url, body):
 
 
 def summary_body(dashboard_url, endpoint):
-    """Build the deploy panel's text: the dashboard URL, and how to call and poll the
-    endpoint described by its published record, when there is one."""
+    """Build the deploy panel's text: the dashboard URL, and how to call, poll and
+    answer the endpoint described by its published record, when there is one."""
     body = Text()
     body.append("Dashboard  ", "dim")
     if dashboard_url:
@@ -384,13 +384,19 @@ def summary_body(dashboard_url, endpoint):
         host, api_port = endpoint["public_host"], endpoint["api_port"]
         base = f"http://{host}:{api_port}"
         example = {name: "your query" for name in endpoint["arguments"]}
-        body.append("\n\n")
+        body.append("\n\nmessage           ", "dim")
         body.append(_curl_example(endpoint["url"], example), WHITE)
-        body.append("\npoll       ", "dim")
+        body.append("\nrespond to agent  ", "dim")
+        body.append(
+            _curl_example(f"{base}/answer/<request_id>", {"input": "your answer"}),
+            WHITE,
+        )
+        body.append("\ncheck result      ", "dim")
         body.append(f"curl {base}/status/<request_id>", WHITE)
         if host not in ("127.0.0.1", "localhost"):
             body.append(
-                f"\n           needs inbound TCP {api_port} open on {host}", "dim"
+                f"\n                  needs inbound TCP {api_port} open on {host}",
+                "dim",
             )
     return body
 

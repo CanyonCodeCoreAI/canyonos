@@ -25,6 +25,8 @@ from canyonos_core.controller.future import Future
 from canyonos_core.controller.local_controller import LocalController
 from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT
 
+import local_controller_pb2
+
 logger = logging.getLogger(__name__)
 
 # How many requests each worker serves at once; the rest wait for a free thread.
@@ -33,7 +35,8 @@ WORKER_THREADS = 16
 
 def create_app(agent, method, redis_client):
     """Build the Flask app that queues calls to the agent's method at `POST /<method>`
-    and reports their results at `GET /status/<request_id>`."""
+    and reports their results at `GET /status/<request_id>`; `POST /answer/<request_id>`
+    answers that request's oldest waiting question."""
     app = Flask("canyonos-endpoint")
 
     @app.errorhandler(404)
@@ -49,7 +52,8 @@ def create_app(agent, method, redis_client):
         return jsonify({"error": "Method not allowed"}), 405
 
     @app.route(f"/{method}", methods=["POST"])
-    def handle_request():
+    @app.route("/answer/<request_id>", methods=["POST"])
+    def handle_request(request_id=None):
         # Parsed with stdlib json because Flask replaces decode errors with a
         # generic "Bad Request".
         raw_body = request.get_data(cache=True)
@@ -63,6 +67,28 @@ def create_app(agent, method, redis_client):
                 return jsonify({"error": "Request body must be a JSON object"}), 400
         else:
             kwargs = {}
+
+        if request_id:
+            waiting = redis_client.rpop(f"request:{request_id}:waiting")
+            if waiting is None:
+                return jsonify(
+                    {"error": f"Request {request_id} is not waiting for input"}
+                ), 409
+            future_id = json.loads(waiting)["future_id"]
+            # The endpoint's controller passes it on to the agent that asked.
+            Future._get_stub().WriteResult(
+                local_controller_pb2.JsonResponse(
+                    response=json.dumps(
+                        {
+                            "future_id": future_id,
+                            "result": json.dumps(kwargs),
+                            "finished_at": time.time(),
+                        }
+                    )
+                )
+            )
+            logger.info("Answered question %s of request %s", future_id, request_id)
+            return jsonify({"request_id": request_id}), 202
 
         context = kwargs.pop("_context", {})
         request_id = uuid.uuid4().hex
@@ -84,7 +110,8 @@ def create_app(agent, method, redis_client):
 
     @app.route("/status/<request_id>", methods=["GET"])
     def get_status(request_id):
-        """Report a request's status, and its result or error once it has one."""
+        """Report a request's status, and its result or error once it has one, or the
+        question it is waiting on."""
         future_id = redis_client.get(f"request:{request_id}:future")
         if future_id is None:
             # Cleanup expires a finished request's keys; durable history lives in
@@ -100,6 +127,9 @@ def create_app(agent, method, redis_client):
         elif record.get("result"):
             response["status"] = "done"
             response["result"] = json.loads(record["result"])
+        elif oldest := redis_client.lrange(f"request:{request_id}:waiting", -1):
+            response["status"] = "input_required"
+            response["question"] = json.loads(oldest[0])["question"]
 
         return jsonify(response), 200
 

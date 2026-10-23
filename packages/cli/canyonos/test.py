@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 from rich.panel import Panel
@@ -41,7 +42,7 @@ from canyonos.deploy import (
     queued_lines,
     run_deploy,
 )
-from canyonos.gc import deploy_status, deployed_endpoint
+from canyonos.gc import _error_detail, deploy_status, deployed_endpoint
 from canyonos.init import docker_env, load_state, quit_existing
 from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
@@ -138,7 +139,7 @@ def _wait_for_endpoint(state, api_port):
 
 
 def _send_query(url, body):
-    """POST the test query to the endpoint and return the request ID it assigns."""
+    """POST a query or an answer to the endpoint and return the request ID it sends back."""
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"}, method="POST"
@@ -155,8 +156,8 @@ def _send_query(url, body):
 
 
 def _await_result(endpoint, request_id, timeout):
-    """Poll the endpoint for the request's result until it is done or errors, or return
-    `{"status": "timeout"}`."""
+    """Poll the endpoint until the request is done, errors or waits for an answer, or
+    return `{"status": "timeout"}`."""
     url = f"http://{endpoint['public_host']}:{endpoint['api_port']}/status/{request_id}"
     deadline = time.time() + timeout
     with ui.status("Running query..."):
@@ -164,7 +165,7 @@ def _await_result(endpoint, request_id, timeout):
             try:
                 with urllib.request.urlopen(url, timeout=10) as resp:
                     data = json.loads(resp.read())
-                if data.get("status") in ("done", "error"):
+                if data.get("status") in ("done", "error", "input_required"):
                     return data
             except (OSError, ValueError):
                 # A network blip or a malformed body while the workflow is busy; keep polling.
@@ -244,6 +245,18 @@ def _verify_runtime(run, config_path):
     run.done(f"{len(run.runtime['agents'])} agent(s) up")
 
 
+def _read_answer(prompt, kind):
+    """Read one answer to the workflow's question from the terminal: as typed when
+    `kind` is `str`, otherwise as JSON when it parses and as typed when it doesn't."""
+    text = input(prompt)
+    if kind == "str":
+        return text
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
 def _query(run, endpoint, timeout, number=3, total=3):
     """Send the test query to the deployed endpoint, as every argument of its method,
     and store the result on the run; raises if it errors or times out."""
@@ -260,6 +273,36 @@ def _query(run, endpoint, timeout, number=3, total=3):
         ) from None
 
     data = _await_result(endpoint, request_id, timeout)
+    answer_url = (
+        f"http://{endpoint['public_host']}:{endpoint['api_port']}/answer/{request_id}"
+    )
+    while data.get("status") == "input_required":
+        # Quiet means --json: the question can't be shown, and a script can't answer it.
+        if ui.console.quiet:
+            raise RuntimeError(
+                "The workflow asked a question, which --json can't answer. "
+                "Run `canyonos test` without --json to answer it."
+            )
+        asked = data["question"]
+        schema = asked["input_schema"]
+        ui.say(f"The workflow asks: {json.dumps(asked['question'])}")
+        body = {}
+        for key, kind in schema.items():
+            prompt = f"{key} ({kind}): "
+            if list(schema) == ["input"]:
+                prompt = "Your answer: " if kind == "str" else f"Your answer ({kind}): "
+            body[key] = _read_answer(prompt, kind)
+        try:
+            _send_query(answer_url, body)
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(
+                f"Could not send the answer to {answer_url}: {_error_detail(e)}"
+            ) from None
+        except OSError as e:
+            raise RuntimeError(
+                f"Could not send the answer to {answer_url}: {e}"
+            ) from None
+        data = _await_result(endpoint, request_id, timeout)
     status = data.get("status")
     if status == "error":
         raise RuntimeError(data.get("error") or "the workflow returned an error.")
@@ -406,6 +449,10 @@ def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
             _run_test(run, timeout=timeout)
         except KeyboardInterrupt:
             run.error = "cancelled by user"
+        except EOFError:
+            run.error = (
+                "The workflow asked a question, but there is no terminal to answer it."
+            )
         except RuntimeError as e:
             # Every phase raises RuntimeError with a message fit for the terminal and `--json`.
             run.error = str(e)

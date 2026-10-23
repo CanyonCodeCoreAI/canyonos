@@ -58,6 +58,8 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
         # Set by LocalController: fans a just-arrived result out to this machine's
         # consumers. Signature: on_result(future_id, result, failed, error_message).
         self.on_result = None
+        # Set by LocalController: called with the request id when a root call's result arrives.
+        self.on_request_done = None
         # Set by LocalController while a stateless replica drains: forwarded work is refused.
         self.refusing = False
         # Requests with calls bound here by affinity, until the GC reports them done.
@@ -131,6 +133,13 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
                         failed=failed,
                         error_message=error_message,
                     )
+                if not data.get("parent") and data.get("request_id"):
+                    # On its own thread, so the sender never waits on the request's end.
+                    Thread(
+                        target=self.on_request_done,
+                        args=(data["request_id"],),
+                        daemon=True,
+                    ).start()
             else:
                 logger.error("WriteResult: missing future_id in %s", data)
         except Exception as e:
@@ -197,6 +206,7 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
                 futures_key,
                 f"request:{request_id}:future",
                 f"request:{request_id}:context",
+                f"request:{request_id}:waiting",
             ]
             for fid in future_ids:
                 keys_to_expire.extend(

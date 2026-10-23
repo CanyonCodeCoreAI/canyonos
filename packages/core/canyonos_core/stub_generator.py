@@ -66,6 +66,7 @@ _AGENT_FLAT_SOURCES = {
     "log_entry.py": ("controller", "utils", "log_entry.py"),
     "gpu_metrics.py": ("controller", "utils", "gpu_metrics.py"),
     "log_handler.py": ("controller", "utils", "log_handler.py"),
+    "human_input.py": ("controller", "utils", "human_input.py"),
 }
 
 AGENT_FLAT_MODULES = frozenset(_AGENT_FLAT_SOURCES)

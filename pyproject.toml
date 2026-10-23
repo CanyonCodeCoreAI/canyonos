@@ -76,7 +76,10 @@ allowed-unresolved-imports = [
     "canyonos_context",
     "deploy",
     "future",
+    "human_input",
     "poller",
     "*_stub",
     "*_agent_stub",
+    # Imported by human_input only where LangGraph, which depends on it, is installed.
+    "pydantic",
 ]

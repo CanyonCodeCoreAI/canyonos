@@ -64,8 +64,9 @@ Deploy is live
 
 Dashboard  http://127.0.0.1:8081
 
-curl -X POST http://127.0.0.1:8082/main -H "Content-Type: application/json" -d '{"query": "your query"}'
-poll       curl http://127.0.0.1:8082/status/<request_id>
+message           curl -X POST http://127.0.0.1:8082/main -H "Content-Type: application/json" -d '{"query": "your query"}'
+respond to agent  curl -X POST http://127.0.0.1:8082/answer/<request_id> -H "Content-Type: application/json" -d '{"input": "your answer"}'
+check result      curl http://127.0.0.1:8082/status/<request_id>
 ```
 
 The dashboard port moves to the next free one if 8081 is taken, so use the URL it prints.

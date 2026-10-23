@@ -225,6 +225,7 @@ class CleanupRequestTests(unittest.TestCase):
                 "future:fut1:consumers": "x",
                 "request:req1:future": "fut1",
                 "request:req1:context": "x",
+                "request:req1:waiting": "x",
             },
         )
         servicer = _bare_servicer(redis)
@@ -236,6 +237,7 @@ class CleanupRequestTests(unittest.TestCase):
             "request:req1:futures",
             "request:req1:future",
             "request:req1:context",
+            "request:req1:waiting",
             "future:fut1",
             "future:fut2",
             "future:fut1:children",

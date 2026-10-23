@@ -169,3 +169,19 @@ def test_quiet_skips_the_resource_picker(monkeypatch, deployable):
     )
 
     assert deploy_cmd.run_deploy(CONFIG_PATH, quiet=True) == STATE
+
+
+def test_the_deploy_panel_shows_how_to_answer_a_question():
+    endpoint = {
+        "public_host": "127.0.0.1",
+        "api_port": 8084,
+        "url": "http://127.0.0.1:8084/main",
+        "arguments": ["query"],
+    }
+
+    text = deploy_cmd.summary_body(None, endpoint).plain
+
+    assert (
+        "respond to agent  curl -X POST http://127.0.0.1:8084/answer/<request_id> "
+        '-H "Content-Type: application/json" -d \'{"input": "your answer"}\''
+    ) in text
