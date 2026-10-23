@@ -143,11 +143,6 @@ class ValidationTests(unittest.TestCase):
         self._assert_invalid({**HAIKU, "max_tokens": "1024"}, "haiku", "max_tokens")
         self._assert_invalid({**HAIKU, "max_tokens": True}, "haiku", "max_tokens")
 
-    def test_capped_entry_needs_a_price_in_llm_prices(self):
-        self._assert_invalid(
-            {**HAIKU, "model_id": "no-such-model"}, "haiku", "llm_prices.json"
-        )
-
     def test_cap_must_be_numeric(self):
         self._assert_invalid(
             {**HAIKU, "agents": {"IntentAgent": "0.01"}}, "haiku", "IntentAgent"

@@ -4,48 +4,49 @@
 # Advisor Agent
 #
 # Final stage. Turns the computed portfolio metrics and risk figures into a
-# short, plain-English briefing using a small, cheap model on AWS Bedrock
-# (Converse API), called directly via boto3. Token/cost telemetry is recorded
-# onto this execution's future:<future_id> hash transparently by the CanyonOS LLM
-# gateway each agent container's boto3 calls are routed through. Configure
-# with env vars:
-#   BEDROCK_MODEL_ID  (default: meta.llama3-8b-instruct-v1:0)
-#   AWS_REGION        (default: us-east-1)
+# short, plain-English briefing using a small, cheap Baseten Model API, called
+# through the openai SDK. Token telemetry is recorded onto this execution's
+# future:<future_id> hash transparently by the CanyonOS LLM gateway each agent
+# container's Baseten calls are routed through. Configure with env vars:
+#   BASETEN_API_KEY   (required)
+#   BASETEN_MODEL_ID  (default: deepseek-ai/DeepSeek-V4-Flash-0731)
 #
 # If the LLM is unavailable (returns an empty string), it falls back to a
 # deterministic templated summary so the pipeline still returns.
 #
 # The instructions are the AdvisorAgent.summarize system prompt in config/prompts.yaml, which the
-# LLM gateway adds to every Converse call.
+# LLM gateway adds to every chat completion.
 #
-# Resource profile: cheap CPU; the LLM cost sits in the Bedrock call, not here.
+# Resource profile: cheap CPU; the LLM cost sits in the Baseten call, not here.
 
 import os
 
-import boto3
+from openai import OpenAI
 
 
 class AdvisorAgent(object):
     def __init__(self):
         self.tools = [self.summarize]
         self.model_id = os.environ.get(
-            "BEDROCK_MODEL_ID", "meta.llama3-8b-instruct-v1:0"
+            "BASETEN_MODEL_ID", "deepseek-ai/DeepSeek-V4-Flash-0731"
         )
-        self.region = os.environ.get("AWS_REGION", "us-east-1")
-        self._client = boto3.client("bedrock-runtime", region_name=self.region)
+        self._client = OpenAI(
+            base_url="https://inference.baseten.co/v1",
+            api_key=os.environ["BASETEN_API_KEY"],
+        )
 
     def summarize(self, holdings: dict, metrics: dict, risk: dict) -> str:
         """Write a short plain-English briefing on the portfolio."""
         prompt = self._build_prompt(holdings, metrics, risk)
         try:
-            response = self._client.converse(
-                modelId=self.model_id,
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
-                inferenceConfig={"maxTokens": 400, "temperature": 0.2},
+            response = self._client.chat.completions.create(
+                model=self.model_id,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
             )
-            return response["output"]["message"]["content"][0]["text"]
+            return response.choices[0].message.content
         except Exception as e:
-            print(f"AdvisorAgent: Bedrock call failed ({e}); using templated summary.")
+            print(f"AdvisorAgent: Baseten call failed ({e}); using templated summary.")
             return self._fallback_summary(metrics, risk)
 
     def _build_prompt(self, holdings: dict, metrics: dict, risk: dict) -> str:

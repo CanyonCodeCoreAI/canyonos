@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -24,6 +25,21 @@ log = logging.getLogger("llm_gateway")
 FUTURE_ID_HEADER = "x-canyonos-future-id"
 # The agent function making the call, so the gateway can pick its prompt.
 FUNCTION_HEADER = "x-canyonos-function"
+# The gateway always runs on localhost inside the agent's own container.
+GATEWAY_HOST = "http://127.0.0.1:8081"
+# Every HTTP(S) call in the container leaves through the gateway's proxy on this port.
+PROXY_PORT = 8082
+# Trusted roots plus the proxy's certificate authority, so clients accept its certificates.
+PROXY_CA_BUNDLE = "/tmp/canyonos-proxy/ca-bundle.pem"
+# Where an LLM call was addressed (scheme://host:port) before the proxy sent it to the gateway.
+UPSTREAM_HEADER = "x-canyonos-upstream"
+# The paths of each provider's LLM calls, which the container's proxy sends to the gateway.
+LLM_PATHS = {
+    "openai": re.compile(
+        r"/((chat/)?completions|embeddings|responses(/input_tokens)?)$"
+    ),
+    "anthropic": re.compile(r"/messages(/count_tokens)?$"),
+}
 
 
 @dataclass
@@ -58,6 +74,8 @@ class Ctx:
     model: Optional[str] = None
     prompt_name: Optional[str] = None
     prompt_version: Optional[str] = None
+    # LiteLLM's price prefix for the host an OpenAI-format call went to, e.g. "together_ai".
+    price_prefix: Optional[str] = None
 
     def elapsed_ms(self) -> float:
         """Return milliseconds since the request started."""
@@ -160,6 +178,7 @@ class Hooks:
                 # A future can make several LLM calls, so each call adds to its totals.
                 key = f"future:{future_id}"
                 self._redis.hset(key, "model", model_id)
+                self._redis.hset(key, "price_prefix", ctx.price_prefix or "")
                 if ctx.prompt_version:
                     self._redis.hset(key, "prompt_name", ctx.prompt_name)
                     self._redis.hset(key, "prompt_version", ctx.prompt_version)
@@ -230,12 +249,14 @@ class Hooks:
         """Bedrock Converse's usage schema (camelCase), used for both converse and converse-stream."""
         if not usage:
             return None
+        cache_read = usage.get("cacheReadInputTokens", 0)
+        cache_write = usage.get("cacheWriteInputTokens", 0)
         return TokenUsage(
-            input_tokens=usage.get("inputTokens", 0),
+            input_tokens=usage.get("inputTokens", 0) + cache_read + cache_write,
             output_tokens=usage.get("outputTokens", 0),
             total_tokens=usage.get("totalTokens", 0),
-            input_cache_tokens=usage.get("cacheReadInputTokens", 0),
-            input_cache_write_tokens=usage.get("cacheCreationInputTokens", 0),
+            input_cache_tokens=cache_read,
+            input_cache_write_tokens=cache_write,
         )
 
     @staticmethod
@@ -245,14 +266,16 @@ class Hooks:
         """Anthropic's native usage schema (snake_case, no total field); shared by direct Anthropic API calls and Bedrock invoke for anthropic.* models, since Bedrock returns Anthropic's own response body unchanged for that op."""
         if not usage:
             return None
-        input_tokens = usage.get("input_tokens", 0)
+        cache_read = usage.get("cache_read_input_tokens", 0)
+        cache_write = usage.get("cache_creation_input_tokens", 0)
+        input_tokens = usage.get("input_tokens", 0) + cache_read + cache_write
         output_tokens = usage.get("output_tokens", 0)
         return TokenUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
-            input_cache_tokens=usage.get("cache_read_input_tokens", 0),
-            input_cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
+            input_cache_tokens=cache_read,
+            input_cache_write_tokens=cache_write,
         )
 
     @staticmethod
@@ -265,8 +288,14 @@ class Hooks:
             return None
         input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0))
         output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
+        details = (
+            usage.get("prompt_tokens_details")
+            or usage.get("input_tokens_details")
+            or {}
+        )
         return TokenUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=usage.get("total_tokens", input_tokens + output_tokens),
+            input_cache_tokens=details.get("cached_tokens", 0),
         )

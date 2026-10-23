@@ -10,7 +10,7 @@ import importlib
 import logging
 from functools import wraps
 
-from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, FUTURE_ID_HEADER
+from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, FUTURE_ID_HEADER, LLM_PATHS
 
 log = logging.getLogger(__name__)
 
@@ -19,8 +19,9 @@ _PATCH_MARKER = "_canyonos_future_id_header_injection"
 
 def install(get_future_id, get_function=lambda: ""):
     """Add the future-id and function headers, read from `get_future_id()` and
-    `get_function()`, to Bedrock calls when boto3 is installed and to OpenAI/Anthropic SDK
-    calls bound for the gateway."""
+    `get_function()`, to Bedrock calls when boto3 is installed and to every POST to an
+    OpenAI-format or Anthropic LLM path, which the container's proxy sends to the gateway
+    when its body names a model."""
 
     def add_header(headers):
         future_id = get_future_id()
@@ -52,12 +53,19 @@ def install(get_future_id, get_function=lambda: ""):
 
 
 def _patch_httpx(httpx, add_header):
-    """Wrap httpx's sync and async send so requests to the gateway carry the header."""
+    """Wrap httpx's sync and async send so calls that may reach the gateway carry the
+    headers. A failure here leaves the request as the agent sent it."""
 
     def add_if_gateway(request):
-        # The provider path prefixes identify our gateway without trusting a rewritten host.
-        if request.url.path.startswith(("/openai", "/anthropic")):
-            add_header(request.headers)
+        try:
+            if request.method == "POST" and any(
+                p.search(request.url.path) for p in LLM_PATHS.values()
+            ):
+                add_header(request.headers)
+        except Exception:
+            log.warning(
+                "Could not add the CanyonOS headers to this call", exc_info=True
+            )
 
     sync_send = httpx.Client.send
     if not getattr(sync_send, _PATCH_MARKER, False):

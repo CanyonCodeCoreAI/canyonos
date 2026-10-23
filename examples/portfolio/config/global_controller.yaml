@@ -10,7 +10,7 @@
 
 agents:
   # Stage 0: parse the free-text request into structured holdings + lookback
-  # window (calls Bedrock via boto3, routed through the CanyonOS LLM gateway). Cheap CPU, one
+  # window (calls Baseten via the openai SDK, routed through the CanyonOS LLM gateway). Cheap CPU, one
   # call per request, on the critical path before the fan-out.
   - name: IntentAgent
     replicas: 1
@@ -19,7 +19,7 @@ agents:
       memory: 256
       gpu: 0
     entrypoint: agents/intent_agent.py
-    requirements: [boto3]
+    requirements: [openai]
     functions:
       - name: parse
         arguments:
@@ -94,7 +94,7 @@ agents:
     provider: local
     machine_type: t3.micro
 
-  # Stage 3: LLM briefing via Bedrock. On the critical path, one call per
+  # Stage 3: LLM briefing via Baseten. On the critical path, one call per
   # request.
   - name: AdvisorAgent
     replicas: 1
@@ -103,7 +103,7 @@ agents:
       memory: 512
       gpu: 0
     entrypoint: agents/advisor_agent.py
-    requirements: [boto3]
+    requirements: [openai]
     functions:
       - name: summarize
         arguments:
@@ -164,7 +164,7 @@ otel:
       endpoint: http://host.docker.internal:3000
       headers: {}
 
-# User secrets (AWS Bedrock credentials, etc.) -- see .env.example.
+# User secrets (Baseten API key, etc.) -- see .env.example.
 env_file: .env
 
 # Polling interval in seconds

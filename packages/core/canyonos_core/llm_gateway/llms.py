@@ -9,8 +9,6 @@ import json
 import logging
 from typing import Optional
 
-from canyonos_core.llm_gateway import pricing
-
 log = logging.getLogger("llm_gateway")
 
 LLMS_CONFIG_KEY = "llms:config"
@@ -66,11 +64,6 @@ def _validate_priced_entry(name: str, llm: dict) -> None:
     if not _is_number(llm.get("max_tokens")):
         raise ValueError(
             f"llms.yaml entry {name}: max_tokens must be a number to enforce a cap"
-        )
-    if pricing.token_prices(normalize_model_id(llm["model_id"])) is None:
-        raise ValueError(
-            f"llms.yaml entry {name}: {llm['model_id']} has no price in llm_prices.json "
-            "to enforce a cap"
         )
     for agent, cap in caps:
         if cap is not None and not _is_number(cap):

@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, wait
 
 import grpc
 
+from canyonos_core.llm_gateway.hooks import PROXY_PORT
+
 try:
     from canyonos_core.controller import gateway_headers
     from canyonos_core.controller.local_controller_frontend import start_server
@@ -90,6 +92,8 @@ FORWARD_RETRIES = 8
 # One question's wait plus 5 minutes; a call that asks several can still outrun it.
 FUTURE_RESULT_TIMEOUT_SECONDS = human_input.QUESTION_TIMEOUT_SECONDS + 300
 ENDPOINT_LOG_SOURCE = "Endpoint"
+# Every outbound call goes through the gateway, so a gateway that keeps dying fails the replica.
+MAX_GATEWAY_RESTARTS = 3
 
 
 class ReplicaRemovedError(RuntimeError):
@@ -147,6 +151,8 @@ class LocalController(object):
         self._status_key = f"controller:{self.agent_host}:{self.public_port}:status"
 
         # Agent LLM calls go through the gateway, so it starts before ready.
+        self._gateway_restarts = 0
+        self._redis_address = (redis_host, redis_port)
         if runs_agent:
             try:
                 self._gateway_process = self._start_llm_gateway(redis_host, redis_port)
@@ -287,9 +293,10 @@ class LocalController(object):
     def _start_llm_gateway(self, redis_host, redis_port):
         """Start the LLM gateway as a subprocess in this container (127.0.0.1:8081).
 
-        Fatal: the runtime force-injects LLM base-URL env vars that point every
-        Bedrock/OpenAI/Anthropic SDK call at this gateway (`docker run -e` beats
-        `--env-file`, so nothing can opt back out). If it fails to start, every
+        Fatal: the runtime force-injects env vars that point every Bedrock/Anthropic
+        SDK call at this gateway and every other HTTP(S) call at its proxy
+        (`docker run -e` beats `--env-file`, so nothing can opt back out), which
+        sends every OpenAI-format call here. If it fails to start, every
         LLM call in this container would silently fail or hang, not just lose
         telemetry -- so raise instead of limping on with no gateway listening.
         """
@@ -298,20 +305,24 @@ class LocalController(object):
         import urllib.request
 
         # An orphaned gateway on 8081 would answer the /healthz probe below and mask
-        # one of ours that never bound, so prove the port free before spawning.
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_probe:
-            port_probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                port_probe.bind(("127.0.0.1", 8081))
-            except OSError as e:
-                logger.error("127.0.0.1:8081 is already in use: %s", e)
-                raise RuntimeError(
-                    "127.0.0.1:8081 is already in use, so the LLM gateway cannot bind "
-                    "it; agent LLM calls are routed through it unconditionally and "
-                    "would otherwise fail silently."
-                ) from e
+        # one of ours that never bound, so prove its ports free before spawning.
+        for port in (8081, PROXY_PORT):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_probe:
+                port_probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    port_probe.bind(("127.0.0.1", port))
+                except OSError as e:
+                    logger.error("127.0.0.1:%d is already in use: %s", port, e)
+                    raise RuntimeError(
+                        f"127.0.0.1:{port} is already in use, so the LLM gateway cannot "
+                        "bind it; agent LLM calls are routed through it unconditionally "
+                        "and would otherwise fail silently."
+                    ) from e
 
         gateway_env = os.environ.copy()
+        # The gateway's own calls to providers must not loop back through its proxy.
+        gateway_env.pop("HTTP_PROXY", None)
+        gateway_env.pop("HTTPS_PROXY", None)
         gateway_env.update(
             {
                 "GATEWAY_HOST": "127.0.0.1",
@@ -391,10 +402,39 @@ class LocalController(object):
             "observed_at": str(time.time()),
         }
 
+    def _watch_llm_gateway(self):
+        """Restart the LLM gateway if it has exited. After MAX_GATEWAY_RESTARTS restarts, fail
+        this replica and stop serving and heartbeating instead, so the reconciler replaces it."""
+        # Only a replica that runs an agent starts a gateway.
+        if not (self.agent_name or self.agent_file):
+            return
+        if self._gateway_process.poll() is None:
+            return
+        code = self._gateway_process.returncode
+        if self._gateway_restarts >= MAX_GATEWAY_RESTARTS:
+            logger.error(
+                "LLM gateway exited (code %s) after %d restarts; failing this replica",
+                code,
+                self._gateway_restarts,
+            )
+            self.mark_failed()
+            self.server.stop(0)
+            self._metrics_stop_event.set()
+            return
+        self._gateway_restarts += 1
+        logger.warning(
+            "LLM gateway exited (code %s); restarting it (%d of %d)",
+            code,
+            self._gateway_restarts,
+            MAX_GATEWAY_RESTARTS,
+        )
+        self._gateway_process = self._start_llm_gateway(*self._redis_address)
+
     def _metrics_loop(self):
         """Background thread: periodically publish replica metrics and refresh status."""
         while not self._metrics_stop_event.is_set():
             try:
+                self._watch_llm_gateway()
                 # Read before collecting, so a heartbeat saying draining comes after refusals began.
                 remove_at = self.redis.get(self._draining_key)
                 self._draining = remove_at is not None

@@ -38,7 +38,9 @@ class AgentStartupOrderTests(unittest.TestCase):
             patch.object(
                 LocalController,
                 "_start_llm_gateway",
-                lambda _self, *_a: order.append("gateway") or MagicMock(),
+                lambda _self, *_a: (
+                    order.append("gateway") or MagicMock(**{"poll.return_value": None})
+                ),
             ),
             patch.object(
                 LocalController,

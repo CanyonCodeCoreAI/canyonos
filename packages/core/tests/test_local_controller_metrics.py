@@ -54,7 +54,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
     def test_configured_agent_load_failure_never_reports_healthy(self):
         redis = _FakeRedis()
         server = MagicMock()
-        gateway = MagicMock()
+        gateway = MagicMock(**{"poll.return_value": None})
         servicer = SimpleNamespace(request_queue=None, on_result=None)
         controllers = []
 
@@ -180,6 +180,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             _load_policy_rules=lambda reload=False: None,
         )
         controller._metrics_stop_event = stop_event
+        controller._watch_llm_gateway = lambda: None
         controller._fail_unfinished = lambda: controller.failed_leftovers.append(True)
         controller._collect_metrics = lambda: {
             "status": "healthy",

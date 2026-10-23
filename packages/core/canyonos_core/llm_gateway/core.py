@@ -8,11 +8,12 @@ from __future__ import annotations
 import json
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 from flask import Response, stream_with_context
 
-from canyonos_core.llm_gateway import prompts
-from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, Ctx
+from canyonos_core.llm_gateway import pricing, prompts
+from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, UPSTREAM_HEADER, Ctx
 from canyonos_core.llm_gateway.routing import AGENT_NAME, route, denied_response
 
 
@@ -46,10 +47,15 @@ def proxy_request(hooks, provider, subpath, flask_request):
         model=_guess_model(body),
         prompt_name=prompt_name if prompt_version else None,
         prompt_version=prompt_version,
+        price_prefix=pricing.LLM_HOSTS.get(
+            pricing.llm_host(
+                urlsplit(flask_request.headers.get(UPSTREAM_HEADER, "")).hostname
+            )
+        ),
     )
     hooks.on_request(ctx)
     # Policy/routing call; all routing and policy logic lives in routing.py.
-    denied = route(hooks._extract_model_id(ctx), body)
+    denied = route(hooks._extract_model_id(ctx), body, ctx.price_prefix)
     if denied:
         pr = denied_response(denied)
     else:

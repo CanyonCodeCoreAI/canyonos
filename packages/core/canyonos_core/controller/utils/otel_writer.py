@@ -147,6 +147,7 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
             output_token_count = int(float(raw.get("output_token_count") or 0))
             token_count = int(float(raw.get("token_count") or 0))
             cached_tokens = int(float(raw.get("input_cache_tokens") or 0))
+            cache_write_tokens = int(float(raw.get("input_cache_write_tokens") or 0))
             service = raw.get("service")
             method = raw.get("method")
             name = raw.get("name") or ".".join(
@@ -162,7 +163,12 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
                 # just cost it at 0.
                 try:
                     token_cost = pricing.compute_token_cost(
-                        raw.get("model"), input_token_count, output_token_count
+                        raw.get("model"),
+                        input_token_count,
+                        output_token_count,
+                        cached_tokens,
+                        cache_write_tokens,
+                        prefix=raw.get("price_prefix"),
                     )
                 except Exception as e:
                     _log_cost_failure("Token cost", e)

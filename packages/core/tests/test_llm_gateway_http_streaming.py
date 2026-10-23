@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.llm_gateway.hooks import Ctx, Hooks
+from canyonos_core.llm_gateway.hooks import UPSTREAM_HEADER, Ctx, Hooks
 from canyonos_core.llm_gateway.providers import base as base_module
 from canyonos_core.llm_gateway.providers.anthropic import AnthropicProvider
 from canyonos_core.llm_gateway.providers.openai import OpenAIProvider
@@ -36,7 +36,7 @@ class _Args:
 
 class _Req:
     method = "POST"
-    headers = {"content-type": "application/json"}
+    headers = {"content-type": "application/json", UPSTREAM_HEADER: "https://host.test"}
     args = _Args()
 
 
@@ -109,7 +109,7 @@ class HttpProviderStreamingTests(unittest.TestCase):
                 usage.input_cache_tokens,
                 usage.input_cache_write_tokens,
             ),
-            (11, 7, 18, 3, 5),
+            (19, 7, 26, 3, 5),
         )
 
     def test_openai_stream_captures_trailing_usage_chunk(self):

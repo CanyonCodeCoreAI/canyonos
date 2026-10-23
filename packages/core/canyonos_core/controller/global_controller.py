@@ -41,6 +41,7 @@ from canyonos_core.controller.utils.container_names import (
     project_label_args,
     redis_container_name,
 )
+from canyonos_core.llm_gateway import pricing
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.replicas import log_tail
 from canyonos_core.controller.utils.config_specs import write_config_specs
@@ -154,6 +155,9 @@ class GlobalController(ControllerContext):
             self._launch_redis_containers()
             # One machine-level metrics collector per host (best-effort, local hosts only).
             self._launch_metrics_collectors()
+            # Fetched before any replica starts, so every gateway finds them in Redis at startup.
+            self.llm_prices = pricing_refresh.litellm_prices()
+            pricing.add_prices(self.llm_prices)
             self._apply_config(
                 self._read_config_folder(), load_manifest(self.config_path)
             )
@@ -397,11 +401,13 @@ class GlobalController(ControllerContext):
         return rules, payloads, live_prompts
 
     def _write_policies(self, rules, payloads, live_prompts):
-        """Publish policy rules, and each config file under its key, to every host Redis."""
+        """Publish policy rules, LiteLLM's prices, and each config file under its key, to every host Redis."""
         targets = list(self.machine_redis.values()) or [self.redis]
         rules_json = json.dumps(rules)
+        prices_json = json.dumps(self.llm_prices)
         for redis_client in targets:
             redis_client.set(self.POLICY_RULES_KEY, rules_json)
+            redis_client.set(pricing.LLM_PRICES_KEY, prices_json)
             # A file removed since the last publish must not leave its old config behind.
             for stale in set(redis_client.smembers(self.CONFIG_FILES_KEY)) - set(
                 payloads
@@ -859,7 +865,6 @@ class GlobalController(ControllerContext):
 
     def run(self):
         """Start the daemon polling loop."""
-        pricing_refresh.refresh_llm_prices()
         self.running = True
         logger.info(
             "Global controller started, polling every %ds...", self.poll_interval

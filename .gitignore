@@ -78,3 +78,5 @@ site/
 # Local skill-evaluation state and reports
 .promptfoo/
 evals/results/
+
+examples/TradingAgents

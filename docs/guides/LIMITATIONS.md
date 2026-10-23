@@ -51,7 +51,7 @@ Also don't depend on the host machine: no local absolute paths, GPU, or display.
 
 ### 3. A supported model provider
 
-The managed LLM path supports the providers the in-container LLM gateway routes, listed in [`packages/core/canyonos_core/llm_gateway/config.py`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/packages/core/canyonos_core/llm_gateway/config.py) for the CanyonOS version you deploy. Today those are OpenAI, Anthropic, and AWS Bedrock. An app that needs another provider has to move to one of these first.
+The managed LLM path supports the calls the in-container LLM gateway routes: any provider's OpenAI-format API (chat completions or responses), Anthropic, and AWS Bedrock. An app that needs another API has to move to one of these first.
 
 Secrets come from environment variables or a secret store. Model names and service URLs can have defaults, but must be changeable at runtime:
 
@@ -63,12 +63,10 @@ client = OpenAI(
 model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 ```
 
-Inside CanyonOS, an OpenAI app points at the in-container gateway:
+Inside CanyonOS, an OpenAI-format app needs no base URL change; its calls reach the in-container gateway on their own:
 
 ```dotenv
 OPENAI_API_KEY=...
-OPENAI_BASE_URL=http://127.0.0.1:8081/openai/v1
-OPENAI_API_BASE=http://127.0.0.1:8081/openai/v1
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
@@ -143,3 +141,18 @@ python3 -c "from your_package.entrypoint import YourAgent"
 Then install only the packages declared for each `global_controller.yaml` entry into a fresh environment, and check that `python3 -m pip freeze` shows the same versions as the tested environment for every package the serving path uses.
 
 Run at least one real request with a real model and the same data and tools as production. A successful import alone is not enough.
+
+### 7. Network traffic and the LLM gateway
+
+Every HTTP(S) call from an agent container goes through the LLM gateway's proxy on `127.0.0.1:8082`, which decrypts HTTPS only for known LLM API hosts. That means:
+
+- **Company proxies aren't supported.** CanyonOS sets `HTTPS_PROXY` itself, so a proxy in your `.env` is ignored and calls go out directly. On a network that only allows traffic through a company proxy, every call fails.
+- **Calling an LLM host with a pinned certificate, a client certificate (mTLS), or your own CA bundle fails.** The proxy answers those hosts with its own certificate.
+- **HTTPS LLM calls to a host the proxy doesn't know aren't caught**, such as a self-hosted vLLM behind HTTPS. Plain-HTTP servers are.
+- **Clients that ignore proxy settings skip the gateway**, such as `aiohttp.ClientSession()` without `trust_env=True`. Their LLM calls aren't capped or counted.
+- **The app can't listen on ports 8081 or 8082.** The gateway and its proxy use them.
+- **If the gateway stops, all outbound calls fail**, not just LLM calls.
+- **Large downloads go through the same proxy as LLM calls**, so they can slow each other down.
+- **Some OpenAI-compatible APIs reject streamed calls.** The gateway adds `stream_options` to read token usage, which strict APIs refuse (for example Azure OpenAI before api-version `2024-09-01-preview`).
+- **A typo in a capped `llms.yaml` model id isn't caught.** Real calls don't match the entry, so they run with no cap.
+- **Building an agent image needs network access** to download Python 3.12 and mitmproxy for the gateway.

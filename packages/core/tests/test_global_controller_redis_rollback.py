@@ -40,6 +40,10 @@ class RedisContainerRollbackTests(unittest.TestCase):
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
             patch("canyonos_core.controller.global_controller.load_manifest"),
             patch.object(GlobalController, "_remove_stale_containers"),
+            patch(
+                "canyonos_core.controller.utils.pricing_refresh.litellm_prices",
+                return_value={},
+            ),
             patch.object(GlobalController, "_run_cmd", new=fake_run_cmd),
             patch(
                 "canyonos_core.controller.global_controller.write_config_specs",

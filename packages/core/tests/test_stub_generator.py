@@ -480,7 +480,9 @@ class PlatformPinTests(unittest.TestCase):
     def test_the_gateway_gets_its_own_venv_after_the_app_install(self):
         dockerfile = self._dockerfile()
         app_install = dockerfile.index("uv pip install --system")
-        gateway_install = dockerfile.index("uv venv /opt/canyonos-gateway")
+        gateway_install = dockerfile.index(
+            "uv venv --python 3.12 /opt/canyonos-gateway"
+        )
         self.assertLess(app_install, gateway_install)
         gateway_stage = dockerfile[gateway_install:]
         for pin in stub_generator.GATEWAY_REQUIREMENTS:

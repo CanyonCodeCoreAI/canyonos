@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 
+from canyonos_core.llm_gateway import proxy
 from canyonos_core.llm_gateway.app import create_app
 from canyonos_core.llm_gateway.config import Config
 
@@ -21,12 +22,11 @@ def main() -> None:
     )
     cfg = Config.from_env()
     app = create_app(cfg)
+    proxy.start()
     logging.getLogger("llm_gateway").info(
-        "llm_gateway on http://%s:%d  (openai=%s, anthropic=%s, bedrock=%s [%s])",
+        "llm_gateway on http://%s:%d  (bedrock=%s [%s])",
         cfg.host,
         cfg.port,
-        cfg.openai.upstream_base,
-        cfg.anthropic.upstream_base,
         cfg.bedrock_upstream_host,
         cfg.bedrock_region,
     )

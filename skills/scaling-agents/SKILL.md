@@ -54,10 +54,11 @@ Follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
 - Leave every cap empty unless the developer supplies a dollar amount. A cap is
   checked against the worst case, input bytes / 4 plus the full output limit, so a
   guessed cap refuses calls that would have been cheap.
-- An entry with a cap needs a numeric `max_tokens` and a price for the model in
-  `packages/core/canyonos_core/llm_gateway/llm_prices.json`. Otherwise the
-  gateway rejects the whole file and refuses every call. Set `max_tokens` to the
-  largest limit the calls set.
+- An entry with a cap needs a numeric `max_tokens`. Otherwise the gateway
+  rejects the whole file and refuses every call. A capped call is refused when
+  `packages/core/canyonos_core/llm_gateway/llm_prices.json` has no price for the
+  model at the provider serving it. Set `max_tokens` to the largest limit the
+  calls set.
 - Write no `llms.yaml` when the project calls no model through the gateway.
 
 ## 4. Scaling: `scaling.yaml`

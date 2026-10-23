@@ -20,6 +20,7 @@ def _controller(config_dir, machine_redis):
     controller.config_path = os.path.join(config_dir, "global_controller.yaml")
     controller.redis = _FakeRedis()
     controller.machine_redis = machine_redis
+    controller.llm_prices = {}
     return controller
 
 

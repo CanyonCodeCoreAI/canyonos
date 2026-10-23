@@ -34,9 +34,14 @@ TESTED_MAJOR_VERSIONS = {
     "redis": 8,
 }
 
-# The LLM gateway runs from its own venv, so these exact pins never meet the app's.
+# The LLM gateway runs from its own Python 3.12 venv (mitmproxy 12 needs it), so these exact pins never meet the app's.
 # These requirements are not pinned to a specific version because LLM-gateway is completely managed by CanyonOS, with no user code interacting with the internals
-GATEWAY_REQUIREMENTS = ["flask==3.1.3", "requests==2.34.2", "redis==8.1.0"]
+GATEWAY_REQUIREMENTS = [
+    "flask==3.1.3",
+    "requests==2.34.2",
+    "redis==8.1.0",
+    "mitmproxy==12.2.3",
+]
 
 # Only images whose app can import boto3 can call Bedrock, so only they get the gateway's Bedrock route.
 GATEWAY_BEDROCK_REQUIREMENT = "boto3==1.43.91"
@@ -676,7 +681,7 @@ RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv
  && printf '%s\\n' {caps} > /tmp/tested.txt \\
  && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
 RUN --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
-RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv venv /opt/canyonos-gateway \\
+RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv venv --python 3.12 /opt/canyonos-gateway \\
  && uv pip install --python /opt/canyonos-gateway/bin/python {" ".join(GATEWAY_REQUIREMENTS)} \\
  && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
 """

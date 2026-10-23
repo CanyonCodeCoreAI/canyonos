@@ -211,6 +211,7 @@ class ScalingEntryPointTests(unittest.TestCase):
     def _controller(self, agent_specs_by_name=None):
         controller = GlobalController.__new__(GlobalController)
         controller.redis = _FakeRedis()
+        controller.llm_prices = {}
         controller.agent_specs_by_name = (
             agent_specs_by_name
             if agent_specs_by_name is not None
@@ -247,6 +248,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         config_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, config_dir)
         controller = GlobalController.__new__(GlobalController)
+        controller.llm_prices = {}
         controller.redis = _FakeRedis()
         controller.machine_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
@@ -292,6 +294,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         with open(os.path.join(config_dir, "policy.yaml"), "w") as f:
             f.write("rules:\n  - match: {}\n    access: all\n")
         controller = GlobalController.__new__(GlobalController)
+        controller.llm_prices = {}
         controller.redis = _FakeRedis()
         controller.machine_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")

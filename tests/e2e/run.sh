@@ -155,3 +155,9 @@ if docker logs "$workflow" 2>&1 | grep -E "waiting for result|Timed out waiting 
   echo "the workflow treated the 16-hex-character argument as a Future"
   exit 1
 fi
+
+# Last, since it kills a gateway: LLM calls, streams, child processes, passthrough, prices and restart, from inside a replica.
+step "LLM gateway and proxy inside an agent replica"
+agent="$(docker ps --filter name=-priceagent- --format '{{.Names}}' | head -n 1)"
+docker cp "$E2E_DIR/gateway_check.py" "$agent:/tmp/gateway_check.py"
+docker exec "$agent" python /tmp/gateway_check.py | tee "$ARTIFACTS_DIR/gateway-check.log"

@@ -41,7 +41,7 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200)
 
         with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-            client.get("http://proxy.test/openai/v1/chat/completions")
+            client.post("http://proxy.test/openai/v1/chat/completions")
 
         self.assertEqual(seen_headers[FUTURE_ID_HEADER], "future-sync")
         self.assertEqual(seen_headers["x-canyonos-function"], "summarize")
@@ -55,7 +55,7 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            await client.get("http://proxy.test/anthropic/v1/messages")
+            await client.post("http://proxy.test/anthropic/v1/messages")
 
         self.assertEqual(seen_headers[FUTURE_ID_HEADER], "future-async")
 
@@ -69,7 +69,7 @@ class HttpxHeaderInjectionTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200)
 
         with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-            client.get("http://proxy.test/openai/v1/chat/completions")
+            client.post("http://proxy.test/openai/v1/chat/completions")
 
         self.assertEqual(seen_headers[FUNCTION_HEADER], "parse")
 

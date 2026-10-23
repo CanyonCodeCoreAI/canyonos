@@ -21,13 +21,15 @@ BYTES_PER_TOKEN = 4
 
 
 def start_refresh(redis) -> None:
-    """Load llms.yaml and prompts.yaml from Redis now, then keep them current in the background."""
+    """Load LLM prices once, and llms.yaml and prompts.yaml now and then in the background,
+    from Redis."""
 
     def loop():
         while True:
             time.sleep(REFRESH_SECONDS)
             refresh(redis)
 
+    pricing.load_published_prices(redis)
     refresh(redis)
     threading.Thread(target=loop, name="llms-config-refresh", daemon=True).start()
 
@@ -38,8 +40,9 @@ def refresh(redis) -> None:
     prompts.refresh_prompts(redis)
 
 
-def route(model_id: str, body: bytes) -> Optional[str]:
-    """Why this agent's call to model_id is refused, or None to let it through."""
+def route(model_id: str, body: bytes, prefix: Optional[str] = None) -> Optional[str]:
+    """Why this agent's call to model_id, served by LiteLLM's provider `prefix`, is refused,
+    or None to let it through."""
     if llms.llms_by_model_id is None:
         detail = f": {llms.load_error}" if llms.load_error else " yet"
         return f"canyonos denied: {llms.LLMS_CONFIG_KEY} has not loaded{detail}"
@@ -54,8 +57,13 @@ def route(model_id: str, body: bytes) -> Optional[str]:
     cap = agents[AGENT_NAME]
     if cap is None:
         return None
+    if pricing.token_prices(llms.normalize_model_id(llm["model_id"]), prefix) is None:
+        return (
+            f"canyonos denied: {AGENT_NAME} has a per-request cap on {llm['name']}, "
+            "but llm_prices.json has no price for it at the provider serving this call"
+        )
     try:
-        cost = worst_case_cost(body, llm)
+        cost = worst_case_cost(body, llm, prefix)
     except ValueError:
         return (
             f"canyonos denied: {AGENT_NAME} has a per-request cap on {llm['name']}, "
@@ -69,8 +77,9 @@ def route(model_id: str, body: bytes) -> Optional[str]:
     return None
 
 
-def worst_case_cost(body: bytes, llm: dict) -> float:
-    """USD cost if the call used every output token it is allowed."""
+def worst_case_cost(body: bytes, llm: dict, prefix: Optional[str] = None) -> float:
+    """USD cost, at LiteLLM's provider `prefix`, if the call used every output token it is
+    allowed."""
     input_tokens = len(body) / BYTES_PER_TOKEN
     payload = json.loads(body)
     if not isinstance(payload, dict):
@@ -79,7 +88,10 @@ def worst_case_cost(body: bytes, llm: dict) -> float:
         payload.get("n") or 1
     )
     return pricing.compute_token_cost(
-        llms.normalize_model_id(llm["model_id"]), input_tokens, output_tokens
+        llms.normalize_model_id(llm["model_id"]),
+        input_tokens,
+        output_tokens,
+        prefix=prefix,
     )
 
 

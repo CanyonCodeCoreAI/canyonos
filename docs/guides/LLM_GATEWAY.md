@@ -4,8 +4,8 @@ Every model call an agent makes goes through the LLM gateway that runs next to i
 gateway can limit which agents may use a model and how much a single call may cost.
 Without any setup, every agent can call every model.
 
-Every agent container runs its own copy of `llm_gateway`. OpenAI,
-Anthropic and Bedrock calls from your code go through it, which is how
+Every agent container runs its own copy of `llm_gateway`. OpenAI-format
+calls to any provider, and Anthropic and Bedrock calls, go through it, which is how
 CanyonOS collects token usage and cost per request without changing the
 calling code.
 
@@ -66,8 +66,17 @@ call.
 
 Prices come from CanyonOS's own price list,
 `packages/core/canyonos_core/llm_gateway/llm_prices.json`. The same list is used to
-check caps and to report spend on the dashboard. A model with a cap must have a price
-there, or the gateway rejects `llms.yaml`.
+check caps and to report spend on the dashboard. A capped call is refused when there is
+no price for its model at the provider serving it.
+
+When the global controller starts, it downloads LiteLLM's current prices once, adds
+them to its own copy of the list, and publishes them to each machine's Redis before any
+replica starts. Each gateway adds them to its copy when it starts. If the download fails,
+everything uses the file's prices alone.
+Hosted models that several providers serve, such as Llama or GLM, have a different price
+at each provider. An OpenAI-format call to a known provider host (Together, Fireworks,
+Baseten, DeepInfra, Groq and others, listed in `pricing.LLM_HOSTS`) uses
+that provider's price. A call to any other host uses the model's plain price.
 
 ## Where it runs
 
@@ -82,70 +91,67 @@ so pointing an SDK at `host.docker.internal:8081` reaches nothing.
 
 ## How calls get there
 
-The runtime sets six variables on every container with `docker run -e`:
+OpenAI-format and Anthropic calls need no setup. The runtime sets `HTTP_PROXY` and
+`HTTPS_PROXY` on every container, so every HTTP(S) call, from any process, leaves
+through a proxy that runs inside the gateway. The proxy sends any POST whose path ends in
+`/chat/completions`, `/completions`, `/embeddings`, `/responses`,
+`/responses/input_tokens`, `/messages` or `/messages/count_tokens`, and whose JSON body
+names a `model`, to the gateway,
+whatever host and base URL your code set. Every other call passes through untouched.
+The original `scheme://host:port` rides along in an `x-canyonos-upstream` header, and
+the gateway forwards the call there with the path unchanged. That covers OpenAI, Azure
+OpenAI, Gemini, Groq, Together, Fireworks, OpenRouter, Baseten, vLLM, Ollama, any
+other OpenAI-compatible API and Anthropic, through any client that reads the proxy
+variables.
+
+The proxy only reads HTTPS calls to known LLM hosts (`LLM_HOSTS` in
+`llm_gateway/pricing.py`, with Azure as any `*.openai.azure.com`). It answers those with its own
+certificates, signed by a certificate authority it creates when the container starts;
+`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `AWS_CA_BUNDLE` point clients at a file that
+trusts it. HTTPS to any other host passes through still encrypted, so an LLM served over
+HTTPS from a host not on that list, such as a self-hosted vLLM, isn't caught. Plain-HTTP
+servers always are.
+
+For Bedrock, the runtime sets one variable on every container with `docker run -e`:
 
 | Variable | Value | Read by |
 |---|---|---|
 | `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` | `http://127.0.0.1:8081/bedrock` | boto3 |
-| `OPENAI_BASE_URL` | `http://127.0.0.1:8081/openai/v1` | openai SDK |
-| `OPENAI_API_BASE` | `http://127.0.0.1:8081/openai/v1` | langchain_openai, llama_index |
-| `ANTHROPIC_BASE_URL` | `http://127.0.0.1:8081/anthropic` | anthropic SDK |
-| `ANTHROPIC_API_URL` | `http://127.0.0.1:8081/anthropic` | langchain_anthropic |
-| `ANTHROPIC_API_BASE` | `http://127.0.0.1:8081/anthropic` | LiteLLM |
 
 Docker applies `-e` after `--env-file`, so a value in your `.env` cannot
-override these. You do not need to write them anywhere, and writing them does
-nothing. The "Read by" column is the platform's own note on which library
-reads which name; it is not checked against those libraries here.
-
-The same mechanism means you cannot point an agent at Azure OpenAI, vLLM,
-Ollama or OpenRouter from the agent's environment. The gateway reads its
-upstream from `OPENAI_UPSTREAM_BASE` and `ANTHROPIC_UPSTREAM_BASE` and
-defaults to the real providers. Because the gateway inherits the container
-environment, setting one of those in the `env_file` redirects the upstream.
+override it. You do not need to write it anywhere, and writing it does
+nothing.
 
 The gateway does not convert providers. Request body, model id and response
 parsing pass through as your code wrote them.
 
 ## What goes in `.env`
 
-The gateway takes its upstream key from the container environment:
-`OPENAI_API_KEY` and `ANTHROPIC_API_KEY`, and the usual AWS credentials for
-Bedrock. The `env_file` in the manifest is how those reach the container.
+OpenAI-format and Anthropic calls carry your code's own key: the gateway passes
+`Authorization` and `x-api-key` through unchanged, so put the provider's key
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `BASETEN_API_KEY`, ...) wherever your code
+reads it from.
 
-An empty `OPENAI_API_KEY=` line is not the same as no line. The gateway sees an
-empty key, forwards the call with no `Authorization` header, and the provider
-answers 401. Leave the line out until you have a key.
-
-Your code may still need a placeholder key of its own. The openai and
-anthropic SDKs refuse to construct a client without one. The gateway strips the
-caller's `Authorization` and `x-api-key` headers and inserts its own key, so
-any non-empty value works.
+For Bedrock the gateway uses the usual AWS credentials from the container
+environment. The `env_file` in the manifest is how those reach the container.
 
 For Bedrock, botocore signs requests even when the endpoint is overridden, so
 a caller may need placeholder AWS credentials. The gateway re-issues the call
 upstream with its own identity.
 
-## Code that ignores environment variables
+## Code that bypasses the gateway
 
-An SDK client built with an explicit `base_url=` argument, or a request made
-by hand against a hardcoded `https://api.openai.com/...`, never reads any of
-the six variables and goes straight to the provider. Grep for
-`api.openai.com` and `api.anthropic.com` in the source to find those. Inside
-the `.car/app` copy, the fix is to read the variable with the original as
-the default:
+A client that ignores the proxy variables, such as an `aiohttp.ClientSession` without
+`trust_env=True`, goes straight to the provider. Grep for `aiohttp` in the source to
+find those. Inside the `.car/app` copy, the fix for aiohttp
+is to let it read them:
 
 ```python
-import os
-
-API = (
-    os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    + "/responses"
-)
+aiohttp.ClientSession(trust_env=True)
 ```
 
-Only the address changes. Outside a CanyonOS container the module behaves as
-before.
+A client that pins certificates or sends a client certificate (mTLS) to an LLM host
+fails instead, since the proxy answers with its own certificate.
 
 ## Confirming the route
 
@@ -166,8 +172,8 @@ the build adds when your code imports it.
 
 ## Supported call shapes
 
-- OpenAI and Anthropic non-streaming calls are buffered and forwarded.
-- OpenAI and Anthropic streaming calls work. When the upstream answers with
+- OpenAI-format and Anthropic non-streaming calls are buffered and forwarded.
+- OpenAI-format and Anthropic streaming calls work. When the upstream answers with
   `text/event-stream`, the gateway relays it chunk by chunk as it arrives, so
   `.stream()`, `.astream()` and a raw `stream=True` all read token by token.
   If the upstream fails mid-stream, the gateway aborts the response instead of
@@ -178,13 +184,17 @@ the build adds when your code imports it.
   two streaming operations are decoded and re-encoded into the AWS
   event-stream format, so your boto3 client sees exactly what Bedrock would
   send.
+- `GET .../responses/{id}` goes straight to the provider. A background-mode
+  response, whose usage only arrives on that later `GET`, records no tokens.
 
-Token usage for a streamed OpenAI call is reported only when the request sets
-`stream_options={"include_usage": True}`. The gateway does not add it.
+The gateway adds `stream_options={"include_usage": True}` to every streamed
+OpenAI-format chat completion so it can record tokens. When the request
+did not set it, the gateway removes the usage chunk before relaying, so the
+agent sees the same stream it would without the gateway.
 
 ## Errors
 
-- OpenAI and Anthropic upstream HTTP errors pass through with their status
+- OpenAI-format and Anthropic upstream HTTP errors pass through with their status
   and body.
 - An exception inside the gateway returns `502` with
   `{"error": "gateway_error", "detail": ...}`. An unknown provider prefix

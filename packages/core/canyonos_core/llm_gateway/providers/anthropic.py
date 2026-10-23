@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from canyonos_core.llm_gateway.hooks import UPSTREAM_HEADER
 from canyonos_core.llm_gateway.providers.base import (
     HttpProvider,
     UpstreamRequest,
@@ -13,21 +14,17 @@ from canyonos_core.llm_gateway.providers.base import (
 
 
 class AnthropicProvider(HttpProvider):
-    """Forwards `/anthropic/...` requests to the Anthropic API."""
+    """Forwards Anthropic Messages API calls to the host the agent addressed."""
 
     name = "anthropic"
 
     def target(self, req, subpath, body):
-        """Build the Anthropic request from the agent's request, swapping in the gateway's
-        API key when one is configured."""
-        headers = client_headers(req, drop=["x-api-key", "authorization"])
-        if self.cfg.anthropic.api_key:
-            headers["x-api-key"] = self.cfg.anthropic.api_key
+        """Build the request to the host the agent addressed, with the agent's own credentials."""
         # `anthropic-version` is supplied by the SDK and passes through untouched.
         return UpstreamRequest(
             method=req.method,
-            url=f"{self.cfg.anthropic.upstream_base}/{subpath}",
-            headers=headers,
+            url=f"{req.headers[UPSTREAM_HEADER]}/{subpath}",
+            headers=client_headers(req, drop=[UPSTREAM_HEADER]),
             params=req.args.to_dict(flat=True),
         )
 

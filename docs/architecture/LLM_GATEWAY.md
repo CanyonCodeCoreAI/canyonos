@@ -22,7 +22,7 @@
 └──────────────────────────────────────────────────────┼────────────────┼──────────┘
                                                        ▼                ▼
                                               ┌──────────────┐   ┌─────────────────┐
-                                              │ machine Redis│   │  api.openai.com │
+                                              │ machine Redis│   │  any OpenAI API │
                                               │ future:<id>  │   │  api.anthropic  │
                                               │ llms:config  │   │  bedrock-runtime│
                                               └──────────────┘   └─────────────────┘
@@ -34,7 +34,7 @@ All LLM calls supported by us go through the gateway, defaulting to the normal L
 
 Our gateway is able to obtain LLM telemetry from every call made, as well as implement policies on requests going through, such as auth, limits, etc..
 
-Current supported providers are: OpenAI, Anthropic, AWS Bedrock.
+Current supported providers are: OpenAI, Anthropic, AWS Bedrock, Baseten Model APIs.
 
 The below diagrams go into more depth into different components specific to the proxy.
 
@@ -70,6 +70,15 @@ controller/utils/otel_writer.py ──▶ llm_gateway/pricing.py   (dashboard co
 ```
 agent SDK call
      │
+     ├─ any HTTP(S) call ──HTTPS_PROXY──▶ proxy.LlmCalls (mitmproxy, 127.0.0.1:8082)
+     │    HTTPS to a host outside LLM_HOSTS: passed through still encrypted
+     │    POST to an OpenAI-format path (/chat/completions, /completions, /embeddings,
+     │    /responses, /responses/input_tokens) or an Anthropic one (/messages,
+     │    /messages/count_tokens), with a "model" in its JSON body:
+     │      sent to 127.0.0.1:8081/<provider>/<same path>
+     │      + x-canyonos-upstream: <scheme>://<host>:<port>
+     │    else: passed through to its host
+     ├─ base-URL env var  (/bedrock/...)
      ▼
 POST 127.0.0.1:8081/<provider>/<subpath>
      │
@@ -109,8 +118,12 @@ core.proxy_request
      OpenAIProvider                AnthropicProvider                BedrockProvider
      (HttpProvider)                (HttpProvider)                   (own forward)
               │                             │                              │
-   drop Authorization            drop x-api-key, Authorization    parse model/<id>/<op>
-   add Bearer OPENAI_API_KEY     add x-api-key ANTHROPIC_API_KEY           │
+   url: x-canyonos-upstream      url: x-canyonos-upstream         parse model/<id>/<op>
+     + path; agent's own           + path; agent's own x-api-key           │
+     Authorization kept            kept                                    │
+   streamed chat: add                       │                              │
+     include_usage, drop                    │                              │
+     its chunk on relay                     │                              │
               │                             │                      boto3 bedrock-runtime
               └──────────────┬──────────────┘                              │
                              ▼                            ┌─────────┬──────┴──┬──────────────┐
@@ -125,7 +138,7 @@ core.proxy_request
 ## Streaming
 
 ```
-OpenAI / Anthropic (server-sent events)
+OpenAI-format / Anthropic (server-sent events)
 
  upstream ──chunk──▶ _relay_llm_stream ──chunk (unchanged)──▶ agent
                             │
@@ -159,10 +172,12 @@ Local Controller                  agent thread                     LLM gateway  
       │                                │  gateway_headers patch adds   │                         │
       │                                │  x-canyonos-future-id: id     │                         │
       │                                │  (httpx send / boto3 sign)    │                         │
+      │                                │  OpenAI/Anthropic: HTTPS_PROXY│                         │
+      │                                │  proxy → gateway + upstream   │                         │
       │                                ├──────────────────────────────▶│                         │
       │                                │                               │ forward + response      │
       │                                │                               │                         │
-      │                                │                               │ on_response:            │
+      │                                │                               │ on_response, POST only: │
       │                                │                               │  _extract_usage         │
       │                                │                               │  _extract_model_id      │
       │                                │                               │ 200 with no usage ──▶   │
@@ -187,14 +202,14 @@ config/llms.yaml ──▶ Global Controller publish ──▶ machine Redis  ll
   agents: {name: cap}                                    │ every 5s
                                                          ▼
                                     routing._refresh ──▶ index_llms
-                                                           ├─ capped entry: max_tokens must be a number
-                                                           └─ capped entry: model must have a price
-                                                                           │
-llm_gateway/llm_prices.json ──▶ pricing.token_prices / compute_token_cost ◀┘
-        ▲                                   ▲
-        │                                   │
- GC startup: pricing_refresh          routing.worst_case_cost   (cost cap, agent image copy)
- (LiteLLM) rewrites the GC's copy     otel_writer               (dashboard cost, GC copy)
+                                                           └─ capped entry: max_tokens must be a number
+
+llm_gateway/llm_prices.json ──▶ pricing.token_prices / compute_token_cost
+  + LiteLLM's current prices                ▲
+        ▲                                   │
+ GC startup: litellm_prices()         routing.worst_case_cost   (cost cap; no price ──▶ denied)
+   ├─▶ add_prices (GC's copy)         otel_writer               (dashboard cost, GC copy)
+   └─▶ machine Redis llm_prices:models ──▶ gateway startup: load_published_prices
 ```
 
 ## Prompts

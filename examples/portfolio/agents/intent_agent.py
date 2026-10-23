@@ -10,20 +10,20 @@
 #      ->  {"holdings": {"AAPL": 0.4, "MSFT": 0.35, "NVDA": 0.25},
 #           "lookback_days": 180}
 #
-# Calls AWS Bedrock (Converse API) directly via boto3 -- same pattern as
-# AdvisorAgent. Token/cost telemetry is recorded onto this execution's
+# Calls a Baseten Model API through the openai SDK -- same pattern as
+# AdvisorAgent. Token telemetry is recorded onto this execution's
 # future:<future_id> hash transparently by the CanyonOS LLM gateway, which each
-# agent container's boto3 calls are routed through (AWS_ENDPOINT_URL_BEDROCK_RUNTIME).
+# agent container's Baseten calls are routed through, hardcoded base_url and all.
 # Configure with env vars:
-#   BEDROCK_MODEL_ID  (default: meta.llama3-8b-instruct-v1:0)
-#   AWS_REGION        (default: us-east-1)
+#   BASETEN_API_KEY   (required)
+#   BASETEN_MODEL_ID  (default: deepseek-ai/DeepSeek-V4-Flash-0731)
 #
 # If the LLM is unavailable or returns unparseable output, parse() raises:
 # there is no fallback, the request fails loudly rather than guessing at the
 # holdings. Weights are renormalized to 1.0.
 #
 # The instructions are the IntentAgent.parse system prompt in config/prompts.yaml, which the
-# LLM gateway adds to every Converse call.
+# LLM gateway adds to every chat completion.
 #
 # Resource profile: cheap CPU, single call per request, on the critical path
 # before the fan-out.
@@ -32,7 +32,7 @@ import os
 import re
 import json
 
-import boto3
+from openai import OpenAI
 
 DEFAULT_LOOKBACK_DAYS = 365
 
@@ -41,21 +41,21 @@ class IntentAgent(object):
     def __init__(self):
         self.tools = [self.parse]
         self.model_id = os.environ.get(
-            "BEDROCK_MODEL_ID", "meta.llama3-8b-instruct-v1:0"
+            "BASETEN_MODEL_ID", "deepseek-ai/DeepSeek-V4-Flash-0731"
         )
-        self.region = os.environ.get("AWS_REGION", "us-east-1")
-        self._client = boto3.client("bedrock-runtime", region_name=self.region)
+        self._client = OpenAI(
+            base_url="https://inference.baseten.co/v1",
+            api_key=os.environ["BASETEN_API_KEY"],
+        )
 
     def parse(self, query: str) -> dict:
         """Parse a natural-language portfolio request into holdings + lookback."""
-        response = self._client.converse(
-            modelId=self.model_id,
-            messages=[
-                {"role": "user", "content": [{"text": self._build_prompt(query)}]}
-            ],
-            inferenceConfig={"maxTokens": 300, "temperature": 0.0},
+        response = self._client.chat.completions.create(
+            model=self.model_id,
+            messages=[{"role": "user", "content": self._build_prompt(query)}],
+            temperature=0.0,
         )
-        text = response["output"]["message"]["content"][0]["text"]
+        text = response.choices[0].message.content
         if not text:
             raise ValueError("IntentAgent: LLM returned no output for the request.")
 

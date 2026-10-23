@@ -8,7 +8,7 @@
 #   1. MetricsAgent  - per-ticker return/vol/Sharpe/drawdown (FAN-OUT, 1 per holding)
 #      (MetricsAgent internally calls PriceAgent to fetch price history)
 #   2. RiskAgent     - roll the per-ticker metrics into portfolio-level risk
-#   3. AdvisorAgent  - LLM briefing (Bedrock) grounded in the computed figures
+#   3. AdvisorAgent  - LLM briefing (Baseten) grounded in the computed figures
 #
 # The request is a single natural-language sentence describing the portfolio,
 # e.g. "Analyze 40% Apple, 35% Microsoft and 25% Nvidia over the last 6 months".

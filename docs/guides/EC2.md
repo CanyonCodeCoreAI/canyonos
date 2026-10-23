@@ -77,7 +77,7 @@ machine that ran `canyonos deploy`. They do not need to be reachable from the
 EC2 hosts.
 
 Every container still runs its own LLM gateway on `127.0.0.1:8081`, and the
-same six base-URL variables are injected. See [LLM gateway](LLM_GATEWAY.md).
+same gateway and proxy variables are injected. See [LLM gateway](LLM_GATEWAY.md).
 
 ## The env file on a remote host
 
