@@ -1,7 +1,7 @@
 # `future:{future_id}` Redis hash schema
 
 Both directions (origin -> executor request, executor -> origin completion
-callback) send the future's full hash. Whichever node last wrote a field
+callback) send the future's full hash. Whichever machine last wrote a field
 wins for most fields (e.g. `args` as re-serialized by the executor) -- the
 one exception is `created_at`, which only the origin ever writes, so it
 always reflects the future's true submission time.
@@ -23,7 +23,7 @@ Fields currently written into `future:{future_id}`, and where:
 | `finished_at`               | `local_controller.py` (`_execute_locally` finally block) |
 | `cpu_resource`              | `local_controller.py` |
 | `gpu_resource`              | `local_controller.py` |
-| `agent`                     | `local_controller.py` (agent_id that executed this step) |
+| `agent`                     | `local_controller.py` (ID of the replica that ran this step) |
 | `queue_time`                | `local_controller.py` (only when `submitted_at` is known) |
 | `model`                     | `llm_gateway/hooks.py` (on_response) |
 | `prompt_name`               | `llm_gateway/hooks.py` (on_response) |
@@ -47,7 +47,7 @@ severity, and neither is optional for the range it covers:
   `Future._submit_request`'s gRPC-failure handler, via `build_failure_entry`. This happens
   unconditionally -- it is not gated by any flag, because the same call site also sets the
   cheap `error`/`failed` fields, wakes up any consumers waiting on the future, and relays the
-  failure to `origin` across instances.
+  failure to `origin` across replicas.
 - **DEBUG/INFO only** (ambient context): captured by `LogHandler`, a `logging.Handler` attached
   to the root logger in `LocalController.__init__`, but only when `logs_enabled` is true (the
   `logs:` key in `global_controller.yaml`, on by default -- set `logs: false` to opt out).

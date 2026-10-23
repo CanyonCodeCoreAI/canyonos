@@ -19,8 +19,8 @@ from canyonos_core.schema.errors import (
 )
 from canyonos_core.schema.functions import BUILTIN_TYPE_NAMES
 from canyonos_core.schema.manifest import (
-    AgentService,
-    DatabaseService,
+    CodeAgent,
+    DatabaseAgent,
     EndpointSpec,
     Manifest,
     OtelDestination,
@@ -31,9 +31,9 @@ from canyonos_core.schema.manifest import (
 )
 
 __all__ = [
-    "AgentService",
+    "CodeAgent",
     "BUILTIN_TYPE_NAMES",
-    "DatabaseService",
+    "DatabaseAgent",
     "DependencyPinConflict",
     "EndpointSpec",
     "Manifest",
@@ -68,7 +68,7 @@ def _missing_sources(manifest, manifest_path, source_dir):
     """Violations for the code a manifest points at but the project does not hold.
 
     The build used to log a line and carry on, leaving a deploy that exited 0
-    with the service quietly absent from it.
+    with the agent quietly absent from it.
     """
     if not os.path.isdir(source_dir):
         return [
@@ -77,16 +77,16 @@ def _missing_sources(manifest, manifest_path, source_dir):
                 0,
                 "agents",
                 f"the project source directory {_as_typed(source_dir)} does not "
-                "exist, so no service's code can be found",
+                "exist, so no agent's code can be found",
             )
         ]
 
     violations = []
     real_source_dir = os.path.realpath(source_dir)
-    for index, service in enumerate(manifest.agents):
-        if service.type != "agent":
+    for index, agent_spec in enumerate(manifest.agents):
+        if agent_spec.type != "agent":
             continue
-        source = os.path.join(source_dir, service.entrypoint)
+        source = os.path.join(source_dir, agent_spec.entrypoint)
         if not os.path.isfile(source):
             problem = f"{_as_typed(source)} does not exist"
         elif (

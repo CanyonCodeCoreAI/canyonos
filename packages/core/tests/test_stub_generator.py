@@ -713,7 +713,7 @@ class GenerateStubTests(unittest.TestCase):
             exec(compile(source, "hello.py", "exec"), namespace)
         sent = namespace["Hello"]().hello("world", FakeFuture()).kwargs
 
-        self.assertEqual(sent["service"], "Hello")
+        self.assertEqual(sent["agent_name"], "Hello")
         self.assertEqual(sent["method"], "hello")
         self.assertEqual(sent["args"]["who"], "world")
         self.assertIsInstance(sent["args"]["earlier"], FakeFuture)

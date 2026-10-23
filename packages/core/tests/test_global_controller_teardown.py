@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""GlobalController.stop() and _drain_instances, not the reconciler itself."""
+"""GlobalController.stop() and _remove_all_replicas, not the reconciler itself."""
 
 import os
 import sys
@@ -15,7 +15,7 @@ from canyonos_core.endpoint import ADDRESS_KEY
 from canyonos_core.reconciler import state
 from fakes import _FakeRedis
 
-ALPHA_KEY = "agent_instance:local:Alpha:0"
+ALPHA_KEY = "agent_instance:Alpha-0"
 
 
 class TeardownTests(unittest.TestCase):
@@ -33,16 +33,18 @@ class TeardownTests(unittest.TestCase):
         controller._stop_metrics_collectors = MagicMock()
         return controller
 
-    def test_drain_wakes_the_reconciler_and_returns_true_once_everything_is_gone(self):
+    def test_remove_all_replicas_wakes_the_reconciler_and_returns_true_once_everything_is_gone(
+        self,
+    ):
         controller = self._controller([[ALPHA_KEY], []])
 
         with patch("time.sleep"):
-            self.assertTrue(controller._drain_instances(timeout=5))
+            self.assertTrue(controller._remove_all_replicas(timeout=5))
 
-        self.assertTrue(state.is_draining(controller.redis))
+        self.assertTrue(state.is_stopping(controller.redis))
         self.assertEqual(controller.redis.lists[state.WAKE_QUEUE_KEY], [state.WAKE_ALL])
 
-    def test_drain_gives_up_after_the_timeout(self):
+    def test_remove_all_replicas_gives_up_after_the_timeout(self):
         controller = self._controller([[ALPHA_KEY]] * 50)
         controller.redis.hset_multiple(ADDRESS_KEY, {"public_host": "127.0.0.1"})
 
@@ -50,14 +52,14 @@ class TeardownTests(unittest.TestCase):
             with self.assertLogs(
                 "canyonos_core.controller.global_controller", "WARNING"
             ):
-                self.assertFalse(controller._drain_instances(timeout=0))
+                self.assertFalse(controller._remove_all_replicas(timeout=0))
 
         self.assertEqual(
             controller.redis.hgetall(ADDRESS_KEY), {"public_host": "127.0.0.1"}
         )
 
-    def test_stop_drains_before_killing_the_reconciler(self):
-        """The reconciler removes the instances, so it has to outlive the drain."""
+    def test_stop_removes_replicas_before_killing_the_reconciler(self):
+        """The reconciler removes the replicas, so it has to outlive the removal."""
         controller = self._controller([[ALPHA_KEY], []])
         calls = []
         controller.redis.scan_keys.side_effect = lambda *a, **k: (
@@ -72,13 +74,13 @@ class TeardownTests(unittest.TestCase):
 
         self.assertEqual(calls.index("terminate"), len(calls) - 1)
 
-    def test_stop_clears_the_flag_after_a_clean_drain(self):
+    def test_stop_clears_the_flag_after_a_clean_removal(self):
         controller = self._controller([[]])
 
         with patch("time.sleep"):
             controller.stop()
 
-        self.assertFalse(state.is_draining(controller.redis))
+        self.assertFalse(state.is_stopping(controller.redis))
         controller._stop_redis_containers.assert_called_once()
 
     def test_redis_is_the_last_thing_stopped(self):
@@ -99,20 +101,20 @@ class TeardownTests(unittest.TestCase):
 
         self.assertEqual(calls, ["terminate", "metrics", "redis"])
 
-    def test_a_timed_out_drain_still_finishes_shutting_down(self):
-        """Instances left by a timed-out drain are the next startup's reconcile to deal with."""
+    def test_a_timed_out_removal_still_finishes_shutting_down(self):
+        """Replicas left by a timed-out removal are the next startup's reconcile to deal with."""
         controller = self._controller([[ALPHA_KEY]])
-        controller._drain_instances = lambda *a, **k: False
+        controller._remove_all_replicas = lambda *a, **k: False
 
         controller.stop()
 
-        self.assertFalse(state.is_draining(controller.redis))
+        self.assertFalse(state.is_stopping(controller.redis))
         controller.process_supervisor.terminate_all.assert_called_once()
         controller._stop_redis_containers.assert_not_called()
 
-    def test_a_redis_outage_during_the_drain_still_finishes_shutting_down(self):
+    def test_a_redis_outage_during_the_removal_still_finishes_shutting_down(self):
         controller = self._controller([])
-        controller._drain_instances = MagicMock(side_effect=ConnectionError("down"))
+        controller._remove_all_replicas = MagicMock(side_effect=ConnectionError("down"))
         controller.redis.delete = MagicMock(side_effect=ConnectionError("down"))
         controller._stop_redis_containers.return_value = []
 
@@ -124,7 +126,7 @@ class TeardownTests(unittest.TestCase):
         controller._stop_metrics_collectors.assert_called_once()
         self.assertEqual(
             [failure.split(":")[0] for failure in failures],
-            ["instance drain", "draining flag", "redis"],
+            ["replica removal", "stopping flag", "redis"],
         )
 
     def test_a_second_stop_is_a_noop(self):

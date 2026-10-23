@@ -23,7 +23,7 @@
                 │ RedisClient                                      │ OTLP/HTTP or gRPC
                 ▼                                                  ▼
        ┌──────────────────┐                              ┌──────────────────────────┐
-       │ node Redis       │                              │ configured OTLP receivers│
+       │ machine Redis    │                              │ configured OTLP receivers│
        │ otel:destinations│                              │ including dashboard API  │
        │ future:*         │                              └──────────────────────────┘
        └──────────────────┘
@@ -32,7 +32,7 @@
 ## Writers and queue
 
 ```
-┌────────────────────────────── node Redis producers ──────────────────────────────┐
+┌──────────────────────────── machine Redis producers ─────────────────────────────┐
 │ Future._submit_request ───────────────┐                                           │
 │ LocalController._execute_locally ─────┼──▶ future:{future_id} hash                │
 │ LLM Gateway Hooks.on_response ──────────┤      request_id, parent, agent, model,     │
@@ -42,14 +42,14 @@
 │ Machine Metrics Poller ──────────────────▶ machine:{host}:metrics                 │
 └──────────────────────────────────┬─────────────────────┬──────────────────────────┘
                                    ▼                     ▼
-GlobalController._poll_one_instance                 GlobalController._poll_machine_metrics
+GlobalController._poll_one_replica                  GlobalController._poll_machine_metrics
         │                                                  │
         ├─ send_telemetry                                  └─ metric_write_rows
         │    └─ _pull_telemetry
         │         └─ scan_keys("future:*")
         │              ├─ _trace_write_rows ──────────────┐
         │              └─ _log_write_rows ─────────────┐  │
-        └─ HGETALL controller:{endpoint}:metrics        │  │
+        └─ HGETALL controller:{address}:metrics         │  │
              └─ metric_write_rows ───────────────────┐  │  │
                                                     ▼  ▼  ▼
 ┌────────────────────── schema.DB_PATH: controller/utils/otel_queue.db ─────────────┐
@@ -95,7 +95,7 @@ while _running  (sleep 1 second)
  │              ├─ trace_mark_sent_many
  │              ├─ metric_mark_sent_many
  │              └─ log_mark_sent_many
- └─ every PRUNE_INTERVAL_SECONDS = 300 ──▶ _prune_expired_rows
+ └─ every DELETE_INTERVAL_SECONDS = 300 ──▶ _delete_expired_rows
 ```
 
 ## Trace conversion
@@ -244,9 +244,9 @@ row conversion
   ├─ metric row empty/unparseable ──▶ metric_mark_sent
   └─ log row empty/unparseable ─────▶ log_mark_sent
 
-_prune_expired_rows  (sent or unsent)
+_delete_expired_rows (sent or unsent)
   ├─ traces_waiting: finished_at older than TRACE_RETENTION_SECONDS = 1800
   ├─ metrics_waiting: observed_at older than METRIC_RETENTION_SECONDS = 600
   └─ logs_waiting: observed_at older than LOG_RETENTION_SECONDS = 1800
-       finished_at IS NULL ──▶ never pruned as an in-flight trace
+       finished_at IS NULL ──▶ never deleted as an in-flight trace
 ```

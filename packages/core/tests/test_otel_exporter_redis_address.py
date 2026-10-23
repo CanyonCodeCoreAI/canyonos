@@ -23,7 +23,7 @@ from canyonos_core.controller.global_controller import GlobalController
 def _bare_controller(redis_port):
     controller = GlobalController.__new__(GlobalController)
     controller.config = {}
-    controller.controllers = [
+    controller.agent_specs = [
         {
             "name": "IntentAgent",
             "provider": "local",
@@ -33,7 +33,7 @@ def _bare_controller(redis_port):
     ]
     controller.redis_containers = {}
     controller.redis_ports = {}
-    controller.node_redis = {}
+    controller.machine_redis = {}
     controller.redis = None
     # What __init__ seeds from the config block before _launch_redis_containers runs.
     controller._redis_addr = ("localhost", 6379)
@@ -66,13 +66,13 @@ class ExporterRedisAddressTests(unittest.TestCase):
         self.assertEqual(controller._redis_addr, ("host.docker.internal", 6380))
 
     def test_the_tracked_address_matches_the_client_that_replaced_self_redis(self):
-        # self.redis is swapped for the local node's client; the address the exporter
+        # self.redis is swapped for the local machine's client; the address the exporter
         # is handed has to be swapped with it or they drift apart.
         controller = _bare_controller(redis_port=6381)
 
         _launch(controller)
 
-        self.assertIs(controller.redis, controller.node_redis["localhost"])
+        self.assertIs(controller.redis, controller.machine_redis["localhost"])
         self.assertEqual(controller._redis_addr[1], 6381)
 
 

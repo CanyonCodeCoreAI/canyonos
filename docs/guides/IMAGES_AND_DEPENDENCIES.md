@@ -71,7 +71,7 @@ After the sweep the build writes on top of it, and later writes win:
   `__version__`
 - every agent's stub, at its entrypoint path and at the root under its
   basename
-- the service's own entrypoint, at the root
+- the agent's own entrypoint, at the root
 
 A module of your own at the root of the copy with one of those names is
 overwritten. `canyonos validate` reports it as `CAR-FLAT-COLLISION`.

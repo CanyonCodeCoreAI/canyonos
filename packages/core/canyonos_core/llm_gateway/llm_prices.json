@@ -1145,7 +1145,7 @@
       "output_cost_per_million_tokens": 3.2
     }
   },
-  "instances": {
+  "machines": {
     "t3.nano": 0.0052,
     "t3.micro": 0.0104,
     "t3.small": 0.0208,

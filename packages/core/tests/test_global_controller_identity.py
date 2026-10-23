@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Bug E: an agent container's CANYONOS_PROJECT_ID env var is frozen at launch.
-_write_identity() publishes the controller's current project identity to every node's Redis
+_write_identity() publishes the controller's current project identity to every machine's Redis
 (mirroring the existing policy:rules/routing_table:* pattern) so consumers can read it live
 instead of trusting a boot-time env var. reload_config() must call this too, or the fix is
 only half-applied.
@@ -19,12 +19,12 @@ from canyonos_core.controller.global_controller import GlobalController
 from fakes import _FakeRedis
 
 
-def _bare_controller(config, node_redis=None):
+def _bare_controller(config, machine_redis=None):
     controller = GlobalController.__new__(GlobalController)
     controller.config = config
     controller.redis = _FakeRedis()
-    controller.node_redis = node_redis if node_redis is not None else {}
-    controller._set_controllers(config.get("agents", []))
+    controller.machine_redis = machine_redis if machine_redis is not None else {}
+    controller._set_agent_specs(config.get("agents", []))
     return controller
 
 
@@ -47,7 +47,7 @@ class WriteIdentityTests(unittest.TestCase):
             "portfolio_agent",
         )
 
-    def test_publishes_project_id_to_self_redis_when_no_node_redis(self):
+    def test_publishes_project_id_to_self_redis_when_no_machine_redis(self):
         controller = _bare_controller(
             {"project_id": "11111111-1111-1111-1111-111111111111"}
         )
@@ -59,32 +59,32 @@ class WriteIdentityTests(unittest.TestCase):
             {"project_id": "11111111-1111-1111-1111-111111111111", "project_name": ""},
         )
 
-    def test_publishes_to_every_node_not_just_self_redis(self):
+    def test_publishes_to_every_machine_not_just_self_redis(self):
         """The same lesson as Bug D: an agent replica on a remote EC2 host has its own
         Redis, distinct from the controller's local one. Publishing to self.redis alone
         would leave that replica reading nothing."""
-        node_a = _FakeRedis()
-        node_b = _FakeRedis()
+        machine_a = _FakeRedis()
+        machine_b = _FakeRedis()
         controller = _bare_controller(
             {"project_id": "11111111-1111-1111-1111-111111111111"},
-            node_redis={"localhost": node_a, "172.31.0.5": node_b},
+            machine_redis={"localhost": machine_a, "172.31.0.5": machine_b},
         )
 
         controller._write_identity()
 
-        for node in (node_a, node_b):
+        for machine in (machine_a, machine_b):
             self.assertEqual(
-                node.hgetall(GlobalController.IDENTITY_KEY)["project_id"],
+                machine.hgetall(GlobalController.IDENTITY_KEY)["project_id"],
                 "11111111-1111-1111-1111-111111111111",
             )
 
     def test_a_second_call_with_a_new_config_overwrites_the_published_value(self):
         """Simulates what reload_config() does on a real SIGHUP: the same key must reflect
         the *new* project after a switch, not just get set once at boot."""
-        node = _FakeRedis()
+        machine = _FakeRedis()
         controller = _bare_controller(
             {"project_id": "11111111-1111-1111-1111-111111111111"},
-            node_redis={"localhost": node},
+            machine_redis={"localhost": machine},
         )
         controller._write_identity()
 
@@ -92,7 +92,7 @@ class WriteIdentityTests(unittest.TestCase):
         controller._write_identity()
 
         self.assertEqual(
-            node.hgetall(GlobalController.IDENTITY_KEY),
+            machine.hgetall(GlobalController.IDENTITY_KEY),
             {"project_id": "22222222-2222-2222-2222-222222222222", "project_name": ""},
         )
 

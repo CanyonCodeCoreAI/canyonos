@@ -23,11 +23,11 @@ def _project_images():
             config = yaml.safe_load(f) or {}
     except (OSError, yaml.YAMLError):
         return None
-    agents = config.get("agents") if isinstance(config, dict) else None
+    agent_specs = config.get("agents") if isinstance(config, dict) else None
     return [
-        project.image_name(agent["name"])
-        for agent in agents or []
-        if isinstance(agent, dict) and isinstance(agent.get("name"), str)
+        project.image_name(agent_spec["name"])
+        for agent_spec in agent_specs or []
+        if isinstance(agent_spec, dict) and isinstance(agent_spec.get("name"), str)
     ]
 
 

@@ -20,7 +20,7 @@ class WaitForRedisTests(unittest.TestCase):
         with self.assertRaisesRegex(
             TimeoutError,
             r"Timed out connecting to Redis at 10\.0\.0\.1:6379\. "
-            r"For EC2 runtimes, ensure the instance security group allows inbound "
+            r"For EC2 machines, ensure the machine security group allows inbound "
             r"TCP 6379 from the global controller host\.",
         ):
             _wait_for_redis(redis_client, "10.0.0.1", 6379, timeout=0, interval=1)

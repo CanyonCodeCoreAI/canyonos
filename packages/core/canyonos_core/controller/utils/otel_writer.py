@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Producer side of the OTel export queue: read telemetry from a node's Redis and write it
+"""Producer side of the OTel export queue: read telemetry from a machine's Redis and write it
 into the SQLite queue tables for the exporter subprocess to drain.
 
 Runs inside the global controller process (GC calls ``send_telemetry`` and
@@ -434,7 +434,7 @@ class ProcessLogHandler(logging.Handler):
 
 
 def _pull_telemetry(redis_client):
-    """Scan a node's Redis for per-execution future rows; each future's identity and
+    """Scan a machine's Redis for per-execution future rows; each future's identity and
     execution metrics both live at future:{future_id}.
     """
     rows = []
@@ -450,7 +450,7 @@ def _pull_telemetry(redis_client):
 
 def send_telemetry(redis_client, project_id=None, db_path=DB_PATH):
     """Pull per-execution future rows from Redis and queue them into the ``traces_waiting``
-    and ``logs_waiting`` tables for OTLP export. GC's ``_poll_one_instance`` calls this once
+    and ``logs_waiting`` tables for OTLP export. GC's ``_poll_one_replica`` calls this once
     per poll. Returns the rows it wrote.
     """
     rows = _pull_telemetry(redis_client)
@@ -462,14 +462,14 @@ def send_telemetry(redis_client, project_id=None, db_path=DB_PATH):
 def deliver_completed_requests(
     redis_clients, request_ids, project_id=None, db_path=DB_PATH
 ):
-    """Persist a final all-node snapshot and mark the requests safe to clean up.
+    """Persist a final all-machine snapshot and mark the requests safe to clean up.
 
     Completion is authoritative in ``request:completed``. The expected future set is
-    the union across every node, while terminal rows are collected from every node. A
-    marker is written to every node only after all SQLite writes have committed.
+    the union across every machine, while terminal rows are collected from every machine. A
+    marker is written to every machine only after all SQLite writes have committed.
 
     Returns ``(delivered, gone)``: ``delivered`` requests have every expected future
-    terminal and are now marked; ``gone`` requests have no futures left on any node --
+    terminal and are now marked; ``gone`` requests have no futures left on any machine --
     already cleaned up and expired -- so they can leave ``request:completed``.
     """
     request_ids = set(request_ids)

@@ -14,7 +14,7 @@ FAILURE_LOG_TAIL_LINES = 40
 _dump_lock = threading.Lock()
 
 
-def dump_container_log(instance, status, log_tail):
+def dump_container_log(replica, status, log_tail):
     """Copy the last lines of a failed container's output into this log, between
     a start line and an end line.
 
@@ -24,9 +24,9 @@ def dump_container_log(instance, status, log_tail):
     never be mistaken for the end line. The start and end text must match what
     `PhaseTracker` in packages/cli/canyonos/deploy.py looks for.
     """
-    name = instance["agent_name"]
+    name = replica["agent_name"]
     try:
-        lines = log_tail(instance, FAILURE_LOG_TAIL_LINES) or [
+        lines = log_tail(replica, FAILURE_LOG_TAIL_LINES) or [
             "(the container produced no output)"
         ]
     except Exception as e:
@@ -36,8 +36,8 @@ def dump_container_log(instance, status, log_tail):
         logger.warning(
             "--- begin container log: %s (%s:%s) status=%s ---",
             name,
-            instance["private_host"],
-            instance["host_port"],
+            replica["private_host"],
+            replica["host_port"],
             status or "unknown",
         )
         for line in lines:

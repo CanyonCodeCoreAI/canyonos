@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Lazily-cached lookups over llm_prices.json's LLM/instance pricing reference data."""
+"""Lazily-cached lookups over llm_prices.json's LLM/machine pricing reference data."""
 
 import json
 import logging
@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_PRICES_PATH = os.path.join(os.path.dirname(__file__), "llm_prices.json")
 
 _token_cost_by_model_id = None
-_hourly_cost_by_instance_type = None
+_hourly_cost_by_machine_type = None
 
 
 def _load_pricing_data(prices_path=DEFAULT_PRICES_PATH):
-    """Read llm_prices.json and return (token costs by model id, hourly costs by instance type)."""
+    """Read llm_prices.json and return (token costs by model id, hourly costs by machine type)."""
     with open(prices_path, "r") as f:
         prices = json.load(f)
 
@@ -28,15 +28,15 @@ def _load_pricing_data(prices_path=DEFAULT_PRICES_PATH):
         )
         for model_id, costs in (prices.get("models") or {}).items()
     }
-    instance_costs = dict((prices.get("instances") or {}).items())
-    return token_costs, instance_costs
+    machine_costs = dict((prices.get("machines") or {}).items())
+    return token_costs, machine_costs
 
 
 def _load_cache():
-    global _token_cost_by_model_id, _hourly_cost_by_instance_type
-    if _token_cost_by_model_id is None or _hourly_cost_by_instance_type is None:
-        _token_cost_by_model_id, _hourly_cost_by_instance_type = _load_pricing_data()
-    return _token_cost_by_model_id, _hourly_cost_by_instance_type
+    global _token_cost_by_model_id, _hourly_cost_by_machine_type
+    if _token_cost_by_model_id is None or _hourly_cost_by_machine_type is None:
+        _token_cost_by_model_id, _hourly_cost_by_machine_type = _load_pricing_data()
+    return _token_cost_by_model_id, _hourly_cost_by_machine_type
 
 
 def _candidate_model_ids(model_id):
@@ -84,13 +84,13 @@ def compute_token_cost(model_id, input_token_count, output_token_count):
     ) / 1_000_000
 
 
-def instance_hourly_cost(instance_type):
-    """Return the USD per hour of an EC2 instance type, or 0.0 if it is unknown."""
-    _, instance_costs = _load_cache()
-    if instance_type not in instance_costs:
+def machine_hourly_cost(machine_type):
+    """Return the USD per hour of an EC2 machine type, or 0.0 if it is unknown."""
+    _, machine_costs = _load_cache()
+    if machine_type not in machine_costs:
         logger.warning(
-            "No hourly price for EC2 instance type %s; its server cost is recorded as 0",
-            instance_type,
+            "No hourly price for EC2 machine type %s; its server cost is recorded as 0",
+            machine_type,
         )
         return 0.0
-    return float(instance_costs[instance_type])
+    return float(machine_costs[machine_type])

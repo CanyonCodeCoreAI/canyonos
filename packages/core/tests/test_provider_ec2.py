@@ -14,11 +14,11 @@ from botocore.exceptions import ClientError, WaiterError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.reconciler.providers.EC2 import _runtime as ec2_runtime
+from canyonos_core.reconciler.providers.EC2 import _provider as ec2_provider
 from fakes import _bind_fake_ec2
 
 
-class EC2RuntimeTests(unittest.TestCase):
+class EC2ProviderTests(unittest.TestCase):
     def setUp(self):
         self.controller, self.fake_client = _bind_fake_ec2(self)
         self.key_path = self.controller.config["ssh_private_key_path"]
@@ -29,8 +29,8 @@ class EC2RuntimeTests(unittest.TestCase):
         default_path = os.path.join(default_dir, "canyonos_ec2")
 
         try:
-            with patch.object(ec2_runtime, "DEFAULT_SSH_KEY_PATH", default_path):
-                self.assertEqual(ec2_runtime._ssh_key_path(), default_path)
+            with patch.object(ec2_provider, "DEFAULT_SSH_KEY_PATH", default_path):
+                self.assertEqual(ec2_provider._ssh_key_path(), default_path)
 
             self.assertTrue(os.path.isfile(default_path))
             mode = stat.S_IMODE(os.stat(default_path).st_mode)
@@ -46,10 +46,10 @@ class EC2RuntimeTests(unittest.TestCase):
         default_path = os.path.join(default_dir, "canyonos_ec2")
 
         try:
-            with patch.object(ec2_runtime, "DEFAULT_SSH_KEY_PATH", default_path):
+            with patch.object(ec2_provider, "DEFAULT_SSH_KEY_PATH", default_path):
                 threads = [
                     threading.Thread(
-                        target=ec2_runtime._generate_default_key, args=(default_path,)
+                        target=ec2_provider._generate_default_key, args=(default_path,)
                     )
                     for _ in range(5)
                 ]
@@ -69,17 +69,17 @@ class EC2RuntimeTests(unittest.TestCase):
         self.controller.config["ssh_private_key_path"] = "/tmp/missing-canyonos-key"
 
         with self.assertRaisesRegex(ValueError, "does not exist"):
-            ec2_runtime._ssh_key_path()
+            ec2_provider._ssh_key_path()
 
     def test_ssh_key_path_rejects_insecure_ssh_private_key_permissions(self):
         os.chmod(self.key_path, 0o644)
 
         with self.assertRaisesRegex(ValueError, "insecure permissions 0644"):
-            ec2_runtime._ssh_key_path()
+            ec2_provider._ssh_key_path()
 
     def _import_key_pair(self):
         cfg = self.controller.config["ec2"]
-        return ec2_runtime._ensure_key_pair_imported(
+        return ec2_provider._ensure_key_pair_imported(
             cfg, self.key_path, self.fake_client
         )
 
@@ -128,11 +128,11 @@ class EC2RuntimeTests(unittest.TestCase):
         spec = {
             "name": "Tagged",
             "provider": "EC2",
-            "instance_type": "t3.small",
+            "machine_type": "t3.small",
             "redis_port": 6390,
         }
 
-        provisioned = ec2_runtime.provision_instance(spec, 2, None, "launch-1")
+        provisioned = ec2_provider.provision_replica(spec, 2, None, "launch-1")
 
         request = self.fake_client.run_requests[0]
         self.assertEqual(request["ImageId"], "ami-123456")
@@ -162,7 +162,7 @@ class EC2RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(request["ClientToken"], "launch-1")
         self.assertEqual(self.fake_client.waiter.calls, [])
-        self.assertEqual(provisioned["runtime_id"], "canyonos-tagged-2--i-test1")
+        self.assertEqual(provisioned["container_name"], "canyonos-tagged-2--i-test1")
         self.assertEqual(
             self.fake_client.client_calls,
             [{"service_name": "ec2", "region_name": "us-east-1"}],
@@ -172,11 +172,11 @@ class EC2RuntimeTests(unittest.TestCase):
         spec = {
             "name": "Spot",
             "provider": "EC2",
-            "instance_type": "t3.small",
+            "machine_type": "t3.small",
             "market_type": "spot",
         }
 
-        ec2_runtime.provision_instance(spec, 0, None, "launch-1")
+        ec2_provider.provision_replica(spec, 0, None, "launch-1")
 
         self.assertEqual(
             self.fake_client.run_requests[0]["InstanceMarketOptions"],
@@ -186,85 +186,81 @@ class EC2RuntimeTests(unittest.TestCase):
     def test_bootstrap_fails_when_no_public_ip_arrives(self):
         self.fake_client.public_ip = None
         self.controller.config["ec2"]["public_ip_timeout"] = 0
-        spec = {"name": "Tagged", "provider": "EC2", "instance_type": "t3.small"}
-        provisioned = ec2_runtime.provision_instance(spec, 0, None, "launch-1")
+        spec = {"name": "Tagged", "provider": "EC2", "machine_type": "t3.small"}
+        provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
 
         with self.assertRaisesRegex(RuntimeError, "never got a public IP"):
-            ec2_runtime.bootstrap_instance(provisioned, spec, 0, "agent-id-0")
+            ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
 
-    def test_provision_attaches_instance_profile_when_configured(self):
-        self.controller.config["ec2"]["instance_profile_name"] = "my-custom-profile"
-        spec = {"name": "Tagged", "provider": "EC2", "instance_type": "t3.small"}
+    def test_provision_attaches_iam_profile_when_configured(self):
+        self.controller.config["ec2"]["iam_profile_name"] = "my-custom-profile"
+        spec = {"name": "Tagged", "provider": "EC2", "machine_type": "t3.small"}
 
-        ec2_runtime.provision_instance(spec, 0, None, "launch-1")
+        ec2_provider.provision_replica(spec, 0, None, "launch-1")
 
         request = self.fake_client.run_requests[0]
         self.assertEqual(request["IamInstanceProfile"], {"Name": "my-custom-profile"})
 
-    def test_provision_and_bootstrap_instance_return_runtime_record(self):
+    def test_provision_and_bootstrap_replica_return_replica_record(self):
         spec = {
             "name": "Tagged",
             "provider": "EC2",
-            "instance_type": "t3.small",
+            "machine_type": "t3.small",
             "redis_port": 6390,
         }
 
         with (
-            patch.object(ec2_runtime, "_bootstrap_instance"),
-            patch.object(ec2_runtime, "_check_controller_health", return_value=True),
+            patch.object(ec2_provider, "_bootstrap_replica"),
+            patch.object(ec2_provider, "_check_controller_health", return_value=True),
         ):
-            provisioned = ec2_runtime.provision_instance(spec, 2, None, "launch-1")
-            instance = ec2_runtime.bootstrap_instance(
-                provisioned, spec, 2, "agent-id-2"
-            )
+            provisioned = ec2_provider.provision_replica(spec, 2, None, "launch-1")
+            replica = ec2_provider.bootstrap_replica(provisioned, spec, 2, "agent-id-2")
 
-        self.assertEqual(instance["private_host"], "10.0.0.30")
-        self.assertEqual(instance["public_host"], "54.10.20.30")
-        self.assertEqual(instance["endpoint"], "10.0.0.30:50051")
-        self.assertEqual(instance["routing_endpoint"], "10.0.0.30:50051")
-        self.assertEqual(instance["redis_host"], "host.docker.internal")
-        self.assertEqual(instance["redis_port"], "6390")
-        self.assertIn("--i-test1", instance["runtime_id"])
+        self.assertEqual(replica["private_host"], "10.0.0.30")
+        self.assertEqual(replica["public_host"], "54.10.20.30")
+        self.assertEqual(replica["published_address"], "10.0.0.30:50051")
+        self.assertEqual(replica["address"], "10.0.0.30:50051")
+        self.assertEqual(replica["redis_host"], "host.docker.internal")
+        self.assertEqual(replica["redis_port"], "6390")
+        self.assertIn("--i-test1", replica["container_name"])
 
     def test_a_database_is_routed_on_its_published_db_port(self):
         spec = {
             "name": "Pg",
             "provider": "EC2",
-            "instance_type": "t3.small",
+            "machine_type": "t3.small",
             "type": "database",
             "db_port": 5433,
         }
 
         with (
-            patch.object(ec2_runtime, "_bootstrap_instance"),
-            patch.object(ec2_runtime, "_check_controller_health", return_value=True),
+            patch.object(ec2_provider, "_bootstrap_replica"),
+            patch.object(ec2_provider, "_check_controller_health", return_value=True),
         ):
-            provisioned = ec2_runtime.provision_instance(spec, 0, None, "launch-1")
-            instance = ec2_runtime.bootstrap_instance(
-                provisioned, spec, 0, "agent-id-0"
-            )
+            provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
+            replica = ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
 
-        self.assertEqual(instance["host_port"], "5433")
-        self.assertEqual(instance["routing_endpoint"], "10.0.0.30:5433")
+        self.assertEqual(replica["host_port"], "5433")
+        self.assertEqual(replica["address"], "10.0.0.30:5433")
 
-    def test_a_failed_bootstrap_leaves_the_instance_for_the_provisioner(self):
+    def test_a_failed_bootstrap_leaves_the_machine_for_the_provisioner(self):
         """The provisioner terminates it from the saved record, so it is never done twice."""
-        spec = {"name": "Broken", "provider": "EC2", "instance_type": "t3.small"}
-        provisioned = ec2_runtime.provision_instance(spec, 0, None, "launch-1")
+        spec = {"name": "Broken", "provider": "EC2", "machine_type": "t3.small"}
+        provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
 
         with (
             patch.object(
-                ec2_runtime, "_bootstrap_instance", side_effect=RuntimeError("boom")
+                ec2_provider, "_bootstrap_replica", side_effect=RuntimeError("boom")
             ),
             self.assertRaisesRegex(RuntimeError, "boom"),
         ):
-            ec2_runtime.bootstrap_instance(provisioned, spec, 0, "agent-id-0")
+            ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
 
         self.assertEqual(self.fake_client.terminate_requests, [])
 
-    def test_an_instance_that_never_runs_says_why(self):
-        spec = {"name": "Broken", "provider": "EC2", "instance_type": "t3.small"}
-        provisioned = ec2_runtime.provision_instance(spec, 0, None, "launch-1")
+    def test_a_machine_that_never_runs_says_why(self):
+        spec = {"name": "Broken", "provider": "EC2", "machine_type": "t3.small"}
+        provisioned = ec2_provider.provision_replica(spec, 0, None, "launch-1")
         self.fake_client.waiter.wait = MagicMock(
             side_effect=WaiterError(
                 "InstanceRunning",
@@ -280,7 +276,7 @@ class EC2RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError, "i-test1 never reached running: spot reclaimed"
         ):
-            ec2_runtime.bootstrap_instance(provisioned, spec, 0, "agent-id-0")
+            ec2_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
 
     def test_a_config_without_an_ec2_section_says_so(self):
         """Records can outlive the config that made them, e.g. across a restart."""
@@ -290,29 +286,31 @@ class EC2RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError, "/app/global_controller.yaml has no ec2: section"
         ):
-            ec2_runtime.terminate_instance({"runtime_id": "canyonos-tagged-0--i-test1"})
+            ec2_provider.terminate_replica(
+                {"container_name": "canyonos-tagged-0--i-test1"}
+            )
 
     def test_bootstrap_uses_ssh_user(self):
         spec = {"name": "Tagged", "provider": "EC2", "redis_port": 6390}
         with (
-            patch.object(ec2_runtime.time, "sleep"),
+            patch.object(ec2_provider.time, "sleep"),
             patch.object(
-                ec2_runtime.subprocess,
+                ec2_provider.subprocess,
                 "run",
                 return_value=SimpleNamespace(returncode=0, stderr="", stdout=""),
             ),
             patch.object(
-                ec2_runtime, "RedisClient", return_value=MagicMock()
+                ec2_provider, "RedisClient", return_value=MagicMock()
             ) as redis_client,
         ):
-            ec2_runtime._bootstrap_instance(
+            ec2_provider._bootstrap_replica(
                 "10.0.0.30",
                 spec,
                 2,
                 self.controller.config["ec2"],
                 redis_host="10.0.0.30",
                 redis_port=6390,
-                agent_id="agent-id-2",
+                replica_id="agent-id-2",
             )
 
         self.assertTrue(self.controller._run_cmd.called)
@@ -340,29 +338,29 @@ class EC2RuntimeTests(unittest.TestCase):
         self.controller.config["logs"] = True
         spec = {"name": "Tagged", "provider": "EC2", "redis_port": 6390}
         with (
-            patch.object(ec2_runtime.time, "sleep"),
+            patch.object(ec2_provider.time, "sleep"),
             patch.object(
-                ec2_runtime.subprocess,
+                ec2_provider.subprocess,
                 "run",
                 return_value=SimpleNamespace(returncode=0, stderr="", stdout=""),
             ),
-            patch.object(ec2_runtime, "RedisClient", return_value=MagicMock()),
+            patch.object(ec2_provider, "RedisClient", return_value=MagicMock()),
         ):
-            ec2_runtime._bootstrap_instance(
+            ec2_provider._bootstrap_replica(
                 "10.0.0.30",
                 spec,
                 2,
                 self.controller.config["ec2"],
                 redis_host="10.0.0.30",
                 redis_port=6390,
-                agent_id="agent-id-2",
+                replica_id="agent-id-2",
             )
 
         cmd = self.controller._run_cmd.call_args_list[-1].args[0]
         index = cmd.index("CANYONOS_LOGS_ENABLED=true")
         self.assertEqual(cmd[index - 1], "-e")
 
-    def test_terminating_an_instance_aws_no_longer_knows_succeeds(self):
+    def test_terminating_a_machine_aws_no_longer_knows_succeeds(self):
         self.fake_client.terminate_instances = MagicMock(
             side_effect=ClientError(
                 {"Error": {"Code": "InvalidInstanceID.NotFound", "Message": "gone"}},
@@ -370,14 +368,14 @@ class EC2RuntimeTests(unittest.TestCase):
             )
         )
 
-        ec2_runtime.terminate_instance({"runtime_id": "canyonos-tagged-0--i-test1"})
+        ec2_provider.terminate_replica({"container_name": "canyonos-tagged-0--i-test1"})
 
-    def test_health_check_error_message_mentions_ec2_runtime_endpoint(self):
-        with patch.object(ec2_runtime.time, "time", side_effect=[0, 999]):
+    def test_health_check_error_message_mentions_the_replica_address(self):
+        with patch.object(ec2_provider.time, "time", side_effect=[0, 999]):
             with self.assertRaisesRegex(
-                TimeoutError, "EC2 runtime endpoint never became reachable"
+                TimeoutError, "Replica address never became reachable"
             ):
-                ec2_runtime._check_controller_health("10.0.0.30:50051", timeout=1)
+                ec2_provider._check_controller_health("10.0.0.30:50051", timeout=1)
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ def _otel_entry(
     *,
     agent_id,
     agent_name,
-    endpoint,
+    address,
     logger_name=None,
     exception_type=None,
     exception_message=None,
@@ -53,7 +53,7 @@ def _otel_entry(
             "logger.name": logger_name,
             "agent.id": agent_id,
             "agent.name": agent_name,
-            "endpoint": endpoint,
+            "endpoint": address,
             "exception.type": exception_type,
             "exception.message": exception_message,
             "exception.stacktrace": exception_stacktrace,
@@ -70,7 +70,7 @@ def error_type_name(error, error_name=None):
 
 
 def build_failure_entry(
-    error, agent_id=None, agent_name=None, endpoint=None, error_name=None
+    error, agent_id=None, agent_name=None, address=None, error_name=None
 ):
     """Return an OTel-shaped log entry for one future failure (an exception or a plain message)."""
     is_exception = isinstance(error, BaseException)
@@ -80,7 +80,7 @@ def build_failure_entry(
         str(error),
         agent_id=agent_id,
         agent_name=agent_name,
-        endpoint=endpoint,
+        address=address,
         exception_type=error_type_name(error, error_name),
         exception_message=str(error) if is_exception else None,
         exception_stacktrace=(
@@ -91,7 +91,7 @@ def build_failure_entry(
     )
 
 
-def build_log_entry(record, agent_id=None, agent_name=None, endpoint=None):
+def build_log_entry(record, agent_id=None, agent_name=None, address=None):
     """Return an OTel-shaped log entry for one stdlib `logging.LogRecord`."""
     exc_type = exc_message = exc_stacktrace = None
     if record.exc_info:
@@ -104,7 +104,7 @@ def build_log_entry(record, agent_id=None, agent_name=None, endpoint=None):
         record.getMessage(),
         agent_id=agent_id,
         agent_name=agent_name,
-        endpoint=endpoint,
+        address=address,
         logger_name=record.name,
         exception_type=exc_type,
         exception_message=exc_message,

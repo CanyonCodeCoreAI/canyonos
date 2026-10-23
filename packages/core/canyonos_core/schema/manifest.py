@@ -5,7 +5,7 @@
 
 Anything not declared here is rejected, so a typo fails the deploy with a line
 number instead of being silently ignored, and a wrong type fails here rather
-than deep inside the instance manager once containers are already up.
+than deep inside the provisioner once containers are already up.
 """
 
 import ntpath
@@ -21,7 +21,7 @@ from canyonos_core.controller.utils.config_env import (
     expand_env_value,
     load_root_dotenv,
 )
-from canyonos_core.endpoint import ENDPOINT_PORT, SERVICE_NAME
+from canyonos_core.endpoint import ENDPOINT_PORT, ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
 from canyonos_core.schema._checks import (
     _ENV_REF_HINT,
@@ -51,7 +51,7 @@ from canyonos_core.schema.otel_destinations import (
 )
 from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
 
-SERVICE_TYPES = ("agent", "database")
+AGENT_TYPES = ("agent", "database")
 
 # Every provider's agent keys, all optional here, so any entry may set them.
 _PROVIDER_AGENT_KEYS = {
@@ -59,8 +59,8 @@ _PROVIDER_AGENT_KEYS = {
     for schema in providers.SCHEMAS.values()
     for key, (kind, _) in schema.AGENT_KEYS.items()
 }
-# Keys every service entry may carry, whatever its type.
-_COMMON_SERVICE_KEYS = frozenset(
+# Keys every entry in `agents` may carry, whatever its type.
+_COMMON_AGENT_KEYS = frozenset(
     {
         "name",
         "type",
@@ -73,11 +73,11 @@ _COMMON_SERVICE_KEYS = frozenset(
         *_PROVIDER_AGENT_KEYS,
     }
 )
-_AGENT_KEYS = _COMMON_SERVICE_KEYS | {"entrypoint", "requirements", "functions"}
-_DATABASE_KEYS = _COMMON_SERVICE_KEYS | {"image", "db_port", "volume_path"}
-_ALL_SERVICE_KEYS = _AGENT_KEYS | _DATABASE_KEYS
-_SERVICE_KEYS_BY_TYPE = {
-    "agent": _AGENT_KEYS,
+_CODE_AGENT_KEYS = _COMMON_AGENT_KEYS | {"entrypoint", "requirements", "functions"}
+_DATABASE_KEYS = _COMMON_AGENT_KEYS | {"image", "db_port", "volume_path"}
+_ALL_AGENT_KEYS = _CODE_AGENT_KEYS | _DATABASE_KEYS
+_AGENT_KEYS_BY_TYPE = {
+    "agent": _CODE_AGENT_KEYS,
     "database": _DATABASE_KEYS,
 }
 
@@ -115,7 +115,7 @@ _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
 
 @dataclass(frozen=True)
 class Resources:
-    """The compute resources requested for a service in `global_controller.yaml`."""
+    """The compute resources requested for an agent in `global_controller.yaml`."""
 
     cpu: float = 1
     memory: float = 512
@@ -160,8 +160,8 @@ class EndpointSpec:
 
 
 @dataclass(frozen=True)
-class _Service:
-    """Fields shared by every service entry in `agents`."""
+class _Agent:
+    """Fields shared by every entry in `agents`."""
 
     name: str
     provider: str = providers.DEFAULT
@@ -175,7 +175,7 @@ class _Service:
 
 
 @dataclass(frozen=True)
-class AgentService(_Service):
+class CodeAgent(_Agent):
     """An `agents:` entry of type `agent`: a Python agent class."""
 
     entrypoint: str = ""
@@ -187,7 +187,7 @@ class AgentService(_Service):
 
 
 @dataclass(frozen=True)
-class DatabaseService(_Service):
+class DatabaseAgent(_Agent):
     """An `agents:` entry of type `database`: a stock database image."""
 
     image: str = ""
@@ -207,8 +207,7 @@ class Manifest:
     project_id: str | None = None
     redis: RedisSpec = field(default_factory=RedisSpec)
     env_file: str | None = None
-    # Streams failure and log detail into each future; read as
-    # `config.get("logs", True)` by both runtimes, hence the default.
+    # Streams failure and log detail into each future; read as `config.get("logs", True)`, hence the default.
     logs: bool = True
     otel: OtelSpec | None = None
     endpoint: EndpointSpec | None = None
@@ -305,23 +304,23 @@ def _resources(collector, node, prefix):
     )
 
 
-def _service_type(collector, node, prefix):
+def _agent_type(collector, node, prefix):
     if "type" not in node:
         return "agent"
     value = _resolve(node["type"])
-    if value not in SERVICE_TYPES:
+    if value not in AGENT_TYPES:
         collector.add(
             node,
             "type",
             _field(prefix, "type"),
-            f"expected one of {list(SERVICE_TYPES)}, got {_describe(value)}",
+            f"expected one of {list(AGENT_TYPES)}, got {_describe(value)}",
         )
         return None
     return value
 
 
 def _provider(collector, node, prefix):
-    """The provider in any casing, normalized to the spelling the runtimes compare."""
+    """The provider in any casing, normalized to the spelling records store."""
     if "provider" not in node:
         return providers.DEFAULT
     value = _resolve(node["provider"])
@@ -337,7 +336,7 @@ def _provider(collector, node, prefix):
     return canonical
 
 
-def _service(collector, entries, index):
+def _agent(collector, entries, index):
     """Parse one entry of `agents`, or None when it cannot be identified.
 
     A type or name that is wrong still leaves the rest of the entry checked,
@@ -351,14 +350,14 @@ def _service(collector, entries, index):
         )
         return None
 
-    service_type = _service_type(collector, node, prefix)
-    _check_service_keys(collector, node, prefix, service_type)
+    agent_type = _agent_type(collector, node, prefix)
+    _check_agent_keys(collector, node, prefix, agent_type)
 
     name = (
         _identifier(
             collector, node, "name", prefix, required=True, reserved=STUB_GLOBAL_NAMES
         )
-        if service_type == "agent"
+        if agent_type == "agent"
         else _string(collector, node, "name", prefix, required=True)
     )
     common = {
@@ -379,7 +378,7 @@ def _service(collector, entries, index):
         f"is required when provider is {provider!r}",
     )
 
-    if service_type == "database":
+    if agent_type == "database":
         if common["replicas"] != 1:
             collector.add(
                 node,
@@ -387,14 +386,14 @@ def _service(collector, entries, index):
                 _field(prefix, "replicas"),
                 f"a database runs as a single container, got {_describe(node['replicas'])}",
             )
-        service_class = DatabaseService
+        agent_class = DatabaseAgent
         fields = {
             "image": _string(collector, node, "image", prefix, "", required=True) or "",
             "db_port": _port(collector, node, "db_port", prefix, 5432),
             "volume_path": _string(collector, node, "volume_path", prefix),
         }
-    elif service_type == "agent":
-        service_class = AgentService
+    elif agent_type == "agent":
+        agent_class = CodeAgent
         fields = {
             "entrypoint": _project_relative_py(
                 collector, node, "entrypoint", prefix, required=True
@@ -408,22 +407,22 @@ def _service(collector, entries, index):
 
     if name is None:
         return None
-    return service_class(**common, **fields)
+    return agent_class(**common, **fields)
 
 
-def _check_service_keys(collector, node, prefix, service_type):
-    allowed = _SERVICE_KEYS_BY_TYPE.get(service_type, _ALL_SERVICE_KEYS)
+def _check_agent_keys(collector, node, prefix, agent_type):
+    allowed = _AGENT_KEYS_BY_TYPE.get(agent_type, _ALL_AGENT_KEYS)
     for key in node:
         if key in allowed:
             continue
-        if key in _ALL_SERVICE_KEYS:
-            message = f"key {key!r} is not valid for type {service_type!r}"
+        if key in _ALL_AGENT_KEYS:
+            message = f"key {key!r} is not valid for type {agent_type!r}"
         else:
             message = _unknown_key_message(key, allowed)
         collector.add(node, key, _field(prefix, key), message)
 
 
-def _services(collector, node):
+def _agents(collector, node):
     """Parse the `agents` list in `global_controller.yaml`; two names that differ only
     in case are a violation, since both would get the same image and container name,
     and so is `endpoint`, the name of the HTTP endpoint's own replica."""
@@ -436,40 +435,40 @@ def _services(collector, node):
             node,
             "agents",
             "agents",
-            f"expected a list of services, got {_describe(raw)}",
+            f"expected a list of agents, got {_describe(raw)}",
         )
         return ()
 
     parsed = []
     for index, entry in enumerate(raw):
-        service = _service(collector, raw, index)
-        if service is not None:
-            parsed.append((index, entry, service))
+        agent_spec = _agent(collector, raw, index)
+        if agent_spec is not None:
+            parsed.append((index, entry, agent_spec))
 
-    # Two services whose names differ only in case collide: the image tag and
+    # Two agents whose names differ only in case collide: the image tag and
     # the container name are both built from `name.lower()`.
     seen = {}
-    for index, entry, service in parsed:
-        key = service.name.lower()
-        if key == SERVICE_NAME:
+    for index, entry, agent_spec in parsed:
+        key = agent_spec.name.lower()
+        if key == ENDPOINT_AGENT_NAME:
             collector.add(
                 entry,
                 "name",
                 f"agents[{index}].name",
-                f"{service.name!r} is reserved for the HTTP endpoint container; "
-                "rename this service",
+                f"{agent_spec.name!r} is reserved for the HTTP endpoint container; "
+                "rename this agent",
             )
         elif key in seen:
             collector.add(
                 entry,
                 "name",
                 f"agents[{index}].name",
-                f"duplicate service name {service.name!r}: agents[{seen[key]}] "
+                f"duplicate agent name {agent_spec.name!r}: agents[{seen[key]}] "
                 "already claims it (names are lowercased into one image tag)",
             )
         else:
             seen[key] = index
-    return tuple(service for _, _, service in parsed)
+    return tuple(agent_spec for _, _, agent_spec in parsed)
 
 
 def _otel(collector, node):
@@ -528,7 +527,7 @@ def _otel(collector, node):
     return OtelSpec(destinations=tuple(destinations))
 
 
-def _endpoint(collector, node, services):
+def _endpoint(collector, node, agent_specs):
     """Parse the required `endpoint` section: the agent method served over HTTP."""
     if "endpoint" not in node or node["endpoint"] is None:
         collector.add(
@@ -545,9 +544,9 @@ def _endpoint(collector, node, services):
     agent = _string(collector, block, "agent", "endpoint", required=True)
     method = _string(collector, block, "method", "endpoint", required=True)
     functions = {
-        service.name: {function.name for function in service.functions}
-        for service in services
-        if service.type == "agent"
+        agent_spec.name: {function.name for function in agent_spec.functions}
+        for agent_spec in agent_specs
+        if agent_spec.type == "agent"
     }
     if agent is not None and agent not in functions:
         collector.add(
@@ -586,10 +585,10 @@ def _check_declared(collector, node, prefix, keys, missing="is required but miss
             _string(collector, node, key, prefix, required=required)
 
 
-def _check_provider_sections(collector, node, services):
+def _check_provider_sections(collector, node, agent_specs):
     """Check each provider's top-level section of `global_controller.yaml`, such as
     `ec2:`. Unknown and retired keys are always reported. The section is required, and
-    its values checked, only when a service uses that provider."""
+    its values checked, only when an agent uses that provider."""
     for name, schema in providers.SCHEMAS.items():
         if not schema.SECTION:
             continue
@@ -603,8 +602,8 @@ def _check_provider_sections(collector, node, services):
         for key, message in schema.RETIRED_KEYS.items():
             if key in (block or {}):
                 collector.add(block, key, _field(schema.SECTION, key), message)
-        if not any(service.provider == name for service in services):
-            # Skip the values when no service uses this provider; their ${VAR}s may be unset.
+        if not any(agent_spec.provider == name for agent_spec in agent_specs):
+            # Skip the values when no agent uses this provider; their ${VAR}s may be unset.
             continue
         if block is None:
             required = [
@@ -616,7 +615,7 @@ def _check_provider_sections(collector, node, services):
                     collector.path,
                     0,
                     schema.SECTION,
-                    f"is required because a service declares provider {name!r}; it "
+                    f"is required because an agent declares provider {name!r}; it "
                     f"must set {', '.join(required)}",
                 )
             )
@@ -659,9 +658,9 @@ def load_manifest(path):
         if key in document:
             collector.add(document, key, key, message)
     _check_keys(collector, document, "", _MANIFEST_KEYS | _RETIRED_KEYS.keys())
-    services = _services(collector, document)
+    agent_specs = _agents(collector, document)
     manifest = Manifest(
-        agents=services,
+        agents=agent_specs,
         poll_interval=_number(collector, document, "poll_interval", "", 5, 0),
         cleanup_interval=_number(collector, document, "cleanup_interval", "", 10, 0),
         project_id=_string(collector, document, "project_id", ""),
@@ -669,11 +668,11 @@ def load_manifest(path):
         env_file=_string(collector, document, "env_file", ""),
         logs=_boolean(collector, document, "logs", "", True),
         otel=_otel(collector, document),
-        endpoint=_endpoint(collector, document, services),
+        endpoint=_endpoint(collector, document, agent_specs),
         dashboard_port=_port(collector, document, "dashboard_port", "", 8081),
         path=path,
     )
-    _check_provider_sections(collector, document, services)
+    _check_provider_sections(collector, document, agent_specs)
     _string(collector, document, "ssh_private_key_path", "")
     if collector.violations:
         raise SchemaError(collector.violations)

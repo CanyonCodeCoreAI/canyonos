@@ -46,7 +46,7 @@ def read_config(config_path):
 def public_ip(timeout=0.3):
     """This machine's public IP via the EC2 IMDSv2 metadata service, or None.
 
-    Only meaningful on an EC2 instance -- a laptop or any other host simply
+    Only meaningful on an EC2 machine -- a laptop or any other host simply
     fails to reach the link-local metadata address and gets None back. Kept to
     a short timeout and cached for the life of the process so a non-EC2 host
     doesn't pay a network-timeout tax on every call site that wants a display
@@ -117,18 +117,18 @@ def endpoint_answers(api_port):
 
 
 def local_redis_port(config_path):
-    """Host port the local node's Redis is published on, or the default."""
+    """Host port the local machine's Redis is published on, or the default."""
     config = read_config(config_path)
     if not isinstance(config, dict):
         return DEFAULT_REDIS_PORT
 
-    agents = config.get("agents")
-    for agent in agents if isinstance(agents, list) else []:
-        if isinstance(agent, dict) and agent.get("host", "localhost") in (
+    agent_specs = config.get("agents")
+    for agent_spec in agent_specs if isinstance(agent_specs, list) else []:
+        if isinstance(agent_spec, dict) and agent_spec.get("host", "localhost") in (
             "localhost",
             "127.0.0.1",
         ):
-            return _port_or_default(agent.get("redis_port", DEFAULT_REDIS_PORT))
+            return _port_or_default(agent_spec.get("redis_port", DEFAULT_REDIS_PORT))
     redis = config.get("redis")
     if not isinstance(redis, dict):
         return DEFAULT_REDIS_PORT

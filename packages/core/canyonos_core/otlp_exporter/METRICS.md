@@ -2,7 +2,7 @@
 
 The metrics signal emits two kinds of samples: 
 
-- **machine** (per-machine/instance resource usage)
+- **machine** (per-machine resource usage)
 - **agent** (per-agent/container metrics).
 
 Both go through the same `metrics_waiting` table and the shared exporter loop. This doc covers only the metric-specific parts.

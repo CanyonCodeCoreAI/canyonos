@@ -27,7 +27,7 @@ parent_span_id = parent_id
 | `parent_id` | Parent future → parent `span_id`; NULL for a root span. |
 | `session_id` | Request id (`= request_id`) → OTel `trace_id`; `NOT NULL`. |
 | `project_id` | Deployment/project id (span attribute). |
-| `agent_id` | Executing instance id (span attribute). |
+| `agent_id` | Executing replica id (span attribute). |
 | `model` | LLM model id. |
 | `cpu`, `gpu` | Observed resource values. |
 | `started_at`, `finished_at` | Unix seconds; `finished_at IS NULL` ⇒ still running, not yet exported. |

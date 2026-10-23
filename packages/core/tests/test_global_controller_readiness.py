@@ -12,7 +12,7 @@ from canyonos_core.reconciler import providers
 
 
 class _Redis:
-    """No status keys, and one instance record per entry of `records`."""
+    """No status keys, and one replica record per entry of `records`."""
 
     def __init__(self, records=()):
         self.records = {
@@ -45,18 +45,18 @@ def _no_output(*_args, **_kwargs):
     return SimpleNamespace(returncode=0, stdout="", stderr="")
 
 
-def _controller(monkeypatch, instances, node_redis, run_cmd=_no_output):
+def _controller(monkeypatch, replicas, machine_redis, run_cmd=_no_output):
     controller = GlobalController.__new__(GlobalController)
     monkeypatch.setattr(
-        "canyonos_core.controller.global_controller.list_instances",
-        lambda _redis: instances,
+        "canyonos_core.controller.global_controller.list_replicas",
+        lambda _redis: replicas,
     )
-    controller.controllers = [
+    controller.agent_specs = [
         {"name": name, "replicas": 1}
-        for name in dict.fromkeys(instance["agent_name"] for instance in instances)
+        for name in dict.fromkeys(replica["agent_name"] for replica in replicas)
     ]
-    controller.node_redis = {"127.0.0.1": node_redis}
-    controller.redis = _Redis(instances)
+    controller.machine_redis = {"127.0.0.1": machine_redis}
+    controller.redis = _Redis(replicas)
     controller.config = {}
     controller._last_status = {}
     controller._run_cmd = run_cmd
@@ -68,11 +68,11 @@ def _replica(agent_name, host_port):
     return {
         "agent_name": agent_name,
         "provider": "local",
-        "runtime_id": f"canyonos-{agent_name.lower()}-0",
+        "container_name": f"canyonos-{agent_name.lower()}-0",
         "private_host": "127.0.0.1",
         "public_host": "127.0.0.1",
         "host_port": host_port,
-        "routing_endpoint": f"127.0.0.1:{host_port}",
+        "address": f"127.0.0.1:{host_port}",
     }
 
 
@@ -93,7 +93,7 @@ def test_surplus_replicas_of_one_agent_do_not_cover_another(monkeypatch):
         _alpha_pair() + [_replica("Beta", 50053)],
         _StatusRedis({"controller:127.0.0.1:50053:status"}),
     )
-    controller.controllers = [
+    controller.agent_specs = [
         {"name": "Alpha", "replicas": 1},
         {"name": "Beta", "replicas": 1},
     ]
@@ -104,7 +104,7 @@ def test_surplus_replicas_of_one_agent_do_not_cover_another(monkeypatch):
 
 def test_a_replica_still_launching_does_not_fail_startup(monkeypatch):
     controller = _controller(monkeypatch, _alpha_pair(), _StatusRedis())
-    controller.controllers = [
+    controller.agent_specs = [
         {"name": "Alpha", "replicas": 1},
         {"name": "Beta", "replicas": 1},
     ]
@@ -116,7 +116,7 @@ def test_a_replica_still_launching_does_not_fail_startup(monkeypatch):
 def test_a_replica_whose_launch_failed_fails_startup(monkeypatch):
     """No record at all: the reconciler removed the failed launch, or never made one."""
     controller = _controller(monkeypatch, _alpha_pair(), _StatusRedis())
-    controller.controllers = [
+    controller.agent_specs = [
         {"name": "Alpha", "replicas": 1},
         {"name": "Beta", "replicas": 1},
     ]
@@ -167,7 +167,7 @@ def test_a_replica_still_starting_is_waited_for(monkeypatch):
     "log_tail, quoted",
     [
         (
-            lambda _instance, _lines: [
+            lambda _replica, _lines: [
                 "Traceback (most recent call last):",
                 "ModuleNotFoundError: No module named 'langchain'",
             ],
@@ -176,7 +176,7 @@ def test_a_replica_still_starting_is_waited_for(monkeypatch):
                 "  ModuleNotFoundError: No module named 'langchain'",
             ],
         ),
-        (lambda _instance, _lines: [], ["  (the container produced no output)"]),
+        (lambda _replica, _lines: [], ["  (the container produced no output)"]),
         (
             RuntimeError("no container"),
             ["  could not read the log of Broken: no container"],

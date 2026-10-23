@@ -10,7 +10,7 @@ GC creates the tables at startup -- and since GC is what spawns the exporter, th
 always exists before the exporter reads; the exporter also creates-if-missing defensively.
 
 Producer-side writes live in ``controller/utils/otel_writer.py``; consumer-side reads,
-marks, and prunes live in ``otlp_exporter/otel_reader.py``. Neither imports the other --
+marks, and deletes live in ``otlp_exporter/otel_reader.py``. Neither imports the other --
 they meet only here and in the database file.
 """
 

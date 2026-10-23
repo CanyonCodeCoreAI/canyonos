@@ -126,7 +126,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
 
     def test_collect_metrics_returns_expected_keys(self):
         # Machine-level metrics (cpu/gpu/disk/memory/uptime) moved to the per-machine
-        # collector container; _collect_metrics now reports only in-process instance
+        # collector container; _collect_metrics now reports only in-process replica
         # state that a sibling process can't observe.
         controller = SimpleNamespace(
             _executor=ThreadPoolExecutor(max_workers=1),
@@ -219,8 +219,8 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 redis=redis,
                 agent=agent,
                 agent_name="Greeter",
-                agent_id="1f2e3d4c5b6a7988fedcba9876543210",
-                _my_endpoint="localhost:50051",
+                replica_id="1f2e3d4c5b6a7988fedcba9876543210",
+                _my_address="localhost:50051",
                 _metrics_key="controller:localhost:50051:metrics",
                 _resolve_future_args=lambda args, future_args: args,
             )
@@ -262,8 +262,8 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 redis=redis,
                 agent=agent,
                 agent_name="Greeter",
-                agent_id="aabbccddeeff00112233445566778899",
-                _my_endpoint="localhost:50051",
+                replica_id="aabbccddeeff00112233445566778899",
+                _my_address="localhost:50051",
                 _metrics_key="controller:localhost:50051:metrics",
                 _resolve_future_args=lambda args, future_args: args,
             )
@@ -297,8 +297,8 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 redis=redis,
                 agent=None,
                 agent_name="MissingAgent",
-                agent_id="agent-1",
-                _my_endpoint="localhost:50051",
+                replica_id="agent-1",
+                _my_address="localhost:50051",
                 _metrics_key="controller:localhost:50051:metrics",
             )
         )
@@ -330,11 +330,11 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 redis=redis,
                 agent=SimpleNamespace(greet=boom),
                 agent_name="Greeter",
-                agent_id="agent-1",
-                _my_endpoint="target:50051",
+                replica_id="agent-1",
+                _my_address="target:50051",
                 _metrics_key="controller:target:50051:metrics",
                 _resolve_future_args=lambda args, future_args: args,
-                _get_remote_stub=lambda endpoint: stub,
+                _get_remote_stub=lambda address: stub,
             )
         )
 
@@ -386,8 +386,8 @@ class LocalControllerMetricsTests(unittest.TestCase):
             redis=redis,
             agent=SimpleNamespace(greet=lambda name: f"hello {name}"),
             agent_name="Greeter",
-            agent_id="agent-1",
-            _my_endpoint="target:50051",
+            replica_id="agent-1",
+            _my_address="target:50051",
             _metrics_key="controller:target:50051:metrics",
             _resolve_future_args=lambda args, future_args: args,
             _mark_future_failed=lambda future_id, error, origin=None: None,

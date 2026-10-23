@@ -33,7 +33,7 @@ agents:
   - name: Alpha
     provider: EC2
     replicas: 1
-    instance_type: ${TEST_EC2_TYPE}
+    machine_type: ${TEST_EC2_TYPE}
 endpoint:
   agent: Alpha
   method: main
@@ -64,7 +64,7 @@ class ConfigExpansionParityTests(unittest.TestCase):
         self.assertEqual(config["ec2"]["ami_id"], "ami-0abc123")
         self.assertEqual(config["ec2"]["region"], "us-east-2")
         self.assertEqual(config["ec2"]["security_group_ids"], ["sg-0def456"])
-        self.assertEqual(config["agents"][0]["instance_type"], "t3.small")
+        self.assertEqual(config["agents"][0]["machine_type"], "t3.small")
 
     def test_an_unset_ref_is_left_alone_rather_than_emptied(self):
         """A visible ${VAR} in a failure message beats a silently empty value."""
@@ -81,7 +81,7 @@ class ConfigExpansionParityTests(unittest.TestCase):
         redis = _FakeRedis()
         write_config_specs(config["agents"], redis)
 
-        self.assertEqual(read_config_specs(redis)[0]["instance_type"], "t3.small")
+        self.assertEqual(read_config_specs(redis)[0]["machine_type"], "t3.small")
 
 
 class ReconcilerContextParityTests(unittest.TestCase):
@@ -110,7 +110,7 @@ class ReconcilerContextParityTests(unittest.TestCase):
             ) as redis_client,
         ):
             context = ControllerContext(self.config_path)
-            context.attach_local_node_redis()
+            context.attach_local_machine_redis()
 
         hosts = [call.kwargs["host"] for call in redis_client.call_args_list]
         self.assertEqual(hosts, ["host.docker.internal", "host.docker.internal"])

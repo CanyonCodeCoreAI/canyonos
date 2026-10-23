@@ -34,7 +34,7 @@ GRPC_SERVER_OPTIONS = [
 ]
 
 
-def call_with_retry(fn, endpoint):
+def call_with_retry(fn, address):
     """Call a remote stub RPC, retrying transient UNAVAILABLE before raising."""
     max_attempts = 8
     backoff = 0.5
@@ -50,7 +50,7 @@ def call_with_retry(fn, endpoint):
                 raise
             logger.warning(
                 "Transient UNAVAILABLE calling %s (attempt %d/%d), retrying in %.1fs",
-                endpoint,
+                address,
                 attempt,
                 max_attempts,
                 backoff,

@@ -17,7 +17,7 @@ rules apply under every provider.
 | policy | `policy.yaml` next to the manifest |
 | generated files | `stubs/`, `grpc_stubs/`, `docker_container/` under `.car` |
 
-Two names have to agree for every agent service:
+Two names have to agree for every agent:
 
 ```text
 manifest entry name == class name in the entrypoint
@@ -190,7 +190,7 @@ without any error; dispatch everything first, then resolve.
 Each build context starts as a copy of `.car/app` with relative paths kept,
 minus what the sweep excludes, and then gets the platform's runtime modules,
 the generated gRPC modules, `canyonos_core/llm_gateway`, every stub, and the
-service's own entrypoint written on top. [Images and
+agent's own entrypoint written on top. [Images and
 dependencies](IMAGES_AND_DEPENDENCIES.md) lists the exclusions and the file
 names that get overwritten.
 
@@ -225,13 +225,13 @@ In a managed deployment the platform's secrets file replaces `env_file`.
 
 ## Policy
 
-No `policy.yaml` means every caller may reach every service. With a file,
+No `policy.yaml` means every caller may reach every agent. With a file,
 `rules` is a list of `{match: {...}, access: [...] | all}`. The controller
 sorts rules by how many keys `match` has, most specific first, and takes the
 first rule whose keys all equal the request's `_context`. `access: all`
-allows everything; otherwise the service has to be listed. No matching rule
+allows everything; otherwise the agent has to be listed. No matching rule
 denies. A denied call fails after the request was accepted, with
-`Unauthorized: Policy denied access to service`.
+`Unauthorized: Policy denied access to agent`.
 
 The file is not schema-checked. An empty file or `rules:` with no list
 crashes the controller with an `AttributeError`.
@@ -243,7 +243,7 @@ prints the summary and stops tailing. From then on Ctrl+C only stops the
 tail; `canyonos logs` reattaches. Ctrl+C while still syncing or starting, or
 a failed deploy, tears the deployment down.
 
-`canyonos stop` asks the controller to drain and remove every instance it
+`canyonos stop` asks the controller to remove every replica it
 recorded. A hard kill of the controller can leave containers behind; the
 next `canyonos deploy` removes stale Redis and metrics containers and
 recreates orphaned agent containers, but an endpoint `api_port`, a database

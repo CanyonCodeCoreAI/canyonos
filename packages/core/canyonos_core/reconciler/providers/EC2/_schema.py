@@ -10,7 +10,7 @@ SECTION_KEYS = {
     "subnet_id": (str, True),
     "ssh_user": (str, False),
     "security_group_ids": (list, True),
-    "instance_profile_name": (str, False),
+    "iam_profile_name": (str, False),
     "public_ip_timeout": (int, False),
     "controller_health_timeout": (int, False),
 }
@@ -19,6 +19,6 @@ RETIRED_KEYS = {
     "ssh_private_key_path": "moved to the top-level ssh_private_key_path",
 }
 AGENT_KEYS = {
-    "instance_type": (str, True),
+    "machine_type": (str, True),
     "market_type": (str, False),
 }

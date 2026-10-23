@@ -38,8 +38,8 @@ through unchanged).
 | `future_id` | Owning future → OTel `span_id`. |
 | `session_id` | Request id → OTel `trace_id`. |
 | `project_id` | Deployment/project id. |
-| `agent_id` | Executing instance id. |
-| `observed_at` | Unix seconds; the prune column. |
+| `agent_id` | Executing replica id. |
+| `observed_at` | Unix seconds; the delete column. |
 | `severity_number` | OTel `SeverityNumber`. |
 | `severity_text` | OTel `SeverityText`. |
 | `body` | Log message text. |

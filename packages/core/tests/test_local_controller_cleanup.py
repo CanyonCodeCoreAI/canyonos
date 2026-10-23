@@ -23,9 +23,9 @@ import local_controller_pb2
 
 
 class ExecuteDedupTests(unittest.TestCase):
-    def _servicer(self, endpoint="10.0.0.1:50051", redis=None):
+    def _servicer(self, address="10.0.0.1:50051", redis=None):
         servicer = SimpleNamespace(
-            my_endpoint=endpoint,
+            my_address=address,
             redis=redis if redis is not None else _FakeRedis(),
             request_queue=__import__("queue").Queue(),
         )
@@ -161,7 +161,7 @@ class CleanupDispatchTests(unittest.TestCase):
 def _bare_servicer(redis):
     servicer = LocalControllerServicer.__new__(LocalControllerServicer)
     servicer.redis = redis
-    servicer.my_endpoint = "test-node"
+    servicer.my_address = "test-node"
     return servicer
 
 
@@ -233,7 +233,7 @@ class CleanupRequestTests(unittest.TestCase):
         servicer._cleanup_request("req1")
 
         self.assertNotIn("request:req1:cleanup_lock", redis.strings)
-        # A node holding none of the request's futures still expires its marker.
+        # A machine holding none of the request's futures still expires its marker.
         self.assertEqual(
             redis.ttls.get("telemetry:delivered:req1"), FUTURE_CLEANUP_GRACE_SECONDS
         )

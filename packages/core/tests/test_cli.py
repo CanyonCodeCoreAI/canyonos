@@ -31,7 +31,7 @@ class CliDeployTests(unittest.TestCase):
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.reconciler.providers.EC2._runtime.preflight")
+    @patch("canyonos_core.reconciler.providers.EC2._provider.preflight")
     def test_deploy_skips_ec2_preflight_for_local_config(
         self,
         preflight,
@@ -66,8 +66,8 @@ class CliDeployTests(unittest.TestCase):
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.reconciler.providers.EC2._runtime.preflight")
-    @patch("canyonos_core.reconciler.providers.Local._runtime.preflight")
+    @patch("canyonos_core.reconciler.providers.EC2._provider.preflight")
+    @patch("canyonos_core.reconciler.providers.Local._provider.preflight")
     def test_deploy_runs_each_used_providers_preflight_once(
         self,
         local_preflight,
@@ -109,8 +109,8 @@ class CliDeployTests(unittest.TestCase):
     @patch("signal.signal")
     @patch("canyonos_core.cli._run_build")
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    @patch("canyonos_core.reconciler.providers.EC2._runtime.preflight")
-    @patch("canyonos_core.reconciler.providers.Local._runtime.preflight")
+    @patch("canyonos_core.reconciler.providers.EC2._provider.preflight")
+    @patch("canyonos_core.reconciler.providers.Local._provider.preflight")
     def test_deploy_treats_a_missing_provider_as_local(
         self,
         local_preflight,

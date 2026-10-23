@@ -8,7 +8,7 @@
 │   ┌──────────────────────────────┐        ┌──────────────────────────────────┐  │
 │   │ canyonos-<project>-metrics-  │        │ agent replica containers         │  │
 │   │   <host>                     │        │  Local Controller writes its own │  │
-│   │ (controller image,           │        │  per-instance metrics hash       │  │
+│   │ (controller image,           │        │  per-replica metrics hash        │  │
 │   │  entrypoint overridden)      │        └──────────────────────────────────┘  │
 │   │                              │                                              │
 │   │ python -m canyonos_core.     │                                              │
@@ -22,7 +22,7 @@
 │                  │ HSET every poll_interval                                     │
 │                  ▼                                                              │
 │   ┌──────────────────────────────┐                                              │
-│   │ node Redis                   │                                              │
+│   │ machine Redis                │                                              │
 │   │ machine:<host>:metrics       │                                              │
 │   └──────────────▲───────────────┘                                              │
 └──────────────────┼──────────────────────────────────────────────────────────────┘
@@ -108,7 +108,7 @@ _capacity   cpu_count, memory total, disk total ───▶ machine_capacity (J
 ## To the dashboard
 
 ```
-machine:<host>:metrics  (node Redis)
+machine:<host>:metrics  (machine Redis)
           │
           │ Global Controller poll tick, hosts read in parallel
           ▼

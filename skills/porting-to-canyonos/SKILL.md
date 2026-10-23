@@ -31,17 +31,17 @@ Trace the serving path in `.car/app`: inputs/outputs, imports, assets,
 dependencies, state and async boundaries. Report required capabilities that
 cannot run; missing credential values alone do not block preparation.
 
-## 2. Choose services
+## 2. Choose agents
 
 Preserve the source framework's agent semantics: each agent defined by
-LangChain or the framework in use maps to one service in its own container.
+LangChain or the framework in use maps to one CanyonOS agent in its own container.
 Keep the agent's internal execution intact; do not redefine its boundary by
 looking for a model/tools loop. Expose its existing callable through the
-service adapter.
+agent adapter.
 
 Move orchestration between agents into the agent the endpoint serves,
 preserving the source behavior. That agent uses its own `llm_gateway` for model
-calls. If the source has no agent, wrap its existing entrypoint as one service
+calls. If the source has no agent, wrap its existing entrypoint as one agent
 and serve it.
 
 Use `replicas: 1` for in-process state shared across requests. Preserve existing

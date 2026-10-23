@@ -8,8 +8,8 @@ canyonos_core/llm_gateway/).
 Every LLM SDK/library reads a different env var name for its base URL -- there
 is no universal name to standardize on, so all of them still have to be set.
 What this module collapses is the VALUE: one GATEWAY_HOST constant, one place
-that lists the var names, used by both the Local and EC2 runtime backends
-instead of two independently hand-maintained copies of the same six lines.
+that lists the var names, used by every replica launch instead of two
+independently hand-maintained copies of the same six lines.
 """
 
 # The gateway always runs on localhost inside the agent's own container.

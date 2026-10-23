@@ -13,9 +13,9 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.reconciler import providers
-from canyonos_core.reconciler.providers.EC2 import _runtime as ec2_runtime
+from canyonos_core.reconciler.providers.EC2 import _provider as ec2_provider
 from canyonos_core.reconciler.providers.Local import (
-    _runtime as local_runtime,
+    _provider as local_provider,
 )
 from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
     resource_limit_args,
@@ -75,18 +75,18 @@ class LocalRuntimeLimitTests(unittest.TestCase):
             config={"poll_interval": 5},
             redis=MagicMock(),
             redis_ports={},
-            node_redis={},
+            machine_redis={},
             _run_cmd=MagicMock(return_value=SimpleNamespace(returncode=0, stdout="")),
         )
         providers.bind(self.controller)
         providers.get("local")
 
     def _launch(self, spec):
-        provisioned = local_runtime.provision_instance(
+        provisioned = local_provider.provision_replica(
             spec, 0, lambda host: 8000, "launch-1"
         )
-        with patch.object(local_runtime, "_port_bound", return_value=False):
-            local_runtime.bootstrap_instance(provisioned, spec, 0, "agent-id-0")
+        with patch.object(local_provider, "_port_bound", return_value=False):
+            local_provider.bootstrap_replica(provisioned, spec, 0, "agent-id-0")
         return self.controller._run_cmd.call_args.args[0]
 
     def test_an_agent_without_a_resources_block_is_still_bounded(self):
@@ -140,7 +140,7 @@ class LocalRuntimeLimitTests(unittest.TestCase):
         self.assertEqual(_limits_of(cmd), {"--cpus": "2", "--memory": "2048m"})
 
 
-class EC2RuntimeLimitTests(unittest.TestCase):
+class EC2ProviderLimitTests(unittest.TestCase):
     def setUp(self):
         key_file = tempfile.NamedTemporaryFile(delete=False)
         key_file.close()
@@ -165,23 +165,23 @@ class EC2RuntimeLimitTests(unittest.TestCase):
 
     def _bootstrap(self, spec):
         with (
-            patch.object(ec2_runtime.time, "sleep"),
+            patch.object(ec2_provider.time, "sleep"),
             patch.object(
-                ec2_runtime.subprocess,
+                ec2_provider.subprocess,
                 "run",
                 return_value=SimpleNamespace(returncode=0, stderr="", stdout=""),
             ),
-            patch.object(ec2_runtime, "RedisClient", return_value=MagicMock()),
-            patch.object(ec2_runtime, "_wait_for_redis"),
+            patch.object(ec2_provider, "RedisClient", return_value=MagicMock()),
+            patch.object(ec2_provider, "_wait_for_redis"),
         ):
-            ec2_runtime._bootstrap_instance(
+            ec2_provider._bootstrap_replica(
                 "10.0.0.30",
                 spec,
                 0,
                 self.controller.config["ec2"],
                 redis_host="10.0.0.30",
                 redis_port=6379,
-                agent_id="agent-id-0",
+                replica_id="agent-id-0",
             )
         redis_cmd, agent_cmd = (
             call.args[0]
@@ -228,13 +228,13 @@ class EC2RuntimeLimitTests(unittest.TestCase):
 class GlobalControllerRedisLimitTests(unittest.TestCase):
     def test_a_newly_launched_redis_container_is_bounded(self):
         controller = GlobalController.__new__(GlobalController)
-        controller.controllers = [
+        controller.agent_specs = [
             {"name": "Workflow", "provider": "local", "replicas": 1, "redis_port": 6379}
         ]
         controller.config = {}
         controller.redis_containers = {}
         controller.redis_ports = {}
-        controller.node_redis = {}
+        controller.machine_redis = {}
         controller.redis = None
         controller._run_cmd = MagicMock(
             return_value=SimpleNamespace(returncode=0, stdout="", stderr="")

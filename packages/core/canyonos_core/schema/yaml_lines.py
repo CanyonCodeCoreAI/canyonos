@@ -42,7 +42,7 @@ def _reject_duplicate_keys(node):
     """Refuse a mapping that sets the same key twice.
 
     PyYAML keeps the last value without a word, so `replicas:` written twice
-    in one service deploys whichever came second. Only scalar keys are
+    in one agent deploys whichever came second. Only scalar keys are
     compared, by tag and text, so `1` and `"1"` stay distinct.
     """
     seen = {}

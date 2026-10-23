@@ -28,7 +28,7 @@
 │                  ▼                                                   │
 │  canyonos-<p>-redis-localhost (the endpoint's Redis: root futures)   │
 └──────────────────────────────────────────────────────────────────────┘
-┌──────────────────────────── node (host) ─────────────────────────────┐
+┌────────────────────────── machine (host) ────────────────────────────┐
 │  <p> = the project, the folder `canyonos deploy` ran from            │
 │  canyonos-<p>-redis-<host>    canyonos-<p>-metrics-<host>            │
 │         ▲  ▲  ▲                 (machine_metrics_poller)             │
@@ -51,16 +51,16 @@
                                        agents:active  ───────────────▶ refresh specs
           set_replicas ─────────────▶ agent:<n>:desired_replicas ───▶ get_desired
           replace_replica ──────────▶ reconciler:replace ───────────▶ remove slot
-          stop() ───────────────────▶ reconciler:draining (TTL) ────▶ desired = 0
+          stop() ───────────────────▶ reconciler:stopping (TTL) ────▶ desired = 0
           _request_reconcile ─LPUSH─▶ reconciler:wake ─────BRPOP────▶ reconcile()
                                                                          │
                                                   ┌──────────────────────┘
                                                   ▼
                                    remove unwanted / unhealthy ─▶ docker rm -f / terminate EC2
-                                   ensure_instances            ─▶ docker run / EC2 + ssh
+                                   ensure_replicas             ─▶ docker run / EC2 + ssh
                                                   │
-                                                  ├─▶ agent_instance:<prov>:<n>:<i>
-                                                  └─▶ routing_table:* ──▶ every node Redis
+                                                  ├─▶ agent_instance:<name>-<i>
+                                                  └─▶ routing_table:* ──▶ every machine Redis
                                                                                │
                               LocalController (each container)                 │
                               ────────────────────────────────                 │
@@ -80,7 +80,7 @@
   │
   ├─ supervisor.check_and_respawn()          reconciler, otel_exporter
   │
-  ├─ for each agent_instance  (parallel) ─── _poll_one_instance
+  ├─ for each agent_instance  (parallel) ─── _poll_one_replica
   │     │
   │     ├─ GET  controller:<ep>:status       ─▶ status transitions
   │     ├─ SCAN future:*   ──▶ send_telemetry ─▶ SQLite traces_waiting, logs_waiting
@@ -90,7 +90,7 @@
   │     └─ HGETALL machine:<host>:metrics     ─▶ SQLite metrics_waiting (kind=machine)
   │
   └─ _trigger_cleanup
-        ├─ SMEMBERS request:completed          (every node Redis)
+        ├─ SMEMBERS request:completed          (every machine Redis)
         ├─ gRPC Cleanup(request_ids) ────────▶ every LC, the endpoint's included
         │                                        └─ EXPIRE future:*, request:<id>:futures
         │                                           DEL affinity:<id>
@@ -133,10 +133,10 @@
    ├─ SADD request:<rid>:futures
    └─ gRPC Execute ──▶ own LC (localhost:50051)
                          │
-                         ├─ SET NX execute:<ep>:<id>:accepted   (dedup)
+                         ├─ SET NX execute:<addr>:<id>:accepted   (dedup)
                          ├─ policy:rules check
-                         ├─ pick endpoint
-                         │    route_to ▸ affinity:<rid> (stateful) ▸ random(routing_table:endpoints)
+                         ├─ pick address
+                         │    route_to ▸ affinity:<rid> (stateful) ▸ random(routing_table:addresses)
                          ├─ for each Future arg: SADD future:<arg>:consumers ← executor
                          │
                          └─ gRPC Execute {origin, route_to} ──────────▶ LC
@@ -183,14 +183,14 @@
          │ response (or stream)
          ▼
    hooks.on_response
-     └─ HSET future:<id> {model, input/output/cache token counts, errors} ─▶ node Redis
+     └─ HSET future:<id> {model, input/output/cache token counts, errors} ─▶ machine Redis
 ```
 
 ## Telemetry
 
 ```
-  EMITTERS (node)                        BUFFER (GC process)                 EXPORT (otel_exporter)
-  ───────────────                        ───────────────────                 ──────────────────────
+  EMITTERS (machine)                     BUFFER (GC process)                 EXPORT (otel_exporter)
+  ──────────────────                     ───────────────────                 ──────────────────────
 
   LC _execute_locally ─┐
   LogHandler (logs) ───┼─▶ future:<id> ──┐
@@ -211,5 +211,5 @@
                                                                               │
                                                   all destinations ok ─▶ sent = 1
                                                   no destinations    ─▶ DELETE rows
-                                                  every 5 min        ─▶ prune old rows
+                                                  every 5 min        ─▶ delete old rows
 ```

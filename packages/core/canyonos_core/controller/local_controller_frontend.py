@@ -44,9 +44,9 @@ EXECUTE_DEDUP_TTL_SECONDS = 3600
 class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer):
     """gRPC servicer that accepts requests and pushes them into a queue."""
 
-    def __init__(self, my_endpoint="unknown"):
+    def __init__(self, my_address="unknown"):
         self.request_queue = queue.Queue()
-        self.my_endpoint = my_endpoint
+        self.my_address = my_address
         # Redis client for writing results back to local Redis
         redis_host = os.environ.get("CANYONOS_REDIS_HOST", "localhost")
         redis_port = int(os.environ.get("CANYONOS_REDIS_PORT", 6379))
@@ -55,7 +55,7 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
         except ImportError:
             from redis_client import RedisClient
         self.redis = RedisClient(host=redis_host, port=redis_port)
-        # Set by LocalController: fans a just-arrived result out to this node's
+        # Set by LocalController: fans a just-arrived result out to this machine's
         # consumers. Signature: on_result(future_id, result, failed, error_message).
         self.on_result = None
 
@@ -77,7 +77,7 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
             return False
         if not future_id:
             return False
-        key = f"execute:{self.my_endpoint}:{future_id}:accepted"
+        key = f"execute:{self.my_address}:{future_id}:accepted"
         try:
             if not self.redis.set(key, "1", nx=True, ex=EXECUTE_DEDUP_TTL_SECONDS):
                 return True
@@ -114,7 +114,7 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
                         result,
                     )
                 # Relay the just-arrived value to any consumers registered on
-                # this node (the origin is where consumer sets live). This is
+                # this machine (the origin is where consumer sets live). This is
                 # what walks the value hop-by-hop through the graph.
                 if self.on_result:
                     self.on_result(
@@ -166,7 +166,7 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
 
         # Atomically claim cleanup — prevents duplicate work when multiple LCs share a Redis
         lock_key = f"request:{request_id}:cleanup_lock"
-        if not self.redis.setnx(lock_key, self.my_endpoint):
+        if not self.redis.setnx(lock_key, self.my_address):
             logger.info(
                 "Cleanup for request %s already claimed by another LC, skipping.",
                 request_id,
@@ -177,9 +177,11 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
             futures_key = f"request:{request_id}:futures"
             future_ids = self.redis.smembers(futures_key)
             if not future_ids:
-                # Nothing of this request lives on this node; only its marker does.
+                # Nothing of this request lives on this machine; only its marker does.
                 self.redis.expire(delivered_key, FUTURE_CLEANUP_GRACE_SECONDS, nx=True)
-                logger.info("No futures found for request %s on this node.", request_id)
+                logger.info(
+                    "No futures found for request %s on this machine.", request_id
+                )
                 return
 
             keys_to_expire = [
@@ -215,14 +217,14 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
             self.redis.delete(lock_key)
 
 
-def start_server(port=50051, my_endpoint="unknown"):
+def start_server(port=50051, my_address="unknown"):
     """Start the gRPC server."""
     try:
         from canyonos_core.controller.utils.grpc_options import GRPC_SERVER_OPTIONS
     except ImportError:
         from grpc_options import GRPC_SERVER_OPTIONS
 
-    servicer = LocalControllerServicer(my_endpoint=my_endpoint)
+    servicer = LocalControllerServicer(my_address=my_address)
 
     # Several, so incoming calls and returning results do not wait on each other.
     server = grpc.server(

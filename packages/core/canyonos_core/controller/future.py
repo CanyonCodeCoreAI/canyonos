@@ -69,17 +69,17 @@ class Future(object):
     def _get_stub(cls):
         """Get or create the cached gRPC stub for the local controller."""
         if cls._stub is None:
-            endpoint = f"{cls._lc_host}:{cls._lc_port}"
-            cls._channel = grpc.insecure_channel(endpoint, options=GRPC_CHANNEL_OPTIONS)
+            address = f"{cls._lc_host}:{cls._lc_port}"
+            cls._channel = grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
             cls._stub = local_controller_pb2_grpc.LocalControllerStub(cls._channel)
-            logger.info("Connected to local controller at %s", endpoint)
+            logger.info("Connected to local controller at %s", address)
         return cls._stub
 
-    def __init__(self, parent, service, method, args=None):
+    def __init__(self, parent, agent_name, method, args=None):
         """
         parent: parent future
-        service: service to be called
-        method: method to be called in service
+        agent_name: agent to be called
+        method: method to be called on that agent
         args: arguments to be passed to the method
         """
 
@@ -95,7 +95,7 @@ class Future(object):
         self.executor = None
         self.result = None
         self.parent = canyonos_context.get_current_future_id()
-        self.service = service
+        self.agent_name = agent_name
         self.method = method
         args = args or {}
         # Send Future args as their ids, listing which arg names are Futures for the controller to resolve.
@@ -112,7 +112,7 @@ class Future(object):
                 "request_id": self.request_id or "",
                 "result": "",
                 "parent": self.parent,
-                "service": self.service,
+                "service": self.agent_name,
                 "method": self.method,
                 "args": json.dumps(self.args),
             },
@@ -144,10 +144,12 @@ class Future(object):
                 lambda: stub.Execute(request), f"{self._lc_host}:{self._lc_port}"
             )
             logger.debug(
-                "Submitted %s.%s (future=%s)", self.service, self.method, self.id
+                "Submitted %s.%s (future=%s)", self.agent_name, self.method, self.id
             )
         except Exception as e:
-            logger.error("gRPC call failed for %s.%s: %s", self.service, self.method, e)
+            logger.error(
+                "gRPC call failed for %s.%s: %s", self.agent_name, self.method, e
+            )
             try:
                 self.redis.hset_multiple(
                     f"future:{self.id}",
@@ -236,30 +238,30 @@ class Future(object):
         return self.redis.smembers(self._consumers_key())
 
     def _notify_consumers(self):
-        """Push this future's result to all registered consumer endpoints via gRPC WriteResult."""
+        """Push this future's result to all registered consumer addresses via gRPC WriteResult."""
         consumers = self._get_consumers()
         if not consumers:
             return
-        for endpoint in consumers:
+        for address in consumers:
             try:
                 if not self.result:
                     logger.warning(
                         "Future %s is notifying consumer %s with an empty/None result",
                         self.id,
-                        endpoint,
+                        address,
                     )
-                channel = grpc.insecure_channel(endpoint, options=GRPC_CHANNEL_OPTIONS)
+                channel = grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
                 stub = local_controller_pb2_grpc.LocalControllerStub(channel)
                 payload = json.dumps({"future_id": self.id, "result": self.result})
                 request = local_controller_pb2.JsonResponse(response=payload)
                 stub.WriteResult(request)
                 logger.info(
-                    "Notified consumer %s with result for future %s", endpoint, self.id
+                    "Notified consumer %s with result for future %s", address, self.id
                 )
             except Exception as e:
                 logger.error(
                     "Failed to notify consumer %s for future %s: %s",
-                    endpoint,
+                    address,
                     self.id,
                     e,
                 )

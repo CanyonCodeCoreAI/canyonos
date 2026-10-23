@@ -1,7 +1,7 @@
 # EC2 deployment
 
-Any service entry can run on EC2 instead of the local Docker engine. Set
-`provider: EC2` on the entry and give it an `instance_type`. Then add an
+Any agent can run on EC2 instead of the local Docker engine. Set
+`provider: EC2` on the entry and give it a `machine_type`. Then add an
 `ec2:` block at the top of the manifest. The provider value is accepted in
 any casing.
 
@@ -18,7 +18,7 @@ agents:
   - name: ExampleAgent
     entrypoint: agents/example_agent.py
     provider: EC2
-    instance_type: t3.micro
+    machine_type: t3.micro
     functions:
       - name: run
         arguments:
@@ -30,7 +30,7 @@ endpoint:
   method: run
 ```
 
-Required: `region`, `subnet_id`, `security_group_ids`, and `instance_type` on
+Required: `region`, `subnet_id`, `security_group_ids`, and `machine_type` on
 each EC2 entry. There is no default for these.
 
 Optional, with defaults:
@@ -39,7 +39,7 @@ Optional, with defaults:
 |---|---|
 | `ami_id` | CanyonOS's own Ubuntu AMI in `us-east-1`. Any AMI with Docker and `zstd` works. |
 | `ssh_user` | `ubuntu` |
-| `instance_profile_name` | none. Attaches an IAM role to each instance; the deploying identity then needs `iam:PassRole`. |
+| `iam_profile_name` | none. The name of an IAM instance profile, which attaches an IAM role to each machine; the deploying identity then needs `iam:PassRole`. |
 | `public_ip_timeout` | `120` seconds |
 | `controller_health_timeout` | `180` seconds |
 
@@ -49,12 +49,12 @@ The SSH key is the top-level `ssh_private_key_path`. It defaults to `~/.ssh/cany
 
 The machine running `canyonos deploy` needs Docker, AWS credentials with
 `ec2:RunInstances`, `ec2:TerminateInstances`, `ec2:DescribeInstances`,
-`ec2:CreateTags` and `ec2:ImportKeyPair`, and a route to the instances'
+`ec2:CreateTags` and `ec2:ImportKeyPair`, and a route to the machines'
 private IPs, which in practice means running inside the same VPC as
-`subnet_id`. The instances' security group has to allow 22, 50051 and 6379
+`subnet_id`. The machines' security group has to allow 22, 50051 and 6379
 from itself. The endpoint and dashboard run on the deploying machine, so it has
 to allow their ports (8080 and 8081 by default) from whoever calls the
-endpoint, and the gRPC port the endpoint publishes from the instances' security
+endpoint, and the gRPC port the endpoint publishes from the machines' security
 group: agents send results back there, and without it every request stays
 pending. The EC2 provider
 README in `packages/core` has the exact IAM policy JSON.
@@ -67,8 +67,8 @@ group. Those fail during provisioning.
 ## Networking
 
 Each EC2 host runs its own Redis and its own containers. Inside a container
-there, `host.docker.internal` is that EC2 host, not your machine. Services
-find each other through the routing table, which publishes each instance's
+there, `host.docker.internal` is that EC2 host, not your machine. Agents
+find each other through the routing table, which publishes, for each replica, its machine's
 private IP and port. A database or other backing service your code reaches by
 address has to be reachable from every host that runs a caller.
 
@@ -94,13 +94,13 @@ Ctrl+C only stops the tail; the deployment keeps running and `canyonos logs`
 reattaches. Ctrl+C while the project is still syncing or starting, or a
 deploy that fails, tears everything down.
 
-`canyonos stop` asks the controller to drain. Every instance it recorded in
-Redis is terminated through the AWS API. The drain waits 30 seconds; whatever
+`canyonos stop` asks the controller to remove every replica. Every machine it recorded in
+Redis is terminated through the AWS API. The stop waits 30 seconds; whatever
 is still going after that is left for the next start to reconcile.
 
-An instance whose container fails to start is terminated automatically. The
+A machine whose container fails to start is terminated automatically. The
 launch is recorded in Redis before `RunInstances` is called, under a token AWS
-keeps, so an instance that never got a public IP is still found by that token
+keeps, so a machine that never got a public IP is still found by that token
 and terminated on the next pass. If `canyonos stop` moved on after its 30
-seconds, look for instances tagged `Name=canyonos-<agent>-<replica>` and
+seconds, look for machines tagged `Name=canyonos-<agent>-<replica>` and
 `CreatedBy=EC2 Fast Launch` in the region and terminate those specifically.

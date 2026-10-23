@@ -30,29 +30,33 @@ UNITS = {"cpu": "cores", "memory": "MiB"}
 BOLD = "\x1b[1m"
 
 
-def _fill_defaults(agent):
-    resources = agent.get("resources")
+def _fill_defaults(agent_spec):
+    resources = agent_spec.get("resources")
     if not isinstance(resources, dict):
         resources = CommentedMap()
-        agent["resources"] = resources
+        agent_spec["resources"] = resources
     for key, default in RESOURCE_DEFAULTS:
         resources.setdefault(key, default)
-    agent.setdefault("replicas", REPLICAS_DEFAULT)
+    agent_spec.setdefault("replicas", REPLICAS_DEFAULT)
 
 
 def _label(field):
     return f"{field} ({UNITS[field]})" if field in UNITS else field
 
 
-def _get(agent, field):
-    return agent["replicas"] if field == "replicas" else agent["resources"][field]
+def _get(agent_spec, field):
+    return (
+        agent_spec["replicas"]
+        if field == "replicas"
+        else agent_spec["resources"][field]
+    )
 
 
-def _set(agent, field, value):
+def _set(agent_spec, field, value):
     if field == "replicas":
-        agent["replicas"] = value
+        agent_spec["replicas"] = value
     else:
-        agent["resources"][field] = value
+        agent_spec["resources"][field] = value
 
 
 DECIMAL_FIELDS = ("cpu",)
@@ -110,24 +114,24 @@ def _deploy_button():
     return "\n".join(colored)
 
 
-def _name(agent, index):
-    return str(agent.get("name", f"[{index}]"))
+def _name(agent_spec, index):
+    return str(agent_spec.get("name", f"[{index}]"))
 
 
-def _cells(agents):
+def _cells(agent_specs):
     """Per agent, the name and each field padded to its column's width, plus those widths."""
     rows = [
-        [_name(agent, i)]
-        + [f"{_label(field)} {_get(agent, field)}" for field in FIELDS]
-        for i, agent in enumerate(agents)
+        [_name(agent_spec, i)]
+        + [f"{_label(field)} {_get(agent_spec, field)}" for field in FIELDS]
+        for i, agent_spec in enumerate(agent_specs)
     ]
     widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
     return [[c.ljust(w) for c, w in zip(row, widths)] for row in rows], widths
 
 
-def _table(agents):
+def _table(agent_specs):
     """Menu labels for the agents boxed into a table, and the bottom border as a footer."""
-    rows, widths = _cells(agents)
+    rows, widths = _cells(agent_specs)
     top = "╭" + "┬".join("─" * (w + 2) for w in widths) + "╮"
     bottom = "╰" + "┴".join("─" * (w + 2) for w in widths) + "╯"
     divider = "├" + "┼".join("─" * (w + 2) for w in widths) + "┤"
@@ -146,13 +150,13 @@ def _render(title, status):
     ui.console.print()
 
 
-def _edit_agent(agent, status):
+def _edit_agent(agent_spec, status):
     """Field menu for one agent. Returns the status line to show next."""
-    name = agent.get("name", "agent")
+    name = agent_spec.get("name", "agent")
     while True:
         _render(name, status)
         options = [
-            (field, f"{_label(field)}: {_get(agent, field)}") for field in FIELDS
+            (field, f"{_label(field)}: {_get(agent_spec, field)}") for field in FIELDS
         ]
         options.append((BACK, "← Back"))
         field = select_menu(options, title=f"Resources for {name}")
@@ -163,20 +167,20 @@ def _edit_agent(agent, status):
         while True:
             _render(f"{name} › {field}", status)
             raw = input_line(
-                f"{_label(field)} (current {_get(agent, field)}): ", error=error
+                f"{_label(field)} (current {_get(agent_spec, field)}): ", error=error
             )
             if not raw:
                 break
             try:
-                _set(agent, field, _cast(field, raw))
+                _set(agent_spec, field, _cast(field, raw))
             except ValueError:
                 error = _invalid_message(field, raw)
                 continue
-            status = f"Set {name} {field} = {_get(agent, field)}"
+            status = f"Set {name} {field} = {_get(agent_spec, field)}"
             break
 
 
-def _pick(agents):
+def _pick(agent_specs):
     """Agent menu. Returns True to deploy, False if the user cancelled."""
     status = ""
     ui.console.set_alt_screen(True)
@@ -184,7 +188,7 @@ def _pick(agents):
         while True:
             _render("resources", status)
             options = [(DEPLOY, _deploy_button())]
-            labels, footer = _table(agents)
+            labels, footer = _table(agent_specs)
             options += list(enumerate(labels))
             choice = select_menu(
                 options, title="Configure agent resources", footer=footer
@@ -193,7 +197,7 @@ def _pick(agents):
                 return False
             if choice == DEPLOY:
                 return True
-            status = _edit_agent(agents[choice], status)
+            status = _edit_agent(agent_specs[choice], status)
     finally:
         ui.console.set_alt_screen(False)
 
@@ -207,13 +211,13 @@ def configure_resources(config_path):
     with open(config_path) as f:
         data = yaml_rt.load(f)
 
-    agents = (data or {}).get("agents") or []
-    if not agents:
+    agent_specs = (data or {}).get("agents") or []
+    if not agent_specs:
         return True
-    for agent in agents:
-        _fill_defaults(agent)
+    for agent_spec in agent_specs:
+        _fill_defaults(agent_spec)
 
-    if sys.stdin.isatty() and not _pick(agents):
+    if sys.stdin.isatty() and not _pick(agent_specs):
         return False
 
     with open(config_path, "w") as f:

@@ -36,7 +36,7 @@ def get(name):
     canonical = canonical_name(name)
     if canonical is None:
         raise ValueError(f"Unknown provider {name!r}; use one of: {', '.join(NAMES)}.")
-    provider: Any = importlib.import_module(f"{_PACKAGES[canonical]}._runtime")
+    provider: Any = importlib.import_module(f"{_PACKAGES[canonical]}._provider")
     provider._controller = _controller
     return provider
 

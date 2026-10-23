@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Create and destroy agent runtime instances; the controller imports nothing from here."""
+"""Create and remove agent replicas; the controller imports nothing from here."""
 
 import logging
 import os
@@ -10,9 +10,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from canyonos_core.controller.controller_context import (
-    instance_id as _instance_id,
-    instance_key as _instance_key,
-    list_instances,
+    replica_id as _replica_id,
+    replica_key as _replica_key,
+    list_replicas,
 )
 from canyonos_core.controller.utils.container_names import ForeignContainerError
 from canyonos_core.reconciler import providers
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class Provisioner(object):
-    """Makes the running instances match the specs it is handed."""
+    """Makes the running replicas match the specs it is handed."""
 
     def __init__(self, controller):
         self.controller = controller
@@ -35,10 +35,10 @@ class Provisioner(object):
         """The Global Controller's Redis client."""
         return self.controller.redis
 
-    def ensure_instances(self, agent_specs, only=None):
+    def ensure_replicas(self, agent_specs, only=None):
         """Start missing replicas of the agents in only (all when None) and republish routing for every agent."""
         self._agent_specs = agent_specs
-        instances = []
+        replicas = []
         existing = []
         jobs = []
 
@@ -46,42 +46,42 @@ class Provisioner(object):
             agent_name = agent_spec["name"]
             if only is not None and agent_name not in only:
                 continue
-            provider = agent_spec["provider"]
-            runtime = providers.get(provider)
+            provider_name = agent_spec["provider"]
+            provider = providers.get(provider_name)
 
             for replica_index in range(int(agent_spec.get("replicas", 1))):
-                instance_id = _instance_id(provider, agent_name, replica_index)
-                key = _instance_key(provider, agent_name, replica_index)
-                instance = self.redis.hgetall(key)
+                replica_id = _replica_id(agent_name, replica_index)
+                key = _replica_key(agent_name, replica_index)
+                replica = self.redis.hgetall(key)
 
-                if instance:
+                if replica:
                     # An unfinished launch whose removal failed; remove_unfinished retries it.
-                    if not instance.get("routing_endpoint"):
+                    if not replica.get("address"):
                         continue
-                    if runtime.is_running(instance):
-                        existing.append((agent_name, instance_id, instance))
+                    if provider.is_running(replica):
+                        existing.append((agent_name, replica_id, replica))
                         continue
                     logger.warning(
-                        "Replacing %s: its runtime %s is not running",
-                        instance_id,
-                        instance["runtime_id"],
+                        "Replacing %s: its container %s is not running",
+                        replica_id,
+                        replica["container_name"],
                     )
-                    self._destroy_runtime(instance)
-                    self._discard_instance_record(instance_id, instance)
+                    self._remove_container(replica)
+                    self._delete_replica_record(replica_id, replica)
 
                 launch_id = uuid.uuid4().hex
                 self.redis.hset_multiple(
                     key,
                     {
                         "agent_name": agent_name,
-                        "provider": provider,
+                        "provider": provider_name,
                         "replica_index": str(replica_index),
                         "launch_id": launch_id,
                         "launched_at": str(time.time()),
                     },
                 )
                 claimed_port = None
-                host = runtime.port_claim_host(agent_spec)
+                host = provider.port_claim_host(agent_spec)
                 if host:
                     claimed_port = self._claim_host_port(host, key)
 
@@ -89,9 +89,9 @@ class Provisioner(object):
                     {
                         "agent_name": agent_name,
                         "agent_spec": agent_spec,
-                        "runtime": runtime,
+                        "provider": provider,
                         "replica_index": replica_index,
-                        "instance_id": instance_id,
+                        "replica_id": replica_id,
                         "claimed_port": claimed_port,
                         "launch_id": launch_id,
                     }
@@ -108,24 +108,22 @@ class Provisioner(object):
                 for future in as_completed(future_to_job):
                     job = future_to_job[future]
                     try:
-                        instance = future.result()
+                        replica = future.result()
                     except Exception as e:
                         logger.warning(
-                            "Failed to provision %s: %r", job["instance_id"], e
+                            "Failed to provision %s: %r", job["replica_id"], e
                         )
                         failures.append(e)
                         continue
-                    provisioned.append(
-                        (job["agent_name"], job["instance_id"], instance)
-                    )
+                    provisioned.append((job["agent_name"], job["replica_id"], replica))
 
-        for agent_name, instance_id, instance in existing + provisioned:
-            self._add_instance_to_agent(agent_name, instance_id)
-            instances.append(instance)
+        for agent_name, replica_id, replica in existing + provisioned:
+            self._add_replica_to_agent(agent_name, replica_id)
+            replicas.append(replica)
 
-        self.controller.prune_node_redis(list_instances(self.redis))
+        self.controller.remove_unused_redis_clients(list_replicas(self.redis))
         publish_routing_snapshot(
-            self._agent_specs, self.redis, self.controller.node_redis
+            self._agent_specs, self.redis, self.controller.machine_redis
         )
         if failures:
             # All launches have ended, so this removes failed ones, not ones in progress.
@@ -134,12 +132,12 @@ class Provisioner(object):
             except Exception as e:
                 logger.warning("Failed to remove unfinished launches: %s", e)
             raise failures[0]
-        return instances
+        return replicas
 
     def _provision_one(self, job):
         """Create and start one replica, then save its record. A failed launch leaves its
         record unfinished, for remove_unfinished to clean up."""
-        runtime = job["runtime"]
+        provider = job["provider"]
         agent_spec = job["agent_spec"]
         replica_index = job["replica_index"]
         claimed_port = job["claimed_port"]
@@ -148,122 +146,113 @@ class Provisioner(object):
             return claimed_port
 
         # Priced first, so a failed price lookup never takes down a replica that started.
-        hourly_cost = runtime.hourly_cost(agent_spec)
-        instance = runtime.provision_instance(
+        hourly_cost = provider.hourly_cost(agent_spec)
+        replica = provider.provision_replica(
             agent_spec, replica_index, next_host_port, job["launch_id"]
         )
         self.redis.hset_multiple(
-            f"agent_instance:{job['instance_id']}",
+            f"agent_instance:{job['replica_id']}",
             {
-                field: str(instance[field])
-                for field in ("runtime_id", "user")
-                if instance.get(field)
+                field: str(replica[field])
+                for field in ("container_name", "user")
+                if replica.get(field)
             },
         )
 
-        agent_id = f"{job['agent_name']}-{replica_index}"
         try:
-            instance = runtime.bootstrap_instance(
-                instance, agent_spec, replica_index, agent_id
+            replica = provider.bootstrap_replica(
+                replica, agent_spec, replica_index, job["replica_id"]
             )
         except ForeignContainerError:
             # The container under this name is another project's: left in the
             # record, remove_unfinished would terminate theirs as ours.
-            self._discard_instance_record(
-                job["instance_id"], {"agent_name": job["agent_name"]}
+            self._delete_replica_record(
+                job["replica_id"], {"agent_name": job["agent_name"]}
             )
             raise
-        instance["agent_id"] = agent_id
-        self._write_instance(instance, hourly_cost)
-        return instance
+        self._write_replica(replica, hourly_cost)
+        return replica
 
-    def _write_instance(self, instance, hourly_cost):
+    def _write_replica(self, replica, hourly_cost):
         """Save a new replica's record to Redis, plus the keys that route requests to it
-        and price its runtime."""
-        key = _instance_key(
-            instance["provider"], instance["agent_name"], int(instance["replica_index"])
-        )
+        and price its compute."""
+        replica_id = _replica_id(replica["agent_name"], replica["replica_index"])
         mapping = {
-            "agent_id": instance["agent_id"],
-            "agent_name": instance["agent_name"],
-            "provider": instance["provider"],
-            "replica_index": str(instance["replica_index"]),
-            "private_host": instance["private_host"],
-            "public_host": instance["public_host"],
-            "host_port": str(instance["host_port"]),
-            "container_port": str(instance["container_port"]),
-            "endpoint": instance["endpoint"],
-            "routing_endpoint": instance["routing_endpoint"],
-            "redis_host": instance["redis_host"],
-            "redis_port": str(instance["redis_port"]),
-            "runtime_id": instance["runtime_id"],
+            "agent_name": replica["agent_name"],
+            "provider": replica["provider"],
+            "replica_index": str(replica["replica_index"]),
+            "private_host": replica["private_host"],
+            "public_host": replica["public_host"],
+            "host_port": str(replica["host_port"]),
+            "container_port": str(replica["container_port"]),
+            "published_address": replica["published_address"],
+            "address": replica["address"],
+            "redis_host": replica["redis_host"],
+            "redis_port": str(replica["redis_port"]),
+            "container_name": replica["container_name"],
             # Lets the reconciler tell a starting replica from one that stopped answering.
             "created_at": str(time.time()),
         }
-        if instance.get("user"):
-            mapping["user"] = str(instance["user"])
+        if replica.get("user"):
+            mapping["user"] = str(replica["user"])
 
-        node_redis = self.controller.node_redis_for_instance(instance)
-        node_redis.set(
-            f"controller:{instance['routing_endpoint']}:agent_id", instance["agent_id"]
-        )
-        node_redis.set(f"agent:{instance['agent_id']}:hourly_cost", hourly_cost)
-        # Last: routing_endpoint marks the launch finished, so a failed write above leaves it unfinished.
-        self.redis.hset_multiple(key, mapping)
+        machine_redis = self.controller.machine_redis_for_replica(replica)
+        machine_redis.set(f"controller:{replica['address']}:replica_id", replica_id)
+        machine_redis.set(f"agent:{replica_id}:hourly_cost", hourly_cost)
+        # Last: address marks the launch finished, so a failed write above leaves it unfinished.
+        self.redis.hset_multiple(f"agent_instance:{replica_id}", mapping)
 
-    def _add_instance_to_agent(self, agent_name, instance_id):
-        self.redis.sadd(f"agent:{agent_name}:instances", instance_id)
+    def _add_replica_to_agent(self, agent_name, replica_id):
+        self.redis.sadd(f"agent:{agent_name}:instances", replica_id)
 
-    def remove_instance(self, instance_id):
-        """Stop a replica's container, delete its record, and republish the routing
+    def remove_replica(self, replica_id):
+        """Remove a replica's container, delete its record, and republish the routing
         table without it."""
-        key = f"agent_instance:{instance_id}"
-        instance = self.redis.hgetall(key)
-        if not instance:
+        key = f"agent_instance:{replica_id}"
+        replica = self.redis.hgetall(key)
+        if not replica:
             return
 
-        # Before the runtime goes: on EC2 that terminates the host this status
-        # lives on, and drops the node's Redis client with it.
-        self._delete_controller_status(instance)
-        self._destroy_runtime(instance)
+        # Before the container goes: on EC2 that terminates the machine whose Redis holds this status.
+        self._delete_controller_status(replica)
+        self._remove_container(replica)
         self.redis.delete(key)
-        self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
-        self.controller.prune_node_redis(list_instances(self.redis))
+        self.redis.srem(f"agent:{replica['agent_name']}:instances", replica_id)
+        self.controller.remove_unused_redis_clients(list_replicas(self.redis))
         publish_routing_snapshot(
-            self.controller.controllers
+            self.controller.agent_specs
             if self._agent_specs is None
             else self._agent_specs,
             self.redis,
-            self.controller.node_redis,
+            self.controller.machine_redis,
         )
 
-    def _delete_controller_status(self, instance):
-        """Drop the status key belonging to this instance.
+    def _delete_controller_status(self, replica):
+        """Drop the status key belonging to this replica.
 
-        Hygiene: a status key should not outlive the instance record it belongs
+        Hygiene: a status key should not outlive the replica record it belongs
         to. The guarantee that a stale one is never read lives at launch, where
-        the local runtime clears the key, fail-closed, right before `docker run`.
-        Best effort here: a node whose Redis is already gone must not stop the
-        teardown.
+        the Local provider clears the key, fail-closed, right before `docker run`.
+        Best effort here: a machine whose Redis is already gone must not stop the
+        removal.
         """
         try:
-            node_redis = (
-                self.controller.node_redis.get(instance.get("private_host"))
+            machine_redis = (
+                self.controller.machine_redis.get(replica.get("private_host"))
                 or self.redis
             )
-            node_redis.delete(f"controller:{instance['routing_endpoint']}:status")
+            machine_redis.delete(f"controller:{replica['address']}:status")
         except Exception as e:
             logger.warning(
-                "Could not clear the status of %s: %s", instance.get("runtime_id"), e
+                "Could not clear the status of %s: %s", replica.get("container_name"), e
             )
 
-    def _destroy_runtime(self, instance):
-        runtime = providers.get(instance["provider"])
-        runtime.terminate_instance(instance)
+    def _remove_container(self, replica):
+        providers.get(replica["provider"]).terminate_replica(replica)
 
-    def _discard_instance_record(self, instance_id, instance):
-        self.redis.delete(f"agent_instance:{instance_id}")
-        self.redis.srem(f"agent:{instance['agent_name']}:instances", instance_id)
+    def _delete_replica_record(self, replica_id, replica):
+        self.redis.delete(f"agent_instance:{replica_id}")
+        self.redis.srem(f"agent:{replica['agent_name']}:instances", replica_id)
 
     def remove_unfinished(self):
         """Remove every launch that never finished: whatever it started, then its record.
@@ -271,15 +260,15 @@ class Provisioner(object):
         is launching, since a launch in progress looks the same."""
         for key in self.redis.scan_keys("agent_instance:*"):
             record = self.redis.hgetall(key)
-            if not record or record.get("routing_endpoint"):
+            if not record or record.get("address"):
                 continue
             logger.info(
                 "Removing %s: its launch never finished, or a version without "
-                "routing_endpoint saved it",
+                "address saved it",
                 key,
             )
             try:
-                self._destroy_runtime(record)
+                self._remove_container(record)
             except Exception as e:
                 logger.warning("Could not remove the unfinished launch %s: %s", key, e)
                 continue
@@ -295,9 +284,9 @@ class Provisioner(object):
                 for record_key in self.redis.scan_keys("agent_instance:*")
             )
             used = {
-                int(instance["host_port"])
-                for instance in records
-                if instance.get("private_host") == host and instance.get("host_port")
+                int(replica["host_port"])
+                for replica in records
+                if replica.get("private_host") == host and replica.get("host_port")
             }
             port = DEFAULT_HOST_PORT_START
             while port in used:

@@ -4,7 +4,7 @@
 """GPU utilization reporting via nvidia-smi."""
 # Disclaimer, only works for NVIDIA (obviously but wanted to make note)
 # NVIDIA-smi is inaccurate, will need to change it in the future
-# Currently, read_gpu_percent() is meant for LC to read the GPU that it is taking up, while read_gpu_metrics() is meant for the instance metrics collector for the GPU util by the whole machine.
+# Currently, read_gpu_percent() is meant for LC to read the GPU that it is taking up, while read_gpu_metrics() is meant for the machine metrics collector for the GPU util by the whole machine.
 
 import subprocess
 

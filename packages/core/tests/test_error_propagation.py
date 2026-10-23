@@ -58,17 +58,17 @@ class ErrorPropagationTests(unittest.TestCase):
         controller = _bind_failure_marker(
             SimpleNamespace(
                 redis=redis,
-                agent_id=None,
+                replica_id=None,
                 agent_name=None,
-                _my_endpoint="172.31.19.107:50051",
-                _get_remote_stub=lambda endpoint: stub,
+                _my_address="172.31.19.107:50051",
+                _get_remote_stub=lambda address: stub,
             )
         )
-        controller._forward_request = lambda endpoint, data: (
-            LocalController._forward_request(controller, endpoint, data)
+        controller._forward_request = lambda address, data: (
+            LocalController._forward_request(controller, address, data)
         )
-        controller._on_forwarded = lambda call, endpoint, data: (
-            LocalController._on_forwarded(controller, call, endpoint, data)
+        controller._on_forwarded = lambda call, address, data: (
+            LocalController._on_forwarded(controller, call, address, data)
         )
         data = {
             "future_id": "future-1",
@@ -136,7 +136,7 @@ class ErrorPropagationTests(unittest.TestCase):
         controller = SimpleNamespace(
             redis=redis,
             agent_name="ExampleAgent",
-            _get_remote_stub=lambda endpoint: stub,
+            _get_remote_stub=lambda address: stub,
         )
 
         LocalController._send_result_callback(
@@ -222,9 +222,9 @@ class ErrorPropagationTests(unittest.TestCase):
         controller = _bind_failure_marker(
             SimpleNamespace(
                 redis=redis,
-                agent_id=None,
+                replica_id=None,
                 agent_name=None,
-                _my_endpoint="localhost:50051",
+                _my_address="localhost:50051",
             )
         )
 
@@ -245,9 +245,9 @@ class ErrorPropagationTests(unittest.TestCase):
         controller = _bind_failure_marker(
             SimpleNamespace(
                 redis=redis,
-                agent_id=None,
+                replica_id=None,
                 agent_name=None,
-                _my_endpoint="localhost:50051",
+                _my_address="localhost:50051",
             )
         )
         controller._load_policy_rules = lambda: [
@@ -272,16 +272,16 @@ class ErrorPropagationTests(unittest.TestCase):
         controller = _bind_failure_marker(
             SimpleNamespace(
                 redis=redis,
-                agent_id=None,
+                replica_id=None,
                 agent_name=None,
-                _my_endpoint="localhost:50051",
+                _my_address="localhost:50051",
             )
         )
         controller._load_policy_rules = lambda: []
         controller._check_policy = lambda service, context: (
             LocalController._check_policy(controller, service, context)
         )
-        controller._resolve_endpoint = lambda service, request_id: None
+        controller._resolve_address = lambda service, request_id: None
 
         LocalController._process_request(
             controller,
@@ -299,8 +299,8 @@ class ErrorPropagationTests(unittest.TestCase):
                 redis=redis,
                 agent=SimpleNamespace(),
                 agent_name="ExampleAgent",
-                agent_id="agent-1",
-                _my_endpoint="localhost:50051",
+                replica_id="agent-1",
+                _my_address="localhost:50051",
                 _metrics_key="controller:localhost:50051:metrics",
             )
         )
@@ -319,10 +319,10 @@ class ErrorPropagationTests(unittest.TestCase):
         controller = _bind_failure_marker(
             SimpleNamespace(
                 redis=redis,
-                agent_id="agent-1",
+                replica_id="agent-1",
                 agent_name="ExampleAgent",
-                _my_endpoint="localhost:50051",
-                _get_remote_stub=lambda endpoint: stub,
+                _my_address="localhost:50051",
+                _get_remote_stub=lambda address: stub,
             )
         )
 
@@ -347,7 +347,7 @@ class ErrorPropagationTests(unittest.TestCase):
         the same event `_mark_future_failed` already wrote via `build_failure_entry`."""
         redis = _FakeRedis()
         handler = LogHandler(
-            redis, agent_id="agent-1", agent_name="ExampleAgent", endpoint="ep:1"
+            redis, agent_id="agent-1", agent_name="ExampleAgent", address="ep:1"
         )
         test_logger = logging.getLogger("test_error_propagation_boundary")
         test_logger.setLevel(logging.DEBUG)
@@ -408,11 +408,11 @@ class ErrorPropagationTests(unittest.TestCase):
             redis=executor_redis,
             agent=SimpleNamespace(greet=boom),
             agent_name="Greeter",
-            agent_id="executor-agent",
-            _my_endpoint="executor:50051",
+            replica_id="executor-agent",
+            _my_address="executor:50051",
             _metrics_key="controller:executor:50051:metrics",
             _resolve_future_args=lambda args, future_args: args,
-            _get_remote_stub=lambda endpoint: stub,
+            _get_remote_stub=lambda address: stub,
         )
         executor._mark_future_failed = lambda future_id, error, origin=None: (
             LocalController._mark_future_failed(executor, future_id, error, origin)
@@ -488,11 +488,11 @@ class ErrorPropagationTests(unittest.TestCase):
             redis=shared_redis,
             agent=SimpleNamespace(greet=boom),
             agent_name="Greeter",
-            agent_id="replica-a",
-            _my_endpoint="localhost:8001",
+            replica_id="replica-a",
+            _my_address="localhost:8001",
             _metrics_key="controller:localhost:8001:metrics",
             _resolve_future_args=lambda args, future_args: args,
-            _get_remote_stub=lambda endpoint: stub,
+            _get_remote_stub=lambda address: stub,
         )
         executor._mark_future_failed = lambda future_id, error, origin=None: (
             LocalController._mark_future_failed(executor, future_id, error, origin)
@@ -526,9 +526,9 @@ class ErrorPropagationTests(unittest.TestCase):
         controller = _bind_failure_marker(
             SimpleNamespace(
                 redis=_FlakyRedis(),
-                agent_id=None,
+                replica_id=None,
                 agent_name=None,
-                _my_endpoint="localhost:50051",
+                _my_address="localhost:50051",
             )
         )
 

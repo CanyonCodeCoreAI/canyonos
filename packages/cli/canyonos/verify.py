@@ -82,12 +82,12 @@ def agent_rows(config_path):
     containers = _running_containers()
 
     rows = []
-    for agent in config.get("agents") or []:
-        name = agent.get("name")
+    for agent_spec in config.get("agents") or []:
+        name = agent_spec.get("name")
         if not name:
             continue
         image = project.image_name(name)
-        expected = int(agent.get("replicas", 1) or 1)
+        expected = int(agent_spec.get("replicas", 1) or 1)
         running = sum(
             1 for i in range(expected) if project.container_name(name, i) in containers
         )

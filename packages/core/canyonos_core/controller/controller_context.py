@@ -26,7 +26,7 @@ from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient
-from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT, SERVICE_NAME
+from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT, ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
 
 logger = logging.getLogger(__name__)
@@ -49,51 +49,48 @@ def _redis_connect_host(host):
     return host
 
 
-def instance_id(provider, agent_name, replica_index):
-    """Return one agent replica's ID (e.g. `local:Alpha:0`), used to key it in Redis."""
-    return f"{provider}:{agent_name}:{replica_index}"
+def replica_id(agent_name, replica_index):
+    """Return one agent replica's ID (e.g. `Alpha-0`), used to key it in Redis and to
+    label its telemetry."""
+    return f"{agent_name}-{replica_index}"
 
 
-def instance_key(provider, agent_name, replica_index):
+def replica_key(agent_name, replica_index):
     """Return the Redis key of one replica's record."""
-    return f"agent_instance:{instance_id(provider, agent_name, replica_index)}"
+    return f"agent_instance:{replica_id(agent_name, replica_index)}"
 
 
-def instance_id_from_record(instance):
+def replica_id_from_record(replica):
     """Return the replica ID for a record read back from Redis."""
-    return instance_id(
-        instance["provider"], instance["agent_name"], int(instance["replica_index"])
-    )
+    return replica_id(replica["agent_name"], replica["replica_index"])
 
 
-def localhost_redis_port(agents):
+def localhost_redis_port(agent_specs):
     """Return the port of this machine's Redis container, taken from the first agent with
     a replica here, or None if no agent runs here."""
-    for ctrl in agents:
-        for host, _port in ControllerContext._get_replica_placements(ctrl):
+    for agent_spec in agent_specs:
+        for host, _port in ControllerContext._get_replica_placements(agent_spec):
             if _is_local_host(host):
-                return int(ctrl.get("redis_port", 6379))
+                return int(agent_spec.get("redis_port", 6379))
     return None
 
 
-def list_instances(redis_client, agent_name=None):
-    """Instance records straight from Redis."""
+def list_replicas(redis_client, agent_name=None):
+    """Replica records straight from Redis."""
     if agent_name:
-        instance_ids = sorted(redis_client.smembers(f"agent:{agent_name}:instances"))
-        keys = [f"agent_instance:{instance_id}" for instance_id in instance_ids]
+        replica_ids = sorted(redis_client.smembers(f"agent:{agent_name}:instances"))
+        keys = [f"agent_instance:{replica_id}" for replica_id in replica_ids]
     else:
         keys = sorted(redis_client.scan_keys("agent_instance:*"))
 
-    # Skips launches that haven't finished: only the final write adds routing_endpoint.
+    # Skips launches that haven't finished: only the final write adds address.
     return [
-        instance
-        for key in keys
-        if (instance := redis_client.hgetall(key)).get("routing_endpoint")
+        replica for key in keys if (replica := redis_client.hgetall(key)).get("address")
     ]
 
 
 class ControllerContext(object):
-    """Everything the provisioner and provider runtimes read off `controller`."""
+    """Everything the provisioner and providers read off `controller`."""
 
     def __init__(self, config_path):
         self.config_path = config_path
@@ -110,10 +107,10 @@ class ControllerContext(object):
         )
 
         self.poll_interval = self.config.get("poll_interval", 5)
-        self._set_controllers(self.config.get("agents", []))
+        self._set_agent_specs(self.config.get("agents", []))
         self.redis_containers = {}  # host -> container_name
         self.redis_ports = {}  # host -> published redis port
-        self.node_redis = {}  # host -> RedisClient
+        self.machine_redis = {}  # host -> RedisClient
         providers.bind(self)
 
     @staticmethod
@@ -125,25 +122,25 @@ class ControllerContext(object):
         config = config_env.load_config(config_path)
         if not isinstance(config, dict):
             raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
-        agents = config["agents"]
+        agent_specs = config["agents"]
         endpoint = config["endpoint"]
-        agents.append(
+        agent_specs.append(
             {
-                "name": SERVICE_NAME,
+                "name": ENDPOINT_AGENT_NAME,
                 "type": "endpoint",
                 "replicas": 1,
                 # One Redis runs per machine, so the endpoint shares the port of the
                 # agents placed here.
-                "redis_port": localhost_redis_port(agents) or 6379,
+                "redis_port": localhost_redis_port(agent_specs) or 6379,
                 "resources": {"cpu": ENDPOINT_CPUS},
                 "api_port": endpoint.get("api_port", ENDPOINT_PORT),
                 "agent": endpoint["agent"],
                 "method": endpoint["method"],
             }
         )
-        for agent in agents:
-            agent["provider"] = providers.canonical_name(
-                agent.get("provider", providers.DEFAULT)
+        for agent_spec in agent_specs:
+            agent_spec["provider"] = providers.canonical_name(
+                agent_spec.get("provider", providers.DEFAULT)
             )
         return config
 
@@ -153,23 +150,25 @@ class ControllerContext(object):
     _load_dotenv = staticmethod(config_env.load_dotenv)
     _expand_env_value = staticmethod(config_env.expand_env_value)
 
-    def _set_controllers(self, agents):
+    def _set_agent_specs(self, agent_specs):
         """Set the agent spec list and its by-name index together so they can't drift."""
-        self.controllers = agents
-        self.agent_specs = {spec["name"]: spec for spec in agents}
+        self.agent_specs = agent_specs
+        self.agent_specs_by_name = {
+            agent_spec["name"]: agent_spec for agent_spec in agent_specs
+        }
 
-    def refresh_controllers_from_redis(self):
+    def refresh_agent_specs_from_redis(self):
         """Adopt the published agent specs; True when they replaced what we had."""
         try:
-            specs = read_config_specs(self.redis)
+            agent_specs = read_config_specs(self.redis)
         except Exception as e:
             logger.warning("Failed to read published agent specs: %s", e)
             return False
-        if specs is None:
+        if agent_specs is None:
             return False
-        if specs == self.controllers:
+        if agent_specs == self.agent_specs:
             return False
-        self._set_controllers(specs)
+        self._set_agent_specs(agent_specs)
         return True
 
     def refresh_config(self):
@@ -187,16 +186,16 @@ class ControllerContext(object):
             return
         self.config = config
 
-    def _ssh_user(self, ctrl):
-        """SSH user for a service's hosts, as its provider decides."""
-        return providers.get(ctrl["provider"]).ssh_user(ctrl)
+    def _ssh_user(self, agent_spec):
+        """SSH user for an agent's hosts, as its provider decides."""
+        return providers.get(agent_spec["provider"]).ssh_user(agent_spec)
 
     @staticmethod
-    def _get_replica_placements(ctrl):
+    def _get_replica_placements(agent_spec):
         """Normalize replicas into a list of (host, port) placements."""
-        replicas = ctrl.get("replicas", 1)
-        default_host = ctrl.get("host", "localhost")
-        base_port = ctrl.get("port", 50051)
+        replicas = agent_spec.get("replicas", 1)
+        default_host = agent_spec.get("host", "localhost")
+        base_port = agent_spec.get("port", 50051)
 
         if isinstance(replicas, int):
             return [(default_host, base_port + i) for i in range(replicas)]
@@ -207,35 +206,37 @@ class ControllerContext(object):
             ]
         return [(default_host, base_port)]
 
-    def attach_local_node_redis(self):
-        """Point self.redis at the local node's Redis without launching anything."""
-        port = localhost_redis_port(self.controllers)
+    def attach_local_machine_redis(self):
+        """Point self.redis at the local machine's Redis without launching anything."""
+        port = localhost_redis_port(self.agent_specs)
         if port is None:
             return
         client = RedisClient(host=_redis_connect_host("localhost"), port=port)
-        self.node_redis["localhost"] = client
+        self.machine_redis["localhost"] = client
         self.redis = client
 
-    def node_redis_for_instance(self, instance):
-        """Redis client for the node an instance runs on, connecting on demand."""
-        host = instance.get("private_host")
+    def machine_redis_for_replica(self, replica):
+        """Redis client for the machine a replica runs on, connecting on demand."""
+        host = replica.get("private_host")
         if not host:
             return self.redis
-        if host in self.node_redis:
-            return self.node_redis[host]
+        if host in self.machine_redis:
+            return self.machine_redis[host]
 
-        port = int(instance.get("redis_port") or 6379)
+        port = int(replica.get("redis_port") or 6379)
         client = RedisClient(host=_redis_connect_host(host), port=port)
-        self.node_redis[host] = client
+        self.machine_redis[host] = client
         return client
 
-    def prune_node_redis(self, instances):
+    def remove_unused_redis_clients(self, replicas):
         """Drop the Redis clients of hosts that no configured agent or given replica runs on."""
-        hosts = {instance["private_host"] for instance in instances}
-        for ctrl in self.controllers:
-            hosts.update(host for host, _port in self._get_replica_placements(ctrl))
-        for host in set(self.node_redis) - hosts:
-            del self.node_redis[host]
+        hosts = {replica["private_host"] for replica in replicas}
+        for agent_spec in self.agent_specs:
+            hosts.update(
+                host for host, _port in self._get_replica_placements(agent_spec)
+            )
+        for host in set(self.machine_redis) - hosts:
+            del self.machine_redis[host]
 
     def _run_cmd(self, cmd, host, user=None):
         """Run a command locally, or on a remote host over SSH."""

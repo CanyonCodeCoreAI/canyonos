@@ -44,7 +44,7 @@ If there is no `.car` directory, `canyonos deploy` falls back to
 
 Each image is built from a context that starts as a copy of `app/` with
 relative paths intact. The build then writes the platform's runtime modules,
-the generated stubs and a copy of the service's entrypoint on top of it.
+the generated stubs and a copy of the agent's entrypoint on top of it.
 Inside the container the working directory is `/app` and Python starts there,
 so `/app/pkg/mod.py` imports as `pkg.mod`. [Images and
 dependencies](IMAGES_AND_DEPENDENCIES.md) explains what the copy leaves out

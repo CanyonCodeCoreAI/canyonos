@@ -62,8 +62,8 @@ class RuntimeReuseScanTests(unittest.TestCase):
             )
 
         self._bind(run_cmd)
-        instance = {
-            "runtime_id": "canyonos-agent-0",
+        replica = {
+            "container_name": "canyonos-agent-0",
             "private_host": "10.0.0.5",
             "provider": "EC2",
         }
@@ -72,20 +72,20 @@ class RuntimeReuseScanTests(unittest.TestCase):
             "canyonos_core.reconciler.providers.shared_utils.docker_host",
             level="WARNING",
         ):
-            self.assertFalse(providers.get("EC2").is_running(instance))
+            self.assertFalse(providers.get("EC2").is_running(replica))
 
-    def test_a_running_runtime_is_still_reported_as_reusable(self):
+    def test_a_running_container_is_still_reported_as_reusable(self):
         def run_cmd(_cmd, _host, user=None):
             return subprocess.CompletedProcess([], 0, "true\n", "")
 
         self._bind(run_cmd)
-        instance = {
-            "runtime_id": "canyonos-agent-0",
+        replica = {
+            "container_name": "canyonos-agent-0",
             "private_host": "localhost",
             "provider": "local",
         }
 
-        self.assertTrue(providers.get("local").is_running(instance))
+        self.assertTrue(providers.get("local").is_running(replica))
 
 
 if __name__ == "__main__":

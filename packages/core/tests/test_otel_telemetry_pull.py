@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Covers the telemetry feed in controller/utils/otel_writer.py: ``_pull_telemetry`` (scan
-future:* hashes from a node's Redis) and ``send_telemetry`` (pull + queue into the
+future:* hashes from a machine's Redis) and ``send_telemetry`` (pull + queue into the
 ``traces_waiting`` table). Replaces the old test_telemetry_logging.py now that the legacy
 Postgres writers are gone.
 """
@@ -128,7 +128,7 @@ class SendTelemetryTests(unittest.TestCase):
 
         send_telemetry(redis, db_path=self.tmp)
 
-        # A later poll receives a stale copy from another node.
+        # A later poll receives a stale copy from another machine.
         stale = _FakeRedis(
             {
                 "future:done": {
@@ -176,7 +176,7 @@ class SendTelemetryTests(unittest.TestCase):
         self.assertEqual(redis.get("telemetry:delivered:req1"), "1")
         self.assertIsNone(redis.get("telemetry:delivered:req2"))
 
-    def test_acknowledges_terminal_futures_across_nodes(self):
+    def test_acknowledges_terminal_futures_across_machines(self):
         origin = _FakeRedis(
             {
                 "future:root": {

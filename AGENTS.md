@@ -50,6 +50,12 @@ Run `bun run check` and `bun run test` before calling a change done.
 - Add or update tests next to the change: `packages/core/tests/`, `packages/cli/tests/`, `src/modules` in `api` and `web`, or `tests/` for cross-package behavior.
 - Keep tool versions pinned exactly (e.g. `ruff==`, `ty==`, SHA-pinned GitHub Actions).
 - Keep provider-specific logic (Local, EC2, and any new provider) inside `packages/core/canyonos_core/reconciler/providers/`. Callers go through `providers/__init__.py`, never a provider module or a provider name; see [its README](packages/core/canyonos_core/reconciler/providers/README.md).
+- Naming: one word per thing, in code, comments, logs and docs.
+  - _machine_: a computer, this one or a cloud VM. Never "instance" or "node".
+  - _agent_: one entry under `agents:` in `global_controller.yaml`, databases and the endpoint included. Never "service". Its config is an _agent spec_: `agent_spec` for one, `agent_specs` for the list, `agent_specs_by_name` for the lookup.
+  - _replica_: one running copy of an agent; an agent has N. Its ID is `<agent>-<slot>`, e.g. `Alpha-0`. Never "instance".
+  - _container_: the Docker container itself (`container_name`, `container_port`, `docker` commands). Redis, the metrics collector and the Global Controller run in containers too, so not every container is a replica.
+  - Names that predate this and stay: stored Redis keys such as `agent_instance:*` and `agent:<name>:instances`, exported telemetry names such as `agent.id` (it holds a replica ID), and AWS API names such as `run_instances` or `InstanceType`.
 - Core modules are also imported as flat modules inside container images. Do not "fix" those fallback imports or the `E402` ignore in `pyproject.toml`.
 
 ## Further reading

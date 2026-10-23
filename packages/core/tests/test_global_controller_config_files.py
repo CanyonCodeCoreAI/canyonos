@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Every YAML file in the config folder is published to every node's Redis as `<name>:config`."""
+"""Every YAML file in the config folder is published to every machine's Redis as `<name>:config`."""
 
 import json
 import os
@@ -15,11 +15,11 @@ from canyonos_core.controller.global_controller import GlobalController
 from fakes import _FakeRedis
 
 
-def _controller(config_dir, node_redis):
+def _controller(config_dir, machine_redis):
     controller = GlobalController.__new__(GlobalController)
     controller.config_path = os.path.join(config_dir, "global_controller.yaml")
     controller.redis = _FakeRedis()
-    controller.node_redis = node_redis
+    controller.machine_redis = machine_redis
     return controller
 
 
@@ -29,72 +29,73 @@ def _write(config_dir, filename, text):
 
 
 class PublishConfigFilesTests(unittest.TestCase):
-    def test_publishes_every_yaml_file_to_every_node(self):
+    def test_publishes_every_yaml_file_to_every_machine(self):
         with tempfile.TemporaryDirectory() as config_dir:
             _write(config_dir, "llms.yaml", "routes:\n  - agent: IntentAgent\n")
             _write(config_dir, "global_controller.yaml", "poll_interval: 5\n")
             _write(config_dir, "scaling.yml", "scaling: {}\n")
-            nodes = {"localhost": _FakeRedis(), "172.31.0.5": _FakeRedis()}
+            machines = {"localhost": _FakeRedis(), "172.31.0.5": _FakeRedis()}
 
-            controller = _controller(config_dir, nodes)
+            controller = _controller(config_dir, machines)
             controller._write_policies(*controller._read_config_folder())
 
-        for node in nodes.values():
+        for machine in machines.values():
             self.assertEqual(
-                json.loads(node.get("llms:config")),
+                json.loads(machine.get("llms:config")),
                 {"routes": [{"agent": "IntentAgent"}]},
             )
             self.assertEqual(
-                json.loads(node.get("global_controller:config")), {"poll_interval": 5}
+                json.loads(machine.get("global_controller:config")),
+                {"poll_interval": 5},
             )
-            self.assertEqual(json.loads(node.get("scaling:config")), {"scaling": {}})
+            self.assertEqual(json.loads(machine.get("scaling:config")), {"scaling": {}})
 
     def test_files_that_are_not_yaml_are_left_out(self):
         with tempfile.TemporaryDirectory() as config_dir:
             _write(config_dir, "notes.txt", "not config\n")
-            node = _FakeRedis()
+            machine = _FakeRedis()
 
-            controller = _controller(config_dir, {"localhost": node})
+            controller = _controller(config_dir, {"localhost": machine})
             controller._write_policies(*controller._read_config_folder())
 
-        self.assertIsNone(node.get("notes:config"))
+        self.assertIsNone(machine.get("notes:config"))
 
     def test_a_date_is_published_as_a_string(self):
         with tempfile.TemporaryDirectory() as config_dir:
             _write(config_dir, "release.yaml", "released: 2026-01-01\n")
-            node = _FakeRedis()
+            machine = _FakeRedis()
 
-            controller = _controller(config_dir, {"localhost": node})
+            controller = _controller(config_dir, {"localhost": machine})
             controller._write_policies(*controller._read_config_folder())
 
         self.assertEqual(
-            json.loads(node.get("release:config")), {"released": "2026-01-01"}
+            json.loads(machine.get("release:config")), {"released": "2026-01-01"}
         )
 
     def test_a_removed_file_clears_its_key(self):
         with tempfile.TemporaryDirectory() as config_dir:
             _write(config_dir, "prompts.yaml", "prompts: {}\n")
-            node = _FakeRedis()
-            controller = _controller(config_dir, {"localhost": node})
+            machine = _FakeRedis()
+            controller = _controller(config_dir, {"localhost": machine})
             controller._write_policies(*controller._read_config_folder())
             os.remove(os.path.join(config_dir, "prompts.yaml"))
 
             controller._write_policies(*controller._read_config_folder())
 
-        self.assertIsNone(node.get("prompts:yaml"))
+        self.assertIsNone(machine.get("prompts:yaml"))
 
     def test_prompts_yaml_is_published_without_touching_prompts_config(self):
         with tempfile.TemporaryDirectory() as config_dir:
             _write(config_dir, "prompts.yaml", "prompts: {}\n")
-            node = _FakeRedis(strings={"prompts:config": "dashboard"})
+            machine = _FakeRedis(strings={"prompts:config": "dashboard"})
 
-            controller = _controller(config_dir, {"localhost": node})
+            controller = _controller(config_dir, {"localhost": machine})
             controller._write_policies(*controller._read_config_folder())
 
-        self.assertEqual(json.loads(node.get("prompts:yaml")), {"prompts": {}})
-        self.assertEqual(node.get("prompts:config"), "dashboard")
+        self.assertEqual(json.loads(machine.get("prompts:yaml")), {"prompts": {}})
+        self.assertEqual(machine.get("prompts:config"), "dashboard")
 
-    def test_falls_back_to_its_own_redis_without_nodes(self):
+    def test_falls_back_to_its_own_redis_without_machines(self):
         with tempfile.TemporaryDirectory() as config_dir:
             _write(config_dir, "notes.yaml", "database: StateDB\n")
             controller = _controller(config_dir, {})
@@ -178,7 +179,7 @@ class SeedPromptsTests(unittest.TestCase):
 
 
 class SyncPromptsTests(unittest.TestCase):
-    def test_copies_a_dashboard_edit_to_the_other_nodes(self):
+    def test_copies_a_dashboard_edit_to_the_other_machines(self):
         local = _FakeRedis(strings={"prompts:config": '{"prompts": {"a": {}}}'})
         remote = _FakeRedis(strings={"prompts:config": "{}"})
         controller = _controller("/unused", {"localhost": local, "172.31.0.5": remote})

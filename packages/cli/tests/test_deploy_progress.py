@@ -34,7 +34,7 @@ def test_a_full_run_reports_each_phase_once():
             "#5 [4/7] RUN pip install -r requirements.txt\n",
             "INFO:canyonos_core:Build complete.\n",
             "INFO:canyonos_core:Deploying from config: config.yaml\n",
-            "INFO:canyonos_core.controller.global_controller:Redis launched on 1 node(s).\n",
+            "INFO:canyonos_core.controller.global_controller:Redis launched on 1 machine(s).\n",
             "INFO:canyonos_core.controller.global_controller:Waiting for 2 replica(s) to become healthy (timeout=300s)...\n",
             "INFO:canyonos_core.controller.global_controller:Controller Intent (127.0.0.1:50051) is ready.\n",
             "INFO:canyonos_core.controller.global_controller:Controller Metrics (127.0.0.1:50052) is ready.\n",
@@ -54,12 +54,12 @@ def test_phases_are_matched_in_the_order_the_container_emits_them():
     _, spinners, done, _ = drive(
         [
             "INFO:canyonos_core.controller.global_controller:Checking for stale containers from previous runs...\n",
-            "INFO:canyonos_core.controller.global_controller:Redis launched on 1 node(s).\n",
+            "INFO:canyonos_core.controller.global_controller:Redis launched on 1 machine(s).\n",
             "INFO:canyonos_core:Deploying from config: config.yaml\n",
         ]
     )
     assert done == ["Redis ready"]
-    assert spinners == ["Cleaning up stale containers...", "Starting deploy..."]
+    assert spinners == ["Removing stale containers...", "Starting deploy..."]
 
 
 def test_repeated_build_lines_collapse_to_one_spinner_update():
@@ -513,9 +513,7 @@ def test_verbose_keeps_echoing_after_a_fatal_line_until_the_deploy_is_gone(
     replies = iter([{"running": True}, None, None])
     monkeypatch.setattr(deploy_cmd, "deploy_status", lambda _p: next(replies, None))
     verdict = "CRITICAL:canyonos_core:Controller readiness failed: Broken 0/1\n"
-    teardown = (
-        "INFO:canyonos_core.reconciler.reconciler:Removing instance local:Broken:0\n"
-    )
+    teardown = "INFO:canyonos_core.reconciler.reconciler:Removing replica Broken-0\n"
     lines = deploy_cmd.queued_lines(iter([verdict, teardown]))
     lines.put = lambda *a, **k: None
 
@@ -527,7 +525,7 @@ def test_verbose_keeps_echoing_after_a_fatal_line_until_the_deploy_is_gone(
             on_ready=lambda _ready: None,
         )
 
-    assert "Removing instance local:Broken:0" in capsys.readouterr().out
+    assert "Removing replica Broken-0" in capsys.readouterr().out
 
 
 def test_a_quiet_deploy_keeps_waiting_and_names_the_running_step(monkeypatch):

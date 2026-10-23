@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from canyonos_core.controller.global_controller import GlobalController
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.reconciler import Reconciler
-from fakes import _bare_reconciler, _FakeProvisioner, _FakeRedis, _instance
+from fakes import _bare_reconciler, _FakeProvisioner, _FakeRedis, _replica
 
 
 class _RaisingRedis(_FakeRedis):
@@ -38,44 +38,44 @@ _MANIFEST = (
 )
 
 
-def _fake_context(redis=None, agents=None, node_redis=None):
+def _fake_context(redis=None, agent_specs=None, machine_redis=None):
     redis = redis if redis is not None else _FakeRedis()
-    agents = agents if agents is not None else [ALPHA_SPEC, BETA_SPEC]
+    agent_specs = agent_specs if agent_specs is not None else [ALPHA_SPEC, BETA_SPEC]
     return SimpleNamespace(
         redis=redis,
-        controllers=agents,
-        agent_specs={spec["name"]: spec for spec in agents},
+        agent_specs=agent_specs,
+        agent_specs_by_name={
+            agent_spec["name"]: agent_spec for agent_spec in agent_specs
+        },
         config_path="/tmp/canyonos.yaml",
-        node_redis_for_instance=lambda instance: node_redis or redis,
-        refresh_controllers_from_redis=lambda: False,
+        machine_redis_for_replica=lambda replica: machine_redis or redis,
+        refresh_agent_specs_from_redis=lambda: False,
     )
 
 
 class StartupReadinessTests(unittest.TestCase):
     def _controller(self, replicas):
         controller = GlobalController.__new__(GlobalController)
-        controller.controllers = [{"name": "Alpha", "replicas": replicas}]
+        controller.agent_specs = [{"name": "Alpha", "replicas": replicas}]
         controller.redis = _FakeRedis()
-        # _launch_redis_containers registers the local node in production
-        controller.node_redis = {"localhost": controller.redis}
+        # _launch_redis_containers registers the local machine in production
+        controller.machine_redis = {"localhost": controller.redis}
         controller._last_status = {}
-        patcher = patch("canyonos_core.controller.global_controller.list_instances")
-        self.list_instances = patcher.start()
+        patcher = patch("canyonos_core.controller.global_controller.list_replicas")
+        self.list_replicas = patcher.start()
         self.addCleanup(patcher.stop)
         return controller
 
-    def _ready(self, controller, instance):
-        controller.redis.set(
-            f"controller:{instance['routing_endpoint']}:status", "healthy"
-        )
+    def _ready(self, controller, replica):
+        controller.redis.set(f"controller:{replica['address']}:status", "healthy")
 
-    def test_wait_for_healthy_tracks_instances_that_appear_asynchronously(self):
+    def test_wait_for_healthy_tracks_replicas_that_appear_asynchronously(self):
         controller = self._controller(replicas=2)
-        first = _instance("Alpha", 0)
-        second = _instance("Alpha", 1)
+        first = _replica("Alpha", 0)
+        second = _replica("Alpha", 1)
         self._ready(controller, first)
         self._ready(controller, second)
-        self.list_instances.side_effect = [
+        self.list_replicas.side_effect = [
             [],
             [first],
             [first, second],
@@ -89,7 +89,7 @@ class StartupReadinessTests(unittest.TestCase):
         ):
             controller._wait_for_healthy()
 
-        self.assertEqual(self.list_instances.call_count, 3)
+        self.assertEqual(self.list_replicas.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
         self.assertEqual(
             sum(" is ready." in message for message in logs.output),
@@ -100,9 +100,9 @@ class StartupReadinessTests(unittest.TestCase):
             {("localhost", "8000"): "healthy", ("localhost", "8001"): "healthy"},
         )
 
-    def test_wait_for_healthy_fails_when_no_instance_was_ever_recorded(self):
+    def test_wait_for_healthy_fails_when_no_replica_was_ever_recorded(self):
         controller = self._controller(replicas=1)
-        self.list_instances.return_value = []
+        self.list_replicas.return_value = []
 
         with (
             patch(
@@ -114,7 +114,7 @@ class StartupReadinessTests(unittest.TestCase):
         ):
             controller._wait_for_healthy(timeout=2, interval=2)
 
-        self.assertEqual(self.list_instances.call_count, 2)
+        self.assertEqual(self.list_replicas.call_count, 2)
         sleep.assert_called_once_with(2)
 
 
@@ -172,19 +172,20 @@ class WakeQueueTests(unittest.TestCase):
 class ReplaceRequestTests(unittest.TestCase):
     def test_only_ids_belonging_to_the_named_agent_are_returned(self):
         redis = _FakeRedis()
-        state.request_replace(redis, "local:Alpha:1")
-        state.request_replace(redis, "local:Beta:0")
+        state.request_replace(redis, "Alpha-1")
+        state.request_replace(redis, "Beta-0")
+        state.request_replace(redis, "Alpha-Beta-0")
 
-        self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
+        self.assertEqual(state.replace_requests(redis, "Alpha"), {"Alpha-1"})
 
     def test_a_request_stays_pending_until_cleared(self):
         redis = _FakeRedis()
-        state.request_replace(redis, "local:Alpha:1")
+        state.request_replace(redis, "Alpha-1")
 
         state.replace_requests(redis, "Alpha")
-        self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
+        self.assertEqual(state.replace_requests(redis, "Alpha"), {"Alpha-1"})
 
-        state.clear_replace_requests(redis, "local:Alpha:1")
+        state.clear_replace_requests(redis, "Alpha-1")
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
 
@@ -200,22 +201,28 @@ class ScalingEntryPointTests(unittest.TestCase):
         self.assertEqual(controller.redis.lists[state.WAKE_QUEUE_KEY], ["Alpha"])
 
     def test_an_unknown_agent_writes_nothing(self):
-        controller = self._controller(specs={})
+        controller = self._controller(agent_specs_by_name={})
 
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
             self.assertIsNone(controller._set_replicas("Nope", 3))
 
         self.assertEqual(controller.redis.strings, {})
 
-    def _controller(self, specs=None):
+    def _controller(self, agent_specs_by_name=None):
         controller = GlobalController.__new__(GlobalController)
         controller.redis = _FakeRedis()
-        controller.agent_specs = specs if specs is not None else {"Alpha": ALPHA_SPEC}
+        controller.agent_specs_by_name = (
+            agent_specs_by_name
+            if agent_specs_by_name is not None
+            else {"Alpha": ALPHA_SPEC}
+        )
         return controller
 
     def test_configured_replicas_overwrite_a_stale_stored_count(self):
-        controller = self._controller(specs={"Alpha": ALPHA_SPEC, "Beta": BETA_SPEC})
-        controller.controllers = [ALPHA_SPEC, BETA_SPEC]
+        controller = self._controller(
+            agent_specs_by_name={"Alpha": ALPHA_SPEC, "Beta": BETA_SPEC}
+        )
+        controller.agent_specs = [ALPHA_SPEC, BETA_SPEC]
         state.set_desired(controller.redis, "Alpha", 7)
 
         controller._apply_configured_replicas()
@@ -225,8 +232,10 @@ class ScalingEntryPointTests(unittest.TestCase):
 
     def test_a_non_integer_replicas_is_skipped_without_failing_the_others(self):
         listed = {"name": "Listed", "provider": "local", "replicas": ["a", "b"]}
-        controller = self._controller(specs={"Listed": listed, "Alpha": ALPHA_SPEC})
-        controller.controllers = [listed, ALPHA_SPEC]
+        controller = self._controller(
+            agent_specs_by_name={"Listed": listed, "Alpha": ALPHA_SPEC}
+        )
+        controller.agent_specs = [listed, ALPHA_SPEC]
 
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
             controller._apply_configured_replicas()
@@ -239,11 +248,11 @@ class ScalingEntryPointTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, config_dir)
         controller = GlobalController.__new__(GlobalController)
         controller.redis = _FakeRedis()
-        controller.node_redis = {}
+        controller.machine_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
         with open(controller.config_path, "w") as f:
             f.write(_MANIFEST)
-        controller._set_controllers([ALPHA_SPEC])
+        controller._set_agent_specs([ALPHA_SPEC])
         controller._apply_configured_replicas()
         controller._load_config = lambda path: {
             "agents": [{**ALPHA_SPEC, "replicas": 5}]
@@ -260,11 +269,11 @@ class ScalingEntryPointTests(unittest.TestCase):
             f.write("a: [1, 2\n")
         controller = GlobalController.__new__(GlobalController)
         controller.redis = _FakeRedis()
-        controller.node_redis = {}
+        controller.machine_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
         with open(controller.config_path, "w") as f:
             f.write(_MANIFEST)
-        controller._set_controllers([ALPHA_SPEC])
+        controller._set_agent_specs([ALPHA_SPEC])
         controller._apply_configured_replicas()
         controller._load_config = lambda path: {
             "agents": [{**ALPHA_SPEC, "replicas": 5}]
@@ -284,11 +293,11 @@ class ScalingEntryPointTests(unittest.TestCase):
             f.write("rules:\n  - match: {}\n    access: all\n")
         controller = GlobalController.__new__(GlobalController)
         controller.redis = _FakeRedis()
-        controller.node_redis = {}
+        controller.machine_redis = {}
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
         with open(controller.config_path, "w") as f:
             f.write(_MANIFEST)
-        controller._set_controllers([ALPHA_SPEC])
+        controller._set_agent_specs([ALPHA_SPEC])
         controller._load_config = lambda path: {"agents": [ALPHA_SPEC]}
 
         controller.reload_config()
@@ -303,14 +312,12 @@ class ScalingEntryPointTests(unittest.TestCase):
 
         target = controller._replace_replica("Alpha", 1)
 
-        self.assertEqual(target, "local:Alpha:1")
-        self.assertEqual(
-            controller.redis.smembers(state.REPLACE_SET_KEY), {"local:Alpha:1"}
-        )
+        self.assertEqual(target, "Alpha-1")
+        self.assertEqual(controller.redis.smembers(state.REPLACE_SET_KEY), {"Alpha-1"})
         self.assertEqual(controller.redis.lists[state.WAKE_QUEUE_KEY], ["Alpha"])
 
     def test_an_unknown_agent_queues_nothing(self):
-        controller = self._controller(specs={})
+        controller = self._controller(agent_specs_by_name={})
 
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
             self.assertIsNone(controller._replace_replica("Nope", 0))
@@ -329,15 +336,15 @@ class ReconcileTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return reconciler
 
-    def test_surplus_instances_are_removed_and_the_kept_one_is_left_alone(self):
+    def test_surplus_replicas_are_removed_and_the_kept_one_is_left_alone(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
-        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(3)]})
+        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", i) for i in range(3)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         reconciler._reconcile(["Alpha"])
 
-        self.assertEqual(manager.removed, ["local:Alpha:1", "local:Alpha:2"])
+        self.assertEqual(manager.removed, ["Alpha-1", "Alpha-2"])
 
     def test_a_pass_provisions_specs_for_every_configured_agent(self):
         """A single-spec call would drop every other agent from the routing table."""
@@ -364,20 +371,20 @@ class ReconcileTests(unittest.TestCase):
                     ],
                 )
 
-    def test_an_unhealthy_instance_is_removed_unless_it_is_still_starting(self):
+    def test_an_unhealthy_replica_is_removed_unless_it_is_still_starting(self):
         """_is_healthy is a function of (accepts, fresh, seen_healthy, created_at)."""
         now = time.time()
         cases = [
-            ("probe fails", False, True, now - 3600, set(), ["local:Alpha:0"]),
+            ("probe fails", False, True, now - 3600, set(), ["Alpha-0"]),
             ("starting up", False, False, now, set(), []),
-            ("grace passed", False, False, now - 3600, set(), ["local:Alpha:0"]),
+            ("grace passed", False, False, now - 3600, set(), ["Alpha-0"]),
             (
                 "no grace once seen",
                 False,
                 False,
                 now,
-                {"local:Alpha:0"},
-                ["local:Alpha:0"],
+                {"Alpha-0"},
+                ["Alpha-0"],
             ),
         ]
         for name, accepts, fresh, created_at, seen, expected in cases:
@@ -385,7 +392,7 @@ class ReconcileTests(unittest.TestCase):
                 redis = _FakeRedis()
                 state.set_desired(redis, "Alpha", 1)
                 manager = _FakeProvisioner(
-                    {"Alpha": [_instance("Alpha", 0, created_at=created_at)]}
+                    {"Alpha": [_replica("Alpha", 0, created_at=created_at)]}
                 )
                 reconciler = _bare_reconciler(
                     _fake_context(redis), manager, _seen_healthy=set(seen)
@@ -398,14 +405,14 @@ class ReconcileTests(unittest.TestCase):
                     reconciler._reconcile(["Alpha"])
 
                 self.assertEqual(manager.removed, expected)
-                self.assertNotIn("local:Alpha:0", reconciler._seen_healthy)
+                self.assertNotIn("Alpha-0", reconciler._seen_healthy)
 
     def test_a_database_is_judged_by_its_connection_alone(self):
-        for accepts, expected in ((True, []), (False, ["local:Db:0"])):
+        for accepts, expected in ((True, []), (False, ["Db-0"])):
             with self.subTest(accepts=accepts):
                 redis = _FakeRedis()
                 manager = _FakeProvisioner(
-                    {"Db": [_instance("Db", 0, created_at=time.time() - 3600)]}
+                    {"Db": [_replica("Db", 0, created_at=time.time() - 3600)]}
                 )
                 context = _fake_context(
                     redis, [{"name": "Db", "type": "database", "replicas": 1}]
@@ -424,7 +431,7 @@ class ReconcileTests(unittest.TestCase):
         redis = _FakeRedis()
         manager = _FakeProvisioner()
         context = _fake_context(redis)
-        context.agent_specs = {
+        context.agent_specs_by_name = {
             "Placed": {"name": "Placed", "replicas": [{"host": "h"}]}
         }
         reconciler = _bare_reconciler(context, manager)
@@ -445,57 +452,57 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(manager.removed, [])
         self.assertEqual(manager.ensure_calls, [])
 
-    def test_a_replacement_request_is_cleared_once_its_instance_is_removed(self):
+    def test_a_replacement_request_is_cleared_once_its_replica_is_removed(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 2)
-        state.request_replace(redis, "local:Alpha:1")
-        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(2)]})
+        state.request_replace(redis, "Alpha-1")
+        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", i) for i in range(2)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         reconciler._reconcile(["Alpha"])
 
-        self.assertEqual(manager.removed, ["local:Alpha:1"])
+        self.assertEqual(manager.removed, ["Alpha-1"])
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
     def test_a_replacement_request_survives_a_failed_removal(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 2)
-        state.request_replace(redis, "local:Alpha:1")
+        state.request_replace(redis, "Alpha-1")
         manager = _FakeProvisioner(
-            {"Alpha": [_instance("Alpha", i) for i in range(2)]}, remove_raises=True
+            {"Alpha": [_replica("Alpha", i) for i in range(2)]}, remove_raises=True
         )
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
             reconciler._reconcile(["Alpha"])
 
-        self.assertEqual(state.replace_requests(redis, "Alpha"), {"local:Alpha:1"})
+        self.assertEqual(state.replace_requests(redis, "Alpha"), {"Alpha-1"})
 
-    def test_a_replacement_request_for_a_missing_instance_is_dropped(self):
+    def test_a_replacement_request_for_a_missing_replica_is_dropped(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 2)
-        state.request_replace(redis, "local:Alpha:7")
-        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
+        state.request_replace(redis, "Alpha-7")
+        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", 0)]})
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 
         reconciler._reconcile(["Alpha"])
 
         self.assertEqual(state.replace_requests(redis, "Alpha"), set())
 
-    def test_a_full_pass_removes_instances_of_an_agent_removed_from_the_config(self):
+    def test_a_full_pass_removes_replicas_of_an_agent_removed_from_the_config(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
         manager = _FakeProvisioner(
-            {"Alpha": [_instance("Alpha", 0)], "Gone": [_instance("Gone", 0)]}
+            {"Alpha": [_replica("Alpha", 0)], "Gone": [_replica("Gone", 0)]}
         )
-        context = _fake_context(redis, agents=[{**ALPHA_SPEC, "replicas": 1}])
+        context = _fake_context(redis, agent_specs=[{**ALPHA_SPEC, "replicas": 1}])
         reconciler = self._healthy(_bare_reconciler(context, manager))
 
         reconciler._reconcile(["Alpha"])
         self.assertEqual(manager.removed, [])
 
         reconciler._reconcile()
-        self.assertEqual(manager.removed, ["local:Gone:0"])
+        self.assertEqual(manager.removed, ["Gone-0"])
 
     def test_full_pass_keeps_going_when_one_agent_raises(self):
         redis = _FakeRedis()
@@ -511,7 +518,7 @@ class ReconcileTests(unittest.TestCase):
 
 
 class ConnectionProbeTests(unittest.TestCase):
-    def _probed_address(self, instance, env):
+    def _probed_address(self, replica, env):
         reconciler = _bare_reconciler(_fake_context(), _FakeProvisioner())
         with (
             patch.dict(os.environ, env, clear=False),
@@ -521,98 +528,98 @@ class ConnectionProbeTests(unittest.TestCase):
         ):
             if "CANYONOS_REDIS_HOST" not in env:
                 os.environ.pop("CANYONOS_REDIS_HOST", None)
-            self.assertTrue(reconciler._port_is_open(instance))
+            self.assertTrue(reconciler._port_is_open(replica))
         return connect.call_args.args[0]
 
     def test_a_containerized_reconciler_probes_local_ports_via_the_host_gateway(self):
         address = self._probed_address(
-            _instance("Alpha", 0), {"CANYONOS_REDIS_HOST": "host.docker.internal"}
+            _replica("Alpha", 0), {"CANYONOS_REDIS_HOST": "host.docker.internal"}
         )
 
         self.assertEqual(address, ("host.docker.internal", 8000))
 
     def test_a_reconciler_on_the_host_probes_localhost(self):
         self.assertEqual(
-            self._probed_address(_instance("Alpha", 0), {}), ("localhost", 8000)
+            self._probed_address(_replica("Alpha", 0), {}), ("localhost", 8000)
         )
 
     def test_a_remote_host_is_probed_directly(self):
-        instance = {**_instance("Alpha", 0), "private_host": "10.0.0.5"}
+        replica = {**_replica("Alpha", 0), "private_host": "10.0.0.5"}
 
         address = self._probed_address(
-            instance, {"CANYONOS_REDIS_HOST": "host.docker.internal"}
+            replica, {"CANYONOS_REDIS_HOST": "host.docker.internal"}
         )
 
         self.assertEqual(address, ("10.0.0.5", 8000))
 
 
 class ReportFreshnessTests(unittest.TestCase):
-    def _reconciler(self, node_redis):
-        context = _fake_context(node_redis=node_redis)
+    def _reconciler(self, machine_redis):
+        context = _fake_context(machine_redis=machine_redis)
         return _bare_reconciler(context, _FakeProvisioner())
 
-    def _metrics_key(self, instance):
+    def _metrics_key(self, replica):
         """Spelled the way the agent's own LocalController writes it, not the record."""
-        return (
-            f"controller:{instance['runtime_id']}:{instance['container_port']}:metrics"
-        )
+        return f"controller:{replica['container_name']}:{replica['container_port']}:metrics"
 
     def test_a_recent_observed_at_is_fresh(self):
-        instance = _instance("Alpha", 0)
-        node_redis = _FakeRedis()
-        node_redis.hset(self._metrics_key(instance), "observed_at", time.time())
+        replica = _replica("Alpha", 0)
+        machine_redis = _FakeRedis()
+        machine_redis.hset(self._metrics_key(replica), "observed_at", time.time())
 
-        self.assertTrue(self._reconciler(node_redis)._reports_are_fresh(instance))
+        self.assertTrue(self._reconciler(machine_redis)._reports_are_fresh(replica))
 
     def test_an_observed_at_older_than_stale_after_is_not_fresh(self):
-        instance = _instance("Alpha", 0)
-        node_redis = _FakeRedis()
-        node_redis.hset(self._metrics_key(instance), "observed_at", time.time() - 3600)
+        replica = _replica("Alpha", 0)
+        machine_redis = _FakeRedis()
+        machine_redis.hset(
+            self._metrics_key(replica), "observed_at", time.time() - 3600
+        )
 
-        self.assertFalse(self._reconciler(node_redis)._reports_are_fresh(instance))
+        self.assertFalse(self._reconciler(machine_redis)._reports_are_fresh(replica))
 
     def test_a_missing_metrics_hash_is_not_fresh(self):
         self.assertFalse(
-            self._reconciler(_FakeRedis())._reports_are_fresh(_instance("Alpha", 0))
+            self._reconciler(_FakeRedis())._reports_are_fresh(_replica("Alpha", 0))
         )
 
-    def test_a_redis_blip_is_not_read_as_an_unhealthy_instance(self):
+    def test_a_redis_blip_is_not_read_as_an_unhealthy_replica(self):
         reconciler = self._reconciler(_RaisingRedis())
 
         with self.assertLogs("canyonos_core.reconciler.reconciler", "WARNING"):
-            self.assertTrue(reconciler._reports_are_fresh(_instance("Alpha", 0)))
+            self.assertTrue(reconciler._reports_are_fresh(_replica("Alpha", 0)))
 
 
-class DrainingFlagTests(unittest.TestCase):
-    def test_nothing_is_draining_by_default(self):
-        self.assertFalse(state.is_draining(_FakeRedis()))
+class StoppingFlagTests(unittest.TestCase):
+    def test_nothing_is_stopping_by_default(self):
+        self.assertFalse(state.is_stopping(_FakeRedis()))
 
-    def test_set_draining_is_visible_and_carries_a_ttl(self):
+    def test_set_stopping_is_visible_and_carries_a_ttl(self):
         redis = _FakeRedis()
-        state.set_draining(redis)
+        state.set_stopping(redis)
 
-        self.assertTrue(state.is_draining(redis))
-        self.assertEqual(redis.ttls[state.DRAINING_KEY], state.DRAINING_TTL_SECONDS)
+        self.assertTrue(state.is_stopping(redis))
+        self.assertEqual(redis.ttls[state.STOPPING_KEY], state.STOPPING_TTL_SECONDS)
 
-    def test_clear_draining_removes_the_flag(self):
+    def test_clear_stopping_removes_the_flag(self):
         redis = _FakeRedis()
-        state.set_draining(redis)
-        state.clear_draining(redis)
+        state.set_stopping(redis)
+        state.clear_stopping(redis)
 
-        self.assertFalse(state.is_draining(redis))
+        self.assertFalse(state.is_stopping(redis))
 
-    def test_draining_leaves_desired_replicas_untouched(self):
-        """Draining is a separate flag, so clearing it leaves the desired counts as they were."""
+    def test_stopping_leaves_desired_replicas_untouched(self):
+        """Stopping is a separate flag, so clearing it leaves the desired counts as they were."""
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 3)
 
-        state.set_draining(redis)
-        state.clear_draining(redis)
+        state.set_stopping(redis)
+        state.clear_stopping(redis)
 
         self.assertEqual(state.get_desired(redis, "Alpha"), 3)
 
 
-class DrainReconcileTests(unittest.TestCase):
+class StopReconcileTests(unittest.TestCase):
     def _reconciler(self, redis, manager):
         patcher = patch.object(Reconciler, "_port_is_open", return_value=True)
         patcher.start()
@@ -622,50 +629,48 @@ class DrainReconcileTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return _bare_reconciler(_fake_context(redis), manager)
 
-    def test_draining_removes_every_instance_regardless_of_desired(self):
+    def test_stopping_removes_every_replica_regardless_of_desired(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 3)
-        state.set_draining(redis)
-        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", i) for i in range(3)]})
+        state.set_stopping(redis)
+        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", i) for i in range(3)]})
 
         self._reconciler(redis, manager)._reconcile(["Alpha"])
 
-        self.assertEqual(
-            manager.removed, ["local:Alpha:0", "local:Alpha:1", "local:Alpha:2"]
-        )
+        self.assertEqual(manager.removed, ["Alpha-0", "Alpha-1", "Alpha-2"])
         # desired_agent_specs falls back to the configured count, so a fill would undo it.
         self.assertEqual(manager.ensure_calls, [])
 
-    def test_full_pass_drains_every_agent_and_fills_nothing(self):
+    def test_full_pass_while_stopping_removes_every_agent_and_fills_nothing(self):
         redis = _FakeRedis()
-        state.set_draining(redis)
+        state.set_stopping(redis)
         manager = _FakeProvisioner(
-            {"Alpha": [_instance("Alpha", 0)], "Beta": [_instance("Beta", 0)]}
+            {"Alpha": [_replica("Alpha", 0)], "Beta": [_replica("Beta", 0)]}
         )
 
         self._reconciler(redis, manager)._reconcile()
 
-        self.assertEqual(sorted(manager.removed), ["local:Alpha:0", "local:Beta:0"])
+        self.assertEqual(sorted(manager.removed), ["Alpha-0", "Beta-0"])
         self.assertEqual(manager.ensure_calls, [])
 
-    def test_draining_removes_instances_of_an_agent_whose_replicas_is_not_a_count(self):
+    def test_stopping_removes_replicas_of_an_agent_whose_replicas_is_not_a_count(self):
         """The non-integer guard skips removal, but a teardown still has to remove it."""
         redis = _FakeRedis()
-        state.set_draining(redis)
+        state.set_stopping(redis)
         agents = [{"name": "Alpha", "provider": "local", "replicas": [["host", 9000]]}]
-        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
-        reconciler = _bare_reconciler(_fake_context(redis, agents=agents), manager)
+        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", 0)]})
+        reconciler = _bare_reconciler(_fake_context(redis, agent_specs=agents), manager)
 
         reconciler._reconcile()
 
-        self.assertEqual(manager.removed, ["local:Alpha:0"])
+        self.assertEqual(manager.removed, ["Alpha-0"])
 
     def test_clearing_the_flag_returns_the_loop_to_desired_state(self):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
-        state.set_draining(redis)
-        state.clear_draining(redis)
-        manager = _FakeProvisioner({"Alpha": [_instance("Alpha", 0)]})
+        state.set_stopping(redis)
+        state.clear_stopping(redis)
+        manager = _FakeProvisioner({"Alpha": [_replica("Alpha", 0)]})
 
         self._reconciler(redis, manager)._reconcile(["Alpha"])
 

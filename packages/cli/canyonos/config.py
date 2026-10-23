@@ -45,7 +45,7 @@ def _fmt(value):
     return str(value)
 
 
-def _agents_table(agents):
+def _agents_table(agent_specs):
     """Build a read-only table of agent settings, shown in the terminal when you choose
     View in `canyonos config`."""
     table = Table(
@@ -63,17 +63,17 @@ def _agents_table(agents):
     ):
         table.add_column(col)
 
-    for agent in agents:
-        resources = agent.get("resources") or {}
-        entry = agent.get("entrypoint") or "-"
-        port = agent.get("redis_port")
+    for agent_spec in agent_specs:
+        resources = agent_spec.get("resources") or {}
+        entry = agent_spec.get("entrypoint") or "-"
+        port = agent_spec.get("redis_port")
         table.add_row(
-            _fmt(agent.get("name")),
-            agent.get("type", "agent"),
-            _fmt(agent.get("replicas")),
+            _fmt(agent_spec.get("name")),
+            agent_spec.get("type", "agent"),
+            _fmt(agent_spec.get("replicas")),
             _fmt(resources.get("cpu")),
             _fmt(resources.get("memory")),
-            _fmt(agent.get("provider")),
+            _fmt(agent_spec.get("provider")),
             _fmt(port),
             entry,
         )

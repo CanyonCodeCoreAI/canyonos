@@ -29,7 +29,7 @@ def _fixture_json_path(tmp_path):
                         "output_cost_per_million_tokens": 4.0,
                     },
                 },
-                "instances": {"m5.large": 0.096},
+                "machines": {"m5.large": 0.096},
             }
         )
     )
@@ -99,8 +99,8 @@ class PricingRefreshTests(unittest.TestCase):
                 "output_cost_per_million_tokens": 4.0,
             },
         )
-        # instances untouched
-        self.assertEqual(data["instances"], {"m5.large": 0.096})
+        # machines untouched
+        self.assertEqual(data["machines"], {"m5.large": 0.096})
 
     @patch.object(pricing_refresh.requests, "get")
     def test_network_exception_leaves_file_untouched(self, mock_get):

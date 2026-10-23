@@ -48,7 +48,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
             ),
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
             patch("canyonos_core.controller.global_controller.load_manifest"),
-            patch.object(GlobalController, "_cleanup_stale_containers"),
+            patch.object(GlobalController, "_remove_stale_containers"),
             patch.object(GlobalController, "_run_cmd", new=fake_run_cmd),
             patch(
                 "canyonos_core.controller.global_controller.write_config_specs",
@@ -70,7 +70,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
 
     def test_later_launch_failure_rolls_back_an_earlier_owned_container(self):
         controller = GlobalController.__new__(GlobalController)
-        controller.controllers = [
+        controller.agent_specs = [
             {
                 "name": "First",
                 "provider": "EC2",
@@ -87,7 +87,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
         controller.config = {}
         controller.redis_containers = {}
         controller.redis_ports = {}
-        controller.node_redis = {}
+        controller.machine_redis = {}
         controller.redis = None
         calls = []
 

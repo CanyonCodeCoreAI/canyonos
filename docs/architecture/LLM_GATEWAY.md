@@ -22,7 +22,7 @@
 └──────────────────────────────────────────────────────┼────────────────┼──────────┘
                                                        ▼                ▼
                                               ┌──────────────┐   ┌─────────────────┐
-                                              │  node Redis  │   │  api.openai.com │
+                                              │ machine Redis│   │  api.openai.com │
                                               │ future:<id>  │   │  api.anthropic  │
                                               │ llms:config  │   │  bedrock-runtime│
                                               └──────────────┘   └─────────────────┘
@@ -147,7 +147,7 @@ Bedrock (AWS event stream)
 ## Future ID and telemetry
 
 ```
-Local Controller                  agent thread                     LLM gateway                 node Redis
+Local Controller                  agent thread                     LLM gateway                 machine Redis
       │                                │                               │                         │
       │ startup:                       │                               │                         │
       │  gateway_headers.install(      │                               │                         │
@@ -182,7 +182,7 @@ Global Controller poll ──▶ otel_writer.send_telemetry ──▶ scan futur
 ## Policy and prices
 
 ```
-config/llms.yaml ──▶ Global Controller publish ──▶ node Redis  llms:config
+config/llms.yaml ──▶ Global Controller publish ──▶ machine Redis  llms:config
   model_id, max_tokens,                                  │
   agents: {name: cap}                                    │ every 5s
                                                          ▼
@@ -210,10 +210,10 @@ llm_gateway/llm_prices.json ──▶ pricing.token_prices / compute_token_cost 
  ┌──────────────────────────────────────────────────────┐
  │  GC Redis   prompts:config                           │
  └──────────────────────────┬───────────────────────────┘
-                            │ every GC poll: copy to each node
+                            │ every GC poll: copy to each machine
                             ▼
  ┌──────────────────────────────────────────────────────┐
- │  node Redis   prompts:config                         │
+ │  machine Redis   prompts:config                      │
  └──────────────────────────┬───────────────────────────┘
                             │ prompts.refresh_prompts, every 5s (routing.start_refresh loop)
                             ▼
@@ -272,7 +272,7 @@ sequenceDiagram
     rect rgb(255, 250, 235)
     Note over Y,GW: Sync and reload (continuous)
     loop every GC poll
-        GC->>R: copy prompts:config to every node Redis
+        GC->>R: copy prompts:config to every machine Redis
     end
     loop every 5s
         GW->>R: GET prompts:config

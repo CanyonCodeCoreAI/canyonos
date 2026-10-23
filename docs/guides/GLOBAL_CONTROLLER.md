@@ -96,7 +96,7 @@ class in its `entrypoint` file.
 ### Where it runs
 
 - `provider`: `local` (the default) runs on this machine. `EC2` runs on Amazon EC2
-  and also needs `instance_type`, such as `t3.micro`, and the top-level `ec2` section
+  and also needs `machine_type`, such as `t3.micro`, and the top-level `ec2` section
   below.
 
 ### Other settings
@@ -156,9 +156,9 @@ an error, so this page lists every key it accepts.
 
 ### `global_controller.yaml`
 
-#### Service entries
+#### Agent entries
 
-Every entry under `agents:` is a service. `type` picks which extra keys it
+Every entry under `agents:` is an agent. `type` picks which extra keys it
 takes. Without `type` it is an agent.
 
 Keys every entry accepts:
@@ -169,15 +169,15 @@ Keys every entry accepts:
 | `type` | `agent` | One of `agent`, `database`. |
 | `provider` | `local` | `local` or `EC2`, in any casing. |
 | `replicas` | `1` | Integer, at least 1. A database must be 1. |
-| `redis_port` | `6379` | Host port of the Redis this service talks to. Entries on one host must agree. |
+| `redis_port` | `6379` | Host port of the Redis this agent talks to. Entries on one host must agree. |
 | `resources.cpu` | `1` | Passed to `docker run --cpus`. |
 | `resources.memory` | `512` | MiB, passed to `--memory`. |
 | `resources.gpu` | none | Integer. `0` means no GPU. Passed to `--gpus`. |
-| `stateful` | `false` | Marks the service stateful in the routing table, so every call within one request goes to the same replica. |
-| `instance_type` | none | Required when `provider: EC2`. |
+| `stateful` | `false` | Marks the agent stateful in the routing table, so every call within one request goes to the same replica. |
+| `machine_type` | none | Required when `provider: EC2`. |
 | `env` | `{}` | Extra `-e` variables. Only applied to `database` entries today. |
 | `host`, `user` | this machine, none | For the local provider: run the container on another Docker host reached over SSH as `user`. |
-| `host_port` (or `port`) | next free port | Host port published for the service's gRPC endpoint. |
+| `host_port` (or `port`) | next free port | Host port published for the agent's gRPC server. |
 
 Agent entries add:
 
@@ -185,7 +185,7 @@ Agent entries add:
 |---|---|---|
 | `entrypoint` | required | `.py` path relative to the project root, or to `.car/app` in a ported artifact; no `..`, not absolute. Holds the class named `name`. |
 | `requirements` | `[]` | One PEP 508 requirement per item. See [Per-image requirements](#per-image-requirements). |
-| `functions` | `[]` | The methods other services can call; an agent without any cannot be called. See [Agent functions](#agent-functions). |
+| `functions` | `[]` | The methods other agents can call; an agent without any cannot be called. See [Agent functions](#agent-functions). |
 
 Database entries add:
 
@@ -195,8 +195,8 @@ Database entries add:
 | `db_port` | `5432` | Port the database listens on. |
 | `volume_path` | none | Mount point for a named volume `canyonos-<project>-<name>-data`. |
 
-A database entry needs no code. Other services reach
-it through the routing table: the Redis hash `routing_table:endpoints` maps
+A database entry needs no code. Other agents reach
+it through the routing table: the Redis hash `routing_table:addresses` maps
 the entry name to a JSON list of `host:port` strings, on the Redis every
 container reaches through `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT`.
 
@@ -209,7 +209,7 @@ instead of an in-process store, and the agent no longer needs
 
 | Key | Default | Notes |
 |---|---|---|
-| `agents` | required | The service list above. |
+| `agents` | required | The agent list above. |
 | `poll_interval` | `5` | Seconds between Global Controller loop iterations. Also exported to containers as `CANYONOS_POLL_INTERVAL`. |
 | `cleanup_interval` | `10` | Seconds between cleanup passes. |
 | `project_id` | generated | Written back into the file on first deploy. Leave it out on a new project. |
@@ -375,7 +375,7 @@ imports: `import yaml` installs as `PyYAML`, `import cv2` as `opencv-python`,
 schema and fails in the image build.
 
 Follow module-level imports out of the entrypoint into the copy to build the
-list. Stop at another service's `entrypoint`: that module is a stub in this
+list. Stop at another agent's `entrypoint`: that module is a stub in this
 image, so nothing behind it runs here. A package `__init__.py` on the way is
 real and runs first, so its imports count too.
 

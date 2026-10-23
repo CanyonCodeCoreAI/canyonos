@@ -27,7 +27,7 @@ class LocalRedisPortTests(unittest.TestCase):
         self.assertEqual(local_redis_port(path), 6379)
 
     def test_a_remote_agents_port_is_ignored(self):
-        """That Redis runs on the remote node, not the one the dashboard talks to."""
+        """That Redis runs on the remote machine, not the one the dashboard talks to."""
         path = self._config(
             {"agents": [{"name": "A", "host": "10.0.0.5", "redis_port": 6390}]}
         )

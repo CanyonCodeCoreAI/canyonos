@@ -11,8 +11,8 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 |---|---|
 | `Config file not found: .car/config/global_controller.yaml` | The command ran in a directory without that file. `canyonos deploy` looks for `.car` in the current directory. |
 | `the project source directory .car/app does not exist` | `.car/app` was never created, or the command ran from the wrong directory |
-| `duplicate service name ... (names are lowercased into one image tag)` | Two entries differ only in case |
-| `is required when provider is 'EC2'` | An EC2 entry has no `instance_type` |
+| `duplicate agent name ... (names are lowercased into one image tag)` | Two entries differ only in case |
+| `is required when provider is 'EC2'` | An EC2 entry has no `machine_type` |
 | `expected an integer >= 1` on `replicas` | `replicas` is a string or zero |
 | `is not a single PEP 508 requirement` | A `requirements` item has several packages or a stray flag |
 | `is not built from builtin types` on an argument or `returns` `type` | A typing name like `List[str]`; use `list[str]` |
@@ -53,7 +53,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 |---|---|
 | `unexpected keyword argument` in the agent | The argument name in `functions` differs from the method's parameter name |
 | `missing ... required positional argument` | `functions` does not declare a parameter the method requires, or the caller did not send it |
-| `Unauthorized: Policy denied access to service` | The first matching policy rule, or no rule at all, excludes that service |
+| `Unauthorized: Policy denied access to agent` | The first matching policy rule, or no rule at all, excludes that agent |
 | `.value()` returns text that looks like a dict | Expected. Results travel as strings; `json.loads` it |
 | `is not JSON serializable` | The agent returned framework objects. Convert to plain types first |
 | The response holds `<...Future object at 0x...>` | `main` formatted a `Future` (`str`, f-string, `json.dumps`) before resolving it. Call `.value()` first |
@@ -85,5 +85,5 @@ lists the project's containers. Run `canyonos quit` to remove them.
 | Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
 | `canyonos clean` deleted `.car/app` and `.car/config` | That is what it does: it removes the whole `.car` and the images of the agents in `global_controller.yaml` |
 | Containers remain after `canyonos clean` | `clean` never touches containers. Use `canyonos stop` or `canyonos quit` |
-| EC2 instances remain after `canyonos stop` | The drain waited 30 seconds and moved on. See [EC2 deployment](EC2.md) |
+| EC2 machines remain after `canyonos stop` | The stop waited 30 seconds and moved on. See [EC2 deployment](EC2.md) |
 | Images remain after `canyonos clean` | Docker was unreachable, the images live on a different Docker context than the one the deploy used, or the agent was removed from `global_controller.yaml` before `clean` ran |

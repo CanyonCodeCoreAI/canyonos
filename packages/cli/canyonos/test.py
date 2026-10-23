@@ -63,8 +63,8 @@ def _force_local_providers(config_path):
     yaml_rt = round_trip_yaml()
     data = yaml_rt.load(original)
 
-    for agent in data.get("agents") or []:
-        agent["provider"] = "local"
+    for agent_spec in data.get("agents") or []:
+        agent_spec["provider"] = "local"
 
     with open(config_path, "w") as f:
         yaml_rt.dump(data, f)

@@ -23,7 +23,7 @@ POLICY = {
     "scale_up_above": 10,
     "scale_down_below": 1,
 }
-INSTANCE = {
+REPLICA = {
     "provider": "local",
     "agent_name": "Alpha",
     "replica_index": 0,
@@ -31,10 +31,10 @@ INSTANCE = {
 }
 
 
-def _controller(policy, agent_specs=None):
+def _controller(policy, agent_specs_by_name=None):
     controller = GlobalController.__new__(GlobalController)
     controller.redis = _FakeRedis()
-    controller.agent_specs = agent_specs or {"Alpha": {"name": "Alpha"}}
+    controller.agent_specs_by_name = agent_specs_by_name or {"Alpha": {"name": "Alpha"}}
     controller.redis.set("scaling:config", json.dumps({"scaling": policy}))
     return controller
 
@@ -306,13 +306,13 @@ class RecordSamplesTests(unittest.TestCase):
             "requests_completed": "20",
             "execution_ms_total": "3000",
         }
-        controller._record_instance_sample(INSTANCE, first)
-        key = contract.instance_key("local:Alpha:0")
+        controller._record_replica_sample(REPLICA, first)
+        key = contract.replica_key("Alpha-0")
         previous = json.loads(controller.redis.lists[key][0])
         previous["observed_at"] -= 60
         controller.redis.lists[key][0] = json.dumps(previous)
 
-        sample = controller._record_instance_sample(INSTANCE, second)
+        sample = controller._record_replica_sample(REPLICA, second)
 
         self.assertAlmostEqual(sample["requests_per_minute"], 10, places=0)
         self.assertEqual(sample["avg_execution_ms"], 200)

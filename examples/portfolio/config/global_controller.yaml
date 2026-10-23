@@ -29,7 +29,7 @@ agents:
         returns:
           type: dict
     provider: local
-    instance_type: t3.micro
+    machine_type: t3.micro
 
   # Stage 0b: price history fetch. Network/IO-bound, cheap CPU. Called by
   # MetricsAgent, one fetch per ticker — high fan-out, so multiple replicas.
@@ -42,7 +42,7 @@ agents:
       gpu: 0
     entrypoint: agents/price_agent.py
     provider: local
-    instance_type: t3.micro
+    machine_type: t3.micro
     requirements: [yfinance]
     functions:
       - name: get_history
@@ -74,7 +74,7 @@ agents:
         returns:
           type: dict
     provider: local
-    instance_type: t3.micro
+    machine_type: t3.micro
 
   # Stage 2: portfolio-level risk aggregation. Single call per request; needs
   # every ticker's metrics (the barrier).
@@ -96,7 +96,7 @@ agents:
         returns:
           type: dict
     provider: local
-    instance_type: t3.micro
+    machine_type: t3.micro
 
   # Stage 3: LLM briefing via Bedrock. On the critical path, one call per
   # request.
@@ -121,7 +121,7 @@ agents:
         returns:
           type: str
     provider: local
-    instance_type: t3.micro
+    machine_type: t3.micro
 
   # The agent the endpoint serves over HTTP; it calls the stages above.
   - name: Workflow
@@ -140,7 +140,7 @@ agents:
         returns:
           type: dict
     provider: local
-    instance_type: t3.micro
+    machine_type: t3.micro
 
   # Example: a shared Postgres state store (commented out, not used by this pipeline).
   # - name: StateDB

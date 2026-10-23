@@ -3,7 +3,7 @@
 
 """Tests for the OTel *logs* pipeline: log_convert.log_row_to_log_records,
 otel_writer._log_write_rows, otel_reader.log_mark_sent(_many), the log exporter build,
-_log_send_pending, and the logs-specific empty-queue/prune/flush paths. (The trace side is
+_log_send_pending, and the logs-specific empty-queue/delete/flush paths. (The trace side is
 covered by test_otel_exporter_fanout.py; the metrics side by test_otel_metrics.py.)
 """
 
@@ -283,11 +283,11 @@ class ProcessLogHandlerTests(_LogsQueueTestCase):
         super().tearDown()
 
     def test_process_log_handler_queues_records_under_its_source_name(self):
-        self.logger.info("polling %d instance(s)", 3)
+        self.logger.info("polling %d replica(s)", 3)
         self.logger.debug("not queued")
 
         (row,) = self._rows().values()
-        self.assertEqual(row["body"], "polling 3 instance(s)")
+        self.assertEqual(row["body"], "polling 3 replica(s)")
         self.assertEqual(row["agent_id"], "Global Controller")
         self.assertEqual(row["project_id"], "proj")
         self.assertIsNone(row["future_id"])
@@ -558,7 +558,7 @@ class LogQueueStateTests(unittest.TestCase):
         self.assertEqual(otel_exporter._trace_empty_queue["consecutive"], 0)
 
 
-class PruneExpiredLogsTests(unittest.TestCase):
+class DeleteExpiredLogsTests(unittest.TestCase):
     def setUp(self):
         fd, self.tmp = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -581,29 +581,29 @@ class PruneExpiredLogsTests(unittest.TestCase):
         with sqlite3.connect(self.tmp) as conn:
             return {r[0] for r in conn.execute("SELECT log_id FROM logs_waiting")}
 
-    def test_prune_removes_aged_out_rows_regardless_of_sent(self):
+    def test_delete_removes_aged_out_rows_regardless_of_sent(self):
         now = time.time()
         self._seed_log("old-sent", now - 10000, 1)
         self._seed_log("old-unsent", now - 10000, 0)
         self._seed_log("new-unsent", now - 10, 0)
-        removed = otel_reader.prune_expired(
+        removed = otel_reader.delete_expired(
             "logs_waiting", "observed_at", 600, self.tmp
         )
         self.assertEqual(removed, 2)
         self.assertEqual(self._log_ids(), {"new-unsent"})
 
-    def test_prune_leaves_rows_with_a_null_timestamp(self):
+    def test_delete_leaves_rows_with_a_null_timestamp(self):
         self._seed_log("unsent-null-ts", None, 0)
         self.assertEqual(
-            otel_reader.prune_expired("logs_waiting", "observed_at", 0, self.tmp), 0
+            otel_reader.delete_expired("logs_waiting", "observed_at", 0, self.tmp), 0
         )
         self.assertEqual(self._log_ids(), {"unsent-null-ts"})
 
-    def test_prune_expired_rows_covers_the_logs_table(self):
+    def test_delete_expired_rows_covers_the_logs_table(self):
         now = time.time()
         self._seed_log("old", now - otel_exporter.LOG_RETENTION_SECONDS - 60, 1)
         with patch.object(otel_exporter, "DB_PATH", self.tmp):
-            otel_exporter._prune_expired_rows()
+            otel_exporter._delete_expired_rows()
         self.assertEqual(self._log_ids(), set())
 
 

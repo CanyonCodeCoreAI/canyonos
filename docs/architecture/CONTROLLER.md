@@ -18,12 +18,12 @@ CLI host:         ──▶          8000
 │        ▲                                                                     │
 │        ├── agent replica: LocalController + agent code                      │
 │        │      gRPC [::]:50051; host publication <host>:<host_port>           │
-│        │      routing_endpoint ──▶ <runtime_id>:50051 (local)                │
+│        │      address ──▶ <container_name>:50051 (local)                     │
 │        │      LLM gateway ──▶ 127.0.0.1:8081                                   │
 │        │                                                                     │
 │        ├── canyonos-<project>-endpoint-0 (GC's machine): routing-only        │
 │        │      LocalController + gunicorn; host <api_port> ──▶ container 8080 │
-│        │      routing_endpoint ──▶ <runtime_id>:50051, or                    │
+│        │      address ──▶ <container_name>:50051, or                         │
 │        │        <CANYONOS_PRIVATE_IP>:<host_port> when that is set           │
 │        │                                                                     │
 │        └── canyonos-<project>-metrics-<host>                                 │
@@ -47,7 +47,7 @@ canyonos_core.server.deploy
                     │    │                    + endpoint spec after the agents
                     │    ├─ resolve_env_file
                     │    └─ RedisClient
-                    ├─ _cleanup_stale_containers
+                    ├─ _remove_stale_containers
                     ├─ _launch_redis_containers
                     ├─ _launch_metrics_collectors
                     ├─ _apply_config
@@ -86,7 +86,7 @@ python local_controller.py --port 50051  python -m canyonos_core.endpoint
                                 │              CANYONOS_REDIS_PORT)
                                 ├─ _start_llm_gateway ──▶ 127.0.0.1:8081 (agent only)
                                 │                         └─ canyonos_core.llm_gateway
-                                ├─ GET controller:<host>:<port>:agent_id
+                                ├─ GET controller:<host>:<port>:replica_id
                                 ├─ SET status = initializing
                                 ├─ _metrics_loop
                                 ├─ _load_agent
@@ -141,10 +141,10 @@ calling agent   ──▶ generated agent stub ──▶ Future.__init__
                                       LocalController.run ──▶ _process_request
                                                                │
                       policy:rules ──▶ _check_policy            │
-   routing_table:* ──▶ _load_routing ──▶ _resolve_endpoint (memory, skips replicas marked down)
+   routing_table:* ──▶ _load_routing ──▶ _resolve_address (memory, skips replicas marked down)
                                                                │
                          ┌─────────────────────────────────────┴──────────────┐
-                         │ endpoint == _my_endpoint                         │ remote
+                         │ address == _my_address                           │ remote
                          ▼                                                  ▼
              ThreadPoolExecutor.submit                              _forward_request
                          │                                          Execute.future (2 s)
@@ -191,7 +191,7 @@ root future (parent=None) done ──▶ SADD request:completed
                                          │
                                          ▼
                             GlobalController._trigger_cleanup
-                              ├─ SMEMBERS on every node Redis
+                              ├─ SMEMBERS on every machine Redis
                               ├─ union request_ids
                               └─ Cleanup ──▶ every LocalControllerServicer
                                                   └─ _cleanup_request
@@ -225,10 +225,10 @@ LocalController / LocalControllerServicer
              request:<request_id>:context, request:<request_id>:futures,
              request:<request_id>:cleanup_lock, future:<future_id>,
              future:<future_id>:children, future:<future_id>:consumers,
-             affinity:<request_id>, execute:<endpoint>:<future_id>:accepted,
+             affinity:<request_id>, execute:<address>:<future_id>:accepted,
              request:completed
-  reads  ◀── controller:<host>:<port>:agent_id,
-             routing_table:endpoints, routing_table:stateful, policy:rules,
+  reads  ◀── controller:<host>:<port>:replica_id,
+             routing_table:addresses, routing_table:stateful, policy:rules,
              request:<request_id>:context, request:<request_id>:futures,
              future:<future_id>, future:<future_id>:consumers,
              affinity:<request_id>
@@ -241,7 +241,7 @@ endpoint / Future
 
 reconciler
   writes ──▶ agent_instance:*, agent:<name>:instances,
-             routing_table:services, routing_table:endpoints,
+             routing_table:agents, routing_table:addresses,
              routing_table:stateful
 ```
 

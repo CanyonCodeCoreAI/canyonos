@@ -127,7 +127,7 @@ _PHASES = (
     ("No Docker images to build.", None, "No images to build"),
     ("Build complete.", None, "Build complete"),
     ("Deploying from config:", "Starting deploy...", None),
-    ("Checking for stale containers", "Cleaning up stale containers...", None),
+    ("Checking for stale containers", "Removing stale containers...", None),
     ("Redis launched on", None, "Redis ready"),
     ("Docker container(s) across", "Starting agents...", None),
 )
@@ -207,7 +207,7 @@ class PhaseTracker:
             self.spinner = self._agent_progress()
             return self.spinner, None, False
 
-        # Matched on the endpoint, since the name repeats across an agent's replicas.
+        # Matched on the published address, since the name repeats across an agent's replicas.
         ready = re.search(r"Controller (\S+ \([^)]+\)) is ready\.", line)
         if ready:
             self.replicas_ready.add(ready.group(1))

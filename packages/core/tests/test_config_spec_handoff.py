@@ -86,7 +86,7 @@ class RefreshTests(unittest.TestCase):
     def _context(self, redis, agents):
         context = ControllerContext.__new__(ControllerContext)
         context.redis = redis
-        context._set_controllers(agents)
+        context._set_agent_specs(agents)
         return context
 
     def test_published_specs_replace_the_ones_loaded_at_construction(self):
@@ -94,23 +94,23 @@ class RefreshTests(unittest.TestCase):
         write_config_specs([ALPHA, BETA], redis)
         context = self._context(redis, [ALPHA])
 
-        self.assertTrue(context.refresh_controllers_from_redis())
-        self.assertEqual(context.controllers, [ALPHA, BETA])
-        self.assertEqual(sorted(context.agent_specs), ["Alpha", "Beta"])
+        self.assertTrue(context.refresh_agent_specs_from_redis())
+        self.assertEqual(context.agent_specs, [ALPHA, BETA])
+        self.assertEqual(sorted(context.agent_specs_by_name), ["Alpha", "Beta"])
 
     def test_an_unchanged_spec_reports_no_refresh(self):
         redis = _FakeRedis()
         write_config_specs([ALPHA], redis)
         context = self._context(redis, [ALPHA])
 
-        self.assertFalse(context.refresh_controllers_from_redis())
+        self.assertFalse(context.refresh_agent_specs_from_redis())
 
     def test_an_unseeded_redis_leaves_the_current_specs_in_place(self):
         """Absent specs must not read as "no agents"; that would remove the fleet."""
         context = self._context(_FakeRedis(), [ALPHA])
 
-        self.assertFalse(context.refresh_controllers_from_redis())
-        self.assertEqual(context.controllers, [ALPHA])
+        self.assertFalse(context.refresh_agent_specs_from_redis())
+        self.assertEqual(context.agent_specs, [ALPHA])
 
     def test_a_redis_failure_leaves_the_current_specs_in_place(self):
         class _Boom(_FakeRedis):
@@ -120,8 +120,8 @@ class RefreshTests(unittest.TestCase):
         context = self._context(_Boom(), [ALPHA])
 
         with self.assertLogs("canyonos_core.controller.controller_context", "WARNING"):
-            self.assertFalse(context.refresh_controllers_from_redis())
-        self.assertEqual(context.controllers, [ALPHA])
+            self.assertFalse(context.refresh_agent_specs_from_redis())
+        self.assertEqual(context.agent_specs, [ALPHA])
 
 
 class ReloadPropagationTests(unittest.TestCase):
@@ -131,8 +131,8 @@ class ReloadPropagationTests(unittest.TestCase):
         context = ControllerContext.__new__(ControllerContext)
         context.redis = redis
         context.config_path = "/tmp/canyonos.yaml"
-        context.node_redis_for_instance = lambda instance: redis
-        context._set_controllers(agents)
+        context.machine_redis_for_replica = lambda replica: redis
+        context._set_agent_specs(agents)
 
         patcher = patch.object(Reconciler, "_port_is_open", return_value=True)
         patcher.start()

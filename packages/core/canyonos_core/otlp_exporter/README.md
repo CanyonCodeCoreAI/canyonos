@@ -44,7 +44,7 @@ result code. Can be made to be async later but since this is a separate process 
 ### Pruning Data (Selective Deletion of Completed Data)
 Every 5 minutes, a function runs that deletes
 rows that are delivered (sent = 1), and have a non-null timestamp, and are older than the
-signal's retention. If a row has been completed for 30 minutes and somehow not sent, it automatically gets pruned too to prevent bounds from growing too much.
+signal's retention. If a row has been completed for 30 minutes and somehow not sent, it automatically gets deleted too to prevent bounds from growing too much.
 
 ### Flushing Data (Total Annihilation of Data)
 The exporter is always running, even with no destinations configured. When

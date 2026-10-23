@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Fix C: a restart must not unconditionally wipe and recreate each node's Redis container.
+"""Fix C: a restart must not unconditionally wipe and recreate each machine's Redis container.
 
 _launch_redis_containers() used to `docker run` a fresh canyonos-redis-<host> container on every
 __init__, unconditionally -- wiping every `agent_instance:*` record the Provisioner needs to
-recognize already-running EC2 replicas as reusable. ensure_instances()'s dedup logic was already
+recognize already-running EC2 replicas as reusable. ensure_replicas()'s dedup logic was already
 correct; it was just fed an empty Redis on every restart, so it reprovisioned everything from
 scratch and orphaned the previous replicas. The fix: check whether the existing container is
 already healthy before recreating it.
@@ -25,10 +25,10 @@ from canyonos_core.reconciler import providers
 
 def _bare_controller(controllers):
     controller = GlobalController.__new__(GlobalController)
-    controller._set_controllers(controllers)
+    controller._set_agent_specs(controllers)
     controller.redis_containers = {}
     controller.redis_ports = {}
-    controller.node_redis = {}
+    controller.machine_redis = {}
     controller.redis = None
     providers.bind(controller)
     return controller
@@ -86,7 +86,7 @@ class RedisContainerReuseTests(unittest.TestCase):
             "a healthy existing Redis container must not be recreated",
         )
         self.assertNotIn("localhost", controller.redis_containers)
-        self.assertIn("localhost", controller.node_redis)
+        self.assertIn("localhost", controller.machine_redis)
         self.assertEqual(controller.redis_ports["localhost"], 6379)
 
         controller._run_cmd = MagicMock(

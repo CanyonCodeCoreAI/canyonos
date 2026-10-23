@@ -353,7 +353,7 @@ class MetricQueueStateTests(unittest.TestCase):
         self.assertEqual(otel_exporter._trace_empty_queue["consecutive"], 0)
 
 
-class PruneExpiredTests(unittest.TestCase):
+class DeleteExpiredTests(unittest.TestCase):
     def setUp(self):
         fd, self.tmp = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -376,27 +376,27 @@ class PruneExpiredTests(unittest.TestCase):
         with sqlite3.connect(self.tmp) as conn:
             return {r[0] for r in conn.execute("SELECT sample_id FROM metrics_waiting")}
 
-    def test_prune_removes_aged_out_rows_regardless_of_sent(self):
+    def test_delete_removes_aged_out_rows_regardless_of_sent(self):
         now = time.time()
         self._seed_metric("old-sent", now - 10000, 1)  # removed
         self._seed_metric("old-unsent", now - 10000, 0)  # removed: sent-agnostic
         self._seed_metric("new-unsent", now - 10, 0)  # kept: too recent
-        removed = otel_reader.prune_expired(
+        removed = otel_reader.delete_expired(
             "metrics_waiting", "observed_at", 600, self.tmp
         )
         self.assertEqual(removed, 2)
         self.assertEqual(self._metric_ids(), {"new-unsent"})
 
-    def test_prune_leaves_rows_with_a_null_timestamp(self):
+    def test_delete_leaves_rows_with_a_null_timestamp(self):
         # NULL finished_at is how an in-flight span looks; the age-out must never drop
         # those mid-execution, even when unsent.
         self._seed_metric("unsent-null-ts", None, 0)
         self.assertEqual(
-            otel_reader.prune_expired("metrics_waiting", "observed_at", 0, self.tmp), 0
+            otel_reader.delete_expired("metrics_waiting", "observed_at", 0, self.tmp), 0
         )
         self.assertEqual(self._metric_ids(), {"unsent-null-ts"})
 
-    def test_prune_expired_rows_covers_both_tables(self):
+    def test_delete_expired_rows_covers_both_tables(self):
         now = time.time()
         self._seed_metric("old", now - otel_exporter.METRIC_RETENTION_SECONDS - 60, 1)
         with sqlite3.connect(self.tmp) as conn:
@@ -407,7 +407,7 @@ class PruneExpiredTests(unittest.TestCase):
             )
             conn.commit()
         with patch.object(otel_exporter, "DB_PATH", self.tmp):
-            otel_exporter._prune_expired_rows()
+            otel_exporter._delete_expired_rows()
         with sqlite3.connect(self.tmp) as conn:
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM metrics_waiting").fetchone()[0], 0

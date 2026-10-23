@@ -22,7 +22,7 @@ import os
 import sys
 from typing import NamedTuple
 
-from canyonos_core.schema import AgentService, check_project
+from canyonos_core.schema import CodeAgent, check_project
 from canyonos_core.stub_generator import AGENT_FLAT_MODULES
 
 # canyonos_core/cli.py SOURCE_DIR_NAME -- the copy of the application source
@@ -260,7 +260,7 @@ def _methods(source_dir, cls, seen=frozenset()):
     return methods, complete
 
 
-def _check_adapter(report, source_dir, entrypoint_path, service):
+def _check_adapter(report, source_dir, entrypoint_path, agent_spec):
     """The class the controller loads, and the methods it calls on it."""
     tree, error = _parse(entrypoint_path)
     if tree is None:
@@ -274,7 +274,7 @@ def _check_adapter(report, source_dir, entrypoint_path, service):
         )
         return
 
-    cls = _resolve_class(source_dir, entrypoint_path, tree, service.name)
+    cls = _resolve_class(source_dir, entrypoint_path, tree, agent_spec.name)
     if cls is _UNREADABLE:
         return
     if cls is None:
@@ -284,16 +284,16 @@ def _check_adapter(report, source_dir, entrypoint_path, service):
             "CAR-ADAPTER-CLASS",
             entrypoint_path,
             1,
-            f"no class named `{service.name}` at module level (found: {found})",
+            f"no class named `{agent_spec.name}` at module level (found: {found})",
             "_load_agent does getattr(module, CANYONOS_AGENT_NAME) and swallows "
             "the AttributeError. The class name must equal the entry's name exactly.",
         )
         return
 
     methods, complete = _methods(source_dir, cls)
-    _check_constructor(report, service.name, methods)
-    for function in service.functions:
-        _check_method(report, cls.path, service.name, function, methods, complete)
+    _check_constructor(report, agent_spec.name, methods)
+    for function in agent_spec.functions:
+        _check_method(report, cls.path, agent_spec.name, function, methods, complete)
 
 
 def _check_constructor(report, name, methods):
@@ -419,14 +419,14 @@ def _check_flat_collisions(report, source_dir):
         )
 
 
-def _check_package_reexport(report, source_dir, service):
+def _check_package_reexport(report, source_dir, agent_spec):
     """The entrypoint's package must not import from the entrypoint itself.
 
     Python runs a package's `__init__.py` before any of its submodules, and in
     every image except this agent's own the module at the entrypoint is the
     generated stub, which defines the agent class and nothing else.
     """
-    package, _, module = _module_path(service.entrypoint).rpartition(".")
+    package, _, module = _module_path(agent_spec.entrypoint).rpartition(".")
     if not package:
         return
     init_path = os.path.join(source_dir, *package.split("."), "__init__.py")
@@ -454,7 +454,7 @@ def _check_package_reexport(report, source_dir, service):
             init_path,
             node.lineno,
             f"`{package}/__init__.py` re-exports from `{module}`, the "
-            f"entrypoint for {service.name}",
+            f"entrypoint for {agent_spec.name}",
             f"Any peer image that imports anything from `{package}` re-runs "
             "this re-export against the stub and dies at container startup with "
             f"ImportError. Point `entrypoint` at a module `{package}/"
@@ -522,16 +522,16 @@ def validate_car(artifact_root, config_path=None):
     if manifest is None or not os.path.isdir(source_dir):
         return _sorted(report.findings)
 
-    for service in manifest.agents:
-        if not isinstance(service, AgentService):
+    for agent_spec in manifest.agents:
+        if not isinstance(agent_spec, CodeAgent):
             continue
-        entrypoint_path = os.path.join(source_dir, service.entrypoint)
+        entrypoint_path = os.path.join(source_dir, agent_spec.entrypoint)
         if not os.path.isfile(entrypoint_path) or not _inside(
             source_dir, entrypoint_path
         ):
             continue  # reported by check_project
-        _check_adapter(report, source_dir, entrypoint_path, service)
-        _check_package_reexport(report, source_dir, service)
+        _check_adapter(report, source_dir, entrypoint_path, agent_spec)
+        _check_package_reexport(report, source_dir, agent_spec)
 
     _check_flat_collisions(report, source_dir)
     return _sorted(report.findings)

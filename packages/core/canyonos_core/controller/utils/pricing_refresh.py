@@ -22,7 +22,7 @@ def refresh_llm_prices(
     """Refresh the `models:` entries in prices_path from source_url's per-token costs.
 
     Only updates model ids already present in the file -- never adds or removes keys,
-    and never touches `instances:`. Returns True if the file was rewritten, False on
+    and never touches `machines:`. Returns True if the file was rewritten, False on
     any failure (network, bad response, no matches) or if nothing changed -- this must
     never raise, since it runs unconditionally on every global controller startup.
     """

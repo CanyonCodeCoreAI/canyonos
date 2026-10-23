@@ -160,7 +160,7 @@ class RedisPortTests(unittest.TestCase):
 
         gc = GlobalController.__new__(GlobalController)
         gc.config = {}
-        gc.controllers = [
+        gc.agent_specs = [
             {
                 "provider": "local",
                 "user": None,
@@ -171,10 +171,10 @@ class RedisPortTests(unittest.TestCase):
         ]
         gc.redis_containers = {}
         gc.redis_ports = {}
-        gc.node_redis = {}
+        gc.machine_redis = {}
         gc.redis = None
         gc._run_cmd = run_cmd
-        gc._get_replica_placements = lambda ctrl: [("localhost", 5001)]
+        gc._get_replica_placements = lambda agent_spec: [("localhost", 5001)]
         return gc
 
     def _run_cmd_factory(self, conflicts):
@@ -247,7 +247,7 @@ class RedisPortTests(unittest.TestCase):
     def test_string_redis_port_is_coerced_not_crashed_on(self):
         run_cmd = self._run_cmd_factory(conflicts=0)
         gc = self._controller(run_cmd)
-        gc.controllers[0]["redis_port"] = "6379"
+        gc.agent_specs[0]["redis_port"] = "6379"
         with (
             patch("canyonos_core.controller.global_controller.RedisClient"),
             patch("canyonos_core.controller.global_controller._wait_for_redis"),

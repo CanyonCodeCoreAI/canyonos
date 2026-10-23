@@ -89,9 +89,9 @@ def _validate_or_exit(config_path, source_dir=None):
     return manifest
 
 
-def _normalize_requirements(agent_cfg):
-    """Return a service's `requirements` list; the schema already checked its shape."""
-    return list(agent_cfg.get("requirements") or [])
+def _normalize_requirements(agent_spec):
+    """Return an agent's `requirements` list; the schema already checked its shape."""
+    return list(agent_spec.get("requirements") or [])
 
 
 def _write_bake_file(bake_targets, bake_file_path, platform):
@@ -155,12 +155,12 @@ def _run_build(config_path):
     artifact_root, source_root = _project_layout()
 
     # Nothing below runs against a config the schema rejects. Validate before loading so
-    # non-YAML files render as violations too, and pass source_root so a service with
+    # non-YAML files render as violations too, and pass source_root so an agent with
     # missing code fails here instead of being skipped from a "successful" deploy.
     manifest = _validate_or_exit(config_path, source_root)
 
     config = load_config(config_path)
-    agents = config.get("agents", [])
+    agent_specs = config.get("agents", [])
     package_dir = _get_package_dir()
 
     from canyonos_core.stub_generator import (
@@ -169,16 +169,16 @@ def _run_build(config_path):
     )
 
     too_old = []
-    for agent in agents:
-        requirements = _normalize_requirements(agent)
+    for agent_spec in agent_specs:
+        requirements = _normalize_requirements(agent_spec)
         too_old += [
-            f"{agent['name']} currently requires {asked}, but CanyonOS only supports {supported}"
+            f"{agent_spec['name']} currently requires {asked}, but CanyonOS only supports {supported}"
             for asked, supported in too_old_requirements(requirements)
         ]
         for asked, tested in too_new_requirements(requirements):
             logger.warning(
                 "%s currently requires %s, but CanyonOS has only tested %s; it may not work",
-                agent["name"],
+                agent_spec["name"],
                 asked,
                 tested,
             )
@@ -199,21 +199,23 @@ def _run_build(config_path):
         target_docker_platform,
     )
 
-    agent_services = [service for service in manifest.agents if service.type == "agent"]
+    code_agent_specs = [
+        agent_spec for agent_spec in manifest.agents if agent_spec.type == "agent"
+    ]
 
     # Keyed by the stub's own basename, which is the entrypoint's: the stub is
     # written to `stubs/<entrypoint>` below.
     stub_entrypoints = {
-        os.path.basename(service.entrypoint): service.entrypoint
-        for service in agent_services
+        os.path.basename(code_agent_spec.entrypoint): code_agent_spec.entrypoint
+        for code_agent_spec in code_agent_specs
     }
 
     stub_paths = []
-    for service in agent_services:
-        output_path = os.path.join(stubs_dir, service.entrypoint)
+    for code_agent_spec in code_agent_specs:
+        output_path = os.path.join(stubs_dir, code_agent_spec.entrypoint)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        logger.info("Generating stub: %s -> %s", service.name, output_path)
-        generate_stub(service, output_path)
+        logger.info("Generating stub: %s -> %s", code_agent_spec.name, output_path)
+        generate_stub(code_agent_spec, output_path)
         stub_paths.append(output_path)
 
     # -------------------------------------------------------------- #
@@ -243,17 +245,17 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     #  Step 4: Generate Docker contexts                               #
     # -------------------------------------------------------------- #
-    platform = target_docker_platform(agents)
+    platform = target_docker_platform(agent_specs)
     bake_targets = []
-    for agent_cfg in agents:
-        agent_name = agent_cfg["name"]
-        agent_type = agent_cfg.get("type", "agent")
+    for agent_spec in agent_specs:
+        agent_name = agent_spec["name"]
+        agent_type = agent_spec.get("type", "agent")
 
         if agent_type == "database":
             # No build: pull the declared image and tag it like any other
             # agent image so the rest of the deploy pipeline treats it the
             # same way (EC2 image transfer, etc.) without further changes.
-            image = agent_cfg["image"]
+            image = agent_spec["image"]
             target_image = image_name(agent_name)
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
             subprocess.run(
@@ -263,9 +265,9 @@ def _run_build(config_path):
             continue
 
         # Every key read below is one the schema requires and has checked,
-        # down to the file being on disk -- a service that cannot be built
+        # down to the file being on disk -- an agent that cannot be built
         # fails the deploy rather than dropping quietly out of it.
-        agent_file = os.path.join(source_root, agent_cfg["entrypoint"])
+        agent_file = os.path.join(source_root, agent_spec["entrypoint"])
         docker_context = os.path.join(artifact_root, "docker_container", agent_name)
         logger.info("Generating Docker context for '%s'", agent_name)
         generate_docker(
@@ -275,7 +277,7 @@ def _run_build(config_path):
             grpc_stubs_dir=grpc_stubs_dir,
             stub_files=stub_paths,
             project_dir=source_root,
-            requirements=_normalize_requirements(agent_cfg),
+            requirements=_normalize_requirements(agent_spec),
             stub_entrypoints=stub_entrypoints,
         )
 
@@ -368,7 +370,8 @@ def _cmd_deploy(args):
     _ensure_grpc_stubs_importable(artifact_root)
 
     for name in dict.fromkeys(
-        agent.get("provider", providers.DEFAULT) for agent in config.get("agents", [])
+        agent_spec.get("provider", providers.DEFAULT)
+        for agent_spec in config.get("agents", [])
     ):
         providers.get(name).preflight()
 

@@ -60,7 +60,7 @@ class MachineMetricsPoller:
         """Snapshot this machine's metrics.
 
         This process is one-per-machine, so it only reports machine-level signals plus
-        the box's total capacity -- per-agent/per-instance state (queue length, request
+        the box's total capacity -- per-agent/per-replica state (queue length, request
         counters, resource requirements) stays in each LocalController's own hash.
 
         ``observed_at`` is stamped here, at the producer, so a sample's timestamp is its
@@ -223,7 +223,7 @@ class MachineMetricsPoller:
 
 def _metrics_key_from_env():
     """Prefer the key GlobalController hands us; otherwise compose a machine-scoped one.
-    This process is one-per-machine, so the key is keyed by host, not by instance."""
+    This process is one-per-machine, so the key is keyed by host, not by replica."""
     metrics_key = os.environ.get("CANYONOS_METRICS_KEY")
     if metrics_key:
         return metrics_key

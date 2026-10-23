@@ -4,8 +4,8 @@
 """Docker names, labels, the controller port and image for everything CanyonOS launches.
 
 Every place that creates, bootstraps, or cleans up a container, image, or volume
-derives the name from here, so the provider runtimes and the controller's
-stale-container cleanup cannot drift apart. The `canyonos` CLI keeps a copy of
+derives the name from here, so replica launch and the controller's
+stale-container removal cannot drift apart. The `canyonos` CLI keeps a copy of
 the same scheme in `canyonos/project.py`, since it cannot import this package.
 
 The project comes from `CANYONOS_DOCKER_PROJECT`, which the CLI sets on the
@@ -58,7 +58,7 @@ def container_name(agent_name, replica_index):
 
 def redis_container_name(host):
     """The single source of truth for this name -- every caller (the controller
-    that creates it, and every runtime that points an agent at it) must agree,
+    that creates it, and every launch that points an agent at it) must agree,
     or agents connect to a Redis container that doesn't exist under the name
     they were given."""
     return f"{_prefix()}-redis-{host.replace('.', '-')}"

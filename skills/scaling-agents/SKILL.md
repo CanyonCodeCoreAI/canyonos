@@ -34,7 +34,7 @@ and [database entries](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyon
 - State shared across requests in process: keep `replicas: 1` and
   `stateful: true`, and mark the agent unscalable. Another replica would not see it.
 - State already in an external store, or in a database entry resolved through
-  `routing_table:endpoints`: keep it; the agent is scalable.
+  `routing_table:addresses`: keep it; the agent is scalable.
 - Moving in-process state to a database entry changes application code. Propose
   it with the store and entry it needs; implement it only when approved.
 - All calls share one instance on eight threads. Report unsynchronized mutable

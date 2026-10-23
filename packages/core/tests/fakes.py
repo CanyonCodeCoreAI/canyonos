@@ -136,20 +136,20 @@ class _FakeRedis:
         )
 
 
-def _instance(agent_name, replica_index, created_at=None, host_port=None):
+def _replica(agent_name, replica_index, created_at=None, host_port=None):
     """An agent_instance:* record as the Provisioner writes it."""
     host_port = str(host_port or 8000 + replica_index)
     return {
         "agent_name": agent_name,
         "provider": "local",
-        "runtime_id": f"canyonos-{agent_name.lower()}-{replica_index}",
+        "container_name": f"canyonos-{agent_name.lower()}-{replica_index}",
         "container_port": "50051",
         "replica_index": str(replica_index),
         "private_host": "localhost",
         "public_host": "localhost",
         "host_port": host_port,
-        "endpoint": f"localhost:{host_port}",
-        "routing_endpoint": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
+        "published_address": f"localhost:{host_port}",
+        "address": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
         "created_at": str(created_at if created_at is not None else time.time()),
     }
 
@@ -157,8 +157,8 @@ def _instance(agent_name, replica_index, created_at=None, host_port=None):
 class _FakeProvisioner:
     """Records what the reconciler asked for without touching Docker."""
 
-    def __init__(self, instances=None, raise_for=None, remove_raises=False):
-        self.instances = instances or {}
+    def __init__(self, replicas=None, raise_for=None, remove_raises=False):
+        self.replicas = replicas or {}
         self.raise_for = raise_for
         self.remove_raises = remove_raises
         self.removed = []
@@ -166,12 +166,12 @@ class _FakeProvisioner:
         self.ensure_only = []
         self.unfinished_removals = 0
 
-    def remove_instance(self, instance_id):
+    def remove_replica(self, replica_id):
         if self.remove_raises:
             raise RuntimeError("terminate failed")
-        self.removed.append(instance_id)
+        self.removed.append(replica_id)
 
-    def ensure_instances(self, agent_specs, only=None):
+    def ensure_replicas(self, agent_specs, only=None):
         self.ensure_calls.append(agent_specs)
         self.ensure_only.append(only)
         return []
@@ -180,13 +180,13 @@ class _FakeProvisioner:
         self.unfinished_removals += 1
 
 
-def _seed_instance_records(redis, provisioner):
-    """Write the fake provisioner's instances into Redis, where the reconciler reads them."""
-    for agent_name, records in getattr(provisioner, "instances", {}).items():
+def _seed_replica_records(redis, provisioner):
+    """Write the fake provisioner's replicas into Redis, where the reconciler reads them."""
+    for agent_name, records in getattr(provisioner, "replicas", {}).items():
         for record in records:
-            instance_id = f"{record['provider']}:{agent_name}:{record['replica_index']}"
-            redis.hset_multiple(f"agent_instance:{instance_id}", record)
-            redis.sadd(f"agent:{agent_name}:instances", instance_id)
+            replica_id = f"{agent_name}-{record['replica_index']}"
+            redis.hset_multiple(f"agent_instance:{replica_id}", record)
+            redis.sadd(f"agent:{agent_name}:instances", replica_id)
     raise_for = getattr(provisioner, "raise_for", None)
     if raise_for:
         smembers = redis.smembers
@@ -203,7 +203,7 @@ def _bare_reconciler(context, provisioner, **overrides):
     """Build a Reconciler without running its __init__ (no config, no Docker, no Redis)."""
     from canyonos_core.reconciler.reconciler import Reconciler
 
-    _seed_instance_records(context.redis, provisioner)
+    _seed_replica_records(context.redis, provisioner)
     reconciler = Reconciler.__new__(Reconciler)
     reconciler.context = context
     reconciler.provisioner = provisioner
@@ -244,16 +244,16 @@ def _fake_controller():
 
     controller = SimpleNamespace(
         redis=redis,
-        node_redis={},
+        machine_redis={},
         redis_containers={},
         redis_ports={},
         running=running,
         config={"poll_interval": 5},
         _run_cmd=MagicMock(side_effect=fake_run_cmd),
-        prune_node_redis=MagicMock(),
+        remove_unused_redis_clients=MagicMock(),
     )
-    controller.node_redis_for_instance = lambda instance: controller.node_redis.get(
-        instance["private_host"], redis
+    controller.machine_redis_for_replica = lambda replica: controller.machine_redis.get(
+        replica["private_host"], redis
     )
     providers.bind(controller)
     return controller
@@ -268,13 +268,13 @@ class _FakeWaiter:
 
 
 class _FakeEC2Client:
-    """Stands in for boto3's EC2 client: instances it launches stay listed after they
-    are terminated, until a test deletes them from `instances`."""
+    """Stands in for boto3's EC2 client: machines it launches stay listed after they
+    are terminated, until a test deletes them from `machines`."""
 
     def __init__(self, public_ip="54.10.20.30", private_ip="10.0.0.30"):
         self.public_ip = public_ip
         self.private_ip = private_ip
-        self.instances = {}
+        self.machines = {}
         self.client_calls = []
         self.run_requests = []
         self.terminate_requests = []
@@ -294,15 +294,15 @@ class _FakeEC2Client:
 
     def run_instances(self, **kwargs):
         self.run_requests.append(kwargs)
-        instance_id = f"i-test{len(self.run_requests)}"
-        self.instances[instance_id] = {
-            "InstanceId": instance_id,
+        machine_id = f"i-test{len(self.run_requests)}"
+        self.machines[machine_id] = {
+            "InstanceId": machine_id,
             "ClientToken": kwargs["ClientToken"],
             "State": {"Name": "running"},
             "PrivateIpAddress": self.private_ip,
             "PublicIpAddress": self.public_ip,
         }
-        return {"Instances": [{"InstanceId": instance_id}]}
+        return {"Instances": [{"InstanceId": machine_id}]}
 
     def get_waiter(self, name):
         assert name == "instance_running"
@@ -312,26 +312,26 @@ class _FakeEC2Client:
         tokens = {value for f in Filters for value in f["Values"]}
         return {
             "Reservations": [
-                {"Instances": [instance]}
-                for instance_id, instance in self.instances.items()
-                if instance_id in InstanceIds or instance["ClientToken"] in tokens
+                {"Instances": [machine]}
+                for machine_id, machine in self.machines.items()
+                if machine_id in InstanceIds or machine["ClientToken"] in tokens
             ]
         }
 
     def terminate_instances(self, InstanceIds):
         self.terminate_requests.append(list(InstanceIds))
-        for instance_id in InstanceIds:
-            if instance_id not in self.instances:
+        for machine_id in InstanceIds:
+            if machine_id not in self.machines:
                 raise ClientError(
                     {
                         "Error": {
                             "Code": "InvalidInstanceID.NotFound",
-                            "Message": f"The instance ID '{instance_id}' does not exist",
+                            "Message": f"The instance ID '{machine_id}' does not exist",
                         }
                     },
                     "TerminateInstances",
                 )
-            self.instances[instance_id]["State"] = {"Name": "terminated"}
+            self.machines[machine_id]["State"] = {"Name": "terminated"}
         return {}
 
 

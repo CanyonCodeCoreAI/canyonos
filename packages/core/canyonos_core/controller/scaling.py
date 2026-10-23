@@ -63,8 +63,8 @@ def scale(controller):
         "max_replicas": int(policy["max_replicas"]),
     }
     decisions = []
-    for agent_name, spec in controller.agent_specs.items():
-        if spec.get("type", "agent") != "agent":
+    for agent_name, agent_spec in controller.agent_specs_by_name.items():
+        if agent_spec.get("type", "agent") != "agent":
             continue
         samples = contract.read(controller.redis, contract.agent_key(agent_name))
         if not samples:

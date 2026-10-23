@@ -70,7 +70,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-ROUTING_ENDPOINTS_KEY = "routing_table:endpoints"
+ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
 POLICY_RULES_KEY = "policy:rules"
 EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5
@@ -114,15 +114,15 @@ class LocalController(object):
         # The endpoint's controller runs no agent: it only forwards calls.
         runs_agent = bool(self.agent_name or self.agent_file)
 
-        # Public port is how the routing table and other nodes know us;
+        # Public port is how the routing table and other machines know us;
         # internally the gRPC server binds to `port` (50051 inside Docker).
         self.public_port = os.environ.get("CANYONOS_AGENT_PORT", str(port))
 
-        self._my_endpoint = f"{self.agent_host}:{self.public_port}"
+        self._my_address = f"{self.agent_host}:{self.public_port}"
 
-        self.server, self.servicer = start_server(port, my_endpoint=self._my_endpoint)
+        self.server, self.servicer = start_server(port, my_address=self._my_address)
         self.request_queue = self.servicer.request_queue
-        # Let the gRPC servicer fan a result out to this node's consumers as
+        # Let the gRPC servicer fan a result out to this machine's consumers as
         # soon as it arrives via WriteResult (see _fan_out_to_consumers).
         self.servicer.on_result = self._fan_out_to_consumers
 
@@ -146,8 +146,8 @@ class LocalController(object):
                 raise
 
         # Written by the Provisioner; stamps completed requests with the replica that ran them.
-        self.agent_id = self.redis.get(
-            f"controller:{self.agent_host}:{self.public_port}:agent_id"
+        self.replica_id = self.redis.get(
+            f"controller:{self.agent_host}:{self.public_port}:replica_id"
         )
 
         # global_controller.yaml's `logs:` flag, on by default -- set `logs: false` to opt out. Only
@@ -159,13 +159,13 @@ class LocalController(object):
         if self.logs_enabled:
             self._log_handler = LogHandler(
                 self.redis,
-                agent_id=self.agent_id,
+                agent_id=self.replica_id,
                 agent_name=log_source_name(self.agent_name),
-                endpoint=self._my_endpoint,
+                address=self._my_address,
             )
             logging.getLogger().addHandler(self._log_handler)
 
-        # Periodically publish instance metrics, on the same cadence
+        # Periodically publish replica metrics, on the same cadence
         # GlobalController polls with (via CANYONOS_POLL_INTERVAL).
         self._metrics_key = f"controller:{self.agent_host}:{self.public_port}:metrics"
         self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
@@ -192,8 +192,8 @@ class LocalController(object):
         self._status_lock = threading.Lock()
 
         # Cache for gRPC stubs to remote controllers
-        self._remote_channels = {}  # endpoint -> grpc.Channel
-        self._remote_stubs = {}  # endpoint -> LocalControllerStub
+        self._remote_channels = {}  # address -> grpc.Channel
+        self._remote_stubs = {}  # address -> LocalControllerStub
         # Result callbacks on executor and gRPC threads create stubs too, not just
         # the loop that forwards requests.
         self._remote_stubs_lock = threading.Lock()
@@ -208,7 +208,7 @@ class LocalController(object):
         self._executor = ThreadPoolExecutor(max_workers=max_instances)
         self._executor_futures = {}
         self._executor_futures_lock = threading.Lock()
-        # endpoint -> time.monotonic() until which new picks skip it
+        # address -> time.monotonic() until which new picks skip it
         self._down_until = {}
 
         # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
@@ -237,7 +237,7 @@ class LocalController(object):
 
         logger.info(
             "Local controller initialized at %s (max_agent_instances=%d); %s.",
-            self._my_endpoint,
+            self._my_address,
             max_instances,
             "reported healthy to Redis"
             if publish_ready
@@ -349,7 +349,7 @@ class LocalController(object):
         return gateway_process
 
     def _collect_metrics(self):
-        """Snapshot the in-process instance metrics LocalController owns.
+        """Snapshot the in-process replica metrics LocalController owns.
 
         Machine-level metrics (cpu/gpu/disk/memory/uptime) are sampled by the separate
         per-machine collector container (see GlobalController._launch_metrics_collectors);
@@ -368,7 +368,7 @@ class LocalController(object):
         }
 
     def _metrics_loop(self):
-        """Background thread: periodically publish instance metrics and refresh status."""
+        """Background thread: periodically publish replica metrics and refresh status."""
         while not self._metrics_stop_event.is_set():
             try:
                 metrics = self._collect_metrics()
@@ -448,12 +448,12 @@ class LocalController(object):
             self._policy_rules = []
         return self._policy_rules
 
-    def _check_policy(self, service, context):
+    def _check_policy(self, agent_name, context):
         """
-        Check if the given service is accessible for the given request context.
+        Check if the given agent is accessible for the given request context.
 
         Iterates through rules (sorted most-specific first) and returns True
-        if a matching rule grants access to the service.
+        if a matching rule grants access to the agent.
         """
         rules = self._load_policy_rules()
         if not rules:
@@ -468,82 +468,87 @@ class LocalController(object):
             if all(context.get(k) == v for k, v in match.items()):
                 if access == "all":
                     return True
-                return service in access
+                return agent_name in access
 
         # No rule matched at all
         logger.warning(
             "No policy rule matched for context=%s, denying access to %s",
             context,
-            service,
+            agent_name,
         )
         return False
 
     # ------------------------------------------------------------------ #
-    #  Endpoint resolution (affinity / load balancing)                      #
+    #  Address resolution (affinity / load balancing)                       #
     # ------------------------------------------------------------------ #
 
     def _load_routing(self):
         """Copy the routing table from Redis into memory, where requests read it."""
         self._routing = {
-            service: json.loads(endpoints)
-            for service, endpoints in self.redis.hgetall(ROUTING_ENDPOINTS_KEY).items()
+            agent_name: json.loads(addresses)
+            for agent_name, addresses in self.redis.hgetall(
+                ROUTING_ADDRESSES_KEY
+            ).items()
         }
         self._stateful = {
-            service
-            for service, flag in self.redis.hgetall(ROUTING_STATEFUL_KEY).items()
+            agent_name
+            for agent_name, flag in self.redis.hgetall(ROUTING_STATEFUL_KEY).items()
             if flag == "true"
         }
 
-    def _resolve_endpoint(self, service, request_id):
-        """Pick the correct endpoint for a service.
+    def _resolve_address(self, agent_name, request_id):
+        """Pick the correct address for an agent.
 
         - **Stateful agents**: check for an existing affinity binding in
-          Redis (``affinity:<request_id>:<service>``).  If none exists,
+          Redis (``affinity:<request_id>:<agent>``).  If none exists,
           pick a random replica and persist the binding so all subsequent
-          calls within the same request land on the same instance.
-        - **Stateless agents**: pick a random replica from the endpoint
+          calls within the same request land on the same replica.
+        - **Stateless agents**: pick a random replica from the address
           list on every call.
 
         Returns:
-            The chosen endpoint string, or ``None`` if the service is not
+            The chosen address string, or ``None`` if the agent is not
             in the routing table.
         """
-        endpoints = self._routing.get(service)
-        if endpoints is None:
+        addresses = self._routing.get(agent_name)
+        if addresses is None:
             # Published since the last refresh, e.g. agents provisioned after this
             # controller started.
             self._load_routing()
-            endpoints = self._routing.get(service)
-        if not endpoints:
+            addresses = self._routing.get(agent_name)
+        if not addresses:
             return None
         now = time.monotonic()
         # Every replica is still a candidate when all are marked down, so the call
         # has somewhere to go.
-        available_endpoint = [
-            e for e in endpoints if self._down_until.get(e, 0) <= now
-        ] or endpoints
+        available_addresses = [
+            e for e in addresses if self._down_until.get(e, 0) <= now
+        ] or addresses
 
         # Check if this agent is stateful
-        is_stateful = service in self._stateful
+        is_stateful = agent_name in self._stateful
 
         if is_stateful and request_id:
             affinity_key = f"affinity:{request_id}"
-            existing = self.redis.hget(affinity_key, service)
+            existing = self.redis.hget(affinity_key, agent_name)
             if existing:
                 logger.debug(
-                    "Affinity hit: %s -> %s (request %s)", service, existing, request_id
+                    "Affinity hit: %s -> %s (request %s)",
+                    agent_name,
+                    existing,
+                    request_id,
                 )
                 return existing
             # No existing binding — pick randomly and persist to Hash
-            chosen = random.choice(available_endpoint)
-            self.redis.hset(affinity_key, service, chosen)
+            chosen = random.choice(available_addresses)
+            self.redis.hset(affinity_key, agent_name, chosen)
             logger.info(
-                "Affinity set: %s -> %s (request %s)", service, chosen, request_id
+                "Affinity set: %s -> %s (request %s)", agent_name, chosen, request_id
             )
             return chosen
         else:
             # Stateless: pick randomly
-            return random.choice(available_endpoint)
+            return random.choice(available_addresses)
 
     # ------------------------------------------------------------------ #
     #  Request processing                                                  #
@@ -595,9 +600,9 @@ class LocalController(object):
             if getattr(self, "logs_enabled", True):
                 entry = build_failure_entry(
                     error,
-                    agent_id=self.agent_id,
+                    agent_id=self.replica_id,
                     agent_name=log_source_name(self.agent_name),
-                    endpoint=self._my_endpoint,
+                    address=self._my_address,
                     error_name=error_name,
                 )
                 append_log_entry(self.redis, f"future:{future_id}", entry)
@@ -606,7 +611,7 @@ class LocalController(object):
             # surfaces as an error instead of a 300s timeout.
             self._fan_out_to_consumers(future_id, failed=1, error_message=name)
 
-            if origin and origin != self._my_endpoint:
+            if origin and origin != self._my_address:
                 self._send_result_callback(
                     origin,
                     future_id,
@@ -621,15 +626,15 @@ class LocalController(object):
         """
         Route a request to the correct controller.
 
-        Looks up the service in the routing table. If the endpoint matches
+        Looks up the agent in the routing table. If the address matches
         this controller, execute locally. Otherwise, forward via gRPC.
         """
-        service = data.get("service")
+        agent_name = data.get("service")
         function = data.get("function")
         args = data.get("args", {})
         parent = data.get("parent")
         future_id = data.get("future_id")
-        origin = data.get("origin")  # endpoint of the LC that originated this request
+        origin = data.get("origin")  # address of the LC that originated this request
         request_id = data.get("request_id")  # tracing ID set by the endpoint
         created_at = data.get("created_at")  # origin's true submission time
         baggage = data.get("baggage", {})
@@ -655,7 +660,7 @@ class LocalController(object):
         if request_id and affinities:
             self.redis.hset_multiple(f"affinity:{request_id}", affinities)
 
-        if not service or not function or not future_id:
+        if not agent_name or not function or not future_id:
             logger.error("Malformed request, missing required fields: %s", data)
             self._mark_future_failed(
                 future_id,
@@ -666,8 +671,8 @@ class LocalController(object):
             return
 
         # Check policy before routing
-        if not self._check_policy(service, context):
-            err_msg = f"Unauthorized: Policy denied access to service '{service}'"
+        if not self._check_policy(agent_name, context):
+            err_msg = f"Unauthorized: Policy denied access to agent '{agent_name}'"
             logger.warning(err_msg)
             self._mark_future_failed(
                 future_id,
@@ -681,16 +686,16 @@ class LocalController(object):
         # re-resolving at every hop lets stateless requests ping-pong between replicas.
         route_to = data.get("route_to")
         if route_to:
-            endpoint = route_to
+            address = route_to
         else:
-            endpoint = self._resolve_endpoint(service, request_id)
-            if not endpoint:
+            address = self._resolve_address(agent_name, request_id)
+            if not address:
                 logger.error(
-                    "No endpoint found for service '%s' in routing table.", service
+                    "No address found for agent '%s' in routing table.", agent_name
                 )
                 self._mark_future_failed(
                     future_id,
-                    f"No endpoint found for service '{service}'",
+                    f"No address found for agent '{agent_name}'",
                     origin,
                     error_name="NoEndpointFound",
                 )
@@ -711,11 +716,11 @@ class LocalController(object):
                     )
                     return
 
-        if endpoint == self._my_endpoint:
+        if address == self._my_address:
             submitted_at = time.time()
             executor_future = self._executor.submit(
                 self._execute_locally,
-                service,
+                agent_name,
                 function,
                 args,
                 future_id,
@@ -734,10 +739,10 @@ class LocalController(object):
             # so results get pushed to its Redis via WriteResult.
             for key, value in future_args.items():
                 future_key = f"future:{value}"
-                self.redis.sadd(f"{future_key}:consumers", endpoint)
+                self.redis.sadd(f"{future_key}:consumers", address)
                 logger.info(
                     "Registered %s as consumer of future %s (arg '%s')",
-                    endpoint,
+                    address,
                     value,
                     key,
                 )
@@ -751,9 +756,9 @@ class LocalController(object):
                         "Future %s already resolved, pushing value %s to %s",
                         value,
                         existing_result,
-                        endpoint,
+                        address,
                     )
-                    self._send_result_callback(endpoint, value, existing_result)
+                    self._send_result_callback(address, value, existing_result)
 
             # Build comprehensive outward baggage so the receiver gets all context and routing descisions
             outbound_baggage = {"context": context} if context else {}
@@ -766,20 +771,20 @@ class LocalController(object):
                 data["baggage"] = outbound_baggage
 
             # Note: We now rely on baggage["affinities"] heavily instead of `target_endpoint`.
-            # We explicitly place the destined endpoint into the affinities bag.
+            # We explicitly place the destined address into the affinities bag.
             if request_id and "affinities" not in data.get("baggage", {}):
-                data.setdefault("baggage", {})["affinities"] = {service: endpoint}
+                data.setdefault("baggage", {})["affinities"] = {agent_name: address}
             elif request_id:
-                data["baggage"]["affinities"][service] = endpoint
+                data["baggage"]["affinities"][agent_name] = address
 
             logger.info(
                 "Forwarding %s.%s (future=%s) to %s",
-                service,
+                agent_name,
                 function,
                 future_id,
-                endpoint,
+                address,
             )
-            self._forward_request(endpoint, data)
+            self._forward_request(address, data)
 
     def _resolve_future_args(self, args, future_args, poll_interval=0.01, timeout=300):
         """
@@ -825,7 +830,7 @@ class LocalController(object):
 
     def _execute_locally(
         self,
-        service,
+        agent_name,
         function,
         args,
         future_id,
@@ -846,13 +851,13 @@ class LocalController(object):
         thread_cpu_start = time.thread_time()
 
         # Write a complete, self-contained execution record for this step entirely
-        # to this node's own Redis.
+        # to this machine's own Redis.
         initial_fields = {
             "id": future_id,
             "request_id": request_id or "",
             "result": "",
             "parent": parent or "",
-            "service": service,
+            "service": agent_name,
             "method": function,
             "args": json.dumps(args),
             "failed": 0,
@@ -869,7 +874,7 @@ class LocalController(object):
         canyonos_context.set_current_function(function)
         canyonos_context.set_current_metrics_key(self._metrics_key)
         if self.agent is None:
-            logger.error("No agent loaded, cannot execute %s.%s", service, function)
+            logger.error("No agent loaded, cannot execute %s.%s", agent_name, function)
             self._mark_future_failed(
                 future_id,
                 "No agent loaded",
@@ -898,7 +903,7 @@ class LocalController(object):
             args = self._resolve_future_args(args, future_args)
 
             logger.info(
-                "Executing %s.%s (future=%s) locally", service, function, future_id
+                "Executing %s.%s (future=%s) locally", agent_name, function, future_id
             )
             result = method(**args)
             if is_root:
@@ -917,18 +922,18 @@ class LocalController(object):
             self.redis.hset(f"future:{future_id}", "failed", 0)
             succeeded = True
 
-            # Push the result to any consumers registered on this node.
+            # Push the result to any consumers registered on this machine.
             self._fan_out_to_consumers(future_id, result=serialized)
 
             logger.info(
                 "Completed %s.%s (future=%s) -> %s",
-                service,
+                agent_name,
                 function,
                 future_id,
                 serialized,
             )
         except Exception as e:
-            logger.error("Failed to execute %s.%s: %s", service, function, e)
+            logger.error("Failed to execute %s.%s: %s", agent_name, function, e)
 
             # `error` holds only the type name; the callback snapshot carries this
             # text to the origin.
@@ -956,7 +961,7 @@ class LocalController(object):
                     "finished_at": wall_end,
                     "cpu_resource": cpu_percent,
                     "gpu_resource": gpu_percent,
-                    "agent": self.agent_id,
+                    "agent": self.replica_id,
                     **({"queue_time": queue_time} if queue_time is not None else {}),
                 },
             )
@@ -971,7 +976,7 @@ class LocalController(object):
 
             # Send the completion callback only now that every final metric
             # has been written, so the snapshot sent to origin is complete.
-            if origin and origin != self._my_endpoint:
+            if origin and origin != self._my_address:
                 if succeeded:
                     self._send_result_callback(
                         origin, future_id, result=serialized, failed=0, error_message=""
@@ -991,39 +996,39 @@ class LocalController(object):
     #  Request forwarding                                                  #
     # ------------------------------------------------------------------ #
 
-    def _get_remote_stub(self, endpoint):
+    def _get_remote_stub(self, address):
         """Get or create a cached gRPC stub for a remote controller."""
         with self._remote_stubs_lock:
-            if endpoint not in self._remote_stubs:
-                self._remote_channels[endpoint] = grpc.insecure_channel(
-                    endpoint, options=GRPC_CHANNEL_OPTIONS
+            if address not in self._remote_stubs:
+                self._remote_channels[address] = grpc.insecure_channel(
+                    address, options=GRPC_CHANNEL_OPTIONS
                 )
-                self._remote_stubs[endpoint] = (
+                self._remote_stubs[address] = (
                     local_controller_pb2_grpc.LocalControllerStub(
-                        self._remote_channels[endpoint]
+                        self._remote_channels[address]
                     )
                 )
                 logger.info(
-                    "Created gRPC connection to remote controller at %s", endpoint
+                    "Created gRPC connection to remote controller at %s", address
                 )
-            return self._remote_stubs[endpoint]
+            return self._remote_stubs[address]
 
-    def _forward_request(self, endpoint, data):
+    def _forward_request(self, address, data):
         """Send a request to a remote controller without waiting for its answer, so a
         slow or dead replica never holds up the next request."""
-        # Tag the request with our endpoint so the remote LC can call back
-        data["origin"] = self._my_endpoint
+        # Tag the request with our address so the remote LC can call back
+        data["origin"] = self._my_address
         # Pin the routing decision so the destination executes the request
         # instead of re-resolving it (which would let stateless requests
         # ping-pong between replicas).
-        data["route_to"] = endpoint
+        data["route_to"] = address
         request = local_controller_pb2.JsonResponse(response=json.dumps(data))
-        call = self._get_remote_stub(endpoint).Execute.future(
+        call = self._get_remote_stub(address).Execute.future(
             request, timeout=FORWARD_TIMEOUT_SECONDS
         )
-        call.add_done_callback(lambda done: self._on_forwarded(done, endpoint, data))
+        call.add_done_callback(lambda done: self._on_forwarded(done, address, data))
 
-    def _on_forwarded(self, call, endpoint, data):
+    def _on_forwarded(self, call, address, data):
         """When the replica was unreachable or did not answer in time, mark it down and
         put the request back on the request queue; any other failure, or running out
         of retries, fails the request."""
@@ -1036,10 +1041,10 @@ class LocalController(object):
             not in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED)
             or retries > FORWARD_RETRIES
         ):
-            logger.error("Failed to forward request to %s: %s", endpoint, error)
+            logger.error("Failed to forward request to %s: %s", address, error)
             self._mark_future_failed(data.get("future_id"), error)
             return
-        self._down_until[endpoint] = time.monotonic() + REPLICA_DOWN_SECONDS
+        self._down_until[address] = time.monotonic() + REPLICA_DOWN_SECONDS
         data["retries"] = retries
         if error.code() == grpc.StatusCode.UNAVAILABLE:
             # Never reached, so routing picks again; a timed-out one may have queued
@@ -1047,7 +1052,7 @@ class LocalController(object):
             data.pop("route_to")
         logger.warning(
             "Forwarding a request to %s failed (%s); queueing it again.",
-            endpoint,
+            address,
             error.code().name,
         )
         # The first retry goes out at once; later ones back off so a replica being
@@ -1107,15 +1112,15 @@ class LocalController(object):
             )
 
     def _fan_out_to_consumers(self, future_id, result=None, failed=0, error_message=""):
-        """Push a completed future (result or failure) to every endpoint registered
-        as a consumer on THIS node's Redis.
+        """Push a completed future (result or failure) to every address registered
+        as a consumer on THIS machine's Redis.
 
         Called at every site that writes a terminal value for a future -- local
         production (_execute_locally), failure (_mark_future_failed), and remote
         arrival (WriteResult) -- so propagation is event-driven and never depends
-        on anyone calling Future.value(). Whichever node holds the consumer set is
+        on anyone calling Future.value(). Whichever machine holds the consumer set is
         always either the producer or the origin, so one of those sites fires; the
-        value then re-fans-out at each node it lands on, walking the graph.
+        value then re-fans-out at each machine it lands on, walking the graph.
 
         Delivery is intentionally not deduped: a consumer's WriteResult just
         re-writes the same value, so a redundant push (e.g. racing the immediate
@@ -1123,10 +1128,10 @@ class LocalController(object):
         """
         if not future_id:
             return
-        for endpoint in self.redis.smembers(f"future:{future_id}:consumers"):
-            if endpoint and endpoint != self._my_endpoint:
+        for address in self.redis.smembers(f"future:{future_id}:consumers"):
+            if address and address != self._my_address:
                 self._send_result_callback(
-                    endpoint,
+                    address,
                     future_id,
                     result=result,
                     failed=failed,

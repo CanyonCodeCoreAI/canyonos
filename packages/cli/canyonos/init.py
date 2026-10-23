@@ -40,7 +40,7 @@ GC_CONTAINER_PORT = 8000
 
 # Same network canyonos_core's own GlobalController creates for local-provider
 # Redis/agent containers -- the GC container needs to be on it too, e.g. to
-# resolve <runtime_id>:50051 for its own cleanup gRPC calls.
+# resolve <container_name>:50051 for its own cleanup gRPC calls.
 LOCAL_NETWORK = "canyonos-local"
 
 # The project's workspace volume (`project.workspace_volume()`) is mounted here.

@@ -25,9 +25,9 @@ from canyonos_core.controller.controller_context import (
     ControllerContext,
     _is_local_host,
     _redis_connect_host,
-    instance_id,
-    instance_id_from_record,
-    list_instances,
+    replica_id,
+    replica_id_from_record,
+    list_replicas,
 )
 from canyonos_core.controller import scaling
 from canyonos_core.endpoint import ADDRESS_KEY, endpoint_record
@@ -67,9 +67,9 @@ import grpc
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Teardown waits this long for the reconciler to remove every instance; any left
+# Teardown waits this long for the reconciler to remove every replica; any left
 # over keep Redis up so the next startup can reconcile their records.
-DRAIN_TIMEOUT_SECONDS = 30
+STOP_TIMEOUT_SECONDS = 30
 
 LOCAL_NETWORK = "canyonos-local"
 GLOBAL_CONTROLLER_LOG_SOURCE = "Global Controller"
@@ -112,7 +112,7 @@ def _live_prompts(document):
 
 class GlobalController(ControllerContext):
     """
-    Daemon that manages a routing table across multiple local controller instances.
+    Daemon that manages a routing table across the local controllers of multiple replicas.
 
     At startup it reads a YAML config file listing known agents, writes the
     initial routing table to Redis, then enters a polling loop that periodically
@@ -143,24 +143,24 @@ class GlobalController(ControllerContext):
         self._stopping = False
         self._metrics_collectors = {}  # host -> collector container name (one per host)
         self._last_status = {}  # (host, port) -> last known status
-        self._lc_stubs = {}  # endpoint -> gRPC stub
-        # Clean up any stale containers from previous runs
-        self._cleanup_stale_containers()
+        self._lc_stubs = {}  # address -> gRPC stub
+        # Remove any stale containers from previous runs
+        self._remove_stale_containers()
 
         self.process_supervisor = ProcessSupervisor()
         try:
-            # Launch Redis on each unique node, then write routing table and policies
+            # Launch Redis on each unique machine, then write routing table and policies
             self._launch_redis_containers()
             # One machine-level metrics collector per host (best-effort, local hosts only).
             self._launch_metrics_collectors()
             self._apply_config(
                 self._read_config_folder(), load_manifest(self.config_path)
             )
-            # A teardown killed mid-drain leaves the flag set; clear it or the fleet stays at zero.
-            state.clear_draining(self.redis)
+            # A stop killed midway leaves the flag set; clear it or the fleet stays at zero.
+            state.clear_stopping(self.redis)
             logger.info(
                 "Global controller initialized with %d controller(s).",
-                len(self.controllers),
+                len(self.agent_specs),
             )
 
             # Spawn the OTLP exporter as a separate process,
@@ -243,10 +243,10 @@ class GlobalController(ControllerContext):
             raise
 
     # ------------------------------------------------------------------ #
-    #  Stale container cleanup                                             #
+    #  Stale container removal                                             #
     # ------------------------------------------------------------------ #
 
-    def _cleanup_stale_containers(self):
+    def _remove_stale_containers(self):
         """Remove stopped Redis and metrics containers left from previous runs."""
         logger.info("Checking for stale containers from previous runs...")
 
@@ -254,9 +254,9 @@ class GlobalController(ControllerContext):
         # { host: (user, [container_names]) }
         host_containers = {}
 
-        for ctrl in self.controllers:
-            user = self._ssh_user(ctrl)
-            placements = self._get_replica_placements(ctrl)
+        for agent_spec in self.agent_specs:
+            user = self._ssh_user(agent_spec)
+            placements = self._get_replica_placements(agent_spec)
 
             for host, _port in placements:
                 if host not in host_containers:
@@ -285,7 +285,7 @@ class GlobalController(ControllerContext):
                 except Exception:
                     pass  # Container didn't exist, that's fine
 
-        logger.info("Stale container cleanup complete.")
+        logger.info("Stale container removal complete.")
 
     # ------------------------------------------------------------------ #
     #  Config                                                             #
@@ -348,9 +348,9 @@ class GlobalController(ControllerContext):
         config_files = self._read_config_folder()
         self.config = self._load_config(self.config_path)
         self.env_file_path = resolve_env_file(self.config)
-        previous = set(self.agent_specs)
-        self._set_controllers(self.config.get("agents", []))
-        for name in previous - set(self.agent_specs):
+        previous = set(self.agent_specs_by_name)
+        self._set_agent_specs(self.config.get("agents", []))
+        for name in previous - set(self.agent_specs_by_name):
             self.redis.delete(state.desired_key(name))
         self.poll_interval = self.config.get("poll_interval", 5)
         self._apply_config(config_files, manifest)
@@ -367,7 +367,7 @@ class GlobalController(ControllerContext):
         """Publish the loaded config to Redis: agent specs, replica counts, policies,
         identity, and where callers reach the endpoint, read from the validated
         `manifest`."""
-        write_config_specs(self.controllers, self.redis)
+        write_config_specs(self.agent_specs, self.redis)
         # The YAML is authoritative, so this overwrites any runtime scale.
         self._apply_configured_replicas()
         # Overwrites any dashboard edits, except prompts: the dashboard API owns prompts:config.
@@ -418,7 +418,7 @@ class GlobalController(ControllerContext):
 
     def _write_policies(self, rules, payloads, live_prompts):
         """Publish policy rules, and each config file under its key, to every host Redis."""
-        targets = list(self.node_redis.values()) or [self.redis]
+        targets = list(self.machine_redis.values()) or [self.redis]
         rules_json = json.dumps(rules)
         for redis_client in targets:
             redis_client.set(self.POLICY_RULES_KEY, rules_json)
@@ -446,12 +446,12 @@ class GlobalController(ControllerContext):
 
     # Only relevant for demo purposes
     def _write_identity(self):
-        """Publish the current project identity to every node's Redis."""
+        """Publish the current project identity to every machine's Redis."""
         payload = {
             "project_id": str(self.config.get("project_id")),
             "project_name": os.environ.get("CANYONOS_PROJECT_NAME", ""),
         }
-        targets = list(self.node_redis.values()) or [self.redis]
+        targets = list(self.machine_redis.values()) or [self.redis]
         for redis_client in targets:
             redis_client.hset_multiple(self.IDENTITY_KEY, payload)
 
@@ -462,12 +462,12 @@ class GlobalController(ControllerContext):
         )
 
     # The reconciler publishes the routing table; these keys are read-only here:
-    # - self.redis.hgetall(self.ROUTING_ENDPOINTS_KEY)
-    # - self.redis.hget(self.ROUTING_ENDPOINTS_KEY, service_name)
+    # - self.redis.hgetall(self.ROUTING_ADDRESSES_KEY)
+    # - self.redis.hget(self.ROUTING_ADDRESSES_KEY, service_name)
 
-    def get_node_redis(self, host):
-        """Get the RedisClient for a specific node."""
-        return self.node_redis.get(host)
+    def get_machine_redis(self, host):
+        """Get the RedisClient for a specific machine."""
+        return self.machine_redis.get(host)
 
     # ------------------------------------------------------------------ #
     #  Redis container management                                         #
@@ -490,7 +490,7 @@ class GlobalController(ControllerContext):
         return result.returncode == 0
 
     def _redis_responds(self, host, connect_host, redis_port):
-        """Check whether a Redis on this node is already up and answering."""
+        """Check whether a Redis on this machine is already up and answering."""
         try:
             probe = RedisClient(host=connect_host, port=redis_port)
             _wait_for_redis(probe, host, redis_port, timeout=5, interval=1)
@@ -499,19 +499,19 @@ class GlobalController(ControllerContext):
             return False
 
     def _launch_redis_containers(self):
-        """Launch a Redis container on each unique node, reusing one that's already healthy."""
-        # Collect unique nodes from all replica placements
-        nodes = {}
-        for ctrl in self.controllers:
-            user = self._ssh_user(ctrl)
-            redis_port = int(ctrl.get("redis_port", 6379))
-            for host, _port in self._get_replica_placements(ctrl):
-                claimed = nodes.setdefault(
+        """Launch a Redis container on each unique machine, reusing one that's already healthy."""
+        # Collect unique machines from all replica placements
+        machines = {}
+        for agent_spec in self.agent_specs:
+            user = self._ssh_user(agent_spec)
+            redis_port = int(agent_spec.get("redis_port", 6379))
+            for host, _port in self._get_replica_placements(agent_spec):
+                claimed = machines.setdefault(
                     host,
                     {
                         "user": user,
                         "redis_port": redis_port,
-                        "agent": ctrl.get("name"),
+                        "agent": agent_spec.get("name"),
                     },
                 )
                 if claimed["redis_port"] != redis_port:
@@ -521,16 +521,16 @@ class GlobalController(ControllerContext):
                         "per host -- give them the same `redis_port` in "
                         "global_controller.yaml.",
                         claimed["agent"],
-                        ctrl.get("name"),
+                        agent_spec.get("name"),
                         host,
                         claimed["redis_port"],
                         redis_port,
                     )
                     sys.exit(1)
 
-        for host, node_cfg in nodes.items():
-            redis_port = node_cfg["redis_port"]
-            user = node_cfg["user"]
+        for host, machine_cfg in machines.items():
+            redis_port = machine_cfg["redis_port"]
+            user = machine_cfg["user"]
             container_name = redis_container_name(host)
             connect_host = _redis_connect_host(host)
 
@@ -639,22 +639,22 @@ class GlobalController(ControllerContext):
                     redis_port,
                 )
 
-            # Create a RedisClient for this node
+            # Create a RedisClient for this machine
             redis_client = RedisClient(host=connect_host, port=redis_port)
             try:
                 _wait_for_redis(redis_client, host, redis_port)
             except TimeoutError as e:
                 logger.critical("%s", e)
                 sys.exit(1)
-            self.node_redis[host] = redis_client
+            self.machine_redis[host] = redis_client
             if _is_local_host(host):
                 self._redis_addr = (connect_host, redis_port)
-                # Update the primary redis client to the local node's Redis
+                # Update the primary redis client to the local machine's Redis
                 self.redis = redis_client
 
         logger.info(
-            "Redis ready on %d node(s); %d owned by this controller.",
-            len(self.node_redis),
+            "Redis ready on %d machine(s); %d owned by this controller.",
+            len(self.machine_redis),
             len(self.redis_containers),
         )
 
@@ -676,19 +676,19 @@ class GlobalController(ControllerContext):
         # Unique-host dedup (like _launch_redis_containers), tracking per host whether any
         # agent placed there requests a GPU -- so --gpus is only added where it's wanted
         # (it fails `docker run` on hosts without the nvidia container runtime).
-        nodes = {}
-        for ctrl in self.controllers:
-            user = self._ssh_user(ctrl)
-            redis_port = ctrl.get("redis_port", 6379)
-            wants_gpu = bool(ctrl.get("resources", {}).get("gpu"))
-            for host, _port in self._get_replica_placements(ctrl):
-                node = nodes.setdefault(
+        machines = {}
+        for agent_spec in self.agent_specs:
+            user = self._ssh_user(agent_spec)
+            redis_port = agent_spec.get("redis_port", 6379)
+            wants_gpu = bool(agent_spec.get("resources", {}).get("gpu"))
+            for host, _port in self._get_replica_placements(agent_spec):
+                machine = machines.setdefault(
                     host, {"user": user, "redis_port": redis_port, "gpu": False}
                 )
-                node["gpu"] = node["gpu"] or wants_gpu
+                machine["gpu"] = machine["gpu"] or wants_gpu
 
-        for host, node_cfg in nodes.items():
-            user = node_cfg["user"]
+        for host, machine_cfg in machines.items():
+            user = machine_cfg["user"]
             container_name = metrics_container_name(host)
             try:
                 inspect = self._run_cmd(
@@ -719,7 +719,7 @@ class GlobalController(ControllerContext):
                     "-v",
                     "/:/host:ro",
                 ]
-                if node_cfg["gpu"]:
+                if machine_cfg["gpu"]:
                     cmd += ["--gpus", "all"]
                 cmd += [
                     # With --network=host the collector reaches the host's published Redis
@@ -727,7 +727,7 @@ class GlobalController(ControllerContext):
                     "-e",
                     "CANYONOS_REDIS_HOST=localhost",
                     "-e",
-                    f"CANYONOS_REDIS_PORT={node_cfg['redis_port']}",
+                    f"CANYONOS_REDIS_PORT={machine_cfg['redis_port']}",
                     "-e",
                     f"CANYONOS_METRICS_KEY=machine:{host}:metrics",
                     "-e",
@@ -761,9 +761,9 @@ class GlobalController(ControllerContext):
     def _stop_metrics_collectors(self):
         """Stop and remove the machine metrics collector container on each host."""
         users = {}
-        for ctrl in self.controllers:
-            user = self._ssh_user(ctrl)
-            for host, _port in self._get_replica_placements(ctrl):
+        for agent_spec in self.agent_specs:
+            user = self._ssh_user(agent_spec)
+            for host, _port in self._get_replica_placements(agent_spec):
                 users.setdefault(host, user)
         for host, container_name in self._metrics_collectors.items():
             try:
@@ -777,14 +777,14 @@ class GlobalController(ControllerContext):
     def _stop_redis_containers(self):
         """Stop and remove all Redis containers owned by this controller."""
         failures = []
-        nodes = {}
-        for ctrl in self.controllers:
-            user = self._ssh_user(ctrl)
-            redis_port = ctrl.get("redis_port", 6379)
-            for host, _port in self._get_replica_placements(ctrl):
-                nodes.setdefault(host, {"user": user, "redis_port": redis_port})
+        machines = {}
+        for agent_spec in self.agent_specs:
+            user = self._ssh_user(agent_spec)
+            redis_port = agent_spec.get("redis_port", 6379)
+            for host, _port in self._get_replica_placements(agent_spec):
+                machines.setdefault(host, {"user": user, "redis_port": redis_port})
         for host, container_name in list(self.redis_containers.items()):
-            user = nodes.get(host, {}).get("user")
+            user = machines.get(host, {}).get("user")
             errors = []
             for action in ("stop", "rm"):
                 try:
@@ -806,7 +806,7 @@ class GlobalController(ControllerContext):
                 logger.warning("Failed to fully stop %s", detail)
             else:
                 self.redis_containers.pop(host, None)
-                self.node_redis.pop(host, None)
+                self.machine_redis.pop(host, None)
                 logger.info("Stopped Redis %s on %s", container_name, host)
         return failures
 
@@ -829,12 +829,14 @@ class GlobalController(ControllerContext):
             interval: Seconds between checks.
         """
         expected = {
-            spec["name"]: state.get_desired(self.redis, spec["name"], configured)
-            for spec in self.controllers
-            if (configured := state.replica_count(spec)) is not None
+            agent_spec["name"]: state.get_desired(
+                self.redis, agent_spec["name"], configured
+            )
+            for agent_spec in self.agent_specs
+            if (configured := state.replica_count(agent_spec)) is not None
         }
         total = sum(expected.values())
-        if not total and self.controllers:
+        if not total and self.agent_specs:
             logger.critical(
                 "No agent declares an integer replica count; nothing will be "
                 "provisioned. Check `replicas` in %s.",
@@ -855,31 +857,31 @@ class GlobalController(ControllerContext):
         )
 
         while True:
-            instances = list_instances(self.redis)
+            replicas = list_replicas(self.redis)
             pending = []
             healthy = {}
-            for instance in instances:
-                name = instance["agent_name"]
-                host = instance["private_host"]
-                port = instance["host_port"]
-                node_redis = self.node_redis_for_instance(instance)
-                endpoint = instance["routing_endpoint"]
-                status = node_redis.get(f"controller:{endpoint}:status")
+            for replica in replicas:
+                name = replica["agent_name"]
+                host = replica["private_host"]
+                port = replica["host_port"]
+                machine_redis = self.machine_redis_for_replica(replica)
+                address = replica["address"]
+                status = machine_redis.get(f"controller:{address}:status")
                 if status == "healthy":
                     healthy[name] = healthy.get(name, 0) + 1
-                    instance_key = (name, host, port)
-                    if instance_key not in ready:
+                    replica_key = (name, host, port)
+                    if replica_key not in ready:
                         logger.info("Controller %s (%s:%s) is ready.", name, host, port)
                         self._last_status[(host, port)] = "healthy"
-                        ready.add(instance_key)
+                        ready.add(replica_key)
                 else:
-                    pending.append((instance, status))
+                    pending.append((replica, status))
 
             if all(healthy.get(name, 0) >= want for name, want in expected.items()):
                 return
             terminal = [
-                (instance, status)
-                for instance, status in pending
+                (replica, status)
+                for replica, status in pending
                 if status in _TERMINAL_STATUSES
             ]
             if terminal or time.time() >= deadline:
@@ -887,12 +889,12 @@ class GlobalController(ControllerContext):
             time.sleep(interval)
 
         waited = int(time.time() - started)
-        for instance, status in pending:
+        for replica, status in pending:
             logger.warning(
                 "Controller %s (%s:%s) is %s after %ds.",
-                instance["agent_name"],
-                instance["private_host"],
-                instance["host_port"],
+                replica["agent_name"],
+                replica["private_host"],
+                replica["host_port"],
                 status or "not ready",
                 waited,
             )
@@ -915,7 +917,7 @@ class GlobalController(ControllerContext):
             self.redis.hgetall(key).get("agent_name")
             for key in self.redis.scan_keys("agent_instance:*")
         )
-        failing = {instance["agent_name"] for instance, _ in pending}
+        failing = {replica["agent_name"] for replica, _ in pending}
         failed = {
             name: (have, want)
             for name, (have, want) in short.items()
@@ -927,10 +929,10 @@ class GlobalController(ControllerContext):
         # The cause (e.g. an adapter's ModuleNotFoundError) exists only inside the
         # container, which teardown removes. After a terminal status the others' logs
         # hold nothing yet; a timeout shows every laggard.
-        for instance, status in terminal or pending:
-            if instance["agent_name"] in failed:
+        for replica, status in terminal or pending:
+            if replica["agent_name"] in failed:
                 dump_container_log(
-                    instance, status, providers.get(instance["provider"]).log_tail
+                    replica, status, providers.get(replica["provider"]).log_tail
                 )
 
         summary = ", ".join(
@@ -971,11 +973,11 @@ class GlobalController(ControllerContext):
             self.stop()
 
     def _sync_prompts(self):
-        """Copy dashboard edits to prompts:config from this Redis to the other nodes' Redis."""
+        """Copy dashboard edits to prompts:config from this Redis to the other machines' Redis."""
         payload = self.redis.get("prompts:config")
         if payload is None:
             return
-        for redis_client in self.node_redis.values():
+        for redis_client in self.machine_redis.values():
             # Writing the snapshot back to its source would clobber an edit saved since the read.
             if redis_client is self.redis:
                 continue
@@ -983,29 +985,27 @@ class GlobalController(ControllerContext):
 
     def _poll_controllers(self):
         """
-        Check the health of each registered controller replica via its node's Redis.
-        Also retrieves the request calls made in each instance.
+        Check the health of each registered controller replica via its machine's Redis.
+        Also retrieves the request calls made in each replica.
         """
         # Prevents a process from restarting if a deliberate kill-cmd happens
         if self.running:
             self.process_supervisor.check_and_respawn()
 
-        # Polled in parallel, one instance's slow Redis round-trip no longer
-        # gates every other instance's poll.
-        instances = list_instances(self.redis)
-        self.prune_node_redis(instances)
-        instance_samples = []
-        if instances:
-            with ThreadPoolExecutor(max_workers=len(instances)) as executor:
-                instance_samples = list(
-                    executor.map(self._poll_one_instance, instances)
-                )
+        # Polled in parallel, one replica's slow Redis round-trip no longer
+        # gates every other replica's poll.
+        replicas = list_replicas(self.redis)
+        self.remove_unused_redis_clients(replicas)
+        replica_samples = []
+        if replicas:
+            with ThreadPoolExecutor(max_workers=len(replicas)) as executor:
+                replica_samples = list(executor.map(self._poll_one_replica, replicas))
 
         # Machine-level metrics are per-host, so they're read once per host here rather
-        # than inside the per-instance loop above (N replicas on a box would otherwise
+        # than inside the per-replica loop above (N replicas on a box would otherwise
         # re-read and re-write the same machine sample N times).
         self._poll_machine_metrics()
-        self._record_agent_samples([s for s in instance_samples if s])
+        self._record_agent_samples([s for s in replica_samples if s])
 
     def _poll_machine_metrics(self):
         """Read each host's machine-level metrics hash (written by the per-machine
@@ -1016,15 +1016,15 @@ class GlobalController(ControllerContext):
         project_id = self.config.get("project_id")
         hosts = {
             host
-            for ctrl in self.controllers
-            for host, _port in self._get_replica_placements(ctrl)
+            for agent_spec in self.agent_specs
+            for host, _port in self._get_replica_placements(agent_spec)
         }
         if not hosts:
             return
 
         def _read_host_metrics(host):
             try:
-                metrics = self.node_redis.get(host, self.redis).hgetall(
+                metrics = self.machine_redis.get(host, self.redis).hgetall(
                     f"machine:{host}:metrics"
                 )
                 if metrics:
@@ -1042,7 +1042,7 @@ class GlobalController(ControllerContext):
                 )
             return None
 
-        # Read hosts in parallel, mirroring the per-instance poll above, so one host's
+        # Read hosts in parallel, mirroring the per-replica poll above, so one host's
         # slow Redis round-trip doesn't gate the others.
         with ThreadPoolExecutor(max_workers=len(hosts)) as executor:
             rows = [row for row in executor.map(_read_host_metrics, hosts) if row]
@@ -1054,39 +1054,39 @@ class GlobalController(ControllerContext):
                     "Failed to write machine metrics rows (non-fatal): %s", e
                 )
 
-    def _poll_one_instance(self, instance):
-        """Poll and persist one instance's runtime/metrics/health data and return its scaling sample; never raises."""
+    def _poll_one_replica(self, replica):
+        """Poll and persist one replica's runtime/metrics/health data and return its scaling sample; never raises."""
         try:
-            name = instance["agent_name"]
-            host = instance["private_host"]
-            port = instance["host_port"]
-            node_redis = self.node_redis_for_instance(instance)
+            name = replica["agent_name"]
+            host = replica["private_host"]
+            port = replica["host_port"]
+            machine_redis = self.machine_redis_for_replica(replica)
         except Exception as e:
-            logger.warning("Failed to poll instance %s: %s", instance, e)
+            logger.warning("Failed to poll replica %s: %s", replica, e)
             return
 
         try:
-            send_telemetry(node_redis, self.config.get("project_id"))
+            send_telemetry(machine_redis, self.config.get("project_id"))
         except Exception as e:
             logger.warning(
-                "Failed to write runtime information for instance %s (%s:%s) "
+                "Failed to write runtime information for replica %s (%s:%s) "
                 "(non-fatal): %s",
                 name,
                 host,
                 port,
                 e,
             )
-        endpoint = instance["routing_endpoint"]
-        status_key = f"controller:{endpoint}:status"
-        metrics_key = f"controller:{endpoint}:metrics"
+        address = replica["address"]
+        status_key = f"controller:{address}:status"
+        metrics_key = f"controller:{address}:metrics"
 
         # Getting metrics from local controllers
         # See LocalController._execute_locally
         metrics = None
         try:
-            metrics = node_redis.hgetall(metrics_key)
+            metrics = machine_redis.hgetall(metrics_key)
             if metrics:
-                # Persist the instance's hash verbatim; all per-metric logic lives in
+                # Persist the replica's hash verbatim; all per-metric logic lives in
                 # metric_convert. Counters are cumulative and never reset, so they
                 # export as monotonic Sums.
                 try:
@@ -1094,7 +1094,7 @@ class GlobalController(ControllerContext):
                         [
                             {
                                 "kind": "agent",
-                                "agent_id": instance.get("agent_id"),
+                                "agent_id": replica_id_from_record(replica),
                                 "agent_name": name,
                                 "host": host,
                                 "port": port,
@@ -1105,7 +1105,7 @@ class GlobalController(ControllerContext):
                     )
                 except Exception as e:
                     logger.warning(
-                        "Failed to write instance metrics row for %s (%s:%s) "
+                        "Failed to write replica metrics row for %s (%s:%s) "
                         "(non-fatal): %s",
                         name,
                         host,
@@ -1115,7 +1115,7 @@ class GlobalController(ControllerContext):
 
         except Exception as e:
             logger.warning(
-                "Failed to poll metrics for instance %s (%s:%s): %s",
+                "Failed to poll metrics for replica %s (%s:%s): %s",
                 name,
                 host,
                 port,
@@ -1125,10 +1125,10 @@ class GlobalController(ControllerContext):
         sample = None
         if metrics:
             try:
-                sample = self._record_instance_sample(instance, metrics)
+                sample = self._record_replica_sample(replica, metrics)
             except Exception as e:
                 logger.warning(
-                    "Failed to record scaling sample for instance %s (%s:%s) "
+                    "Failed to record scaling sample for replica %s (%s:%s) "
                     "(non-fatal): %s",
                     name,
                     host,
@@ -1137,7 +1137,7 @@ class GlobalController(ControllerContext):
                 )
 
         try:
-            status = node_redis.get(status_key) or "unknown"
+            status = machine_redis.get(status_key) or "unknown"
             prev = self._last_status.get((host, port))
 
             if status != prev:
@@ -1165,7 +1165,7 @@ class GlobalController(ControllerContext):
                     self._on_controller_unhealthy(name, host, port)
         except Exception as e:
             logger.warning(
-                "Failed to poll status for instance %s (%s:%s): %s",
+                "Failed to poll status for replica %s (%s:%s): %s",
                 name,
                 host,
                 port,
@@ -1173,9 +1173,9 @@ class GlobalController(ControllerContext):
             )
         return sample
 
-    def _record_instance_sample(self, instance, metrics):
+    def _record_replica_sample(self, replica, metrics):
         """Record one replica's load for the scaling policy and return the sample."""
-        key = contract.instance_key(instance_id_from_record(instance))
+        key = contract.replica_key(replica_id_from_record(replica))
         previous = contract.latest(self.redis, key)
         observed_at = contract.now()
         counters = {
@@ -1188,8 +1188,8 @@ class GlobalController(ControllerContext):
                 "execution_ms_total",
             )
         }
-        sample = contract.instance_sample(
-            agent_name=instance["agent_name"],
+        sample = contract.replica_sample(
+            agent_name=replica["agent_name"],
             queue_length=int(metrics.get("queue_length", 0)),
             **counters,
             requests_per_minute=contract.per_minute(
@@ -1212,10 +1212,10 @@ class GlobalController(ControllerContext):
         contract.push(self.redis, key, sample)
         return sample
 
-    def _record_agent_samples(self, instance_samples):
+    def _record_agent_samples(self, replica_samples):
         """Roll this poll's replica samples up into one scaling sample per agent."""
-        by_agent = {agent_name: [] for agent_name in self.agent_specs}
-        for sample in instance_samples:
+        by_agent = {agent_name: [] for agent_name in self.agent_specs_by_name}
+        for sample in replica_samples:
             if sample["agent_name"] in by_agent:
                 by_agent[sample["agent_name"]].append(sample)
 
@@ -1243,7 +1243,7 @@ class GlobalController(ControllerContext):
 
     def _set_replicas(self, agent_name, count):
         """Change one agent's replica count without touching the others; the entry point for scaling."""
-        if agent_name not in self.agent_specs:
+        if agent_name not in self.agent_specs_by_name:
             logger.warning("Cannot scale unknown agent %s", agent_name)
             return None
         desired = state.set_desired(self.redis, agent_name, count)
@@ -1258,25 +1258,24 @@ class GlobalController(ControllerContext):
 
     def _apply_configured_replicas(self):
         """Reset every agent's replica count to what the YAML says, at startup and on reload."""
-        for spec in self.controllers:
-            count = state.replica_count(spec)
+        for agent_spec in self.agent_specs:
+            count = state.replica_count(agent_spec)
             if count is None:
                 logger.warning(
                     "Agent %s declares a non-integer replicas value (%r); "
                     "reconciliation needs a count, skipping it.",
-                    spec["name"],
-                    spec.get("replicas"),
+                    agent_spec["name"],
+                    agent_spec.get("replicas"),
                 )
                 continue
-            self._set_replicas(spec["name"], count)
+            self._set_replicas(agent_spec["name"], count)
 
     def _replace_replica(self, agent_name, replica_index):
-        """Destroy one replica; the desired count is unchanged, so the slot is refilled."""
-        if agent_name not in self.agent_specs:
-            logger.warning("Cannot replace an instance of unknown agent %s", agent_name)
+        """Remove one replica; the desired count is unchanged, so the slot is refilled."""
+        if agent_name not in self.agent_specs_by_name:
+            logger.warning("Cannot replace a replica of unknown agent %s", agent_name)
             return None
-        provider = self.agent_specs[agent_name]["provider"]
-        target = instance_id(provider, agent_name, int(replica_index))
+        target = replica_id(agent_name, int(replica_index))
         state.request_replace(self.redis, target)
         self._request_reconcile(agent_name)
         return target
@@ -1313,14 +1312,14 @@ class GlobalController(ControllerContext):
     #  Cleanup trigger                                                     #
     # ------------------------------------------------------------------ #
 
-    def _get_lc_stub(self, endpoint):
-        """Get or create a cached gRPC stub for a local controller endpoint."""
-        if endpoint not in self._lc_stubs:
-            channel = grpc.insecure_channel(endpoint, options=GRPC_CHANNEL_OPTIONS)
-            self._lc_stubs[endpoint] = local_controller_pb2_grpc.LocalControllerStub(
+    def _get_lc_stub(self, address):
+        """Get or create a cached gRPC stub for a local controller address."""
+        if address not in self._lc_stubs:
+            channel = grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
+            self._lc_stubs[address] = local_controller_pb2_grpc.LocalControllerStub(
                 channel
             )
-        return self._lc_stubs[endpoint]
+        return self._lc_stubs[address]
 
     def _cleanup_loop(self):
         """Background thread: trigger cleanup right after each poll tick, or every cleanup_interval as a fallback."""
@@ -1333,10 +1332,10 @@ class GlobalController(ControllerContext):
                 logger.warning("Cleanup loop encountered an error: %s", e)
 
     def _trigger_cleanup(self):
-        """Drain completed requests whose futures are gone, and broadcast a batched Cleanup gRPC to all instances for every delivered one, gathered from every node's Redis."""
-        # Falls back to self.redis alone if node_redis is unset/empty.
-        node_redis_map = getattr(self, "node_redis", None) or {}
-        redis_clients = list(node_redis_map.values()) or [self.redis]
+        """Drain completed requests whose futures are gone, and broadcast a batched Cleanup gRPC to all replicas for every delivered one, gathered from every machine's Redis."""
+        # Falls back to self.redis alone if machine_redis is unset/empty.
+        machine_redis_map = getattr(self, "machine_redis", None) or {}
+        redis_clients = list(machine_redis_map.values()) or [self.redis]
 
         completed_by_client = {}
         all_completed = set()
@@ -1355,7 +1354,7 @@ class GlobalController(ControllerContext):
             getattr(self, "config", {}).get("project_id"),
         )
         # A request leaves "request:completed" only once its futures are gone on every
-        # node. A Cleanup that fails or never arrives leaves them in place, so the
+        # machine. A Cleanup that fails or never arrives leaves them in place, so the
         # request stays delivered and is sent again next cycle.
         for client, completed in completed_by_client.items():
             to_remove = completed & gone
@@ -1369,44 +1368,42 @@ class GlobalController(ControllerContext):
 
         payload = json.dumps({"request_ids": list(delivered)})
 
-        def _send(instance):
-            # Container-reachable address (runtime_id:CONTAINER_PORT), not
-            # instance["endpoint"] -- that's the host-published port
-            # (e.g. localhost:8001), which the GC container can't reach.
-            endpoint = instance["routing_endpoint"]
+        def _send(replica):
+            # Not replica["published_address"]: the GC container can't reach a host-published port.
+            address = replica["address"]
             try:
-                stub = self._get_lc_stub(endpoint)
+                stub = self._get_lc_stub(address)
                 stub.Cleanup(local_controller_pb2.JsonResponse(response=payload))
                 logger.debug(
                     "Sent Cleanup batch of %d request(s) to %s",
                     len(delivered),
-                    endpoint,
+                    address,
                 )
                 return True
             except Exception as e:
-                logger.warning("Failed to trigger cleanup on %s: %s", endpoint, e)
+                logger.warning("Failed to trigger cleanup on %s: %s", address, e)
                 return False
 
-        instances = list_instances(self.redis)
-        if not instances:
+        replicas = list_replicas(self.redis)
+        if not replicas:
             logger.warning(
-                "No instances to broadcast cleanup to; %d delivered request(s) wait "
+                "No replicas to broadcast cleanup to; %d delivered request(s) wait "
                 "for the next cycle.",
                 len(delivered),
             )
             return
 
-        with ThreadPoolExecutor(max_workers=len(instances)) as executor:
-            sent = sum(executor.map(_send, instances))
+        with ThreadPoolExecutor(max_workers=len(replicas)) as executor:
+            sent = sum(executor.map(_send, replicas))
         logger.info(
-            "Sent cleanup for %d delivered request(s) to %d of %d instance(s)",
+            "Sent cleanup for %d delivered request(s) to %d of %d replica(s)",
             len(delivered),
             sent,
-            len(instances),
+            len(replicas),
         )
 
     # ------------------------------------------------------------------ #
-    #  Runtime launching                                                  #
+    #  Replica launching                                                  #
     # ------------------------------------------------------------------ #
 
     # ------------------------------------------------------------------ #
@@ -1418,10 +1415,10 @@ class GlobalController(ControllerContext):
         logger.info("Cleaning up all resources...")
         return self.stop()
 
-    def _drain_instances(self, timeout=DRAIN_TIMEOUT_SECONDS, interval=1):
-        """Have the reconciler remove every instance, then forget the endpoint's address.
+    def _remove_all_replicas(self, timeout=STOP_TIMEOUT_SECONDS, interval=1):
+        """Have the reconciler remove every replica, then forget the endpoint's address.
         True once none are left."""
-        state.set_draining(self.redis)
+        state.set_stopping(self.redis)
         state.request_reconcile(self.redis)
         deadline = time.time() + timeout
 
@@ -1430,22 +1427,22 @@ class GlobalController(ControllerContext):
                 # Every record, unfinished launches too: one may still hold a machine.
                 remaining = self.redis.scan_keys("agent_instance:*")
             except Exception as e:
-                logger.warning("Failed to read instance records while draining: %s", e)
+                logger.warning("Failed to read replica records while stopping: %s", e)
                 return False
             if not remaining:
                 self.redis.delete(ADDRESS_KEY)
-                logger.info("All agent instances drained.")
+                logger.info("All agent replicas removed.")
                 return True
             if time.time() >= deadline:
                 logger.warning(
-                    "Instance records still in Redis after %ds: %s; the next "
+                    "Replica records still in Redis after %ds: %s; the next "
                     "startup's reconcile removes whichever are unhealthy or unfinished.",
                     timeout,
                     ", ".join(sorted(remaining)),
                 )
                 return False
             time.sleep(interval)
-            state.set_draining(self.redis)
+            state.set_stopping(self.redis)
 
     def stop(self):
         """Gracefully shut down the daemon and all agent processes.
@@ -1454,31 +1451,30 @@ class GlobalController(ControllerContext):
         signal handler and again from atexit, where an exception would skip the
         handler's own exit and then repeat on the way out.
         """
-        # A second signal arriving mid-drain must not start a second teardown.
+        # A second signal arriving mid-stop must not start a second teardown.
         if self._stopping:
             return []
         self._stopping = True
         self.running = False
 
         failures = []
-        drained = False
+        removed = False
         try:
-            drained = self._drain_instances()
+            removed = self._remove_all_replicas()
         except Exception as e:
-            failures.append(f"instance drain: {e}")
-        # The reconciler does the removing, so it has to outlive the drain; clearing
-        # the flag before it dies would have it refill everything just removed.
+            failures.append(f"replica removal: {e}")
+        # The reconciler does the removing, so it must outlive the removal; clearing the flag first would have it refill everything just removed.
         try:
             self.process_supervisor.terminate_all()
         except Exception as e:
             failures.append(f"supervised processes: {e}")
         try:
-            state.clear_draining(self.redis)
+            state.clear_stopping(self.redis)
         except Exception as e:
-            failures.append(f"draining flag: {e}")
+            failures.append(f"stopping flag: {e}")
         self._stop_metrics_collectors()
-        # Instance records live in Redis; removing it with instances left would orphan them.
-        if drained and not failures:
+        # Replica records live in Redis; removing it with replicas left would orphan them.
+        if removed and not failures:
             failures += self._stop_redis_containers() or []
         else:
             failures.append("redis: kept for the next startup to reconcile")

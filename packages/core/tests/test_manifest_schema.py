@@ -4,7 +4,7 @@
 """The manifest schema decides what `global_controller.yaml` may say.
 
 Before it existed, an unknown key was ignored and `replicas: "2"` blew up inside
-the instance manager once containers were already being launched. Every test
+the provisioner once containers were already being launched. Every test
 here is one of those turned into a rejection with a file, a line and a field.
 """
 
@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from canyonos_core.controller.utils.config_env import ENV_REF
 from canyonos_core.schema import (
-    AgentService,
-    DatabaseService,
+    CodeAgent,
+    DatabaseAgent,
     SchemaError,
     SchemaViolation,
     load_manifest,
@@ -169,8 +169,8 @@ class ReplicaTests(_ManifestCase):
                 )
 
 
-class ServiceIdentityTests(_ManifestCase):
-    def test_a_service_without_a_name_is_rejected(self):
+class AgentIdentityTests(_ManifestCase):
+    def test_an_agent_without_a_name_is_rejected(self):
         violation = self.one(
             {"agents": [{"entrypoint": "agents/a.py", "functions": [{"name": "work"}]}]}
         )
@@ -178,13 +178,13 @@ class ServiceIdentityTests(_ManifestCase):
         self.assertEqual(violation.field, "agents[0].name")
         self.assertEqual(violation.message, "is required but missing")
 
-    def test_two_services_cannot_share_a_name(self):
+    def test_two_agents_cannot_share_a_name(self):
         violation = self.one(
             {"agents": [_agent(), _agent(entrypoint="agents/other.py")]}
         )
 
         self.assertEqual(violation.field, "agents[1].name")
-        self.assertIn("duplicate service name 'ExampleAgent'", violation.message)
+        self.assertIn("duplicate agent name 'ExampleAgent'", violation.message)
 
     def test_names_that_differ_only_in_case_collide(self):
         # The image tag and the container name are both name.lower().
@@ -318,7 +318,7 @@ class EntrypointTests(_ManifestCase):
                 self.assertIn(expected, violation.message)
 
 
-class DatabaseServiceTests(_ManifestCase):
+class DatabaseAgentTests(_ManifestCase):
     def _database(self, **overrides):
         entry = {"name": "StateDB", "type": "database", "image": "postgres:16-alpine"}
         entry.update(overrides)
@@ -347,10 +347,10 @@ class DatabaseServiceTests(_ManifestCase):
             self._database(db_port=5433, volume_path="/var/lib/postgresql/data")
         )
 
-        service = manifest.agents[0]
-        self.assertIsInstance(service, DatabaseService)
-        self.assertEqual(service.db_port, 5433)
-        self.assertEqual(service.volume_path, "/var/lib/postgresql/data")
+        database = manifest.agents[0]
+        self.assertIsInstance(database, DatabaseAgent)
+        self.assertEqual(database.db_port, 5433)
+        self.assertEqual(database.volume_path, "/var/lib/postgresql/data")
 
 
 class ProviderTests(_ManifestCase):
@@ -364,7 +364,7 @@ class ProviderTests(_ManifestCase):
             with self.subTest(provider=provider):
                 manifest = self.load(
                     {
-                        "agents": [_agent(provider=provider, instance_type="t3.micro")],
+                        "agents": [_agent(provider=provider, machine_type="t3.micro")],
                         "ec2": _EC2_BLOCK,
                     }
                 )
@@ -372,7 +372,7 @@ class ProviderTests(_ManifestCase):
 
     def test_a_lowercase_ec2_still_needs_the_ec2_block(self):
         violation = self.one(
-            {"agents": [_agent(provider="ec2", instance_type="t3.micro")]}
+            {"agents": [_agent(provider="ec2", machine_type="t3.micro")]}
         )
 
         self.assertEqual(violation.field, "ec2")
@@ -387,21 +387,21 @@ class ProviderTests(_ManifestCase):
                     f"expected one of ['local', 'EC2'], got the string {provider!r}",
                 )
 
-    def test_an_ec2_service_needs_an_instance_type(self):
+    def test_an_ec2_agent_needs_a_machine_type(self):
         violation = self.one({"agents": [_agent(provider="EC2")], "ec2": _EC2_BLOCK})
 
-        self.assertEqual(violation.field, "agents[0].instance_type")
+        self.assertEqual(violation.field, "agents[0].machine_type")
         self.assertEqual(violation.message, "is required when provider is 'EC2'")
 
-    def test_an_ec2_service_needs_the_ec2_block(self):
+    def test_an_ec2_agent_needs_the_ec2_block(self):
         violation = self.one(
-            {"agents": [_agent(provider="EC2", instance_type="t3.micro")]}
+            {"agents": [_agent(provider="EC2", machine_type="t3.micro")]}
         )
 
         self.assertEqual(violation.field, "ec2")
         self.assertEqual(
             violation.message,
-            "is required because a service declares provider 'EC2'; it must set "
+            "is required because an agent declares provider 'EC2'; it must set "
             "region, subnet_id, security_group_ids",
         )
         self.assertEqual(violation.line, 0)
@@ -413,7 +413,7 @@ class ProviderTests(_ManifestCase):
         self.assertEqual(
             self.fields(
                 {
-                    "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+                    "agents": [_agent(provider="EC2", machine_type="t3.micro")],
                     "ec2": block,
                 }
             ),
@@ -422,10 +422,10 @@ class ProviderTests(_ManifestCase):
 
     def test_an_empty_security_group_list_is_rejected(self):
         # It used to pass the required check, after which the block was
-        # dropped without a violation: an EC2 service with Manifest.ec2 None.
+        # dropped without a violation: an EC2 agent with Manifest.ec2 None.
         violation = self.one(
             {
-                "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+                "agents": [_agent(provider="EC2", machine_type="t3.micro")],
                 "ec2": {**_EC2_BLOCK, "security_group_ids": []},
             }
         )
@@ -438,11 +438,11 @@ class ProviderTests(_ManifestCase):
 
         self.assertEqual(manifest.agents[0].requirements, ())
 
-    def test_the_ec2_block_accepts_an_instance_profile(self):
+    def test_the_ec2_block_accepts_an_iam_profile(self):
         self.load(
             {
-                "agents": [_agent(provider="EC2", instance_type="t3.micro")],
-                "ec2": {**_EC2_BLOCK, "instance_profile_name": "my-profile"},
+                "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+                "ec2": {**_EC2_BLOCK, "iam_profile_name": "my-profile"},
             }
         )
 
@@ -480,7 +480,7 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(manifest.redis.db, 0)
         self.assertIsNone(manifest.otel)
 
-        self.assertIsInstance(agent, AgentService)
+        self.assertIsInstance(agent, CodeAgent)
         self.assertEqual(agent.provider, "local")
         self.assertEqual(agent.replicas, 1)
         self.assertEqual(agent.redis_port, 6379)
@@ -493,7 +493,7 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(manifest.endpoint.api_port, 8080)
         self.assertEqual(manifest.dashboard_port, 8081)
 
-        self.assertIsInstance(database, DatabaseService)
+        self.assertIsInstance(database, DatabaseAgent)
         self.assertEqual(database.db_port, 5432)
 
 
@@ -748,7 +748,7 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_string_field_takes_the_variable_s_text(self):
         config = {
-            "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+            "agents": [_agent(provider="EC2", machine_type="t3.micro")],
             "ec2": {**_EC2_BLOCK, "region": "${CANYONOS_TEST_REGION}"},
         }
 
@@ -757,7 +757,7 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_string_list_takes_the_variable_s_text(self):
         config = {
-            "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+            "agents": [_agent(provider="EC2", machine_type="t3.micro")],
             "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
         }
 
@@ -777,7 +777,7 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_ref_that_resolves_to_nothing_in_a_list_names_the_variable(self):
         config = {
-            "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+            "agents": [_agent(provider="EC2", machine_type="t3.micro")],
             "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
         }
 
@@ -803,7 +803,7 @@ class EnvExpansionTests(_ManifestCase):
         ):
             with self.subTest(key=key):
                 config = {
-                    "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+                    "agents": [_agent(provider="EC2", machine_type="t3.micro")],
                     "ec2": {**_EC2_BLOCK, key: value},
                 }
                 environ = {
@@ -819,7 +819,7 @@ class EnvExpansionTests(_ManifestCase):
                     "is not set",
                 )
 
-    def test_the_ec2_block_is_only_checked_when_a_service_uses_ec2(self):
+    def test_the_ec2_block_is_only_checked_when_an_agent_uses_ec2(self):
         environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_REGION"}
         for block in (
             {"region": "${CANYONOS_TEST_REGION}", "ami_id": "ami-1"},
@@ -881,7 +881,7 @@ class EveryProblemInAnEntryTests(_ManifestCase):
         del block["region"]
         fields = self.fields(
             {
-                "agents": [_agent(provider="EC2", instance_type="t3.micro")],
+                "agents": [_agent(provider="EC2", machine_type="t3.micro")],
                 "ec2": block,
             }
         )
@@ -900,7 +900,7 @@ class ListItemLineTests(unittest.TestCase):
                 load_manifest(path)
         return raised.exception.violations
 
-    def test_a_service_that_is_not_a_mapping_points_at_its_line(self):
+    def test_an_agent_entry_that_is_not_a_mapping_points_at_its_line(self):
         (violation,) = self._violations(
             "agents:\n"
             "  - name: ExampleAgent\n"
@@ -1013,7 +1013,7 @@ class UnparseableFileTests(unittest.TestCase):
         # No field to name, so the location is followed by the message itself.
         self.assertNotIn(": : ", rendered)
 
-    def test_a_key_set_twice_in_a_service_is_rejected_at_the_second(self):
+    def test_a_key_set_twice_in_an_agent_is_rejected_at_the_second(self):
         # PyYAML keeps the last value silently; the first `replicas` would
         # simply vanish from the deploy.
         (violation,) = self._load(

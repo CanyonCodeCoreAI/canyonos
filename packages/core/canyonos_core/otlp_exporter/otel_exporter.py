@@ -71,9 +71,9 @@ MAX_ROW_EXPORT_ATTEMPTS = 5
 _row_export_failures = {}
 EMPTY_QUEUE_WARNING_POLLS = 12
 EMPTY_QUEUE_REWARN_POLLS = 720
-# Sent rows are transport residue; prune them so the queue file stays bounded. Metrics
+# Sent rows are transport residue; delete them so the queue file stays bounded. Metrics
 # accrue every poll for every agent + host, so they get a shorter retention than spans.
-PRUNE_INTERVAL_SECONDS = 5 * 60
+DELETE_INTERVAL_SECONDS = 5 * 60
 TRACE_RETENTION_SECONDS = 30 * 60
 METRIC_RETENTION_SECONDS = 10 * 60
 LOG_RETENTION_SECONDS = 30 * 60
@@ -728,28 +728,28 @@ def _flush_pending(table, unit):
         )
 
 
-def _prune_expired_rows():
+def _delete_expired_rows():
     """Delete aged-out rows from all queue tables (throttled by the caller). Age-based
     only -- sent or not -- so an unreachable/rejecting destination can't grow the queue
     forever. Traces age out on ``finished_at`` (NULL for in-flight spans, so they're
     never dropped mid-run); metrics and logs age out on ``observed_at``.
     """
     try:
-        traces = otel_reader.prune_expired(
+        traces = otel_reader.delete_expired(
             "traces_waiting", "finished_at", TRACE_RETENTION_SECONDS, DB_PATH
         )
-        metrics = otel_reader.prune_expired(
+        metrics = otel_reader.delete_expired(
             "metrics_waiting", "observed_at", METRIC_RETENTION_SECONDS, DB_PATH
         )
-        logs = otel_reader.prune_expired(
+        logs = otel_reader.delete_expired(
             "logs_waiting", "observed_at", LOG_RETENTION_SECONDS, DB_PATH
         )
     except Exception as e:
-        logger.error("Failed to prune aged-out rows (non-fatal): %s", e, exc_info=True)
+        logger.error("Failed to delete aged-out rows (non-fatal): %s", e, exc_info=True)
         return
     if traces or metrics or logs:
         logger.info(
-            "Pruned %d span row(s), %d metric sample(s), and %d log row(s) from %s.",
+            "Deleted %d span row(s), %d metric sample(s), and %d log row(s) from %s.",
             traces,
             metrics,
             logs,
@@ -985,7 +985,7 @@ def main():
         )
     try:
         last_poll = 0
-        last_prune = 0
+        last_delete = 0
         while _running:
             if time.time() - last_poll >= POLL_INTERVAL_SECONDS:
                 try:
@@ -1014,9 +1014,9 @@ def main():
                     )
                 last_poll = time.time()
             # Pruning runs on its own slower cadence, independent of the poll tick.
-            if time.time() - last_prune >= PRUNE_INTERVAL_SECONDS:
-                _prune_expired_rows()
-                last_prune = time.time()
+            if time.time() - last_delete >= DELETE_INTERVAL_SECONDS:
+                _delete_expired_rows()
+                last_delete = time.time()
             time.sleep(1)
     finally:
         _shutdown_exporters(_trace_exporters, "shutting the exporter process down")

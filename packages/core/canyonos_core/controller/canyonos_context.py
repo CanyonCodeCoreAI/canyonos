@@ -57,7 +57,7 @@ def get_current_function() -> str:
 
 
 def set_current_metrics_key(metrics_key: str):
-    """Set the Redis metrics-hash key of the controller instance currently executing."""
+    """Set the Redis metrics-hash key of the replica currently executing."""
     _current_metrics_key.set(metrics_key)
 
 

@@ -98,7 +98,7 @@ def _build_stub_method(function, agent_name):
     Generates:
         def get_stock_price(self, ticker: str) -> Future:
             args = {"ticker": ticker}
-            return Future(parent=inspect.stack()[1].filename, service="FinanceAgent",
+            return Future(parent=inspect.stack()[1].filename, agent_name="FinanceAgent",
                           method="get_stock_price", args=args, grpc_stub=self.stub)
     """
     func_name = function.name
@@ -138,7 +138,7 @@ def _build_stub_method(function, agent_name):
         )
     )
 
-    # return Future(parent=..., service=..., method=..., args=args)
+    # return Future(parent=..., agent_name=..., method=..., args=args)
     body.append(
         ast.Return(
             value=ast.Call(
@@ -163,7 +163,7 @@ def _build_stub_method(function, agent_name):
                         ),
                     ),
                     ast.keyword(
-                        arg="service",
+                        arg="agent_name",
                         value=ast.Constant(value=agent_name),
                     ),
                     ast.keyword(
@@ -191,7 +191,7 @@ def _build_stub_method(function, agent_name):
     return func_def
 
 
-def _build_stub_class(service):
+def _build_stub_class(agent_spec):
     """
     Build an AST node for the entire stub class.
 
@@ -201,8 +201,8 @@ def _build_stub_class(service):
                 pass
             ...stub methods...
     """
-    class_name = service.name
-    functions = service.functions
+    class_name = agent_spec.name
+    functions = agent_spec.functions
 
     # __init__ method: simple pass, no gRPC setup needed.
     # Future handles its own gRPC connections via env vars.
@@ -225,7 +225,7 @@ def _build_stub_class(service):
     # Build all stub methods
     methods = [init_method]
     for function in functions:
-        methods.append(_build_stub_method(function, service.name))
+        methods.append(_build_stub_method(function, agent_spec.name))
 
     class_def = ast.ClassDef(
         name=class_name,
@@ -238,11 +238,11 @@ def _build_stub_class(service):
     return class_def
 
 
-def generate_stub(service, output_path):
+def generate_stub(agent_spec, output_path):
     """
     Generate an importable Python stub file for an agent's declared functions.
     """
-    class_def = _build_stub_class(service)
+    class_def = _build_stub_class(agent_spec)
 
     # Build the full module AST
     module = ast.Module(
@@ -538,7 +538,7 @@ def _copy_files(output_dir, files_to_copy):
 
 
 # Bandage: revisit once resources are pooled and agents no longer declare a provider.
-def target_docker_platform(agents):
+def target_docker_platform(agent_specs):
     """Return the platform `canyonos deploy` builds and pulls every image for:
     `CANYONOS_DOCKER_PLATFORM` when set, else this Docker daemon's own when every
     agent runs on this machine, else the portable one EC2 and remote hosts run."""
@@ -548,11 +548,11 @@ def target_docker_platform(agents):
     # port_claim_host gives the host an agent runs on, or None if it gets its own machine.
     if all(
         _is_local_host(
-            providers.get(agent.get("provider", providers.DEFAULT)).port_claim_host(
-                agent
-            )
+            providers.get(
+                agent_spec.get("provider", providers.DEFAULT)
+            ).port_claim_host(agent_spec)
         )
-        for agent in agents
+        for agent_spec in agent_specs
     ):
         return _docker_daemon_platform()
     return DEFAULT_DOCKER_PLATFORM

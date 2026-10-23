@@ -13,12 +13,12 @@
 ## AWS-side setup
 
 - **Security group** (everything is inbound, same permissions needed for outbound unless you allow all outbound traffic)
-  - The endpoint and dashboard run on the host, not on an instance. Their ports are by default 8080 and 8081, and are referred as such below
-  - On the instances' security group, ports 50051, 6379, and 22 need to be accessible by the security group itself. The host must run inside the same VPC, since it reaches every instance over its private IP.
+  - The endpoint and dashboard run on the host, not on a launched machine. Their ports are by default 8080 and 8081, and are referred as such below
+  - On the machines' security group, ports 50051, 6379, and 22 need to be accessible by the security group itself. The host must run inside the same VPC, since it reaches every machine over its private IP.
     - 50051 and 6379 must be accessible over custom TCP.
     - 22 must be accessible over ssh.
   - On the host, ports 8080 and 8081 need to be accessible by whoever queries the endpoint (0.0.0.0 for example)
-  - On the host, the port the endpoint publishes for its gRPC controller needs to be accessible by the instances' security group over custom TCP. Agents send results back there; without it every request stays "pending".
+  - On the host, the port the endpoint publishes for its gRPC controller needs to be accessible by the machines' security group over custom TCP. Agents send results back there; without it every request stays "pending".
 
 ## Config (`ec2:` block in `global_controller.yaml`)
 
@@ -32,7 +32,7 @@ ec2:
     - sg-0123456789abcdef0
 ```
 
-`canyonos build` handles this automatically, but each EC2 agent's spec also needs its own `instance_type` (e.g. `t3.micro`), example below. 
+`canyonos build` handles this automatically, but each EC2 agent's spec also needs its own `machine_type` (e.g. `t3.micro`), example below. 
 
 Example:
 
@@ -40,12 +40,12 @@ Example:
   - name: ExampleAgent
     entrypoint: agents/example_agent.py
     provider: EC2
-    instance_type: t3.micro
+    machine_type: t3.micro
 ```
 
 ## IAM permissions
 
-The host machine needs these IAM Permissions to be able to launch external EC2 instances. This can either be held by the host itself, or the EC2 machine hosting the deployment.
+The host machine needs these IAM Permissions to be able to launch external EC2 machines. This can either be held by the host itself, or the EC2 machine hosting the deployment.
 
 - ec2:
   - RunInstances
@@ -54,10 +54,10 @@ The host machine needs these IAM Permissions to be able to launch external EC2 i
   - CreateTags
   - ImportKeyPair
 - IAM:
-  - PassRole (only needed if you set `ec2.instance_profile_name in global_controller.yaml`)
+  - PassRole (only needed if you set `ec2.iam_profile_name in global_controller.yaml`)
 
-You can paste the exact JSON below in the "create manual policy" field in IAM when generating permissions for a role. Drop the `iam:PassRole` statement if you're not setting `ec2.instance_profile_name`.
-`iam:PassRole` gives all created instances a IAM role and its permissions, enabling stuff like Bedrock.
+You can paste the exact JSON below in the "create manual policy" field in IAM when generating permissions for a role. Drop the `iam:PassRole` statement if you're not setting `ec2.iam_profile_name`.
+`iam:PassRole` gives all created machines a IAM role and its permissions, enabling stuff like Bedrock.
 
 ```json
 {
@@ -81,7 +81,7 @@ You can paste the exact JSON below in the "create manual policy" field in IAM wh
 
 ## [OPTIONAL] Extra Configurations in the ec2 block in `global_controller.yaml`
 
-The ec2 config block given above has the bare minimum needed to get the instances up and running, to add separate settings, you can add these following fields in the block.
+The ec2 config block given above has the bare minimum needed to get the machines up and running, to add separate settings, you can add these following fields in the block.
 
 ```yaml
 ec2:
@@ -92,13 +92,13 @@ ec2:
     - sg-0123456789abcdef0
 
   # Optional Commands
-  instance_profile_name: ec2launch # For the launched instances, if you want a specific IAM role attached to each instance, pass this variable in.
+  iam_profile_name: ec2launch # For the launched machines, if you want a specific IAM role attached to each machine, pass this variable in.
   ami_id: ami-0123456789abcdef0 # Look at `Creating your own AMI` below
   ssh_user: ubuntu # Look at `Creating your own AMI` below
 
 ssh_private_key_path: ~/.ssh/your-own-key # Top level, not under ec2. Look at `Private Key` below
 ```
-For the instance_profile_name, you will also need to add a new policy to your IAM role in the host machine, the iam:PassRole policy. JSON below.
+For the iam_profile_name, you will also need to add a new policy to your IAM role in the host machine, the iam:PassRole policy. JSON below.
 
 ```json
 {
@@ -107,7 +107,7 @@ For the instance_profile_name, you will also need to add a new policy to your IA
     {
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::<account-id>:role/<role-behind-your-instance-profile>"
+      "Resource": "arn:aws:iam::<account-id>:role/<role-behind-your-iam-profile>"
     }
   ]
 }

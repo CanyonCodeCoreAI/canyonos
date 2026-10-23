@@ -67,7 +67,7 @@ class FutureParentIdTests(unittest.TestCase):
 
     def test_parent_defaults_to_empty_when_no_future_executing(self):
         f = future_module.Future(
-            parent="some/file.py", service="Svc", method="do_thing"
+            parent="some/file.py", agent_name="Svc", method="do_thing"
         )
         self.assertEqual(f.parent, "")
         self.assertEqual(self.fake_redis.hashes[f"future:{f.id}"]["parent"], "")
@@ -76,7 +76,7 @@ class FutureParentIdTests(unittest.TestCase):
         canyonos_context.set_current_future_id("caller-future-id")
 
         f = future_module.Future(
-            parent="ignored/file.py", service="Svc", method="do_thing"
+            parent="ignored/file.py", agent_name="Svc", method="do_thing"
         )
 
         self.assertEqual(f.parent, "caller-future-id")
@@ -88,7 +88,7 @@ class FutureParentIdTests(unittest.TestCase):
         future_module.Future._stub.Execute.side_effect = RuntimeError("submit failed")
 
         future = future_module.Future(
-            parent="ignored/file.py", service="Svc", method="do_thing"
+            parent="ignored/file.py", agent_name="Svc", method="do_thing"
         )
 
         # The hash's `error` field is just the exception type name; the full
@@ -117,7 +117,7 @@ class FutureParentIdTests(unittest.TestCase):
 
         try:
             future_module.Future(
-                parent="ignored/file.py", service="Svc", method="do_thing"
+                parent="ignored/file.py", agent_name="Svc", method="do_thing"
             )
         except Exception as e:
             self.fail(f"Future.__init__ raised unexpectedly: {e}")
@@ -127,7 +127,7 @@ class FutureParentIdTests(unittest.TestCase):
 
         with patch("canyonos_core.controller.utils.grpc_options.time.sleep") as sleep:
             future = future_module.Future(
-                parent="ignored/file.py", service="Svc", method="do_thing"
+                parent="ignored/file.py", agent_name="Svc", method="do_thing"
             )
 
         self.assertEqual(future_module.Future._stub.Execute.call_count, 2)

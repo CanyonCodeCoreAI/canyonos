@@ -64,7 +64,7 @@ sequenceDiagram
     E->>LC: gRPC Execute (localhost:50051)
     E->>R: SET request:{id}:future
     E-->>C: 202 {"request_id": {id}}
-    LC->>A: gRPC Execute (routed by routing_table:endpoints)
+    LC->>A: gRPC Execute (routed by routing_table:addresses)
     A->>A: run {method}(**kwargs), resolve Futures in the result
     A->>LC: gRPC WriteResult (result or error)
     LC->>R: HSET future:{future_id} result / failed

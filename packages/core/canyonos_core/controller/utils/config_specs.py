@@ -18,20 +18,20 @@ def _published_names(redis_client):
     return None if raw is None else json.loads(raw)
 
 
-def write_config_specs(agents, redis_client):
+def write_config_specs(agent_specs, redis_client):
     """Publish each agent's spec to Redis, writing the agent list last."""
-    for agent in agents:
-        name = agent["name"]
-        resources = agent.get("resources", {})
-        replicas = agent.get("replicas", 1)
+    for agent_spec in agent_specs:
+        name = agent_spec["name"]
+        resources = agent_spec.get("resources", {})
+        replicas = agent_spec.get("replicas", 1)
         redis_client.hset_multiple(
             f"agent:{name}:",
             {
                 "resources": json.dumps(resources),
                 "replicas": json.dumps(replicas),
-                "stateful": json.dumps(agent.get("stateful", False)),
-                "redis_port": str(agent.get("redis_port", 6379)),
-                "provider": agent["provider"],
+                "stateful": json.dumps(agent_spec.get("stateful", False)),
+                "redis_port": str(agent_spec.get("redis_port", 6379)),
+                "provider": agent_spec["provider"],
             },
         )
         redis_client.hset_multiple(
@@ -43,9 +43,9 @@ def write_config_specs(agents, redis_client):
             },
         )
         # Already env-expanded, so the reconciler never re-parses the YAML.
-        redis_client.set(_spec_key(name), json.dumps(agent))
+        redis_client.set(_spec_key(name), json.dumps(agent_spec))
 
-    names = [agent["name"] for agent in agents]
+    names = [agent_spec["name"] for agent_spec in agent_specs]
     stale = set(_published_names(redis_client) or []) - set(names)
     redis_client.set(ACTIVE_AGENTS_KEY, json.dumps(names))
     # Deleted only once the list no longer names them.
@@ -61,10 +61,10 @@ def read_config_specs(redis_client):
     if not names:
         return []
 
-    specs = []
+    agent_specs = []
     for name in names:
         raw = redis_client.get(_spec_key(name))
         if raw is None:
             continue
-        specs.append(json.loads(raw))
-    return specs or None
+        agent_specs.append(json.loads(raw))
+    return agent_specs or None

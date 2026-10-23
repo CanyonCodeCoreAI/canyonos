@@ -47,26 +47,26 @@ class _FailingStub:
         raise RuntimeError("connection refused")
 
 
-def _bare_controller(testcase, redis, instances, node_redis=None):
+def _bare_controller(testcase, redis, replicas, machine_redis=None):
     """Build a GlobalController without running its heavy __init__.
 
-    `node_redis` optionally simulates the host -> RedisClient map that
+    `machine_redis` optionally simulates the host -> RedisClient map that
     _launch_redis_containers()/EC2 bootstrap populate. Passing None (the
     default) leaves the attribute unset entirely, reproducing a controller
-    that never got node_redis set at all -- _trigger_cleanup must tolerate
+    that never got machine_redis set at all -- _trigger_cleanup must tolerate
     this and fall back to `redis` alone.
     """
     controller = GlobalController.__new__(GlobalController)
     controller.redis = redis
     patcher = patch(
-        "canyonos_core.controller.global_controller.list_instances",
-        return_value=instances,
+        "canyonos_core.controller.global_controller.list_replicas",
+        return_value=replicas,
     )
     patcher.start()
     testcase.addCleanup(patcher.stop)
     controller._lc_stubs = {}
-    if node_redis is not None:
-        controller.node_redis = node_redis
+    if machine_redis is not None:
+        controller.machine_redis = machine_redis
 
     # Every completed request is delivered, except those a test lists in
     # `testcase.gone` (futures already expired), which are gone instead.
@@ -84,47 +84,47 @@ def _bare_controller(testcase, redis, instances, node_redis=None):
 
 
 class TriggerCleanupTests(unittest.TestCase):
-    def test_sends_one_batched_call_per_instance_not_per_request(self):
+    def test_sends_one_batched_call_per_replica_not_per_request(self):
         # A backlog of many completed requests must not multiply the number of
-        # gRPC calls per instance -- one call per instance carrying the whole
+        # gRPC calls per replica -- one call per replica carrying the whole
         # batch, regardless of how large the backlog is.
         completed = {f"req{i}" for i in range(25)}
         expected = set(completed)  # snapshot -- _FakeRedis aliases this set, and
         # _trigger_cleanup drains "request:completed" via srem in place.
         redis = _FakeRedis(sets={"request:completed": completed})
-        instances = [{"routing_endpoint": f"host{i}:50051"} for i in range(3)]
-        controller = _bare_controller(self, redis, instances)
+        replicas = [{"address": f"host{i}:50051"} for i in range(3)]
+        controller = _bare_controller(self, redis, replicas)
 
-        stubs = {instance["routing_endpoint"]: _FakeStub() for instance in instances}
-        controller._get_lc_stub = lambda endpoint: stubs[endpoint]
+        stubs = {replica["address"]: _FakeStub() for replica in replicas}
+        controller._get_lc_stub = lambda address: stubs[address]
 
         controller._trigger_cleanup()
 
-        for endpoint, stub in stubs.items():
+        for address, stub in stubs.items():
             self.assertEqual(
-                len(stub.calls), 1, f"expected exactly one Cleanup call to {endpoint}"
+                len(stub.calls), 1, f"expected exactly one Cleanup call to {address}"
             )
             self.assertEqual(set(stub.calls[0]["request_ids"]), expected)
 
         # Sending isn't draining: they stay queued until their futures are gone.
         self.assertEqual(redis.smembers("request:completed"), expected)
 
-    def test_one_instance_failing_does_not_stop_the_others(self):
+    def test_one_replica_failing_does_not_stop_the_others(self):
         # CAN-391: a failed Cleanup RPC must not drop requests -- dropping them is how
         # entries went missing and Redis grew unbounded. They stay queued and are
         # sent again next cycle, since their futures are still there.
         completed = {"reqA", "reqB"}
         expected = set(completed)  # snapshot -- see note in the test above
         redis = _FakeRedis(sets={"request:completed": completed})
-        instances = [
-            {"routing_endpoint": "good:50051"},
-            {"routing_endpoint": "bad:50051"},
+        replicas = [
+            {"address": "good:50051"},
+            {"address": "bad:50051"},
         ]
-        controller = _bare_controller(self, redis, instances)
+        controller = _bare_controller(self, redis, replicas)
 
         good_stub = _FakeStub()
         stubs = {"good:50051": good_stub, "bad:50051": _FailingStub()}
-        controller._get_lc_stub = lambda endpoint: stubs[endpoint]
+        controller._get_lc_stub = lambda address: stubs[address]
 
         controller._trigger_cleanup()  # must not raise
 
@@ -134,9 +134,9 @@ class TriggerCleanupTests(unittest.TestCase):
 
     def test_gone_requests_are_drained_and_not_sent_again(self):
         redis = _FakeRedis(sets={"request:completed": {"req1", "req2"}})
-        controller = _bare_controller(self, redis, [{"routing_endpoint": "host:50051"}])
+        controller = _bare_controller(self, redis, [{"address": "host:50051"}])
         stub = _FakeStub()
-        controller._get_lc_stub = lambda endpoint: stub
+        controller._get_lc_stub = lambda address: stub
         self.gone = {"req1"}
 
         controller._trigger_cleanup()
@@ -146,9 +146,9 @@ class TriggerCleanupTests(unittest.TestCase):
 
     def test_undelivered_requests_are_neither_sent_nor_drained(self):
         redis = _FakeRedis(sets={"request:completed": {"req1"}})
-        controller = _bare_controller(self, redis, [{"routing_endpoint": "host:50051"}])
+        controller = _bare_controller(self, redis, [{"address": "host:50051"}])
         stub = _FakeStub()
-        controller._get_lc_stub = lambda endpoint: stub
+        controller._get_lc_stub = lambda address: stub
         patcher = patch(
             "canyonos_core.controller.global_controller.otel_writer.deliver_completed_requests",
             return_value=(set(), set()),
@@ -161,11 +161,11 @@ class TriggerCleanupTests(unittest.TestCase):
         self.assertEqual(stub.calls, [])
         self.assertEqual(redis.smembers("request:completed"), {"req1"})
 
-    def test_gone_requests_drain_even_with_no_instance_reachable(self):
+    def test_gone_requests_drain_even_with_no_replica_reachable(self):
         # Draining depends only on Redis state, never on an LC answering.
         redis = _FakeRedis(sets={"request:completed": {"req1", "req2"}})
-        controller = _bare_controller(self, redis, [{"routing_endpoint": "bad:50051"}])
-        controller._get_lc_stub = lambda endpoint: _FailingStub()
+        controller = _bare_controller(self, redis, [{"address": "bad:50051"}])
+        controller._get_lc_stub = lambda address: _FailingStub()
         self.gone = {"req1"}
 
         controller._trigger_cleanup()
@@ -174,16 +174,16 @@ class TriggerCleanupTests(unittest.TestCase):
 
     def test_noop_when_nothing_completed(self):
         redis = _FakeRedis()
-        instances = [{"routing_endpoint": "host0:50051"}]
-        controller = _bare_controller(self, redis, instances)
+        replicas = [{"address": "host0:50051"}]
+        controller = _bare_controller(self, redis, replicas)
 
         stub = _FakeStub()
-        controller._get_lc_stub = lambda endpoint: stub
+        controller._get_lc_stub = lambda address: stub
 
         controller._trigger_cleanup()
         self.assertEqual(stub.calls, [])
 
-    def test_noop_when_no_instances_registered(self):
+    def test_noop_when_no_replicas_registered(self):
         # CAN-391: with nothing to broadcast to, nothing has been cleaned --
         # the batch must stay queued rather than being silently dropped.
         redis = _FakeRedis(sets={"request:completed": {"req1"}})
@@ -193,59 +193,59 @@ class TriggerCleanupTests(unittest.TestCase):
         self.assertEqual(redis.smembers("request:completed"), {"req1"})
 
 
-class MultiNodeTriggerCleanupTests(unittest.TestCase):
-    """Bug D: _trigger_cleanup must not be blind to non-localhost node Redis instances.
+class MultiMachineTriggerCleanupTests(unittest.TestCase):
+    """Bug D: _trigger_cleanup must not be blind to non-localhost machine Redis instances.
 
     Each replica (local or EC2) records its own completions in its own Redis, never centrally.
     """
 
-    def test_completed_request_only_on_non_localhost_node_gets_cleaned(self):
+    def test_completed_request_only_on_non_localhost_machine_gets_cleaned(self):
         localhost_redis = _FakeRedis()
         ec2_redis = _FakeRedis(sets={"request:completed": {"reqE"}})
-        node_redis = {"localhost": localhost_redis, "10.0.0.5": ec2_redis}
+        machine_redis = {"localhost": localhost_redis, "10.0.0.5": ec2_redis}
         controller = _bare_controller(
             self,
             localhost_redis,
-            [{"routing_endpoint": "wf:50051"}],
-            node_redis=node_redis,
+            [{"address": "wf:50051"}],
+            machine_redis=machine_redis,
         )
 
         stub = _FakeStub()
-        controller._get_lc_stub = lambda endpoint: stub
+        controller._get_lc_stub = lambda address: stub
 
         controller._trigger_cleanup()
 
         self.assertEqual(len(stub.calls), 1)
         self.assertEqual(set(stub.calls[0]["request_ids"]), {"reqE"})
 
-        # A later cycle, once its futures are gone, drains it from that node.
+        # A later cycle, once its futures are gone, drains it from that machine.
         self.gone = {"reqE"}
         controller._trigger_cleanup()
         self.assertEqual(ec2_redis.smembers("request:completed"), set())
 
-    def test_requests_across_multiple_nodes_batched_into_one_call_per_instance(self):
+    def test_requests_across_multiple_machines_batched_into_one_call_per_replica(self):
         localhost_redis = _FakeRedis(sets={"request:completed": {"reqA", "reqB"}})
         ec2_redis_1 = _FakeRedis(sets={"request:completed": {"reqC"}})
         ec2_redis_2 = _FakeRedis(sets={"request:completed": {"reqD", "reqE"}})
-        node_redis = {
+        machine_redis = {
             "localhost": localhost_redis,
             "ec2-1": ec2_redis_1,
             "ec2-2": ec2_redis_2,
         }
-        instances = [{"routing_endpoint": f"host{i}:50051"} for i in range(3)]
+        replicas = [{"address": f"host{i}:50051"} for i in range(3)]
         controller = _bare_controller(
-            self, localhost_redis, instances, node_redis=node_redis
+            self, localhost_redis, replicas, machine_redis=machine_redis
         )
 
-        stubs = {instance["routing_endpoint"]: _FakeStub() for instance in instances}
-        controller._get_lc_stub = lambda endpoint: stubs[endpoint]
+        stubs = {replica["address"]: _FakeStub() for replica in replicas}
+        controller._get_lc_stub = lambda address: stubs[address]
 
         controller._trigger_cleanup()
 
         expected = {"reqA", "reqB", "reqC", "reqD", "reqE"}
-        for endpoint, stub in stubs.items():
+        for address, stub in stubs.items():
             self.assertEqual(
-                len(stub.calls), 1, f"expected exactly one Cleanup call to {endpoint}"
+                len(stub.calls), 1, f"expected exactly one Cleanup call to {address}"
             )
             self.assertEqual(set(stub.calls[0]["request_ids"]), expected)
 
@@ -254,19 +254,19 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
         for redis in (localhost_redis, ec2_redis_1, ec2_redis_2):
             self.assertEqual(redis.smembers("request:completed"), set())
 
-    def test_each_node_drained_from_its_own_client_not_cross_contaminated(self):
+    def test_each_machine_drained_from_its_own_client_not_cross_contaminated(self):
         redis_with_data = _SpyRedis({"request:completed": {"reqX"}})
         redis_empty = _SpyRedis()
-        node_redis = {"a": redis_with_data, "b": redis_empty}
+        machine_redis = {"a": redis_with_data, "b": redis_empty}
         controller = _bare_controller(
             self,
             redis_with_data,
-            [{"routing_endpoint": "wf:50051"}],
-            node_redis=node_redis,
+            [{"address": "wf:50051"}],
+            machine_redis=machine_redis,
         )
 
         stub = _FakeStub()
-        controller._get_lc_stub = lambda endpoint: stub
+        controller._get_lc_stub = lambda address: stub
         self.gone = {"reqX"}
 
         controller._trigger_cleanup()
@@ -274,19 +274,17 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
         self.assertEqual(redis_with_data.srem_calls, [("request:completed", ("reqX",))])
         self.assertEqual(redis_empty.srem_calls, [])
 
-    def test_falls_back_to_self_redis_when_node_redis_attribute_missing(self):
-        # No node_redis kwarg at all -- the attribute genuinely doesn't exist,
+    def test_falls_back_to_self_redis_when_machine_redis_attribute_missing(self):
+        # No machine_redis kwarg at all -- the attribute genuinely doesn't exist,
         # reproducing a controller built before _launch_redis_containers() ever
         # ran. Behavior must match the pre-Bug-D single-redis path exactly.
         completed = {"req1", "req2"}
         redis = _FakeRedis(sets={"request:completed": set(completed)})
-        controller = _bare_controller(
-            self, redis, [{"routing_endpoint": "host0:50051"}]
-        )
-        self.assertFalse(hasattr(controller, "node_redis"))
+        controller = _bare_controller(self, redis, [{"address": "host0:50051"}])
+        self.assertFalse(hasattr(controller, "machine_redis"))
 
         stub = _FakeStub()
-        controller._get_lc_stub = lambda endpoint: stub
+        controller._get_lc_stub = lambda address: stub
 
         controller._trigger_cleanup()
         self.assertEqual(set(stub.calls[0]["request_ids"]), completed)
@@ -295,17 +293,17 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
         controller._trigger_cleanup()
         self.assertEqual(redis.smembers("request:completed"), set())
 
-    def test_falls_back_to_self_redis_when_node_redis_is_empty_dict(self):
-        # node_redis present but empty -- the window right at the start of
+    def test_falls_back_to_self_redis_when_machine_redis_is_empty_dict(self):
+        # machine_redis present but empty -- the window right at the start of
         # __init__, before _launch_redis_containers() populates it.
         completed = {"req1"}
         redis = _FakeRedis(sets={"request:completed": set(completed)})
         controller = _bare_controller(
-            self, redis, [{"routing_endpoint": "host0:50051"}], node_redis={}
+            self, redis, [{"address": "host0:50051"}], machine_redis={}
         )
 
         stub = _FakeStub()
-        controller._get_lc_stub = lambda endpoint: stub
+        controller._get_lc_stub = lambda address: stub
 
         controller._trigger_cleanup()
         self.assertEqual(set(stub.calls[0]["request_ids"]), completed)
@@ -315,25 +313,25 @@ class MultiNodeTriggerCleanupTests(unittest.TestCase):
         self.assertEqual(redis.smembers("request:completed"), set())
 
 
-class RoutingEndpointTests(unittest.TestCase):
-    """CAN-391: the GC container must send Cleanup to each instance's
-    container-reachable routing endpoint, never its host-published endpoint
+class RoutingAddressTests(unittest.TestCase):
+    """CAN-391: the GC container must send Cleanup to each replica's
+    container-reachable address, never its host-published address
     (e.g. localhost:8001) -- the GC can't reach that from inside Docker."""
 
-    def test_cleanup_uses_routing_endpoint_not_published_endpoint(self):
+    def test_cleanup_uses_address_not_published_address(self):
         completed = {"req1"}
         redis = _FakeRedis(sets={"request:completed": set(completed)})
-        instances = [
-            {"endpoint": "localhost:8001", "routing_endpoint": "runtime-abc:50051"}
+        replicas = [
+            {"published_address": "localhost:8001", "address": "container-abc:50051"}
         ]
-        controller = _bare_controller(self, redis, instances)
+        controller = _bare_controller(self, redis, replicas)
 
         routing_stub = _FakeStub()
 
-        def _get_lc_stub(endpoint):
-            if endpoint == "localhost:8001":
+        def _get_lc_stub(address):
+            if address == "localhost:8001":
                 raise AssertionError(
-                    "Cleanup must not be sent to the host-published endpoint; "
+                    "Cleanup must not be sent to the host-published address; "
                     "the GC container cannot reach it."
                 )
             return routing_stub
@@ -345,33 +343,36 @@ class RoutingEndpointTests(unittest.TestCase):
         self.assertEqual(len(routing_stub.calls), 1)
         self.assertEqual(set(routing_stub.calls[0]["request_ids"]), completed)
 
-    def test_distinct_endpoints_across_multiple_instances(self):
+    def test_distinct_addresses_across_multiple_replicas(self):
         completed = {"req1", "req2"}
         redis = _FakeRedis(sets={"request:completed": set(completed)})
-        instances = [
-            {"endpoint": f"localhost:800{i}", "routing_endpoint": f"runtime-{i}:50051"}
+        replicas = [
+            {
+                "published_address": f"localhost:800{i}",
+                "address": f"container-{i}:50051",
+            }
             for i in range(3)
         ]
-        controller = _bare_controller(self, redis, instances)
+        controller = _bare_controller(self, redis, replicas)
 
-        stubs = {inst["routing_endpoint"]: _FakeStub() for inst in instances}
-        published = {inst["endpoint"] for inst in instances}
+        stubs = {replica["address"]: _FakeStub() for replica in replicas}
+        published = {replica["published_address"] for replica in replicas}
 
-        def _get_lc_stub(endpoint):
+        def _get_lc_stub(address):
             self.assertNotIn(
-                endpoint, published, "must route by routing_endpoint, not endpoint"
+                address, published, "must route by address, not published_address"
             )
-            return stubs[endpoint]
+            return stubs[address]
 
         controller._get_lc_stub = _get_lc_stub
 
         controller._trigger_cleanup()
 
-        for routing_endpoint, stub in stubs.items():
+        for address, stub in stubs.items():
             self.assertEqual(
                 len(stub.calls),
                 1,
-                f"expected exactly one Cleanup call to {routing_endpoint}",
+                f"expected exactly one Cleanup call to {address}",
             )
             self.assertEqual(set(stub.calls[0]["request_ids"]), completed)
 
@@ -388,7 +389,7 @@ class StaleContainerNameTests(unittest.TestCase):
         """
         controller = GlobalController.__new__(GlobalController)
         controller.config = {}
-        controller._set_controllers(agents)
+        controller._set_agent_specs(agents)
         controller.removed = []
         controller.command_targets = []
 
@@ -411,7 +412,7 @@ class StaleContainerNameTests(unittest.TestCase):
         ]
         controller = self._controller(agents)
 
-        controller._cleanup_stale_containers()
+        controller._remove_stale_containers()
 
         self.assertEqual(
             set(controller.removed),
@@ -422,7 +423,7 @@ class StaleContainerNameTests(unittest.TestCase):
         agents = [{"name": "IntentAgent", "provider": "local", "replicas": 1}]
         controller = self._controller(agents, running=True)
 
-        controller._cleanup_stale_containers()
+        controller._remove_stale_containers()
 
         self.assertEqual(controller.removed, [])
 
@@ -438,7 +439,7 @@ class StaleContainerNameTests(unittest.TestCase):
         ]
         controller = self._controller(agents)
 
-        controller._cleanup_stale_containers()
+        controller._remove_stale_containers()
 
         self.assertEqual(set(controller.command_targets), {("10.0.0.6", "ubuntu")})
 
@@ -450,7 +451,7 @@ class StaleContainerNameTests(unittest.TestCase):
         controller = self._controller(agents)
         controller.config = {"ec2": {"ssh_user": "ec2-user"}}
 
-        controller._cleanup_stale_containers()
+        controller._remove_stale_containers()
 
         self.assertEqual(
             set(controller.command_targets),
@@ -463,15 +464,17 @@ class ShutdownCleanupTests(unittest.TestCase):
         controller = GlobalController.__new__(GlobalController)
         controller.running = True
         controller._stopping = False
-        controller.controllers = []
+        controller.agent_specs = []
         controller.redis = _FakeRedis()
         controller.redis_containers = {
             "localhost": "canyonos-redis-localhost",
             "10.0.0.5": "canyonos-redis-10-0-0-5",
         }
-        controller.node_redis = {host: object() for host in controller.redis_containers}
+        controller.machine_redis = {
+            host: object() for host in controller.redis_containers
+        }
         controller._metrics_collectors = {}
-        controller._drain_instances = lambda: True
+        controller._remove_all_replicas = lambda: True
 
         class FailingSupervisor:
             def terminate_all(self):
@@ -493,12 +496,14 @@ class ShutdownCleanupTests(unittest.TestCase):
 
     def test_failed_redis_removal_stays_tracked_for_retry(self):
         controller = GlobalController.__new__(GlobalController)
-        controller.controllers = []
+        controller.agent_specs = []
         controller.redis_containers = {
             "localhost": "canyonos-redis-localhost",
             "10.0.0.5": "canyonos-redis-10-0-0-5",
         }
-        controller.node_redis = {host: object() for host in controller.redis_containers}
+        controller.machine_redis = {
+            host: object() for host in controller.redis_containers
+        }
         controller._metrics_collectors = {}
         fail_local_remove = True
 
@@ -516,12 +521,12 @@ class ShutdownCleanupTests(unittest.TestCase):
             controller.redis_containers,
             {"localhost": "canyonos-redis-localhost"},
         )
-        self.assertEqual(set(controller.node_redis), {"localhost"})
+        self.assertEqual(set(controller.machine_redis), {"localhost"})
 
         fail_local_remove = False
         self.assertEqual(controller._stop_redis_containers(), [])
         self.assertEqual(controller.redis_containers, {})
-        self.assertEqual(controller.node_redis, {})
+        self.assertEqual(controller.machine_redis, {})
 
 
 if __name__ == "__main__":

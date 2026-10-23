@@ -23,7 +23,7 @@ from canyonos_core.controller.global_controller import GlobalController
 def _bare_controller():
     controller = GlobalController.__new__(GlobalController)
     controller.config = {"poll_interval": 4}
-    controller.controllers = [
+    controller.agent_specs = [
         {"name": "IntentAgent", "replicas": 1, "redis_port": 6380, "provider": "local"}
     ]
     controller._metrics_collectors = {}

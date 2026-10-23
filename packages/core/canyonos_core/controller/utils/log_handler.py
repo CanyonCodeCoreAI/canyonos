@@ -27,12 +27,12 @@ class LogHandler(logging.Handler):
     widening this handler's range would double-record the same failure.
     """
 
-    def __init__(self, redis_client, agent_id=None, agent_name=None, endpoint=None):
+    def __init__(self, redis_client, agent_id=None, agent_name=None, address=None):
         super().__init__(level=logging.DEBUG)
         self._redis = redis_client
         self._agent_id = agent_id
         self._agent_name = agent_name
-        self._endpoint = endpoint
+        self._address = address
 
     def emit(self, record):
         # Skips logging if log is above a warning as its considered an error and handled elsewhere, this prevents duplicate error logging
@@ -48,7 +48,7 @@ class LogHandler(logging.Handler):
                 record,
                 agent_id=self._agent_id,
                 agent_name=self._agent_name,
-                endpoint=self._endpoint,
+                address=self._address,
             )
             append_log_entry(self._redis, f"future:{future_id}", entry)
         except Exception:

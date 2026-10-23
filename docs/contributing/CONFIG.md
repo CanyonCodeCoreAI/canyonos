@@ -33,7 +33,7 @@ allows `${VAR}` only in string fields.
 `validate_project` is what the in-container deploy calls.
 
 - `manifest.py`: `global_controller.yaml`. `load_manifest` parses it into frozen
-  dataclasses (`Manifest`, `AgentService`, `DatabaseService`, `RedisSpec`, `OtelSpec`,
+  dataclasses (`Manifest`, `CodeAgent`, `DatabaseAgent`, `RedisSpec`, `OtelSpec`,
   `EndpointSpec`) and collects every violation before raising one
   `SchemaError`.
 - `functions.py`: an agent entry's `functions`. Their names become Python source in the
@@ -52,7 +52,7 @@ instead; see `packages/core/canyonos_core/reconciler/providers/README.md`.
 
 Cross-field rules live in `_service`, `_check_provider_sections` and `_endpoint`:
 
-- `provider: EC2` needs `instance_type`, and then the `ec2` section.
+- `provider: EC2` needs `machine_type`, and then the `ec2` section.
 - The `endpoint` names an entry of type `agent` and one of its `functions`.
 - A database always has one replica.
 - Two entry names that differ only in case collide, since image and container names
@@ -72,7 +72,7 @@ config to Redis:
 | OTel destinations | `otel:destinations` | `_write_otel_destinations` |
 
 The YAML always wins: every load overwrites replica counts changed at runtime. The
-Reconciler converges running instances onto the new desired counts; see
+Reconciler converges running replicas onto the new desired counts; see
 [RECONCILER.md](../architecture/RECONCILER.md).
 
 ## Reloading
@@ -85,7 +85,7 @@ today, so users apply changes with `canyonos deploy`.
 
 ## Adding a setting
 
-1. Add the key to `_MANIFEST_KEYS` or the right service key set in `manifest.py`, and
+1. Add the key to `_MANIFEST_KEYS` or the right agent key set in `manifest.py`, and
    a field with its default to the matching dataclass.
 2. Parse it in `load_manifest` or `_service` with the helpers in `schema/_checks.py`.
 3. Read it where it's used, and publish it in `_apply_config` if other processes need it.

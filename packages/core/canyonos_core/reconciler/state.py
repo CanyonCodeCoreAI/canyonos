@@ -16,9 +16,9 @@ _DRAIN_LIMIT = 1000
 
 REPLACE_SET_KEY = "reconciler:replace"
 
-DRAINING_KEY = "reconciler:draining"
+STOPPING_KEY = "reconciler:stopping"
 # Expires so a hard-killed controller cannot hold the fleet at zero forever.
-DRAINING_TTL_SECONDS = 60
+STOPPING_TTL_SECONDS = 60
 
 
 # ------------------------------------------------------------------ #
@@ -52,24 +52,27 @@ def set_desired(redis_client, agent_name, count):
     return count
 
 
-def replica_count(spec):
+def replica_count(agent_spec):
     """An agent spec's configured replica count, or None when it is not a count."""
-    replicas = spec.get("replicas", 1)
+    replicas = agent_spec.get("replicas", 1)
     return replicas if isinstance(replicas, int) else None
 
 
 def desired_agent_specs(redis_client, agent_specs):
     """The full spec list with each spec's replicas replaced by its desired count."""
-    specs = []
-    for spec in agent_specs:
-        configured = replica_count(spec)
+    desired_specs = []
+    for agent_spec in agent_specs:
+        configured = replica_count(agent_spec)
         if configured is None:
-            specs.append(spec)
+            desired_specs.append(agent_spec)
             continue
-        specs.append(
-            {**spec, "replicas": get_desired(redis_client, spec["name"], configured)}
+        desired_specs.append(
+            {
+                **agent_spec,
+                "replicas": get_desired(redis_client, agent_spec["name"], configured),
+            }
         )
-    return specs
+    return desired_specs
 
 
 # ------------------------------------------------------------------ #
@@ -102,44 +105,43 @@ def drain(redis_client, timeout=1):
 # ------------------------------------------------------------------ #
 
 
-def request_replace(redis_client, instance_id):
-    """Mark one instance to be destroyed; the loop refills its slot afterwards."""
-    redis_client.sadd(REPLACE_SET_KEY, instance_id)
+def request_replace(redis_client, replica_id):
+    """Mark one replica to be removed; the loop refills its slot afterwards."""
+    redis_client.sadd(REPLACE_SET_KEY, replica_id)
 
 
 def replace_requests(redis_client, agent_name):
     """An agent's pending replace requests; they stay pending until cleared."""
-    prefix = f":{agent_name}:"
     return {
-        instance_id
-        for instance_id in redis_client.smembers(REPLACE_SET_KEY)
-        if prefix in instance_id
+        replica_id
+        for replica_id in redis_client.smembers(REPLACE_SET_KEY)
+        if replica_id.rsplit("-", 1)[0] == agent_name
     }
 
 
-def clear_replace_requests(redis_client, *instance_ids):
+def clear_replace_requests(redis_client, *replica_ids):
     """Mark replace requests as done."""
-    if instance_ids:
-        redis_client.srem(REPLACE_SET_KEY, *instance_ids)
+    if replica_ids:
+        redis_client.srem(REPLACE_SET_KEY, *replica_ids)
 
 
 # ------------------------------------------------------------------ #
-#  Draining                                                          #
+#  Stopping                                                          #
 # ------------------------------------------------------------------ #
 
 
-def set_draining(redis_client):
+def set_stopping(redis_client):
     """Hold every agent at zero replicas while the controller tears the fleet down."""
-    redis_client.set(DRAINING_KEY, 1)
-    redis_client.expire(DRAINING_KEY, DRAINING_TTL_SECONDS)
+    redis_client.set(STOPPING_KEY, 1)
+    redis_client.expire(STOPPING_KEY, STOPPING_TTL_SECONDS)
 
 
-def clear_draining(redis_client):
+def clear_stopping(redis_client):
     """Stop holding agents at zero, letting desired state drive the loop again."""
-    redis_client.delete(DRAINING_KEY)
+    redis_client.delete(STOPPING_KEY)
 
 
-def is_draining(redis_client):
+def is_stopping(redis_client):
     """Return True while the Global Controller is tearing the fleet down, during which
     every agent is held at zero replicas."""
-    return redis_client.get(DRAINING_KEY) is not None
+    return redis_client.get(STOPPING_KEY) is not None

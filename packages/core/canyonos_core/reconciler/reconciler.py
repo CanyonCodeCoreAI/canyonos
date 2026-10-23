@@ -3,7 +3,7 @@
 
 """The reconciler process: starts and removes replicas until each agent runs the count
 recorded in Redis."""
-# Level-triggered process converging running instances onto desired replica counts in Redis.
+# Level-triggered process converging running replicas onto desired replica counts in Redis.
 
 import argparse
 import logging
@@ -16,8 +16,8 @@ import time
 from canyonos_core.controller.controller_context import (
     ControllerContext,
     _redis_connect_host,
-    instance_id_from_record,
-    list_instances,
+    replica_id_from_record,
+    list_replicas,
 )
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.provisioner import Provisioner
@@ -39,21 +39,21 @@ def _handle_shutdown(signum, frame):
 
 
 class Reconciler(object):
-    """Converges observed instances onto the desired replica counts in Redis."""
+    """Converges observed replicas onto the desired replica counts in Redis."""
 
     def __init__(self, config_path, sweep_interval=None):
         self.context = ControllerContext(config_path)
-        self.context.attach_local_node_redis()
+        self.context.attach_local_machine_redis()
         self.provisioner = Provisioner(self.context)
         self.sweep_interval = sweep_interval or self.context.poll_interval
 
         # A replica reports on GlobalController's poll cadence; allow a couple of misses.
         self.stale_after = 3 * self.context.poll_interval
 
-        # An instance that has never reported yet is still starting, not unhealthy.
+        # A replica that has never reported yet is still starting, not unhealthy.
         self.startup_grace = max(30, 3 * self.context.poll_interval)
 
-        self._seen_healthy = set()  # instance_id, once it has answered at least once
+        self._seen_healthy = set()  # replica_id, once it has answered at least once
 
     # ------------------------------------------------------------------ #
     #  Reconcile                                                         #
@@ -61,55 +61,57 @@ class Reconciler(object):
 
     def _reconcile(self, agent_names=None):
         """Converge the named agents, or every configured agent when agent_names is None."""
-        if self.context.refresh_controllers_from_redis():
+        if self.context.refresh_agent_specs_from_redis():
             logger.info(
-                "Adopted %d published agent spec(s).", len(self.context.controllers)
+                "Adopted %d published agent spec(s).", len(self.context.agent_specs)
             )
-        draining = state.is_draining(self.context.redis)
+        stopping = state.is_stopping(self.context.redis)
 
         names = (
-            agent_names if agent_names is not None else list(self.context.agent_specs)
+            agent_names
+            if agent_names is not None
+            else list(self.context.agent_specs_by_name)
         )
         checked = False
         for name in names:
             try:
-                checked |= self._remove_unwanted(name, draining)
+                checked |= self._remove_unwanted(name, stopping)
             except Exception as e:
-                logger.warning("Failed to remove unwanted instances of %s: %s", name, e)
+                logger.warning("Failed to remove unwanted replicas of %s: %s", name, e)
         if agent_names is None:
             try:
-                self._remove_instances_of_removed_agents()
+                self._remove_replicas_of_removed_agents()
             except Exception as e:
-                logger.warning("Failed to remove instances of removed agents: %s", e)
+                logger.warning("Failed to remove replicas of removed agents: %s", e)
 
         try:
             self.provisioner.remove_unfinished()
         except Exception as e:
             logger.warning("Failed to remove unfinished launches: %s", e)
 
-        # desired_agent_specs falls back to the configured count, so a fill would undo the drain.
-        if draining:
+        # desired_agent_specs falls back to the configured count, so a fill would undo the stop.
+        if stopping:
             return
         # A named agent that could not be checked has nothing to fill into.
         if agent_names is not None and not checked:
             return
         try:
-            # The whole spec list: ensure_instances republishes routing from what it is handed.
-            self.provisioner.ensure_instances(
-                state.desired_agent_specs(self.context.redis, self.context.controllers),
+            # The whole spec list: ensure_replicas republishes routing from what it is handed.
+            self.provisioner.ensure_replicas(
+                state.desired_agent_specs(self.context.redis, self.context.agent_specs),
                 only=agent_names,
             )
         except Exception as e:
-            logger.warning("Failed to provision missing instances: %s", e)
+            logger.warning("Failed to provision missing replicas: %s", e)
 
     # ------------------------------------------------------------------ #
     #  Removal                                                           #
     # ------------------------------------------------------------------ #
 
-    def _remove_unwanted(self, agent_name, draining=False):
-        """Remove an agent's surplus, unhealthy and replaced instances."""
-        spec = self.context.agent_specs.get(agent_name)
-        if spec is None:
+    def _remove_unwanted(self, agent_name, stopping=False):
+        """Remove an agent's surplus, unhealthy and replaced replicas."""
+        agent_spec = self.context.agent_specs_by_name.get(agent_name)
+        if agent_spec is None:
             logger.warning(
                 "Wake signal for unknown agent %s; it is not in %s",
                 agent_name,
@@ -118,8 +120,8 @@ class Reconciler(object):
             return False
 
         redis_client = self.context.redis
-        configured = state.replica_count(spec)
-        if draining:
+        configured = state.replica_count(agent_spec)
+        if stopping:
             desired = 0
         elif configured is None:
             logger.warning(
@@ -130,78 +132,76 @@ class Reconciler(object):
             desired = state.get_desired(redis_client, agent_name, configured)
         replace_requested = state.replace_requests(redis_client, agent_name)
 
-        instances = list_instances(redis_client, agent_name)
-        for instance in instances:
-            # Routing republishes fan out to node_redis, so every node needs a client first.
-            self.context.node_redis_for_instance(instance)
+        replicas = list_replicas(redis_client, agent_name)
+        for replica in replicas:
+            # Routing republishes fan out to machine_redis, so every machine needs a client first.
+            self.context.machine_redis_for_replica(replica)
 
-        # A request for an instance that no longer exists has nothing left to do.
-        existing_ids = {instance_id_from_record(instance) for instance in instances}
+        # A request for a replica that no longer exists has nothing left to do.
+        existing_ids = {replica_id_from_record(replica) for replica in replicas}
         state.clear_replace_requests(redis_client, *(replace_requested - existing_ids))
 
-        for instance in instances:
-            instance_id = instance_id_from_record(instance)
+        for replica in replicas:
+            replica_id = replica_id_from_record(replica)
             reason = self._removal_reason(
-                instance, instance_id, desired, replace_requested
+                replica, replica_id, desired, replace_requested
             )
             if reason is None:
                 continue
-            self._remove_instance(instance_id, reason)
-            if instance_id in replace_requested:
-                state.clear_replace_requests(redis_client, instance_id)
+            self._remove_replica(replica_id, reason)
+            if replica_id in replace_requested:
+                state.clear_replace_requests(redis_client, replica_id)
         return True
 
-    def _removal_reason(self, instance, instance_id, desired, replace_requested):
-        if instance_id in replace_requested:
+    def _removal_reason(self, replica, replica_id, desired, replace_requested):
+        if replica_id in replace_requested:
             return "replacement requested"
-        if int(instance["replica_index"]) >= desired:
+        if int(replica["replica_index"]) >= desired:
             return f"surplus to desired count {desired}"
-        if not self._is_healthy(instance, instance_id):
+        if not self._is_healthy(replica, replica_id):
             return "unhealthy"
         return None
 
-    def _remove_instance(self, instance_id, reason):
-        logger.info("Removing instance %s (%s)", instance_id, reason)
-        self._seen_healthy.discard(instance_id)
-        self.provisioner.remove_instance(instance_id)
+    def _remove_replica(self, replica_id, reason):
+        logger.info("Removing replica %s (%s)", replica_id, reason)
+        self._seen_healthy.discard(replica_id)
+        self.provisioner.remove_replica(replica_id)
 
-    def _remove_instances_of_removed_agents(self):
-        """Remove instances of agents that are no longer in the published specs."""
-        for instance in list_instances(self.context.redis):
-            if instance["agent_name"] in self.context.agent_specs:
+    def _remove_replicas_of_removed_agents(self):
+        """Remove replicas of agents that are no longer in the published specs."""
+        for replica in list_replicas(self.context.redis):
+            if replica["agent_name"] in self.context.agent_specs_by_name:
                 continue
-            self.context.node_redis_for_instance(instance)
-            self._remove_instance(
-                instance_id_from_record(instance), "agent removed from config"
+            self.context.machine_redis_for_replica(replica)
+            self._remove_replica(
+                replica_id_from_record(replica), "agent removed from config"
             )
 
     # ------------------------------------------------------------------ #
     #  Health checks                                                     #
     # ------------------------------------------------------------------ #
 
-    def _is_healthy(self, instance, instance_id):
+    def _is_healthy(self, replica, replica_id):
         # A stock database image has no controller to write the metrics heartbeat.
         """Return True if the replica answers on its port and reports fresh metrics, or
         has not answered yet but may still be starting."""
         is_database = (
-            self.context.agent_specs.get(instance["agent_name"], {}).get("type")
+            self.context.agent_specs_by_name.get(replica["agent_name"], {}).get("type")
             == "database"
         )
-        if self._port_is_open(instance) and (
-            is_database or self._reports_are_fresh(instance)
+        if self._port_is_open(replica) and (
+            is_database or self._reports_are_fresh(replica)
         ):
-            self._seen_healthy.add(instance_id)
+            self._seen_healthy.add(replica_id)
             return True
-        if instance_id not in self._seen_healthy and self._may_still_be_booting(
-            instance
-        ):
+        if replica_id not in self._seen_healthy and self._may_still_be_booting(replica):
             return True
         return False
 
-    def _port_is_open(self, instance):
-        """Whether something is listening on the instance's port."""
-        host = instance.get("private_host")
-        port = instance.get("host_port")
+    def _port_is_open(self, replica):
+        """Whether something is listening on the replica's port."""
+        host = replica.get("private_host")
+        port = replica.get("host_port")
         if not host or not port:
             return False
         try:
@@ -214,16 +214,16 @@ class Reconciler(object):
         except (OSError, ValueError):
             return False
 
-    def _reports_are_fresh(self, instance):
-        """Whether the instance's metrics heartbeat is recent."""
-        node_redis = self.context.node_redis_for_instance(instance)
-        # The agent writes this key from its own env, under its routing endpoint.
-        key = f"controller:{instance['routing_endpoint']}:metrics"
+    def _reports_are_fresh(self, replica):
+        """Whether the replica's metrics heartbeat is recent."""
+        machine_redis = self.context.machine_redis_for_replica(replica)
+        # The agent writes this key from its own env, under its address.
+        key = f"controller:{replica['address']}:metrics"
         try:
-            metrics = node_redis.hgetall(key)
+            metrics = machine_redis.hgetall(key)
         except Exception as e:
             logger.warning("Failed to read metrics for %s: %s", key, e)
-            return True  # a Redis blip is not evidence the instance is unhealthy
+            return True  # a Redis blip is not evidence the replica is unhealthy
 
         observed_at = metrics.get("observed_at")
         if not observed_at:
@@ -233,9 +233,9 @@ class Reconciler(object):
         except (TypeError, ValueError):
             return False
 
-    def _may_still_be_booting(self, instance):
-        """Whether the instance was created within the startup grace period."""
-        created_at = instance.get("created_at")
+    def _may_still_be_booting(self, replica):
+        """Whether the replica was created within the startup grace period."""
+        created_at = replica.get("created_at")
         if not created_at:
             return False
         try:
@@ -252,7 +252,7 @@ class Reconciler(object):
         and on a fixed interval, until stopped."""
         logger.info(
             "Reconciler started for %d agent(s), sweeping every %ds.",
-            len(self.context.agent_specs),
+            len(self.context.agent_specs_by_name),
             self.sweep_interval,
         )
         self._reconcile()

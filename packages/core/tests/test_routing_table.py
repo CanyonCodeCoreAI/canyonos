@@ -13,9 +13,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import canyonos_core.controller.global_controller as global_controller_module
 from canyonos_core.controller.global_controller import GlobalController
 from canyonos_core.reconciler.routing import (
-    ROUTING_ENDPOINTS_KEY,
+    ROUTING_ADDRESSES_KEY,
     ROUTING_STATEFUL_KEY,
-    SERVICES_SET_KEY,
+    AGENTS_SET_KEY,
     publish_routing_snapshot,
 )
 
@@ -26,9 +26,9 @@ BETA = {"name": "Beta", "provider": "local", "stateful": True}
 
 
 def _seed(redis, agent_name, replica_index):
-    instance_id = f"local:{agent_name}:{replica_index}"
-    redis.sadd(f"agent:{agent_name}:instances", instance_id)
-    redis.hashes[f"agent_instance:{instance_id}"] = {
+    replica_id = f"local:{agent_name}:{replica_index}"
+    redis.sadd(f"agent:{agent_name}:instances", replica_id)
+    redis.hashes[f"agent_instance:{replica_id}"] = {
         "agent_name": agent_name,
         "provider": "local",
         "replica_index": str(replica_index),
@@ -36,23 +36,23 @@ def _seed(redis, agent_name, replica_index):
         "public_host": "localhost",
         "host_port": str(8000 + replica_index),
         "container_port": "50051",
-        "endpoint": f"localhost:{8000 + replica_index}",
-        "routing_endpoint": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
-        "runtime_id": f"canyonos-{agent_name.lower()}-{replica_index}",
+        "published_address": f"localhost:{8000 + replica_index}",
+        "address": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
+        "container_name": f"canyonos-{agent_name.lower()}-{replica_index}",
     }
 
 
 class PublishTests(unittest.TestCase):
-    def test_services_endpoints_and_stateful_are_all_written(self):
+    def test_agents_addresses_and_stateful_are_all_written(self):
         redis = _FakeRedis()
         _seed(redis, "Alpha", 0)
         _seed(redis, "Beta", 0)
 
         publish_routing_snapshot([ALPHA, BETA], redis)
 
-        self.assertEqual(redis.smembers(SERVICES_SET_KEY), {"Alpha", "Beta"})
+        self.assertEqual(redis.smembers(AGENTS_SET_KEY), {"Alpha", "Beta"})
         self.assertEqual(
-            json.loads(redis.hget(ROUTING_ENDPOINTS_KEY, "Alpha")),
+            json.loads(redis.hget(ROUTING_ADDRESSES_KEY, "Alpha")),
             ["canyonos-alpha-0:50051"],
         )
         self.assertEqual(redis.hget(ROUTING_STATEFUL_KEY, "Beta"), "true")
@@ -67,7 +67,7 @@ class PublishTests(unittest.TestCase):
         publish_routing_snapshot([ALPHA], redis)
 
         self.assertEqual(
-            json.loads(redis.hget(ROUTING_ENDPOINTS_KEY, "Alpha")),
+            json.loads(redis.hget(ROUTING_ADDRESSES_KEY, "Alpha")),
             [
                 "canyonos-alpha-0:50051",
                 "canyonos-alpha-1:50051",
@@ -75,7 +75,7 @@ class PublishTests(unittest.TestCase):
             ],
         )
 
-    def test_a_service_missing_from_the_specs_is_removed_everywhere(self):
+    def test_an_agent_missing_from_the_specs_is_removed_everywhere(self):
         """The spec list is the complete world, so the fill step must pass every agent's."""
         redis = _FakeRedis()
         _seed(redis, "Alpha", 0)
@@ -84,18 +84,18 @@ class PublishTests(unittest.TestCase):
 
         publish_routing_snapshot([ALPHA], redis)
 
-        self.assertEqual(redis.smembers(SERVICES_SET_KEY), {"Alpha"})
-        self.assertIsNone(redis.hget(ROUTING_ENDPOINTS_KEY, "Beta"))
+        self.assertEqual(redis.smembers(AGENTS_SET_KEY), {"Alpha"})
+        self.assertIsNone(redis.hget(ROUTING_ADDRESSES_KEY, "Beta"))
         self.assertIsNone(redis.hget(ROUTING_STATEFUL_KEY, "Beta"))
 
-    def test_a_service_with_no_instances_is_listed_but_has_no_endpoints(self):
+    def test_an_agent_with_no_replicas_is_listed_but_has_no_addresses(self):
         """Configured but nothing running; a missing entry correctly means "no route"."""
         redis = _FakeRedis()
 
         publish_routing_snapshot([ALPHA], redis)
 
-        self.assertEqual(redis.smembers(SERVICES_SET_KEY), {"Alpha"})
-        self.assertIsNone(redis.hget(ROUTING_ENDPOINTS_KEY, "Alpha"))
+        self.assertEqual(redis.smembers(AGENTS_SET_KEY), {"Alpha"})
+        self.assertIsNone(redis.hget(ROUTING_ADDRESSES_KEY, "Alpha"))
 
     def test_an_agent_that_stops_being_stateful_loses_the_flag(self):
         redis = _FakeRedis()
@@ -106,29 +106,31 @@ class PublishTests(unittest.TestCase):
 
         self.assertIsNone(redis.hget(ROUTING_STATEFUL_KEY, "Beta"))
 
-    def test_every_node_gets_a_copy_while_records_come_from_the_primary(self):
-        """Records live on the primary, so a node client with no records still gets the table."""
+    def test_every_machine_gets_a_copy_while_records_come_from_the_primary(self):
+        """Records live on the primary, so a machine client with no records still gets the table."""
         primary = _FakeRedis()
-        node_a, node_b = _FakeRedis(), _FakeRedis()
+        machine_a, machine_b = _FakeRedis(), _FakeRedis()
         _seed(primary, "Alpha", 0)
 
-        publish_routing_snapshot([ALPHA], primary, {"host-a": node_a, "host-b": node_b})
+        publish_routing_snapshot(
+            [ALPHA], primary, {"host-a": machine_a, "host-b": machine_b}
+        )
 
-        for node in (node_a, node_b):
-            self.assertEqual(node.smembers(SERVICES_SET_KEY), {"Alpha"})
+        for machine in (machine_a, machine_b):
+            self.assertEqual(machine.smembers(AGENTS_SET_KEY), {"Alpha"})
             self.assertEqual(
-                json.loads(node.hget(ROUTING_ENDPOINTS_KEY, "Alpha")),
+                json.loads(machine.hget(ROUTING_ADDRESSES_KEY, "Alpha")),
                 ["canyonos-alpha-0:50051"],
             )
-        self.assertEqual(primary.smembers(SERVICES_SET_KEY), set())
+        self.assertEqual(primary.smembers(AGENTS_SET_KEY), set())
 
-    def test_an_empty_node_map_falls_back_to_the_primary(self):
+    def test_an_empty_machine_map_falls_back_to_the_primary(self):
         redis = _FakeRedis()
         _seed(redis, "Alpha", 0)
 
         publish_routing_snapshot([ALPHA], redis, {})
 
-        self.assertEqual(redis.smembers(SERVICES_SET_KEY), {"Alpha"})
+        self.assertEqual(redis.smembers(AGENTS_SET_KEY), {"Alpha"})
 
 
 class OwnershipTests(unittest.TestCase):

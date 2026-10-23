@@ -70,7 +70,7 @@ def create_app(agent, method, redis_client):
             redis_client.set(f"request:{request_id}:context", json.dumps(context))
 
         canyonos_context.set_request_id(request_id)
-        future = Future(parent=None, service=agent, method=method, args=kwargs)
+        future = Future(parent=None, agent_name=agent, method=method, args=kwargs)
         redis_client.set(f"request:{request_id}:future", future.id)
 
         logger.info(

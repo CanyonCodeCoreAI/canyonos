@@ -20,6 +20,6 @@ def _wait_for_redis(redis_client, host, port, timeout=30, interval=1):
 
     raise TimeoutError(
         f"Timed out connecting to Redis at {host}:{port}. "
-        "For EC2 runtimes, ensure the instance security group allows inbound "
+        "For EC2 machines, ensure the machine security group allows inbound "
         f"TCP {port} from the global controller host."
     ) from last_error

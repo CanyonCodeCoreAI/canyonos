@@ -129,7 +129,7 @@ def flush_all(table, db_path=DB_PATH):
     return _execute(f"DELETE FROM {table}", (), db_path)
 
 
-def prune_expired(table, ts_column, older_than_seconds, db_path=DB_PATH):
+def delete_expired(table, ts_column, older_than_seconds, db_path=DB_PATH):
     """Delete rows older than ``older_than_seconds`` (measured on ``ts_column``, unix
     seconds), returning the number removed -- whether or not they were sent, so a
     destination that stays down/rejecting can't grow the queue file without bound.

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Local runtime helpers for CanyonOS.
+Local provider for CanyonOS.
 
 This module is the local-provider backend for `provider: local` agents.
 It keeps the existing Docker launch/teardown behavior while letting
@@ -59,7 +59,7 @@ _controller = None
 
 def _require_controller():
     if _controller is None:
-        raise RuntimeError("Local runtime controller is not configured.")
+        raise RuntimeError("Local provider controller is not configured.")
     return _controller
 
 
@@ -85,9 +85,9 @@ def preflight():
     return None
 
 
-def port_claim_host(spec):
+def port_claim_host(agent_spec):
     """Return the agent's host, where each new replica is given a free port."""
-    return spec.get("host", DEFAULT_HOST)
+    return agent_spec.get("host", DEFAULT_HOST)
 
 
 def ssh_user(entry):
@@ -95,16 +95,18 @@ def ssh_user(entry):
     return entry.get("user")
 
 
-def hourly_cost(spec):
+def hourly_cost(agent_spec):
     """Return 0: a local replica has no hourly cost."""
     return 0
 
 
-def provision_instance(spec, replica_index, next_host_port, launch_id):
+def provision_replica(agent_spec, replica_index, next_host_port, launch_id):
     """Choose where a new local replica runs and its name, without starting it."""
-    host = spec.get("host", DEFAULT_HOST)
-    host_port = int(spec.get("host_port", spec.get("port", next_host_port(host))))
-    agent_name = spec["name"]
+    host = agent_spec.get("host", DEFAULT_HOST)
+    host_port = int(
+        agent_spec.get("host_port", agent_spec.get("port", next_host_port(host)))
+    )
+    agent_name = agent_spec["name"]
 
     return {
         "provider": PROVIDER,
@@ -115,12 +117,12 @@ def provision_instance(spec, replica_index, next_host_port, launch_id):
         "redis_host": redis_container_name(host)
         if _is_local_host(host)
         else HOST_GATEWAY,
-        "runtime_id": container_name(agent_name, replica_index),
-        "user": spec.get("user"),
+        "container_name": container_name(agent_name, replica_index),
+        "user": agent_spec.get("user"),
     }
 
 
-def _refuse_other_projects_container(runtime_id, host, user):
+def _refuse_other_projects_container(container, host, user):
     """Raise instead of replacing a running container that has this replica's name
     but belongs to another project. Project `my` with agent `app-worker` and project
     `my-app` with agent `worker` both name a replica `canyonos-my-app-worker-0`; a
@@ -131,7 +133,7 @@ def _refuse_other_projects_container(runtime_id, host, user):
             "inspect",
             "-f",
             f'{{{{index .Config.Labels "{PROJECT_LABEL}"}}}}',
-            runtime_id,
+            container,
         ],
         host,
         user,
@@ -140,46 +142,46 @@ def _refuse_other_projects_container(runtime_id, host, user):
         if "no such" in (labels.stderr or "").lower():
             return
         raise ForeignContainerError(
-            f"Cannot launch {runtime_id}: a container with that name is running but "
+            f"Cannot launch {container}: a container with that name is running but "
             f"Docker would not say which project owns it: {labels.stderr.strip()}"
         )
     owner = labels.stdout.strip()
     if owner and owner != project_group():
         raise ForeignContainerError(
-            f"Cannot launch {runtime_id}: a container with that name already runs in "
+            f"Cannot launch {container}: a container with that name already runs in "
             f"Docker group {owner}, not {project_group()}. Rename the agent or the "
             "project folder so the names no longer collide."
         )
 
 
-def bootstrap_instance(provisioned, spec, replica_index, agent_id):
+def bootstrap_replica(provisioned, agent_spec, replica_index, replica_id):
     """Start a local replica's Docker container (replacing a leftover one with the same
-    name) and return its instance record."""
-    agent_name = spec["name"]
-    ctrl_type = spec.get("type", "agent")
+    name) and return its replica record."""
+    agent_name = agent_spec["name"]
+    agent_type = agent_spec.get("type", "agent")
     image = image_name(agent_name)
     host = provisioned["private_host"]
     host_port = provisioned["host_port"]
     user = provisioned.get("user")
     redis_host = provisioned["redis_host"]
-    runtime_id = provisioned["runtime_id"]
+    container = provisioned["container_name"]
     is_local = _is_local_host(host)
 
     inspect = _require_controller()._run_cmd(
-        ["docker", "inspect", "-f", "{{.State.Running}}", runtime_id], host, user
+        ["docker", "inspect", "-f", "{{.State.Running}}", container], host, user
     )
     if inspect.returncode == 0 and inspect.stdout.strip() == "true":
-        _refuse_other_projects_container(runtime_id, host, user)
+        _refuse_other_projects_container(container, host, user)
         logger.warning(
             "No Redis record for %s but a container with that name is already running; "
             "treating it as orphaned and recreating.",
-            runtime_id,
+            container,
         )
-        _require_controller()._run_cmd(["docker", "rm", "-f", runtime_id], host, user)
+        _require_controller()._run_cmd(["docker", "rm", "-f", container], host, user)
 
     container_port = CONTAINER_PORT
-    if ctrl_type == "database":
-        host_port, container_port = int(spec.get("db_port", 5432)), 5432
+    if agent_type == "database":
+        host_port, container_port = int(agent_spec.get("db_port", 5432)), 5432
         if is_local and _port_bound(host_port):
             raise RuntimeError(
                 f"db_port {host_port} is already in use and can't be reassigned "
@@ -187,23 +189,23 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             )
 
     redis_port = _require_controller().redis_ports.get(
-        host, spec.get("redis_port", 6379)
+        host, agent_spec.get("redis_port", 6379)
     )
 
     if not is_local:
         transfer_image(_require_controller(), image, host, user)
 
-    callback_host = _callback_host(spec)
+    callback_host = _callback_host(agent_spec)
     for attempt in range(MAX_PORT_ATTEMPTS):
         # Other machines can't resolve container names, so they reach a replica on its
         # published port: a remote one at its host, the endpoint at the private IP.
         if is_local and not callback_host:
-            agent_host, agent_port = runtime_id, container_port
+            agent_host, agent_port = container, container_port
         else:
             agent_host, agent_port = callback_host or host, host_port
-        endpoint = f"{agent_host}:{agent_port}"
+        address = f"{agent_host}:{agent_port}"
         # Last thing before `docker run`, after any orphan under this name is gone.
-        _clear_stale_status(host, endpoint, runtime_id)
+        _clear_stale_status(host, address, container)
 
         cmd = [
             "docker",
@@ -212,7 +214,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             *project_label_args(),
             *(["--network", NETWORK] if is_local else []),
             "--name",
-            runtime_id,
+            container,
             # Docker Desktop resolves this automatically; native Linux Docker
             # (e.g. an EC2 test box) does not unless told to.
             "--add-host",
@@ -235,20 +237,20 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             f"CANYONOS_LOGS_ENABLED={str(bool(_require_controller().config.get('logs', True))).lower()}",
         ]
 
-        if ctrl_type == "database":
-            volume_path = spec.get("volume_path")
+        if agent_type == "database":
+            volume_path = agent_spec.get("volume_path")
             if volume_path:
                 cmd.extend(["-v", f"{data_volume_name(agent_name)}:{volume_path}"])
-            for key, value in spec.get("env", {}).items():
+            for key, value in agent_spec.get("env", {}).items():
                 cmd.extend(["-e", f"{key}={value}"])
         # A stock database image capped at the agent defaults gets OOM-killed under load.
         cmd.extend(
             resource_limit_args(
-                spec.get("resources"), apply_defaults=ctrl_type != "database"
+                agent_spec.get("resources"), apply_defaults=agent_type != "database"
             )
         )
 
-        with _image_args(spec, image, host, user) as image_args:
+        with _image_args(agent_spec, image, host, user) as image_args:
             cmd.extend(image_args)
             result = _require_controller()._run_cmd(cmd, host, user)
 
@@ -258,7 +260,7 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
             # A failed port bind leaves a `Created` container under this name; remove it
             # so the retry doesn't hit a name conflict instead of the port conflict.
             _require_controller()._run_cmd(
-                ["docker", "rm", "-f", runtime_id], host, user
+                ["docker", "rm", "-f", container], host, user
             )
             clashed = _clashed_port(result.stderr)
             if clashed not in (None, host_port):
@@ -269,18 +271,18 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
                 )
             host_port += 1
             continue
-        raise RuntimeError(f"Failed to launch {runtime_id}: {result.stderr}")
+        raise RuntimeError(f"Failed to launch {container}: {result.stderr}")
     else:
         raise RuntimeError(
-            f"Failed to launch {runtime_id}: no free port found after "
+            f"Failed to launch {container}: no free port found after "
             f"{MAX_PORT_ATTEMPTS} attempts"
         )
 
     controller = _require_controller()
-    node_redis = controller.node_redis.get(host) or controller.redis
-    node_redis.set(f"controller:{endpoint}:agent_id", agent_id)
+    machine_redis = controller.machine_redis.get(host) or controller.redis
+    machine_redis.set(f"controller:{address}:replica_id", replica_id)
 
-    instance = {
+    replica = {
         "agent_name": agent_name,
         "provider": PROVIDER,
         "replica_index": str(replica_index),
@@ -288,38 +290,38 @@ def bootstrap_instance(provisioned, spec, replica_index, agent_id):
         "public_host": host,
         "host_port": str(host_port),
         "container_port": str(container_port),
-        "endpoint": f"{host}:{host_port}",
-        "routing_endpoint": endpoint,
+        "published_address": f"{host}:{host_port}",
+        "address": address,
         "redis_host": redis_host,
         "redis_port": str(redis_port),
-        "runtime_id": runtime_id,
+        "container_name": container,
     }
     if user:
-        instance["user"] = user
-    logger.info("Runtime ready: %s -> %s", runtime_id, instance["endpoint"])
-    return instance
+        replica["user"] = user
+    logger.info("Replica ready: %s -> %s", container, replica["published_address"])
+    return replica
 
 
-def _callback_host(spec):
+def _callback_host(agent_spec):
     """Return the address agents on other machines call the endpoint's controller
-    back on, this machine's private IP, or None for any other service or when the
+    back on, this machine's private IP, or None for any other agent or when the
     CLI found no private IP."""
-    if spec.get("type") != "endpoint":
+    if agent_spec.get("type") != "endpoint":
         return None
     return os.environ.get("CANYONOS_PRIVATE_IP") or None
 
 
 @contextmanager
-def _image_args(spec, image, host, user):
+def _image_args(agent_spec, image, host, user):
     """Yield the `docker run` args that end the command and pick what runs.
 
     The endpoint runs the controller image as `python -m canyonos_core.endpoint`,
     publishing its HTTP port on `api_port` and serving one agent method. Any other
-    service runs its own image with the user's `env_file`; explicit -e flags before
+    agent runs its own image with the user's `env_file`; explicit -e flags before
     it still win, so a stray CANYONOS_* line in someone's .env cannot break agent
     wiring.
     """
-    if spec.get("type") == "endpoint":
+    if agent_spec.get("type") == "endpoint":
         if not CONTROLLER_IMAGE:
             raise RuntimeError(
                 "CANYONOS_CONTROLLER_IMAGE is unset, so the endpoint has no image to "
@@ -327,11 +329,11 @@ def _image_args(spec, image, host, user):
             )
         yield [
             "-p",
-            f"{spec['api_port']}:{ENDPOINT_PORT}",
+            f"{agent_spec['api_port']}:{ENDPOINT_PORT}",
             "-e",
-            f"CANYONOS_ENDPOINT_AGENT={spec['agent']}",
+            f"CANYONOS_ENDPOINT_AGENT={agent_spec['agent']}",
             "-e",
-            f"CANYONOS_ENDPOINT_METHOD={spec['method']}",
+            f"CANYONOS_ENDPOINT_METHOD={agent_spec['method']}",
             "--entrypoint",
             "python",
             CONTROLLER_IMAGE,
@@ -350,65 +352,65 @@ def _clashed_port(stderr):
     return int(match.group(1)) if match else None
 
 
-def _clear_stale_status(host, endpoint, runtime_id):
+def _clear_stale_status(host, address, container):
     """Delete the status key the container about to start will own.
 
-    The key has no TTL and the endpoint is derived from the container name, so
-    whatever the last container at this endpoint said -- in this run or one
+    The key has no TTL and the address is derived from the container name, so
+    whatever the last container at this address said -- in this run or one
     that crashed -- is still there, and the readiness wait would read it as the
     new container's. Fails closed: a launch that cannot clear it must not
     proceed, or a stale "healthy" passes for a container that never came up.
     """
     controller = _require_controller()
-    node_redis = controller.node_redis.get(host) or controller.redis
+    machine_redis = controller.machine_redis.get(host) or controller.redis
     try:
-        node_redis.delete(f"controller:{endpoint}:status")
+        machine_redis.delete(f"controller:{address}:status")
     except Exception as e:
         raise RuntimeError(
-            f"Cannot launch {runtime_id}: could not clear the stale readiness "
-            f"status at {endpoint} on {host}: {e}"
+            f"Cannot launch {container}: could not clear the stale readiness "
+            f"status at {address} on {host}: {e}"
         ) from e
 
 
-def terminate_instance(instance):
+def terminate_replica(replica):
     """Remove a local replica's Docker container; a container that is already gone is
     not an error."""
-    runtime_id = instance.get("runtime_id")
-    if not runtime_id:
+    container = replica.get("container_name")
+    if not container:
         return
 
     result = _require_controller()._run_cmd(
-        ["docker", "rm", "-f", runtime_id],
-        instance.get("private_host", DEFAULT_HOST),
-        instance.get("user"),
+        ["docker", "rm", "-f", container],
+        replica.get("private_host", DEFAULT_HOST),
+        replica.get("user"),
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         if "no such container" not in detail.casefold():
             raise RuntimeError(
-                f"Failed to remove runtime {runtime_id}: "
+                f"Failed to remove container {container}: "
                 f"{detail or f'exit code {result.returncode}'}"
             )
 
 
-def is_running(instance):
-    """True if the replica's container, named by its runtime id, is running on its
+def is_running(replica):
+    """True if the replica's container, named by its container name, is running on its
     host; an unreachable host counts as not running."""
     return container_running(
         _require_controller(),
-        instance["runtime_id"],
-        instance["private_host"],
-        ssh_user(instance),
+        replica["container_name"],
+        replica["private_host"],
+        ssh_user(replica),
     )
 
 
-def log_tail(instance, lines):
+def log_tail(replica, lines):
     """Return the last `lines` lines of the replica container's output. Raises
     RuntimeError with the reason if they can't be read."""
     return container_log_tail(
         _require_controller(),
-        instance.get("runtime_id"),
-        instance["private_host"],
-        ssh_user(instance),
+        replica.get("container_name"),
+        replica["private_host"],
+        ssh_user(replica),
         lines,
     )

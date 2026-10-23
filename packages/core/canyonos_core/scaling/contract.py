@@ -14,8 +14,8 @@ WINDOW_LENGTH = 4
 # ------------------------------------------------------------------ #
 
 
-def instance_key(instance_id):
-    return f"{instance_id}:samples"
+def replica_key(replica_id):
+    return f"{replica_id}:samples"
 
 
 def agent_key(agent_name):
@@ -27,7 +27,7 @@ def agent_key(agent_name):
 # ------------------------------------------------------------------ #
 
 
-def instance_sample(
+def replica_sample(
     agent_name,
     queue_length,
     requests_served,

@@ -118,7 +118,7 @@ def status():
 
 def _deploy_redis(config_path):
     """Return a client for the Redis the running deploy's Global Controller publishes
-    to: this machine's node Redis, on the port its config gives the agents here."""
+    to: this machine's Redis, on the port its config gives the agents here."""
     # Raw YAML, not load_config: importing the project's .env here would leak into the
     # next deploy's environment. Ports cannot be ${VAR} references, so none is missed.
     with open(config_path) as f:
