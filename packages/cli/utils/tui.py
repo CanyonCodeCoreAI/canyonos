@@ -48,7 +48,9 @@ def _read_key(fd):
     return ch
 
 
-def select_menu(options, title, deletable=False, quittable=False, footer=None):
+def select_menu(
+    options, title, deletable=False, quittable=False, footer=None, header=None
+):
     """Arrow-key single-select over `options` (a list of (value, label) pairs).
 
     Returns the chosen value, or None if there's nothing to choose from or
@@ -63,7 +65,8 @@ def select_menu(options, title, deletable=False, quittable=False, footer=None):
     nested session rather than just this one menu.
 
     A label may span several lines (split on newlines); the cursor sits on its
-    middle line. `footer` lines are drawn under the options and can't be selected.
+    first line. `header` lines are drawn above the options and `footer` lines
+    under them; neither can be selected.
     """
     if not options or not sys.stdin.isatty():
         return None
@@ -76,16 +79,14 @@ def select_menu(options, title, deletable=False, quittable=False, footer=None):
 
     def frame():
         lines = [f"\x1b[1m{title}\x1b[0m", ""]
+        lines.extend(f"  {line}" for line in header or ())
         for i, (_, label) in enumerate(options):
             label_lines = str(label).splitlines() or [""]
-            middle = len(label_lines) // 2
             for j, line in enumerate(label_lines):
-                if i != idx:
-                    lines.append(f"  {line}")
-                elif j == middle:
+                if i == idx and j == 0:
                     lines.append(f"{_GREEN}❯ {line}\x1b[0m")
                 else:
-                    lines.append(f"{_GREEN}  {line}\x1b[0m")
+                    lines.append(f"  {line}")
         lines.extend(f"  {line}" for line in footer or ())
         hint = "↑/↓ move · 1-9 jump · enter select"
         if deletable:
@@ -93,7 +94,7 @@ def select_menu(options, title, deletable=False, quittable=False, footer=None):
         if quittable:
             hint += " · q quit"
         hint += " · esc cancel"
-        lines.append(f"\x1b[2m{hint}\x1b[0m")
+        lines += ["", hint]
         # Each line clears only its own leftover tail, so redraws overwrite in place.
         return "\x1b[K\r\n".join(lines) + "\x1b[K"
 
@@ -147,7 +148,7 @@ def input_line(prompt, hint="enter save · esc back", error=None):
     try:
         tty.setraw(fd)
         error_line = f"\x1b[1;31m✗ {error}\x1b[0m" if error else ""
-        out.write(f"\x1b[?25h{prompt}\r\n{error_line}\r\n\x1b[2m{hint}\x1b[0m\x1b[2A")
+        out.write(f"\x1b[?25h{prompt}\r\n{error_line}\r\n{hint}\x1b[2A")
         while True:
             out.write(f"\r\x1b[K{prompt}{buffer}")
             out.flush()

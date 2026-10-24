@@ -11,14 +11,16 @@ import math
 import os
 import sys
 
+from rich.text import Text
 from ruamel.yaml.comments import CommentedMap
 
 from canyonos import ui
 from canyonos.constants import round_trip_yaml
-from canyonos.theme import GRADIENT, GREEN, WHITE
+from canyonos.theme import GREEN, WHITE
 from utils.tui import input_line, select_menu
 
 DEPLOY = "__deploy__"
+CONFIGURE = "__configure__"
 BACK = "__back__"
 
 RESOURCE_DEFAULTS = (("cpu", 1), ("memory", 512), ("gpu", 0))
@@ -26,8 +28,24 @@ REPLICAS_DEFAULT = 1
 
 FIELDS = ("cpu", "memory", "gpu", "replicas")
 UNITS = {"cpu": "cores", "memory": "MiB"}
+COLUMNS = ("agent", *FIELDS)
+FIELD_HELP = (
+    "cpu: max CPU cores each replica can use",
+    "memory: max memory each replica can use, in MiB",
+    "gpu: max GPUs each replica can use",
+    "replicas: how many copies of the agent to run",
+)
 
-BOLD = "\x1b[1m"
+MENU = [
+    (
+        DEPLOY,
+        "1. Deploy\n   Launch your workflow. This is the final step before seeing it!",
+    ),
+    (
+        CONFIGURE,
+        "2. Configure an agent\n   Set the upper limit on what its replicas can use.",
+    ),
+]
 
 
 def _fill_defaults(agent_spec):
@@ -82,38 +100,6 @@ def _invalid_message(field, raw):
     return f"{raw!r} is not valid: {_label(field)} must be {kind}"
 
 
-def _gradient_color(position):
-    """Truecolor escape for `position` (0..1) along the brand gradient."""
-    scaled = position * (len(GRADIENT) - 1)
-    low = min(int(scaled), len(GRADIENT) - 2)
-    mix = scaled - low
-    start, end = GRADIENT[low], GRADIENT[low + 1]
-    rgb = (
-        round(int(start[i : i + 2], 16) * (1 - mix) + int(end[i : i + 2], 16) * mix)
-        for i in (1, 3, 5)
-    )
-    return "\x1b[38;2;{};{};{}m".format(*rgb)
-
-
-def _deploy_button():
-    """A boxed, gradient-colored Deploy label spanning three menu lines."""
-    inner = 18
-    lines = [
-        "╭" + "─" * inner + "╮",
-        "│" + "DEPLOY".center(inner) + "│",
-        "╰" + "─" * inner + "╯",
-    ]
-    colored = [
-        "".join(
-            f"{_gradient_color(col / (inner + 1))}{BOLD if ch.isalpha() else ''}{ch}\x1b[22m"
-            for col, ch in enumerate(line)
-        )
-        + "\x1b[0m"
-        for line in lines
-    ]
-    return "\n".join(colored)
-
-
 def _name(agent_spec, index):
     return str(agent_spec.get("name", f"[{index}]"))
 
@@ -121,30 +107,26 @@ def _name(agent_spec, index):
 def _cells(agent_specs):
     """Per agent, the name and each field padded to its column's width, plus those widths."""
     rows = [
-        [_name(agent_spec, i)]
-        + [f"{_label(field)} {_get(agent_spec, field)}" for field in FIELDS]
+        [_name(agent_spec, i)] + [str(_get(agent_spec, field)) for field in FIELDS]
         for i, agent_spec in enumerate(agent_specs)
     ]
-    widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
+    widths = [max(len(cell) for cell in column) for column in zip(COLUMNS, *rows)]
     return [[c.ljust(w) for c, w in zip(row, widths)] for row in rows], widths
 
 
 def _table(agent_specs):
-    """Menu labels for the agents boxed into a table, and the bottom border as a footer."""
+    """The agents as a boxed table: the top border with the column names in it, one
+    line per agent, and the bottom border."""
     rows, widths = _cells(agent_specs)
-    top = "╭" + "┬".join("─" * (w + 2) for w in widths) + "╮"
+    names = (f" {name} ".ljust(w + 2, "─") for name, w in zip(COLUMNS, widths))
+    top = "╭" + "┬".join(names) + "╮"
     bottom = "╰" + "┴".join("─" * (w + 2) for w in widths) + "╯"
-    divider = "├" + "┼".join("─" * (w + 2) for w in widths) + "┤"
-    labels = [
-        f"{top if i == 0 else divider}\n│ " + " │ ".join(row) + " │"
-        for i, row in enumerate(rows)
-    ]
-    return labels, [bottom]
+    return top, ["│ " + " │ ".join(row) + " │" for row in rows], bottom
 
 
 def _render(title, status):
     ui.console.clear()
-    ui.console.print(f"[bold {GREEN}]CanyonOS[/] [{WHITE}]deploy › {title}[/]")
+    ui.console.print(f"[bold {GREEN}]CanyonOS[/] [{WHITE}]{title}[/]")
     if status:
         ui.console.print(f"[{GREEN}]{status}[/]")
     ui.console.print()
@@ -154,7 +136,7 @@ def _edit_agent(agent_spec, status):
     """Field menu for one agent. Returns the status line to show next."""
     name = agent_spec.get("name", "agent")
     while True:
-        _render(name, status)
+        _render(f"deploy › {name}", status)
         options = [
             (field, f"{_label(field)}: {_get(agent_spec, field)}") for field in FIELDS
         ]
@@ -165,7 +147,7 @@ def _edit_agent(agent_spec, status):
 
         error = None
         while True:
-            _render(f"{name} › {field}", status)
+            _render(f"deploy › {name} › {field}", status)
             raw = input_line(
                 f"{_label(field)} (current {_get(agent_spec, field)}): ", error=error
             )
@@ -180,24 +162,48 @@ def _edit_agent(agent_spec, status):
             break
 
 
+def _configure(agent_specs, status):
+    """Agent menu: pick an agent to edit, until Esc. Returns the status line to show next."""
+    while True:
+        _render("deploy › configure", status)
+        top, rows, bottom = _table(agent_specs)
+        choice = select_menu(
+            list(enumerate(rows)),
+            title="Which agent do you want to configure?",
+            header=[top],
+            footer=[bottom],
+        )
+        if choice is None:
+            return status
+        status = _edit_agent(agent_specs[choice], status)
+
+
 def _pick(agent_specs):
-    """Agent menu. Returns True to deploy, False if the user cancelled."""
+    """Deploy menu. Returns True to deploy, False if the user cancelled."""
     status = ""
     ui.console.set_alt_screen(True)
     try:
         while True:
-            _render("resources", status)
-            options = [(DEPLOY, _deploy_button())]
-            labels, footer = _table(agent_specs)
-            options += list(enumerate(labels))
-            choice = select_menu(
-                options, title="Configure agent resources", footer=footer
+            _render("", status)
+            ui.console.print(
+                Text(
+                    "Your workflow's agents and the max resources each replica can use",
+                    style="bold",
+                )
             )
+            ui.console.print()
+            top, rows, bottom = _table(agent_specs)
+            for line in (top, *rows, bottom, ""):
+                ui.console.print(Text(f"  {line}"))
+            for line in FIELD_HELP:
+                ui.console.print(Text(f"  {line}", style="dim"))
+            ui.console.print()
+            choice = select_menu(MENU, title="What do you want to do?")
             if choice is None:
                 return False
             if choice == DEPLOY:
                 return True
-            status = _edit_agent(agent_specs[choice], status)
+            status = _configure(agent_specs, status)
     finally:
         ui.console.set_alt_screen(False)
 
