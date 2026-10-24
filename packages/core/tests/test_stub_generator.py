@@ -477,20 +477,20 @@ class PlatformPinTests(unittest.TestCase):
                 )
             return _read_dockerfile(output_dir)
 
-    def test_the_gateway_gets_its_own_venv_after_the_app_install(self):
+    def test_the_gateway_gets_its_own_venv_before_the_app_install(self):
         dockerfile = self._dockerfile()
         app_install = dockerfile.index("uv pip install --system")
         gateway_install = dockerfile.index(
             "uv venv --python 3.12 /opt/canyonos-gateway"
         )
-        self.assertLess(app_install, gateway_install)
-        gateway_stage = dockerfile[gateway_install:]
+        self.assertLess(gateway_install, app_install)
+        gateway_stage = dockerfile[gateway_install:app_install]
         for pin in stub_generator.GATEWAY_REQUIREMENTS:
             self.assertIn(pin, gateway_stage)
         self.assertIn(
             'if python -c "import boto3" 2>/dev/null; then uv pip install '
             f"--python /opt/canyonos-gateway/bin/python {stub_generator.GATEWAY_BEDROCK_REQUIREMENT}; fi",
-            gateway_stage,
+            dockerfile[app_install:],
         )
 
     def test_the_image_compiles_bytecode_for_every_install(self):

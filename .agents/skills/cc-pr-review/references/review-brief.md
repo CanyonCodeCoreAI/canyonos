@@ -54,17 +54,25 @@ report each conflicting hunk. Review what would actually land.
 
 1. Part 1: what the PR does, its stated goal, the contract it breaks or
    changes (<manifest keys, containers, CLI commands, docs, skill>), the
-   conflict situation, and the test plan. Wait for the owner's OK.
-2. Tests on real infra: build `canyonos-core:<tag>` from the merged branch,
+   conflict situation, whether CI has run on the PR merged with current
+   `main` (if not, ask to push the merge so CI runs during the review), and
+   the test plan. Wait for the owner's OK.
+2. Tests on real infra: CI's "E2E", "API E2E" and "CI" runs are the evidence
+   when they ran on the current merge with no conflicts; run locally only
+   what they miss, or all of this when they are stale or absent. Build
+   `canyonos-core:<tag>` from the merged branch,
    run the real CLI against it on copies of `examples/helloworld` (no LLM)
    and `examples/portfolio` (Bedrock keys; CI "E2E" runs it). Add
-   `bun run api:test:e2e` when `packages/api` changes.
+   `bun run api:test:e2e` (on its own Redis) when `packages/api` changes.
+   Only `deploy` needs the lock: run `api:test:e2e`, `bun run check` and
+   `bun run test` while the image builds.
 3. Architecture judgment when the PR moves ownership or contracts:
    <the questions this PR must answer>.
 4. Docs and skill audit by a separate agent: nothing under `docs/`,
    `README.md`, `examples/*/README.md`, `skills/*/SKILL.md`,
    `.agents/skills/**` may contradict the change.
-5. `bun run check`, `bun run test`, CI green.
+5. CI green, already running since the push. Local `bun run check` and
+   `bun run test` only alongside step 2's local runs.
 6. Verdict: one list ordered by severity with evidence, then architecture,
    docs, nits, follow-up candidates. No fixes until the owner says "fix".
 ```

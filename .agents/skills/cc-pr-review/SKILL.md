@@ -28,14 +28,23 @@ filled in: the brief is that session's only context.
 
 1. **Part 1, then wait.** Report what the PR does, its stated goal, the
    contract it changes (manifest keys, containers, CLI commands, examples,
-   docs, the porting skill), whether `main` moved under it, and the test
-   plan. Stop until the owner answers; "I need it today" shortens nothing.
+   docs, the porting skill), whether `main` moved under it, whether CI has
+   run on the PR merged with current `main` (if not, ask to push the merge
+   as soon as it exists, so CI runs during the review), and the test plan.
+   Stop until the owner answers; "I need it today" shortens nothing.
 2. **Land it locally.** `git checkout <head>`, merge `origin/main` into it
    in the worktree, resolve faithfully to both sides, report every conflicting
    hunk. Review what would actually land. The merge commit is pushed to the
    PR branch only when the owner says "push"; "merge it" or "get it in" is
    not that word, and the owner merges the PR on GitHub.
-3. **Real infra.** Build `canyonos-core:<tag>` from the merged branch; run
+3. **Real infra.** PR workflows run on the PR merged with `main` as of its
+   last push: "E2E" deploys `portfolio` and `helloworld` with the real CLI,
+   "API E2E" runs `api:test:e2e`, "CI" runs `check` and `test`. When the
+   local merge had no conflicts and nothing landed on `main` after those runs
+   started, they are the evidence; do not rerun them. A conflicting PR runs
+   no workflows. Locally, run only what they miss (the paths this PR changes
+   that no CI step deploys), or all of this step when they are stale or
+   absent. Build `canyonos-core:<tag>` from the merged branch; run
    `canyonos validate`, `deploy --serve false`, `status`, `doctor`, `test`,
    `quit` with `CANYONOS_ENV=development CANYONOS_CORE_IMAGE=<tag>` on a copy
    of `examples/helloworld` (no LLM) and, when the path matters, `portfolio`
@@ -47,7 +56,8 @@ filled in: the brief is that session's only context.
    Containers named `canyonos-<other project>-*` belong to someone else.
    Deploy copies of the examples from a scratch folder, with `api_port`,
    `dashboard_port` and `redis_port` that `docker ps --format '{{.Ports}}'`
-   does not show.
+   does not show. Only `deploy` needs the lock: run `bun run check`,
+   `bun run test` and `api:test:e2e` (on its own Redis) while the image builds.
 4. **Architecture, as its own part,** when the PR moves ownership or a
    contract: who owns it now, what leaks outside the new boundary, what a
    third implementation would have to touch, what a user with the old layout
@@ -56,7 +66,8 @@ filled in: the brief is that session's only context.
    `examples/*/README.md`, `skills/*/SKILL.md`, `.agents/skills/**`: nothing
    may contradict the change; it need not mention it. The porting skill is
    what `canyonos convert` installs, so a stale instruction there is a must-fix.
-6. **Gates last.** `bun run check`, `bun run test`, CI green on the PR.
+6. **Gates last.** CI green on the PR, already running since the push. Local
+   `bun run check` and `bun run test` only alongside step 3's local runs.
 7. **Verdict.** One list ordered by severity, each item with its evidence,
    then architecture, docs, nits, follow-up candidates. "Must fix in this
    PR" and "already on `main`, Linear candidate" are separate headings.
@@ -90,7 +101,8 @@ filled in: the brief is that session's only context.
 
 ## Red flags
 
-- "CI is green and it has tests" as evidence.
+- "CI is green and it has tests" as evidence. Only CI's deploy runs count,
+  and only on the current merge.
 - Fixing, pushing or filing before the owner chose a disposition.
 - Reading the whole diff yourself on a 100-file PR.
 - A verdict spread over chat instead of one severity-ordered list.

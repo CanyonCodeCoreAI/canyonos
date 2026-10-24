@@ -22,7 +22,7 @@
     },
     "packages/api": {
       "name": "@canyonos/api",
-      "version": "0.1.736",
+      "version": "0.1.738",
       "dependencies": {
         "@elysiajs/cors": "1.4.2",
         "@elysiajs/openapi": "1.4.15",
@@ -123,7 +123,7 @@
     },
     "packages/web": {
       "name": "web",
-      "version": "0.1.736",
+      "version": "0.1.738",
       "dependencies": {
         "@canyonos/api": "*",
         "@elysiajs/eden": "^1.4.9",
@@ -153,6 +153,7 @@
         "@types/react": "^19.1.8",
         "@types/react-dom": "^19.1.6",
         "@vitejs/plugin-react-swc": "^3.10.2",
+        "dotenv": "^17.2.3",
         "playwright": "^1.57.0",
         "terser": "^5.46.0",
         "typescript": "5.9.3",

@@ -52,4 +52,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: false
           cache-from: type=gha,scope=canyonos-core
-          cache-to: type=gha,mode=max,scope=canyonos-core
+          # Only main writes the image cache: a PR's entries help only that PR and evict main's from the 10 GB limit.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=canyonos-core' || '' }}

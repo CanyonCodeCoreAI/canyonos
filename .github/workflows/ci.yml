@@ -51,6 +51,8 @@ jobs:
           version: "0.12.15"
           python-version: "3.11.15"
           enable-cache: true
+          # The default **/uv.lock search walks node_modules for ~40s.
+          cache-dependency-glob: uv.lock
 
       # --locked fails the job when uv.lock is stale.
       - name: Sync the Python workspace

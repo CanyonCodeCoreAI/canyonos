@@ -144,8 +144,11 @@ const findProject = (body: any) => body?.find?.((row: any) => row.id === PROJECT
 async function main() {
   log('building the images');
   await $`docker build -f packages/api/Dockerfile -t canyonos-api:smoke .`;
-  // The image bakes a relative API base URL, so the bundle carries no host or port.
-  await $`docker build -f packages/web/Dockerfile --target canyonos --build-arg VITE_API_URL=/api -t canyonos-web:smoke .`;
+  // CI prebuilds the web image and names it in CANYONOS_WEB_IMAGE, which the compose file reads.
+  if (!Bun.env.CANYONOS_WEB_IMAGE) {
+    // The image bakes a relative API base URL, so the bundle carries no host or port.
+    await $`docker build -f packages/web/Dockerfile --target canyonos --build-arg VITE_API_URL=/api -t canyonos-web:smoke .`;
+  }
 
   log('starting postgres and redis');
   await compose('up', '-d', '--wait', 'postgres', 'redis');

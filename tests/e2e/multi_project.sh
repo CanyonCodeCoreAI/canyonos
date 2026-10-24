@@ -33,11 +33,11 @@ if [ -f "$E2E_DIR/.env" ]; then
   set +a
 fi
 
-# The images are built from this checkout, so the run tests the code under review.
+# The images are built from this checkout, here or by CI, which names them in CANYONOS_*_IMAGE.
 export CANYONOS_ENV=development
-export CANYONOS_CORE_IMAGE=local
-export CANYONOS_API_IMAGE=local
-export CANYONOS_WEB_IMAGE=local
+export CANYONOS_CORE_IMAGE="${CANYONOS_CORE_IMAGE:-local}"
+export CANYONOS_API_IMAGE="${CANYONOS_API_IMAGE:-local}"
+export CANYONOS_WEB_IMAGE="${CANYONOS_WEB_IMAGE:-local}"
 
 WORK_DIR="$(mktemp -d)"
 ARTIFACTS_DIR="${E2E_ARTIFACTS_DIR:-$(mktemp -d)}"
@@ -115,12 +115,18 @@ PORTFOLIO_REDIS="$(config_port portfolio local_redis_port)"
 HELLO_API="http://127.0.0.1:$(config_port helloworld endpoint_api_port)"
 [ "$HELLO_REDIS" != "$PORTFOLIO_REDIS" ] || fail "both projects use Redis port $HELLO_REDIS"
 
-step "Building canyonos-core:dev, canyonos-api:dev and canyonos-web:dev"
-docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$REPO_ROOT/packages/core"
-docker build -q -f "$REPO_ROOT/packages/api/Dockerfile" -t canyonos-api:dev "$REPO_ROOT"
-docker build -q -f "$REPO_ROOT/packages/web/Dockerfile" --target canyonos \
-  --build-arg VITE_API_URL=/api \
-  -t canyonos-web:dev "$REPO_ROOT"
+step "Building the images set to local"
+if [ "$CANYONOS_CORE_IMAGE" = local ]; then
+  docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$REPO_ROOT/packages/core"
+fi
+if [ "$CANYONOS_API_IMAGE" = local ]; then
+  docker build -q -f "$REPO_ROOT/packages/api/Dockerfile" -t canyonos-api:dev "$REPO_ROOT"
+fi
+if [ "$CANYONOS_WEB_IMAGE" = local ]; then
+  docker build -q -f "$REPO_ROOT/packages/web/Dockerfile" --target canyonos \
+    --build-arg VITE_API_URL=/api \
+    -t canyonos-web:dev "$REPO_ROOT"
+fi
 
 step "canyonos quit (any previous deploy of either project)"
 (cd "$WORK_DIR/helloworld" && canyonos quit) || true

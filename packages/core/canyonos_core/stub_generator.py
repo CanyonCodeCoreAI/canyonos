@@ -675,15 +675,16 @@ def _dockerfile_install_steps(overrides, requirements):
         for name, major in TESTED_MAJOR_VERSIONS.items()
         if name not in asked_newer
     )
+    # The gateway's packages go before the app's, so every agent image on a machine shares that layer.
     return f"""ENV UV_COMPILE_BYTECODE=1
+RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv venv --python 3.12 /opt/canyonos-gateway \\
+ && uv pip install --python /opt/canyonos-gateway/bin/python {" ".join(GATEWAY_REQUIREMENTS)}
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
  && printf '%s\\n' {caps} > /tmp/tested.txt \\
  && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
 RUN --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
-RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv venv --python 3.12 /opt/canyonos-gateway \\
- && uv pip install --python /opt/canyonos-gateway/bin/python {" ".join(GATEWAY_REQUIREMENTS)} \\
- && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
+RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
 """
 
 

@@ -53,13 +53,6 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
-
       - run: bun install --frozen-lockfile
 
       - name: Run E2E Tests

@@ -36,9 +36,9 @@ fi
 : "${AWS_ACCESS_KEY_ID:?set it in the environment or in tests/e2e/.env}"
 : "${AWS_SECRET_ACCESS_KEY:?set it in the environment or in tests/e2e/.env}"
 
-# The core image is built from this checkout, so the run tests the code under review.
+# The core image is built from this checkout, here or by CI, which names it in CANYONOS_CORE_IMAGE.
 export CANYONOS_ENV=development
-export CANYONOS_CORE_IMAGE=local
+export CANYONOS_CORE_IMAGE="${CANYONOS_CORE_IMAGE:-local}"
 
 PROJECT_DIR="$(mktemp -d)/$FIXTURE"
 ARTIFACTS_DIR="${E2E_ARTIFACTS_DIR:-$(mktemp -d)}"
@@ -81,8 +81,10 @@ AWS_REGION=us-east-1
 EOF
 QUERY="$(cat "$PROJECT_DIR/.canyon/config/test_query.txt")"
 
-step "Building canyonos-core:dev"
-docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$REPO_ROOT/packages/core"
+if [ "$CANYONOS_CORE_IMAGE" = local ]; then
+  step "Building canyonos-core:dev"
+  docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$REPO_ROOT/packages/core"
+fi
 
 cd "$PROJECT_DIR"
 

@@ -11,9 +11,14 @@ COPY packages/api/package.json ./packages/api/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 COPY packages/cli-usage-api/package.json ./packages/cli-usage-api/package.json
 COPY packages/tsconfig/package.json ./packages/tsconfig/package.json
-RUN bun install --frozen-lockfile --ignore-scripts
+# Only the workspaces the build reads: the root dev tools would add 2 GB to this layer and the CI cache.
+RUN bun install --frozen-lockfile --ignore-scripts --filter web --filter @repo/ui --filter @canyonos/api
 
-COPY . .
+# Only what the build reads, so a change elsewhere in the repo keeps this stage cached.
+COPY packages/tsconfig ./packages/tsconfig
+COPY packages/api ./packages/api
+COPY packages/ui ./packages/ui
+COPY packages/web ./packages/web
 RUN bun run build:sdk
 
 ARG VITE_API_URL
