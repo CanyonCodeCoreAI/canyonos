@@ -22,6 +22,8 @@ Using one of our examples? Copy its `.env.example` to `.env` and fill in the val
 
 `env_file: .env` in your `global_controller.yaml` passes these to every agent container. Without them, the test fails at the first agent that needs one.
 
+> **Tip:** Never write secrets in your code or YAML, and keep `.env` out of git. Read them in your agent code with `os.environ["OPENAI_API_KEY"]`, and in config files with `${OPENAI_API_KEY}`.
+
 ### 2. Test
 
 Verify the workflow works by deploying everything locally and sending a test query:
