@@ -103,7 +103,7 @@ expect_routes() {
 step "Staging helloworld and portfolio in $WORK_DIR"
 cp -R "$REPO_ROOT/examples/helloworld" "$WORK_DIR/helloworld"
 cp -R "$REPO_ROOT/examples/portfolio" "$WORK_DIR/portfolio"
-cp -R "$E2E_DIR/portfolio/.car" "$WORK_DIR/portfolio/.car"
+cp -R "$E2E_DIR/portfolio/.canyon" "$WORK_DIR/portfolio/.canyon"
 cat >"$WORK_DIR/portfolio/.env" <<EOF
 AWS_ENDPOINT_URL_BEDROCK_RUNTIME=http://127.0.0.1:8081/bedrock
 AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-not-a-real-key}

@@ -345,7 +345,7 @@ def test_the_installed_cli_keeps_validate_json_on_stdout(tmp_path, policy, expec
     )
 
     assert result.returncode == 2
-    assert json.loads(result.stdout)["error"].startswith(".car is not a directory")
+    assert json.loads(result.stdout)["error"].startswith(".canyon is not a directory")
     if expected is None:
         assert result.stderr == ""
     else:

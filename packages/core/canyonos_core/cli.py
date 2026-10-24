@@ -29,7 +29,7 @@ from canyonos_core.schema import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("canyonos_core")
-ARTIFACT_DIR_NAME = ".car"
+ARTIFACT_DIR_NAME = ".canyon"
 SOURCE_DIR_NAME = "app"
 
 
@@ -54,7 +54,7 @@ def _artifact_prefix(root):
 def _project_layout():
     """(artifact_root, source_root) for the project in cwd.
 
-    The .car layout keeps the app's own code under `.car/app` and everything
+    The .canyon layout keeps the app's own code under `.canyon/app` and everything
     generated beside it; a plain checkout keeps both at the project root.
     """
     project_dir = os.path.abspath(os.getcwd())

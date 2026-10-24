@@ -1,12 +1,12 @@
 ---
 name: porting-to-canyonos
-description: Port a Python agent project to CanyonOS by preparing and validating a `.car`.
+description: Port a Python agent project to CanyonOS by preparing and validating a `.canyon`.
 ---
 # Port an agent project to CanyonOS
 
 ## Scope
 
-- Edit only `.car`, `.gitignore` through `prepare.py`, and application-root
+- Edit only `.canyon`, `.gitignore` through `prepare.py`, and application-root
   `.env` / `.env.example`. Other changes require specific approval.
 - Preserve application behavior, providers, dependency constraints and layout.
   Import existing logic; do not duplicate it or repair unrelated source defects.
@@ -17,17 +17,17 @@ description: Port a Python agent project to CanyonOS by preparing and validating
 
 ## 1. Prepare
 
-Choose the import root using [The `.car` artifact](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/BUILD_ARTIFACT.md)
+Choose the import root using [The `.canyon` artifact](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/BUILD_ARTIFACT.md)
 and [Images and dependencies](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/IMAGES_AND_DEPENDENCIES.md), then run:
 
 ```bash
-python3 <skill_dir>/prepare.py <import-root> .car
+python3 <skill_dir>/prepare.py <import-root> .canyon
 ```
 
 Use `--refresh` for an existing copy. Use `--force` only when discarding all
 port edits is authorized.
 
-Trace the serving path in `.car/app`: inputs/outputs, imports, assets,
+Trace the serving path in `.canyon/app`: inputs/outputs, imports, assets,
 dependencies, state and async boundaries. Report required capabilities that
 cannot run; missing credential values alone do not block preparation.
 
@@ -52,7 +52,7 @@ external stores and concurrency controls; follow the
 
 - Write adapters and the agent the endpoint serves against the [Runtime contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/RUNTIME_CONTRACT.md).
   Put adapters beside the code they wrap; reuse compatible classes directly.
-- Write one representative input from the source to `.car/config/test_query.txt`
+- Write one representative input from the source to `.canyon/config/test_query.txt`
   as raw query text, without labels or Markdown fences.
 - Derive each agent's `functions` (the methods other agents or the endpoint
   call, with argument and return types built from builtins), paths and
@@ -86,5 +86,5 @@ until exit 0, or report the blocker. Check changes against the allowed scope.
 
 Report the validation result, blockers, chosen defaults and required credential
 names in the developer's language. Link to [Commands](https://canyonos.readthedocs.io/en/latest/#commands)
-for next steps, including `canyonos test "$(cat .car/config/test_query.txt)"`.
+for next steps, including `canyonos test "$(cat .canyon/config/test_query.txt)"`.
 Claim success only after validation exits 0 with no open blocker.

@@ -53,10 +53,10 @@ def loud():
 @pytest.fixture
 def project(monkeypatch, tmp_path):
     root = tmp_path / "portfolio"
-    car = root / ".car"
-    (car / "config").mkdir(parents=True)
-    (car / "app").mkdir()
-    (car / "config" / "global_controller.yaml").write_text(CONFIG)
+    canyon = root / ".canyon"
+    (canyon / "config").mkdir(parents=True)
+    (canyon / "app").mkdir()
+    (canyon / "config" / "global_controller.yaml").write_text(CONFIG)
     monkeypatch.chdir(root)
     return root
 
@@ -87,7 +87,7 @@ def test_a_complete_deploy_passes(project, runtime):
     runtime(IMAGES, ALL_UP)
 
     result = verify.verify_runtime(
-        str(project / ".car" / "config" / "global_controller.yaml")
+        str(project / ".canyon" / "config" / "global_controller.yaml")
     )
 
     assert [(a["name"], a["running"], a["expected"]) for a in result["agents"]] == [
@@ -101,7 +101,7 @@ def test_a_short_replica_count_fails(project, runtime):
 
     with pytest.raises(RuntimeError, match="1 of 2 replicas"):
         verify.verify_runtime(
-            str(project / ".car" / "config" / "global_controller.yaml")
+            str(project / ".canyon" / "config" / "global_controller.yaml")
         )
 
 
@@ -112,7 +112,7 @@ def test_an_image_that_was_never_built_fails(project, runtime):
         RuntimeError, match="canyonos-portfolio-echoagent was never built"
     ):
         verify.verify_runtime(
-            str(project / ".car" / "config" / "global_controller.yaml")
+            str(project / ".canyon" / "config" / "global_controller.yaml")
         )
 
 
@@ -172,7 +172,7 @@ def test_the_dashboard_is_not_started_under_test(monkeypatch, deployable):
 
 
 def test_the_provider_is_restored_after_the_run(project, deployable):
-    config = project / ".car" / "config" / "global_controller.yaml"
+    config = project / ".canyon" / "config" / "global_controller.yaml"
 
     test_cmd.run_test("hi")
 
@@ -393,7 +393,7 @@ def test_a_question_fails_a_json_run_without_prompting(monkeypatch, deployable, 
     assert len(sent) == 1
 
 
-def test_a_flat_layout_project_deploys_fine_with_no_car_directory(
+def test_a_flat_layout_project_deploys_fine_with_no_canyon_directory(
     monkeypatch, tmp_path, deployable, capsys
 ):
     legacy = tmp_path / "legacy" / "config"

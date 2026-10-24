@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Find the symptom, check the cause against your `.car`, then read the linked
+Find the symptom, check the cause against your `.canyon`, then read the linked
 page for the mechanism. `canyonos validate` catches most of the first two
 tables before a deploy; its codes are listed in [Images and
 dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
@@ -9,8 +9,8 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 
 | Symptom | Likely cause |
 |---|---|
-| `Config file not found: .car/config/global_controller.yaml` | The command ran in a directory without that file. `canyonos deploy` looks for `.car` in the current directory. |
-| `the project source directory .car/app does not exist` | `.car/app` was never created, or the command ran from the wrong directory |
+| `Config file not found: .canyon/config/global_controller.yaml` | The command ran in a directory without that file. `canyonos deploy` looks for `.canyon` in the current directory. |
+| `the project source directory .canyon/app does not exist` | `.canyon/app` was never created, or the command ran from the wrong directory |
 | `duplicate agent name ... (names are lowercased into one image tag)` | Two entries differ only in case |
 | `is required when provider is 'EC2'` | An EC2 entry has no `machine_type` |
 | `expected an integer >= 1` on `replicas` | `replicas` is a string or zero |
@@ -30,16 +30,16 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 |---|---|
 | Deploy fails and prints `--- begin container log` | The agent's import or constructor raised. Read the lines between the markers. |
 | `AttributeError: module ... has no attribute '<Name>'` in that log | The class in the entrypoint is not named like the manifest entry |
-| `ModuleNotFoundError` for a module of the application | `.car/app` is not rooted at the import root, so the import does not resolve from `/app`. See [Images and dependencies](IMAGES_AND_DEPENDENCIES.md) |
+| `ModuleNotFoundError` for a module of the application | `.canyon/app` is not rooted at the import root, so the import does not resolve from `/app`. See [Images and dependencies](IMAGES_AND_DEPENDENCIES.md) |
 | `ModuleNotFoundError` for a third-party module | The distribution is missing from this entry's `requirements`. The application's own `requirements.txt` is never installed |
 | `ModuleNotFoundError` for a distribution this entry's code never imports | The entrypoint's package `__init__.py` or a sibling module imports it. It ships in this image, so its dependency has to be declared here |
-| `ImportError` in a peer container for a name from another agent's module | That agent's package `__init__.py` re-exports from its entrypoint, which is a stub here. `CAR-PACKAGE-REEXPORT` |
+| `ImportError` in a peer container for a name from another agent's module | That agent's package `__init__.py` re-exports from its entrypoint, which is a stub here. `CANYON-PACKAGE-REEXPORT` |
 | `attempted relative import with no known parent package` | The entrypoint uses relative imports. It is loaded as a top-level module. Make its own imports absolute |
 | `SyntaxError` on an import of an agent | An entrypoint path segment is not a Python identifier |
 | A model call runs at container start, before any request | Module-level code in the entrypoint performs a real run |
 | An agent runs inside the caller's process instead of its container | The caller imported the class from a module that is not the agent's `entrypoint` path or its basename at the root |
 | Calls meant for one agent reach another | Two entries share an `entrypoint`, or two entrypoints share a basename, so one stub overwrote the other |
-| A module of the application vanished or changed | Its name at the root of the copy matches a platform runtime module (`future.py`, `local_controller.py`, ...) and was overwritten. `CAR-FLAT-COLLISION` |
+| A module of the application vanished or changed | Its name at the root of the copy matches a platform runtime module (`future.py`, `local_controller.py`, ...) and was overwritten. `CANYON-FLAT-COLLISION` |
 | A file of the application is missing from the image | It is hidden, a symlink, private key material, or one of the reserved root names. The build printed a note or warning about it |
 | `import local_controller` fails on a protobuf version check | The image resolved a protobuf below what the generated modules need. Check the requirement that dragged it down |
 | Missing credentials while the agent loads | `env_file` is unset, points elsewhere, or the code reads a different variable name |
@@ -57,7 +57,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `.value()` returns text that looks like a dict | Expected. Results travel as strings; `json.loads` it |
 | `is not JSON serializable` | The agent returned framework objects. Convert to plain types first |
 | The response holds `<...Future object at 0x...>` | `main` formatted a `Future` (`str`, f-string, `json.dumps`) before resolving it. Call `.value()` first |
-| Redis holds a coroutine `repr` instead of a result | The agent method is `async def`. `CAR-ADAPTER-ASYNC` |
+| Redis holds a coroutine `repr` instead of a result | The agent method is `async def`. `CANYON-ADAPTER-ASYNC` |
 | Fan-out is no faster than sequential | Dispatch and `.value()` were fused in one comprehension |
 | `Lock is bound to a different event loop` on the second request | The agent runs `asyncio.run` per call while the instance holds loop-bound state. Use one persistent loop |
 | Wrong results under load | Concurrent calls share one instance; state on `self` is not thread-safe |
@@ -83,7 +83,7 @@ lists the project's containers. Run `canyonos quit` to remove them.
 | Symptom | Likely cause |
 |---|---|
 | Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
-| `canyonos clean` deleted `.car/app` and `.car/config` | That is what it does: it removes the whole `.car` and the images of the agents in `global_controller.yaml` |
+| `canyonos clean` deleted `.canyon/app` and `.canyon/config` | That is what it does: it removes the whole `.canyon` and the images of the agents in `global_controller.yaml` |
 | Containers remain after `canyonos clean` | `clean` never touches containers. Use `canyonos stop` or `canyonos quit` |
 | EC2 machines remain after `canyonos stop` | The stop waited 4 minutes and moved on. See [EC2 deployment](EC2.md) |
 | Images remain after `canyonos clean` | Docker was unreachable, the images live on a different Docker context than the one the deploy used, or the agent was removed from `global_controller.yaml` before `clean` ran |

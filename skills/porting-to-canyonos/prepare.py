@@ -5,8 +5,8 @@
 
 """Create a CanyonOS Core artifact tree from a chosen Python import root.
 
-The script owns the mechanical part of step 1: it creates ``.car/config`` and
-copies the selected import root to ``.car/app`` with development artifacts and
+The script owns the mechanical part of step 1: it creates ``.canyon/config`` and
+copies the selected import root to ``.canyon/app`` with development artifacts and
 credential files excluded. Choosing the correct import root still requires
 reading the application's imports.
 """
@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 
 EXCLUDED_DIRECTORIES = frozenset(
     {
-        ".car",
+        ".canyon",
         ".claude",
         ".git",
         ".hg",
@@ -144,7 +144,7 @@ def _load_state(config_dir: Path) -> dict[str, str]:
     if not state_path.is_file():
         raise ValueError(
             f"{state_path} is missing; this artifact predates refresh tracking. "
-            "Use --force only if discarding all edits in .car/app is intentional"
+            "Use --force only if discarding all edits in .canyon/app is intentional"
         )
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -232,8 +232,8 @@ def _refresh_app(
             "" if len(conflicts) <= 20 else f"\n  ... and {len(conflicts) - 20} more"
         )
         raise ValueError(
-            "refresh found files changed in both the source and .car/app:\n  "
-            f"{shown}{suffix}\nResolve them in .car/app, then update the source "
+            "refresh found files changed in both the source and .canyon/app:\n  "
+            f"{shown}{suffix}\nResolve them in .canyon/app, then update the source "
             "or use --force only to discard all port edits"
         )
 
@@ -352,17 +352,17 @@ def prepare(
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Create .car/config and copy an import root into .car/app."
+        description="Create .canyon/config and copy an import root into .canyon/app."
     )
     parser.add_argument(
         "import_root",
-        help="directory whose contents should become the contents of .car/app",
+        help="directory whose contents should become the contents of .canyon/app",
     )
     parser.add_argument(
         "artifact_root",
         nargs="?",
-        default=".car",
-        help="artifact directory to create (default: .car)",
+        default=".canyon",
+        help="artifact directory to create (default: .canyon)",
     )
     parser.add_argument(
         "--force",

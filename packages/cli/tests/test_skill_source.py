@@ -16,11 +16,11 @@ import re
 from canyonos import env
 
 SKILL = env.LOCAL_SKILL_DIR
-# The one script the skill still runs itself: it prepares `.car`, and there is
-# no `.car` for the CLI to work on until it has.
+# The one script the skill still runs itself: it prepares `.canyon`, and there is
+# no `.canyon` for the CLI to work on until it has.
 ALLOWED_SCRIPTS = {"prepare.py"}
 # The retired validator's own code scheme. `canyonos validate` names every
-# finding CAR-*, so a V0xx or W0xx left in the prose cites a check that no
+# finding CANYON-*, so a V0xx or W0xx left in the prose cites a check that no
 # longer runs and sends a reader looking for output they will never see.
 RETIRED_CODE = re.compile(r"\b[VW]0[0-9]{2}\b")
 # The skill links the contract reference in `docs/`: as raw markdown for the

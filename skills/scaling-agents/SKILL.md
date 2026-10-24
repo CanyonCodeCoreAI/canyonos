@@ -13,10 +13,10 @@ behavior; do not invent limits that refuse real calls.
 ## 1. Locate the source and config
 
 - Find the active `global_controller.yaml`. Write `llms.yaml` and `scaling.yaml`
-  beside it: `.car/config/` for a ported project, or `config/` for the source
+  beside it: `.canyon/config/` for a ported project, or `config/` for the source
   layout. Respect an explicitly chosen destination.
-- Trace each manifest entry's entrypoint. For a `.car` project,
-  inspect `.car/app`, since that is the deployed source.
+- Trace each manifest entry's entrypoint. For a `.canyon` project,
+  inspect `.canyon/app`, since that is the deployed source.
 - Read existing `llms.yaml` and `scaling.yaml` first. Keep their entries, names
   and other fields; change only what the source contradicts or the developer asked.
 

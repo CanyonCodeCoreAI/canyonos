@@ -9,7 +9,7 @@ from ..harness import canyonos, docker
 
 def test_validate(recorder, workspace, images):
     call = canyonos(
-        recorder, ["validate", ".car", "--json"], cwd=workspace, check=False
+        recorder, ["validate", ".canyon", "--json"], cwd=workspace, check=False
     )
     assert call.code == 0, call.output
 

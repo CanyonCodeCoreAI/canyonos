@@ -248,7 +248,7 @@ def test_a_failed_agent_never_consults_an_earlier_port(monkeypatch, convertible)
     monkeypatch.setattr(
         convert_cmd,
         "_report_port",
-        lambda: pytest.fail("a dead session is no evidence about .car"),
+        lambda: pytest.fail("a dead session is no evidence about .canyon"),
     )
 
     assert convert_cmd.run_convert(yes=True) is False
@@ -260,32 +260,32 @@ def test_a_missing_agent_cli_fails_the_conversion(monkeypatch, convertible):
     assert convert_cmd.run_convert(yes=True) is False
 
 
-def test_a_port_with_no_car_fails(monkeypatch, tmp_path):
+def test_a_port_with_no_canyon_fails(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         convert_cmd,
         "run_validate",
-        lambda *_a, **_k: pytest.fail("nothing to validate without a .car"),
+        lambda *_a, **_k: pytest.fail("nothing to validate without a .canyon"),
     )
 
     assert convert_cmd._report_port() is False
 
 
 def test_a_port_is_validated_where_it_was_produced(monkeypatch, tmp_path):
-    """The verdict comes from `canyonos validate` over `.car`, in this process.
+    """The verdict comes from `canyonos validate` over `.canyon`, in this process.
 
     No file is looked for in the skill directory: the skill ships no validator
     to shell out to, and _report_port is not told where the skill landed.
     """
     monkeypatch.chdir(tmp_path)
-    (tmp_path / convert_cmd.CAR_DIR).mkdir()
+    (tmp_path / convert_cmd.CANYON_DIR).mkdir()
     validated = []
     monkeypatch.setattr(
         convert_cmd, "run_validate", lambda root: validated.append(root) or 0
     )
 
     assert convert_cmd._report_port() is True
-    assert validated == [convert_cmd.CAR_DIR]
+    assert validated == [convert_cmd.CANYON_DIR]
 
 
 @pytest.mark.parametrize(
@@ -295,7 +295,7 @@ def test_a_port_takes_its_verdict_from_the_validator(
     monkeypatch, tmp_path, status, passed
 ):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / convert_cmd.CAR_DIR).mkdir()
+    (tmp_path / convert_cmd.CANYON_DIR).mkdir()
     monkeypatch.setattr(convert_cmd, "run_validate", lambda _root: status)
 
     assert convert_cmd._report_port() is passed
@@ -307,7 +307,7 @@ def _flat(capsys):
 
 def test_a_port_with_findings_did_not_pass(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / convert_cmd.CAR_DIR).mkdir()
+    (tmp_path / convert_cmd.CANYON_DIR).mkdir()
     monkeypatch.setattr(convert_cmd, "run_validate", lambda _root: 1)
 
     assert convert_cmd._report_port() is False
@@ -321,7 +321,7 @@ def test_a_port_nobody_could_check_is_unverified_not_failed(
     the line must not send the user hunting for findings that were never
     produced."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / convert_cmd.CAR_DIR).mkdir()
+    (tmp_path / convert_cmd.CANYON_DIR).mkdir()
     monkeypatch.setattr(convert_cmd, "run_validate", lambda _root: UNCHECKED)
 
     assert convert_cmd._report_port() is False

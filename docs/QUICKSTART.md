@@ -129,11 +129,11 @@ canyonos stop   # stop this project's containers; keeps CanyonOS's own container
 canyonos quit   # full teardown — also removes CanyonOS's container, its copy of your project, and the dashboard if no other project is running
 ```
 
-`quit` leaves your project folder (including `.car/` and `.env`) and the built images in place. Use `canyonos clean` for `.car/`, the images, the installed skill and the `CANYONOS_*` `.env` keys older versions of `canyonos serve` wrote.
+`quit` leaves your project folder (including `.canyon/` and `.env`) and the built images in place. Use `canyonos clean` for `.canyon/`, the images, the installed skill and the `CANYONOS_*` `.env` keys older versions of `canyonos serve` wrote.
 
 ### Clean generated files
 
-Removes the `.car` folder, the CanyonOS skill `canyonos convert` installed in this project, the `.env` keys `canyonos serve` wrote (your own lines stay), and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay.
+Removes the `.canyon` folder, the CanyonOS skill `canyonos convert` installed in this project, the `.env` keys `canyonos serve` wrote (your own lines stay), and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay.
 
 ```bash
 canyonos clean

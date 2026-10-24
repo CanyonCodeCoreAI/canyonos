@@ -6,16 +6,16 @@ rules apply under every provider.
 
 ## Discovery
 
-`canyonos deploy` runs from the application root and reads `.car` below it.
+`canyonos deploy` runs from the application root and reads `.canyon` below it.
 
 | Input | Where |
 |---|---|
-| manifest | `.car/config/global_controller.yaml`, or the file given with `-c` |
+| manifest | `.canyon/config/global_controller.yaml`, or the file given with `-c` |
 | agent functions | `functions` on an agent entry |
-| entrypoint | `entrypoint` on an agent entry, relative to `.car/app` |
+| entrypoint | `entrypoint` on an agent entry, relative to `.canyon/app` |
 | endpoint | `endpoint:` in the manifest, naming the agent method served over HTTP |
 | policy | `policy.yaml` next to the manifest |
-| generated files | `stubs/`, `grpc_stubs/`, `docker_container/` under `.car` |
+| generated files | `stubs/`, `grpc_stubs/`, `docker_container/` under `.canyon` |
 
 Two names have to agree for every agent:
 
@@ -56,7 +56,7 @@ What the stub replaces is one module. Everything around it is real:
 
 - The package `__init__.py` runs before the stub. If it re-exports a name
   from the stubbed module, every peer image raises `ImportError` at start.
-  `canyonos validate` reports this as `CAR-PACKAGE-REEXPORT`.
+  `canyonos validate` reports this as `CANYON-PACKAGE-REEXPORT`.
 - Sibling modules are present, but only this entry's `requirements` are
   installed. Add what those siblings import to the entry that ships them.
 - The stub defines the declared class and nothing else. Module constants,
@@ -88,7 +88,7 @@ So:
   is never used to convert anything.
 - Methods are called synchronously. An `async def` is not awaited, and its
   coroutine's `repr` is what lands in Redis. `canyonos validate` reports
-  `CAR-ADAPTER-ASYNC`.
+  `CANYON-ADAPTER-ASYNC`.
 - Calls run on a thread pool of 16 workers against one instance, so the
   instance is shared between concurrent requests. State on `self` needs to
   be safe for that, or the entry needs `replicas: 1` and `stateful: true`.
@@ -230,7 +230,7 @@ A scale-down that drains the asking replica fails the request with
 
 ## Build context
 
-Each build context starts as a copy of `.car/app` with relative paths kept,
+Each build context starts as a copy of `.canyon/app` with relative paths kept,
 minus what the sweep excludes, and then gets the platform's runtime modules,
 the generated gRPC modules, `canyonos_core/llm_gateway`, every stub, and the
 agent's own entrypoint written on top. [Images and
@@ -293,7 +293,7 @@ next `canyonos deploy` removes stale Redis and metrics containers and
 recreates orphaned agent containers, but an endpoint `api_port`, a database
 `db_port` or a Redis port still in use is a hard error.
 
-`canyonos clean` deletes the entire `.car` directory in the current
+`canyonos clean` deletes the entire `.canyon` directory in the current
 directory, including `app/` and `config/`, strips the keys `canyonos serve`
 wrote to `.env` (your own lines, `CANYONOS_*` ones included, stay), removes the skill `canyonos convert`
 installed in this project (a global install is kept), and removes the local

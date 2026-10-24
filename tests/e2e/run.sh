@@ -8,9 +8,9 @@
 #
 # Usage: tests/e2e/run.sh [fixture]          (default: portfolio)
 #
-# The fixture pairs examples/<fixture> (the source) with tests/e2e/<fixture>/.car
+# The fixture pairs examples/<fixture> (the source) with tests/e2e/<fixture>/.canyon
 # (a port verified by hand), so `canyonos convert` and its coding agent stay out
-# of the run. The query comes from .car/config/test_query.txt, and
+# of the run. The query comes from .canyon/config/test_query.txt, and
 # tests/e2e/<fixture>/check.py decides whether the result is real.
 #
 # Needs AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for an IAM user allowed to invoke the
@@ -23,7 +23,7 @@ FIXTURE="${1:-portfolio}"
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$E2E_DIR/../.." && pwd)"
 SOURCE_DIR="$REPO_ROOT/examples/$FIXTURE"
-CAR_DIR="$E2E_DIR/$FIXTURE/.car"
+CANYON_DIR="$E2E_DIR/$FIXTURE/.canyon"
 CHECK="$E2E_DIR/$FIXTURE/check.py"
 REQUEST_TIMEOUT=300
 
@@ -72,14 +72,14 @@ trap finish EXIT
 
 step "Staging $FIXTURE in $PROJECT_DIR"
 cp -R "$SOURCE_DIR" "$PROJECT_DIR"
-cp -R "$CAR_DIR" "$PROJECT_DIR/.car"
+cp -R "$CANYON_DIR" "$PROJECT_DIR/.canyon"
 cat >"$PROJECT_DIR/.env" <<EOF
 AWS_ENDPOINT_URL_BEDROCK_RUNTIME=http://127.0.0.1:8081/bedrock
 AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 AWS_REGION=us-east-1
 EOF
-QUERY="$(cat "$PROJECT_DIR/.car/config/test_query.txt")"
+QUERY="$(cat "$PROJECT_DIR/.canyon/config/test_query.txt")"
 
 step "Building canyonos-core:dev"
 docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$REPO_ROOT/packages/core"
@@ -91,11 +91,11 @@ cd "$PROJECT_DIR"
 # name, before anything is deployed.
 for mode in rename builtin dunder duplicate returns deep endpoint_name; do
   step "canyonos validate rejects a broken manifest ($mode)"
-  broken_car="$(mktemp -d)/.car"
-  cp -R "$PROJECT_DIR/.car" "$broken_car"
-  expected="$(uv run --project "$REPO_ROOT" python "$E2E_DIR/break_manifest.py" "$broken_car" "$mode")"
+  broken_canyon="$(mktemp -d)/.canyon"
+  cp -R "$PROJECT_DIR/.canyon" "$broken_canyon"
+  expected="$(uv run --project "$REPO_ROOT" python "$E2E_DIR/break_manifest.py" "$broken_canyon" "$mode")"
   out="$ARTIFACTS_DIR/validate-$mode.json"
-  canyonos validate "$broken_car" --json >"$out" && status=0 || status=$?
+  canyonos validate "$broken_canyon" --json >"$out" && status=0 || status=$?
   [ "$status" -eq 1 ] && grep -qF "$expected" "$out" || { cat "$out"; exit 1; }
 done
 

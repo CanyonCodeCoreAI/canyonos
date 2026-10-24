@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Contracts a `.car` has to keep that the schema alone cannot see.
+"""Contracts a `.canyon` has to keep that the schema alone cannot see.
 
 `validate_project` reads the manifest. What it cannot read is the Python
 beside it: a class the controller loads by name, or a method the executor calls
@@ -265,7 +265,7 @@ def _check_adapter(report, source_dir, entrypoint_path, agent_spec):
     tree, error = _parse(entrypoint_path)
     if tree is None:
         report.add(
-            "CAR-ADAPTER-CLASS",
+            "CANYON-ADAPTER-CLASS",
             entrypoint_path,
             0,
             f"the entrypoint does not parse: {error}",
@@ -281,7 +281,7 @@ def _check_adapter(report, source_dir, entrypoint_path, agent_spec):
         defined = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
         found = ", ".join(defined) if defined else "no classes at all"
         report.add(
-            "CAR-ADAPTER-CLASS",
+            "CANYON-ADAPTER-CLASS",
             entrypoint_path,
             1,
             f"no class named `{agent_spec.name}` at module level (found: {found})",
@@ -305,7 +305,7 @@ def _check_constructor(report, name, methods):
     if not required:
         return
     report.add(
-        "CAR-ADAPTER-INIT",
+        "CANYON-ADAPTER-INIT",
         path,
         init.lineno,
         f"`{name}.__init__` requires {', '.join(required)}",
@@ -321,7 +321,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
         if not complete:
             return
         report.add(
-            "CAR-ADAPTER-SIGNATURE",
+            "CANYON-ADAPTER-SIGNATURE",
             class_path,
             0,
             f"`{class_name}` has no method `{function.name}`",
@@ -335,7 +335,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
 
     if isinstance(method, ast.AsyncFunctionDef):
         report.add(
-            "CAR-ADAPTER-ASYNC",
+            "CANYON-ADAPTER-ASYNC",
             path,
             method.lineno,
             f"`{class_name}.{function.name}` is `async def`",
@@ -348,7 +348,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
     positional_only = _positional_only(method, declared)
     if positional_only:
         report.add(
-            "CAR-ADAPTER-SIGNATURE",
+            "CANYON-ADAPTER-SIGNATURE",
             path,
             method.lineno,
             f"`{class_name}.{function.name}` takes "
@@ -371,7 +371,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
     )
     if missing:
         report.add(
-            "CAR-ADAPTER-SIGNATURE",
+            "CANYON-ADAPTER-SIGNATURE",
             path,
             method.lineno,
             f"`{class_name}.{function.name}` has no parameter "
@@ -389,7 +389,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
     ]
     if unfilled:
         report.add(
-            "CAR-ADAPTER-SIGNATURE",
+            "CANYON-ADAPTER-SIGNATURE",
             path,
             method.lineno,
             f"`{class_name}.{function.name}` requires {', '.join(unfilled)}, "
@@ -409,7 +409,7 @@ def _check_flat_collisions(report, source_dir):
         if not os.path.isfile(path):
             continue
         report.add(
-            "CAR-FLAT-COLLISION",
+            "CANYON-FLAT-COLLISION",
             path,
             1,
             f"a project module named `{entry}` sits at the root of the source copy",
@@ -450,7 +450,7 @@ def _check_package_reexport(report, source_dir, agent_spec):
         if not hit:
             continue
         report.add(
-            "CAR-PACKAGE-REEXPORT",
+            "CANYON-PACKAGE-REEXPORT",
             init_path,
             node.lineno,
             f"`{package}/__init__.py` re-exports from `{module}`, the "
@@ -491,11 +491,11 @@ class _Report:
             return path
 
 
-def validate_car(artifact_root, config_path=None):
-    """Every violation in a prepared `.car`, schema first, contracts after.
+def validate_canyon(artifact_root, config_path=None):
+    """Every violation in a prepared `.canyon`, schema first, contracts after.
 
     Never raises: the caller decides how to report. Schema violations come back
-    as `CAR-SCHEMA` findings, and when the manifest itself does not parse they
+    as `CANYON-SCHEMA` findings, and when the manifest itself does not parse they
     are all there is -- the rest of the checks have no model to run over.
     """
     artifact_root = os.path.abspath(artifact_root)
@@ -509,7 +509,7 @@ def validate_car(artifact_root, config_path=None):
     manifest, violations = check_project(config_path, source_dir)
     for violation in violations:
         report.add(
-            "CAR-SCHEMA",
+            "CANYON-SCHEMA",
             violation.path,
             violation.line,
             f"{violation.field}: {violation.message}"
@@ -574,13 +574,13 @@ def _print_text(findings):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="python -m canyonos_core.validate",
-        description="Check a prepared .car against the CanyonOS contract.",
+        description="Check a prepared .canyon against the CanyonOS contract.",
     )
     parser.add_argument(
         "artifact_root",
         nargs="?",
         default=".",
-        help="the .car directory holding config/ and app/ (default: the cwd)",
+        help="the .canyon directory holding config/ and app/ (default: the cwd)",
     )
     parser.add_argument(
         "-c",
@@ -591,7 +591,7 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="emit findings as JSON")
     args = parser.parse_args(argv)
 
-    findings = validate_car(args.artifact_root, args.config)
+    findings = validate_canyon(args.artifact_root, args.config)
     if args.json:
         print(json.dumps(payload(os.path.abspath(args.artifact_root), findings)))
     else:

@@ -143,7 +143,7 @@ upstream with its own identity.
 
 A client that ignores the proxy variables, such as an `aiohttp.ClientSession` without
 `trust_env=True`, goes straight to the provider. Grep for `aiohttp` in the source to
-find those. Inside the `.car/app` copy, the fix for aiohttp
+find those. Inside the `.canyon/app` copy, the fix for aiohttp
 is to let it read them:
 
 ```python

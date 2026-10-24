@@ -19,7 +19,7 @@ nav:
       - Autoscaling: guides/SCALING.md
       - Dashboard: guides/DASHBOARD.md
       - CLI reference: guides/CLI.md
-      - The .car artifact: guides/BUILD_ARTIFACT.md
+      - The .canyon artifact: guides/BUILD_ARTIFACT.md
       - global_controller.yaml: guides/GLOBAL_CONTROLLER.md
       - Runtime contract: guides/RUNTIME_CONTRACT.md
       - Images and dependencies: guides/IMAGES_AND_DEPENDENCIES.md

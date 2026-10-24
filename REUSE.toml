@@ -24,7 +24,7 @@ path = [
   "**/*.db",
   "**/*.rb",
   "**/*.txt",
-  "tests/e2e/portfolio/.car/**",
+  "tests/e2e/portfolio/.canyon/**",
   "packages/api/src/db/migrations/**",
   "packages/web/src/routeTree.gen.ts",
   "LICENSE",

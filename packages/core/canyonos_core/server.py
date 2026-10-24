@@ -45,7 +45,7 @@ def deploy():
 
     data = request.get_json(force=True, silent=True) or {}
     # Resolved with canyonos' own artifact-layout rule rather than a second copy
-    # of it, so a `.car` project works when the client sends no config_path.
+    # of it, so a `.canyon` project works when the client sends no config_path.
     config_path = data.get("config_path") or os.path.join(
         _artifact_prefix(WORKSPACE_DIR), "config", "global_controller.yaml"
     )

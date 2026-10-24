@@ -58,9 +58,9 @@ from canyonos_core.schema import SchemaError, check_project, load_manifest
 from canyonos_core.schema.yaml_lines import load_yaml_lines
 
 # Add generated grpc_stubs from the local project to the path. Projects using
-# the .car artifact layout keep grpc_stubs under .car/; older/plain layouts
+# the .canyon artifact layout keep grpc_stubs under .canyon/; older/plain layouts
 # keep it at the project root.
-_artifact_prefix = ".car" if os.path.isdir(".car") else ""
+_artifact_prefix = ".canyon" if os.path.isdir(".canyon") else ""
 sys.path.insert(0, os.path.abspath(os.path.join(_artifact_prefix, "grpc_stubs")))
 import local_controller_pb2
 import local_controller_pb2_grpc

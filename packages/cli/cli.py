@@ -211,12 +211,12 @@ def _run_command():
         "artifact_root",
         nargs="?",
         default=DEFAULT_ARTIFACT_ROOT,
-        help=f"The .car directory to check (default: {DEFAULT_ARTIFACT_ROOT})",
+        help=f"The .canyon directory to check (default: {DEFAULT_ARTIFACT_ROOT})",
     )
     validate.add_argument(
         "-c",
         "--config",
-        help="Path to the manifest, relative to the .car (default: config/global_controller.yaml)",
+        help="Path to the manifest, relative to the .canyon (default: config/global_controller.yaml)",
     )
     validate.add_argument(
         "--json",

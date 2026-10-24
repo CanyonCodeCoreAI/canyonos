@@ -5,7 +5,7 @@ what each setting means, see [the user guide](../guides/GLOBAL_CONTROLLER.md).
 
 ## Where the files are
 
-The CLI looks for `.car/config/global_controller.yaml`, then
+The CLI looks for `.canyon/config/global_controller.yaml`, then
 `config/global_controller.yaml` (`default_config_path` in
 `packages/cli/canyonos/constants.py`). `canyonos config` edits that file on the host
 and nothing else.

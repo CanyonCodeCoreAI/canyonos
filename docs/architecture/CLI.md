@@ -71,12 +71,12 @@ command that needs the container reads it.
                           └─▶ launch your coding agent with it
                                       │
                                       ▼
-                              generates  .car/   ◀── canyonos-formatted project
+                              generates  .canyon/   ◀── canyonos-formatted project
                                                      (originals untouched)
 ```
 
 A **host-side, agent-driven** step. The CLI installs the CanyonOS porting skill
-onto your coding agent and hands it a prompt; the agent produces a `.car/`
+onto your coding agent and hands it a prompt; the agent produces a `.canyon/`
 folder — the canyonos-ready version of your project plus its config. **No
 container is involved yet.**
 
@@ -122,7 +122,7 @@ the project-key design in CAN-521.
 
 INPUT: canyonos test "Test Query"
 
-1. Detects the working directory (goes into .car folder for commands if .car exists, uses current dir otherwise) [default_config_path()]
+1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [default_config_path()]
 2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
 3. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
@@ -185,7 +185,7 @@ And to observe without changing anything:
 ## canyonos test:
 ### INPUT: canyonos test "Test Query"
 #### Steps:
-1. Detects the working directory (goes into .car folder for commands if .car exists, uses current dir otherwise) [default_config_path()]
+1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [default_config_path()]
 2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
 3. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
@@ -203,7 +203,7 @@ And to observe without changing anything:
 #### Steps:
 1. Asks the user which coding agent they want to use for this [Codex/Claude]
 2. Asks the user if they want to download the skill locally or globally (So the skill can be viewed either only in this directory or across your entire laptop)
-3. Opens said coding agent, giving it instructions to build a new .car folder with the code (Nicks skill)
+3. Opens said coding agent, giving it instructions to build a new .canyon folder with the code (Nicks skill)
   4. Periodically the coding agent should ask the user config related questions (which provider, entrypoints, OTEL location)
   5. Coding agent should also be running canyonos test to verify workflow works
 6. Finishes, doesn't run deploy itself.

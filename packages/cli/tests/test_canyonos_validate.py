@@ -13,7 +13,7 @@ from canyonos import env, ui
 from canyonos import validate as validate_cmd
 
 
-def finding(code="CAR-ADAPTER-ASYNC"):
+def finding(code="CANYON-ADAPTER-ASYNC"):
     return {
         "code": code,
         "path": "app/agents/echo_agent.py",
@@ -43,11 +43,13 @@ def in_process(monkeypatch):
     def install(findings):
         seen = {}
 
-        def validate_car(artifact_root, config_path=None):
+        def validate_canyon(artifact_root, config_path=None):
             seen.update(artifact_root=artifact_root, config_path=config_path)
             return [_Finding(f) for f in findings]
 
-        monkeypatch.setattr(validate_cmd, "_import_validate_car", lambda: validate_car)
+        monkeypatch.setattr(
+            validate_cmd, "_import_validate_canyon", lambda: validate_canyon
+        )
         return seen
 
     return install
@@ -65,14 +67,14 @@ class _Finding:
 
 @pytest.fixture(autouse=True)
 def in_a_project(monkeypatch, tmp_path):
-    """Run from a project that holds an (empty) `.car`."""
+    """Run from a project that holds an (empty) `.canyon`."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".car").mkdir(exist_ok=True)
+    (tmp_path / ".canyon").mkdir(exist_ok=True)
 
 
 @pytest.fixture
 def no_core(monkeypatch):
-    monkeypatch.setattr(validate_cmd, "_import_validate_car", lambda: None)
+    monkeypatch.setattr(validate_cmd, "_import_validate_canyon", lambda: None)
 
 
 # ------------------------------------------------------------------ #
@@ -80,28 +82,28 @@ def no_core(monkeypatch):
 # ------------------------------------------------------------------ #
 
 
-def test_a_clean_car_passes(in_process, capsys):
+def test_a_clean_canyon_passes(in_process, capsys):
     in_process([])
 
-    assert validate_cmd.run_validate(".car") == 0
+    assert validate_cmd.run_validate(".canyon") == 0
     assert "clean" in flat(capsys)
 
 
 def test_the_artifact_and_config_reach_the_validator(in_process):
     seen = in_process([])
-    os.makedirs("port/.car")
+    os.makedirs("port/.canyon")
 
-    validate_cmd.run_validate("port/.car", config="config/other.yaml")
+    validate_cmd.run_validate("port/.canyon", config="config/other.yaml")
 
-    assert seen == {"artifact_root": "port/.car", "config_path": "config/other.yaml"}
+    assert seen == {"artifact_root": "port/.canyon", "config_path": "config/other.yaml"}
 
 
 def test_an_error_is_rendered_as_a_block_and_fails(in_process, capsys):
     in_process([finding()])
 
-    assert validate_cmd.run_validate(".car") == 1
+    assert validate_cmd.run_validate(".canyon") == 1
     out = flat(capsys)
-    assert "CAR-ADAPTER-ASYNC" in out
+    assert "CANYON-ADAPTER-ASYNC" in out
     assert "app/agents/echo_agent.py:12" in out
     assert "`EchoAgent.echo` is `async def`" in out
     assert "no await" in out
@@ -109,31 +111,31 @@ def test_an_error_is_rendered_as_a_block_and_fails(in_process, capsys):
 
 
 def test_json_mode_prints_one_object_and_nothing_else(in_process, capsys):
-    in_process([finding(), finding(code="CAR-FLAT-COLLISION")])
+    in_process([finding(), finding(code="CANYON-FLAT-COLLISION")])
 
-    assert validate_cmd.run_validate(".car", as_json=True) == 1
+    assert validate_cmd.run_validate(".canyon", as_json=True) == 1
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["errors"] == 2
     assert [f["code"] for f in payload["findings"]] == [
-        "CAR-ADAPTER-ASYNC",
-        "CAR-FLAT-COLLISION",
+        "CANYON-ADAPTER-ASYNC",
+        "CANYON-FLAT-COLLISION",
     ]
 
 
-def test_a_missing_car_is_refused_before_anything_runs(in_process, capsys):
+def test_a_missing_canyon_is_refused_before_anything_runs(in_process, capsys):
     seen = in_process([])
 
-    assert validate_cmd.run_validate("missing/.car") == validate_cmd.UNCHECKED
-    assert "missing/.car is not a directory" in flat(capsys)
+    assert validate_cmd.run_validate("missing/.canyon") == validate_cmd.UNCHECKED
+    assert "missing/.canyon is not a directory" in flat(capsys)
     assert seen == {}
 
 
-def test_a_missing_car_is_not_mounted_into_docker(docker, capsys):
+def test_a_missing_canyon_is_not_mounted_into_docker(docker, capsys):
     """`docker run -v` would create the path, root-owned on Linux."""
     calls = docker(json.dumps({"errors": 0, "findings": []}))
 
-    assert validate_cmd.run_validate("missing/.car") == validate_cmd.UNCHECKED
+    assert validate_cmd.run_validate("missing/.canyon") == validate_cmd.UNCHECKED
     assert "argv" not in calls
     assert not os.path.exists("missing")
 
@@ -142,15 +144,15 @@ def test_a_config_outside_the_artifact_is_refused(in_process, capsys):
     in_process([])
 
     assert (
-        validate_cmd.run_validate(".car", config="../config/other.yaml")
+        validate_cmd.run_validate(".canyon", config="../config/other.yaml")
         == validate_cmd.UNCHECKED
     )
-    assert "outside .car" in flat(capsys)
+    assert "outside .canyon" in flat(capsys)
 
 
 def test_a_config_written_as_a_path_into_the_artifact_is_accepted(in_process, tmp_path):
     seen = in_process([])
-    root = tmp_path / ".car"
+    root = tmp_path / ".canyon"
 
     validate_cmd.run_validate(str(root), config=str(root / "config" / "other.yaml"))
 
@@ -193,7 +195,7 @@ def docker(monkeypatch, no_core):
 
 def test_the_container_gets_the_artifact_read_only_as_its_workdir(docker, tmp_path):
     calls = docker(json.dumps({"errors": 0, "findings": []}))
-    root = tmp_path / ".car"
+    root = tmp_path / ".canyon"
 
     assert validate_cmd.run_validate(str(root)) == 0
     assert calls["argv"] == [
@@ -220,7 +222,7 @@ def test_the_image_entrypoint_is_replaced_by_the_validator(docker, tmp_path):
     """The core image's ENTRYPOINT is the server; left in place it would take
     `python -m canyonos_core.validate` as its own arguments and never exit."""
     calls = docker(json.dumps({"errors": 0, "findings": []}))
-    root = tmp_path / ".car"
+    root = tmp_path / ".canyon"
 
     validate_cmd.run_validate(str(root))
 
@@ -233,7 +235,7 @@ def test_the_image_entrypoint_is_replaced_by_the_validator(docker, tmp_path):
 
 def test_a_config_is_passed_through_to_the_container(docker, tmp_path):
     calls = docker(json.dumps({"errors": 0, "findings": []}))
-    root = tmp_path / ".car"
+    root = tmp_path / ".canyon"
 
     validate_cmd.run_validate(str(root), config="config/other.yaml")
 
@@ -243,14 +245,14 @@ def test_a_config_is_passed_through_to_the_container(docker, tmp_path):
 def test_findings_from_the_container_are_rendered(docker, capsys):
     docker(json.dumps({"errors": 1, "findings": [finding()]}))
 
-    assert validate_cmd.run_validate(".car") == 1
-    assert "CAR-ADAPTER-ASYNC" in flat(capsys)
+    assert validate_cmd.run_validate(".canyon") == 1
+    assert "CANYON-ADAPTER-ASYNC" in flat(capsys)
 
 
 def test_a_container_that_says_nothing_is_a_failure(docker, capsys):
     docker("", returncode=125, stderr="Unable to find image 'canyonos-core:dev'")
 
-    assert validate_cmd.run_validate(".car") == validate_cmd.UNCHECKED
+    assert validate_cmd.run_validate(".canyon") == validate_cmd.UNCHECKED
     assert "Unable to find image" in flat(capsys)
 
 
@@ -258,23 +260,23 @@ def test_a_docker_that_is_not_on_a_local_socket_says_so(monkeypatch, docker, cap
     docker("")
     monkeypatch.setattr(validate_cmd, "active_docker_socket", lambda: None)
 
-    assert validate_cmd.run_validate(".car") == validate_cmd.UNCHECKED
+    assert validate_cmd.run_validate(".canyon") == validate_cmd.UNCHECKED
     assert "not reachable over a local socket" in flat(capsys)
 
 
 def test_neither_core_nor_docker_is_one_line(monkeypatch, no_core, capsys):
     monkeypatch.setattr(validate_cmd.shutil, "which", lambda _name: None)
 
-    assert validate_cmd.run_validate(".car") == validate_cmd.UNCHECKED
+    assert validate_cmd.run_validate(".canyon") == validate_cmd.UNCHECKED
     assert "neither is available" in flat(capsys)
 
 
 def test_the_container_is_named_after_this_run(docker):
     calls = docker(json.dumps({"errors": 0, "findings": []}))
 
-    validate_cmd.run_validate(".car")
+    validate_cmd.run_validate(".canyon")
     first = calls["argv"][calls["argv"].index("--name") + 1]
-    validate_cmd.run_validate(".car")
+    validate_cmd.run_validate(".canyon")
     second = calls["argv"][calls["argv"].index("--name") + 1]
 
     assert first.startswith("canyonos-validate-")
@@ -300,7 +302,7 @@ def test_a_container_that_never_finishes_is_removed_and_reported(
 
     monkeypatch.setattr(validate_cmd.subprocess, "run", run)
 
-    assert validate_cmd.run_validate(".car", as_json=True) == validate_cmd.UNCHECKED
+    assert validate_cmd.run_validate(".canyon", as_json=True) == validate_cmd.UNCHECKED
     payload = json.loads(capsys.readouterr().out)
 
     name = argvs[0][argvs[0].index("--name") + 1]
@@ -309,9 +311,9 @@ def test_a_container_that_never_finishes_is_removed_and_reported(
 
 
 def test_a_reply_missing_a_finding_field_is_a_failure(docker, capsys):
-    docker(json.dumps({"findings": [{"code": "CAR-SCHEMA", "path": "x"}]}))
+    docker(json.dumps({"findings": [{"code": "CANYON-SCHEMA", "path": "x"}]}))
 
-    assert validate_cmd.run_validate(".car") == validate_cmd.UNCHECKED
+    assert validate_cmd.run_validate(".canyon") == validate_cmd.UNCHECKED
     assert "returned no findings" in flat(capsys)
 
 
@@ -319,13 +321,13 @@ def test_a_finding_field_of_the_wrong_type_is_a_failure(docker, capsys):
     reply = dict(finding(), mechanism=None)
     docker(json.dumps({"findings": [reply]}))
 
-    assert validate_cmd.run_validate(".car") == validate_cmd.UNCHECKED
+    assert validate_cmd.run_validate(".canyon") == validate_cmd.UNCHECKED
     assert "returned no findings" in flat(capsys)
 
 
 def test_json_mode_reports_a_failure_as_json(docker, capsys, tmp_path):
     docker("", returncode=125, stderr="Cannot connect to the Docker daemon")
-    root = tmp_path / ".car"
+    root = tmp_path / ".canyon"
 
     assert validate_cmd.run_validate(str(root), as_json=True) == validate_cmd.UNCHECKED
     payload = json.loads(capsys.readouterr().out)
@@ -347,7 +349,7 @@ def test_the_command_is_on_the_help_screen():
 
     assert (
         DESCRIPTIONS["validate"]
-        == "Check a converted .car against the CanyonOS contract"
+        == "Check a converted .canyon against the CanyonOS contract"
     )
 
 
@@ -372,10 +374,10 @@ def test_the_cli_dispatches_to_run_validate(monkeypatch):
             seen.update(root=root, config=config, as_json=as_json) or 0
         ),
     )
-    monkeypatch.setattr(sys, "argv", ["canyonos", "validate", "port/.car", "--json"])
+    monkeypatch.setattr(sys, "argv", ["canyonos", "validate", "port/.canyon", "--json"])
 
     with pytest.raises(SystemExit) as exit_info:
         cli.main()
 
     assert exit_info.value.code == 0
-    assert seen == {"root": "port/.car", "config": None, "as_json": True}
+    assert seen == {"root": "port/.canyon", "config": None, "as_json": True}

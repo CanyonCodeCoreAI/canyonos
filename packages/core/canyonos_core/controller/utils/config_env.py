@@ -49,10 +49,10 @@ def expand_env_value(value):
 def _project_root_for_config(config_path):
     """The project root a config file belongs to -- where its `.env` lives."""
     project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
-    # Under the .car layout, config lives at <project>/.car/config, so the
-    # naive parent-of-parent lands on .car itself -- go up one more level
+    # Under the .canyon layout, config lives at <project>/.canyon/config, so the
+    # naive parent-of-parent lands on .canyon itself -- go up one more level
     # to reach the actual project root where .env lives.
-    if os.path.basename(project_root) == ".car":
+    if os.path.basename(project_root) == ".canyon":
         project_root = os.path.dirname(project_root)
     return project_root
 

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos validate`: check a ported `.car` against the CanyonOS contract.
+Logic for `canyonos validate`: check a ported `.canyon` against the CanyonOS contract.
 
 The checks themselves live in `canyonos_core.validate`, beside the schema, the
 platform pins and the Dockerfile templates they are about -- this command only
@@ -11,10 +11,10 @@ runs them and renders what comes back. Two ways in, in this order:
 - imported here, when `canyonos_core` is installed alongside the CLI (a dev
   checkout, or the CLI running inside the Global Controller image)
 - otherwise the same module inside the core image, over a read-only bind mount
-  of the `.car` itself
+  of the `.canyon` itself
 
 Exit 0 when nothing is found, 1 when something is, and 2 when the check could
-not run at all -- so a caller can tell a broken `.car` from one nobody looked at.
+not run at all -- so a caller can tell a broken `.canyon` from one nobody looked at.
 """
 
 import json
@@ -28,7 +28,7 @@ from canyonos import env, ui
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
 from canyonos.init import active_docker_socket
 
-DEFAULT_ARTIFACT_ROOT = ".car"
+DEFAULT_ARTIFACT_ROOT = ".canyon"
 # Distinct from 1 (findings) the way grep and diff use it: trouble, not a result.
 UNCHECKED = 2
 CORE_MODULE = "canyonos_core.validate"
@@ -48,7 +48,7 @@ FINDING_FIELDS = {
 def _relative_config(artifact_root, config):
     """`config` as a path inside the artifact, whichever way it was written.
 
-    The image sees the `.car` and nothing above it, so a manifest outside it
+    The image sees the `.canyon` and nothing above it, so a manifest outside it
     could not be read there and must not be read here either.
     """
     if config is None:
@@ -58,36 +58,38 @@ def _relative_config(artifact_root, config):
     if relative == os.pardir or relative.startswith(os.pardir + os.sep):
         raise RuntimeError(
             f"--config {config} is outside {artifact_root}; the manifest has to "
-            "live in the .car that is being checked."
+            "live in the .canyon that is being checked."
         )
     return relative
 
 
-def _import_validate_car():
+def _import_validate_canyon():
     """Core's validator, or None when core is not installed beside this CLI.
 
     The released CLI is a single binary with none of core in it, so this is
     expected to miss and fall through to the image.
     """
     try:
-        from canyonos_core.validate import validate_car
+        from canyonos_core.validate import validate_canyon
     except ImportError:
         return None
-    return validate_car
+    return validate_canyon
 
 
 def _in_process(artifact_root, config):
     """Findings from the imported validator, or None when it is not there."""
-    validate_car = _import_validate_car()
-    if validate_car is None:
+    validate_canyon = _import_validate_canyon()
+    if validate_canyon is None:
         return None
-    return [dict(finding._asdict()) for finding in validate_car(artifact_root, config)]
+    return [
+        dict(finding._asdict()) for finding in validate_canyon(artifact_root, config)
+    ]
 
 
 def _docker_argv(artifact_root, config, name):
     """The `docker run` that validates `artifact_root` inside the core image.
 
-    The `.car` is the mount, so the container sees no more of the host than the
+    The `.canyon` is the mount, so the container sees no more of the host than the
     artifact being checked, and every path in the findings is already relative
     to it. The image's own entrypoint starts the server, so it is replaced. The
     name is what finds the container again if the run has to be abandoned.
@@ -141,7 +143,7 @@ def _in_image(artifact_root, config):
     if active_docker_socket() is None:
         raise RuntimeError(
             "Docker is not reachable over a local socket (remote context, or the "
-            "daemon is not running), so the .car cannot be bind-mounted into the "
+            "daemon is not running), so the .canyon cannot be bind-mounted into the "
             "core image."
         )
 
@@ -203,7 +205,7 @@ def _print_findings(findings, artifact_root):
 
 
 def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False):
-    """Report every contract the `.car` breaks. Returns the exit status."""
+    """Report every contract the `.canyon` breaks. Returns the exit status."""
     ui.set_quiet(as_json)
     try:
         try:
@@ -211,7 +213,7 @@ def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False
                 # Checked before either path: `docker run -v` would create it.
                 raise RuntimeError(
                     f"{artifact_root} is not a directory. Run `canyonos convert` to "
-                    "create the .car, or pass the path of the one to check."
+                    "create the .canyon, or pass the path of the one to check."
                 )
             config = _relative_config(artifact_root, config)
             findings = _in_process(artifact_root, config)

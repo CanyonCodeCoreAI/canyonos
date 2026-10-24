@@ -54,8 +54,8 @@ DEFAULT_SCOPE = "local"
 
 CONVERT_PROMPT = (
     f"Use the CanyonOS {SKILL_NAME} skill to convert the codebase in this directory to a "
-    "canyonos-compatible format. Put every conversion result in a new .car folder and "
-    "leave the application's own source untouched. Three files outside .car are yours to "
+    "canyonos-compatible format. Put every conversion result in a new .canyon folder and "
+    "leave the application's own source untouched. Three files outside .canyon are yours to "
     "update, because the port needs them and the skill's own preparation step already "
     "writes one of them: .gitignore, .env and .env.example. The skill states how each is "
     "written; follow it rather than deciding for yourself."
@@ -71,7 +71,7 @@ UNATTENDED_NOTE = (
     "without a question."
 )
 
-CAR_DIR = ".car"
+CANYON_DIR = ".canyon"
 
 # The leaf name of every install path must match the skill's own `name:`
 # frontmatter or the agent won't resolve it.
@@ -305,25 +305,25 @@ def _report_port() -> bool:
     """Say whether the port landed, and answer True only when it did.
 
     The verdict is the skill's own step 4 -- `canyonos validate` exiting 0 over
-    the `.car` in this directory -- so a session that stopped early fails here
+    the `.canyon` in this directory -- so a session that stopped early fails here
     instead of passing for having exited cleanly. Unverifiable is a failure too,
     since convert cannot call a port complete on evidence it never saw, but it is
     reported as one: the validator has already said why it could not run, and
     there are no findings to go looking for.
     """
-    if not os.path.isdir(CAR_DIR):
-        ui.fail(f"Conversion incomplete: no {CAR_DIR}/ was produced.")
+    if not os.path.isdir(CANYON_DIR):
+        ui.fail(f"Conversion incomplete: no {CANYON_DIR}/ was produced.")
         return False
 
-    status = run_validate(CAR_DIR)
+    status = run_validate(CANYON_DIR)
     if status == 0:
-        ui.ok(f"Conversion complete: {CAR_DIR}/ passed validation.")
+        ui.ok(f"Conversion complete: {CANYON_DIR}/ passed validation.")
         return True
     if status == UNCHECKED:
-        ui.fail(f"Conversion unverified: {CAR_DIR}/ could not be validated.")
+        ui.fail(f"Conversion unverified: {CANYON_DIR}/ could not be validated.")
         return False
 
-    ui.fail(f"Conversion incomplete: {CAR_DIR}/ did not pass validation.")
+    ui.fail(f"Conversion incomplete: {CANYON_DIR}/ did not pass validation.")
     return False
 
 
@@ -332,8 +332,8 @@ def run_convert(
 ) -> bool:
     """Install the skill, hand the port to a coding agent, then check its work.
 
-    True only if the agent ran to completion and the `.car` it left validates.
-    A session that died says nothing about a `.car` an earlier run may have left
+    True only if the agent ran to completion and the `.canyon` it left validates.
+    A session that died says nothing about a `.canyon` an earlier run may have left
     in the directory, so it fails without consulting it.
     """
     # The menus read keys off stdin and draw on stderr; without both, flags are

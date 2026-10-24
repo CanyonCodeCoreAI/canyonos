@@ -7,7 +7,7 @@ Each mode rewrites the first agent's first function in one way its stub
 cannot be generated from, or names an agent in a way the manifest forbids, and
 prints the text the finding has to contain.
 
-Usage: break_manifest.py <.car> <mode>
+Usage: break_manifest.py <.canyon> <mode>
 """
 
 import sys
@@ -58,8 +58,8 @@ MODES = {
     for f in (rename, builtin, dunder, duplicate, returns, deep, endpoint_name)
 }
 
-car, mode = sys.argv[1:]
-path = Path(car) / "config" / "global_controller.yaml"
+canyon, mode = sys.argv[1:]
+path = Path(canyon) / "config" / "global_controller.yaml"
 manifest = yaml.safe_load(path.read_text())
 agent = next(
     service for service in manifest["agents"] if service.get("type", "agent") == "agent"

@@ -33,11 +33,11 @@ env/
 Thumbs.db
 ._*
 
-# Canyon artifacts. `.car` is generated from the application source by the
+# Canyon artifacts. `.canyon` is generated from the application source by the
 # porting skill and `canyonos convert`; it is never committed, except the ports
 # verified by hand that the e2e workflow runs against.
-.car/
-!tests/e2e/*/.car/
+.canyon/
+!tests/e2e/*/.canyon/
 tests/ecosystem/.env
 
 # Generated stubs

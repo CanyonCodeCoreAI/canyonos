@@ -121,18 +121,18 @@ def _remove_canyon_env_vars():
 
 
 def run_clean():
-    """Remove the current project's `.car` folder, CanyonOS skill and the `.env`
+    """Remove the current project's `.canyon` folder, CanyonOS skill and the `.env`
     keys `canyonos serve` wrote, and the Docker images built for its agents."""
-    # A built project keeps its agent list inside .car, which goes first.
+    # A built project keeps its agent list inside .canyon, which goes first.
     images = _project_images()
-    car_dir = os.path.join(os.getcwd(), ".car")
+    canyon_dir = os.path.join(os.getcwd(), ".canyon")
 
-    if os.path.isdir(car_dir):
-        with ui.status(f"Cleaning {car_dir}..."):
-            shutil.rmtree(car_dir)
-        ui.ok("Removed .car.")
+    if os.path.isdir(canyon_dir):
+        with ui.status(f"Cleaning {canyon_dir}..."):
+            shutil.rmtree(canyon_dir)
+        ui.ok("Removed .canyon.")
     else:
-        ui.say("No .car folder to remove.")
+        ui.say("No .canyon folder to remove.")
 
     _remove_canyon_skills()
     _remove_canyon_env_vars()

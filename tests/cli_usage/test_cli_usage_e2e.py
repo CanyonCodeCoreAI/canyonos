@@ -116,7 +116,7 @@ def new_app(cli, **options):
 def failing_validate(cli, **options):
     """`canyonos validate` on a folder that doesn't exist: a command that fails without
     Docker."""
-    return cli.run("validate", str(cli.home / "missing.car"), **options)
+    return cli.run("validate", str(cli.home / "missing.canyon"), **options)
 
 
 def stored(stack, installation_id, count):
@@ -226,7 +226,7 @@ def test_an_unreachable_api_changes_nothing_and_keeps_the_events(
     installation_id = opt_in(cli)
 
     unreachable = cli.run_and_settle(
-        "validate", str(cli.home / "missing.car"), usage_url=closed_url
+        "validate", str(cli.home / "missing.canyon"), usage_url=closed_url
     )
 
     assert (unreachable.returncode, unreachable.stdout, unreachable.stderr) == (

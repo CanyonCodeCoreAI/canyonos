@@ -8,7 +8,7 @@ describes.
 
 ## Where it lives
 
-`canyonos convert` can write the file for you at `.car/config/global_controller.yaml`. A
+`canyonos convert` can write the file for you at `.canyon/config/global_controller.yaml`. A
 project that doesn't use `canyonos convert` keeps it at `config/global_controller.yaml`.
 
 You can change it in two ways:
@@ -180,7 +180,7 @@ Agent entries add:
 
 | Key | Default | Notes |
 |---|---|---|
-| `entrypoint` | required | `.py` path relative to the project root, or to `.car/app` in a ported artifact; no `..`, not absolute. Holds the class named `name`. |
+| `entrypoint` | required | `.py` path relative to the project root, or to `.canyon/app` in a ported artifact; no `..`, not absolute. Holds the class named `name`. |
 | `requirements` | `[]` | One PEP 508 requirement per item. See [Per-image requirements](#per-image-requirements). |
 | `functions` | `[]` | The methods other agents can call; an agent without any cannot be called. See [Agent functions](#agent-functions). |
 
@@ -211,7 +211,7 @@ instead of an in-process store, and the agent no longer needs
 | `cleanup_interval` | `10` | Seconds between cleanup passes. |
 | `project_id` | generated | Written back into the file on first deploy. Leave it out on a new project. |
 | `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379` / `0` | The controller's own Redis. |
-| `env_file` | none | Secrets file passed to every container. Resolved against the directory `canyonos deploy` runs from, the one holding `.car`. A missing or unreadable file fails the deploy before anything starts. |
+| `env_file` | none | Secrets file passed to every container. Resolved against the directory `canyonos deploy` runs from, the one holding `.canyon`. A missing or unreadable file fails the deploy before anything starts. |
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
 | `ec2` | none | Required when any entry uses `provider: EC2`. See [EC2 deployment](EC2.md). |

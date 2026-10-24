@@ -1,6 +1,6 @@
-# The `.car` artifact
+# The `.canyon` artifact
 
-A `.car` directory holds everything CanyonOS needs to deploy an application:
+A `.canyon` directory holds everything CanyonOS needs to deploy an application:
 a copy of the source and the manifest. It sits next to the application
 source, and the source itself is not part of the deployment.
 
@@ -17,7 +17,7 @@ Python package is `canyonos_core`, environment variables start with
 ## Layout
 
 ```text
-.car/
+.canyon/
   config/
     global_controller.yaml   deployment manifest
     policy.yaml              optional access rules
@@ -28,15 +28,15 @@ Python package is `canyonos_core`, environment variables start with
 ```
 
 You author `config/` and `app/`. `canyonos deploy` writes the other three
-next to them, never inside `app/`. `canyonos clean` deletes the whole `.car`,
+next to them, never inside `app/`. `canyonos clean` deletes the whole `.canyon`,
 including `app/` and `config/`, and removes the local Docker image of each
 agent listed in `config/global_controller.yaml`.
 
 Every path in the manifest (`entrypoint`) is relative to
-`app/`, or to the project root when there is no `.car`. It has to be a `.py` file, it cannot be absolute, and it cannot use
+`app/`, or to the project root when there is no `.canyon`. It has to be a `.py` file, it cannot be absolute, and it cannot use
 `..` to climb out. A symlink that resolves outside `app/` is rejected too.
 
-If there is no `.car` directory, `canyonos deploy` falls back to
+If there is no `.canyon` directory, `canyonos deploy` falls back to
 `config/global_controller.yaml` at the project root. That is the layout
 `canyonos new-app` scaffolds.
 
@@ -58,7 +58,7 @@ Deploying writes one thing into your files: if the manifest has no
 If the key is present with no value, it fills that line in place.
 
 `canyonos convert` runs a coding agent that follows the porting skill. That
-procedure may append `.car/` to your `.gitignore` and add key names to
+procedure may append `.canyon/` to your `.gitignore` and add key names to
 `.env.example`. Nothing in the runtime touches `.env`: it is only read, as the
 file `env_file` points at.
 
@@ -70,7 +70,7 @@ other secrets your code reads there. Do not put model provider base URLs in
 it: the runtime sets those itself and its values win over the file. See
 [LLM gateway](LLM_GATEWAY.md).
 
-Never copy a secret into `.car/app`. The image sweep would bake it into every
+Never copy a secret into `.canyon/app`. The image sweep would bake it into every
 image. The sweep does drop PEM private keys, `.p12`, `.pfx` and `.jks` files
 and prints a warning for each, but it cannot recognise a key written into a
 Python string or a JSON file.

@@ -55,10 +55,10 @@ def test_docker_unavailable_warns_and_does_not_crash(monkeypatch, tmp_path):
     assert any("Docker" in warning for warning in warnings)
 
 
-def test_car_directory_is_removed(monkeypatch, tmp_path):
-    car_dir = tmp_path / ".car"
-    car_dir.mkdir()
-    (car_dir / "artifact").write_text("built")
+def test_canyon_directory_is_removed(monkeypatch, tmp_path):
+    canyon_dir = tmp_path / ".canyon"
+    canyon_dir.mkdir()
+    (canyon_dir / "artifact").write_text("built")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         clean.subprocess,
@@ -68,7 +68,7 @@ def test_car_directory_is_removed(monkeypatch, tmp_path):
 
     clean.run_clean()
 
-    assert not car_dir.exists()
+    assert not canyon_dir.exists()
 
 
 def test_project_skills_are_removed_and_global_skills_kept(monkeypatch, tmp_path):

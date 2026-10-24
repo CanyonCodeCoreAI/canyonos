@@ -268,7 +268,7 @@ class QueryResult:
 
 
 def _agent_names(workspace: Path) -> list[str]:
-    with (workspace / ".car" / "config" / "global_controller.yaml").open() as handle:
+    with (workspace / ".canyon" / "config" / "global_controller.yaml").open() as handle:
         config = yaml.safe_load(handle)
     return [agent["name"] for agent in config.get("agents", [])]
 
@@ -317,7 +317,7 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Deployed:
     )
     api_port, route, argument = _endpoint(recorder, workspace)
     api = Api(recorder, API_URL, sign_in(recorder, API_URL))
-    query = (workspace / ".car" / "config" / "test_query.txt").read_text().strip()
+    query = (workspace / ".canyon" / "config" / "test_query.txt").read_text().strip()
     yield Deployed(
         project=project,
         dir=workspace,

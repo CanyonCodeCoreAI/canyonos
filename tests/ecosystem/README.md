@@ -2,7 +2,7 @@
 
 Does CanyonOS work on real projects? Each directory under `projects/` is one
 project from [CanyonCodeCoreAI/workflows](https://github.com/CanyonCodeCoreAI/workflows)
-pinned to a commit, with its committed `.car/` port. The run clones it, builds the
+pinned to a commit, with its committed `.canyon/` port. The run clones it, builds the
 images from this checkout, deploys, sends the port's `test_query.txt`, then runs
 every case under `cases/` that applies. Each case passes or fails; a failing case
 leaves its calls, `canyonos doctor` output and container logs under `traces/`.

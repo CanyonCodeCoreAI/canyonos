@@ -27,7 +27,7 @@ Three systems replaced by one install.
 - **Easy deployment**: Developers write agents in python as if writing completely localized code. CanyonOS takes care of distributed deployment of agents and workflows.
 - **Complete Observability**: All metrics, logs, and traces from your runtime are collected and displayed, with OTel-compatability allowing connection to any OTel-compatable frontend
 - **Fully Asynchronous**: Asynchronous execution built in, without any user workflow modification.
-- **Non-invasive**: None of your existing code is changed, a new folder (.car) is created when building on top of a existing workflow
+- **Non-invasive**: None of your existing code is changed, a new folder (.canyon) is created when building on top of a existing workflow
 
 ---
 
