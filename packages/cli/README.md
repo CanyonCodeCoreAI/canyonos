@@ -6,14 +6,16 @@ The `canyonos` command line: port a project, deploy it, and manage the running d
 
 ```bash
 uv tool install canyonos
-canyonos doctor   # check Docker, git and a coding agent are available
+canyonos doctor   # check Docker and Compose are available
 ```
 
 ## Use
 
+Converting an existing workflow? Run `canyonos convert` in its folder first; your coding
+agent writes a CanyonOS version of it into a `.car/` folder.
+
 ```bash
 cd your-project
-canyonos build    # port the project into a .car/ folder
 canyonos deploy   # build and launch the workflow, then open the dashboard
 canyonos quit     # stop the deploy and remove its container and files
 ```

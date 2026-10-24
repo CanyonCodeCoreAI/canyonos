@@ -23,9 +23,9 @@ def isolated_global_skill_dirs(monkeypatch, tmp_path):
                 "global": str(tmp_path / "home" / spec["skill_dirs"]["local"]),
             },
         }
-        for name, spec in clean.build.AGENTS.items()
+        for name, spec in clean.convert.AGENTS.items()
     }
-    monkeypatch.setattr(clean.build, "AGENTS", agents)
+    monkeypatch.setattr(clean.convert, "AGENTS", agents)
 
 
 def in_project(monkeypatch, tmp_path, name, agents=("Workflow", "CVPilotAgent")):
@@ -76,9 +76,10 @@ def test_project_skills_are_removed_and_global_skills_kept(monkeypatch, tmp_path
     monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
     skill_dirs = {
         scope: [
-            tmp_path / spec["skill_dirs"][scope] for spec in clean.build.AGENTS.values()
+            tmp_path / spec["skill_dirs"][scope]
+            for spec in clean.convert.AGENTS.values()
         ]
-        for scope in clean.build.SCOPES
+        for scope in clean.convert.SCOPES
     }
     for skill_dir in skill_dirs["local"] + skill_dirs["global"]:
         skill_dir.mkdir(parents=True)
@@ -94,7 +95,7 @@ def test_emptied_skill_folders_are_removed_and_user_skills_kept(monkeypatch, tmp
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
     claude_skill, codex_skill = (
-        tmp_path / spec["skill_dirs"]["local"] for spec in clean.build.AGENTS.values()
+        tmp_path / spec["skill_dirs"]["local"] for spec in clean.convert.AGENTS.values()
     )
     user_skill = claude_skill.parent / "my-own-skill"
     for skill_dir in (claude_skill, codex_skill, user_skill):
@@ -111,7 +112,7 @@ def test_symlinked_skill_is_unlinked_and_its_target_kept(monkeypatch, tmp_path):
     target = tmp_path / "checkout" / "skill"
     target.mkdir(parents=True)
     (target / "SKILL.md").write_text("skill")
-    skill_link = tmp_path / clean.build.AGENTS["claude"]["skill_dirs"]["local"]
+    skill_link = tmp_path / clean.convert.AGENTS["claude"]["skill_dirs"]["local"]
     skill_link.parent.mkdir(parents=True)
     skill_link.symlink_to(target, target_is_directory=True)
     monkeypatch.chdir(tmp_path)

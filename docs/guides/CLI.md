@@ -6,7 +6,6 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 
 | Command | What it does |
 |---|---|
-| `build` | Convert your project to CanyonOS format using your coding agent |
 | `deploy` | Build images, launch the workflow, start the dashboard |
 | `config` | View or edit the project config |
 
@@ -21,6 +20,7 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `stop` | Stop the running workflow, keep the container |
 | `quit` | Full teardown — remove the container and workspace |
 | `clean` | Remove the generated `.car` folder, the project's CanyonOS skill, the `.env` keys `serve` wrote, and the Docker images of the agents in this project's `global_controller.yaml` |
+| `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 | `validate` | Check a converted `.car` against the CanyonOS contract |
 | `doctor` | Check that your environment is ready |
 | `new-app` | Create a starter project with one agent in an empty folder |

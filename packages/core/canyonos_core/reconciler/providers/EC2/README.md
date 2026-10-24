@@ -32,7 +32,7 @@ ec2:
     - sg-0123456789abcdef0
 ```
 
-`canyonos build` handles this automatically, but each EC2 agent's spec also needs its own `machine_type` (e.g. `t3.micro`), example below. 
+`canyonos convert` handles this automatically, but each EC2 agent's spec also needs its own `machine_type` (e.g. `t3.micro`), example below. 
 
 Example:
 

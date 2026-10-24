@@ -5,7 +5,7 @@ name: E2E
 
 # The README flow (test, deploy, a query on the REST API) against a committed port
 # of examples/portfolio, with real agents, real price data and a real Bedrock call.
-# `canyonos build` is not part of it: the port under tests/e2e is verified by hand.
+# `canyonos convert` is not part of it: the port under tests/e2e is verified by hand.
 
 on:
   pull_request:

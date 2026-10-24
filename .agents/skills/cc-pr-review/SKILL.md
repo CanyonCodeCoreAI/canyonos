@@ -55,7 +55,7 @@ filled in: the brief is that session's only context.
 5. **Docs and skills.** A separate worker checks `docs/`, `README.md`,
    `examples/*/README.md`, `skills/*/SKILL.md`, `.agents/skills/**`: nothing
    may contradict the change; it need not mention it. The porting skill is
-   what `canyonos build` installs, so a stale instruction there is a must-fix.
+   what `canyonos convert` installs, so a stale instruction there is a must-fix.
 6. **Gates last.** `bun run check`, `bun run test`, CI green on the PR.
 7. **Verdict.** One list ordered by severity, each item with its evidence,
    then architecture, docs, nits, follow-up candidates. "Must fix in this

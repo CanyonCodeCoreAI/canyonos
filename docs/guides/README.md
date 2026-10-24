@@ -25,7 +25,7 @@ If a page and the code disagree, the code is right. Open an issue or a PR
 against the page.
 
 The `porting-to-canyonos` skill in `skills/` is the procedure
-`canyonos build` follows to turn an application into a `.car`. It works
+`canyonos convert` follows to turn an application into a `.car`. It works
 against this contract but is not part of it.
 
 ### Pages

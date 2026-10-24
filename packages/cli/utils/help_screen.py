@@ -17,7 +17,6 @@ from canyonos.theme import GREEN, WHITE
 # subparser through this table, so a command can't be added to one and missed
 # in the other.
 CORE_COMMANDS = (
-    ("build", "Convert an existing project into a CanyonOS workflow"),
     ("deploy", "Build and launch the workflow, then open the dashboard"),
     ("config", "Configure project settings"),
 )
@@ -25,7 +24,8 @@ CORE_COMMANDS = (
 UTIL_COMMANDS = (
     ("clean", "Delete .car, project skill, serve's .env keys, the agents' images"),
     ("contact", "See or change whether the CLI shares usage with Canyon Code"),
-    ("doctor", "Check Docker, git and a coding agent are all available"),
+    ("convert", "Optional: convert an existing workflow with a coding agent"),
+    ("doctor", "Check Docker and Compose are available"),
     ("logs", "Follow the running deploy's logs"),
     ("new-app", "Create a starter CanyonOS project with one agent"),
     ("quit", "Stop the deploy and remove the container and its files"),
@@ -34,7 +34,7 @@ UTIL_COMMANDS = (
     ("stop", "Stop the running deploy, keeping the container and files"),
     ("test", "Deploy locally and run one prompt end to end"),
     ("upgrade", "Upgrade the canyonos CLI to the latest release"),
-    ("validate", "Check a ported .car against the CanyonOS contract"),
+    ("validate", "Check a converted .car against the CanyonOS contract"),
 )
 
 DESCRIPTIONS = dict(CORE_COMMANDS + UTIL_COMMANDS)
@@ -71,9 +71,12 @@ def print_custom_help():
     ui.console.print(_command_table(UTIL_COMMANDS))
 
     ui.console.print(f"\n[bold {GREEN}]Quick Start:[/]")
+    ui.console.print(
+        "  [dim]Converting an existing workflow? Run canyonos convert in its folder "
+        "first (opens coding agent).[/dim]"
+    )
     ui.console.print(f"  [dim]1.[/dim] cd [{GREEN}]into-your-workflow-root-dir[/]")
-    ui.console.print("  [dim]2.[/dim] canyonos build (opens coding agent)")
-    ui.console.print("  [dim]3.[/dim] canyonos deploy (UI automatically starts)")
+    ui.console.print("  [dim]2.[/dim] canyonos deploy (UI automatically starts)")
 
     ui.console.print(
         f"[dim]For command-specific help: [{GREEN}]canyonos <command> --help[/][/dim]\n"

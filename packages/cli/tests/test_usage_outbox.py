@@ -114,7 +114,7 @@ def test_an_event_has_exactly_the_contract_fields(reporting):
 def test_occurred_at_is_utc_with_a_z_suffix():
     local = datetime(2026, 10, 8, 9, 30, 15, 123456).astimezone()
 
-    event = outbox.build_event("build", False, "id", local)
+    event = outbox.build_event("convert", False, "id", local)
 
     expected = local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.123Z")
     assert event["occurred_at"] == expected
@@ -287,7 +287,7 @@ def test_an_unwritable_usage_folder_is_silent(monkeypatch, reporting, capsys):
 def test_a_full_outbox_drops_the_oldest_event(monkeypatch, reporting):
     monkeypatch.setattr(outbox, "MAX_PENDING_EVENTS", 3)
     for second in range(3):
-        outbox.record_event("build", True)
+        outbox.record_event("convert", True)
         os.utime(outbox.pending_events()[-1], (second, second))
     oldest, *kept = outbox.pending_events()
 

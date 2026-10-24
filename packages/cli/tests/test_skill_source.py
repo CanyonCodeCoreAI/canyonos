@@ -3,7 +3,7 @@
 
 """What the `porting-to-canyonos` skill is allowed to ship.
 
-`canyonos build` installs the skill directory wholesale, so whatever sits in it
+`canyonos convert` installs the skill directory wholesale, so whatever sits in it
 travels to every ported project. The checks the skill used to carry now live in
 `canyonos validate`, reading the constants in `canyonos_core` itself; a second
 copy of them in the skill would drift from the runtime it describes without

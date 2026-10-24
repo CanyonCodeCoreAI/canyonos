@@ -295,7 +295,7 @@ recreates orphaned agent containers, but an endpoint `api_port`, a database
 
 `canyonos clean` deletes the entire `.car` directory in the current
 directory, including `app/` and `config/`, strips the keys `canyonos serve`
-wrote to `.env` (your own lines, `CANYONOS_*` ones included, stay), removes the skill `canyonos build`
+wrote to `.env` (your own lines, `CANYONOS_*` ones included, stay), removes the skill `canyonos convert`
 installed in this project (a global install is kept), and removes the local
 Docker image (`canyonos-<project>-<agent>`) of each agent in this project's
 `global_controller.yaml`. Other projects' images stay. It does not touch containers; use

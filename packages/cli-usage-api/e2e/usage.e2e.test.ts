@@ -128,7 +128,7 @@ afterAll(removeServerAndContainer);
 
 describe('POST /usage/events against DynamoDB Local', () => {
   test('stores a single event with the time the server received it', async () => {
-    const event = usageEvent({ command: 'build', succeeded: false });
+    const event = usageEvent({ command: 'convert', succeeded: false });
     const before = Date.now();
 
     const response = await postEvents([event]);

@@ -81,7 +81,7 @@ Run `canyonos validate` from the application root. Resolve
 [validation findings](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks)
 until exit 0, or report the blocker. Check changes against the allowed scope.
 
-`canyonos build` ends at static validation. Do not run `canyonos deploy` or
+`canyonos convert` ends at static validation. Do not run `canyonos deploy` or
 `canyonos test` during this flow.
 
 Report the validation result, blockers, chosen defaults and required credential

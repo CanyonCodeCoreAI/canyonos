@@ -131,7 +131,7 @@ def _ensure_grpc_stubs_importable(project_dir):
     except ImportError as exc:
         raise RuntimeError(
             "Deploy failed: generated grpc_stubs are missing or not importable. "
-            "Run `canyonos build` on this host first."
+            "Run `canyonos deploy` again."
         ) from exc
 
 

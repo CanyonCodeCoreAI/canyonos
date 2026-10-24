@@ -22,7 +22,7 @@ Several projects on one machine: each folder you run `canyonos` from is its own 
 
 ## What your app needs before porting
 
-You own your app's code, dependencies, data, credentials, outside services, and whether its answers are correct. CanyonOS owns running it, connecting its containers, and routing its model calls. Check your app against each section below before running `canyonos build`.
+You own your app's code, dependencies, data, credentials, outside services, and whether its answers are correct. CanyonOS owns running it, connecting its containers, and routing its model calls. Check your app against each section below before running `canyonos convert`.
 
 ### 1. A way to call it
 

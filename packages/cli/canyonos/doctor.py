@@ -13,7 +13,6 @@ import shutil
 import subprocess
 
 from canyonos import ui
-from canyonos.build import AGENTS
 from canyonos.constants import (
     default_config_path,
     endpoint_answers,
@@ -62,19 +61,6 @@ def _pre_deploy_checks():
             "Docker Compose available",
             _compose_available,
             "update Docker to a version that includes Compose v2 (needed for `canyonos serve`)",
-        ),
-        (
-            "git available",
-            lambda: shutil.which("git") is not None,
-            "install git (`canyonos build` fetches the porting skill with it; "
-            "without git it falls back to a full-repo tarball download)",
-        ),
-        (
-            "Coding agent available",
-            lambda: any(shutil.which(spec["cli"]) for spec in AGENTS.values()),
-            "install one of "
-            + " or ".join(spec["label"] for spec in AGENTS.values())
-            + " (`canyonos build` runs the port through it)",
         ),
     ]
 

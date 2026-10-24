@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from canyonos import build, dashboard_stack, project, ui
+from canyonos import convert, dashboard_stack, project, ui
 from canyonos.constants import default_config_path
 
 
@@ -92,8 +92,8 @@ def _remove_emptied_parents(path):
 
 
 def _remove_canyon_skills():
-    """Removes the skill `canyonos build` installs into this project, leaving global installs."""
-    for spec in build.AGENTS.values():
+    """Removes the skill `canyonos convert` installs into this project, leaving global installs."""
+    for spec in convert.AGENTS.values():
         skill_dir = spec["skill_dirs"]["local"]
         try:
             if os.path.islink(skill_dir):

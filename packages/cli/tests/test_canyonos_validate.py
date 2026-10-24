@@ -346,7 +346,8 @@ def test_the_command_is_on_the_help_screen():
     from utils.help_screen import DESCRIPTIONS
 
     assert (
-        DESCRIPTIONS["validate"] == "Check a ported .car against the CanyonOS contract"
+        DESCRIPTIONS["validate"]
+        == "Check a converted .car against the CanyonOS contract"
     )
 
 

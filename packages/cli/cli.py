@@ -11,16 +11,16 @@ import importlib.metadata
 import sys
 
 from canyonos import env, ui
-from canyonos.build import (
-    AGENTS as BUILD_AGENTS,
-    DEFAULT_AGENT,
-    DEFAULT_SCOPE,
-    SCOPES as BUILD_SCOPES,
-    run_build,
-)
 from canyonos.clean import run_clean
 from canyonos.config import run_config
 from canyonos.contact import run_contact
+from canyonos.convert import (
+    AGENTS as CONVERT_AGENTS,
+    DEFAULT_AGENT,
+    DEFAULT_SCOPE,
+    SCOPES as CONVERT_SCOPES,
+    run_convert,
+)
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos.logs import run_logs
@@ -133,13 +133,13 @@ def _run_command():
         help="Turn usage reporting on or off without being asked (default: show and ask)",
     )
 
-    # Build has args: --agent, --scope, -y. With none of them it is the
+    # Convert has args: --agent, --scope, -y. With none of them it is the
     # original two-menu interactive command.
-    build = add(
-        "build",
+    convert = add(
+        "convert",
         lambda args: sys.exit(
             0
-            if run_build(
+            if run_convert(
                 agent=args.agent,
                 scope=args.scope,
                 yes=args.yes,
@@ -147,17 +147,17 @@ def _run_command():
             else 1
         ),
     )
-    build.add_argument(
+    convert.add_argument(
         "--agent",
-        choices=sorted(BUILD_AGENTS),
-        help="Coding agent to build on, instead of asking (default: ask)",
+        choices=sorted(CONVERT_AGENTS),
+        help="Coding agent that converts the project, instead of asking (default: ask)",
     )
-    build.add_argument(
+    convert.add_argument(
         "--scope",
-        choices=BUILD_SCOPES,
+        choices=CONVERT_SCOPES,
         help="Where to install the CanyonOS skill, instead of asking (default: ask)",
     )
-    build.add_argument(
+    convert.add_argument(
         "-y",
         "--yes",
         action="store_true",

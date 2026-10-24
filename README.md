@@ -33,7 +33,7 @@ Three systems replaced by one install.
 
 ## Requirements
 - [Docker](https://docs.docker.com/desktop/) with Compose v2 — used to manage everything
-- Optional: A coding agent in terminal (used only by canyonos build to convert workflow to canyonos compatible format) — [Claude Code CLI](https://code.claude.com/docs/en/overview) or [Codex CLI](https://learn.chatgpt.com/docs/codex/cli#getting-started)
+- Optional: A coding agent in terminal (used only by canyonos convert to convert workflow to canyonos compatible format) — [Claude Code CLI](https://code.claude.com/docs/en/overview) or [Codex CLI](https://learn.chatgpt.com/docs/codex/cli#getting-started)
 
 ## Installation
 
@@ -57,8 +57,8 @@ canyonos doctor
 
 | Command | What it does |
 |---|---|
-| `build` | Convert your project to CanyonOS format using your coding agent |
 | `deploy` | Build images, launch the workflow, start the dashboard |
+| `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 
 See the [CLI reference](docs/guides/CLI.md) for every command.
 

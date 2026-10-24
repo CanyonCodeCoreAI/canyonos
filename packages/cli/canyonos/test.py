@@ -331,7 +331,7 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
     if config_path is None:
         raise RuntimeError("The config file must be inside this project folder")
     if not os.path.isfile(config_path):
-        raise RuntimeError(f"No config at {config_path}. Run `canyonos build` first.")
+        raise RuntimeError(f"No config at {config_path}. Run `canyonos convert` first.")
 
     existing = _existing_deploy()
     if existing is not None:

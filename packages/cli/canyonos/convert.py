@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos build`: install the CanyonOS skill on a coding agent,
+Logic for `canyonos convert`: install the CanyonOS skill on a coding agent,
 then launch that agent with a prompt to apply it to the current project.
 
 --agent/--scope/-y replace the two menus, so the command also runs where there
@@ -52,7 +52,7 @@ SCOPES = ("local", "global")
 DEFAULT_AGENT = "claude"
 DEFAULT_SCOPE = "local"
 
-BUILD_PROMPT = (
+CONVERT_PROMPT = (
     f"Use the CanyonOS {SKILL_NAME} skill to convert the codebase in this directory to a "
     "canyonos-compatible format. Put every conversion result in a new .car folder and "
     "leave the application's own source untouched. Three files outside .car are yours to "
@@ -62,11 +62,11 @@ BUILD_PROMPT = (
 )
 
 UNATTENDED_NOTE = (
-    " This build is unattended: there is no terminal and nobody can answer you. "
+    " This conversion is unattended: there is no terminal and nobody can answer you. "
     "Do not ask questions or request approval. Use the skill's documented unattended "
     "defaults and report the choices you made. Complete the whole porting checklist: "
     "the port is done only when `canyonos validate` exits 0. Stop after reporting the "
-    "validation result; canyonos build never deploys or asks whether to deploy. If a "
+    "validation result; canyonos convert never deploys or asks whether to deploy. If a "
     "required decision has no safe documented default, report it as a blocker and stop "
     "without a question."
 )
@@ -109,7 +109,7 @@ AGENTS = {
 
 def _prompt_agent():
     options = [(key, spec["label"]) for key, spec in AGENTS.items()]
-    return select_menu(options, title="Which coding agent do you want to build on?")
+    return select_menu(options, title="Which coding agent should convert this project?")
 
 
 def _prompt_scope(agent):
@@ -131,7 +131,7 @@ def _replace_dir(source, dest):
 
 def _copy_from_directory(source, dest):
     """Install the skill straight from a checkout. Copies rather than moves, so
-    the source survives -- including when it *is* `dest`, e.g. building inside
+    the source survives -- including when it *is* `dest`, e.g. converting inside
     this repo."""
     with tempfile.TemporaryDirectory() as tmp:
         staged = os.path.join(tmp, SKILL_NAME)
@@ -272,7 +272,7 @@ def _install_skill(dest, source=SKILL_SOURCE):
         ui.hint(f"{name} fetch unavailable, trying the next option...")
 
     ui.fail(f"Could not fetch the CanyonOS skill from {_tree_url(source)}.")
-    ui.hint("Install git, or check network access, then run `canyonos doctor`.")
+    ui.hint("Install git, or check network access, then run `canyonos convert` again.")
     return False
 
 
@@ -307,27 +307,27 @@ def _report_port() -> bool:
     The verdict is the skill's own step 4 -- `canyonos validate` exiting 0 over
     the `.car` in this directory -- so a session that stopped early fails here
     instead of passing for having exited cleanly. Unverifiable is a failure too,
-    since build cannot call a port complete on evidence it never saw, but it is
+    since convert cannot call a port complete on evidence it never saw, but it is
     reported as one: the validator has already said why it could not run, and
     there are no findings to go looking for.
     """
     if not os.path.isdir(CAR_DIR):
-        ui.fail(f"Port incomplete: no {CAR_DIR}/ was produced.")
+        ui.fail(f"Conversion incomplete: no {CAR_DIR}/ was produced.")
         return False
 
     status = run_validate(CAR_DIR)
     if status == 0:
-        ui.ok(f"Port complete: {CAR_DIR}/ passed validation.")
+        ui.ok(f"Conversion complete: {CAR_DIR}/ passed validation.")
         return True
     if status == UNCHECKED:
-        ui.fail(f"Port unverified: {CAR_DIR}/ could not be validated.")
+        ui.fail(f"Conversion unverified: {CAR_DIR}/ could not be validated.")
         return False
 
-    ui.fail(f"Port incomplete: {CAR_DIR}/ did not pass validation.")
+    ui.fail(f"Conversion incomplete: {CAR_DIR}/ did not pass validation.")
     return False
 
 
-def run_build(
+def run_convert(
     agent: str | None = None, scope: str | None = None, yes: bool = False
 ) -> bool:
     """Install the skill, hand the port to a coding agent, then check its work.
@@ -340,7 +340,7 @@ def run_build(
     # the only way in.
     can_prompt = sys.stdin.isatty() and sys.stderr.isatty()
     if not yes and (agent is None or scope is None) and not can_prompt:
-        ui.fail("`canyonos build` needs a terminal for the agent and scope menus.")
+        ui.fail("`canyonos convert` needs a terminal for the agent and scope menus.")
         ui.hint(
             f"Re-run with --agent {DEFAULT_AGENT} --scope {DEFAULT_SCOPE}, "
             "or with -y to take those defaults."
@@ -366,10 +366,10 @@ def run_build(
         return False
 
     ui.say(f"Launching {spec['label']}...")
-    status = _launch_agent(agent, BUILD_PROMPT, unattended=yes)
+    status = _launch_agent(agent, CONVERT_PROMPT, unattended=yes)
     if status is None:
         return False
     if status != 0:
-        ui.fail(f"Port incomplete: {spec['label']} exited with status {status}.")
+        ui.fail(f"Conversion incomplete: {spec['label']} exited with status {status}.")
         return False
     return _report_port()

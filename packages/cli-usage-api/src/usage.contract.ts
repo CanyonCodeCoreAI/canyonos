@@ -15,7 +15,7 @@ import { z } from 'zod';
  */
 export const REPORTED_COMMANDS = [
   'new-app',
-  'build',
+  'convert',
   'validate',
   'deploy',
   'test',
@@ -23,6 +23,8 @@ export const REPORTED_COMMANDS = [
   'stop',
   'clean',
   'quit',
+  // Events from before `build` was renamed `convert`.
+  'build',
 ] as const;
 
 export const MAX_EVENTS_PER_BATCH = 25;

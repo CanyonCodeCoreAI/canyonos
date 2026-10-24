@@ -27,7 +27,7 @@ from canyonos.usage.settings import (
 REPORTED_COMMANDS = frozenset(
     {
         "new-app",
-        "build",
+        "convert",
         "validate",
         "deploy",
         "test",
@@ -35,6 +35,8 @@ REPORTED_COMMANDS = frozenset(
         "stop",
         "clean",
         "quit",
+        # Events from before `build` was renamed `convert`.
+        "build",
     }
 )
 MAX_PENDING_EVENTS = 1000

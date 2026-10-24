@@ -61,14 +61,14 @@ command that needs the container reads it.
 
 ## The four commands that matter
 
-### `canyonos build` 
+### `canyonos convert` 
 
 **This skill does not provide any big capabilities, merely an abstraction to downloading a skill file and getting your agent to convert/build a workflow for you.**
 
 ```
- you ──▶ canyonos build ──▶ pick agent (Claude/Codex) + scope
-                        └─▶ fetch the porting skill from GitHub
-                        └─▶ launch your coding agent with it
+ you ──▶ canyonos convert ──▶ pick agent (Claude/Codex) + scope
+                          └─▶ fetch the porting skill from GitHub
+                          └─▶ launch your coding agent with it
                                       │
                                       ▼
                               generates  .car/   ◀── canyonos-formatted project
@@ -198,8 +198,8 @@ And to observe without changing anything:
 - Currently assuming the query body is always "query", need to harden it
 - Verify that there are valid timeouts and correct error tracing for everything
 
-## canyonos build:
-### INPUT: canyonos build
+## canyonos convert:
+### INPUT: canyonos convert
 #### Steps:
 1. Asks the user which coding agent they want to use for this [Codex/Claude]
 2. Asks the user if they want to download the skill locally or globally (So the skill can be viewed either only in this directory or across your entire laptop)

@@ -8,8 +8,8 @@ describes.
 
 ## Where it lives
 
-`canyonos build` can write the file for you at `.car/config/global_controller.yaml`. A
-project that doesn't use `canyonos build` keeps it at `config/global_controller.yaml`.
+`canyonos convert` can write the file for you at `.car/config/global_controller.yaml`. A
+project that doesn't use `canyonos convert` keeps it at `config/global_controller.yaml`.
 
 You can change it in two ways:
 

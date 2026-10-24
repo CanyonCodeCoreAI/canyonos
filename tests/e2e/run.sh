@@ -9,7 +9,7 @@
 # Usage: tests/e2e/run.sh [fixture]          (default: portfolio)
 #
 # The fixture pairs examples/<fixture> (the source) with tests/e2e/<fixture>/.car
-# (a port verified by hand), so `canyonos build` and its coding agent stay out
+# (a port verified by hand), so `canyonos convert` and its coding agent stay out
 # of the run. The query comes from .car/config/test_query.txt, and
 # tests/e2e/<fixture>/check.py decides whether the result is real.
 #
@@ -133,7 +133,7 @@ API_URL="http://127.0.0.1:$API_PORT"
 step "canyonos status"
 canyonos status
 
-# Run after the deploy, so doctor checks the live stack instead of demanding a coding agent.
+# Run after the deploy, so doctor checks the live stack.
 step "canyonos doctor"
 canyonos doctor
 

@@ -57,7 +57,7 @@ Deploying writes one thing into your files: if the manifest has no
 `project_id: "<uuid>"` to `global_controller.yaml` so it survives restarts.
 If the key is present with no value, it fills that line in place.
 
-`canyonos build` runs a coding agent that follows the porting skill. That
+`canyonos convert` runs a coding agent that follows the porting skill. That
 procedure may append `.car/` to your `.gitignore` and add key names to
 `.env.example`. Nothing in the runtime touches `.env`: it is only read, as the
 file `env_file` points at.

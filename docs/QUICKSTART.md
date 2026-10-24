@@ -2,36 +2,16 @@
 
 Install CanyonOS: `uv tool install canyonos`
 
+> **Converting an existing workflow?** Run `canyonos convert` in its folder first. It opens your coding agent with the CanyonOS skill, which writes a CanyonOS version of your project into `.car/` (2-10 minutes). Your code is untouched; outside `.car` it only installs the skill and updates `.env`, `.env.example` and `.gitignore`. Our [examples](../examples/) are already in [CanyonOS format](guides/WORKFLOW_DESIGN.md).
+
 For all steps below, run commands from your project folder:
 ```bash
 cd my-project
 ```
 
-### 1. Convert your project
+### 1. Add your credentials
 
-Skip to Section 2 if you are using a compatible workflow (all workflows in examples/ are valid)
-
-A workflow must follow a certain structure to run on CanyonOS. Thankfully, we have a skill that automatically converts your workflow to a compatible format. Read [workflow design](guides/WORKFLOW_DESIGN.md) for our exact structure.
-
-Our [examples](../examples/) are already in this format, so there's no need to run `canyonos build` on them. Skip to step 2.
-
-`canyonos build` installs the CanyonOS skill into your coding agent and launches it with a prompt to convert your project into `.car/` (CanyonOS's deploy-ready format). We do not modify any of your code. The conversion goes into the .car folder; outside it, build only installs the skill (e.g. `.claude/skills/`) and updates `.env`, `.env.example` and `.gitignore`. As this uses an agent to configure your workflow, it may take a while (2-10 minutes on average).
-
-```bash
-canyonos build
-```
-When it's done, exit back into the terminal. You're now ready to add your credentials.
-The agent will also periodically ask questions to configure your deployment file for you. If you want to change configuration details afterwards, go to step 6. If the config suits your taste, continue.
-
-When it's done, exit back into the terminal. You're now ready to add your credentials. 
-
-The agent will also periodically ask questions to configure your deployment file for you. If you want to change configuration details afterwards, go to step 6. If the config suits your taste, continue.
-
-When the conversion succeeds, exiting the agent ends with `✓ Port complete: .car/ passed validation.`
-
-### 2. Add your credentials
-
-Agents read API keys and other secrets from environment variables. `canyonos build` adds the names your project needs to the `.env` file in your project folder, commented out (and lists them in `.env.example`). Uncomment each one and fill in its value before testing:
+Agents read API keys and other secrets from environment variables. Put them in the `.env` file in your project folder. If you ran `canyonos convert`, it already added the names your project needs there, commented out (and listed them in `.env.example`); uncomment each one and fill in its value before testing:
 
 ```bash
 # .env
@@ -40,24 +20,24 @@ OPENAI_API_KEY=sk-...
 
 Using one of our examples? Copy its `.env.example` to `.env` and fill in the values there instead.
 
-`env_file: .env` in `.car/config/global_controller.yaml` passes these to every agent container. Without them, the test fails at the first agent that needs one.
+`env_file: .env` in your `global_controller.yaml` passes these to every agent container. Without them, the test fails at the first agent that needs one.
 
-### 3. Test
+### 2. Test
 
-Verify the workflow works by deploying everything locally and sending a test query. `canyonos build` saves a sample query taken from your project in `.car/config/test_query.txt`:
+Verify the workflow works by deploying everything locally and sending a test query:
 
 ```bash
-canyonos test "$(cat .car/config/test_query.txt)"
+canyonos test "your query"
 ```
 
-To send your own query instead, pass it in quotes: `canyonos test "your query"`. With no query, `hello` is sent.
+With no query, `hello` is sent. If you ran `canyonos convert`, it saved a sample query from your project: `canyonos test "$(cat .car/config/test_query.txt)"`.
 
 - Every agent runs locally during the test, whatever its `provider`.
 - If the test fails, see [Troubleshooting](guides/TROUBLESHOOTING.md#canyonos-test-fails).
 - If a deploy is already running, the query is sent to that deploy instead, and it stays running.
 - Add `--timeout SECONDS` to wait longer than the default 300 seconds.
 
-### 4. Deploy
+### 3. Deploy
 
 <details>
 <summary>Supported dependency versions</summary>
@@ -95,7 +75,7 @@ check result      curl http://127.0.0.1:8080/status/<request_id>
 - Every `canyonos deploy` automatically tears down any previous deploy on this machine, from any project, so you can also just redeploy directly.
 - If the deploy fails before it comes up, it is torn down automatically (unlike `canyonos test`, which leaves the containers up).
 
-### 5. Sending requests to the workflow
+### 4. Sending requests to the workflow
 
 When you deploy, CanyonOS automatically generates a REST API endpoint for the workflow.
 
@@ -124,7 +104,7 @@ curl http://localhost:8080/status/<request_id>
   - `"status": "error"` if it failed.
 - Periodically we clean up all finished requests. Once a finished request is cleaned up, this returns `404` with `Request not found`.
 
-### 6. Edit config
+### 5. Edit config
 
 If you want to edit any of your config files, you can either edit them directly or through our config command:
 
@@ -140,7 +120,7 @@ Every setting is described in [global_controller.yaml](guides/GLOBAL_CONTROLLER.
 
 For `provider: EC2` agents specifically (AMI/IAM/security group requirements, the `ec2:` config block), see [EC2 deployment](guides/EC2.md).
 
-### 7. Stop or quit
+### 6. Stop or quit
 
 ```bash
 canyonos stop   # stop this project's containers; keeps CanyonOS's own container and files for the next deploy
@@ -151,7 +131,7 @@ canyonos quit   # full teardown — also removes CanyonOS's container, its copy 
 
 ### Clean generated files
 
-Removes the `.car` folder, the CanyonOS skill `canyonos build` installed in this project, the `.env` keys `canyonos serve` wrote (your own lines stay), and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay.
+Removes the `.car` folder, the CanyonOS skill `canyonos convert` installed in this project, the `.env` keys `canyonos serve` wrote (your own lines stay), and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay.
 
 ```bash
 canyonos clean

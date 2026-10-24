@@ -106,7 +106,7 @@ def api(monkeypatch):
 
 def queue(count):
     for second in range(count):
-        outbox.record_event("build", True)
+        outbox.record_event("convert", True)
         os.utime(outbox.pending_events()[-1], (second, second))
     return [json.loads(path.read_text()) for path in outbox.pending_events()]
 
