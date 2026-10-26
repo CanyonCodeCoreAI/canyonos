@@ -19,17 +19,17 @@ import time
 import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+from functools import cached_property
 
 import yaml
 from canyonos_core.controller.controller_context import (
     ControllerContext,
     _redis_connect_host,
-    replica_id,
     replica_id_from_record,
     list_replicas,
 )
 from canyonos_core.controller import scaling
+from canyonos_core.controller.orchestrator import CanyonOrchestrator
 from canyonos_core.endpoint import ADDRESS_KEY, endpoint_record
 from canyonos_core.scaling import contract
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
@@ -43,7 +43,6 @@ from canyonos_core.controller.utils.container_names import (
 )
 from canyonos_core.llm_gateway import pricing
 from canyonos_core.reconciler import state
-from canyonos_core.reconciler.replicas import log_tail
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
@@ -146,15 +145,13 @@ class GlobalController(ControllerContext):
         self._metrics_collectors = {}  # host -> collector container name (one per host)
         self._last_status = {}  # (host, port) -> last known status
         self._lc_stubs = {}  # address -> gRPC stub
-        # Remove any stale containers from previous runs
-        self._remove_stale_containers()
+        # Clean up anything a previous run left behind
+        self.orchestrator.remove_stale_containers()
 
         self.process_supervisor = ProcessSupervisor()
         try:
-            # Launch Redis on each unique machine, then write routing table and policies
-            self._launch_redis_containers()
-            # One machine-level metrics collector per host (best-effort, local hosts only).
-            self._launch_metrics_collectors()
+            # Start what the replicas need, then write routing table and policies
+            self.orchestrator.start_support_services()
             # Fetched before any replica starts, so every gateway finds them in Redis at startup.
             self.llm_prices = pricing_refresh.litellm_prices()
             pricing.add_prices(self.llm_prices)
@@ -207,16 +204,7 @@ class GlobalController(ControllerContext):
                         GLOBAL_CONTROLLER_LOG_SOURCE, self.config.get("project_id")
                     )
                 )
-            self.process_supervisor.register(
-                "reconciler",
-                [
-                    sys.executable,
-                    "-m",
-                    "canyonos_core.reconciler",
-                    "--config",
-                    os.path.abspath(self.config_path),
-                ],
-            )
+            self.orchestrator.register_background_processes(self.process_supervisor)
             self.process_supervisor.start_all()
 
             self._cleanup_ready = threading.Event()
@@ -232,20 +220,13 @@ class GlobalController(ControllerContext):
                     "Failed to stop supervised processes after initialization failure: %s",
                     cleanup_error,
                 )
-            self._stop_metrics_collectors()
-            try:
-                redis_failures = self._stop_redis_containers()
-                if redis_failures:
-                    logger.warning(
-                        "Redis cleanup after initialization failure was incomplete: %s",
-                        "; ".join(redis_failures),
-                    )
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Failed to clean up Redis after initialization failure: %s",
-                    cleanup_error,
-                )
+            self.orchestrator.undo_support_services()
             raise
+
+    @cached_property
+    def orchestrator(self):
+        """Who runs this project's replicas (controller/orchestrator.py)."""
+        return CanyonOrchestrator(self)
 
     # ------------------------------------------------------------------ #
     #  Stale container removal                                             #
@@ -334,11 +315,11 @@ class GlobalController(ControllerContext):
         self.env_file_path = resolve_env_file(self.config)
         previous = set(self.agent_specs_by_name)
         self._set_agent_specs(self.config.get("agents", []))
-        for name in previous - set(self.agent_specs_by_name):
-            self.redis.delete(state.desired_key(name))
         self.poll_interval = self.config.get("poll_interval", 5)
         self._apply_config(config_files, manifest)
-        self._request_reconcile(state.WAKE_ALL)
+        self.orchestrator.forget_removed_agents(
+            previous - set(self.agent_specs_by_name)
+        )
 
         # Only meaningful if the exporter was already running.
         destinations = self._otel_destinations(self.config.get("otel", {}))
@@ -783,7 +764,7 @@ class GlobalController(ControllerContext):
                 name = replica["agent_name"]
                 host = replica["private_host"]
                 port = replica["host_port"]
-                machine_redis = self.machine_redis_for_replica(replica)
+                machine_redis = self.orchestrator.machine_redis_for_replica(replica)
                 address = replica["address"]
                 status = machine_redis.get(f"controller:{address}:status")
                 if status == "healthy":
@@ -850,7 +831,7 @@ class GlobalController(ControllerContext):
         # hold nothing yet; a timeout shows every laggard.
         for replica, status in terminal or pending:
             if replica["agent_name"] in failed:
-                dump_container_log(replica, status, partial(log_tail, self))
+                dump_container_log(replica, status, self.orchestrator.replica_log_tail)
 
         summary = ", ".join(
             f"{name} {have}/{want}" for name, (have, want) in failed.items()
@@ -920,7 +901,7 @@ class GlobalController(ControllerContext):
         # Machine-level metrics are per-host, so they're read once per host here rather
         # than inside the per-replica loop above (N replicas on a box would otherwise
         # re-read and re-write the same machine sample N times).
-        self._poll_machine_metrics()
+        self.orchestrator.poll_machine_metrics()
         # A draining replica is on its way out, so it must not count towards scaling.
         self._record_agent_samples(
             [
@@ -958,7 +939,7 @@ class GlobalController(ControllerContext):
             name = replica["agent_name"]
             host = replica["private_host"]
             port = replica["host_port"]
-            machine_redis = self.machine_redis_for_replica(replica)
+            machine_redis = self.orchestrator.machine_redis_for_replica(replica)
         except Exception as e:
             logger.warning("Failed to poll replica %s: %s", replica, e)
             return
@@ -1144,9 +1125,7 @@ class GlobalController(ControllerContext):
         if agent_name not in self.agent_specs_by_name:
             logger.warning("Cannot scale unknown agent %s", agent_name)
             return None
-        desired = state.set_desired(self.redis, agent_name, count)
-        self._request_reconcile(agent_name)
-        return desired
+        return self.orchestrator.set_replicas(agent_name, count)
 
     def _apply_scaling(self):
         """Apply the scaling policy's replica changes to each agent's desired count."""
@@ -1173,10 +1152,7 @@ class GlobalController(ControllerContext):
         if agent_name not in self.agent_specs_by_name:
             logger.warning("Cannot replace a replica of unknown agent %s", agent_name)
             return None
-        target = replica_id(agent_name, int(replica_index))
-        state.request_replace(self.redis, target)
-        self._request_reconcile(agent_name)
-        return target
+        return self.orchestrator.replace_replica(agent_name, replica_index)
 
     def _request_reconcile(self, agent_name):
         """Wake the reconciler, without letting a Redis failure break the caller."""
@@ -1361,24 +1337,16 @@ class GlobalController(ControllerContext):
         failures = []
         removed = False
         try:
-            removed = self._remove_all_replicas()
+            removed = self.orchestrator.remove_all_replicas()
         except Exception as e:
             failures.append(f"replica removal: {e}")
-        # The reconciler does the removing, so it must outlive the removal; clearing the flag first would have it refill everything just removed.
+        # Whatever removes the replicas has to outlive `remove_all_replicas`, so the
+        # supervised processes stop only now, and the support services after them.
         try:
             self.process_supervisor.terminate_all()
         except Exception as e:
             failures.append(f"supervised processes: {e}")
-        try:
-            state.clear_stopping(self.redis)
-        except Exception as e:
-            failures.append(f"stopping flag: {e}")
-        self._stop_metrics_collectors()
-        # Replica records live in Redis; removing it with replicas left would orphan them.
-        if removed and not failures:
-            failures += self._stop_redis_containers() or []
-        else:
-            failures.append("redis: kept for the next startup to reconcile")
+        failures += self.orchestrator.stop_support_services(removed and not failures)
         if failures:
             logger.error("Cleanup incomplete:\n- %s", "\n- ".join(failures))
         else:

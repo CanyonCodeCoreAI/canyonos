@@ -198,7 +198,7 @@ def test_a_failed_replicas_log_tail_is_shown_between_sentinels(
     )
     read_log = MagicMock(side_effect=log_tail)
     monkeypatch.setattr(
-        "canyonos_core.controller.global_controller.log_tail",
+        "canyonos_core.reconciler.replicas.log_tail",
         lambda _controller, replica, lines: read_log(replica, lines),
     )
 

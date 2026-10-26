@@ -47,9 +47,9 @@ canyonos_core.server.deploy
                     │    │                    + endpoint spec after the agents
                     │    ├─ resolve_env_file
                     │    └─ RedisClient
-                    ├─ _remove_stale_containers
-                    ├─ _launch_redis_containers
-                    ├─ _launch_metrics_collectors
+                    ├─ orchestrator.remove_stale_containers ──▶ _remove_stale_containers
+                    ├─ orchestrator.start_support_services ──▶ _launch_redis_containers
+                    │                         _launch_metrics_collectors
                     ├─ _apply_config
                     │    ├─ write_config_specs
                     │    ├─ _apply_configured_replicas
@@ -58,11 +58,29 @@ canyonos_core.server.deploy
                     │    └─ HSET endpoint:address
                     ├─ schema.init_db
                     ├─ ProcessSupervisor.start_all
-                    │    ├─ reconciler
+                    │    ├─ reconciler (orchestrator.register_background_processes)
                     │    └─ otel_exporter
                     └─ _cleanup_loop ──▶ _wait_for_healthy ──▶ run
                                                                └─ _poll_controllers
 ```
+
+## The orchestrator
+
+The Global Controller decides: the config, policies, how many replicas each agent
+should have, cleanup and telemetry. Starting, replacing and removing those replicas is
+the orchestrator's job. It goes through one object, `gc.orchestrator`
+(`controller/orchestrator.py`), so no other Global Controller code knows what runs them.
+
+`CanyonOrchestrator` (Docker and EC2): CanyonOS runs the replicas itself.
+
+| `gc.orchestrator` | What `CanyonOrchestrator` does |
+| --- | --- |
+| `start_support_services()` | one Redis and one metrics collector per machine |
+| `register_background_processes()` | the reconciler process, under the process supervisor |
+| `set_replicas(agent, n)` | the agent's desired count in Redis, then wakes the reconciler |
+| `replace_replica(agent, slot)` | a replacement request the reconciler acts on |
+| `replica_log_tail(replica, lines)` | the replica container's last output, read on its machine |
+| `remove_all_replicas()`, `stop_support_services(clean)` | the reconciler drains and removes every replica, then Redis and the collectors go |
 
 ## Local Controller startup
 
