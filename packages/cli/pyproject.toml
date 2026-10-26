@@ -19,7 +19,7 @@ dependencies = [
 canyonos = "cli:main"
 
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
