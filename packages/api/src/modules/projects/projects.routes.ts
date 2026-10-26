@@ -11,7 +11,7 @@ import { monitoringRoutes } from '../monitoring/monitoring.routes';
 import { promptsRoutes } from '../prompts/prompts.routes';
 import { requestsRoutes } from '../requests/requests.routes';
 import { scalingRoutes } from '../scaling/scaling.routes';
-import { get_project, get_project_stats, list_projects } from './projects.service';
+import { delete_project, get_project, get_project_stats, list_projects } from './projects.service';
 import { ProjectIdParams, ProjectStatsSchema, ProjectSummarySchema } from './projects.types';
 
 const doc = { tags: ['Projects'], security: [{ bearerAuth: [] }] };
@@ -27,6 +27,11 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
     params: ProjectIdParams,
     response: { 200: ProjectSummarySchema },
     detail: doc,
+  })
+  .delete('/:project_id', ({ params }) => delete_project(params.project_id), {
+    params: ProjectIdParams,
+    response: { 200: ProjectIdParams },
+    detail: { ...doc, summary: 'Delete a project that is not running' },
   })
   .get('/:project_id/stats', ({ params }) => get_project_stats(params.project_id), {
     params: ProjectIdParams,

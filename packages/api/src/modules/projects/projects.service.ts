@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { notFound } from '@core/errors';
+import { conflict, notFound } from '@core/errors';
 
+import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
 import { projects_repo } from './projects.repo';
 import type { ProjectStats, ProjectSummary } from './projects.types';
 
@@ -26,4 +27,22 @@ export async function get_project_stats(project_id: string): Promise<ProjectStat
 
   const workflow_counts = await projects_repo.get_workflow_counts(project_id);
   return { project_id, ...counts, ...workflow_counts };
+}
+
+// A project whose Redis can't be reached counts as stopped: stopping it removes that Redis.
+export async function delete_project(project_id: string): Promise<{ project_id: string }> {
+  const running = await with_redis(project_id, (redis) =>
+    assert_project_running(redis, project_id)
+  ).then(
+    () => true,
+    () => false
+  );
+  if (running) {
+    throw conflict(
+      'projects.running',
+      'This project is still running. Run `canyonos quit` in its folder, then delete it.'
+    );
+  }
+  await projects_repo.delete(project_id);
+  return { project_id };
 }

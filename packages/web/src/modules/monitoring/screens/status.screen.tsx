@@ -2,12 +2,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
+import { Trash2Icon } from 'lucide-react';
+import { useState } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { MonitoringEndpoint, MonitoringEndpointResponse } from '@canyonos/api/monitoring';
 
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@repo/ui/shadcn/alert-dialog';
+import { Button } from '@repo/ui/shadcn/button';
 import { cardVariants } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
+import { toast } from '@repo/ui/shadcn/sonner';
 import { cn } from '@repo/ui/utils';
 import { ApiResponseError } from '@/api';
 import { ContainersSection } from '@/modules/monitoring/components/containers-section';
@@ -16,9 +31,10 @@ import {
   errorSummaryQueryOptions,
   replicasQueryOptions,
 } from '@/modules/monitoring/monitoring.queries';
-import { projectDetailQueryOptions } from '@/modules/projects/projects.queries';
+import { projectDetailQueryOptions, useDeleteProject } from '@/modules/projects/projects.queries';
 
 const CARD = cardVariants({ className: 'min-w-0 p-5' });
+const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
 
 type Deployment = 'checking' | 'running' | 'not_running' | 'unknown';
 
@@ -67,6 +83,7 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
           {project.data?.name ?? 'Status'}
         </h1>
         <StatusBadge deployment={deployment} />
+        <DeleteProjectButton project_id={project_id} name={project.data?.name} />
       </header>
 
       <EndpointCard deployment={deployment} endpoint={endpoint.data?.endpoint} />
@@ -136,6 +153,70 @@ function StatusBadge({ deployment }: { readonly deployment: Deployment }) {
       <span className={cn('size-1.5 rounded-full', badge.dot)} />
       {badge.label}
     </span>
+  );
+}
+
+function DeleteProjectButton({
+  project_id,
+  name,
+}: {
+  readonly project_id: string;
+  readonly name: string | undefined;
+}) {
+  const navigate = useNavigate();
+  const remove = useDeleteProject(project_id);
+  const [open, setOpen] = useState(false);
+  const destroy = () =>
+    remove.mutate(undefined, {
+      onSuccess: () => {
+        toast.success('Project deleted.', TOAST);
+        void navigate({ to: '/' });
+      },
+      onError: (error) => {
+        setOpen(false);
+        toast.error(error.message, TOAST);
+      },
+    });
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="ml-auto text-xs"
+          data-testid="status-delete-project"
+        >
+          <Trash2Icon aria-hidden />
+          Delete project
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent data-testid="status-delete-dialog">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {name ?? 'this project'}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the project and all its telemetry from the dashboard. This can&apos;t be
+            undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel asChild>
+            <Button size="sm" variant="outline" disabled={remove.isPending}>
+              Cancel
+            </Button>
+          </AlertDialogCancel>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={remove.isPending}
+            onClick={destroy}
+            data-testid="status-delete-confirm"
+          >
+            {remove.isPending ? 'Deleting…' : 'Delete'}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

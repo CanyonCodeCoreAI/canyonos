@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { queryOptions } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import type {
   DistributionMetric,
@@ -51,6 +51,17 @@ export function projectDetailQueryOptions(project_id: string) {
     queryKey: projectQueryKeys.detail(project_id),
     queryFn: () => apiCall<ProjectSummary>(() => forgeAuthApi.projects[project_id]!.get()),
     retry: false,
+  });
+}
+
+export function useDeleteProject(project_id: string) {
+  const query_client = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      apiCall<{ project_id: string }>(() => forgeAuthApi.projects[project_id]!.delete()),
+    onSuccess: () =>
+      query_client.invalidateQueries({ queryKey: projectQueryKeys.all, exact: true }),
   });
 }
 

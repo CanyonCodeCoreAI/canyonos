@@ -1,14 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { eq, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { projectWorkflows } from '@api/db/schema';
+import { otelLogs, otelMetrics, otelSpans, projectWorkflows } from '@api/db/schema';
+import { PROJECT_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
+import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { reset_controller, seed_running_project } from './redis-test.utils';
+import { write_project_span } from './telemetry-test.utils';
 import type { TestProjectFile } from './project-test.utils';
 
 setupE2ETests();
@@ -144,5 +148,76 @@ describe('GET /projects/:project_id/stats', () => {
     const { project_id } = await create_test_project(token, { name: 'Unauth Stats' });
 
     expect((await api.projects[project_id]!.stats.get()).error?.status as number).toBe(401);
+  });
+});
+
+async function write_telemetry(project_id: string): Promise<void> {
+  await write_project_span(project_id, { span_id: `span-${project_id}` });
+  const resource_attributes = { [RESOURCE_PROJECT_ATTRIBUTE]: project_id };
+  await db.insert(otelMetrics).values({
+    resource_attributes,
+    metric_name: 'canyonos.test.gauge',
+    metric_type: 'gauge',
+    time_unix_nano: 1n,
+    value: 1,
+  });
+  await db
+    .insert(otelLogs)
+    .values({ resource_attributes, time_unix_nano: 1n, observed_time_unix_nano: 1n, body: 'hi' });
+}
+
+/** How many spans, metrics and logs name project_id. */
+async function telemetry_counts(project_id: string): Promise<number[]> {
+  const count = sql<number>`count(*)::int`;
+  const [spans] = await db
+    .select({ count })
+    .from(otelSpans)
+    .where(sql`${otelSpans.attributes} ->> ${PROJECT_ID_ATTRIBUTE} = ${project_id}`);
+  const [metrics] = await db
+    .select({ count })
+    .from(otelMetrics)
+    .where(
+      sql`${otelMetrics.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+    );
+  const [logs] = await db
+    .select({ count })
+    .from(otelLogs)
+    .where(sql`${otelLogs.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`);
+  return [spans!.count, metrics!.count, logs!.count];
+}
+
+describe('DELETE /projects/:project_id', () => {
+  beforeEach(reset_controller);
+
+  test('deletes a stopped project and its telemetry, and leaves other projects alone', async () => {
+    const token = await authenticate('project-delete@canyonos.test');
+    const headers = bearer(token);
+    const { project_id } = await create_test_project(token, { name: 'Stopped', files: FILES });
+    const { project_id: other_id } = await create_test_project(token, { name: 'Other' });
+    await write_telemetry(project_id);
+    await write_telemetry(other_id);
+
+    const res = await api.projects[project_id]!.delete(undefined, { headers });
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual({ project_id });
+
+    const detail = await api.projects[project_id]!.get({ $headers: headers });
+    expect(detail.error?.status as number).toBe(404);
+    expect(await telemetry_counts(project_id)).toEqual([0, 0, 0]);
+    expect(await telemetry_counts(other_id)).toEqual([1, 1, 1]);
+  });
+
+  test('refuses a running project with 409 projects.running and keeps it', async () => {
+    const token = await authenticate('project-delete-running@canyonos.test');
+    const headers = bearer(token);
+    const { project_id } = await create_test_project(token, { name: 'Running' });
+    await seed_running_project(project_id, { prompts: {} });
+
+    const res = await api.projects[project_id]!.delete(undefined, { headers });
+    expect(res.error?.status as number).toBe(409);
+    expect((res.error?.value as { error?: string })?.error).toBe('projects.running');
+
+    const detail = await api.projects[project_id]!.get({ $headers: headers });
+    expect(detail.data?.id).toBe(project_id);
   });
 });

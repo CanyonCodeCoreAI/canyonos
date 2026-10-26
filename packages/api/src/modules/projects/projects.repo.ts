@@ -4,7 +4,16 @@
 import { eq, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { files, projects, projectWorkflows } from '@api/db/schema';
+import {
+  files,
+  otelLogs,
+  otelMetrics,
+  otelSpans,
+  projects,
+  projectWorkflows,
+} from '@api/db/schema';
+import { PROJECT_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
+import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
 
 import type { ProjectSummary } from './projects.types';
 
@@ -54,6 +63,26 @@ export const projects_repo = {
       .where(eq(projects.id, project_id))
       .limit(1);
     return row !== undefined;
+  },
+
+  /** Deletes the project, the rows that reference it, and its telemetry. */
+  async delete(project_id: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(otelSpans)
+        .where(sql`${otelSpans.attributes} ->> ${PROJECT_ID_ATTRIBUTE} = ${project_id}`);
+      await tx
+        .delete(otelLogs)
+        .where(
+          sql`${otelLogs.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+        );
+      await tx
+        .delete(otelMetrics)
+        .where(
+          sql`${otelMetrics.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+        );
+      await tx.delete(projects).where(eq(projects.id, project_id));
+    });
   },
 
   async get_component_counts(project_id: string): Promise<ProjectComponentCounts | undefined> {
