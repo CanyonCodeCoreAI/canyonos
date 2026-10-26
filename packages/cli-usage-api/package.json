@@ -16,7 +16,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "3.1136.0",
     "elysia": "1.4.28",
-    "zod": "3.25.76"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@canyonos/tsconfig": "workspace:*",
