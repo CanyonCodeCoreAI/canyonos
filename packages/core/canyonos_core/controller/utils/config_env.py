@@ -21,7 +21,10 @@ def load_dotenv(path):
     """Load simple KEY=VALUE entries without overriding existing environment values."""
     if not os.path.isfile(path):
         return
-    with open(path, "r") as f:
+    # utf-8-sig drops the byte-order mark some Windows editors (Notepad) save in front
+    # of the first key, which would otherwise become part of its name; a file without
+    # one reads exactly as with utf-8.
+    with open(path, encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
