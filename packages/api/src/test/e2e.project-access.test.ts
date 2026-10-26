@@ -9,6 +9,13 @@ import { seed_running_project } from './redis-test.utils';
 
 setupE2ETests();
 
+const RANGE_TO = new Date();
+
+const RANGE = {
+  from: new Date(RANGE_TO.getTime() - 365 * 86_400_000).toISOString(),
+  to: RANGE_TO.toISOString(),
+};
+
 async function create_project(token: string): Promise<string> {
   const { project_id } = await create_test_project(token, { name: 'Access Project' });
   return project_id;
@@ -37,20 +44,23 @@ describe('project access across the /projects tree', () => {
     const responses = await Promise.all([
       api.projects[project_id]!.get(read),
       api.projects[project_id]!.stats.get(read),
-      api.projects[project_id]!.requests.get({ ...read, $query: { limit: 20, offset: 0 } }),
-      api.projects[project_id]!.metrics.kpis.get(read),
-      api.projects[project_id]!.monitoring.series.get({ ...read, $query: { time_window: '1d' } }),
+      api.projects[project_id]!.requests.get({
+        ...read,
+        $query: { ...RANGE, limit: 20, offset: 0 },
+      }),
+      api.projects[project_id]!.metrics.kpis.get({ ...read, $query: RANGE }),
+      api.projects[project_id]!.monitoring.series.get({ ...read, $query: RANGE }),
       api.projects[project_id]!.monitoring.logs.get({
         ...read,
-        $query: { time_window: '1d', limit: 200, errors_only: false },
+        $query: { ...RANGE, limit: 200, errors_only: false },
       }),
       api.projects[project_id]!.monitoring.traces.get({
         ...read,
-        $query: { time_window: '1d', limit: 200 },
+        $query: { ...RANGE, limit: 200 },
       }),
       api.projects[project_id]!.monitoring.resources.get({
         ...read,
-        $query: { time_window: '1d' },
+        $query: RANGE,
       }),
       api.projects[project_id]!.monitoring.replicas.get(read),
       api.projects[project_id]!.monitoring.endpoint.get(read),

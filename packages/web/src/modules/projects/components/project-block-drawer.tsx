@@ -10,7 +10,6 @@ import type {
   DistributionStats,
   MetricsAgentDetails,
   MetricsBlocks,
-  MetricsWindow,
 } from '@canyonos/api/metrics';
 
 import { CdfChart } from '@repo/ui/components/charts/cdf-chart';
@@ -27,9 +26,10 @@ import {
 } from '@repo/ui/shadcn/sheet';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import type { CdfMarker } from '@repo/ui/components/charts/cdf-chart';
-import { apiCall, ApiResponseError, forgeAuthApi } from '@/api';
+import { ApiResponseError } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { LOCAL_TIME_ZONE, rangeLabel } from '@/modules/core/time-range';
 import { CostTimeseriesChart } from '@/modules/projects/components/project-cost-timeseries';
 import {
   formatCount,
@@ -48,39 +48,19 @@ import {
   DISTRIBUTION_METRIC_TITLE,
   distributionCdfPoints,
   isDistributionMetric,
-  LOCAL_TIME_ZONE,
 } from '@/modules/projects/projects.metrics';
-import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import {
+  projectAgentQueryOptions,
+  projectBlocksQueryOptions,
+} from '@/modules/projects/projects.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 import type { CostSplitSide } from '@/modules/projects/projects.metrics';
 
 const TEST_ID = 'project-block-drawer';
 const MISSING = '—';
 
-// The agent route is fixed to 30 days, so the table beside it reads the same range.
-const DRAWER_WINDOW: MetricsWindow = '30d';
-const WINDOW_LABEL = 'Last 30 days';
-
-const agentQuery = (project_id: string, agent_id: string) => ({
-  queryKey: projectQueryKeys.metricsAgent(project_id, agent_id, LOCAL_TIME_ZONE),
-  queryFn: () =>
-    apiCall<MetricsAgentDetails>(() =>
-      forgeAuthApi.projects[project_id]!.metrics.agents[agent_id]!.get({
-        // The zone the cost-over-time buckets are cut on, so its day boundaries match the project
-        // timeline's rather than falling on UTC midnights.
-        $query: { time_zone: LOCAL_TIME_ZONE },
-      })
-    ),
-  retry: false,
-});
-
-const blocksQuery = (project_id: string, time_window: MetricsWindow) => ({
-  queryKey: projectQueryKeys.metricsBlocks(project_id, time_window),
-  queryFn: () =>
-    apiCall<MetricsBlocks>(() =>
-      forgeAuthApi.projects[project_id]!.metrics.blocks.get({ $query: { time_window } })
-    ),
-  retry: false,
-});
+const DRAWER_RANGE = { preset: '30d' } as const satisfies RangeSelection;
+const RANGE_LABEL = rangeLabel(DRAWER_RANGE);
 
 const RETRY_ALERT = 0.05;
 
@@ -125,7 +105,7 @@ interface ProjectBlockDrawerProps {
   readonly returnFocusTo?: () => HTMLElement | null;
 }
 
-/** The selected block's trailing-30-day metrics, whatever range the dashboard shows. */
+/** The selected block's fixed-range metrics, whatever range the dashboard shows. */
 export function ProjectBlockDrawer({
   project_id,
   block,
@@ -179,8 +159,13 @@ function BlockDrawerBody({
 }) {
   const agent_id = block.agent_id;
   // Independent reads: either can fail or arrive first, so each renders its own states.
-  const agent_query = useQuery(agentQuery(project_id, agent_id));
-  const blocks_query = useQuery(blocksQuery(project_id, DRAWER_WINDOW));
+  const agent_query = useQuery(
+    projectAgentQueryOptions(project_id, agent_id, {
+      range: DRAWER_RANGE,
+      time_zone: LOCAL_TIME_ZONE,
+    })
+  );
+  const blocks_query = useQuery(projectBlocksQueryOptions(project_id, { range: DRAWER_RANGE }));
 
   const details = agent_query.data;
   // The agent this drawer describes is named rather than addressed: the opening id can be one
@@ -213,7 +198,7 @@ function BlockDrawerBody({
           ) : null}
         </div>
         <SheetDescription>
-          {WINDOW_LABEL} · this agent on its own, whatever range the dashboard is showing.
+          {RANGE_LABEL} · this agent on its own, whatever range the dashboard is showing.
           {replicas > 1 ? ` Totalled across ${replicas} replicas.` : ''}
         </SheetDescription>
       </SheetHeader>
@@ -282,14 +267,18 @@ function AgentSections({
     );
   }
 
-  if (query.error) {
-    return isMissingAgentMetrics(query.error) ? (
+  if (query.error && isMissingAgentMetrics(query.error)) {
+    return (
       <EmptyState size="section" test_id={`${TEST_ID}-empty`}>
         <p className="text-center text-pretty">
-          No runtime data for this block in the last 30 days.
+          No runtime data for this block in the last {RANGE_LABEL.toLowerCase()}.
         </p>
       </EmptyState>
-    ) : (
+    );
+  }
+
+  if (query.error) {
+    return (
       <QueryError
         message="Could not load this block's metrics."
         onRetry={() => void query.refetch()}
@@ -319,7 +308,7 @@ function BlockOverview({ details }: { readonly details: MetricsAgentDetails }) {
 
   return (
     <section className="flex flex-col gap-2.5">
-      <SectionLabel as="h3">Overview · {WINDOW_LABEL}</SectionLabel>
+      <SectionLabel as="h3">Overview · {RANGE_LABEL}</SectionLabel>
       <div className="grid grid-cols-2 gap-2.5" data-testid={`${TEST_ID}-overview`}>
         <StatCard
           size="compact"
@@ -449,7 +438,7 @@ function PerQueryDistribution({
 }
 
 /**
- * This agent's spend per day over the window.
+ * This agent's spend over the fixed range.
  *
  * The same chart the project timeline draws, on this agent's slice of it, so a reader comparing the
  * two is comparing like with like. It rides on the agent payload rather than a fetch of its own,
@@ -458,35 +447,33 @@ function PerQueryDistribution({
 function CostOverTimeSection({ query }: { readonly query: UseQueryResult<MetricsAgentDetails> }) {
   return (
     <section className="border-border/70 flex flex-col gap-2.5 border-t pt-5">
-      <SectionLabel as="h3">Cost over time · {WINDOW_LABEL}</SectionLabel>
-      {query.isPending ? (
-        <Skeleton className="h-72 w-full rounded-lg" data-testid={`${TEST_ID}-cost-time-loading`} />
-      ) : query.error ? null : (
-        <AgentCostChart details={query.data} />
-      )}
+      <SectionLabel as="h3">Cost over time · {RANGE_LABEL}</SectionLabel>
+      <CostOverTimeBody query={query} />
     </section>
   );
+}
+
+function CostOverTimeBody({ query }: { readonly query: UseQueryResult<MetricsAgentDetails> }) {
+  if (query.isPending) {
+    return (
+      <Skeleton className="h-72 w-full rounded-lg" data-testid={`${TEST_ID}-cost-time-loading`} />
+    );
+  }
+  if (query.error) return null;
+  return <AgentCostChart details={query.data} />;
 }
 
 /**
  * The chart, and the two different nothings it can be asked to draw.
  *
- * An agent that ran nothing has an all-zero series. An API that predates the series has no field at
- * all — the response type cannot express that, but a client deployed ahead of its API meets it, so
- * the two are told apart here rather than both reading as "ran nothing".
+ * An agent that ran nothing has an all-zero series.
  */
 function AgentCostChart({ details }: { readonly details: MetricsAgentDetails }) {
-  const series = details.timeseries as MetricsAgentDetails['timeseries'] | undefined;
-
   return (
     <CostTimeseriesChart
-      timeseries={series}
+      timeseries={details.timeseries}
       test_id_prefix={`${TEST_ID}-cost-time`}
-      empty_message={
-        series === undefined
-          ? 'This project’s API does not report per-agent cost over time yet.'
-          : 'This agent ran nothing in the last 30 days, so there is no spend to plot.'
-      }
+      empty_message={`This agent ran nothing in the last ${RANGE_LABEL.toLowerCase()}, so there is no spend to plot.`}
     />
   );
 }

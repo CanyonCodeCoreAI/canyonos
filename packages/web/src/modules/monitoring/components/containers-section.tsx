@@ -38,14 +38,7 @@ export function ContainersSection({ project_id }: { readonly project_id: string 
           </p>
         </div>
         <span className="flex items-baseline gap-2">
-          {draining > 0 && (
-            <span
-              className="text-muted-foreground text-xs"
-              data-testid="metrics-containers-draining"
-            >
-              {draining} draining
-            </span>
-          )}
+          <DrainingCount draining={draining} />
           <span
             className="text-foreground text-2xl font-semibold tabular-nums"
             data-testid="metrics-containers-count"
@@ -114,5 +107,14 @@ function ContainersBody({ query }: { readonly query: UseQueryResult<MonitoringRe
         </li>
       ))}
     </ul>
+  );
+}
+
+function DrainingCount({ draining }: { readonly draining: number }) {
+  if (draining === 0) return null;
+  return (
+    <span className="text-muted-foreground text-xs" data-testid="metrics-containers-draining">
+      {draining} draining
+    </span>
   );
 }

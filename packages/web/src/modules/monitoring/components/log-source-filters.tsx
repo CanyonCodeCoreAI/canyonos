@@ -3,9 +3,6 @@
 
 import { useQuery } from '@tanstack/react-query';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
-import type { MonitoringLogSourcesResponse } from '@canyonos/api/monitoring';
-
 import {
   Select,
   SelectContent,
@@ -13,7 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@repo/ui/shadcn/select';
-import { apiCall, forgeAuthApi } from '@/api';
+import { logSourcesQueryOptions } from '@/modules/monitoring/monitoring.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 export const ALL_SOURCES = 'all';
 
@@ -21,7 +19,7 @@ const TRIGGER_CLASS = 'h-9 w-44 text-xs';
 
 interface LogSourceFiltersProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   readonly agent: string;
   readonly replica: string;
   readonly onAgentChange: (agent: string) => void;
@@ -30,22 +28,13 @@ interface LogSourceFiltersProps {
 
 export function LogSourceFilters({
   project_id,
-  time_window,
+  range,
   agent,
   replica,
   onAgentChange,
   onReplicaChange,
 }: LogSourceFiltersProps) {
-  const query = useQuery({
-    queryKey: ['projects', project_id, 'monitoring', 'logs', 'sources', time_window],
-    queryFn: () =>
-      apiCall<MonitoringLogSourcesResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.logs.sources.get({
-          $query: { time_window },
-        })
-      ),
-    retry: false,
-  });
+  const query = useQuery(logSourcesQueryOptions(project_id, { range }));
 
   const sources = query.data?.sources ?? [];
   const replicas =

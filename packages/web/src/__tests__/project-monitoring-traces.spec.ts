@@ -17,6 +17,7 @@ import { PROJECT, stubFleetSpend, stubProjectDashboard, stubProjectsList } from 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const MONITORING_PATH = `/projects/${PROJECT.id}/monitoring`;
 const API_BASE = `/projects/${PROJECT.id}/monitoring`;
+const RANGE = { from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z' };
 
 const PLAIN_TRACE: MonitoringTrace = {
   at: '2026-10-06 12:00:00',
@@ -121,7 +122,7 @@ const LLM_CALL: MonitoringLlmCall = {
 
 const EMPTY_SERIES: MonitoringSeriesResponse = {
   project_id: PROJECT.id,
-  time_window: '1d',
+  ...RANGE,
   bucket_seconds: 3600,
   bucket_start_ats: [],
   series: [],
@@ -138,8 +139,8 @@ async function openMonitoring(
   await stubFleetSpend(page);
   const answers: Record<string, unknown> = {
     [`${API_BASE}/series`]: EMPTY_SERIES,
-    [`${API_BASE}/traces`]: { project_id: PROJECT.id, time_window: '1d', traces },
-    [`${API_BASE}/llm`]: { project_id: PROJECT.id, time_window: '1d', calls: [LLM_CALL] },
+    [`${API_BASE}/traces`]: { project_id: PROJECT.id, ...RANGE, traces },
+    [`${API_BASE}/llm`]: { project_id: PROJECT.id, ...RANGE, calls: [LLM_CALL] },
   };
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname in answers,

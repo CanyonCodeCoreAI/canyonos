@@ -4,17 +4,16 @@
 import { sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelSpans } from '@api/db/schema';
+import type { TimeRange } from '@core/time-range';
 
-import { window_floor_nanos } from '../metrics/metrics.scope';
 import {
+  fleetRequestSpans,
   spanCost,
   spanDurationMs,
   spanFailed,
   spanProjectId,
   spanTotalTokens,
 } from '../metrics/metrics.sql';
-import type { MetricsWindow } from '../metrics/metrics.types';
 
 export interface FleetProjectRow {
   readonly project_id: string;
@@ -30,8 +29,9 @@ export interface FleetProjectRow {
 
 export const resources_repo = {
   // Count span IDs so the left-join row keeps zero-activity projects at zero.
-  async fleet_projects(time_window: MetricsWindow): Promise<FleetProjectRow[]> {
+  async fleet_projects(range: TimeRange): Promise<FleetProjectRow[]> {
     const rows = await db.execute(sql`
+      with scoped as (${fleetRequestSpans(range)})
       select
         p.id::text as project_id,
         p.name,
@@ -43,9 +43,7 @@ export const resources_repo = {
         coalesce(sum(${sql.raw(spanCost('s'))}), 0)::numeric(20, 10)::text as total_cost,
         avg(${sql.raw(spanDurationMs('s'))})::float8 as avg_latency_ms
       from projects p
-      left join ${otelSpans} s
-        on ${sql.raw(spanProjectId('s'))} = p.id::text
-        and s.start_time_unix_nano >= ${sql.raw(window_floor_nanos(time_window))}
+      left join scoped s on ${sql.raw(spanProjectId('s'))} = p.id::text
       group by p.id, p.name, p.created_at
       order by p.created_at, p.id
     `);

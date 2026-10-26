@@ -5,12 +5,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { MetricsBlocks, MetricsWindow } from '@canyonos/api/metrics';
-
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@repo/ui/shadcn/tabs';
 import { cn } from '@repo/ui/utils';
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ProjectAgentShare } from '@/modules/projects/components/project-agent-share';
@@ -26,7 +23,8 @@ import {
   parseMoney,
 } from '@/modules/projects/projects.format';
 import { COST_SPLIT } from '@/modules/projects/projects.metrics';
-import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import { projectBlocksQueryOptions } from '@/modules/projects/projects.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 import type { SelectedBlock } from '@/modules/projects/components/project-block-drawer';
 
 const MISSING = '—';
@@ -35,16 +33,6 @@ const ROW_GRID_CLASS = 'grid-cols-[minmax(0,1fr)_5.5rem_5rem_5rem_5rem_4.5rem]';
 
 const AGENT_VIEW_TRIGGER_CLASS =
   'data-[state=active]:bg-foreground/10 data-[state=active]:border-transparent mb-0 h-7 rounded-sm border-b-0 px-3 text-xs data-[state=active]:shadow-sm';
-
-const blocksQuery = (project_id: string, time_window: MetricsWindow) => ({
-  queryKey: projectQueryKeys.metricsBlocks(project_id, time_window),
-  queryFn: () =>
-    apiCall<MetricsBlocks>(() =>
-      forgeAuthApi.projects[project_id]!.metrics.blocks.get({ $query: { time_window } })
-    ),
-  retry: false,
-  refetchInterval: dashboardPollInterval,
-});
 
 function AgentSpendSection({
   action,
@@ -56,7 +44,7 @@ function AgentSpendSection({
   return (
     <ProjectMetricsSection
       title="Per-agent breakdown"
-      description="Every agent that billed in this window, dearest first. Open one for its full breakdown."
+      description="Every agent that billed in this range, dearest first. Open one for its full breakdown."
       test_id="project-agent-section"
       className="min-h-0 flex-1"
       action={action}
@@ -68,11 +56,11 @@ function AgentSpendSection({
 
 interface ProjectAgentSpendProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
-export function ProjectAgentSpend({ project_id, time_window }: ProjectAgentSpendProps) {
-  const blocks_query = useQuery(blocksQuery(project_id, time_window));
+export function ProjectAgentSpend({ project_id, range }: ProjectAgentSpendProps) {
+  const blocks_query = useQuery(projectBlocksQueryOptions(project_id, { range }));
   const [selected, setSelected] = useState<SelectedBlock | null>(null);
   const rows_ref = useRef<HTMLDivElement>(null);
   const return_agent_id = useRef<string | null>(null);
@@ -111,7 +99,7 @@ export function ProjectAgentSpend({ project_id, time_window }: ProjectAgentSpend
     return (
       <AgentSpendSection>
         <EmptyState size="section" test_id="project-agents-empty">
-          <p>No blocks executed in this window, so nothing has billed yet.</p>
+          <p>No blocks executed in this range, so nothing has billed yet.</p>
         </EmptyState>
       </AgentSpendSection>
     );
@@ -229,7 +217,7 @@ export function ProjectAgentSpend({ project_id, time_window }: ProjectAgentSpend
 
           <p className="text-muted-foreground shrink-0 px-3 text-xs">
             {formatCount(rows.length)} {rows.length === 1 ? 'agent' : 'agents'} ·{' '}
-            {formatMoney(blocks_query.data.total_cost)} across the window
+            {formatMoney(blocks_query.data.total_cost)} across the range
             {rows[0]?.retry_rate !== null && rows[0] !== undefined
               ? ` · dearest retries ${formatRate(rows[0].retry_rate)}`
               : ''}

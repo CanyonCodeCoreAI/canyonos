@@ -10,9 +10,9 @@ import type {
   MetricsBlock,
   MetricsBlocks,
   MetricsDistribution,
+  MetricsKpi,
   MetricsKpis,
   MetricsTimeseries,
-  MetricsWindow,
 } from '@canyonos/api/metrics';
 import type { RequestList, RequestTrace } from '@canyonos/api/requests';
 
@@ -24,8 +24,8 @@ const PROJECT_ID = '33333333-3333-4333-8333-333333333301';
 
 // The dashboard is mocked at the network layer rather than seeded: the shared Docker database
 // accumulates runtime rows across e2e runs, so asserting on ambient totals would be flaky.
-function kpiWindow(overrides: Partial<MetricsKpis['windows']['30d']> = {}) {
-  const window = {
+function kpiRange(overrides: Partial<MetricsKpi> = {}) {
+  const range = {
     request_count: 95,
     block_count: 681,
     tokens: 11_625_047,
@@ -43,40 +43,57 @@ function kpiWindow(overrides: Partial<MetricsKpis['windows']['30d']> = {}) {
   // Fully priced unless a test says otherwise, so overriding a count cannot leave the costed
   // counterpart describing a different window.
   return {
-    ...window,
-    costed_request_count: overrides.costed_request_count ?? window.request_count,
-    costed_block_count: overrides.costed_block_count ?? window.block_count,
+    ...range,
+    costed_request_count: overrides.costed_request_count ?? range.request_count,
+    costed_block_count: overrides.costed_block_count ?? range.block_count,
   };
 }
 
 const KPIS: MetricsKpis = {
   project_id: PROJECT_ID,
   generated_at: '2026-07-29T12:00:00.000Z',
-  windows: {
-    '1d': kpiWindow({
-      request_count: 1,
-      block_count: 12,
-      llm_cost: '1.080000',
-      harness_cost: '0.013220',
-      total_cost: '1.093220',
-    }),
-    // Each window's split adds up to its total so the dashboard values stay reconcilable.
-    '7d': kpiWindow({
-      request_count: 73,
-      tokens: 28_852_000,
-      llm_cost: '60.520000',
-      harness_cost: '4.122104',
-      total_cost: '64.642104',
-    }),
-    '30d': kpiWindow(),
-    '1q': kpiWindow(),
-  },
+  from: '2026-06-29T12:00:00.000Z',
+  to: '2026-07-29T12:00:00.000Z',
+  run_rate: '2.831627',
+  run_rate_per: 'day',
+  ...kpiRange(),
 };
+
+/** The run rate the API reports for a window: spend over its length, null when nothing priced. */
+function runRateFor(kpi: MetricsKpi, { from, to }: { from: string; to: string }) {
+  const days = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+  const run_rate_per = days <= 1 ? ('hour' as const) : ('day' as const);
+  const unpriced = kpi.block_count > 0 && kpi.costed_block_count === 0;
+  const run_rate = unpriced
+    ? null
+    : (Number(kpi.total_cost) / (run_rate_per === 'hour' ? days * 24 : days)).toFixed(6);
+  return { run_rate, run_rate_per };
+}
+
+const KPI_RANGES = {
+  '1d': kpiRange({
+    request_count: 1,
+    block_count: 12,
+    llm_cost: '1.080000',
+    harness_cost: '0.013220',
+    total_cost: '1.093220',
+  }),
+  '7d': kpiRange({
+    request_count: 73,
+    tokens: 28_852_000,
+    llm_cost: '60.520000',
+    harness_cost: '4.122104',
+    total_cost: '64.642104',
+  }),
+  '30d': kpiRange(),
+  '1q': kpiRange(),
+} as const;
 
 // The agent tabs and drawer use this same spend breakdown. Rows sum to `total_cost`.
 const BLOCKS: MetricsBlocks = {
   project_id: PROJECT_ID,
-  time_window: '30d',
+  from: KPIS.from,
+  to: KPIS.to,
   total_cost: '84.948823',
   blocks: [
     {
@@ -299,8 +316,9 @@ function agentDetails(blocks: MetricsBlocks, block: MetricsBlock): MetricsAgentD
     project_id: PROJECT_ID,
     agent_id,
     label: block.label,
-    time_window: '30d',
-    project: { request_count: KPIS.windows['30d'].request_count, total_cost: blocks.total_cost },
+    from: KPIS.from,
+    to: KPIS.to,
+    project: { request_count: KPIS.request_count, total_cost: blocks.total_cost },
     agent: {
       ...summary,
       request_count: distributions.cost_per_request.request_count,
@@ -340,30 +358,32 @@ function agentTable(blocks: MetricsBlocks): Record<string, MetricsAgentDetails> 
 
 const AGENT_DETAILS = agentTable(BLOCKS);
 
-const TIME_WINDOW_SECONDS: Record<MetricsWindow, number> = {
+type FixtureRange = '1d' | '7d' | '30d' | '1q';
+
+const RANGE_SECONDS: Record<FixtureRange, number> = {
   '1d': 86_400,
   '7d': 604_800,
   '30d': 2_592_000,
   '1q': 7_776_000,
 };
 
-const TIME_WINDOW_BUCKETS: Record<MetricsWindow, number> = {
+const RANGE_BUCKETS: Record<FixtureRange, number> = {
   '1d': 24,
-  '7d': 7,
+  '7d': 28,
   '30d': 30,
   '1q': 30,
 };
 
-// Midnight in the test fixture's display calendar. A quarter's three-day groups each start on
-// their own day and no two range labels share one.
+// Midnight in the test fixture's display calendar.
 const BUCKET_ANCHOR = new Date(2026, 5, 29).getTime();
 
-function timeseriesFor(time_window: MetricsWindow): MetricsTimeseries {
-  const buckets = TIME_WINDOW_BUCKETS[time_window];
-  const bucket_seconds = TIME_WINDOW_SECONDS[time_window] / buckets;
+function timeseriesFor(range: FixtureRange): MetricsTimeseries {
+  const buckets = RANGE_BUCKETS[range];
+  const bucket_seconds = RANGE_SECONDS[range] / buckets;
   return {
     project_id: PROJECT_ID,
-    time_window,
+    from: new Date(BUCKET_ANCHOR).toISOString(),
+    to: new Date(BUCKET_ANCHOR + RANGE_SECONDS[range] * 1000).toISOString(),
     bucket_seconds,
     points: Array.from({ length: buckets }, (_item, index) => ({
       start_at: new Date(BUCKET_ANCHOR + index * bucket_seconds * 1000).toISOString(),
@@ -390,7 +410,8 @@ const EXPENSIVE_TIMESERIES: MetricsTimeseries = {
 const DISTRIBUTION: MetricsDistribution = {
   project_id: PROJECT_ID,
   metric: 'cost_per_request',
-  time_window: '30d',
+  from: KPIS.from,
+  to: KPIS.to,
   request_count: 95,
   mean: 0.894198,
   std: 0.612,
@@ -407,6 +428,8 @@ const DISTRIBUTION: MetricsDistribution = {
 };
 
 const REQUESTS: RequestList = {
+  from: KPIS.from,
+  to: KPIS.to,
   total: 95,
   items: [
     {
@@ -574,6 +597,8 @@ const RUNNING_TRACE: RequestTrace = {
 
 // The listing behind that trace, so the row and the drawer describe the same in-flight query.
 const RUNNING_REQUESTS: RequestList = {
+  from: REQUESTS.from,
+  to: REQUESTS.to,
   total: 1,
   items: [{ ...REQUESTS.items[0]!, status: 'running', finished_at: null, duration_ms: null }],
 };
@@ -586,8 +611,17 @@ const PROJECT = {
   updated_at: '2026-07-01T12:00:00.000Z',
 };
 
-function requestedTimeWindow(url: URL): MetricsWindow {
-  return (url.searchParams.get('time_window') as MetricsWindow | null) ?? '7d';
+function requestedRange(url: URL) {
+  return { from: url.searchParams.get('from')!, to: url.searchParams.get('to')! };
+}
+
+function requestedFixtureRange(url: URL): FixtureRange {
+  const { from, to } = requestedRange(url);
+  const days = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+  if (days <= 1.1) return '1d';
+  if (days <= 7.1) return '7d';
+  if (days <= 30.1) return '30d';
+  return '1q';
 }
 
 interface MetricsMocks {
@@ -630,15 +664,29 @@ async function mockProjectCost(page: Page, options: MetricsMocks = {}): Promise<
   const calls: string[] = [];
   const routes: readonly [string, (url: URL) => unknown, boolean][] = [
     [`/projects/${PROJECT_ID}`, () => PROJECT, false],
-    [KPIS_PATH, () => options.kpis ?? KPIS, options.kpisFails === true],
-    [BLOCKS_PATH, () => options.blocks ?? BLOCKS, false],
+    [
+      KPIS_PATH,
+      (url) => {
+        const kpis = options.kpis ?? { ...KPIS, ...KPI_RANGES[requestedFixtureRange(url)] };
+        return { ...kpis, ...requestedRange(url), ...runRateFor(kpis, requestedRange(url)) };
+      },
+      options.kpisFails === true,
+    ],
+    [BLOCKS_PATH, (url) => ({ ...(options.blocks ?? BLOCKS), ...requestedRange(url) }), false],
     [
       TIMESERIES_PATH,
-      (url) => options.timeseries ?? timeseriesFor(requestedTimeWindow(url)),
+      (url) => ({
+        ...(options.timeseries ?? timeseriesFor(requestedFixtureRange(url))),
+        ...requestedRange(url),
+      }),
       false,
     ],
-    [DISTRIBUTION_PATH, () => DISTRIBUTION, false],
-    [`/projects/${PROJECT_ID}/requests`, () => options.requests ?? REQUESTS, false],
+    [DISTRIBUTION_PATH, (url) => ({ ...DISTRIBUTION, ...requestedRange(url) }), false],
+    [
+      `/projects/${PROJECT_ID}/requests`,
+      (url) => ({ ...(options.requests ?? REQUESTS), ...requestedRange(url) }),
+      false,
+    ],
   ];
 
   for (const [pathname, body, fails] of routes) {
@@ -725,11 +773,11 @@ async function boundingBoxes(ticks: Locator) {
   return boxes.map((box) => box!);
 }
 
-const AXIS_SHAPES: readonly [string, MetricsWindow, RegExp][] = [
-  ['24 hours', '1d', /^\d{1,2} (AM|PM)$/],
-  ['7 days', '7d', /^[A-Z][a-z]{2} \d{1,2}$/],
+const AXIS_SHAPES: readonly [string, FixtureRange, RegExp][] = [
+  ['24 hours', '1d', /^\d{1,2}:\d{2} (AM|PM)$/],
+  ['7 days', '7d', /^[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} (AM|PM)$/],
   ['30 days', '30d', /^[A-Z][a-z]{2} \d{1,2}$/],
-  ['90 days', '1q', /^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/],
+  ['90 days', '1q', /^[A-Z][a-z]{2} \d{1,2}$/],
 ];
 
 test.describe('project cost dashboard', () => {
@@ -779,9 +827,9 @@ test.describe('project cost dashboard', () => {
     const chart = page.getByTestId('project-timeseries-chart');
     const ticks = timeseriesTicks(chart);
 
-    for (const [control, time_window, shape] of AXIS_SHAPES) {
+    for (const [control, range, shape] of AXIS_SHAPES) {
       await page.getByTestId('project-window-toggle').getByRole('radio', { name: control }).click();
-      const { points } = timeseriesFor(time_window);
+      const { points } = timeseriesFor(range);
       await expect(chart.locator('.recharts-bar-rectangle')).toHaveCount(points.length * 2);
       await expect(ticks).toHaveCount(points.length);
 
@@ -791,22 +839,8 @@ test.describe('project cost dashboard', () => {
       expect(labels.filter((label, index) => labels.indexOf(label) !== index)).toEqual([]);
     }
 
-    // The loop ends on the quarter, whose bars group whole local days: consecutive ranges run day
-    // to day instead of sharing a boundary.
-    expect((await ticks.allTextContents()).slice(0, 2)).toEqual([
-      'Jun 29 – Jul 1',
-      'Jul 2 – Jul 4',
-    ]);
-
-    const browser_time_zone = await page.evaluate(
-      () => Intl.DateTimeFormat().resolvedOptions().timeZone
-    );
     const seven_day_call = calls.find((call) => call.startsWith(`${TIMESERIES_PATH}?`));
-    const search = new URL(seven_day_call!, 'http://localhost').searchParams;
-    expect(search.get('time_window')).toBe('7d');
-    expect(search.get('buckets')).toBe('7');
-    expect(search.get('time_zone')).toBe(browser_time_zone);
-    expect(calls.filter((call) => call.includes('buckets=undefined'))).toEqual([]);
+    expect(requestedFixtureRange(new URL(seven_day_call!, 'http://localhost'))).toBe('7d');
   });
 
   test('tilted labels and money ticks stay inside the plotting surface', async ({ page }) => {
@@ -841,13 +875,16 @@ test.describe('project cost dashboard', () => {
     await authenticate(page);
     await mockProjectCost(page);
 
-    const time_windows: string[] = [];
+    const requested_ranges: FixtureRange[] = [];
     await page.route(
       (url) => url.origin === apiOrigin && url.pathname.endsWith('/metrics/timeseries'),
       (route) => {
         const url = new URL(route.request().url());
-        time_windows.push(url.searchParams.get('time_window') ?? '');
-        return fulfillJson(route, timeseriesFor(requestedTimeWindow(url)));
+        requested_ranges.push(requestedFixtureRange(url));
+        return fulfillJson(route, {
+          ...timeseriesFor(requestedFixtureRange(url)),
+          ...requestedRange(url),
+        });
       }
     );
 
@@ -856,73 +893,59 @@ test.describe('project cost dashboard', () => {
 
     await page.getByTestId('project-window-toggle').getByRole('radio', { name: '30 days' }).click();
 
-    await expect.poll(() => time_windows.at(-1)).toBe('30d');
-    // KPIs ship all four windows in one payload, so the ribbon switches without a refetch.
+    await expect.poll(() => requested_ranges.at(-1)).toBe('30d');
     await expect(page.getByTestId('project-cost-total')).toContainText('84.9');
     await expect(
       page.getByTestId('project-window-toggle').getByRole('radio', { name: '30 days' })
     ).toHaveAttribute('data-state', 'on');
   });
 
-  test('the window toggle rides into the header once the hero scrolls away', async ({ page }) => {
+  test('the window toggle stays in the app header while the page scrolls', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page);
 
-    const time_windows: string[] = [];
+    const requested_ranges: FixtureRange[] = [];
     await page.route(
       (url) => url.origin === apiOrigin && url.pathname.endsWith('/metrics/timeseries'),
       (route) => {
         const url = new URL(route.request().url());
-        time_windows.push(url.searchParams.get('time_window') ?? '');
-        return fulfillJson(route, timeseriesFor(requestedTimeWindow(url)));
+        requested_ranges.push(requestedFixtureRange(url));
+        return fulfillJson(route, {
+          ...timeseriesFor(requestedFixtureRange(url)),
+          ...requestedRange(url),
+        });
       }
     );
 
     await page.goto(`/projects/${PROJECT_ID}`);
 
-    const hero_toggle = page.getByTestId('project-hero').getByTestId('project-window-toggle');
-    const docked_toggle = page.getByTestId('app-header').getByTestId('project-window-toggle');
-    await expect(hero_toggle).toBeVisible();
-    await expect(docked_toggle).toHaveCount(0);
-
-    const headerBox = async () => page.getByTestId('app-header').boundingBox();
-    const header_before = await headerBox();
+    const toggle = page.getByTestId('app-header').getByTestId('project-window-toggle');
+    await expect(toggle).toBeVisible();
+    await expect(page.getByTestId('project-hero').getByTestId('project-window-toggle')).toHaveCount(
+      0
+    );
 
     await scrollShellTo(page, 600);
+    await expect(toggle).toBeVisible();
 
-    // Moved, not copied: two instances would mean two focus targets and two states to keep in sync.
-    await expect(docked_toggle).toBeVisible();
-    await expect(hero_toggle).toHaveCount(0);
-    // Docking must not grow the header — the shell is a fixed-height column above the scroll port.
-    expect(await headerBox()).toEqual(header_before);
-
-    await docked_toggle.getByRole('radio', { name: '30 days' }).click();
-    await expect.poll(() => time_windows.at(-1)).toBe('30d');
+    await toggle.getByRole('radio', { name: '30 days' }).click();
+    await expect.poll(() => requested_ranges.at(-1)).toBe('30d');
     await expect(page.getByTestId('project-cost-total')).toContainText('84.9');
-
-    await scrollShellTo(page, 0);
-    await expect(hero_toggle).toBeVisible();
-    await expect(docked_toggle).toHaveCount(0);
-    // The window the reader picked while docked survives the trip back.
-    await expect(hero_toggle.getByRole('radio', { name: '30 days' })).toHaveAttribute(
-      'data-state',
-      'on'
-    );
   });
 
   test('the window is read from and written to the address', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page);
-    await page.goto(`/projects/${PROJECT_ID}?time_window=30d`);
+    await page.goto(`/projects/${PROJECT_ID}?range=30d`);
 
-    const toggle = page.getByTestId('project-hero').getByTestId('project-window-toggle');
+    const toggle = page.getByTestId('app-header').getByTestId('project-window-toggle');
     await expect(toggle.getByRole('radio', { name: '30 days' })).toHaveAttribute(
       'data-state',
       'on'
     );
 
     await toggle.getByRole('radio', { name: '24 hours' }).click();
-    await expect(page).toHaveURL(/[?&]time_window=1d\b/);
+    await expect(page).toHaveURL(/[?&]range=24h\b/);
   });
 
   test('a section that fails shows its own error without blanking the others', async ({ page }) => {
@@ -962,23 +985,20 @@ test.describe('project cost dashboard', () => {
     await expect(page.getByTestId('project-timeseries-stats')).toBeVisible();
   });
 
-  test('a request that straddles time_window still shows its in-window spend', async ({ page }) => {
+  test('a request that straddles the range still shows its in-range spend', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page, {
       kpis: {
         ...KPIS,
-        windows: {
-          ...KPIS.windows,
-          '7d': kpiWindow({
-            request_count: 0,
-            block_count: 2,
-            llm_cost: '2.000000',
-            harness_cost: '0.250000',
-            total_cost: '2.250000',
-            per_block_cost: '1.125000',
-            per_costed_request_cost: null,
-          }),
-        },
+        ...kpiRange({
+          request_count: 0,
+          block_count: 2,
+          llm_cost: '2.000000',
+          harness_cost: '0.250000',
+          total_cost: '2.250000',
+          per_block_cost: '1.125000',
+          per_costed_request_cost: null,
+        }),
       },
     });
 
@@ -989,9 +1009,9 @@ test.describe('project cost dashboard', () => {
   });
 });
 
-const kpisForWindow = (window_overrides: Partial<MetricsKpis['windows']['30d']>): MetricsKpis => ({
+const kpisForRange = (range_overrides: Partial<MetricsKpi>): MetricsKpis => ({
   ...KPIS,
-  windows: { ...KPIS.windows, '7d': kpiWindow(window_overrides) },
+  ...kpiRange(range_overrides),
 });
 
 const coverageBadge = (page: Page, cell: string) => page.getByTestId(`${cell}-coverage`);
@@ -1031,7 +1051,7 @@ test.describe('cost coverage', () => {
   test('a partly priced window says how much of it reported a cost', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page, {
-      kpis: kpisForWindow({
+      kpis: kpisForRange({
         request_count: 95,
         block_count: 681,
         costed_request_count: 40,
@@ -1070,7 +1090,7 @@ test.describe('cost coverage', () => {
   test('a window nothing priced reads as unavailable rather than as free', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page, {
-      kpis: kpisForWindow({
+      kpis: kpisForRange({
         request_count: 95,
         block_count: 681,
         costed_request_count: 0,
@@ -1117,7 +1137,7 @@ test.describe('cost coverage', () => {
   test('a window that ran nothing is quiet rather than unavailable', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page, {
-      kpis: kpisForWindow({
+      kpis: kpisForRange({
         request_count: 0,
         block_count: 0,
         costed_request_count: 0,
@@ -1184,10 +1204,13 @@ test.describe('spend tabs', () => {
     ] as const) {
       await page.getByTestId('project-window-toggle').getByRole('radio', { name: label }).click();
       await expect
-        .poll(() =>
-          calls.filter((call) => call.startsWith(`/projects/${PROJECT_ID}/requests?`)).at(-1)
-        )
-        .toContain(`time_window=${window}`);
+        .poll(() => {
+          const call = calls
+            .filter((item) => item.startsWith(`/projects/${PROJECT_ID}/requests?`))
+            .at(-1);
+          return call ? requestedFixtureRange(new URL(call, 'http://localhost')) : null;
+        })
+        .toBe(window);
     }
   });
 
@@ -1217,13 +1240,13 @@ test.describe('spend tabs', () => {
     await authenticate(page);
     await mockProjectCost(page, {
       blocks: { ...BLOCKS, total_cost: '0.000000', blocks: [] },
-      requests: { total: 0, items: [] },
+      requests: { from: REQUESTS.from, to: REQUESTS.to, total: 0, items: [] },
     });
 
     await page.goto(`/projects/${PROJECT_ID}`);
 
     const highlights = page.getByTestId('project-spend-highlights');
-    await expect(highlights).toContainText('Nothing has billed in this window.');
+    await expect(highlights).toContainText('Nothing has billed in this range.');
     await expect(highlights).toContainText('No queries have billed yet.');
   });
 
@@ -1232,7 +1255,7 @@ test.describe('spend tabs', () => {
   }) => {
     await authenticate(page);
     await mockProjectCost(page, {
-      kpis: kpisForWindow({
+      kpis: kpisForRange({
         request_count: 95,
         block_count: 681,
         costed_request_count: 0,
@@ -1271,14 +1294,14 @@ test.describe('spend tabs', () => {
     );
     await expect(highlights).not.toContainText('$0.00');
     await expect(highlights).not.toContainText('Report Writer');
-    await expect(highlights).toContainText('Cost data is unavailable for this window.');
+    await expect(highlights).toContainText('Cost data is unavailable for this range.');
   });
 
   test('empty data is visible in both Per-Agent and Per-Query views', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page, {
       blocks: { ...BLOCKS, total_cost: '0.000000', blocks: [] },
-      requests: { total: 0, items: [] },
+      requests: { from: REQUESTS.from, to: REQUESTS.to, total: 0, items: [] },
     });
     await page.goto(`/projects/${PROJECT_ID}`);
 
@@ -1356,7 +1379,8 @@ function manyBlocks(count: number): MetricsBlocks {
 
   return {
     project_id: PROJECT_ID,
-    time_window: '30d',
+    from: KPIS.from,
+    to: KPIS.to,
     total_cost: blocks.reduce((sum, block) => sum + Number(block.cost), 0).toFixed(6),
     blocks,
   };
@@ -1456,6 +1480,23 @@ test.describe('spend shell', () => {
     });
   });
 
+  test.describe('tall content on a short desktop', () => {
+    test.use({ viewport: { width: 1280, height: 600 } });
+
+    test('the card grows to hold the views that do not scroll', async ({ page }) => {
+      await authenticate(page);
+      await mockProjectCost(page);
+      await page.goto(`/projects/${PROJECT_ID}`);
+      await expect(page.getByTestId('project-timeseries-run-rate')).toBeVisible();
+
+      expect(Math.abs((await cardFit(page)).content_gap)).toBeLessThanOrEqual(SHELL_TOLERANCE);
+
+      await openSpendTab(page, 'Per-Agent view');
+      await expect(page.getByTestId('project-agent-share')).toBeVisible();
+      expect(Math.abs((await cardFit(page)).content_gap)).toBeLessThanOrEqual(SHELL_TOLERANCE);
+    });
+  });
+
   test.describe('a long agent list on a tall desktop', () => {
     test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -1524,33 +1565,6 @@ test.describe('spend shell', () => {
   });
 });
 
-test.describe('project cost local time zone', () => {
-  test.use({ timezoneId: 'Asia/Shanghai' });
-
-  test('a UTC Aug 5 bucket is labelled Aug 6 when it starts at local midnight', async ({
-    page,
-  }) => {
-    await authenticate(page);
-    const local_midnight = Date.UTC(2026, 7, 5, 16);
-    const local_series = timeseriesFor('7d');
-    const timeseries = {
-      ...local_series,
-      points: local_series.points.map((point, index) => ({
-        ...point,
-        start_at: new Date(local_midnight + index * 86_400_000).toISOString(),
-      })),
-    };
-    const calls = await mockProjectCost(page, { timeseries });
-
-    await page.goto(`/projects/${PROJECT_ID}`);
-
-    const chart = page.getByTestId('project-timeseries-chart');
-    await expect(timeseriesTicks(chart).first()).toHaveText('Aug 6');
-    const call = calls.find((item) => item.startsWith(`${TIMESERIES_PATH}?`));
-    expect(new URL(call!, 'http://localhost').searchParams.get('time_zone')).toBe('Asia/Shanghai');
-  });
-});
-
 test.describe('distribution selection', () => {
   test('picking a histogram bar lists that bucket, and picking it again clears', async ({
     page,
@@ -1596,7 +1610,7 @@ test.describe('distribution selection', () => {
 
     await expect(
       page.getByTestId('project-queries').getByRole('heading', { level: 2 })
-    ).toContainText('Queries in');
+    ).toContainText('Queries · 7 days ·');
     await expect.poll(() => ranges.at(-1)).toMatch(/^cost_per_request:/);
 
     await clickBar();
@@ -1606,16 +1620,21 @@ test.describe('distribution selection', () => {
     await expect.poll(() => ranges.at(-1)).toBe('all');
   });
 
-  test('changing time_window clears the selected bucket', async ({ page }) => {
+  test('changing the range clears the selected bucket', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page);
 
-    const ranges: string[] = [];
+    const asks: { selected: boolean; days: number }[] = [];
     await page.route(
       (url) => url.origin === apiOrigin && url.pathname.endsWith('/requests'),
       (route) => {
         const url = new URL(route.request().url());
-        ranges.push(url.searchParams.get('metric') ? 'selected' : 'all');
+        const span_ms =
+          Date.parse(url.searchParams.get('to')!) - Date.parse(url.searchParams.get('from')!);
+        asks.push({
+          selected: url.searchParams.has('metric'),
+          days: Math.round(span_ms / 86_400_000),
+        });
         return fulfillJson(route, REQUESTS);
       }
     );
@@ -1627,13 +1646,15 @@ test.describe('distribution selection', () => {
       .first();
     await expect(bar).toBeAttached();
     await bar.dispatchEvent('click');
-    await expect.poll(() => ranges.at(-1)).toBe('selected');
+    await expect.poll(() => asks.at(-1)?.selected).toBe(true);
 
     await page.getByTestId('project-window-toggle').getByRole('radio', { name: '30 days' }).click();
 
     // The bucket lives in the screen, not the URL, so the cleared bucket shows up in what the table
     // asks for rather than in the address bar.
-    await expect.poll(() => ranges.at(-1)).toBe('all');
+    await expect.poll(() => asks.at(-1)).toEqual({ selected: false, days: 30 });
+    // Dropped in the same render as the range change: the old bucket is never asked for under 30 days.
+    expect(asks.filter((ask) => ask.selected && ask.days === 30)).toHaveLength(0);
     await expect(page.getByTestId('project-queries').getByRole('heading', { level: 2 })).toHaveText(
       'Queries · 30 days'
     );
@@ -1643,6 +1664,8 @@ test.describe('distribution selection', () => {
 test.describe('queries table ordering and paging', () => {
   // A full page, so "1–5 of 95" and the Next button both have something to describe.
   const FULL_PAGE: RequestList = {
+    from: REQUESTS.from,
+    to: REQUESTS.to,
     total: 95,
     items: Array.from({ length: 5 }, (_item, index) => ({
       ...REQUESTS.items[0]!,
@@ -1821,23 +1844,6 @@ test.describe('queries table ordering and paging', () => {
     await expect(page.getByTestId('project-queries-count')).toHaveText('1–5 of 95 queries');
   });
 
-  test('refreshing re-reads the active overview metrics', async ({ page }) => {
-    await authenticate(page);
-    const calls = await mockProjectCost(page);
-    await page.goto(`/projects/${PROJECT_ID}`);
-
-    await expect(page.getByTestId('project-timeseries-chart')).toBeVisible();
-    const metrics_before = OVERVIEW_PATHS.map((path) => countCalls(calls, path));
-
-    await page.getByTestId('project-header-refresh').click();
-
-    for (const [index, path] of OVERVIEW_PATHS.entries()) {
-      await expect
-        .poll(() => countCalls(calls, path), { message: `re-read ${path}` })
-        .toBeGreaterThan(metrics_before[index]!);
-    }
-  });
-
   test('re-reads what is on screen on its own, with no click', async ({ page }) => {
     await authenticate(page);
     const calls = await mockProjectCost(page);
@@ -1865,7 +1871,7 @@ test.describe('queries table ordering and paging', () => {
     await expect.poll(() => listingReads(), waits).toBeGreaterThan(listed);
   });
 
-  test('a re-read in flight leaves paging and the refresh control alone', async ({ page }) => {
+  test('a re-read in flight leaves paging alone', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page);
     const listing = await holdNextListingRead(page);
@@ -1873,23 +1879,19 @@ test.describe('queries table ordering and paging', () => {
     await openQueryView(page);
 
     const next = page.getByTestId('project-queries-next');
-    const refresh = page.getByTestId('project-header-refresh');
     await expect(next).toBeEnabled();
 
     listing.arm();
     await listing.in_flight;
 
     // Asserted while the read is held open, so this is the screen mid-poll rather than after it.
-    // The tick is the dashboard's own work: it owns neither the control that pages the listing nor
-    // the one that asks for a read.
+    // The tick is the dashboard's own work, so it never disables the control that pages the listing.
     await expect(next).toBeEnabled();
-    await expect(refresh).toBeEnabled();
-    await expect(refresh.locator('svg').first()).not.toHaveClass(/animate-spin/);
 
     listing.release();
   });
 
-  test('refreshing keeps the listing on its page and filter, and asks the metrics for neither', async ({
+  test('a re-read keeps the listing on its page and filter, and asks the metrics for neither', async ({
     page,
   }) => {
     await authenticate(page);
@@ -1904,48 +1906,18 @@ test.describe('queries table ordering and paging', () => {
     await page.getByRole('option', { name: 'Failed', exact: true }).click();
     await expect.poll(() => lastAsk(asked, 'status')).toBe('failed');
 
+    // The dashboard re-reads on its own interval; room for several turns of it on a loaded machine.
     const kpis_before = countCalls(calls, KPIS_PATH);
-    await page.getByTestId('project-header-refresh').click();
-    await expect.poll(() => countCalls(calls, KPIS_PATH)).toBeGreaterThan(kpis_before);
+    await expect
+      .poll(() => countCalls(calls, KPIS_PATH), { timeout: 20_000 })
+      .toBeGreaterThan(kpis_before);
 
-    // The status filter narrows the listing only. The metrics endpoints take a window and nothing
+    // The status filter narrows the listing only. The metrics endpoints take a range and nothing
     // else, so a table filter must never reach them.
     expect(lastAsk(asked, 'status')).toBe('failed');
     for (const call of calls.filter((item) => item.startsWith(KPIS_PATH))) {
       expect(call).not.toContain('status');
     }
-  });
-
-  test('refreshing re-reads the window on screen and leaves the ones behind it alone', async ({
-    page,
-  }) => {
-    await authenticate(page);
-    const calls = await mockProjectCost(page);
-    await page.goto(`/projects/${PROJECT_ID}`);
-    await openQueryView(page);
-
-    const toggle = page.getByTestId('project-window-toggle');
-    await page.getByRole('tab', { name: 'Overview' }).click();
-    await toggle.getByRole('radio', { name: '30 days' }).click();
-    await expect
-      .poll(() => countCalls(calls, `${TIMESERIES_PATH}?time_window=30d`))
-      .toBeGreaterThan(0);
-    await toggle.getByRole('radio', { name: '7 days' }).click();
-    await expect
-      .poll(() => countCalls(calls, `${TIMESERIES_PATH}?time_window=7d`))
-      .toBeGreaterThan(0);
-
-    const thirty_before = countCalls(calls, `${TIMESERIES_PATH}?time_window=30d`);
-    const seven_before = countCalls(calls, `${TIMESERIES_PATH}?time_window=7d`);
-
-    await page.getByTestId('project-header-refresh').click();
-    await expect
-      .poll(() => countCalls(calls, `${TIMESERIES_PATH}?time_window=7d`))
-      .toBeGreaterThan(seven_before);
-
-    // 30d is cached but unmounted. It is marked stale and re-read if the reader goes back to it —
-    // refreshing must not fan a click out across every window they have visited.
-    expect(countCalls(calls, `${TIMESERIES_PATH}?time_window=30d`)).toBe(thirty_before);
   });
 });
 
@@ -2001,7 +1973,7 @@ test.describe('block metrics drawer', () => {
     await expect(page.getByTestId(DRAWER)).toBeVisible();
     await expect(page.getByRole('dialog', { name: 'Report Writer' })).toBeVisible();
     await expect(page.getByTestId(`${DRAWER}-kind`)).toHaveText('Model · claude-opus-5');
-    await expect(page.getByTestId(DRAWER)).toContainText('Last 30 days');
+    await expect(page.getByTestId(DRAWER)).toContainText('Overview · 30 days');
 
     for (const [label, value, hint] of [
       ['Cost', '$68.71', '128 blocks'],
@@ -2033,7 +2005,12 @@ test.describe('block metrics drawer', () => {
       .getByTestId('project-window-toggle')
       .getByRole('radio', { name: '24 hours' })
       .click();
-    await expect.poll(() => calls.filter(isBlocksCall).at(-1)).toContain('time_window=1d');
+    await expect
+      .poll(() => {
+        const call = calls.filter(isBlocksCall).at(-1);
+        return call ? requestedFixtureRange(new URL(call, 'http://localhost')) : null;
+      })
+      .toBe('1d');
 
     await page.getByTestId(WRITER_CARD).click();
     await expect(page.getByTestId(`${DRAWER}-overview`)).toBeVisible();
@@ -2042,11 +2019,13 @@ test.describe('block metrics drawer', () => {
     expect(
       unique(calls.filter(isAgentCall)).map((call) => new URL(call, 'http://localhost').pathname)
     ).toEqual([`${AGENTS_PATH}writer`]);
-    expect(unique(calls.filter(isBlocksCall))).toEqual([
-      `${BLOCKS_PATH}?time_window=7d`,
-      `${BLOCKS_PATH}?time_window=1d`,
-      `${BLOCKS_PATH}?time_window=30d`,
-    ]);
+    expect(
+      unique(
+        calls
+          .filter(isBlocksCall)
+          .map((call) => requestedFixtureRange(new URL(call, 'http://localhost')))
+      )
+    ).toEqual(['7d', '1d', '30d']);
   });
 
   test('the cost-per-query curve climbs through cost against the share of queries', async ({
@@ -2325,9 +2304,17 @@ test.describe('query trace drawer', () => {
       page.getByTestId('trace-block-prompt-version').filter({ visible: true })
     ).toHaveText('Classifier-classify-0a1b2c3d-v3');
     await expect(page.getByTestId(TRACE_DRAWER)).toContainText('review-escalation ×5');
-    await expect
-      .poll(() => calls.some((call) => call.endsWith(`/requests/${SESSION_ID}`)))
-      .toBe(true);
+    // The medians compare against the range the listing answered for, so the trace asks for it.
+    const rangeOf = (call: string) => {
+      const params = new URL(call, 'http://localhost').searchParams;
+      return `${params.get('from')}/${params.get('to')}`;
+    };
+    const trace_path = `/projects/${PROJECT_ID}/requests/${SESSION_ID}?`;
+    await expect.poll(() => calls.some((call) => call.startsWith(trace_path))).toBe(true);
+    const listed = calls
+      .filter((call) => call.startsWith(`/projects/${PROJECT_ID}/requests?`))
+      .map(rangeOf);
+    expect(listed).toContain(rangeOf(calls.find((call) => call.startsWith(trace_path))!));
 
     await page.keyboard.press('Escape');
     await expect(page.getByTestId(TRACE_DRAWER)).toHaveCount(0);
@@ -2518,14 +2505,20 @@ test.describe('queries day filter', () => {
       (route) => {
         const params = new URL(route.request().url()).searchParams;
         asked.push(params);
+        const from = params.get('from')!;
+        const to = params.get('to')!;
         const filtered = params.has('created_from');
-        if (filtered && empty_day) return fulfillJson(route, { total: 0, items: [] });
+        if (filtered && empty_day) {
+          return fulfillJson(route, { from, to, total: 0, items: [] });
+        }
         // Paged like the endpoint is, so the last page of a filtered day is short and the count
         // line under the table has a real range to print.
         const total = filtered ? DAY_TOTAL : 95;
         const offset = Number(params.get('offset') ?? 0);
         const shown = Math.max(0, Math.min(Number(params.get('limit') ?? 5), total - offset));
         return fulfillJson(route, {
+          from,
+          to,
           total,
           items: Array.from({ length: shown }, (_item, index) => ({
             ...REQUESTS.items[0]!,
@@ -2611,14 +2604,6 @@ test.describe('queries day filter', () => {
     // Nothing to reset until a day is picked.
     await expect(page.getByTestId('project-queries-calendar-reset')).toHaveCount(0);
 
-    // Refresh applies to the project overview, so the query section keeps only its local day filter.
-    await expect(
-      page.getByTestId('project-queries').getByTestId('project-header-refresh')
-    ).toHaveCount(0);
-    await expect(
-      page.getByTestId('app-header').getByTestId('project-header-refresh')
-    ).toBeVisible();
-
     await trigger.focus();
     await page.keyboard.press('Enter');
     const grid = page.getByRole('grid');
@@ -2652,9 +2637,10 @@ test.describe('queries day filter', () => {
     await page.getByTestId('project-queries-calendar').click();
     await dayCell(page, today.key).getByRole('button').click();
 
-    // Half-open local midnights, sent as instants.
+    // Half-open local midnights, sent as instants beside the range they narrow.
     await expect.poll(() => lastAsk(asked, 'created_from')).toBe(today.created_from);
     expect(lastAsk(asked, 'created_to')).toBe(today.created_to);
+    expect(requestedFixtureRange(new URL(`?${asked.at(-1)}`, 'http://localhost'))).toBe('7d');
     expect(lastAsk(asked, 'offset')).toBe('0');
 
     await expect(queriesHeading(page)).toHaveText(`Queries · 7 days · ${today.label}`);
@@ -2721,7 +2707,7 @@ test.describe('queries day filter', () => {
     await expect(empty).toHaveCount(0);
   });
 
-  test('changing the metrics window clears the picked day', async ({ page }) => {
+  test('changing the metrics range clears the picked day', async ({ page }) => {
     await authenticate(page);
     await mockProjectCost(page);
     const asked = await trackListing(page);
@@ -2740,7 +2726,9 @@ test.describe('queries day filter', () => {
       .click();
 
     // A day picked under a wider window may sit outside the new one, so the filter goes with it.
-    await expect.poll(() => lastAsk(asked, 'created_from')).toBeNull();
+    await expect
+      .poll(() => requestedFixtureRange(new URL(`?${asked.at(-1)}`, 'http://localhost')))
+      .toBe('1d');
     await expect(queriesHeading(page)).toHaveText('Queries · 24 hours');
     // Back to naming the window, which is now the narrower one that cleared the day.
     await expect(page.getByTestId('project-queries-calendar')).toHaveText('24 hours');

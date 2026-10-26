@@ -8,17 +8,21 @@ import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { User } from '@canyonos/api/auth';
 import type { ProjectSummary } from '@canyonos/api/projects';
-import type { FleetOverview, FleetProject } from '@canyonos/api/resources';
+import type { FleetProject } from '@canyonos/api/resources';
 
 import { SectionLabel } from '@repo/ui/components/section-label';
 import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { apiCall, forgeAuthApi } from '@/api';
 import { authSelectors, useAuthStore } from '@/modules/auth/auth.store';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { formatCount, formatMoneyValue } from '@/modules/projects/projects.format';
-import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import {
+  fleetOverviewQueryOptions,
+  projectsQueryOptions,
+} from '@/modules/projects/projects.queries';
+
+const OVERVIEW_RANGE = { preset: '30d' } as const;
 
 const SKELETON_KEYS = ['a', 'b', 'c', 'd', 'e'] as const;
 const ENTER = 'animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both ease-snappy duration-300';
@@ -62,19 +66,8 @@ function formatRelativeTime(iso: string): string {
 }
 
 export function ProjectsOverviewScreen() {
-  const projectsQuery = useQuery({
-    queryKey: projectQueryKeys.all,
-    queryFn: () => apiCall<ProjectSummary[]>(() => forgeAuthApi.projects.get()),
-    retry: false,
-  });
-  const spend_query = useQuery({
-    queryKey: ['resources', 'overview', '30d'],
-    queryFn: () =>
-      apiCall<FleetOverview>(() =>
-        forgeAuthApi.resources.overview.get({ $query: { time_window: '30d' } })
-      ),
-    retry: false,
-  });
+  const projectsQuery = useQuery(projectsQueryOptions());
+  const spend_query = useQuery(fleetOverviewQueryOptions({ range: OVERVIEW_RANGE }));
   const user = useAuthStore(authSelectors.user);
 
   // Spend is decoration on a row that already reads without it, so a failed rollup drops the figures

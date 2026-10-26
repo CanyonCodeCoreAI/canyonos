@@ -5,7 +5,6 @@ import { useQuery } from '@tanstack/react-query';
 import { getRouteApi } from '@tanstack/react-router';
 import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
 import type { MonitoringSeries, MonitoringSeriesResponse } from '@canyonos/api/monitoring';
 
 import { TimeseriesChart } from '@repo/ui/components/charts/timeseries-chart';
@@ -16,24 +15,23 @@ import type { TimeRangeOption } from '@repo/ui/components/time-range-toggle';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { dailyTickInterval, formatBucketLabel, LOCAL_TIME_ZONE } from '@/modules/core/time-range';
 import { LlmCallList } from '@/modules/monitoring/components/llm-call-list';
 import { TraceList } from '@/modules/monitoring/components/trace-list';
 import {
-  formatBucketLabel,
   formatSignalValue,
   monitoringSeriesQueryOptions,
   SIGNAL_LABELS,
   UNIT_AXIS_LABELS,
 } from '@/modules/monitoring/monitoring.queries';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
+import type { RangeSelection } from '@/modules/core/time-range';
 import type { TraceView } from '@/modules/monitoring/monitoring.search';
 
 const SIGNAL_COLORS = {
   traffic: 'var(--signal-traffic)',
   latency: 'var(--signal-latency)',
 } as const;
-
-const X_TICK_INTERVAL = 2;
 
 const VIEW_OPTIONS = [
   { value: 'traces', label: 'All traces' },
@@ -51,12 +49,14 @@ const isShown = (series: MonitoringSeries): series is ShownSeries => series.sign
 
 interface MonitoringScreenProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   readonly view: TraceView;
 }
 
-export function MonitoringScreen({ project_id, time_window, view }: MonitoringScreenProps) {
-  const query = useQuery(monitoringSeriesQueryOptions(project_id, time_window));
+export function MonitoringScreen({ project_id, range, view }: MonitoringScreenProps) {
+  const query = useQuery(
+    monitoringSeriesQueryOptions(project_id, { range, time_zone: LOCAL_TIME_ZONE })
+  );
   const navigate = route.useNavigate();
 
   return (
@@ -73,13 +73,15 @@ export function MonitoringScreen({ project_id, time_window, view }: MonitoringSc
       <section className="flex min-w-0 flex-col gap-3">
         <TimeRangeToggle
           value={view}
-          onValueChange={(next) => void navigate({ search: { time_window, view: next } })}
+          onValueChange={(next) =>
+            void navigate({ search: (previous) => ({ ...previous, view: next }) })
+          }
           options={VIEW_OPTIONS}
           aria-label="Trace view"
           data-testid="trace-view-toggle"
           className="self-start"
         />
-        <TraceViewPanel project_id={project_id} time_window={time_window} view={view} />
+        <TraceViewPanel project_id={project_id} range={range} view={view} />
       </section>
     </main>
   );
@@ -120,16 +122,15 @@ function SignalGrid({ query }: { readonly query: UseQueryResult<MonitoringSeries
 
 function TraceViewPanel({
   project_id,
-  time_window,
+  range,
   view,
 }: {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   readonly view: TraceView;
 }) {
-  if (view === 'llm_calls')
-    return <LlmCallList project_id={project_id} time_window={time_window} />;
-  return <TraceList project_id={project_id} time_window={time_window} />;
+  if (view === 'llm_calls') return <LlmCallList project_id={project_id} range={range} />;
+  return <TraceList project_id={project_id} range={range} />;
 }
 
 function SignalQuadrant({
@@ -163,9 +164,11 @@ function SignalQuadrant({
             maxValue={series.peak !== null && series.peak > 0 ? series.peak : 1}
             axisFormatter={(value) => formatSignalValue(value, series.unit)}
             valueFormatter={(value) => formatSignalValue(value, series.unit)}
-            xTickFormatter={(index) => formatBucketLabel(bucket_start_ats[index]!, bucket_seconds)}
-            xTickInterval={X_TICK_INTERVAL}
-            xAxisLabel={bucket_seconds >= 86_400 ? 'Time (day)' : 'Time (hour)'}
+            xTickFormatter={(index) =>
+              formatBucketLabel(bucket_start_ats[index]!, bucket_seconds, { short: true })
+            }
+            xTickInterval={dailyTickInterval(bucket_seconds)}
+            xAxisLabel="Time"
             yAxisLabel={UNIT_AXIS_LABELS[series.unit]}
             labelFormatter={(point) =>
               formatBucketLabel(bucket_start_ats[point.index]!, bucket_seconds)

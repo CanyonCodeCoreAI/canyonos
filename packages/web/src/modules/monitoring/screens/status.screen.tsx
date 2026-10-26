@@ -48,7 +48,7 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
   const project = useQuery(projectDetailQueryOptions(project_id));
   const endpoint = useQuery(endpointQueryOptions(project_id));
   const replicas_query = useQuery(replicasQueryOptions(project_id));
-  const errors = useQuery(errorSummaryQueryOptions(project_id, '1d'));
+  const errors = useQuery(errorSummaryQueryOptions(project_id, { range: { preset: '24h' } }));
 
   const deployment = deploymentOf(endpoint);
   // Agent replicas also run calls, but each one serves an endpoint request already counted.

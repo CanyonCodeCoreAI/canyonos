@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { withTimeZone } from '@core/time-range';
+import type { GridQuery, TimeRange } from '@core/time-range';
+
 import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
 import { monitoring_repo } from './monitoring.repo';
 import { SIGNALS } from './monitoring.signals';
@@ -15,7 +18,6 @@ import type {
   MonitoringLogSourcesResponse,
   MonitoringLogsQuery,
   MonitoringLogsResponse,
-  MonitoringQuery,
   MonitoringReplicasResponse,
   MonitoringResourceEntry,
   MonitoringResourceUtilizationResponse,
@@ -25,15 +27,15 @@ import type {
 
 export async function get_series(
   project_id: string,
-  query: MonitoringQuery
+  query: GridQuery
 ): Promise<MonitoringSeriesResponse> {
-  const { bucket_seconds, bucket_start_ats, ...values } = await monitoring_repo.series(
-    project_id,
-    query
+  const { bucket_seconds, bucket_start_ats, ...values } = await withTimeZone(query, () =>
+    monitoring_repo.series(project_id, query)
   );
   return {
     project_id,
-    time_window: query.time_window,
+    from: query.from,
+    to: query.to,
     bucket_seconds,
     bucket_start_ats,
     series: MonitoringSignalSchema.options.map((signal) => ({
@@ -57,17 +59,20 @@ const drop_buckets = (entries: MonitoringResourceEntry[], count: number) =>
     series: entry.series.map((series) => ({ ...series, values: series.values.slice(count) })),
   }));
 
-// The window opens on the first bucket anything was measured in, so a chart does not start on a
-// run of empty buckets. A window with no readings at all keeps its full grid.
+// The grid opens on the first bucket anything was measured in, so a chart does not start on a run
+// of empty buckets. A range with no readings at all keeps its full grid.
 export async function get_resource_utilization(
   project_id: string,
-  query: MonitoringQuery
+  query: GridQuery
 ): Promise<MonitoringResourceUtilizationResponse> {
-  const row = await monitoring_repo.resource_utilization(project_id, query);
+  const row = await withTimeZone(query, () =>
+    monitoring_repo.resource_utilization(project_id, query)
+  );
   const leading = leading_empty_buckets([...row.machines, ...row.agents]);
   return {
     project_id,
-    time_window: query.time_window,
+    from: query.from,
+    to: query.to,
     bucket_seconds: row.bucket_seconds,
     bucket_start_ats: row.bucket_start_ats.slice(leading),
     machines: drop_buckets(row.machines, leading),
@@ -77,10 +82,10 @@ export async function get_resource_utilization(
 
 export async function get_error_summary(
   project_id: string,
-  query: MonitoringQuery
+  query: TimeRange
 ): Promise<MonitoringErrorSummaryResponse> {
   const row = await monitoring_repo.error_summary(project_id, query);
-  return { project_id, time_window: query.time_window, ...row };
+  return { project_id, from: query.from, to: query.to, ...row };
 }
 
 export async function get_logs(
@@ -89,7 +94,8 @@ export async function get_logs(
 ): Promise<MonitoringLogsResponse> {
   return {
     project_id,
-    time_window: query.time_window,
+    from: query.from,
+    to: query.to,
     logs: await monitoring_repo.logs(project_id, query),
   };
 }
@@ -100,7 +106,8 @@ export async function get_llm_calls(
 ): Promise<MonitoringLlmCallsResponse> {
   return {
     project_id,
-    time_window: query.time_window,
+    from: query.from,
+    to: query.to,
     calls: await monitoring_repo.llm_calls(project_id, query),
   };
 }
@@ -111,18 +118,20 @@ export async function get_traces(
 ): Promise<MonitoringTracesResponse> {
   return {
     project_id,
-    time_window: query.time_window,
+    from: query.from,
+    to: query.to,
     traces: await monitoring_repo.traces(project_id, query),
   };
 }
 
 export async function get_log_sources(
   project_id: string,
-  query: MonitoringQuery
+  query: TimeRange
 ): Promise<MonitoringLogSourcesResponse> {
   return {
     project_id,
-    time_window: query.time_window,
+    from: query.from,
+    to: query.to,
     sources: await monitoring_repo.log_sources(project_id, query),
   };
 }

@@ -3,9 +3,7 @@
 
 import { z } from 'zod';
 
-// `1q` is the trailing quarter (90 days); the other windows are trailing 1/7/30 days. All four
-// come back in one response so the UI range selector never refetches.
-export const MetricsWindowSchema = z.enum(['1d', '7d', '30d', '1q']);
+import { TIME_RANGE_FIELDS, timeRangeQuery } from '@core/time-range';
 
 export const DistributionMetricSchema = z.enum([
   'tokens_per_request',
@@ -17,7 +15,7 @@ export const DistributionMetricSchema = z.enum([
 // the producer's reported components and `total_cost` its reported total, never derived from them.
 // A block with no reported cost is not a free block, so every cost average divides by the costed
 // count rather than the block count.
-export const KpiWindowSchema = z.object({
+export const MetricsKpiSchema = z.object({
   request_count: z.number().int().nonnegative(),
   block_count: z.number().int().nonnegative(),
   failed_block_count: z.number().int().nonnegative(),
@@ -34,15 +32,16 @@ export const KpiWindowSchema = z.object({
   per_costed_request_cost: z.string().nullable(),
 });
 
-export const MetricsKpisSchema = z.object({
+export const RunRatePerSchema = z.enum(['hour', 'day']);
+
+// `run_rate` is `total_cost` over the range's own length, per hour for a range of a day or less and
+// per day beyond. Null when blocks ran and none reported a cost.
+export const MetricsKpisSchema = MetricsKpiSchema.extend({
   project_id: z.string().uuid(),
+  run_rate: z.string().nullable(),
+  run_rate_per: RunRatePerSchema,
   generated_at: z.string(),
-  windows: z.object({
-    '1d': KpiWindowSchema,
-    '7d': KpiWindowSchema,
-    '30d': KpiWindowSchema,
-    '1q': KpiWindowSchema,
-  }),
+  ...TIME_RANGE_FIELDS,
 });
 
 export const DistributionBucketSchema = z.object({
@@ -68,17 +67,17 @@ export const DistributionStatsSchema = z.object({
 export const MetricsDistributionSchema = DistributionStatsSchema.extend({
   project_id: z.string().uuid(),
   metric: DistributionMetricSchema,
-  time_window: MetricsWindowSchema,
+  ...TIME_RANGE_FIELDS,
 });
 
-export const DistributionQuerySchema = z.object({
+export const DistributionQuerySchema = timeRangeQuery({
   metric: DistributionMetricSchema,
-  time_window: MetricsWindowSchema.default('30d'),
   buckets: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-// One equal-width time bucket. Every bucket in the window is emitted, empty ones included, so a
-// chart never has to invent the gaps.
+// One time bucket, the first and last possibly partial. Every bucket in the range is emitted, empty
+// ones included, so a chart never has to invent the gaps. A request counts whole in the bucket it
+// started in.
 export const TimeseriesPointSchema = z.object({
   start_at: z.string(),
   llm_cost: z.string(),
@@ -91,39 +90,9 @@ export const TimeseriesPointSchema = z.object({
 
 export const MetricsTimeseriesSchema = z.object({
   project_id: z.string().uuid(),
-  time_window: MetricsWindowSchema,
+  ...TIME_RANGE_FIELDS,
   bucket_seconds: z.number().positive(),
   points: z.array(TimeseriesPointSchema),
-});
-
-// `buckets` is optional rather than defaulted because the default depends on the window (a day
-// reads as 24 hourly points, the longer windows as 30); the service resolves it.
-const TimeZoneSchema = z
-  .string()
-  .min(1)
-  .max(255)
-  .refine(
-    (time_zone) => {
-      try {
-        new Intl.DateTimeFormat('en-US', { timeZone: time_zone });
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    { message: 'Invalid IANA time zone' }
-  );
-
-export const TimeseriesQuerySchema = z.object({
-  time_window: MetricsWindowSchema.default('30d'),
-  buckets: z.coerce.number().int().min(1).max(120).optional(),
-  time_zone: TimeZoneSchema.optional(),
-});
-
-// The agent drawer is fixed at 30 days, so it takes no window — only the zone its day boundaries
-// are drawn on, exactly as the project timeseries does.
-export const AgentDetailsQuerySchema = z.object({
-  time_zone: TimeZoneSchema.optional(),
 });
 
 export const BlockKindSchema = z.enum(['model', 'harness']);
@@ -149,7 +118,7 @@ export const MetricsBlockSchema = z.object({
 
 export const MetricsBlocksSchema = z.object({
   project_id: z.string().uuid(),
-  time_window: MetricsWindowSchema,
+  ...TIME_RANGE_FIELDS,
   total_cost: z.string(),
   blocks: z.array(MetricsBlockSchema),
 });
@@ -165,8 +134,6 @@ export const MetricsAgentSummarySchema = MetricsBlockSchema.omit({
   replica_count: z.number().int().nonnegative(),
 });
 
-// One point per calendar day of the 30, zero-filled, in the same shape the project timeseries
-// serves so one chart draws both.
 export const MetricsAgentTimeseriesSchema = z.object({
   bucket_seconds: z.number().positive(),
   points: z.array(TimeseriesPointSchema),
@@ -176,7 +143,7 @@ export const MetricsAgentDetailsSchema = z.object({
   project_id: z.string().uuid(),
   agent_id: z.string(),
   label: z.string(),
-  time_window: z.literal('30d'),
+  ...TIME_RANGE_FIELDS,
   project: z.object({
     request_count: z.number().int().nonnegative(),
     total_cost: z.string(),
@@ -188,27 +155,19 @@ export const MetricsAgentDetailsSchema = z.object({
   latency: DistributionStatsSchema,
 });
 
-// Every surface that reads one trailing window and nothing else takes this query.
-export const TimeWindowQuerySchema = z.object({
-  time_window: MetricsWindowSchema.default('30d'),
-});
-
-export type MetricsWindow = z.infer<typeof MetricsWindowSchema>;
 export type DistributionMetric = z.infer<typeof DistributionMetricSchema>;
-export type KpiWindow = z.infer<typeof KpiWindowSchema>;
+export type MetricsKpi = z.infer<typeof MetricsKpiSchema>;
 export type MetricsKpis = z.infer<typeof MetricsKpisSchema>;
+export type RunRatePer = z.infer<typeof RunRatePerSchema>;
 export type DistributionBucket = z.infer<typeof DistributionBucketSchema>;
 export type DistributionStats = z.infer<typeof DistributionStatsSchema>;
 export type MetricsDistribution = z.infer<typeof MetricsDistributionSchema>;
 export type DistributionQuery = z.infer<typeof DistributionQuerySchema>;
 export type TimeseriesPoint = z.infer<typeof TimeseriesPointSchema>;
 export type MetricsTimeseries = z.infer<typeof MetricsTimeseriesSchema>;
-export type TimeseriesQuery = z.infer<typeof TimeseriesQuerySchema>;
 export type BlockKind = z.infer<typeof BlockKindSchema>;
 export type MetricsBlock = z.infer<typeof MetricsBlockSchema>;
 export type MetricsBlocks = z.infer<typeof MetricsBlocksSchema>;
 export type MetricsAgentSummary = z.infer<typeof MetricsAgentSummarySchema>;
 export type MetricsAgentTimeseries = z.infer<typeof MetricsAgentTimeseriesSchema>;
 export type MetricsAgentDetails = z.infer<typeof MetricsAgentDetailsSchema>;
-export type AgentDetailsQuery = z.infer<typeof AgentDetailsQuerySchema>;
-export type TimeWindowQuery = z.infer<typeof TimeWindowQuerySchema>;

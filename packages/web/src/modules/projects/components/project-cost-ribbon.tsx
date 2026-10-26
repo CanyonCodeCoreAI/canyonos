@@ -4,7 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { KpiWindow, MetricsKpis, MetricsWindow } from '@canyonos/api/metrics';
+import type { MetricsKpi, MetricsKpis } from '@canyonos/api/metrics';
 
 import { Badge } from '@repo/ui/shadcn/badge';
 import { Card } from '@repo/ui/shadcn/card';
@@ -22,26 +22,27 @@ import {
 } from '@/modules/projects/projects.format';
 import { COST_SPLIT } from '@/modules/projects/projects.metrics';
 import { projectKpisQueryOptions } from '@/modules/projects/projects.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 const RIBBON = 'grid overflow-hidden sm:grid-cols-2 lg:grid-cols-5';
 
 interface ProjectCostRibbonProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
-export function ProjectCostRibbon({ project_id, time_window }: ProjectCostRibbonProps) {
-  const kpis_query = useQuery(projectKpisQueryOptions(project_id));
+export function ProjectCostRibbon({ project_id, range }: ProjectCostRibbonProps) {
+  const kpis_query = useQuery(projectKpisQueryOptions(project_id, { range }));
 
   return (
     <ProjectMetricsSection test_id="project-cost-ribbon">
-      <RibbonBody query={kpis_query} time_window={time_window} />
+      <RibbonBody query={kpis_query} />
     </ProjectMetricsSection>
   );
 }
 
 /**
- * How much of a window reported a cost at all.
+ * How much of a range reported a cost at all.
  *
  * A block the source never priced is not a free block, so every figure derived from cost covers the
  * priced blocks alone. `complete` is the state where that qualification is unnecessary.
@@ -61,8 +62,8 @@ type QualifiedCoverage = Exclude<CostCoverage, { readonly state: 'complete' }>;
 
 // Shared by the ribbon, timeseries stats rail, and spend highlights so a figure and its coverage
 // badge can never disagree about which state they are in.
-export function costCoverage(kpi: KpiWindow): CostCoverage {
-  // A window that ran nothing has nothing to qualify. Anything that did run and priced none of it
+export function costCoverage(kpi: MetricsKpi): CostCoverage {
+  // A range that ran nothing has nothing to qualify. Anything that did run and priced none of it
   // is unavailable, never complete.
   if (kpi.request_count === 0 && kpi.block_count === 0) return { state: 'complete' };
   if (kpi.costed_block_count === 0) return { state: 'unavailable' };
@@ -101,7 +102,7 @@ export function CostCoverageBadge({
   kpi,
   test_id,
 }: {
-  readonly kpi: KpiWindow;
+  readonly kpi: MetricsKpi;
   readonly test_id: string;
 }) {
   const coverage = costCoverage(kpi);
@@ -149,8 +150,8 @@ function RibbonCell({
   readonly hint: string;
   readonly color?: string;
   readonly test_id: string;
-  /** Present on the cells whose figure depends on how much of the window reported a cost. */
-  readonly kpi?: KpiWindow;
+  /** Present on the cells whose figure depends on how much of the range reported a cost. */
+  readonly kpi?: MetricsKpi;
 }) {
   return (
     <div
@@ -179,13 +180,7 @@ function RibbonCell({
   );
 }
 
-function RibbonBody({
-  query,
-  time_window,
-}: {
-  readonly query: UseQueryResult<MetricsKpis>;
-  readonly time_window: MetricsWindow;
-}) {
+function RibbonBody({ query }: { readonly query: UseQueryResult<MetricsKpis> }) {
   if (query.isPending) {
     return (
       <Card className={RIBBON} aria-busy data-testid="project-cost-ribbon-loading">
@@ -213,11 +208,11 @@ function RibbonBody({
     );
   }
 
-  const kpi = query.data.windows[time_window];
+  const kpi = query.data;
   const unavailable = costCoverage(kpi).state === 'unavailable';
 
-  // Null (not the API's own zero) makes formatMoney render an em dash for an unpriced window.
-  // request_count and tokens aggregate the whole window, not just the priced blocks, so they are
+  // Null (not the API's own zero) makes formatMoney render an em dash for an unpriced range.
+  // request_count and tokens aggregate the whole range, not just the priced blocks, so they are
   // never blanked here.
   const total_cost = unavailable ? null : kpi.total_cost;
   const llm_cost = unavailable ? null : kpi.llm_cost;

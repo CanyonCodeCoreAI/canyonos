@@ -5,12 +5,14 @@ import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
+import { timeGrid } from '@core/time-range';
+import type { GridQuery, TimeRange } from '@core/time-range';
 
 import { distribution_sql } from './metrics.distribution';
-import { window_floor_nanos, WINDOW_INTERVALS } from './metrics.scope';
 import {
   isModelSpan,
-  projectSpans,
+  projectRequestSpans,
+  requestStart,
   spanAgentId,
   spanCacheHitRatio,
   spanCost,
@@ -19,7 +21,6 @@ import {
   spanFailed,
   spanModel,
   spanServerCost,
-  spanStart,
   spanTokenCost,
   spanTotalTokens,
 } from './metrics.sql';
@@ -27,28 +28,17 @@ import { DistributionMetricSchema } from './metrics.types';
 import type {
   DistributionMetric,
   DistributionStats,
-  KpiWindow,
   MetricsAgentDetails,
   MetricsAgentTimeseries,
   MetricsBlocks,
   MetricsDistribution,
+  MetricsKpi,
   MetricsKpis,
   MetricsTimeseries,
-  MetricsWindow,
+  RunRatePer,
 } from './metrics.types';
 
-const WINDOW_KEYS = Object.keys(WINDOW_INTERVALS) as MetricsWindow[];
-
-const SCAN_FLOOR = window_floor_nanos('1q');
-
 const AGENT_HISTOGRAM_BUCKETS = 12;
-
-const GRID_UNITS: Record<MetricsWindow, 'hour' | 'day'> = {
-  '1d': 'hour',
-  '7d': 'day',
-  '30d': 'day',
-  '1q': 'day',
-};
 
 /**
  * A block's wasted spend: a failed block bought nothing, and a block that recovered from `n` errors
@@ -77,117 +67,93 @@ const AGENTS_CTE = `agents as (
     group by s.name
   )`;
 
-const window_filter = (key: MetricsWindow, extra?: string): string => {
-  const conditions = [
-    key === '1q' ? undefined : `s.start_time_unix_nano >= ${window_floor_nanos(key)}`,
-    extra,
-  ].filter(Boolean);
-  return conditions.length === 0 ? '' : ` filter (where ${conditions.join(' and ')})`;
-};
-
 // Cost averages divide by the costed count: a block with no reported cost is not a free block.
-const kpi_columns = (key: MetricsWindow): string => {
-  const f = window_filter(key);
-  const priced = window_filter(key, `${spanCost('s')} is not null`);
-  return [
-    `count(distinct s.trace_id)${f}::int as "request_count_${key}"`,
-    `count(*)${f}::int as "block_count_${key}"`,
-    `count(*)${window_filter(key, spanFailed('s'))}::int as "failed_block_count_${key}"`,
-    `coalesce(sum(${spanTotalTokens('s')})${f}, 0)::float8 as "tokens_${key}"`,
-    `(coalesce(sum(${spanTotalTokens('s')})${f}, 0)::float8
-        / nullif(count(*)${f}, 0)) as "per_block_tokens_${key}"`,
-    `coalesce(sum(${spanServerCost('s')})${f}, 0)::numeric(20, 10)::text as "harness_cost_${key}"`,
-    `coalesce(sum(${spanTokenCost('s')})${f}, 0)::numeric(20, 10)::text as "llm_cost_${key}"`,
-    `coalesce(sum(${spanCost('s')})${f}, 0)::numeric(20, 10)::text as "total_cost_${key}"`,
-    `coalesce(sum(${recoverable_cost('s')})${priced}, 0)
-        ::numeric(20, 10)::text as "recoverable_cost_${key}"`,
-    `(avg(${spanCost('s')})${priced})::numeric(20, 10)::text as "per_block_cost_${key}"`,
-    `(avg(${spanDurationMs('s')})${f})::float8 as "per_block_latency_ms_${key}"`,
-    `count(*)${priced}::int as "costed_block_count_${key}"`,
-    `count(distinct s.trace_id)${priced}::int as "costed_request_count_${key}"`,
-  ].join(',\n      ');
-};
+const KPI_COLUMNS = [
+  `count(distinct s.trace_id)::int as request_count`,
+  `count(*)::int as block_count`,
+  `count(*) filter (where ${spanFailed('s')})::int as failed_block_count`,
+  `coalesce(sum(${spanTotalTokens('s')}), 0)::float8 as tokens`,
+  `(coalesce(sum(${spanTotalTokens('s')}), 0)::float8
+    / nullif(count(*), 0)) as per_block_tokens`,
+  `coalesce(sum(${spanServerCost('s')}), 0)::numeric(20, 10)::text as harness_cost`,
+  `coalesce(sum(${spanTokenCost('s')}), 0)::numeric(20, 10)::text as llm_cost`,
+  `coalesce(sum(${spanCost('s')}), 0)::numeric(20, 10)::text as total_cost`,
+  `coalesce(sum(${recoverable_cost('s')}) filter (where ${spanCost('s')} is not null), 0)
+    ::numeric(20, 10)::text as recoverable_cost`,
+  `(avg(${spanCost('s')}) filter (where ${spanCost('s')} is not null))
+    ::numeric(20, 10)::text as per_block_cost`,
+  `(avg(${spanDurationMs('s')}))::float8 as per_block_latency_ms`,
+  `count(*) filter (where ${spanCost('s')} is not null)::int as costed_block_count`,
+  `count(distinct s.trace_id) filter (where ${spanCost('s')} is not null)
+    ::int as costed_request_count`,
+].join(',\n      ');
 
-// Averaged over per-request sums, never `total_cost / request_count`: that would spread reported
-// dollars across requests that priced nothing.
-const kpi_cost_per_request_column = (key: MetricsWindow): string => {
-  const floor = key === '1q' ? '' : ` and s.start_time_unix_nano >= ${window_floor_nanos(key)}`;
-  return `(select avg(q.cost)::numeric(20, 10)::text
+// Averaged over per-request sums, never total_cost / request_count.
+const KPI_COST_PER_REQUEST_COLUMN = `(select avg(q.cost)::numeric(20, 10)::text
       from (
         select s.trace_id, sum(${spanCost('s')}) as cost
         from scoped s
-        where ${spanCost('s')} is not null${floor}
+        where ${spanCost('s')} is not null
         group by s.trace_id
       ) q
-    ) as "per_costed_request_cost_${key}"`;
+    ) as per_costed_request_cost`;
+
+const SECONDS_PER: Record<RunRatePer, number> = { hour: 3_600, day: 86_400 };
+
+const run_rate_per = ({ from, to }: TimeRange): RunRatePer =>
+  Date.parse(to) - Date.parse(from) <= SECONDS_PER.day * 1000 ? 'hour' : 'day';
+
+const run_rate_column = (range: TimeRange, per: RunRatePer): SQL => {
+  const range_seconds = (Date.parse(range.to) - Date.parse(range.from)) / 1000;
+  return sql`(case
+      when count(*) > 0 and count(${sql.raw(spanCost('s'))}) = 0 then null
+      else (coalesce(sum(${sql.raw(spanCost('s'))}), 0) * ${SECONDS_PER[per]}::numeric
+        / ${range_seconds}::numeric)::numeric(20, 10)::text
+    end) as run_rate`;
 };
 
-// The grid drives the output, so a quiet bucket is an explicit zero. It ends at the next calendar
-// boundary after now, which makes the newest bucket partial by design.
+// Each request lands whole in the bucket it started in, so the points sum to the KPI totals.
 const timeseries_sql = ({
   source,
-  interval,
-  unit,
-  buckets,
-  time_zone,
+  query,
   prelude,
 }: {
+  /** Spans read through `projectRequestSpans`, which carry `request_start_unix_nano`. */
   source: string;
-  interval: string;
-  unit: 'hour' | 'day';
-  buckets: number;
-  time_zone: SQL | string;
+  query: GridQuery;
   /** Already comma-terminated: this statement owns its own `with`. */
   prelude?: SQL;
-}): SQL => sql`
-  with ${prelude ?? sql.empty()}grid as (
+}): SQL => {
+  const grid = timeGrid(query);
+  return sql`
+    with ${prelude ?? sql.empty()}slots as (${grid.slots}),
+    per_bucket as (
+      select
+        ${grid.index(requestStart('s'))} as bucket,
+        count(distinct s.trace_id)::int as request_count,
+        count(*)::int as block_count,
+        coalesce(sum(${sql.raw(spanTotalTokens('s'))}), 0)::float8 as tokens,
+        sum(${sql.raw(spanTokenCost('s'))}) as llm_cost,
+        sum(${sql.raw(spanServerCost('s'))}) as harness_cost,
+        sum(${sql.raw(spanCost('s'))}) as total_cost
+      from ${sql.raw(source)}
+      group by 1
+    )
     select
-      e.end_local - interval '${sql.raw(interval)}' as start_local,
-      extract(epoch from interval '${sql.raw(interval)}')::float8 / ${sql.raw(String(buckets))}::int
-        as bucket_seconds
-    from (
-      select date_trunc('${sql.raw(unit)}', now() at time zone ${time_zone})
-        + interval '1 ${sql.raw(unit)}' as end_local
-    ) e
-  ),
-  per_bucket as (
-    select
-      least(
-        floor(
-          extract(epoch from ((${sql.raw(spanStart('s'))} at time zone ${time_zone}) - g.start_local))::float8
-            / g.bucket_seconds
-        )::int + 1,
-        ${sql.raw(String(buckets))}::int
-      ) as bucket,
-      count(distinct s.trace_id)::int as request_count,
-      count(*)::int as block_count,
-      coalesce(sum(${sql.raw(spanTotalTokens('s'))}), 0)::float8 as tokens,
-      sum(${sql.raw(spanTokenCost('s'))}) as llm_cost,
-      sum(${sql.raw(spanServerCost('s'))}) as harness_cost,
-      sum(${sql.raw(spanCost('s'))}) as total_cost
-    from ${sql.raw(source)} cross join grid g
-    where ${sql.raw(spanStart('s'))} >= g.start_local at time zone ${time_zone}
-    group by 1
-  )
-  select
-    g.bucket_seconds,
-    (
-      select json_agg(json_build_object(
-        'start_at', (
-          g.start_local + make_interval(secs => (b - 1) * g.bucket_seconds)
-        ) at time zone ${time_zone},
+      ${grid.bucket_seconds}::float8 as bucket_seconds,
+      json_agg(json_build_object(
+        'start_at', sl.bucket_start,
         'llm_cost', coalesce(p.llm_cost, 0)::numeric(20, 10)::text,
         'harness_cost', coalesce(p.harness_cost, 0)::numeric(20, 10)::text,
         'total_cost', coalesce(p.total_cost, 0)::numeric(20, 10)::text,
         'request_count', coalesce(p.request_count, 0),
         'block_count', coalesce(p.block_count, 0),
         'tokens', coalesce(p.tokens, 0)
-      ) order by b)
-      from generate_series(1, ${sql.raw(String(buckets))}::int) b
-      left join per_bucket p on p.bucket = b
-    ) as points
-  from grid g
-`;
+      ) order by sl.b) as points
+    from slots sl
+    left join per_bucket p on p.bucket = sl.b
+  `;
+};
 
 const block_aggregates = (): string =>
   [
@@ -216,78 +182,45 @@ const AGENT_DISTRIBUTION_COLUMNS = AGENT_DISTRIBUTIONS.map((d) => `${d.json} as 
   ',\n        '
 );
 
-type KpiRow = Record<string, number | string | null>;
-
 export const metrics_repo = {
-  async kpis_by_project(project_id: string): Promise<MetricsKpis> {
+  async kpis_by_project(project_id: string, range: TimeRange): Promise<MetricsKpis> {
+    const per = run_rate_per(range);
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, SCAN_FLOOR)})
+      with scoped as (${projectRequestSpans(project_id, range)})
       select now()::text as generated_at,
-        ${sql.raw(WINDOW_KEYS.map(kpi_columns).join(',\n      '))},
-        ${sql.raw(WINDOW_KEYS.map(kpi_cost_per_request_column).join(',\n      '))}
+        ${sql.raw(KPI_COLUMNS)},
+        ${sql.raw(KPI_COST_PER_REQUEST_COLUMN)},
+        ${run_rate_column(range, per)}
       from scoped s
     `);
-    const row = (rows as unknown as [KpiRow])[0];
-
-    const time_window = (key: MetricsWindow): KpiWindow => ({
-      request_count: row[`request_count_${key}`] as number,
-      block_count: row[`block_count_${key}`] as number,
-      failed_block_count: row[`failed_block_count_${key}`] as number,
-      tokens: row[`tokens_${key}`] as number,
-      per_block_tokens: row[`per_block_tokens_${key}`] as number | null,
-      harness_cost: row[`harness_cost_${key}`] as string,
-      llm_cost: row[`llm_cost_${key}`] as string,
-      total_cost: row[`total_cost_${key}`] as string,
-      recoverable_cost: row[`recoverable_cost_${key}`] as string,
-      per_block_cost: row[`per_block_cost_${key}`] as string | null,
-      per_block_latency_ms: row[`per_block_latency_ms_${key}`] as number | null,
-      costed_block_count: row[`costed_block_count_${key}`] as number,
-      costed_request_count: row[`costed_request_count_${key}`] as number,
-      per_costed_request_cost: row[`per_costed_request_cost_${key}`] as string | null,
-    });
-
-    return {
-      project_id,
-      generated_at: row.generated_at as string,
-      windows: {
-        '1d': time_window('1d'),
-        '7d': time_window('7d'),
-        '30d': time_window('30d'),
-        '1q': time_window('1q'),
-      },
-    };
+    const row = (
+      rows as unknown as [MetricsKpi & { generated_at: string; run_rate: string | null }]
+    )[0];
+    return { project_id, from: range.from, to: range.to, ...row, run_rate_per: per };
   },
 
   async distribution_by_project(
     project_id: string,
     metric: DistributionMetric,
-    time_window: MetricsWindow,
+    range: TimeRange,
     buckets: number
   ): Promise<MetricsDistribution> {
     const distribution = distribution_sql({ metric, source: 'scoped s', buckets });
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, window_floor_nanos(time_window))}),
+      with scoped as (${projectRequestSpans(project_id, range)}),
       ${sql.raw(distribution.ctes)}
       select ${sql.raw(distribution.json)} as stats
     `);
     const row = (rows as unknown as [{ stats: DistributionStats }])[0];
-    return { project_id, metric, time_window, ...row.stats };
+    return { project_id, metric, ...range, ...row.stats };
   },
 
-  async timeseries_by_project(
-    project_id: string,
-    time_window: MetricsWindow,
-    buckets: number,
-    time_zone: string
-  ): Promise<MetricsTimeseries> {
+  async timeseries_by_project(project_id: string, query: GridQuery): Promise<MetricsTimeseries> {
     const rows = await db.execute(
       timeseries_sql({
-        prelude: sql`scoped as (${projectSpans(project_id, window_floor_nanos(time_window))}), `,
+        prelude: sql`scoped as (${projectRequestSpans(project_id, query)}), `,
         source: 'scoped s',
-        interval: WINDOW_INTERVALS[time_window],
-        unit: GRID_UNITS[time_window],
-        buckets,
-        time_zone: sql`${time_zone}`,
+        query,
       })
     );
     const row = (
@@ -295,15 +228,16 @@ export const metrics_repo = {
     )[0];
     return {
       project_id,
-      time_window,
+      from: query.from,
+      to: query.to,
       bucket_seconds: row.bucket_seconds,
       points: row.points,
     };
   },
 
-  async blocks_by_project(project_id: string, time_window: MetricsWindow): Promise<MetricsBlocks> {
+  async blocks_by_project(project_id: string, range: TimeRange): Promise<MetricsBlocks> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, window_floor_nanos(time_window))}),
+      with scoped as (${projectRequestSpans(project_id, range)}),
       ${sql.raw(AGENTS_CTE)},
       grouped as (
         select
@@ -339,21 +273,16 @@ export const metrics_repo = {
         ), '[]'::json) as blocks
     `);
     const row = (rows as unknown as [{ total_cost: string; blocks: MetricsBlocks['blocks'] }])[0];
-    return {
-      project_id,
-      time_window,
-      total_cost: row.total_cost,
-      blocks: row.blocks,
-    };
+    return { project_id, ...range, total_cost: row.total_cost, blocks: row.blocks };
   },
 
   async agent_details_by_project(
     project_id: string,
     agent_id: string,
-    time_zone: string
+    query: GridQuery
   ): Promise<MetricsAgentDetails | null> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, window_floor_nanos('30d'))}),
+      with scoped as (${projectRequestSpans(project_id, query)}),
       ${sql.raw(AGENTS_CTE)},
       agent_rows as (
         select s.*
@@ -374,15 +303,7 @@ export const metrics_repo = {
           ${sql.raw(block_aggregates())}
         from agent_rows s
       ),
-      series as (
-        ${timeseries_sql({
-          source: 'agent_rows s',
-          interval: '30 days',
-          unit: 'day',
-          buckets: 30,
-          time_zone: sql`${time_zone}`,
-        })}
-      ),
+      series as (${timeseries_sql({ source: 'agent_rows s', query })}),
       ${sql.raw(AGENT_DISTRIBUTION_CTES)}
       select
         (
@@ -443,7 +364,8 @@ export const metrics_repo = {
       project_id,
       agent_id,
       label: row.label,
-      time_window: '30d',
+      from: query.from,
+      to: query.to,
       project: {
         request_count: row.project_request_count,
         total_cost: row.project_total_cost,

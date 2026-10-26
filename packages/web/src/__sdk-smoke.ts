@@ -20,9 +20,10 @@ export type _HealthzReturn = Awaited<ReturnType<typeof _client.healthz.get>>;
 
 function _project_contract(project_id: string) {
   const project = _client.projects[project_id]!;
+  const range = { from: '2026-09-01T00:00:00Z', to: '2026-10-01T00:00:00Z' };
   void project.get();
   void project.stats.get();
-  void project.requests.get({ $query: { limit: 20, offset: 0 } });
+  void project.requests.get({ $query: { ...range, limit: 20, offset: 0 } });
   void project.requests.get({
     $query: {
       limit: 20,
@@ -30,17 +31,17 @@ function _project_contract(project_id: string) {
       metric: 'cost_per_request',
       min: 0.9,
       max: 2.4,
-      time_window: '30d',
+      ...range,
     },
   });
-  void project.requests['session-1']!.get();
-  void project.metrics.kpis.get();
+  void project.requests['session-1']!.get({ $query: range });
+  void project.metrics.kpis.get({ $query: range });
   void project.metrics.distribution.get({
-    $query: { metric: 'latency', time_window: '30d', buckets: 20 },
+    $query: { metric: 'latency', ...range, buckets: 20 },
   });
-  void project.metrics.timeseries.get({ $query: { time_window: '30d', buckets: 30 } });
-  void project.metrics.blocks.get({ $query: { time_window: '30d' } });
-  void project.metrics.agents['agent-1']!.get({ $query: { time_zone: 'UTC' } });
+  void project.metrics.timeseries.get({ $query: range });
+  void project.metrics.blocks.get({ $query: range });
+  void project.metrics.agents['agent-1']!.get({ $query: range });
 }
 
 void _project_contract;
@@ -56,17 +57,16 @@ function _metrics_contract(
   void `${series.bucket_seconds} ${point?.start_at} ${point?.total_cost}`;
   const block = blocks.blocks[0];
   void `${blocks.total_cost} ${block?.agent_id} ${block?.kind} ${block?.recoverable_cost} ${block?.retry_rate}`;
-  // The block drawer reads the agent's own window, the project denominators it divides by, and the
+  // The block drawer reads the agent's own range, the project denominators it divides by, and the
   // cost-per-request histogram it plots.
-  void `${agent.label} ${agent.time_window} ${agent.project.request_count} ${agent.project.total_cost}`;
+  void `${agent.label} ${agent.from} ${agent.to} ${agent.project.request_count} ${agent.project.total_cost}`;
   void `${agent.agent.cost} ${agent.agent.request_count} ${agent.agent.cache_hit_ratio}`;
   void `${agent.cost_per_request.p95} ${agent.cost_per_request.buckets[0]?.lower}`;
-  // The coverage badge divides the costed counts by the window's own, and the cost-per-query cells
+  // The coverage badge divides the costed counts by the range's own, and the cost-per-query cells
   // read the average over the costed queries alone.
-  const window = kpis.windows['30d'];
-  void `${window.costed_block_count} ${window.block_count}`;
-  void `${window.costed_request_count} ${window.request_count}`;
-  void `${window.per_costed_request_cost} ${window.per_block_cost}`;
+  void `${kpis.costed_block_count} ${kpis.block_count}`;
+  void `${kpis.costed_request_count} ${kpis.request_count}`;
+  void `${kpis.per_costed_request_cost} ${kpis.per_block_cost}`;
 }
 
 void _metrics_contract;
@@ -74,9 +74,9 @@ void _metrics_contract;
 // Selecting a histogram bucket filters the query table, so the subpath has to keep exporting the
 // metric-range selection alongside the page it returns.
 function _requests_contract(query: ListRequestsQuery, page: RequestList) {
-  void `${query.metric} ${query.min} ${query.max} ${query.time_window} ${query.limit}`;
+  void `${query.metric} ${query.min} ${query.max} ${query.from} ${query.to} ${query.limit}`;
   const request = page.items[0];
-  void `${page.total} ${request?.session_id} ${request?.status} ${request?.total_cost}`;
+  void `${page.from} ${page.to} ${page.total} ${request?.session_id} ${request?.status} ${request?.total_cost}`;
 }
 
 void _requests_contract;

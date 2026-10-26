@@ -26,7 +26,15 @@ const MINUTE_MS = 60 * 1000;
 
 // One frozen reference: deriving each span from Date.now() at insert time would skew the fixtures
 // by the milliseconds between inserts.
-const BASE_NANOS = BigInt(Date.now()) * NANOS_PER_MS;
+const BASE_MS = Date.now();
+const BASE_NANOS = BigInt(BASE_MS) * NANOS_PER_MS;
+
+const MONTH_MINUTES = 30 * 24 * 60;
+
+const range = (minutes: number) => ({
+  from: new Date(BASE_MS - minutes * MINUTE_MS).toISOString(),
+  to: new Date(BASE_MS).toISOString(),
+});
 
 const ago = (ms: number): bigint => BASE_NANOS - BigInt(Math.round(ms)) * NANOS_PER_MS;
 const plus = (nanos: bigint, ms: number): bigint => nanos + BigInt(Math.round(ms)) * NANOS_PER_MS;
@@ -127,7 +135,7 @@ type ListQuery = Record<string, string | number | undefined>;
 
 async function list(token: string, project_id: string, query: ListQuery = {}) {
   const res = await api.projects[project_id]!.requests.get({
-    $query: { limit: 20, offset: 0, ...query },
+    $query: { ...range(60), limit: 20, offset: 0, ...query },
     $headers: bearer(token),
   });
   expect(res.error).toBeNull();
@@ -142,6 +150,7 @@ describe('request trace endpoint', () => {
     const project_id = await create_project(token);
 
     const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
 
@@ -154,6 +163,7 @@ describe('request trace endpoint', () => {
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.requests[VALID_REQUEST_ID]!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
 
@@ -165,8 +175,20 @@ describe('request trace endpoint', () => {
     const owner = await authenticate('req-owner3@canyonos.test');
     const project_id = await create_project(owner);
 
-    const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get();
+    const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
+      $query: range(MONTH_MINUTES),
+    });
     expect(res.error?.status as number).toBe(401);
+  });
+
+  test('a trace read without from/to is rejected by validation (422)', async () => {
+    const token = await authenticate('req-norange@canyonos.test');
+    const project_id = await create_project(token);
+
+    const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
+      $headers: bearer(token),
+    } as never);
+    expect(res.error?.status as number).toBe(422);
   });
 
   test('an oversized request id is rejected by validation (422)', async () => {
@@ -174,6 +196,7 @@ describe('request trace endpoint', () => {
     const project_id = await create_project(token);
 
     const res = await api.projects[project_id]!.requests['x'.repeat(256)]!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -182,6 +205,7 @@ describe('request trace endpoint', () => {
   test('a non-uuid project id is rejected by validation (422)', async () => {
     const token = await authenticate('req-baduuid@canyonos.test');
     const res = await api.projects['not-a-uuid']!.requests[VALID_REQUEST_ID]!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -284,7 +308,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
 
     const page = await list(token, project_id);
 
-    expect(page).toEqual({ total: 0, items: [] });
+    expect(page).toEqual({ ...range(60), total: 0, items: [] });
   });
 
   test('a span without the project attribute is invisible to every project', async () => {
@@ -337,7 +361,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
     });
   });
 
-  test('an unselected window includes only requests with in-window spans', async () => {
+  test('an unselected range includes only requests with in-range spans', async () => {
     const token = await authenticate('req-window@canyonos.test');
     const project_id = await create_project(token);
     const old_start = ago(3 * 24 * 60 * MINUTE_MS);
@@ -352,11 +376,11 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
       },
     ]);
 
-    const all = await list(token, project_id);
-    const day = await list(token, project_id, { time_window: '1d' });
+    const week = await list(token, project_id, { ...range(7 * 1440) });
+    const day = await list(token, project_id, { ...range(1440) });
 
-    expect(all.total).toBe(5);
-    expect(ids(all.items)).toContain('win-ancient');
+    expect(week.total).toBe(5);
+    expect(ids(week.items)).toContain('win-ancient');
     expect(day.total).toBe(4);
     expect(ids(day.items)).not.toContain('win-ancient');
   });
@@ -368,7 +392,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
 
     const other_user = await authenticate('req-list-intruder@canyonos.test');
     const res = await api.projects[project_id]!.requests.get({
-      $query: { limit: 20, offset: 0 },
+      $query: { ...range(60), limit: 20, offset: 0 },
       $headers: bearer(other_user),
     });
 
@@ -380,7 +404,9 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
     const owner = await authenticate('req-list-anon@canyonos.test');
     const project_id = await create_project(owner);
 
-    const res = await api.projects[project_id]!.requests.get({ $query: { limit: 20, offset: 0 } });
+    const res = await api.projects[project_id]!.requests.get({
+      $query: { ...range(60), limit: 20, offset: 0 },
+    });
     expect(res.error?.status as number).toBe(401);
   });
 
@@ -389,7 +415,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
     const project_id = await create_project(token);
 
     const res = await api.projects[project_id]!.requests.get({
-      $query: { limit: 500, offset: 0 },
+      $query: { ...range(60), limit: 500, offset: 0 },
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -511,7 +537,7 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
 
   test('an unknown sort key is rejected by validation (422)', async () => {
     const res = await api.projects[project_id]!.requests.get({
-      $query: { limit: 20, offset: 0, sort: 'nonsense' as RequestSort },
+      $query: { ...range(60), limit: 20, offset: 0, sort: 'nonsense' as RequestSort },
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -519,7 +545,13 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
 
   test('an unknown order direction is rejected by validation (422)', async () => {
     const res = await api.projects[project_id]!.requests.get({
-      $query: { limit: 20, offset: 0, sort: 'total_cost', order: 'sideways' as SortDirection },
+      $query: {
+        ...range(60),
+        limit: 20,
+        offset: 0,
+        sort: 'total_cost',
+        order: 'sideways' as SortDirection,
+      },
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -554,7 +586,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
   });
 
   const ranged = async (metric: string, min: number, max: number): Promise<string[]> =>
-    ids((await list(token, project_id, { metric, min, max, time_window: '30d' })).items);
+    ids((await list(token, project_id, { metric, min, max, ...range(43200) })).items);
 
   test('cost_per_request lists only the requests inside the range', async () => {
     expect(await ranged('cost_per_request', 0.0015, 0.0035)).toEqual([
@@ -607,7 +639,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
       metric: 'cost_per_request',
       min: 0.0015,
       max: 0.0035,
-      time_window: '30d',
+      ...range(43200),
     });
 
     expect(page.total).toBe(2);
@@ -619,7 +651,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
       metric: 'cost_per_request',
       min: 0.0015,
       max: 0.0035,
-      time_window: '30d',
+      ...range(43200),
       sort: 'total_cost',
       order: 'desc',
     });
@@ -629,7 +661,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
 
   test('a half-specified selection is rejected by validation (422)', async () => {
     const res = await api.projects[project_id]!.requests.get({
-      $query: { limit: 20, offset: 0, metric: 'cost_per_request', min: 1 },
+      $query: { ...range(60), limit: 20, offset: 0, metric: 'cost_per_request', min: 1 },
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -645,7 +677,88 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
   });
 });
 
-describe('GET /projects/:project_id/requests (creation-date filtering)', () => {
+describe('GET /projects/:project_id/requests (time-range filtering)', () => {
+  test('a request is listed and counted whole in the range it started in', async () => {
+    const token = await authenticate('req-whole@canyonos.test');
+    const project_id = await create_project(token);
+    const to_ms = BASE_MS - 30 * MINUTE_MS;
+    const query = {
+      from: new Date(to_ms - 60 * MINUTE_MS).toISOString(),
+      to: new Date(to_ms).toISOString(),
+    };
+    const before_to = (minutes: number) => BigInt(to_ms - minutes * MINUTE_MS) * NANOS_PER_MS;
+    await seed(project_id, [
+      // Starts inside the range and finishes after it ends.
+      {
+        span_id: 'whole-1',
+        trace_id: 'whole',
+        start_time_unix_nano: before_to(1),
+        end_time_unix_nano: before_to(0.5),
+        cost: 0.001,
+      },
+      {
+        span_id: 'whole-2',
+        trace_id: 'whole',
+        start_time_unix_nano: before_to(-2),
+        end_time_unix_nano: before_to(-3),
+        cost: 0.002,
+      },
+      // Started before the range, with a later step inside it.
+      {
+        span_id: 'earlier-1',
+        trace_id: 'earlier',
+        start_time_unix_nano: before_to(61),
+        end_time_unix_nano: before_to(60.5),
+        cost: 0.001,
+      },
+      {
+        span_id: 'earlier-2',
+        trace_id: 'earlier',
+        start_time_unix_nano: before_to(30),
+        end_time_unix_nano: before_to(29),
+        cost: 0.001,
+      },
+    ]);
+
+    const page = await list(token, project_id, query);
+    expect(page.total).toBe(1);
+    expect(page.items[0]).toMatchObject({
+      session_id: 'whole',
+      block_count: 2,
+      duration_ms: 4 * MINUTE_MS,
+      total_cost: '0.0030000000',
+    });
+
+    const traces = await api.projects[project_id]!.monitoring.traces.get({
+      $query: { ...query, limit: 200 },
+      $headers: bearer(token),
+    });
+    expect(traces.error).toBeNull();
+    expect(
+      traces.data!.traces.map(({ trace_id, span_count }) => ({ trace_id, span_count }))
+    ).toEqual([{ trace_id: 'whole', span_count: 2 }]);
+
+    const [kpis, timeseries, blocks, monitoring] = await Promise.all([
+      api.projects[project_id]!.metrics.kpis.get({ $query: query, $headers: bearer(token) }),
+      api.projects[project_id]!.metrics.timeseries.get({ $query: query, $headers: bearer(token) }),
+      api.projects[project_id]!.metrics.blocks.get({ $query: query, $headers: bearer(token) }),
+      api.projects[project_id]!.monitoring.series.get({ $query: query, $headers: bearer(token) }),
+    ]);
+    expect(kpis.data).toMatchObject({
+      request_count: 1,
+      block_count: 2,
+      total_cost: '0.0030000000',
+    });
+    const points = timeseries.data!.points;
+    expect(points.reduce((sum, point) => sum + point.request_count, 0)).toBe(1);
+    expect(points.reduce((sum, point) => sum + Number(point.total_cost), 0).toFixed(10)).toBe(
+      '0.0030000000'
+    );
+    expect(blocks.data!.total_cost).toBe('0.0030000000');
+    const traffic = monitoring.data!.series.find((series) => series.signal === 'traffic')!;
+    expect(traffic.values.reduce((sum: number, value) => sum + (value ?? 0), 0)).toBe(1);
+  });
+
   let token: string;
   let project_id: string;
   let prefix: string;
@@ -690,29 +803,18 @@ describe('GET /projects/:project_id/requests (creation-date filtering)', () => {
 
   test('a day window includes its start and excludes its end', async () => {
     const page = await list(token, project_id, {
-      created_from: day_start,
-      created_to: day_end,
+      from: day_start,
+      to: day_end,
     });
 
     expect(ids(page.items).sort()).toEqual([`${prefix}-edge`, `${prefix}-inside`].sort());
     expect(page.total).toBe(2);
   });
 
-  test('created_from alone lists every request since that instant', async () => {
-    const page = await list(token, project_id, { created_from: day_start });
-    expect(ids(page.items)).not.toContain(`${prefix}-before`);
-    expect(page.total).toBe(2);
-  });
-
-  test('created_to alone lists every request before that instant', async () => {
-    const page = await list(token, project_id, { created_to: day_start });
-    expect(ids(page.items)).toEqual([`${prefix}-before`]);
-  });
-
   test('a day window narrows a status filter instead of replacing it', async () => {
     const page = await list(token, project_id, {
-      created_from: day_start,
-      created_to: day_end,
+      from: day_start,
+      to: day_end,
       status: 'failed',
     });
 
@@ -723,14 +825,75 @@ describe('GET /projects/:project_id/requests (creation-date filtering)', () => {
     const empty_from = new Date(Date.parse(day_start) - 30 * 24 * 60 * MINUTE_MS).toISOString();
     const empty_to = new Date(Date.parse(empty_from) + 24 * 60 * MINUTE_MS).toISOString();
 
-    const page = await list(token, project_id, { created_from: empty_from, created_to: empty_to });
+    const page = await list(token, project_id, { from: empty_from, to: empty_to });
 
-    expect(page).toEqual({ total: 0, items: [] });
+    expect(page).toEqual({ from: empty_from, to: empty_to, total: 0, items: [] });
+  });
+
+  test('a picked day narrows the range instead of replacing it', async () => {
+    const page = await list(token, project_id, {
+      from: new Date(Date.parse(day_start) + 30 * MINUTE_MS).toISOString(),
+      to: day_end,
+      created_from: day_start,
+      created_to: day_end,
+    });
+
+    expect(ids(page.items)).toEqual([`${prefix}-inside`]);
+    expect(page.total).toBe(1);
+  });
+
+  test('a picked day keeps a cost bucket measured over the whole range', async () => {
+    const at = (minutes: number) =>
+      BigInt(Date.parse(day_start) + minutes * MINUTE_MS) * NANOS_PER_MS;
+    // The day's only priced request sits on the bucket's upper edge; the range's largest is outside the day.
+    await seed(project_id, [
+      {
+        span_id: `${prefix}-small-1`,
+        trace_id: `${prefix}-small`,
+        start_time_unix_nano: at(120),
+        end_time_unix_nano: at(121),
+        cost: 1,
+      },
+      {
+        span_id: `${prefix}-large-1`,
+        trace_id: `${prefix}-large`,
+        start_time_unix_nano: at(-120),
+        end_time_unix_nano: at(-119),
+        cost: 2,
+      },
+    ]);
+
+    const page = await list(token, project_id, {
+      from: new Date(Date.parse(day_start) - 180 * MINUTE_MS).toISOString(),
+      to: day_end,
+      created_from: day_start,
+      created_to: day_end,
+      metric: 'cost_per_request',
+      min: 0,
+      max: 1,
+    });
+
+    expect(page.total).toBe(0);
+  });
+
+  test('a day that ends before it starts is rejected by validation (422)', async () => {
+    const res = await api.projects[project_id]!.requests.get({
+      $query: {
+        limit: 20,
+        offset: 0,
+        from: day_start,
+        to: day_end,
+        created_from: day_end,
+        created_to: day_start,
+      },
+      $headers: bearer(token),
+    });
+    expect(res.error?.status as number).toBe(422);
   });
 
   test('a window that ends before it starts is rejected by validation (422)', async () => {
     const res = await api.projects[project_id]!.requests.get({
-      $query: { limit: 20, offset: 0, created_from: day_end, created_to: day_start },
+      $query: { limit: 20, offset: 0, from: day_end, to: day_start },
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -738,7 +901,7 @@ describe('GET /projects/:project_id/requests (creation-date filtering)', () => {
 
   test('a bound that is not an instant is rejected by validation (422)', async () => {
     const res = await api.projects[project_id]!.requests.get({
-      $query: { limit: 20, offset: 0, created_from: '2026-09-01T00:00:00' },
+      $query: { limit: 20, offset: 0, from: '2026-09-01T00:00:00', to: day_end },
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
@@ -752,6 +915,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     await seed(project_id, listing_spans('tr'));
 
     const res = await api.projects[project_id]!.requests['tr-done']!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
     expect(res.error).toBeNull();
@@ -803,6 +967,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     await seed(project_id, listing_spans('trf'));
 
     const res = await api.projects[project_id]!.requests['trf-failed']!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
 
@@ -816,6 +981,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     await seed(project_id, listing_spans('trt'));
 
     const res = await api.projects[project_id]!.requests['trt-recent']!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
 
@@ -823,12 +989,12 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     expect(res.data?.output).toBe('plain recent answer');
   });
 
-  test('the median reads only requests that billed inside the trailing 30 days', async () => {
+  test('the median reads only requests that billed inside the queried range', async () => {
     const token = await authenticate('req-median@canyonos.test');
     const project_id = await create_project(token);
 
-    // Billed: 0.001, 0.002, 0.003 -> median 0.002. Counting the two unbilled requests as $0 would
-    // drag it to 0.001, and the 40-day-old request would pull it to 0.003.
+    // Billed in the last 30 days: 0.001, 0.002, 0.003 -> median 0.002. Counting the two unbilled
+    // requests as $0 would drag it to 0.001; a range reaching the 40-day-old $9 request moves it.
     for (const [index, cost] of [0.001, 0.002, 0.003].entries()) {
       const start = ago((index + 1) * MINUTE_MS);
       await write_project_span(project_id, {
@@ -858,6 +1024,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     });
 
     const res = await api.projects[project_id]!.requests['med-billed-1']!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
 
@@ -866,9 +1033,16 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     expect(res.data?.cost_vs_median).toBe(1);
     expect(res.data?.harness_cost_vs_median).toBeNull();
     expect(res.data?.token_count_vs_median).toBeNull();
+
+    const wider = await api.projects[project_id]!.requests['med-billed-1']!.get({
+      $query: range(41 * 24 * 60),
+      $headers: bearer(token),
+    });
+    expect(wider.error).toBeNull();
+    expect(wider.data?.median_cost).toBe('0.0025000000');
   });
 
-  test('a project that billed nothing in the window reports no median', async () => {
+  test('a project that billed nothing in the range reports no median', async () => {
     const token = await authenticate('req-trace-nomedian@canyonos.test');
     const project_id = await create_project(token);
     const start = ago(MINUTE_MS);
@@ -879,7 +1053,10 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       end_time_unix_nano: plus(start, 100),
     });
 
-    const res = await api.projects[project_id]!.requests['nomed']!.get({ $headers: bearer(token) });
+    const res = await api.projects[project_id]!.requests['nomed']!.get({
+      $query: range(MONTH_MINUTES),
+      $headers: bearer(token),
+    });
 
     expect(res.error).toBeNull();
     expect(res.data?.median_cost).toBeNull();
@@ -910,7 +1087,10 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       cost: 0.000099,
     });
 
-    const res = await api.projects[mine]!.requests['tshare']!.get({ $headers: bearer(owner) });
+    const res = await api.projects[mine]!.requests['tshare']!.get({
+      $query: range(MONTH_MINUTES),
+      $headers: bearer(owner),
+    });
 
     expect(res.error).toBeNull();
     expect(res.data?.blocks.map((block) => block.future_id)).toEqual(['tshare-mine-1']);
@@ -929,6 +1109,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     });
 
     const res = await api.projects[project_id]!.requests['lonely']!.get({
+      $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
 
@@ -974,7 +1155,10 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       total_cost: '0.0000040000',
     });
 
-    const res = await api.projects[project_id]!.requests['bad']!.get({ $headers: bearer(token) });
+    const res = await api.projects[project_id]!.requests['bad']!.get({
+      $query: range(MONTH_MINUTES),
+      $headers: bearer(token),
+    });
     expect(res.error).toBeNull();
     expect(res.data?.blocks[0]).toMatchObject({
       kind: 'model',

@@ -189,7 +189,11 @@ async function main() {
   await seedTelemetry();
 
   log('reading the fixture back through the image');
-  const listing = await getJson(`/projects/${PROJECT_ID}/requests`, token);
+  const range = new URLSearchParams({
+    from: new Date(Date.now() - 3_600_000).toISOString(),
+    to: new Date().toISOString(),
+  });
+  const listing = await getJson(`/projects/${PROJECT_ID}/requests?${range}`, token);
   equal(listing.status, 200, 'the user reads the request listing');
   equal(listing.body.total, 1, 'the inserted trace is listed');
   equal(listing.body.items[0].session_id, TRACE_ID, 'the listed trace is the inserted one');

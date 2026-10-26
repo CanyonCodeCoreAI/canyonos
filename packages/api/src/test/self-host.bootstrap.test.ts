@@ -145,7 +145,12 @@ describe('canyonos reads', () => {
 
     const requests = await api.projects[project_id]!.requests.get({
       $headers: headers,
-      $query: { limit: 20, offset: 0 },
+      $query: {
+        from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        to: new Date().toISOString(),
+        limit: 20,
+        offset: 0,
+      },
     });
     expect(requests.error).toBeNull();
     expect(requests.data?.items.map((item) => item.session_id)).toEqual(['canyonos-user-trace']);

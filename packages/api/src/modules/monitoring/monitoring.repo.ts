@@ -8,11 +8,14 @@ import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { otelLogs, otelMetrics } from '@api/db/schema';
+import { timeGrid, withinRange } from '@core/time-range';
+import type { GridQuery, TimeRange } from '@core/time-range';
 
-import { window_floor_nanos, WINDOW_INTERVALS } from '../metrics/metrics.scope';
 import {
   isModelSpan,
+  projectRequestSpans,
   projectSpans,
+  requestStart,
   spanAgentId,
   spanAgentName,
   spanCacheHitRatio,
@@ -36,7 +39,6 @@ import {
   RESOURCE_PROJECT_ATTRIBUTE,
   SATURATION_METRIC,
 } from './monitoring.signals';
-import type { MetricsWindow } from '../metrics/metrics.types';
 import type {
   MonitoringErrorSummaryResponse,
   MonitoringGrid,
@@ -45,7 +47,6 @@ import type {
   MonitoringLog,
   MonitoringLogSource,
   MonitoringLogsQuery,
-  MonitoringQuery,
   MonitoringReplica,
   MonitoringResourceUtilizationResponse,
   MonitoringScope,
@@ -59,22 +60,6 @@ type SeriesRow = MonitoringGrid & Record<MonitoringSignal, MonitoringValueSeries
 type ResourceUtilizationRow = Omit<MonitoringResourceUtilizationResponse, keyof MonitoringScope>;
 
 type ErrorSummaryRow = Omit<MonitoringErrorSummaryResponse, keyof MonitoringScope>;
-
-const GRID_UNITS: Record<MetricsWindow, 'hour' | 'day'> = {
-  '1d': 'hour',
-  '7d': 'day',
-  '30d': 'day',
-  '1q': 'day',
-};
-
-const BUCKET_COUNTS: Record<MetricsWindow, number> = {
-  '1d': 24,
-  '7d': 30,
-  '30d': 30,
-  '1q': 30,
-};
-
-const GRID_ZONE = 'UTC';
 
 const LATENCY_QUANTILE = '0.95';
 
@@ -134,96 +119,63 @@ ${Object.entries(MACHINE_UTILIZATION_METRICS)
   .join('\n')}
   end`;
 
-const bucket_index = (time_expr: string, buckets: string): string => `
-  least(
-    floor(
-      extract(epoch from ((${time_expr} at time zone '${GRID_ZONE}') - g.start_local))::float8
-        / g.bucket_seconds
-    )::int + 1,
-    ${buckets}::int
-  )`;
-
 const metricTime = (alias: string): string => `to_timestamp(${alias}.time_unix_nano / 1e9)`;
-
-const traceStart = (alias: string): string =>
-  `to_timestamp(min(${alias}.start_time_unix_nano) / 1e9)`;
-
-const traceDurationMs = (alias: string): string =>
-  `((max(${alias}.end_time_unix_nano) - min(${alias}.start_time_unix_nano)) / 1e6)`;
 
 // The stats read the same per-bucket value the chart draws, over the buckets that have one.
 const value_series = (value: string): string => `json_build_object(
-  'values', json_agg(${value} order by b),
+  'values', json_agg(${value} order by sl.b),
   'average', avg(${value})::float8,
   'peak', max(${value})::float8,
-  'latest', (array_agg(${value} order by b desc) filter (where ${value} is not null))[1]::float8,
+  'latest', (array_agg(${value} order by sl.b desc) filter (where ${value} is not null))[1]::float8,
   'samples', count(${value})::int
 )`;
 
-const series_sql = (project_id: string, time_window: MetricsWindow): SQL => {
-  const buckets = String(BUCKET_COUNTS[time_window]);
-  const interval = WINDOW_INTERVALS[time_window];
-  const unit = GRID_UNITS[time_window];
+const series_sql = (project_id: string, query: GridQuery): SQL => {
+  const grid = timeGrid(query);
 
   return sql`
-    with scoped as (${projectSpans(project_id, window_floor_nanos(time_window))}),
+    with scoped as (${projectRequestSpans(project_id, query)}),
     traces as (
       select
         s.trace_id,
-        ${sql.raw(traceStart('s'))} as started_at,
-        ${sql.raw(traceDurationMs('s'))} as duration_ms,
+        ${sql.raw(requestStart('s'))} as started_at,
+        ((max(s.end_time_unix_nano) - s.request_start_unix_nano) / 1e6) as duration_ms,
         bool_or(${sql.raw(spanFailed('s'))}) as failed
       from scoped s
-      group by s.trace_id
+      group by s.trace_id, s.request_start_unix_nano
     ),
-    grid as (
-      select
-        e.end_local - interval '${sql.raw(interval)}' as start_local,
-        e.end_local,
-        extract(epoch from interval '${sql.raw(interval)}')::float8 / ${sql.raw(buckets)}::int
-          as bucket_seconds
-      from (
-        select date_trunc('${sql.raw(unit)}', now() at time zone ${GRID_ZONE})
-          + interval '1 ${sql.raw(unit)}' as end_local
-      ) e
-    ),
+    slots as (${grid.slots}),
     traces_bucket as (
       select
-        ${sql.raw(bucket_index('t.started_at', buckets))} as bucket,
+        ${grid.index('t.started_at')} as bucket,
         count(*)::int as traffic,
         count(*) filter (where t.failed)::int as errors,
         percentile_cont(${sql.raw(LATENCY_QUANTILE)}) within group (
           order by t.duration_ms
         )::float8 as latency
-      from traces t cross join grid g
-      where t.started_at >= g.start_local at time zone ${GRID_ZONE}
+      from traces t
       group by 1
     ),
     metrics_bucket as (
       select
-        ${sql.raw(bucket_index(metricTime('m'), buckets))} as bucket,
+        ${grid.index(metricTime('m'))} as bucket,
         avg(m.value)::float8 as saturation
-      from ${otelMetrics} m cross join grid g
+      from ${otelMetrics} m
       where m.metric_name = ${SATURATION_METRIC}
         and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
-        and ${sql.raw(metricTime('m'))} >= g.start_local at time zone ${GRID_ZONE}
+        and ${withinRange('m.time_unix_nano', query)}
       group by 1
     )
     select
-      g.bucket_seconds,
-      json_agg(
-        (g.start_local + make_interval(secs => (b - 1) * g.bucket_seconds)) at time zone ${GRID_ZONE}
-        order by b
-      ) as bucket_start_ats,
+      ${grid.bucket_seconds}::float8 as bucket_seconds,
+      json_agg(sl.bucket_start order by sl.b) as bucket_start_ats,
       ${sql.raw(value_series('coalesce(s.traffic, 0)'))} as traffic,
       ${sql.raw(value_series('coalesce(s.errors, 0)'))} as errors,
       ${sql.raw(value_series('s.latency'))} as latency,
       ${sql.raw(value_series('m.saturation'))} as saturation
-    from grid g
-    cross join generate_series(1, ${sql.raw(buckets)}::int) b
-    left join traces_bucket s on s.bucket = b
-    left join metrics_bucket m on m.bucket = b
-    group by g.bucket_seconds, g.start_local, g.end_local
+    from slots sl
+    left join traces_bucket s on s.bucket = sl.b
+    left join metrics_bucket m on m.bucket = sl.b
   `;
 };
 
@@ -243,8 +195,8 @@ const LOG_REPLICA = sql.raw(`coalesce(
   'unknown'
 )`);
 
-const log_scope = (project_id: string, floor_nanos: string): SQL => sql`
-  l.time_unix_nano >= ${sql.raw(floor_nanos)}
+const log_scope = (project_id: string, range: TimeRange): SQL => sql`
+  ${withinRange('l.time_unix_nano', range)}
   and (
     (l.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
     or l.trace_id in (select trace_id from project_traces)
@@ -292,24 +244,22 @@ const entity_rollup = (prefix: 'machine' | 'agent'): SQL =>
   )`);
 
 export const monitoring_repo = {
-  async series(project_id: string, { time_window }: MonitoringQuery): Promise<SeriesRow> {
-    const rows = await db.execute(series_sql(project_id, time_window));
+  async series(project_id: string, query: GridQuery): Promise<SeriesRow> {
+    const rows = await db.execute(series_sql(project_id, query));
     return (rows as unknown as [SeriesRow])[0];
   },
 
-  async logs(
-    project_id: string,
-    { time_window, limit, errors_only, agent, replica }: MonitoringLogsQuery
-  ): Promise<MonitoringLog[]> {
-    const floor_nanos = window_floor_nanos(time_window);
+  async logs(project_id: string, query: MonitoringLogsQuery): Promise<MonitoringLog[]> {
+    const { limit, errors_only, agent, replica } = query;
+    const range = query;
     const severity_filter = errors_only ? sql`and ${ERROR_SEVERITY}` : sql``;
     const agent_filter = agent === undefined ? sql`` : sql`and ${LOG_AGENT} = ${agent}`;
     const replica_filter = replica === undefined ? sql`` : sql`and ${LOG_REPLICA} = ${replica}`;
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, floor_nanos)}),
+      with scoped as (${projectSpans(project_id, range)}),
       project_traces as (select distinct s.trace_id from scoped s)
       select
-        to_char(${sql.raw(metricTime('l'))} at time zone ${GRID_ZONE}, 'YYYY-MM-DD"T"HH24:MI:SSZ')
+        to_char(${sql.raw(metricTime('l'))} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SSZ')
           as at,
         l.severity_text as severity,
         l.severity_number,
@@ -320,7 +270,7 @@ export const monitoring_repo = {
         l.span_id,
         l.attributes - 'canyonos.agent.id' - 'canyonos.agent.name' as attributes
       from ${otelLogs} l
-      where ${log_scope(project_id, floor_nanos)}
+      where ${log_scope(project_id, range)}
         ${severity_filter}
         ${agent_filter}
         ${replica_filter}
@@ -330,15 +280,11 @@ export const monitoring_repo = {
     return rows as unknown as MonitoringLog[];
   },
 
-  async llm_calls(
-    project_id: string,
-    { time_window, limit }: MonitoringListQuery
-  ): Promise<MonitoringLlmCall[]> {
-    const floor_nanos = window_floor_nanos(time_window);
+  async llm_calls(project_id: string, query: MonitoringListQuery): Promise<MonitoringLlmCall[]> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, floor_nanos)})
+      with scoped as (${projectRequestSpans(project_id, query)})
       select
-        to_char(${sql.raw(spanStart('s'))} at time zone ${GRID_ZONE},
+        to_char(${sql.raw(spanStart('s'))} at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SSZ') as at,
         s.name,
         ${sql.raw(spanModel('s'))} as model,
@@ -358,28 +304,23 @@ export const monitoring_repo = {
       from scoped s
       where ${sql.raw(isModelSpan('s'))}
       order by s.start_time_unix_nano desc
-      limit ${limit}
+      limit ${query.limit}
     `);
     return rows as unknown as MonitoringLlmCall[];
   },
 
-  async traces(
-    project_id: string,
-    { time_window, limit }: MonitoringListQuery
-  ): Promise<MonitoringTrace[]> {
-    const floor_nanos = window_floor_nanos(time_window);
+  async traces(project_id: string, query: MonitoringListQuery): Promise<MonitoringTrace[]> {
     const agent = `nullif(${spanAgentId('s')}, '')`;
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, floor_nanos)}),
+      with scoped as (${projectRequestSpans(project_id, query)}),
       recent as (
-        select s.trace_id, min(s.start_time_unix_nano) as start_nanos
+        select distinct s.trace_id, s.request_start_unix_nano as start_nanos
         from scoped s
-        group by s.trace_id
         order by start_nanos desc
-        limit ${limit}
+        limit ${query.limit}
       )
       select
-        to_char(to_timestamp(r.start_nanos / 1e9) at time zone ${GRID_ZONE},
+        to_char(to_timestamp(r.start_nanos / 1e9) at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SSZ') as at,
         r.trace_id,
         (array_agg(s.name order by coalesce(s.parent_span_id, '') <> '', s.start_time_unix_nano))[1]
@@ -420,18 +361,14 @@ export const monitoring_repo = {
     return rows as unknown as MonitoringTrace[];
   },
 
-  async log_sources(
-    project_id: string,
-    { time_window }: MonitoringQuery
-  ): Promise<MonitoringLogSource[]> {
-    const floor_nanos = window_floor_nanos(time_window);
+  async log_sources(project_id: string, range: TimeRange): Promise<MonitoringLogSource[]> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, floor_nanos)}),
+      with scoped as (${projectSpans(project_id, range)}),
       project_traces as (select distinct s.trace_id from scoped s),
       sources as (
         select distinct ${LOG_AGENT} as agent, ${LOG_REPLICA} as replica
         from ${otelLogs} l
-        where ${log_scope(project_id, floor_nanos)}
+        where ${log_scope(project_id, range)}
       )
       select agent, json_agg(replica order by replica) as replicas
       from sources group by agent order by agent
@@ -441,27 +378,12 @@ export const monitoring_repo = {
 
   async resource_utilization(
     project_id: string,
-    { time_window }: MonitoringQuery
+    range: GridQuery
   ): Promise<ResourceUtilizationRow> {
-    const floor_nanos = window_floor_nanos(time_window);
-    const buckets = String(BUCKET_COUNTS[time_window]);
-    const interval = WINDOW_INTERVALS[time_window];
-    const unit = GRID_UNITS[time_window];
-
+    const grid = timeGrid(range);
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, floor_nanos)}),
-      grid as (
-        select
-          e.end_local - interval '${sql.raw(interval)}' as start_local,
-          e.end_local,
-          extract(epoch from interval '${sql.raw(interval)}')::float8 / ${sql.raw(buckets)}::int
-            as bucket_seconds
-        from (
-          select date_trunc('${sql.raw(unit)}', now() at time zone ${GRID_ZONE})
-            + interval '1 ${sql.raw(unit)}' as end_local
-        ) e
-      ),
-      slots as (select b from generate_series(1, ${sql.raw(buckets)}::int) b),
+      with scoped as (${projectRequestSpans(project_id, range)}),
+      slots as (${grid.slots}),
       machine_samples as (
         select
           coalesce(nullif(m.resource_attributes ->> 'host.name', ''), m.service_name, ${UNKNOWN_HOST})
@@ -469,11 +391,11 @@ export const monitoring_repo = {
           ${sql.raw(resource_case('m'))} as resource,
           m.value,
           m.time_unix_nano as at_nanos,
-          ${sql.raw(bucket_index(metricTime('m'), buckets))} as bucket
-        from ${otelMetrics} m cross join grid g
+          ${grid.index(metricTime('m'))} as bucket
+        from ${otelMetrics} m
         where m.metric_name in ${METRIC_NAME_LIST}
           and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
-          and ${sql.raw(metricTime('m'))} >= g.start_local at time zone ${GRID_ZONE}
+          and ${withinRange('m.time_unix_nano', range)}
       ),
       agent_samples as (
         select
@@ -481,20 +403,15 @@ export const monitoring_repo = {
           'cpu' as resource,
           ${sql.raw(spanCpuPercent('s'))} as value,
           s.start_time_unix_nano as at_nanos,
-          ${sql.raw(bucket_index(spanStart('s'), buckets))} as bucket
-        from scoped s cross join grid g
+          ${grid.index(requestStart('s'))} as bucket
+        from scoped s
         where ${sql.raw(spanCpuPercent('s'))} is not null
-          and ${sql.raw(spanStart('s'))} >= g.start_local at time zone ${GRID_ZONE}
       ),
       ${entity_rollup('machine')},
       ${entity_rollup('agent')}
       select
-        g.bucket_seconds,
-        json_agg(
-          (g.start_local + make_interval(secs => (s.b - 1) * g.bucket_seconds))
-            at time zone ${GRID_ZONE}
-          order by s.b
-        ) as bucket_start_ats,
+        ${grid.bucket_seconds}::float8 as bucket_seconds,
+        (select json_agg(sl.bucket_start order by sl.b) from slots sl) as bucket_start_ats,
         (select coalesce(
             json_agg(json_build_object('key', m.key, 'series', m.series)
               order by m.cpu_average desc nulls last, m.key), '[]'::json)
@@ -503,8 +420,6 @@ export const monitoring_repo = {
             json_agg(json_build_object('key', a.key, 'series', a.series)
               order by a.cpu_average desc nulls last, a.key), '[]'::json)
           from agent_rows a) as agents
-      from grid g cross join slots s
-      group by g.bucket_seconds
     `);
     return (rows as unknown as [ResourceUtilizationRow])[0];
   },
@@ -543,13 +458,9 @@ export const monitoring_repo = {
     return result.success ? result.data : null;
   },
 
-  async error_summary(
-    project_id: string,
-    { time_window }: MonitoringQuery
-  ): Promise<ErrorSummaryRow> {
-    const floor_nanos = window_floor_nanos(time_window);
+  async error_summary(project_id: string, range: TimeRange): Promise<ErrorSummaryRow> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, floor_nanos)}),
+      with scoped as (${projectSpans(project_id, range)}),
       project_traces as (select distinct s.trace_id from scoped s),
       errors as (
         select
@@ -561,7 +472,7 @@ export const monitoring_repo = {
             ${UNKNOWN_AGENT}
           ) as agent
         from ${otelLogs} l
-        where ${log_scope(project_id, floor_nanos)}
+        where ${log_scope(project_id, range)}
           and ${ERROR_SEVERITY}
       ),
       by_type as (

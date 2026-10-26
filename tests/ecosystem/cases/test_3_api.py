@@ -5,6 +5,9 @@
 query that was sent. Telemetry reaches Postgres through the Global Controller and
 the OTLP exporter, each polling every few seconds, so data cases poll."""
 
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
+
 import pytest
 
 from ..harness import CallFailed, http, poll
@@ -16,11 +19,23 @@ def _project_path(deployed, suffix):
     return f"/projects/{deployed.project_id}{suffix}"
 
 
-def _wait_for(deployed, suffix, accept, what):
-    """GET the project route until `accept(body)` is truthy; return the body."""
+def _range():
+    """The last day up to now, as a `from`/`to` query string."""
+    to = datetime.now(timezone.utc)
+    return urlencode(
+        {"from": (to - timedelta(days=1)).isoformat(), "to": to.isoformat()}
+    )
+
+
+def _wait_for(deployed, suffix, accept, what, ranged=True):
+    """GET the project route until `accept(body)` is truthy; return the body. A ranged
+    route asks for the last day, re-read on each attempt."""
 
     def attempt():
-        body = deployed.api.get(_project_path(deployed, suffix)).json()
+        path = (
+            f"{suffix}{'&' if '?' in suffix else '?'}{_range()}" if ranged else suffix
+        )
+        body = deployed.api.get(_project_path(deployed, path)).json()
         return body if accept(body) else None
 
     return poll(attempt, timeout=DATA_TIMEOUT, what=what)
@@ -69,10 +84,10 @@ def test_kpis(deployed, query_result):
     body = _wait_for(
         deployed,
         "/metrics/kpis",
-        lambda b: b["windows"]["1d"]["request_count"] >= 1,
-        "a request in the 1d KPI window",
+        lambda b: b["request_count"] >= 1,
+        "a request in the last day's KPIs",
     )
-    assert float(body["windows"]["1d"]["llm_cost"]) > 0, body["windows"]["1d"]
+    assert float(body["llm_cost"]) > 0, body
 
 
 @pytest.mark.parametrize(
@@ -81,7 +96,7 @@ def test_kpis(deployed, query_result):
 def test_distribution(deployed, query_result, metric):
     body = _wait_for(
         deployed,
-        f"/metrics/distribution?metric={metric}&time_window=1d",
+        f"/metrics/distribution?metric={metric}",
         lambda b: b["request_count"] >= 1,
         f"the {metric} distribution",
     )
@@ -91,7 +106,7 @@ def test_distribution(deployed, query_result, metric):
 def test_timeseries(deployed, query_result):
     _wait_for(
         deployed,
-        "/metrics/timeseries?time_window=1d",
+        "/metrics/timeseries",
         lambda b: any(p["request_count"] >= 1 for p in b["points"]),
         "a timeseries bucket with the request",
     )
@@ -100,17 +115,17 @@ def test_timeseries(deployed, query_result):
 def test_blocks_and_agent_detail(deployed, query_result):
     body = _wait_for(
         deployed,
-        "/metrics/blocks?time_window=1d",
+        "/metrics/blocks",
         lambda b: bool(b["blocks"]),
         "a costed block for an agent",
     )
     agent_id = body["blocks"][0]["agent_id"]
-    deployed.api.get(_project_path(deployed, f"/metrics/agents/{agent_id}"))
+    deployed.api.get(_project_path(deployed, f"/metrics/agents/{agent_id}?{_range()}"))
 
 
 def test_resources_overview(deployed, query_result):
     def listed():
-        body = deployed.api.get("/resources/overview?time_window=1d").json()
+        body = deployed.api.get(f"/resources/overview?{_range()}").json()
         names = [p["name"] for p in body["projects"]]
         return body if deployed.project.name in names else None
 
@@ -130,7 +145,7 @@ def test_llm_calls(deployed, query_result):
 
 def test_errors_summary(deployed):
     body = deployed.api.get(
-        _project_path(deployed, "/monitoring/errors/summary")
+        _project_path(deployed, f"/monitoring/errors/summary?{_range()}")
     ).json()
     assert "total" in body, body
 
@@ -156,6 +171,7 @@ def test_replicas(deployed):
         "/monitoring/replicas",
         lambda b: {r["agent"] for r in b["replicas"]} >= set(deployed.agents),
         "every agent reporting up",
+        ranged=False,
     )
     assert body["replicas"]
 
@@ -192,4 +208,5 @@ def test_scaling_read(deployed):
             and {a["name"] for a in b["agents"]} == set(deployed.agents)
         ),
         "every agent reporting its running replicas",
+        ranged=False,
     )

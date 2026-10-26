@@ -6,23 +6,19 @@ import { getRouteApi } from '@tanstack/react-router';
 import { ChevronDownIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
-import type {
-  MonitoringTrace,
-  MonitoringTraceSpan,
-  MonitoringTracesResponse,
-} from '@canyonos/api/monitoring';
+import type { MonitoringTrace, MonitoringTraceSpan } from '@canyonos/api/monitoring';
 
 import { Card } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent } from '@repo/ui/shadcn/collapsible';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { cn } from '@repo/ui/utils';
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { Payload } from '@/modules/monitoring/components/payload';
 import { RowTrigger } from '@/modules/monitoring/components/row-trigger';
 import { formatCost, formatTokens } from '@/modules/monitoring/monitoring.format';
+import { tracesQueryOptions } from '@/modules/monitoring/monitoring.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 const TRACE_LIMIT = 200;
 
@@ -52,21 +48,12 @@ function llmSummary(trace: MonitoringTrace) {
 
 interface TraceListProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
-export function TraceList({ project_id, time_window }: TraceListProps) {
+export function TraceList({ project_id, range }: TraceListProps) {
   const { view, trace: focused_trace_id } = route.useSearch();
-  const query = useQuery({
-    queryKey: ['projects', project_id, 'monitoring', 'traces', time_window],
-    queryFn: () =>
-      apiCall<MonitoringTracesResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.traces.get({
-          $query: { time_window, limit: TRACE_LIMIT },
-        })
-      ),
-    retry: false,
-  });
+  const query = useQuery(tracesQueryOptions(project_id, { range, limit: TRACE_LIMIT }));
 
   if (query.error) {
     return (

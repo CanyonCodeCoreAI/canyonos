@@ -5,19 +5,19 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ArrowUpRightIcon, ChevronDownIcon } from 'lucide-react';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
-import type { MonitoringLlmCall, MonitoringLlmCallsResponse } from '@canyonos/api/monitoring';
+import type { MonitoringLlmCall } from '@canyonos/api/monitoring';
 
 import { Card } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent } from '@repo/ui/shadcn/collapsible';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { Payload } from '@/modules/monitoring/components/payload';
 import { RowTrigger } from '@/modules/monitoring/components/row-trigger';
 import { formatTokens } from '@/modules/monitoring/monitoring.format';
+import { llmCallsQueryOptions } from '@/modules/monitoring/monitoring.queries';
 import { formatMoneyValue } from '@/modules/projects/projects.format';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 const CALL_LIMIT = 200;
 
@@ -28,20 +28,11 @@ const formatCost = (value: number | null) => (value === null ? '—' : formatMon
 
 interface LlmCallListProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
-export function LlmCallList({ project_id, time_window }: LlmCallListProps) {
-  const query = useQuery({
-    queryKey: ['projects', project_id, 'monitoring', 'llm', time_window],
-    queryFn: () =>
-      apiCall<MonitoringLlmCallsResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.llm.get({
-          $query: { time_window, limit: CALL_LIMIT },
-        })
-      ),
-    retry: false,
-  });
+export function LlmCallList({ project_id, range }: LlmCallListProps) {
+  const query = useQuery(llmCallsQueryOptions(project_id, { range, limit: CALL_LIMIT }));
 
   if (query.error) {
     return (
@@ -78,13 +69,7 @@ export function LlmCallList({ project_id, time_window }: LlmCallListProps) {
           </tr>
         </thead>
         {query.data.calls.map((call, index) => (
-          <LlmCallRow
-            key={call.span_id}
-            call={call}
-            index={index}
-            project_id={project_id}
-            time_window={time_window}
-          />
+          <LlmCallRow key={call.span_id} call={call} index={index} project_id={project_id} />
         ))}
       </table>
     </Card>
@@ -95,12 +80,10 @@ function LlmCallRow({
   call,
   index,
   project_id,
-  time_window,
 }: {
   readonly call: MonitoringLlmCall;
   readonly index: number;
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
 }) {
   return (
     <Collapsible asChild>
@@ -143,7 +126,7 @@ function LlmCallRow({
               <Link
                 to="/projects/$project_id/monitoring"
                 params={{ project_id }}
-                search={{ time_window, view: 'traces', trace: call.trace_id }}
+                search={(previous) => ({ ...previous, view: 'traces', trace: call.trace_id })}
                 className="text-link mb-3 inline-flex items-center gap-1"
                 data-testid={`llm-row-open-trace-${index}`}
               >

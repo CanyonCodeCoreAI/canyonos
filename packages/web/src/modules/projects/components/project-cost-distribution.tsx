@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { DistributionMetric, MetricsDistribution, MetricsWindow } from '@canyonos/api/metrics';
+import type { DistributionMetric, MetricsDistribution } from '@canyonos/api/metrics';
 
 import { BarChart } from '@repo/ui/components/charts/bar-chart';
 import { TimeRangeToggle } from '@repo/ui/components/time-range-toggle';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import type { BarDatum, BarMarker } from '@repo/ui/components/charts/bar-chart';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ProjectMetricsSection } from '@/modules/projects/components/project-metrics-section';
@@ -24,7 +24,8 @@ import {
   distributionBucketIndex,
   isDistributionMetric,
 } from '@/modules/projects/projects.metrics';
-import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import { projectDistributionQueryOptions } from '@/modules/projects/projects.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 import type { DistributionSelection } from '@/modules/projects/projects.metrics';
 
 const CHART_CONFIG: ChartConfig = { value: { label: 'Queries', color: COST_SPLIT.llm_cost.color } };
@@ -43,7 +44,7 @@ const PERCENTILE_MARKERS = [
 
 interface ProjectCostDistributionProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   readonly metric: DistributionMetric;
   readonly selection: DistributionSelection | null;
   readonly onMetricChange: (metric: DistributionMetric) => void;
@@ -52,28 +53,15 @@ interface ProjectCostDistributionProps {
 
 export function ProjectCostDistribution({
   project_id,
-  time_window,
+  range,
   metric,
   selection,
   onMetricChange,
   onSelect,
 }: ProjectCostDistributionProps) {
-  const distribution_query = useQuery({
-    queryKey: projectQueryKeys.metricsDistribution(
-      project_id,
-      metric,
-      time_window,
-      DISTRIBUTION_BUCKETS
-    ),
-    queryFn: () =>
-      apiCall<MetricsDistribution>(() =>
-        forgeAuthApi.projects[project_id]!.metrics.distribution.get({
-          $query: { metric, time_window, buckets: DISTRIBUTION_BUCKETS },
-        })
-      ),
-    retry: false,
-    refetchInterval: dashboardPollInterval,
-  });
+  const distribution_query = useQuery(
+    projectDistributionQueryOptions(project_id, { range, metric, buckets: DISTRIBUTION_BUCKETS })
+  );
 
   return (
     <ProjectMetricsSection
@@ -94,24 +82,33 @@ export function ProjectCostDistribution({
         />
       }
     >
-      {distribution_query.isPending ? (
-        <Skeleton className="h-72 rounded-lg" data-testid="project-distribution-loading" />
-      ) : distribution_query.error ? (
-        <QueryError
-          message="Could not load the per-query distribution."
-          onRetry={() => void distribution_query.refetch()}
-          test_id="project-distribution-error"
-        />
-      ) : (
-        <DistributionChart
-          distribution={distribution_query.data}
-          time_window={time_window}
-          selection={selection}
-          onSelect={onSelect}
-        />
-      )}
+      <DistributionBody query={distribution_query} selection={selection} onSelect={onSelect} />
     </ProjectMetricsSection>
   );
+}
+
+function DistributionBody({
+  query,
+  selection,
+  onSelect,
+}: {
+  readonly query: UseQueryResult<MetricsDistribution>;
+  readonly selection: DistributionSelection | null;
+  readonly onSelect: (selection: DistributionSelection | null) => void;
+}) {
+  if (query.isPending) {
+    return <Skeleton className="h-72 rounded-lg" data-testid="project-distribution-loading" />;
+  }
+  if (query.error) {
+    return (
+      <QueryError
+        message="Could not load the per-query distribution."
+        onRetry={() => void query.refetch()}
+        test_id="project-distribution-error"
+      />
+    );
+  }
+  return <DistributionChart distribution={query.data} selection={selection} onSelect={onSelect} />;
 }
 
 function Figure({ label, value }: { readonly label: string; readonly value: string }) {
@@ -127,12 +124,10 @@ function Figure({ label, value }: { readonly label: string; readonly value: stri
 
 function DistributionChart({
   distribution,
-  time_window,
   selection,
   onSelect,
 }: {
   readonly distribution: MetricsDistribution;
-  readonly time_window: MetricsWindow;
   readonly selection: DistributionSelection | null;
   readonly onSelect: (selection: DistributionSelection | null) => void;
 }) {
@@ -141,7 +136,7 @@ function DistributionChart({
   if (distribution.request_count === 0 || distribution.buckets.length === 0) {
     return (
       <EmptyState size="section" test_id="project-distribution-empty">
-        <p>No completed queries in this window to build a distribution from.</p>
+        <p>No completed queries in this range to build a distribution from.</p>
       </EmptyState>
     );
   }
@@ -193,7 +188,6 @@ function DistributionChart({
             if (selection?.bucket_key === datum.key) return onSelect(null);
             onSelect({
               metric: distribution.metric,
-              time_window,
               min: bucket.lower,
               max: bucket.upper,
               label: `${format(bucket.lower)} – ${format(bucket.upper)}`,

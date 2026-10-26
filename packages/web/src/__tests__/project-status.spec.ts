@@ -19,6 +19,7 @@ const STATUS_PATH = `/projects/${PROJECT.id}/status`;
 const MONITORING_PATH = `/projects/${PROJECT.id}/monitoring`;
 const ENDPOINT_URL = 'http://203.0.113.7:8080/main';
 const STATUS_URL = 'http://203.0.113.7:8080/status';
+const RANGE = { from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z' };
 
 const REPLICAS: MonitoringReplica[] = [
   {
@@ -65,7 +66,7 @@ const ENDPOINT: MonitoringEndpointResponse = {
 
 const ERROR_SUMMARY: MonitoringErrorSummaryResponse = {
   project_id: PROJECT.id,
-  time_window: '1d',
+  ...RANGE,
   total: 7,
   by_type: [],
   by_agent: [],

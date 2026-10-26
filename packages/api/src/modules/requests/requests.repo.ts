@@ -5,12 +5,13 @@ import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
+import type { TimeRange } from '@core/time-range';
 
 import { OTEL_DISTRIBUTION_VALUES } from '../metrics/metrics.distribution';
-import { NO_FLOOR, window_floor_nanos } from '../metrics/metrics.scope';
 import {
+  allProjectSpans,
   isModelSpan,
-  projectSpans,
+  projectRequestSpans,
   spanCost,
   spanDurationMs,
   spanErrorCount,
@@ -26,9 +27,8 @@ import {
   spanTokenCost,
   spanTotalTokens,
 } from '../metrics/metrics.sql';
-import type { MetricsWindow } from '../metrics/metrics.types';
 import type {
-  RequestListItem,
+  RequestList,
   RequestMetricRange,
   RequestSort,
   RequestStatus,
@@ -38,9 +38,8 @@ import type {
 } from './requests.types';
 
 /** What narrows the listing. The page and its `total` must be counted over the same set. */
-export interface RequestFilters {
+export interface RequestFilters extends TimeRange {
   readonly status?: RequestStatus;
-  readonly time_window?: MetricsWindow;
   readonly range?: RequestMetricRange;
   readonly created_from?: string;
   readonly created_to?: string;
@@ -52,9 +51,6 @@ export interface RequestPage extends RequestFilters {
   readonly sort: RequestSort;
   readonly order: SortDirection;
 }
-
-const listing_floor = (time_window: MetricsWindow | undefined): string =>
-  time_window === undefined ? NO_FLOOR : window_floor_nanos(time_window);
 
 const REQUESTS_CTE = `requests as (
     select
@@ -100,7 +96,7 @@ const status_predicate = (status: RequestStatus | undefined): SQL => {
 };
 
 // The final bucket includes its upper bound, matching metrics.distribution.ts.
-const requests_in_metric_range = (project_id: string, range: RequestMetricRange): SQL => {
+const requests_in_metric_range = (range: RequestMetricRange): SQL => {
   const { value, having } = OTEL_DISTRIBUTION_VALUES[range.metric];
   return sql`
     select scored.trace_id
@@ -111,7 +107,7 @@ const requests_in_metric_range = (project_id: string, range: RequestMetricRange)
         max(per_request.value) over () as max_value
       from (
         select s.trace_id, ${sql.raw(value)} as value
-        from (${projectSpans(project_id, window_floor_nanos(range.time_window))}) s
+        from scoped s
         group by s.trace_id
         ${sql.raw(having)}
       ) per_request
@@ -124,12 +120,10 @@ const requests_in_metric_range = (project_id: string, range: RequestMetricRange)
   `;
 };
 
-const metric_range_predicate = (project_id: string, range: RequestMetricRange | undefined): SQL =>
-  range === undefined
-    ? sql.empty()
-    : sql` and q.trace_id in (${requests_in_metric_range(project_id, range)})`;
+const metric_range_predicate = (range: RequestMetricRange | undefined): SQL =>
+  range === undefined ? sql.empty() : sql` and q.trace_id in (${requests_in_metric_range(range)})`;
 
-// Half-open [from, to), so two windows asked for back to back never share a request.
+// Half-open [from, to), so two days asked for back to back never share a request.
 const created_range_predicate = (filters: RequestFilters): SQL => {
   const from =
     filters.created_from === undefined
@@ -142,8 +136,8 @@ const created_range_predicate = (filters: RequestFilters): SQL => {
   return sql`${from}${to}`;
 };
 
-const filter_predicates = (project_id: string, filters: RequestFilters): SQL =>
-  sql`${metric_range_predicate(project_id, filters.range)}${status_predicate(filters.status)}${created_range_predicate(filters)}`;
+const filter_predicates = (filters: RequestFilters): SQL =>
+  sql`${metric_range_predicate(filters.range)}${status_predicate(filters.status)}${created_range_predicate(filters)}`;
 
 const SORT_ORDER: Record<RequestSort, string> = {
   created_at: 'q.first_start',
@@ -171,35 +165,44 @@ function payload(value: string | null): unknown {
 }
 
 export const requests_repo = {
-  async list_by_project(project_id: string, page: RequestPage): Promise<RequestListItem[]> {
+  /** One page and the `total` of the same filtered set, read off one scan of the range. */
+  async page_by_project(
+    project_id: string,
+    page: RequestPage
+  ): Promise<Pick<RequestList, 'total' | 'items'>> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, listing_floor(page.time_window))}),
-      ${sql.raw(REQUESTS_CTE)}
-      select ${sql.raw(REQUEST_COLUMNS)}
-      from requests q
-      where true${filter_predicates(project_id, page)}
-      order by ${sql.raw(order_by(page.sort, page.order))}
-      limit ${page.limit} offset ${page.offset}
+      with scoped as (${projectRequestSpans(project_id, page)}),
+      ${sql.raw(REQUESTS_CTE)},
+      matched as (
+        select q.* from requests q
+        where true${filter_predicates(page)}
+      ),
+      page as (
+        select ${sql.raw(REQUEST_COLUMNS)},
+          row_number() over (order by ${sql.raw(order_by(page.sort, page.order))}) as position
+        from matched q
+        order by position
+        limit ${page.limit} offset ${page.offset}
+      )
+      select
+        (select count(*)::int from matched) as total,
+        coalesce(
+          (select json_agg(to_jsonb(p) - 'position' order by p.position) from page p),
+          '[]'::json
+        ) as items
     `);
-    return rows as unknown as RequestListItem[];
+    return (rows as unknown as [Pick<RequestList, 'total' | 'items'>])[0];
   },
 
-  async count_by_project(project_id: string, filters: RequestFilters): Promise<number> {
-    const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, listing_floor(filters.time_window))}),
-      ${sql.raw(REQUESTS_CTE)}
-      select count(*)::int as total
-      from requests q
-      where true${filter_predicates(project_id, filters)}
-    `);
-    return (rows as unknown as [{ total: number }])[0].total;
-  },
-
-  /** Never window-scoped: a request straddling a window edge must still read completely. */
-  async trace_by_project(project_id: string, session_id: string): Promise<RequestTrace | null> {
+  /** The request reads whole wherever it started; only its medians come from `range`. */
+  async trace_by_project(
+    project_id: string,
+    session_id: string,
+    range: TimeRange
+  ): Promise<RequestTrace | null> {
     const rows = await db.execute(sql`
       with scoped as (
-        select s.* from (${projectSpans(project_id, NO_FLOOR)}) s where s.trace_id = ${session_id}
+        select s.* from (${allProjectSpans(project_id)}) s where s.trace_id = ${session_id}
       ),
       ${sql.raw(REQUESTS_CTE)},
       -- Billed requests only: one that never priced itself contributes a $0 that drags the
@@ -209,7 +212,7 @@ export const requests_repo = {
           coalesce(sum(${sql.raw(spanTotalTokens('s'))}), 0)::float8 as token_count,
           sum(${sql.raw(spanCost('s'))}) as total_cost,
           coalesce(sum(${sql.raw(spanServerCost('s'))}), 0) as harness_cost
-        from (${projectSpans(project_id, window_floor_nanos('30d'))}) s
+        from (${projectRequestSpans(project_id, range)}) s
         group by s.trace_id
         having sum(${sql.raw(spanCost('s'))}) > 0
       ),

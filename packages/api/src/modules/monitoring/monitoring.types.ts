@@ -3,7 +3,7 @@
 
 import { z } from 'zod';
 
-import { MetricsWindowSchema } from '../metrics/metrics.types';
+import { TIME_RANGE_FIELDS, timeRangeQuery } from '@core/time-range';
 
 export const MonitoringSignalSchema = z.enum(['traffic', 'errors', 'latency', 'saturation']);
 
@@ -15,18 +15,15 @@ export const MonitoringResourceSchema = z.enum(['cpu', 'memory', 'disk', 'gpu'])
 
 export const MonitoringScopeSchema = z.object({
   project_id: z.string().uuid(),
-  time_window: MetricsWindowSchema,
+  ...TIME_RANGE_FIELDS,
 });
 
-export const MonitoringQuerySchema = z.object({
-  time_window: MetricsWindowSchema.default('1d'),
-});
-
-export const MonitoringListQuerySchema = MonitoringQuerySchema.extend({
+export const MonitoringListQuerySchema = timeRangeQuery({
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
 
-export const MonitoringLogsQuerySchema = MonitoringListQuerySchema.extend({
+export const MonitoringLogsQuerySchema = timeRangeQuery({
+  limit: z.coerce.number().int().min(1).max(500).default(200),
   errors_only: z
     .union([z.boolean(), z.enum(['true', 'false']).transform((flag) => flag === 'true')])
     .default(false),
@@ -34,7 +31,7 @@ export const MonitoringLogsQuerySchema = MonitoringListQuerySchema.extend({
   replica: z.string().min(1).optional(),
 });
 
-// Every bucket of the window, oldest first; each series' `values` is index-aligned with it.
+// Every bucket of the range, oldest first; each series' `values` is index-aligned with it.
 export const MonitoringGridSchema = z.object({
   bucket_seconds: z.number().positive(),
   bucket_start_ats: z.array(z.string()),
@@ -209,7 +206,6 @@ export type MonitoringUnit = z.infer<typeof MonitoringUnitSchema>;
 export type MonitoringKind = z.infer<typeof MonitoringKindSchema>;
 export type MonitoringResource = z.infer<typeof MonitoringResourceSchema>;
 export type MonitoringScope = z.infer<typeof MonitoringScopeSchema>;
-export type MonitoringQuery = z.infer<typeof MonitoringQuerySchema>;
 export type MonitoringListQuery = z.infer<typeof MonitoringListQuerySchema>;
 export type MonitoringLogsQuery = z.infer<typeof MonitoringLogsQuerySchema>;
 export type MonitoringGrid = z.infer<typeof MonitoringGridSchema>;

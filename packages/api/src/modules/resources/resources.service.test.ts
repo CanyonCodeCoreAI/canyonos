@@ -18,6 +18,13 @@ const row = (overrides: Partial<FleetProjectRow> & { project_id: string }): Flee
   ...overrides,
 });
 
+const END = Date.parse('2026-01-01T00:00:00.000Z');
+
+const lastMinutes = (minutes: number) => ({
+  from: new Date(END - minutes * 60_000).toISOString(),
+  to: new Date(END).toISOString(),
+});
+
 const kpi = (overview: { kpis: { id: string; value: string }[] }, id: string): string =>
   overview.kpis.find((entry) => entry.id === id)!.value;
 
@@ -43,7 +50,7 @@ describe('build_overview', () => {
         }),
         row({ project_id: 'charlie' }),
       ],
-      '30d'
+      lastMinutes(30 * 1440)
     );
 
     expect(kpi(overview, 'total_spend')).toBe('$2.00');
@@ -69,7 +76,7 @@ describe('build_overview', () => {
         row({ project_id: 'fast', block_count: 1, avg_latency_ms: 1000, request_count: 1 }),
         row({ project_id: 'idle', block_count: 0, avg_latency_ms: null }),
       ],
-      '7d'
+      lastMinutes(7 * 1440)
     );
 
     expect(kpi(overview, 'avg_latency')).toBe('2.5 s');
@@ -87,7 +94,7 @@ describe('build_overview', () => {
         row({ project_id: 'p6' }),
         row({ project_id: 'p7' }),
       ],
-      '1d'
+      lastMinutes(1440)
     );
 
     expect(overview.projects[0]!.error_rate_pct).toBe(25);
@@ -96,7 +103,7 @@ describe('build_overview', () => {
   });
 
   test('zeroes every KPI and pool for an empty fleet', () => {
-    const overview = build_overview([], '7d');
+    const overview = build_overview([], lastMinutes(7 * 1440));
 
     expect(overview.projects).toEqual([]);
     expect(kpi(overview, 'total_spend')).toBe('$0.00');
@@ -118,17 +125,32 @@ describe('build_overview', () => {
     expect(overview.resources.every((resource) => resource.pool === 0)).toBe(true);
   });
 
-  test('names the window in every KPI sub-label', () => {
-    const overview = build_overview([row({ project_id: 'only' })], '1q');
+  test('names the range length in every KPI sub-label', () => {
+    const overview = build_overview([row({ project_id: 'only' })], lastMinutes(90 * 1440));
 
     expect(kpi(overview, 'total_spend')).toBe('$0.00');
-    expect(overview.kpis.find((entry) => entry.id === 'requests')?.sub_label).toBe('last 90 days');
+    expect(overview.kpis.find((entry) => entry.id === 'requests')?.sub_label).toBe('90 days');
+  });
+
+  test('names the range in the largest unit that reads well', () => {
+    const label = (minutes: number) =>
+      build_overview([], lastMinutes(minutes)).kpis.find((entry) => entry.id === 'requests')!
+        .sub_label;
+
+    expect(label(1440)).toBe('24 hours');
+    expect(label(7 * 1440)).toBe('7 days');
+    expect(label(36 * 60)).toBe('36 hours');
+    expect(label(37123 / 60)).toBe('10 hours');
+    expect(label(90)).toBe('90 minutes');
+    expect(label(1)).toBe('60 seconds');
+    expect(label(20 / 60)).toBe('20 seconds');
   });
 
   test('keeps spend below a cent readable instead of rounding it away', () => {
-    const cents = build_overview([row({ project_id: 'a', total_cost: '0.1340000000' })], '7d');
-    const sub_cent = build_overview([row({ project_id: 'a', total_cost: '0.0004500000' })], '7d');
-    const thousands = build_overview([row({ project_id: 'a', total_cost: '1340.5' })], '7d');
+    const range = lastMinutes(7 * 1440);
+    const cents = build_overview([row({ project_id: 'a', total_cost: '0.1340000000' })], range);
+    const sub_cent = build_overview([row({ project_id: 'a', total_cost: '0.0004500000' })], range);
+    const thousands = build_overview([row({ project_id: 'a', total_cost: '1340.5' })], range);
 
     expect(kpi(cents, 'total_spend')).toBe('$0.13');
     expect(kpi(sub_cent, 'total_spend')).toBe('$0.00045');

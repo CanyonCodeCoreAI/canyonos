@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { QueryClient, QueryKey } from '@tanstack/react-query';
+import type { InvalidateQueryFilters, QueryClient } from '@tanstack/react-query';
 
-import type { DistributionMetric, MetricsWindow } from '@canyonos/api/metrics';
-
-import type { RequestListFilters, RequestsPage } from './projects.metrics';
+import { resolveRange } from '../core/time-range';
+import type { RangeSelection, TimeRange } from '../core/time-range';
 
 export const projectQueryKeys = {
   all: ['projects'] as const,
@@ -14,45 +13,6 @@ export const projectQueryKeys = {
   prompt: (project_id: string, name: string) => ['projects', project_id, 'prompts', name] as const,
   scaling: (project_id: string) => ['projects', project_id, 'scaling'] as const,
   scalingAgents: (project_id: string) => ['projects', project_id, 'scaling', 'agents'] as const,
-  // KPIs are keyed without a window: one response carries every window, so the range toggle
-  // re-reads the same cache entry instead of refetching.
-  metricsKpis: (project_id: string) => ['projects', project_id, 'metrics', 'kpis'] as const,
-  metricsBlocks: (project_id: string, time_window: MetricsWindow) =>
-    ['projects', project_id, 'metrics', 'blocks', time_window] as const,
-  // Fixed trailing 30 days, so no window in the key. The zone is in it because the payload carries
-  // a bucketed cost series, and the same agent read from two zones is two different series.
-  metricsAgent: (project_id: string, agent_id: string, time_zone: string) =>
-    ['projects', project_id, 'metrics', 'agents', agent_id, time_zone] as const,
-  metricsTimeseries: (project_id: string, time_window: MetricsWindow, time_zone: string) =>
-    ['projects', project_id, 'metrics', 'timeseries', time_window, time_zone] as const,
-  metricsDistribution: (
-    project_id: string,
-    metric: DistributionMetric,
-    time_window: MetricsWindow,
-    buckets: number
-  ) => ['projects', project_id, 'metrics', 'distribution', metric, time_window, buckets] as const,
-  // Every filter the listing sends has to appear here, or narrowing one of them serves the page
-  // fetched under the previous set.
-  requests: (project_id: string, page: RequestsPage, filters: RequestListFilters) =>
-    [
-      'projects',
-      project_id,
-      'requests',
-      page.limit,
-      page.offset,
-      page.sort,
-      page.order,
-      filters.time_window,
-      filters.selection?.metric ?? null,
-      filters.selection?.time_window ?? null,
-      filters.selection?.min ?? null,
-      filters.selection?.max ?? null,
-      filters.status ?? null,
-      filters.day?.created_from ?? null,
-      filters.day?.created_to ?? null,
-    ] as const,
-  requestTrace: (project_id: string, session_id: string) =>
-    ['projects', project_id, 'requests', session_id, 'trace'] as const,
 };
 
 export async function retryProjectDetailLoader(
@@ -67,14 +27,6 @@ export async function retryProjectDetailLoader(
   });
   await invalidate_route();
   reset();
-}
-
-// The metrics sections and the query listing — not `requestTrace`: the drawer
-// isn't live and a refresh must not refetch behind it.
-export function isProjectDashboardQuery(query_key: QueryKey, project_id: string): boolean {
-  if (query_key[0] !== 'projects' || query_key[1] !== project_id) return false;
-  if (query_key[2] === 'requests' && query_key.at(-1) === 'trace') return false;
-  return query_key[2] === 'metrics' || query_key[2] === 'requests';
 }
 
 export const DASHBOARD_POLL_INTERVAL_MS = 5_000;
@@ -94,13 +46,28 @@ export const DASHBOARD_POLL_INTERVAL_MS = 5_000;
 export const dashboardPollInterval = (section: { state: { error: Error | null } }) =>
   section.state.error ? false : DASHBOARD_POLL_INTERVAL_MS;
 
-// Invalidating rather than removing keeps cached data on screen while it re-reads; only active
-// queries refetch, so other visited windows/pages are marked stale instead of refetched immediately.
-export async function refreshProjectDashboard(
-  query_client: QueryClient,
-  project_id: string
-): Promise<void> {
-  await query_client.invalidateQueries({
-    predicate: (query) => isProjectDashboardQuery(query.queryKey, project_id),
-  });
+/** The project's queries whose object holds a range: what a re-read of the shown preset refreshes. */
+export const rangedQueries = (project_id: string): InvalidateQueryFilters => ({
+  queryKey: ['projects', project_id],
+  predicate: (query) =>
+    query.queryKey.some((part) => typeof part === 'object' && part !== null && 'range' in part),
+});
+
+/**
+ * The `from` and `to` a range asks for. A preset ends on the latest poll tick rather than the
+ * millisecond each query runs, so the sections read on one tick all describe the same instants.
+ */
+export const rangeParams = (range: RangeSelection, now = Date.now()): TimeRange =>
+  resolveRange(range, Math.floor(now / DASHBOARD_POLL_INTERVAL_MS) * DASHBOARD_POLL_INTERVAL_MS);
+
+/**
+ * A resource's query object as the `$query` it sends: the range resolved, every other field as is.
+ * An unset field is left out, since the client would otherwise send it as the string "undefined".
+ */
+export function toParams<Query extends { readonly range: RangeSelection }>({
+  range,
+  ...fields
+}: Query): Omit<Query, 'range'> & TimeRange {
+  const set = Object.entries(fields).filter(([, value]) => value !== undefined);
+  return { ...(Object.fromEntries(set) as Omit<Query, 'range'>), ...rangeParams(range) };
 }

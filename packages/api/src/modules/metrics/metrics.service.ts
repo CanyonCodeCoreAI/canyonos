@@ -1,107 +1,54 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { notFound, unprocessable } from '@core/errors';
+import { notFound } from '@core/errors';
+import { withTimeZone } from '@core/time-range';
+import type { GridQuery, TimeRange } from '@core/time-range';
 
 import { metrics_repo } from './metrics.repo';
 import type {
-  AgentDetailsQuery,
   DistributionQuery,
   MetricsAgentDetails,
   MetricsBlocks,
   MetricsDistribution,
   MetricsKpis,
   MetricsTimeseries,
-  MetricsWindow,
-  TimeseriesQuery,
-  TimeWindowQuery,
 } from './metrics.types';
 
-// A day reads naturally as 24 hourly points; the longer windows get 30, which is a point per day
-// at 30d and a point per three days over a quarter.
-const default_buckets = (time_window: MetricsWindow): number => (time_window === '1d' ? 24 : 30);
-
-export async function get_kpis(project_id: string): Promise<MetricsKpis> {
-  return metrics_repo.kpis_by_project(project_id);
+export async function get_kpis(project_id: string, range: TimeRange): Promise<MetricsKpis> {
+  return metrics_repo.kpis_by_project(project_id, range);
 }
 
 export async function get_distribution(
   project_id: string,
   query: DistributionQuery
 ): Promise<MetricsDistribution> {
-  return metrics_repo.distribution_by_project(
-    project_id,
-    query.metric,
-    query.time_window,
-    query.buckets
-  );
-}
-
-// The refine on `time_zone` accepts every zone ICU knows, but Postgres reads the same string against
-// its own catalog and raises SQLSTATE 22023 for the zones it lacks (a bare offset like `-0800`, say).
-// `time_zone` is the only invalid-parameter value this query can carry — `buckets` is a bounded int
-// and the window units are static literals — so the code alone names a zone Postgres cannot resolve.
-// Drizzle wraps the driver failure in a DrizzleQueryError, so the PostgresError with the code sits on
-// `cause`; walk the chain rather than read the top level.
-function is_unknown_time_zone(error: unknown): boolean {
-  for (let cursor = error; cursor != null; cursor = (cursor as { cause?: unknown }).cause) {
-    if ((cursor as { code?: unknown }).code === '22023') return true;
-  }
-  return false;
+  return metrics_repo.distribution_by_project(project_id, query.metric, query, query.buckets);
 }
 
 export async function get_timeseries(
   project_id: string,
-  query: TimeseriesQuery
+  query: GridQuery
 ): Promise<MetricsTimeseries> {
-  const time_zone = query.time_zone ?? 'UTC';
-  try {
-    return await metrics_repo.timeseries_by_project(
-      project_id,
-      query.time_window,
-      query.buckets ?? default_buckets(query.time_window),
-      time_zone
-    );
-  } catch (error) {
-    if (is_unknown_time_zone(error)) {
-      throw unprocessable(
-        'metrics.invalid_time_zone',
-        `Time zone "${time_zone}" is not recognized`
-      );
-    }
-    throw error;
-  }
+  return withTimeZone(query, () => metrics_repo.timeseries_by_project(project_id, query));
 }
 
-export async function get_blocks(
-  project_id: string,
-  query: TimeWindowQuery
-): Promise<MetricsBlocks> {
-  return metrics_repo.blocks_by_project(project_id, query.time_window);
+export async function get_blocks(project_id: string, query: TimeRange): Promise<MetricsBlocks> {
+  return metrics_repo.blocks_by_project(project_id, query);
 }
 
 export async function get_agent_details(
   project_id: string,
   agent_id: string,
-  query: AgentDetailsQuery
+  query: GridQuery
 ): Promise<MetricsAgentDetails> {
-  const time_zone = query.time_zone ?? 'UTC';
-  let details: MetricsAgentDetails | null;
-  try {
-    details = await metrics_repo.agent_details_by_project(project_id, agent_id, time_zone);
-  } catch (error) {
-    if (is_unknown_time_zone(error)) {
-      throw unprocessable(
-        'metrics.invalid_time_zone',
-        `Time zone "${time_zone}" is not recognized`
-      );
-    }
-    throw error;
-  }
+  const details = await withTimeZone(query, () =>
+    metrics_repo.agent_details_by_project(project_id, agent_id, query)
+  );
   if (!details) {
     throw notFound(
       'metrics.agent_not_found',
-      `Agent "${agent_id}" has no telemetry data for this project in the last 30 days`
+      `Agent "${agent_id}" has no telemetry data for this project in the selected range`
     );
   }
   return details;

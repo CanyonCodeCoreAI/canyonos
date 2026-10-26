@@ -24,13 +24,19 @@ async function mockProjectsList(page: Page, projects: ProjectSummary[]): Promise
   );
 }
 
-/** The trailing-30-day rollup the rows read their spend figures from. */
+/** The range-scoped rollup the rows read their spend figures from. */
 async function mockFleetSpend(page: Page, projects: FleetProject[]): Promise<void> {
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname === '/resources/overview',
     (route) =>
       route.request().method() === 'GET'
-        ? fulfillJson(route, { kpis: [], resources: [], projects, time_window: '30d' })
+        ? fulfillJson(route, {
+            kpis: [],
+            resources: [],
+            projects,
+            from: new URL(route.request().url()).searchParams.get('from'),
+            to: new URL(route.request().url()).searchParams.get('to'),
+          })
         : route.continue()
   );
 }

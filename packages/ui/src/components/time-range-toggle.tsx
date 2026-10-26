@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//
-
 import { ToggleGroup, ToggleGroupItem } from '../shadcn/toggle-group';
 
 interface TimeRangeOption<T extends string = string> {
@@ -21,6 +19,8 @@ type DefaultTimeRange = (typeof DEFAULT_OPTIONS)[number]['value'];
 interface TimeRangeToggleProps<T extends string = string> {
   value: T;
   onValueChange: (value: T) => void;
+  /** Called when the option already selected is clicked again. */
+  onReselect?: () => void;
   options: readonly TimeRangeOption<T>[];
   className?: string;
   'aria-label'?: string;
@@ -30,6 +30,7 @@ interface TimeRangeToggleProps<T extends string = string> {
 function TimeRangeToggle<T extends string = string>({
   value,
   onValueChange,
+  onReselect,
   options,
   className,
   'aria-label': ariaLabel = 'Time range',
@@ -40,6 +41,10 @@ function TimeRangeToggle<T extends string = string>({
       type="single"
       value={value}
       onValueChange={(next) => {
+        if (!next) {
+          onReselect?.();
+          return;
+        }
         const picked = options.find((option) => option.value === next);
         if (picked) onValueChange(picked.value);
       }}

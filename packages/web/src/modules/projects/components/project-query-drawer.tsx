@@ -23,7 +23,6 @@ import {
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { Textarea } from '@repo/ui/shadcn/textarea';
 import { cn } from '@repo/ui/utils';
-import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';
 import {
   formatBlockCostCents,
@@ -38,7 +37,8 @@ import {
   shortRequestId,
 } from '@/modules/projects/projects.format';
 import { COST_SPLIT } from '@/modules/projects/projects.metrics';
-import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import { projectRequestTraceQueryOptions } from '@/modules/projects/projects.queries';
+import type { TimeRange } from '@/modules/core/time-range';
 
 const TEST_ID = 'project-query-drawer';
 
@@ -50,17 +50,19 @@ const EXPENSIVE_VS_MEDIAN = 1.5;
 const EXPENSIVE_BLOCK_SHARE = 0.4;
 const TRACE_TICKS = [0, 0.25, 0.5, 0.75, 1] as const;
 
-const traceQuery = (project_id: string, session_id: string) => ({
-  queryKey: projectQueryKeys.requestTrace(project_id, session_id),
-  queryFn: () =>
-    apiCall<RequestTrace>(() => forgeAuthApi.projects[project_id]!.requests[session_id]!.get()),
-  retry: false,
-});
+/**
+ * A query opened from a listing, with the range that listing answered for: the trace's project
+ * medians are read over the same range, so the comparison describes the rows beside it.
+ */
+export interface OpenedQuery {
+  readonly request: RequestListItem;
+  readonly range: TimeRange;
+}
 
 interface ProjectQueryDrawerProps {
   readonly project_id: string;
   /** `null` closes the drawer. */
-  readonly request: RequestListItem | null;
+  readonly opened: OpenedQuery | null;
   readonly onClose: () => void;
   /** Focused again on close; without it focus falls to the document body. */
   readonly returnFocusTo?: () => HTMLElement | null;
@@ -69,17 +71,17 @@ interface ProjectQueryDrawerProps {
 /** One query's trace: what it cost against its peers, and where that money and time went. */
 export function ProjectQueryDrawer({
   project_id,
-  request,
+  opened,
   onClose,
   returnFocusTo,
 }: ProjectQueryDrawerProps) {
-  // Held through the close animation, which still runs after `request` is null.
-  const [shown_request, setShownRequest] = useState(request);
-  if (request !== null && request !== shown_request) setShownRequest(request);
+  // Held through the close animation, which still runs after `opened` is null.
+  const [shown, setShown] = useState(opened);
+  if (opened !== null && opened !== shown) setShown(opened);
 
   return (
     <Sheet
-      open={request !== null}
+      open={opened !== null}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -104,8 +106,8 @@ export function ProjectQueryDrawer({
         }}
         data-testid={TEST_ID}
       >
-        {shown_request === null ? null : (
-          <QueryDrawerBody project_id={project_id} request={shown_request} />
+        {shown === null ? null : (
+          <QueryDrawerBody project_id={project_id} request={shown.request} range={shown.range} />
         )}
       </SheetContent>
     </Sheet>
@@ -115,11 +117,15 @@ export function ProjectQueryDrawer({
 function QueryDrawerBody({
   project_id,
   request,
+  range,
 }: {
   readonly project_id: string;
   readonly request: RequestListItem;
+  readonly range: TimeRange;
 }) {
-  const trace_query = useQuery(traceQuery(project_id, request.session_id));
+  const trace_query = useQuery(
+    projectRequestTraceQueryOptions(project_id, request.session_id, { range })
+  );
   const short_id = shortRequestId(request.session_id);
 
   return (

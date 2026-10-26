@@ -4,13 +4,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 
-import type { MetricsBlock, MetricsBlocks, MetricsWindow } from '@canyonos/api/metrics';
-import type { RequestList, RequestListItem } from '@canyonos/api/requests';
+import type { MetricsBlock } from '@canyonos/api/metrics';
+import type { RequestListItem } from '@canyonos/api/requests';
 
 import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { cn } from '@repo/ui/utils';
-import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ProjectBlockDrawer } from '@/modules/projects/components/project-block-drawer';
 import { costCoverage } from '@/modules/projects/components/project-cost-ribbon';
@@ -24,9 +23,14 @@ import {
   parseMoney,
   shortRequestId,
 } from '@/modules/projects/projects.format';
-import { projectKpisQueryOptions } from '@/modules/projects/projects.queries';
-import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import {
+  projectBlocksQueryOptions,
+  projectKpisQueryOptions,
+  projectRequestsQueryOptions,
+} from '@/modules/projects/projects.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 import type { SelectedBlock } from '@/modules/projects/components/project-block-drawer';
+import type { OpenedQuery } from '@/modules/projects/components/project-query-drawer';
 
 const MISSING = '—';
 
@@ -35,21 +39,21 @@ const DEAREST_QUERY_PAGE = { limit: 1, offset: 0, sort: 'total_cost', order: 'de
 
 interface ProjectSpendHighlightsProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
-const COST_UNAVAILABLE_HINT = 'Cost data is unavailable for this window.';
+const COST_UNAVAILABLE_HINT = 'Cost data is unavailable for this range.';
 
-// blocks_query zeroes out the same way an unpriced KPI window does, so this tile needs the same
+// blocks_query zeroes out the same way an unpriced KPI range does, so this tile needs the same
 // "$0.00 reads as free" guard as the ribbon.
 function agentSpendHint(
   agent: MetricsBlock | undefined,
-  window_total: number,
+  range_total: number,
   unavailable: boolean
 ): string {
-  if (!agent) return 'Nothing has billed in this window.';
+  if (!agent) return 'Nothing has billed in this range.';
   if (unavailable) return COST_UNAVAILABLE_HINT;
-  return `${formatMoney(agent.cost)} · ${formatShare(parseMoney(agent.cost), window_total)} of spend in this window`;
+  return `${formatMoney(agent.cost)} · ${formatShare(parseMoney(agent.cost), range_total)} of spend in this range`;
 }
 
 function queryCostHint(
@@ -63,7 +67,7 @@ function queryCostHint(
     return `${formatQueryCost(request.total_cost)} · no average to compare against yet`;
   }
   const multiple = parseMoney(request.total_cost) / average_query_cost;
-  return `${formatQueryCost(request.total_cost)} · ${formatMultiple(multiple)} the window average of ${formatMoneyValue(average_query_cost)}`;
+  return `${formatQueryCost(request.total_cost)} · ${formatMultiple(multiple)} the range average of ${formatMoneyValue(average_query_cost)}`;
 }
 
 /**
@@ -73,35 +77,18 @@ function queryCostHint(
  * its row would open from that list, so the Overview answers the follow-up question without first
  * making the reader find the row.
  */
-export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpendHighlightsProps) {
+export function ProjectSpendHighlights({ project_id, range }: ProjectSpendHighlightsProps) {
   const [selected_block, setSelectedBlock] = useState<SelectedBlock | null>(null);
-  const [selected_request, setSelectedRequest] = useState<RequestListItem | null>(null);
+  const [opened_query, setOpenedQuery] = useState<OpenedQuery | null>(null);
   const tiles_ref = useRef<HTMLDivElement>(null);
   const tileRef = (test_id: string) => () =>
     tiles_ref.current?.querySelector<HTMLElement>(`[data-testid="${test_id}"]`) ?? null;
-  const request_filters = { time_window } as const;
 
-  const blocks_query = useQuery({
-    queryKey: projectQueryKeys.metricsBlocks(project_id, time_window),
-    queryFn: () =>
-      apiCall<MetricsBlocks>(() =>
-        forgeAuthApi.projects[project_id]!.metrics.blocks.get({ $query: { time_window } })
-      ),
-    retry: false,
-    refetchInterval: dashboardPollInterval,
-  });
-  const kpis_query = useQuery(projectKpisQueryOptions(project_id));
-  const dearest_query = useQuery({
-    queryKey: projectQueryKeys.requests(project_id, DEAREST_QUERY_PAGE, request_filters),
-    queryFn: () =>
-      apiCall<RequestList>(() =>
-        forgeAuthApi.projects[project_id]!.requests.get({
-          $query: { ...DEAREST_QUERY_PAGE, time_window },
-        })
-      ),
-    retry: false,
-    refetchInterval: dashboardPollInterval,
-  });
+  const blocks_query = useQuery(projectBlocksQueryOptions(project_id, { range }));
+  const kpis_query = useQuery(projectKpisQueryOptions(project_id, { range }));
+  const dearest_query = useQuery(
+    projectRequestsQueryOptions(project_id, { range, ...DEAREST_QUERY_PAGE })
+  );
 
   if (blocks_query.isPending || kpis_query.isPending || dearest_query.isPending) {
     return (
@@ -129,17 +116,18 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
     );
   }
 
-  const window_total = parseMoney(blocks_query.data.total_cost);
+  const range_total = parseMoney(blocks_query.data.total_cost);
   // Dearest first, the same order the Per-Agent list reads in.
   const dearest_agent = blocks_query.data.blocks.toSorted(
     (left, right) => parseMoney(right.cost) - parseMoney(left.cost)
   )[0];
 
-  const kpi = kpis_query.data.windows[time_window];
+  const kpi = kpis_query.data;
   const unavailable = costCoverage(kpi).state === 'unavailable';
   const average_query_cost =
     kpi.request_count > 0 ? parseMoney(kpi.total_cost) / kpi.request_count : null;
-  const dearest_request = dearest_query.data.items[0];
+  const { from, to, items } = dearest_query.data;
+  const dearest_request = items[0];
 
   return (
     <div className="flex min-w-0 flex-col gap-2" data-testid="project-spend-highlights">
@@ -147,7 +135,7 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
         <HighlightTile
           label="Most expensive agent"
           value={!dearest_agent || unavailable ? MISSING : dearest_agent.label}
-          hint={agentSpendHint(dearest_agent, window_total, unavailable)}
+          hint={agentSpendHint(dearest_agent, range_total, unavailable)}
           opens="its metrics"
           onOpen={
             dearest_agent
@@ -164,13 +152,17 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
           }
           hint={queryCostHint(dearest_request, average_query_cost, unavailable)}
           opens="its trace"
-          onOpen={dearest_request ? () => setSelectedRequest(dearest_request) : null}
+          onOpen={
+            dearest_request
+              ? () => setOpenedQuery({ request: dearest_request, range: { from, to } })
+              : null
+          }
           test_id="project-highlight-query"
         />
       </Card>
 
       <p className="text-muted-foreground px-3 text-[0.71875rem]">
-        Both highlights are scoped to the selected window.
+        Both highlights are scoped to the selected range.
       </p>
 
       <ProjectBlockDrawer
@@ -181,8 +173,8 @@ export function ProjectSpendHighlights({ project_id, time_window }: ProjectSpend
       />
       <ProjectQueryDrawer
         project_id={project_id}
-        request={selected_request}
-        onClose={() => setSelectedRequest(null)}
+        opened={opened_query}
+        onClose={() => setOpenedQuery(null)}
         returnFocusTo={tileRef('project-highlight-query')}
       />
     </div>

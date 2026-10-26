@@ -3,12 +3,16 @@
 
 import { queryOptions } from '@tanstack/react-query';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
 import type {
   MonitoringEndpointResponse,
   MonitoringErrorSummaryResponse,
+  MonitoringLlmCallsResponse,
+  MonitoringLogSourcesResponse,
+  MonitoringLogsResponse,
   MonitoringReplicasResponse,
+  MonitoringResourceUtilizationResponse,
   MonitoringSeriesResponse,
+  MonitoringTracesResponse,
   MonitoringUnit,
 } from '@canyonos/api/monitoring';
 
@@ -16,23 +20,76 @@ import { apiCall, forgeAuthApi } from '@/api';
 import {
   DASHBOARD_POLL_INTERVAL_MS,
   dashboardPollInterval,
+  toParams,
 } from '@/modules/projects/projects.query-cache';
+import type { BucketedQuery, RangeQuery } from '@/modules/projects/projects.queries';
 
-export const monitoringQueryKeys = {
-  series: (project_id: string, time_window: MetricsWindow) =>
-    ['projects', project_id, 'monitoring', 'series', time_window] as const,
-  replicas: (project_id: string) => ['projects', project_id, 'monitoring', 'replicas'] as const,
-  endpoint: (project_id: string) => ['projects', project_id, 'monitoring', 'endpoint'] as const,
-  errorSummary: (project_id: string, time_window: MetricsWindow) =>
-    ['projects', project_id, 'monitoring', 'errors', 'summary', time_window] as const,
-};
+export interface ListQuery extends RangeQuery {
+  readonly limit: number;
+}
 
-export const monitoringSeriesQueryOptions = (project_id: string, time_window: MetricsWindow) =>
+export interface LogsQuery extends ListQuery {
+  readonly errors_only: boolean;
+  readonly agent?: string;
+  readonly replica?: string;
+}
+
+export const monitoringSeriesQueryOptions = (project_id: string, query: BucketedQuery) =>
   queryOptions({
-    queryKey: monitoringQueryKeys.series(project_id, time_window),
+    queryKey: ['projects', project_id, 'monitoring', 'series', query],
     queryFn: () =>
       apiCall<MonitoringSeriesResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.series.get({ $query: { time_window } })
+        forgeAuthApi.projects[project_id]!.monitoring.series.get({ $query: toParams(query) })
+      ),
+    retry: false,
+  });
+
+export const resourcesQueryOptions = (project_id: string, query: BucketedQuery) =>
+  queryOptions({
+    queryKey: ['projects', project_id, 'monitoring', 'resources', query],
+    queryFn: () =>
+      apiCall<MonitoringResourceUtilizationResponse>(() =>
+        forgeAuthApi.projects[project_id]!.monitoring.resources.get({ $query: toParams(query) })
+      ),
+    retry: false,
+  });
+
+export const tracesQueryOptions = (project_id: string, query: ListQuery) =>
+  queryOptions({
+    queryKey: ['projects', project_id, 'monitoring', 'traces', query],
+    queryFn: () =>
+      apiCall<MonitoringTracesResponse>(() =>
+        forgeAuthApi.projects[project_id]!.monitoring.traces.get({ $query: toParams(query) })
+      ),
+    retry: false,
+  });
+
+export const llmCallsQueryOptions = (project_id: string, query: ListQuery) =>
+  queryOptions({
+    queryKey: ['projects', project_id, 'monitoring', 'llm', query],
+    queryFn: () =>
+      apiCall<MonitoringLlmCallsResponse>(() =>
+        forgeAuthApi.projects[project_id]!.monitoring.llm.get({ $query: toParams(query) })
+      ),
+    retry: false,
+  });
+
+export const logsQueryOptions = (project_id: string, query: LogsQuery) =>
+  queryOptions({
+    queryKey: ['projects', project_id, 'monitoring', 'logs', query],
+    queryFn: () =>
+      apiCall<MonitoringLogsResponse>(() =>
+        forgeAuthApi.projects[project_id]!.monitoring.logs.get({ $query: toParams(query) })
+      ),
+    retry: false,
+  });
+
+export const logSourcesQueryOptions = (project_id: string, query: RangeQuery) =>
+  queryOptions({
+    queryKey: ['projects', project_id, 'monitoring', 'log-sources', query],
+    queryFn: () =>
+      apiCall<MonitoringLogSourcesResponse>(() =>
+        forgeAuthApi.projects[project_id]!.monitoring.logs.sources.get({ $query: toParams(query) })
       ),
     retry: false,
   });
@@ -40,7 +97,7 @@ export const monitoringSeriesQueryOptions = (project_id: string, time_window: Me
 // The exporter ships replica samples every 5s, so polling faster only re-reads the same rows.
 export const replicasQueryOptions = (project_id: string) =>
   queryOptions({
-    queryKey: monitoringQueryKeys.replicas(project_id),
+    queryKey: ['projects', project_id, 'monitoring', 'replicas'],
     queryFn: () =>
       apiCall<MonitoringReplicasResponse>(() =>
         forgeAuthApi.projects[project_id]!.monitoring.replicas.get()
@@ -52,7 +109,7 @@ export const replicasQueryOptions = (project_id: string) =>
 // Polled so a deploy or a teardown flips the running badge without a reload.
 export const endpointQueryOptions = (project_id: string) =>
   queryOptions({
-    queryKey: monitoringQueryKeys.endpoint(project_id),
+    queryKey: ['projects', project_id, 'monitoring', 'endpoint'],
     queryFn: () =>
       apiCall<MonitoringEndpointResponse>(() =>
         forgeAuthApi.projects[project_id]!.monitoring.endpoint.get()
@@ -61,13 +118,13 @@ export const endpointQueryOptions = (project_id: string) =>
     retry: false,
   });
 
-export const errorSummaryQueryOptions = (project_id: string, time_window: MetricsWindow) =>
+export const errorSummaryQueryOptions = (project_id: string, query: RangeQuery) =>
   queryOptions({
-    queryKey: monitoringQueryKeys.errorSummary(project_id, time_window),
+    queryKey: ['projects', project_id, 'monitoring', 'errors', 'summary', query],
     queryFn: () =>
       apiCall<MonitoringErrorSummaryResponse>(() =>
         forgeAuthApi.projects[project_id]!.monitoring.errors.summary.get({
-          $query: { time_window },
+          $query: toParams(query),
         })
       ),
     retry: false,
@@ -95,11 +152,4 @@ export function formatSignalValue(value: number, unit: MonitoringUnit): string {
     case 'percent':
       return `${Math.round(value)}%`;
   }
-}
-
-export function formatBucketLabel(start_at: string, bucket_seconds: number): string {
-  const at = new Date(start_at);
-  return bucket_seconds >= 86_400
-    ? at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    : at.toLocaleTimeString(undefined, { hour: 'numeric' });
 }

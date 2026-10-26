@@ -4,7 +4,7 @@
 import { expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
-import type { KpiWindow, MetricsWindow } from '@canyonos/api/metrics';
+import type { MetricsKpi } from '@canyonos/api/metrics';
 import type { ProjectSummary } from '@canyonos/api/projects';
 
 import { apiBaseUrl, failJson, fulfillJson } from './projects';
@@ -45,12 +45,18 @@ export async function stubProjectsList(
 
 /** The fleet rollup the overview rows read spend from, answered empty. */
 export async function stubFleetSpend(page: Page): Promise<void> {
-  await routePath(page, '/resources/overview', (route) =>
-    fulfillJson(route, { kpis: [], resources: [], projects: [], time_window: '30d' })
+  await routePath(page, '/resources/overview', (route, url) =>
+    fulfillJson(route, {
+      kpis: [],
+      resources: [],
+      projects: [],
+      from: url.searchParams.get('from'),
+      to: url.searchParams.get('to'),
+    })
   );
 }
 
-const EMPTY_KPI_WINDOW: KpiWindow = {
+const EMPTY_KPI: MetricsKpi = {
   request_count: 0,
   block_count: 0,
   failed_block_count: 0,
@@ -67,8 +73,10 @@ const EMPTY_KPI_WINDOW: KpiWindow = {
   per_costed_request_cost: null,
 };
 
-const requestedWindow = (url: URL): MetricsWindow =>
-  (url.searchParams.get('time_window') as MetricsWindow | null) ?? '30d';
+const requestedRange = (url: URL) => ({
+  from: url.searchParams.get('from'),
+  to: url.searchParams.get('to'),
+});
 
 export interface ProjectDashboardOptions {
   /** Fail the KPI read, which is what the cost ribbon's error state is drawn from. */
@@ -84,24 +92,20 @@ export async function stubProjectDashboard(
   const base = `/projects/${project.id}`;
 
   await routePath(page, base, (route) => fulfillJson(route, project));
-  await routePath(page, `${base}/metrics/kpis`, (route) =>
+  await routePath(page, `${base}/metrics/kpis`, (route, url) =>
     kpis_fail
       ? failJson(route, 'Could not read cost totals')
       : fulfillJson(route, {
           project_id: project.id,
           generated_at: '2026-07-29T12:00:00.000Z',
-          windows: {
-            '1d': EMPTY_KPI_WINDOW,
-            '7d': EMPTY_KPI_WINDOW,
-            '30d': EMPTY_KPI_WINDOW,
-            '1q': EMPTY_KPI_WINDOW,
-          },
+          ...requestedRange(url),
+          ...EMPTY_KPI,
         })
   );
   await routePath(page, `${base}/metrics/timeseries`, (route, url) =>
     fulfillJson(route, {
       project_id: project.id,
-      time_window: requestedWindow(url),
+      ...requestedRange(url),
       bucket_seconds: 86_400,
       points: [],
     })
@@ -109,7 +113,7 @@ export async function stubProjectDashboard(
   await routePath(page, `${base}/metrics/blocks`, (route, url) =>
     fulfillJson(route, {
       project_id: project.id,
-      time_window: requestedWindow(url),
+      ...requestedRange(url),
       total_cost: '0.000000',
       blocks: [],
     })
@@ -118,7 +122,7 @@ export async function stubProjectDashboard(
     fulfillJson(route, {
       project_id: project.id,
       metric: url.searchParams.get('metric') ?? 'cost_per_request',
-      time_window: requestedWindow(url),
+      ...requestedRange(url),
       request_count: 0,
       mean: null,
       std: null,
@@ -130,5 +134,7 @@ export async function stubProjectDashboard(
       buckets: [],
     })
   );
-  await routePath(page, `${base}/requests`, (route) => fulfillJson(route, { total: 0, items: [] }));
+  await routePath(page, `${base}/requests`, (route, url) =>
+    fulfillJson(route, { ...requestedRange(url), total: 0, items: [] })
+  );
 }

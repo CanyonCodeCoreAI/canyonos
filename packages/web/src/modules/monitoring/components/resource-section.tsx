@@ -7,7 +7,7 @@ import { TimeseriesChart } from '@repo/ui/components/charts/timeseries-chart';
 import type { SeriesPoint } from '@repo/ui/components/charts/timeseries-chart';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';
 import { EmptyState } from '@/modules/core/components/EmptyState';
-import { formatBucketLabel } from '@/modules/monitoring/monitoring.queries';
+import { formatBucketLabel } from '@/modules/core/time-range';
 import {
   RESOURCE_COLORS,
   RESOURCE_LABELS,

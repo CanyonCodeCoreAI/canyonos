@@ -50,6 +50,10 @@ describe('SDK contract', () => {
       name: 'SDK Project',
       files: [{ path: 'workflow.py', component_kind: 'workflow' }],
     });
+    const range = {
+      from: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+      to: new Date().toISOString(),
+    };
 
     const projects: ProjectSummary[] = (await api.projects.get({ $headers: headers })).data!;
     const project: ProjectSummary = (await api.projects[project_id]!.get({ $headers: headers }))
@@ -58,21 +62,27 @@ describe('SDK contract', () => {
       .data!;
     const requests: RequestList = (
       await api.projects[project_id]!.requests.get({
-        $query: { limit: 20, offset: 0 },
+        $query: { ...range, limit: 20, offset: 0 },
         $headers: headers,
       })
     ).data!;
     const kpis: MetricsKpis = (
-      await api.projects[project_id]!.metrics.kpis.get({ $headers: headers })
+      await api.projects[project_id]!.metrics.kpis.get({ $query: range, $headers: headers })
     ).data!;
     const blocks: MetricsBlocks = (
       await api.projects[project_id]!.metrics.blocks.get({
-        $query: { time_window: '30d' },
+        $query: range,
         $headers: headers,
       })
     ).data!;
     const overview: FleetOverview = (
-      await api.resources.overview.get({ $query: { time_window: '7d' }, $headers: headers })
+      await api.resources.overview.get({
+        $query: {
+          from: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+          to: new Date().toISOString(),
+        },
+        $headers: headers,
+      })
     ).data!;
 
     expect(projects.some(({ id }) => id === project_id)).toBe(true);
@@ -89,17 +99,22 @@ describe('SDK contract', () => {
     const headers = bearer(token);
     const { project_id } = await create_test_project(token, { name: 'SDK Monitoring' });
     const monitoring = api.projects[project_id]!.monitoring;
-    const window = { time_window: '1d' } as const;
-    const list = { ...window, limit: 200 };
+    // On the hour, so the hourly grid has exactly 24 whole buckets rather than two partial ends.
+    const to_ms = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+    const range = {
+      from: new Date(to_ms - 24 * 3_600_000).toISOString(),
+      to: new Date(to_ms).toISOString(),
+    };
+    const list = { ...range, limit: 200 };
 
     const series: MonitoringSeriesResponse = (
-      await monitoring.series.get({ $query: window, $headers: headers })
+      await monitoring.series.get({ $query: range, $headers: headers })
     ).data!;
     const logs: MonitoringLogsResponse = (
       await monitoring.logs.get({ $query: { ...list, errors_only: false }, $headers: headers })
     ).data!;
     const sources: MonitoringLogSourcesResponse = (
-      await monitoring.logs.sources.get({ $query: window, $headers: headers })
+      await monitoring.logs.sources.get({ $query: range, $headers: headers })
     ).data!;
     const calls: MonitoringLlmCallsResponse = (
       await monitoring.llm.get({ $query: list, $headers: headers })
@@ -108,16 +123,16 @@ describe('SDK contract', () => {
       await monitoring.traces.get({ $query: list, $headers: headers })
     ).data!;
     const errors: MonitoringErrorSummaryResponse = (
-      await monitoring.errors.summary.get({ $query: window, $headers: headers })
+      await monitoring.errors.summary.get({ $query: range, $headers: headers })
     ).data!;
     const resources: MonitoringResourceUtilizationResponse = (
-      await monitoring.resources.get({ $query: window, $headers: headers })
+      await monitoring.resources.get({ $query: range, $headers: headers })
     ).data!;
     const replicas: MonitoringReplicasResponse = (
       await monitoring.replicas.get({ $headers: headers })
     ).data!;
 
-    const scope = { project_id, time_window: '1d' } as const;
+    const scope = { project_id, ...range } as const;
     expect(series).toMatchObject({ ...scope, bucket_seconds: 3600 });
     expect(series.series.map(({ signal, samples }) => [signal, samples])).toEqual([
       ['traffic', 24],

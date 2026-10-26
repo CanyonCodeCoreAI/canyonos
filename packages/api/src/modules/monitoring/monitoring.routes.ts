@@ -3,6 +3,8 @@
 
 import { Elysia } from 'elysia';
 
+import { GridQuerySchema, TimeRangeQuerySchema } from '@core/time-range';
+
 import { resolveAuth } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { ProjectIdParams } from '../projects/projects.types';
@@ -25,7 +27,6 @@ import {
   MonitoringLogSourcesResponseSchema,
   MonitoringLogsQuerySchema,
   MonitoringLogsResponseSchema,
-  MonitoringQuerySchema,
   MonitoringReplicasResponseSchema,
   MonitoringResourceUtilizationResponseSchema,
   MonitoringSeriesResponseSchema,
@@ -42,25 +43,38 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     ({ params, query }) => get_series(params.project_id, query),
     {
       params: ProjectIdParams,
-      query: MonitoringQuerySchema,
+      query: GridQuerySchema,
       response: { 200: MonitoringSeriesResponseSchema },
-      detail: { ...doc, summary: 'Golden-signal series on one shared time grid' },
+      detail: {
+        ...doc,
+        summary: 'Golden-signal series on one shared time grid',
+        description:
+          'Traffic, errors and latency count each request whole in the bucket it started in; saturation samples sit at their own time.',
+      },
     }
   )
   .get('/:project_id/monitoring/logs', ({ params, query }) => get_logs(params.project_id, query), {
     params: ProjectIdParams,
     query: MonitoringLogsQuerySchema,
     response: { 200: MonitoringLogsResponseSchema },
-    detail: { ...doc, summary: 'Recent log records for the project, newest first' },
+    detail: {
+      ...doc,
+      summary: 'Recent log records for the project, newest first',
+      description: 'Each log record is in the range by its own timestamp.',
+    },
   })
   .get(
     '/:project_id/monitoring/logs/sources',
     ({ params, query }) => get_log_sources(params.project_id, query),
     {
       params: ProjectIdParams,
-      query: MonitoringQuerySchema,
+      query: TimeRangeQuerySchema,
       response: { 200: MonitoringLogSourcesResponseSchema },
-      detail: { ...doc, summary: 'Agents and replicas that wrote logs in the window' },
+      detail: {
+        ...doc,
+        summary: 'Agents and replicas that wrote logs in the range',
+        description: 'Each log record is in the range by its own timestamp.',
+      },
     }
   )
   .get(
@@ -70,7 +84,11 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: MonitoringListQuerySchema,
       response: { 200: MonitoringLlmCallsResponseSchema },
-      detail: { ...doc, summary: 'Spans carrying a model call, newest first' },
+      detail: {
+        ...doc,
+        summary: 'Spans carrying a model call, newest first',
+        description: 'The model calls of the requests that started in the range, each whole.',
+      },
     }
   )
   .get(
@@ -80,7 +98,11 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: MonitoringListQuerySchema,
       response: { 200: MonitoringTracesResponseSchema },
-      detail: { ...doc, summary: 'Recent traces with their spans, newest first' },
+      detail: {
+        ...doc,
+        summary: 'Recent traces with their spans, newest first',
+        description: 'The requests that started in the range, each whole.',
+      },
     }
   )
   .get(
@@ -88,9 +110,13 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     ({ params, query }) => get_error_summary(params.project_id, query),
     {
       params: ProjectIdParams,
-      query: MonitoringQuerySchema,
+      query: TimeRangeQuerySchema,
       response: { 200: MonitoringErrorSummaryResponseSchema },
-      detail: { ...doc, summary: 'Error counts grouped by exception type and by agent' },
+      detail: {
+        ...doc,
+        summary: 'Error counts grouped by exception type and by agent',
+        description: 'Counts error log records, each in the range by its own timestamp.',
+      },
     }
   )
   .get(
@@ -98,9 +124,14 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     ({ params, query }) => get_resource_utilization(params.project_id, query),
     {
       params: ProjectIdParams,
-      query: MonitoringQuerySchema,
+      query: GridQuerySchema,
       response: { 200: MonitoringResourceUtilizationResponseSchema },
-      detail: { ...doc, summary: 'Resource utilization per machine and per agent' },
+      detail: {
+        ...doc,
+        summary: 'Resource utilization per machine and per agent',
+        description:
+          'Machine samples sit at their own time; agent CPU comes from the requests that started in the range, in the bucket each started in.',
+      },
     }
   )
   .get('/:project_id/monitoring/replicas', ({ params }) => get_replicas(params.project_id), {

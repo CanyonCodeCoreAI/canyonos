@@ -4,6 +4,8 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
+import { TimeRangeQuerySchema } from '@core/time-range';
+
 import { resolveAuth } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { get_request_trace, list_requests } from './requests.service';
@@ -24,7 +26,7 @@ export const requestsRoutes = new Elysia({ name: 'requests.routes' })
   })
   .get(
     '/:project_id/requests/:request_id',
-    ({ params }) => get_request_trace(params.project_id, params.request_id),
+    ({ params, query }) => get_request_trace(params.project_id, params.request_id, query),
     {
       params: z.object({
         project_id: z.string().uuid(),
@@ -32,7 +34,13 @@ export const requestsRoutes = new Elysia({ name: 'requests.routes' })
         // column itself has no length limit.
         request_id: z.string().min(1).max(255),
       }),
+      query: TimeRangeQuerySchema,
       response: { 200: RequestTraceSchema },
-      detail: { ...doc, summary: 'Get a single request trace' },
+      detail: {
+        ...doc,
+        summary: 'Get a single request trace',
+        description:
+          'The trace reads whole; its medians cover the requests that started in from/to.',
+      },
     }
   );

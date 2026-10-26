@@ -43,7 +43,7 @@ const PERCENT = new Intl.NumberFormat('en-US', {
   style: 'percent',
   maximumFractionDigits: 1,
 });
-// The year is carried even for a day inside the current one: the quarter window reaches across a
+// The year is carried even for a day inside the current one: the selected range can cross a
 // year boundary, where "Dec 31" alone names two different days.
 const DAY = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -126,7 +126,7 @@ export function formatDurationMs(milliseconds: number | null): string {
   return `${Math.round(milliseconds)} ms`;
 }
 
-/** Rates come back as 0–1 fractions, null when the block never ran in the window. */
+/** Rates come back as 0–1 fractions, null when the block never ran in the range. */
 export function formatRate(fraction: number | null): string {
   return fraction === null ? MISSING : PERCENT.format(fraction);
 }

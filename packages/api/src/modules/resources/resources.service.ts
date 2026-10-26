@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { TimeRange } from '@core/time-range';
+
 import { resources_repo } from './resources.repo';
-import type { MetricsWindow } from '../metrics/metrics.types';
 import type { FleetProjectRow } from './resources.repo';
 import type { FleetKpi, FleetOverview, FleetResource } from './resources.types';
 
@@ -18,12 +19,20 @@ const RESOURCE_DEFINITIONS = [
   { id: 'tokens', label: 'Tokens', unit: 'M', available: true },
 ] as const;
 
-const WINDOW_LABELS: Record<MetricsWindow, string> = {
-  '1d': 'last 24 hours',
-  '7d': 'last 7 days',
-  '30d': 'last 30 days',
-  '1q': 'last 90 days',
-};
+const SPAN_UNITS = [
+  { name: 'second', seconds: 1, below: 120 },
+  { name: 'minute', seconds: 60, below: 2 * 3_600 },
+  { name: 'hour', seconds: 3_600, below: 2 * 86_400 },
+  { name: 'day', seconds: 86_400, below: Infinity },
+] as const;
+
+/** The range's length rounded to the largest unit that keeps it at two or more, e.g. `36 hours`. */
+function format_span({ from, to }: TimeRange): string {
+  const seconds = (Date.parse(to) - Date.parse(from)) / 1000;
+  const unit = SPAN_UNITS.find((candidate) => seconds < candidate.below)!;
+  const count = Math.round(seconds / unit.seconds);
+  return `${count} ${unit.name}${count === 1 ? '' : 's'}`;
+}
 
 const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 // A fleet of a few hundred real calls spends well under a cent, where two decimals read as $0.00.
@@ -54,10 +63,7 @@ function tokens_in_millions(tokens: number): number {
   return Number((tokens / TOKENS_PER_MILLION).toFixed(1));
 }
 
-export function build_overview(
-  rows: readonly FleetProjectRow[],
-  time_window: MetricsWindow
-): FleetOverview {
+export function build_overview(rows: readonly FleetProjectRow[], range: TimeRange): FleetOverview {
   const total_requests = rows.reduce((sum, row) => sum + row.request_count, 0);
   const total_cost = rows.reduce((sum, row) => sum + Number(row.total_cost), 0);
   const total_tokens = rows.reduce((sum, row) => sum + row.tokens, 0);
@@ -96,14 +102,14 @@ export function build_overview(
   }));
 
   const active_projects = rows.filter((row) => row.request_count > 0).length;
-  const window_label = WINDOW_LABELS[time_window];
+  const range_label = format_span(range);
 
   const kpis: FleetKpi[] = [
     {
       id: 'total_spend',
       label: 'Total spend',
       value: format_money(total_cost),
-      sub_label: window_label,
+      sub_label: range_label,
       tone: 'neutral',
     },
     {
@@ -117,14 +123,14 @@ export function build_overview(
       id: 'requests',
       label: 'Requests',
       value: format_compact(total_requests),
-      sub_label: window_label,
+      sub_label: range_label,
       tone: 'neutral',
     },
     {
       id: 'tokens',
       label: 'Tokens',
       value: format_compact(total_tokens),
-      sub_label: window_label,
+      sub_label: range_label,
       tone: 'neutral',
     },
     {
@@ -136,10 +142,10 @@ export function build_overview(
     },
   ];
 
-  return { kpis, resources, projects, time_window };
+  return { kpis, resources, projects, from: range.from, to: range.to };
 }
 
-export async function get_fleet_overview(time_window: MetricsWindow): Promise<FleetOverview> {
-  const rows = await resources_repo.fleet_projects(time_window);
-  return build_overview(rows, time_window);
+export async function get_fleet_overview(range: TimeRange): Promise<FleetOverview> {
+  const rows = await resources_repo.fleet_projects(range);
+  return build_overview(rows, range);
 }

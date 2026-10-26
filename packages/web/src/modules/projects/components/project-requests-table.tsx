@@ -14,10 +14,10 @@ import {
   LoaderCircleIcon,
   XIcon,
 } from 'lucide-react';
-import { useReducer, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import { useRef, useState } from 'react';
+import type { UseQueryResult } from '@tanstack/react-query';
+import type { Dispatch, RefObject } from 'react';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
 import type {
   RequestList,
   RequestListItem,
@@ -45,9 +45,9 @@ import {
   TableRow,
 } from '@repo/ui/shadcn/table';
 import { cn } from '@repo/ui/utils';
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { rangeLabel } from '@/modules/core/time-range';
 import { ProjectMetricsSection } from '@/modules/projects/components/project-metrics-section';
 import { ProjectQueryDrawer } from '@/modules/projects/components/project-query-drawer';
 import {
@@ -60,17 +60,16 @@ import {
 } from '@/modules/projects/projects.format';
 import {
   DEFAULT_REQUESTS_ORDER,
-  metricsWindowLabel,
   nextRequestsOrder,
   requestDayBounds,
   selectableDayRange,
 } from '@/modules/projects/projects.metrics';
-import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';
-import type {
-  DistributionSelection,
-  RequestListFilters,
-  RequestsPage,
-} from '@/modules/projects/projects.metrics';
+import { projectRequestsQueryOptions } from '@/modules/projects/projects.queries';
+import { rangeParams } from '@/modules/projects/projects.query-cache';
+import type { RangeSelection } from '@/modules/core/time-range';
+import type { OpenedQuery } from '@/modules/projects/components/project-query-drawer';
+import type { DistributionSelection, RequestsPage } from '@/modules/projects/projects.metrics';
+import type { RequestsQuery } from '@/modules/projects/projects.queries';
 
 const PAGE_SIZE = 5;
 
@@ -129,39 +128,29 @@ const HEADER_LABEL = 'text-[0.65625rem] font-semibold tracking-[0.05em] uppercas
 const HEADER_PADDING = 'px-3 py-2.5';
 const NUMERIC_CELL = 'px-3 py-[0.6875rem] text-right font-mono text-[0.78125rem] tabular-nums';
 
-interface ListedRequestScope {
-  readonly selection_key: string;
-  readonly time_window: MetricsWindow;
-}
-
-interface RequestsTableState {
+export interface RequestsTableState {
   readonly page: RequestsPage;
   readonly status_filter: RequestStatus | 'all';
   readonly selected_day: Date | null;
-  readonly selected_request: RequestListItem | null;
-  readonly listed: ListedRequestScope;
+  readonly opened: OpenedQuery | null;
 }
 
-type RequestsTableAction =
+export type RequestsTableAction =
   | { readonly type: 'sort'; readonly column: RequestSort }
   | { readonly type: 'status-filter'; readonly status_filter: RequestStatus | 'all' }
   | { readonly type: 'day-filter'; readonly day: Date | null }
   | { readonly type: 'page-offset'; readonly offset: number }
-  | { readonly type: 'select-request'; readonly request: RequestListItem }
-  | { readonly type: 'close-request' }
-  | { readonly type: 'scope-changed'; readonly scope: ListedRequestScope };
+  | { readonly type: 'open-request'; readonly opened: OpenedQuery }
+  | { readonly type: 'close-request' };
 
-function requestsTableInitialState(listed: ListedRequestScope): RequestsTableState {
-  return {
-    page: { limit: PAGE_SIZE, offset: 0, ...DEFAULT_REQUESTS_ORDER },
-    status_filter: 'all',
-    selected_day: null,
-    selected_request: null,
-    listed,
-  };
-}
+export const INITIAL_REQUESTS_TABLE: RequestsTableState = {
+  page: { limit: PAGE_SIZE, offset: 0, ...DEFAULT_REQUESTS_ORDER },
+  status_filter: 'all',
+  selected_day: null,
+  opened: null,
+};
 
-function requestsTableReducer(
+export function requestsTableReducer(
   state: RequestsTableState,
   action: RequestsTableAction
 ): RequestsTableState {
@@ -181,88 +170,47 @@ function requestsTableReducer(
       return { ...state, selected_day: action.day, page: { ...state.page, offset: 0 } };
     case 'page-offset':
       return { ...state, page: { ...state.page, offset: action.offset } };
-    case 'select-request':
-      return { ...state, selected_request: action.request };
+    case 'open-request':
+      return { ...state, opened: action.opened };
     case 'close-request':
-      return { ...state, selected_request: null };
-    case 'scope-changed': {
-      const time_window_changed = state.listed.time_window !== action.scope.time_window;
-      return {
-        ...state,
-        page: { ...state.page, offset: 0 },
-        selected_day: time_window_changed ? null : state.selected_day,
-        listed: action.scope,
-      };
-    }
+      return { ...state, opened: null };
   }
 }
 
 interface ProjectRequestsTableProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   readonly selection?: DistributionSelection | null;
+  /** Held by the panel, which also moves the page back to the start when the selection changes. */
+  readonly state: RequestsTableState;
+  readonly dispatch: Dispatch<RequestsTableAction>;
 }
 
 export function ProjectRequestsTable({
   project_id,
-  time_window,
+  range,
   selection,
+  state,
+  dispatch,
 }: ProjectRequestsTableProps) {
   const table_ref = useRef<HTMLDivElement>(null);
   const opened_session_id = useRef<string | null>(null);
 
-  const listed_scope = { selection_key: selection?.bucket_key ?? 'all', time_window };
-  const [state, dispatch] = useReducer(
-    requestsTableReducer,
-    listed_scope,
-    requestsTableInitialState
-  );
-  if (
-    state.listed.selection_key !== listed_scope.selection_key ||
-    state.listed.time_window !== listed_scope.time_window
-  ) {
-    dispatch({ type: 'scope-changed', scope: listed_scope });
-  }
-
-  const { page, selected_day, selected_request, status_filter } = state;
+  const { page, selected_day, opened, status_filter } = state;
   const status = status_filter === 'all' ? undefined : status_filter;
-  const filters: RequestListFilters = {
-    time_window,
+  const query: RequestsQuery = {
+    range,
+    ...page,
     status,
-    selection,
-    day: selected_day ? requestDayBounds(selected_day) : null,
+    metric: selection?.metric,
+    min: selection?.min,
+    max: selection?.max,
+    ...(selected_day ? requestDayBounds(selected_day) : {}),
   };
   const requests_query = useQuery({
-    queryKey: projectQueryKeys.requests(project_id, page, filters),
-    queryFn: () =>
-      apiCall<RequestList>(() =>
-        forgeAuthApi.projects[project_id]!.requests.get({
-          $query: {
-            limit: page.limit,
-            offset: page.offset,
-            sort: page.sort,
-            order: page.order,
-            ...(status ? { status } : {}),
-            time_window,
-            ...(filters.day ?? {}),
-            ...(selection
-              ? {
-                  metric: selection.metric,
-                  time_window: selection.time_window,
-                  min: selection.min,
-                  max: selection.max,
-                }
-              : {}),
-          },
-        })
-      ),
+    ...projectRequestsQueryOptions(project_id, query),
     placeholderData: keepPreviousData,
-    retry: false,
-    refetchInterval: dashboardPollInterval,
   });
-  const total = requests_query.data?.total ?? 0;
-  const shown = requests_query.data?.items.length ?? 0;
-
   const sortBy = (column: RequestSort) => dispatch({ type: 'sort', column });
   const filterByStatus = (status_filter: RequestStatus | 'all') =>
     dispatch({ type: 'status-filter', status_filter });
@@ -274,31 +222,20 @@ export function ProjectRequestsTable({
   return (
     <>
       <ProjectMetricsSection
-        title={queriesTitle(time_window, selection, day_label, status_label)}
+        title={queriesTitle(range, selection, day_label, status_label)}
         className="p-5"
-        description={
-          selection
-            ? `The queries that landed in the selected bar${day_label ? ` on ${day_label}` : ''}. Click it again to see them all.`
-            : day_label
-              ? `Only the queries created on ${day_label}. Clear the day to see them all.`
-              : undefined
-        }
+        description={queriesDescription(selection, day_label)}
         test_id="project-queries"
-        action={
-          <QueriesDayFilter value={selected_day} time_window={time_window} onChange={filterByDay} />
-        }
+        action={<QueriesDayFilter value={selected_day} query={query} onChange={filterByDay} />}
         footer={
           <div className="flex min-h-9 flex-col justify-center">
-            {requests_query.data && total > 0 ? (
-              <Pager
-                offset={page.offset}
-                shown={shown}
-                total={total}
-                selection={selection}
-                day_label={day_label}
-                onOffsetChange={(offset) => dispatch({ type: 'page-offset', offset })}
-              />
-            ) : null}
+            <Pager
+              listed={requests_query.data}
+              offset={page.offset}
+              selection={selection}
+              day_label={day_label}
+              onOffsetChange={(offset) => dispatch({ type: 'page-offset', offset })}
+            />
           </div>
         }
       >
@@ -312,15 +249,15 @@ export function ProjectRequestsTable({
           onSort={sortBy}
           onStatusChange={filterByStatus}
           onRetry={() => void requests_query.refetch()}
-          onSelect={(request) => {
-            opened_session_id.current = request.session_id;
-            dispatch({ type: 'select-request', request });
+          onSelect={(opened) => {
+            opened_session_id.current = opened.request.session_id;
+            dispatch({ type: 'open-request', opened });
           }}
         />
       </ProjectMetricsSection>
       <ProjectQueryDrawer
         project_id={project_id}
-        request={selected_request}
+        opened={opened}
         onClose={() => dispatch({ type: 'close-request' })}
         // Resolved at close, not captured at open: refreshing the listing rebuilds its rows and
         // detaches the one that was clicked.
@@ -350,11 +287,7 @@ function QueriesBody({
   onRetry,
   onSelect,
 }: {
-  readonly query: {
-    readonly data: RequestList | undefined;
-    readonly error: unknown;
-    readonly isPending: boolean;
-  };
+  readonly query: UseQueryResult<RequestList>;
   readonly table_ref: RefObject<HTMLDivElement | null>;
   readonly page: RequestsPage;
   readonly status_filter: RequestStatus | 'all';
@@ -363,7 +296,7 @@ function QueriesBody({
   readonly onSort: (column: RequestSort) => void;
   readonly onStatusChange: (status: RequestStatus | 'all') => void;
   readonly onRetry: () => void;
-  readonly onSelect: (request: RequestListItem) => void;
+  readonly onSelect: (opened: OpenedQuery) => void;
 }) {
   const items = query.data?.items ?? [];
 
@@ -416,28 +349,47 @@ function QueriesBody({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {query.isPending
-              ? Array.from({ length: PAGE_SIZE }, (_row, row_index) => (
-                  <TableRow key={row_index} className="border-border/60 hover:bg-transparent">
-                    {COLUMNS.map((column) => (
-                      <TableCell key={column.label} className="px-3 py-[0.6875rem]">
-                        {column.filter === 'status' ? (
-                          <Skeleton className="size-7 rounded-full" />
-                        ) : (
-                          <Skeleton className="h-3.5 w-full" />
-                        )}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : items.map((request) => (
-                  <RequestRow key={request.session_id} request={request} onSelect={onSelect} />
-                ))}
+            {query.data === undefined ? (
+              <SkeletonRows />
+            ) : (
+              <ListedRows listed={query.data} onSelect={onSelect} />
+            )}
           </TableBody>
         </Table>
       </div>
     </div>
   );
+}
+
+function SkeletonRows() {
+  return Array.from({ length: PAGE_SIZE }, (_row, row_index) => (
+    <TableRow key={row_index} className="border-border/60 hover:bg-transparent">
+      {COLUMNS.map((column) => (
+        <TableCell key={column.label} className="px-3 py-[0.6875rem]">
+          <Skeleton
+            className={column.filter === 'status' ? 'size-7 rounded-full' : 'h-3.5 w-full'}
+          />
+        </TableCell>
+      ))}
+    </TableRow>
+  ));
+}
+
+function ListedRows({
+  listed,
+  onSelect,
+}: {
+  readonly listed: RequestList;
+  readonly onSelect: (opened: OpenedQuery) => void;
+}) {
+  const range = { from: listed.from, to: listed.to };
+  return listed.items.map((request) => (
+    <RequestRow
+      key={request.session_id}
+      request={request}
+      onSelect={() => onSelect({ request, range })}
+    />
+  ));
 }
 
 function emptyQueriesMessage(
@@ -449,36 +401,47 @@ function emptyQueriesMessage(
   return 'This project has not served any queries yet.';
 }
 
+function queriesDescription(
+  selection: DistributionSelection | null | undefined,
+  day_label: string | null
+): string | undefined {
+  if (selection) {
+    return `The queries that landed in the selected bar${day_label ? ` on ${day_label}` : ''}. Click it again to see them all.`;
+  }
+  if (day_label) return `Only the queries created on ${day_label}. Clear the day to see them all.`;
+  return undefined;
+}
+
 // Every active filter names itself, or the count under the table reads as the whole project.
 function queriesTitle(
-  time_window: MetricsWindow,
+  range: RangeSelection,
   selection: DistributionSelection | null | undefined,
   day_label: string | null,
   status_label: string | null
 ): string {
-  const scope = selection
-    ? `Queries in ${selection.label}`
-    : `Queries · ${metricsWindowLabel(time_window)}`;
-  const facets = [day_label, status_label].filter((facet) => facet !== null);
+  const scope = `Queries · ${rangeLabel(range)}`;
+  const facets = [selection?.label ?? null, day_label, status_label].filter(
+    (facet) => facet !== null
+  );
   return facets.length === 0 ? scope : `${scope} · ${facets.join(' · ')}`;
 }
 
 function QueriesDayFilter({
   value,
-  time_window,
+  query,
   onChange,
 }: {
   readonly value: Date | null;
-  readonly time_window: MetricsWindow;
+  readonly query: RequestsQuery;
   readonly onChange: (day: Date | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const trigger_ref = useRef<HTMLButtonElement>(null);
-  const { from, to } = selectableDayRange(time_window);
-  const window_label = metricsWindowLabel(time_window);
+  const { from, to } = selectableDayRange(rangeParams(query.range));
+  const range_label = rangeLabel(query.range);
   const label = value
     ? `Filter queries by day: ${formatDay(value)}`
-    : `Filter queries by day, showing ${window_label}`;
+    : `Filter queries by day, showing ${range_label}`;
 
   return (
     <div className="flex items-center gap-1">
@@ -494,7 +457,7 @@ function QueriesDayFilter({
             data-testid="project-queries-calendar"
           >
             <CalendarIcon className="size-3.5" strokeWidth={2.1} aria-hidden />
-            {value ? formatDay(value) : window_label}
+            {value ? formatDay(value) : range_label}
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" aria-label="Choose a day" className="w-auto p-0">
@@ -513,22 +476,36 @@ function QueriesDayFilter({
           />
         </PopoverContent>
       </Popover>
-      {value ? (
-        <button
-          type="button"
-          onClick={() => {
-            onChange(null);
-            trigger_ref.current?.focus();
-          }}
-          aria-label="Clear the day filter"
-          title="Clear the day filter"
-          className="text-muted-foreground focus-visible:ring-ring inline-flex h-9 items-center justify-center rounded-md px-2 focus-visible:ring-2 focus-visible:outline-none"
-          data-testid="project-queries-calendar-reset"
-        >
-          <XIcon className="size-3.5" strokeWidth={2.1} aria-hidden />
-        </button>
-      ) : null}
+      <ClearDayButton
+        value={value}
+        onClear={() => {
+          onChange(null);
+          trigger_ref.current?.focus();
+        }}
+      />
     </div>
+  );
+}
+
+function ClearDayButton({
+  value,
+  onClear,
+}: {
+  readonly value: Date | null;
+  readonly onClear: () => void;
+}) {
+  if (value === null) return null;
+  return (
+    <button
+      type="button"
+      onClick={onClear}
+      aria-label="Clear the day filter"
+      title="Clear the day filter"
+      className="text-muted-foreground focus-visible:ring-ring inline-flex h-9 items-center justify-center rounded-md px-2 focus-visible:ring-2 focus-visible:outline-none"
+      data-testid="project-queries-calendar-reset"
+    >
+      <XIcon className="size-3.5" strokeWidth={2.1} aria-hidden />
+    </button>
   );
 }
 
@@ -594,17 +571,23 @@ function SortableHeader({
       >
         {column.label}
         <span className="inline-flex w-3 justify-center" aria-hidden>
-          {active ? (
-            ascending ? (
-              <ArrowUpIcon className="size-3" strokeWidth={2.4} />
-            ) : (
-              <ArrowDownIcon className="size-3" strokeWidth={2.4} />
-            )
-          ) : null}
+          <SortArrow active={active} ascending={ascending} />
         </span>
       </button>
     </TableHead>
   );
+}
+
+function SortArrow({
+  active,
+  ascending,
+}: {
+  readonly active: boolean;
+  readonly ascending: boolean;
+}) {
+  if (!active) return null;
+  const Arrow = ascending ? ArrowUpIcon : ArrowDownIcon;
+  return <Arrow className="size-3" strokeWidth={2.4} />;
 }
 
 function StatusFilter({
@@ -665,22 +648,21 @@ function StatusGlyph({ status }: { readonly status: RequestStatus }) {
 }
 
 function Pager({
+  listed,
   offset,
-  shown,
-  total,
   selection,
   day_label,
   onOffsetChange,
 }: {
+  readonly listed: RequestList | undefined;
   readonly offset: number;
-  readonly shown: number;
-  readonly total: number;
   readonly selection?: DistributionSelection | null;
   readonly day_label: string | null;
   readonly onOffsetChange: (offset: number) => void;
 }) {
-  const has_previous = offset > 0;
-  const has_next = offset + shown < total;
+  if (listed === undefined || listed.total === 0) return null;
+  const { total } = listed;
+  const shown = listed.items.length;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -689,32 +671,50 @@ function Pager({
         {selection ? ' in this range' : ''}
         {day_label ? ` on ${day_label}` : ''}
       </p>
-      {has_previous || has_next ? (
-        <div className="flex items-center gap-1.5" data-testid="project-queries-pager">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!has_previous}
-            onClick={() => onOffsetChange(Math.max(0, offset - PAGE_SIZE))}
-            className="gap-1 text-xs"
-            data-testid="project-queries-previous"
-          >
-            <ChevronLeftIcon className="size-3.5" strokeWidth={2.1} aria-hidden />
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!has_next}
-            onClick={() => onOffsetChange(offset + PAGE_SIZE)}
-            className="gap-1 text-xs"
-            data-testid="project-queries-next"
-          >
-            Next
-            <ChevronRightIcon className="size-3.5" strokeWidth={2.1} aria-hidden />
-          </Button>
-        </div>
-      ) : null}
+      <PagerButtons offset={offset} shown={shown} total={total} onOffsetChange={onOffsetChange} />
+    </div>
+  );
+}
+
+function PagerButtons({
+  offset,
+  shown,
+  total,
+  onOffsetChange,
+}: {
+  readonly offset: number;
+  readonly shown: number;
+  readonly total: number;
+  readonly onOffsetChange: (offset: number) => void;
+}) {
+  const has_previous = offset > 0;
+  const has_next = offset + shown < total;
+  if (!has_previous && !has_next) return null;
+
+  return (
+    <div className="flex items-center gap-1.5" data-testid="project-queries-pager">
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!has_previous}
+        onClick={() => onOffsetChange(Math.max(0, offset - PAGE_SIZE))}
+        className="gap-1 text-xs"
+        data-testid="project-queries-previous"
+      >
+        <ChevronLeftIcon className="size-3.5" strokeWidth={2.1} aria-hidden />
+        Previous
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!has_next}
+        onClick={() => onOffsetChange(offset + PAGE_SIZE)}
+        className="gap-1 text-xs"
+        data-testid="project-queries-next"
+      >
+        Next
+        <ChevronRightIcon className="size-3.5" strokeWidth={2.1} aria-hidden />
+      </Button>
     </div>
   );
 }
@@ -724,7 +724,7 @@ function RequestRow({
   onSelect,
 }: {
   readonly request: RequestListItem;
-  readonly onSelect: (request: RequestListItem) => void;
+  readonly onSelect: () => void;
 }) {
   const short_id = shortRequestId(request.session_id);
 
@@ -752,7 +752,7 @@ function RequestRow({
       <TableCell className="px-3 py-[0.6875rem]">
         <button
           type="button"
-          onClick={() => onSelect(request)}
+          onClick={onSelect}
           aria-label={`Open query ${short_id}`}
           title={request.session_id}
           className="text-link block min-w-0 truncate text-left font-mono text-[0.75rem] font-semibold after:absolute after:inset-0 after:z-[1] after:content-[''] focus-visible:outline-none"

@@ -5,44 +5,16 @@ import type {
   DistributionBucket,
   DistributionMetric,
   DistributionStats,
-  MetricsWindow,
 } from '@canyonos/api/metrics';
-import type { RequestSort, RequestStatus, SortDirection } from '@canyonos/api/requests';
+import type { RequestSort, SortDirection } from '@canyonos/api/requests';
 
 import type { CdfPoint } from '@repo/ui/components/charts/cdf-chart';
 import type { TimeRangeOption } from '@repo/ui/components/time-range-toggle';
+import type { TimeRange } from '@/modules/core/time-range';
 
 // Relative, like the other sibling imports in this module: the `@/` alias resolves through the
 // tsconfig only, and this file has to load under `bun test` as well.
 import { formatDurationMs, formatMoneyValue, formatTokens } from './projects.format';
-
-export const METRICS_WINDOW_OPTIONS = [
-  { value: '1d', label: '24 hours' },
-  { value: '7d', label: '7 days' },
-  { value: '30d', label: '30 days' },
-  { value: '1q', label: '90 days' },
-] as const satisfies readonly TimeRangeOption[];
-
-export const DEFAULT_METRICS_WINDOW: MetricsWindow = '7d';
-
-/** The zone every bucket is drawn and labelled in, so a caller asks the API for the same grid. */
-export const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-export const METRICS_WINDOW_DAYS: Record<MetricsWindow, number> = {
-  '1d': 1,
-  '7d': 7,
-  '30d': 30,
-  '1q': 90,
-};
-
-export function isMetricsWindow(value: string): value is MetricsWindow {
-  return METRICS_WINDOW_OPTIONS.some((option) => option.value === value);
-}
-
-/** The window's name as the toggle prints it, for controls that report the range they inherit. */
-export function metricsWindowLabel(time_window: MetricsWindow): string {
-  return METRICS_WINDOW_OPTIONS.find((option) => option.value === time_window)!.label;
-}
 
 export const DISTRIBUTION_METRIC_OPTIONS = [
   { value: 'cost_per_request', label: 'Cost' },
@@ -75,7 +47,6 @@ export const DISTRIBUTION_METRIC_FORMATTER: Record<DistributionMetric, (value: n
  */
 export interface DistributionSelection {
   readonly metric: DistributionMetric;
-  readonly time_window: MetricsWindow;
   readonly min: number;
   readonly max: number;
   readonly label: string;
@@ -96,7 +67,7 @@ function startOfLocalDay(date: Date): Date {
 }
 
 /**
- * The day the reader picked, turned into the window that holds it.
+ * The day the reader picked, turned into the range that holds it.
  *
  * A day is a local idea — every timestamp on this screen is rendered in the reader's own zone — so
  * the bounds are local midnight to the next one, sent as UTC instants. The API's range is half-open,
@@ -110,27 +81,20 @@ export function requestDayBounds(day: Date): RequestDayBounds {
 }
 
 /**
- * The days the picker offers for a window: every calendar day that window touches.
+ * The days the picker offers for a range: every calendar day that range touches.
  *
- * The window is a span of instants, so its start lands mid-day rather than at midnight — that day
+ * The range is a span of instants, so its start lands mid-day rather than at midnight — that day
  * is partly in range and stays pickable, which is why the span reaches one day further back than
- * the window's own length.
+ * the range's own length.
  */
-export function selectableDayRange(time_window: MetricsWindow): {
+export function selectableDayRange(range: TimeRange): {
   readonly from: Date;
   readonly to: Date;
 } {
-  const now = new Date();
-  const from = startOfLocalDay(now);
-  from.setDate(from.getDate() - METRICS_WINDOW_DAYS[time_window]);
-  return { from, to: startOfLocalDay(now) };
-}
-
-export interface RequestListFilters {
-  readonly time_window?: MetricsWindow;
-  readonly status?: RequestStatus;
-  readonly selection?: DistributionSelection | null;
-  readonly day?: RequestDayBounds | null;
+  return {
+    from: startOfLocalDay(new Date(range.from)),
+    to: startOfLocalDay(new Date(range.to)),
+  };
 }
 
 /** One page of the queries table: where it starts, how long it is, and how it is ordered. */

@@ -4,12 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { UseQueryResult } from '@tanstack/react-query';
 
-import type {
-  KpiWindow,
-  MetricsKpis,
-  MetricsTimeseries,
-  MetricsWindow,
-} from '@canyonos/api/metrics';
+import type { MetricsKpi, MetricsKpis, MetricsTimeseries } from '@canyonos/api/metrics';
 
 import { TimeseriesChart } from '@repo/ui/components/charts/timeseries-chart';
 import { Legend } from '@repo/ui/components/legend';
@@ -18,9 +13,9 @@ import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { TooltipProvider } from '@repo/ui/shadcn/tooltip';
 import type { ChartConfig } from '@repo/ui/shadcn/chart';
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { formatBucketLabel, LOCAL_TIME_ZONE, rangeLabel } from '@/modules/core/time-range';
 import { costCoverage, CostCoverageBadge } from '@/modules/projects/components/project-cost-ribbon';
 import { ProjectMetricsSection } from '@/modules/projects/components/project-metrics-section';
 import {
@@ -31,13 +26,12 @@ import {
   formatTokens,
   parseMoney,
 } from '@/modules/projects/projects.format';
+import { COST_SPLIT } from '@/modules/projects/projects.metrics';
 import {
-  COST_SPLIT,
-  LOCAL_TIME_ZONE,
-  METRICS_WINDOW_DAYS,
-} from '@/modules/projects/projects.metrics';
-import { projectKpisQueryOptions } from '@/modules/projects/projects.queries';
-import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';
+  projectKpisQueryOptions,
+  projectTimeseriesQueryOptions,
+} from '@/modules/projects/projects.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 import type { CostCoverage } from '@/modules/projects/components/project-cost-ribbon';
 
 const SERIES = ['harness_cost', 'llm_cost'] as const;
@@ -58,72 +52,26 @@ const STATS_RAIL =
 
 const CHART_MIN_HEIGHT = 'h-full min-h-72';
 
-const HOURS_PER_DAY = 24;
-
-const TIME_WINDOW_BUCKETS: Partial<Record<MetricsWindow, number>> = { '7d': 7 };
-
-const timeseriesQuery = (project_id: string, time_window: MetricsWindow) => {
-  const buckets = TIME_WINDOW_BUCKETS[time_window];
-  return {
-    queryKey: projectQueryKeys.metricsTimeseries(project_id, time_window, LOCAL_TIME_ZONE),
-    queryFn: () =>
-      apiCall<MetricsTimeseries>(() =>
-        forgeAuthApi.projects[project_id]!.metrics.timeseries.get({
-          // Eden serialises an undefined query value to the literal string "undefined".
-          $query: {
-            time_window,
-            time_zone: LOCAL_TIME_ZONE,
-            ...(buckets === undefined ? {} : { buckets }),
-          },
-        })
-      ),
-    retry: false,
-    refetchInterval: dashboardPollInterval,
-  };
-};
-
-const DAY_SECONDS = 86_400;
-const DAY_PARTS = { month: 'short', day: 'numeric', timeZone: LOCAL_TIME_ZONE } as const;
-const HOUR_PARTS = { hour: 'numeric', timeZone: LOCAL_TIME_ZONE } as const;
-
-const dayOf = (date: Date) => date.toLocaleDateString('en-US', DAY_PARTS);
-const hourOf = (date: Date) => date.toLocaleTimeString('en-US', HOUR_PARTS);
-
 /** Everything the chart reads. The agent drawer serves the same points without the envelope. */
 export type TimeseriesPlot = Pick<MetricsTimeseries, 'points' | 'bucket_seconds'>;
 
-function bucketLabeller({ points, bucket_seconds }: TimeseriesPlot): (index: number) => string {
-  const spans_days = bucket_seconds >= 2 * DAY_SECONDS;
-  const covers_a_day = bucket_seconds >= DAY_SECONDS;
-
-  return (index) => {
-    const start = new Date(points[index]?.start_at ?? '');
-    if (Number.isNaN(start.getTime())) return '';
-    if (spans_days) {
-      const end = new Date(start);
-      end.setDate(end.getDate() + bucket_seconds / DAY_SECONDS);
-      end.setSeconds(end.getSeconds() - 1);
-      return `${dayOf(start)} – ${dayOf(end)}`;
-    }
-    return covers_a_day ? dayOf(start) : hourOf(start);
-  };
-}
-
 interface ProjectCostTimeseriesProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   /** Off when the section is already inside a card, as it is on the spend Overview tab. */
   readonly framed?: boolean;
 }
 
 export function ProjectCostTimeseries({
   project_id,
-  time_window,
+  range,
   framed = true,
 }: ProjectCostTimeseriesProps) {
-  const timeseries_query = useQuery(timeseriesQuery(project_id, time_window));
-  const kpis_query = useQuery(projectKpisQueryOptions(project_id));
-  const totals = kpis_query.data?.windows[time_window];
+  const timeseries_query = useQuery(
+    projectTimeseriesQueryOptions(project_id, { range, time_zone: LOCAL_TIME_ZONE })
+  );
+  const kpis_query = useQuery(projectKpisQueryOptions(project_id, { range }));
+  const totals = kpis_query.data;
 
   return (
     <ProjectMetricsSection
@@ -139,7 +87,7 @@ export function ProjectCostTimeseries({
     >
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_17rem]">
         <TimeseriesChartPanel query={timeseries_query} totals={totals} />
-        <TimeseriesStatsPanel query={kpis_query} time_window={time_window} />
+        <TimeseriesStatsPanel query={kpis_query} range={range} />
       </div>
     </ProjectMetricsSection>
   );
@@ -150,8 +98,8 @@ function TimeseriesChartPanel({
   totals,
 }: {
   readonly query: UseQueryResult<MetricsTimeseries>;
-  /** The same window's KPI totals, only to derive the chart's coverage state. */
-  readonly totals: KpiWindow | undefined;
+  /** The same range's KPI totals, only to derive the chart's coverage state. */
+  readonly totals: MetricsKpi | undefined;
 }) {
   if (query.isPending) {
     return (
@@ -182,10 +130,10 @@ function TimeseriesChartPanel({
 
 function TimeseriesStatsPanel({
   query,
-  time_window,
+  range,
 }: {
   readonly query: UseQueryResult<MetricsKpis>;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }) {
   if (query.isPending) {
     return (
@@ -200,31 +148,26 @@ function TimeseriesStatsPanel({
   if (query.error) {
     return (
       <QueryError
-        message="Could not load cost totals for this window."
+        message="Could not load cost totals for this range."
         onRetry={() => void query.refetch()}
         test_id="project-timeseries-stats-error"
       />
     );
   }
 
-  return <TimeseriesStats totals={query.data.windows[time_window]} time_window={time_window} />;
+  return <TimeseriesStats totals={query.data} range={range} />;
 }
 
 export function CostTimeseriesChart({
   timeseries,
   coverage,
   test_id_prefix = 'project-timeseries',
-  empty_message = 'No queries ran in this window, so there is no spend to plot.',
+  empty_message = 'No queries ran in this range, so there is no spend to plot.',
 }: {
+  readonly timeseries: TimeseriesPlot;
   /**
-   * Optional because a deployed client can outrun the API behind it: main reaches staging while
-   * only a release reaches demo, so a build that reads a new series can meet one that does not
-   * serve it. An absent series draws the empty state; it must never throw.
-   */
-  readonly timeseries: TimeseriesPlot | undefined;
-  /**
-   * The KPI window's coverage, so an unpriced-but-run window reads as "not priced" rather than
-   * "nothing ran". Absent for callers with no KPI window (the per-agent drawer), which fall back
+   * The KPI range's coverage, so an unpriced-but-run range reads as "not priced" rather than
+   * "nothing ran". Absent for callers with no KPI totals (the per-agent drawer), which fall back
    * to the request-count check instead.
    */
   readonly coverage?: CostCoverage;
@@ -232,9 +175,9 @@ export function CostTimeseriesChart({
   readonly test_id_prefix?: string;
   readonly empty_message?: string;
 }) {
-  const points = timeseries?.points ?? [];
+  const points = timeseries.points;
 
-  if (timeseries === undefined || points.every((point) => point.request_count === 0)) {
+  if (points.every((point) => point.request_count === 0)) {
     return (
       <EmptyState size="section" test_id={`${test_id_prefix}-empty`}>
         <p>{empty_message}</p>
@@ -245,12 +188,13 @@ export function CostTimeseriesChart({
   if (coverage?.state === 'unavailable') {
     return (
       <EmptyState size="section" test_id={`${test_id_prefix}-unpriced`}>
-        <p>No blocks in this window report cost data, so there is no spend to plot.</p>
+        <p>No blocks in this range report cost data, so there is no spend to plot.</p>
       </EmptyState>
     );
   }
 
-  const bucketLabel = bucketLabeller(timeseries);
+  const bucketLabel = (index: number) =>
+    formatBucketLabel(points[index]!.start_at, timeseries.bucket_seconds);
 
   const data = points.map((point, index) => ({
     index,
@@ -280,23 +224,17 @@ export function CostTimeseriesChart({
 
 function TimeseriesStats({
   totals,
-  time_window,
+  range,
 }: {
-  readonly totals: KpiWindow;
-  readonly time_window: MetricsWindow;
+  readonly totals: MetricsKpis;
+  readonly range: RangeSelection;
 }) {
-  // A run rate is spend divided by the window's own length, so the figure stays comparable when
-  // the range changes. A single day reads per hour; anything longer reads per day.
-  const days = METRICS_WINDOW_DAYS[time_window];
-  const per_hour = time_window === '1d';
-  const unavailable = costCoverage(totals).state === 'unavailable';
-
-  // run_rate is computed client-side, not read off the payload, so it needs its own null-out —
-  // formatMoney can't null a plain number.
-  const run_rate_display = unavailable
-    ? formatMoney(null)
-    : `${formatMoneyValue(parseMoney(totals.total_cost) / (per_hour ? HOURS_PER_DAY : days))} / ${per_hour ? 'hour' : 'day'}`;
-  const recoverable_cost = unavailable ? null : totals.recoverable_cost;
+  const run_rate_display =
+    totals.run_rate === null
+      ? formatMoney(null)
+      : `${formatMoney(totals.run_rate)} / ${totals.run_rate_per}`;
+  const recoverable_cost =
+    costCoverage(totals).state === 'unavailable' ? null : totals.recoverable_cost;
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -313,7 +251,7 @@ function TimeseriesStats({
           data-testid="project-timeseries-run-rate"
           label="Run rate"
           value={run_rate_display}
-          hint={`over ${per_hour ? '24 hours' : `${days} days`}`}
+          hint={`over ${rangeLabel(range)}`}
           leading={<CostCoverageBadge kpi={totals} test_id="project-timeseries-run-rate" />}
         />
         <StatCard

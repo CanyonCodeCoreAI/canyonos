@@ -3,18 +3,17 @@
 
 import { useState } from 'react';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
-
 import { LogList } from '@/modules/monitoring/components/log-list';
 import { ALL_SOURCES, LogSourceFilters } from '@/modules/monitoring/components/log-source-filters';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 interface LogsScreenProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
-export function LogsScreen({ project_id, time_window }: LogsScreenProps) {
+export function LogsScreen({ project_id, range }: LogsScreenProps) {
   const [agent, setAgent] = useState(ALL_SOURCES);
   const [replica, setReplica] = useState(ALL_SOURCES);
 
@@ -27,7 +26,7 @@ export function LogsScreen({ project_id, time_window }: LogsScreenProps) {
           </h1>
           <LogSourceFilters
             project_id={project_id}
-            time_window={time_window}
+            range={range}
             agent={agent}
             replica={replica}
             onAgentChange={setAgent}
@@ -39,7 +38,7 @@ export function LogsScreen({ project_id, time_window }: LogsScreenProps) {
 
       <LogList
         project_id={project_id}
-        time_window={time_window}
+        range={range}
         agent={agent === ALL_SOURCES ? undefined : agent}
         replica={replica === ALL_SOURCES ? undefined : replica}
         empty_message="No logs recorded in this window."

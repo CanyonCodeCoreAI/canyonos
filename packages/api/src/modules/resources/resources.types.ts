@@ -3,7 +3,7 @@
 
 import { z } from 'zod';
 
-import { MetricsWindowSchema } from '../metrics/metrics.types';
+import { TIME_RANGE_FIELDS } from '@core/time-range';
 
 export const ResourceIdSchema = z.enum(['gpu', 'cpu', 'mem', 'storage', 'tokens']);
 
@@ -47,7 +47,7 @@ export const FleetOverviewSchema = z.object({
   kpis: z.array(FleetKpiSchema),
   resources: z.array(FleetResourceSchema),
   projects: z.array(FleetProjectSchema),
-  time_window: MetricsWindowSchema,
+  ...TIME_RANGE_FIELDS,
 });
 
 export type FleetKpi = z.infer<typeof FleetKpiSchema>;

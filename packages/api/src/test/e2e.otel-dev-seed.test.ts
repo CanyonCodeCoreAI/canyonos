@@ -13,6 +13,14 @@ import { authenticate, bearer, create_test_project } from './project-test.utils'
 
 setupE2ETests();
 
+const range = () => {
+  const to = new Date();
+  return {
+    from: new Date(to.getTime() - 7 * 86_400_000).toISOString(),
+    to: to.toISOString(),
+  };
+};
+
 describe('otel dev seed', () => {
   test('the seeded project reports its spans through the KPI endpoint', async () => {
     const token = await authenticate('otel-seed-kpis@canyonos.test');
@@ -21,9 +29,12 @@ describe('otel dev seed', () => {
     const listed = await api.projects.get({ $headers: bearer(token) });
     expect(listed.data!.map((project) => project.id)).toContain(project_id);
 
-    const kpis = await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) });
+    const kpis = await api.projects[project_id]!.metrics.kpis.get({
+      $query: range(),
+      $headers: bearer(token),
+    });
     expect(kpis.error).toBeNull();
-    const window = kpis.data!.windows['7d'];
+    const window = kpis.data!;
     expect(window.request_count).toBeGreaterThan(0);
     expect(window.block_count).toBeGreaterThan(0);
     expect(Number(window.total_cost)).toBeGreaterThan(0);
@@ -34,15 +45,17 @@ describe('otel dev seed', () => {
     const project_id = await seedDevTelemetry();
 
     const first_projects = await api.projects.get({ $headers: bearer(token) });
-    const before = (await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) }))
-      .data!.windows['7d'];
+    const before = (
+      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+    ).data!;
 
     expect(await seedDevTelemetry()).toBe(project_id);
 
     const after_projects = await api.projects.get({ $headers: bearer(token) });
     expect(after_projects.data).toHaveLength(first_projects.data!.length);
-    const after = (await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) }))
-      .data!.windows['7d'];
+    const after = (
+      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+    ).data!;
     expect(after.block_count).toBe(before.block_count);
     expect(after.request_count).toBe(before.request_count);
     expect(after.total_cost).toBe(before.total_cost);
@@ -54,7 +67,7 @@ describe('otel dev seed', () => {
 
     const listing = await api.projects[project_id]!.requests.get({
       $headers: bearer(token),
-      $query: { limit: 20, offset: 0, time_window: '7d' },
+      $query: { limit: 20, offset: 0, ...range() },
     });
     expect(listing.error).toBeNull();
     expect(listing.data!.total).toBeGreaterThan(1);
@@ -67,12 +80,15 @@ describe('otel dev seed', () => {
     const project_id = await seedDevTelemetry();
     const listing = await api.projects[project_id]!.requests.get({
       $headers: bearer(token),
-      $query: { limit: 20, offset: 0, time_window: '7d' },
+      $query: { limit: 20, offset: 0, ...range() },
     });
 
     const traces = await Promise.all(
       listing.data!.items.map((item) =>
-        api.projects[project_id]!.requests[item.session_id]!.get({ $headers: bearer(token) })
+        api.projects[project_id]!.requests[item.session_id]!.get({
+          $query: range(),
+          $headers: bearer(token),
+        })
       )
     );
     expect(traces.some((trace) => typeof trace.data?.input === 'string')).toBe(true);
@@ -83,8 +99,9 @@ describe('otel dev seed', () => {
     const token = await authenticate('otel-seed-unpriced@canyonos.test');
     const project_id = await seedDevTelemetry();
 
-    const window = (await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) }))
-      .data!.windows['7d'];
+    const window = (
+      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+    ).data!;
     expect(window.costed_block_count).toBeGreaterThan(0);
     expect(window.costed_block_count).toBeLessThan(window.block_count);
     expect(window.tokens).toBeGreaterThan(0);
@@ -96,14 +113,14 @@ describe('otel dev seed', () => {
 
     const blocks = await api.projects[project_id]!.metrics.blocks.get({
       $headers: bearer(token),
-      $query: { time_window: '7d' },
+      $query: { ...range() },
     });
     expect(blocks.error).toBeNull();
 
     const replica_counts = await Promise.all(
       [...new Set(blocks.data!.blocks.map((block) => block.agent_id))].map(async (agent_id) => {
         const drawer = await api.projects[project_id]!.metrics.agents[agent_id]!.get({
-          $query: {},
+          $query: range(),
           $headers: bearer(token),
         });
         expect(drawer.error).toBeNull();
@@ -121,14 +138,18 @@ describe('otel dev seed', () => {
     expect(projects.data!.map((project) => project.id)).toContain(project_id);
 
     const kpis = await api.projects[project_id]!.metrics.kpis.get({
+      $query: range(),
       $headers: bearer(other.token),
     });
     expect(kpis.error).toBeNull();
-    expect(kpis.data!.windows['7d'].block_count).toBe(7);
+    expect(kpis.data!.block_count).toBe(7);
 
     const overview = await api.resources.overview.get({
       $headers: bearer(other.token),
-      $query: { time_window: '7d' },
+      $query: {
+        from: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+        to: new Date().toISOString(),
+      },
     });
     expect(overview.data!.projects.map((project) => project.id)).toContain(project_id);
   });
@@ -154,15 +175,16 @@ describe('otel dev seed', () => {
     await db.insert(otelSpans).values(foreign);
     const [before] = await db.select().from(otelSpans).where(eq(otelSpans.span_id, 'foreign-span'));
 
-    const aged = (await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) }))
-      .data!.windows['7d'];
+    const aged = (
+      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+    ).data!;
     expect(aged.block_count).toBe(0);
 
     await seedDevTelemetry();
 
     const refreshed = (
-      await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) })
-    ).data!.windows['7d'];
+      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+    ).data!;
     expect(refreshed.block_count).toBe(7);
 
     const [after] = await db.select().from(otelSpans).where(eq(otelSpans.span_id, 'foreign-span'));
@@ -205,14 +227,16 @@ describe('otel dev seed', () => {
     expect(seeded_id).not.toBe(my_project_id);
 
     const mine_kpis = await api.projects[my_project_id]!.metrics.kpis.get({
+      $query: range(),
       $headers: bearer(token),
     });
-    expect(mine_kpis.data!.windows['7d'].block_count).toBe(0);
+    expect(mine_kpis.data!.block_count).toBe(0);
 
     const seeded_kpis = await api.projects[seeded_id]!.metrics.kpis.get({
+      $query: range(),
       $headers: bearer(token),
     });
-    expect(seeded_kpis.data!.windows['7d'].block_count).toBe(7);
+    expect(seeded_kpis.data!.block_count).toBe(7);
   });
 
   test('the fleet overview counts the seeded project', async () => {
@@ -221,7 +245,10 @@ describe('otel dev seed', () => {
 
     const overview = await api.resources.overview.get({
       $headers: bearer(token),
-      $query: { time_window: '7d' },
+      $query: {
+        from: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+        to: new Date().toISOString(),
+      },
     });
     expect(overview.error).toBeNull();
     const seeded = overview.data!.projects.find((row) => row.id === project_id);

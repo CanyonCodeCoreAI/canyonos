@@ -5,6 +5,8 @@ import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
 import { otelSpans } from '@api/db/schema';
+import { withinRange } from '@core/time-range';
+import type { TimeRange } from '@core/time-range';
 
 import { GEN_AI, PROJECT_ID_ATTRIBUTE, RUNTIME_ATTRIBUTES, STATUS_CODE } from './metrics.contract';
 
@@ -96,8 +98,45 @@ export const spanInput = (alias: string): string => `nullif(btrim(${alias}.input
 
 export const spanOutput = (alias: string): string => `nullif(btrim(${alias}.output::text), '')`;
 
-export const projectSpans = (project_id: string, floor_nanos: string): SQL => sql`
+export const projectSpans = (project_id: string, range: TimeRange): SQL => sql`
   select s.*
   from ${otelSpans} s
   where ${sql.raw(spanProjectId('s'))} = ${project_id}
-    and s.start_time_unix_nano >= ${sql.raw(floor_nanos)}`;
+    and ${withinRange('s.start_time_unix_nano', range)}`;
+
+export const allProjectSpans = (project_id: string): SQL => sql`
+  select s.*
+  from ${otelSpans} s
+  where ${sql.raw(spanProjectId('s'))} = ${project_id}`;
+
+const requestSpans = (in_scope: (alias: string) => SQL, range: TimeRange): SQL => sql`
+  select s.*
+  from (
+    select s.*,
+      min(s.start_time_unix_nano) over (
+        partition by ${sql.raw(spanProjectId('s'))}, s.trace_id
+      ) as request_start_unix_nano
+    from ${otelSpans} s
+    where ${in_scope('s')}
+      and s.trace_id in (
+        select c.trace_id from ${otelSpans} c
+        where ${in_scope('c')} and ${withinRange('c.start_time_unix_nano', range)}
+      )
+  ) s
+  where ${withinRange('s.request_start_unix_nano', range)}`;
+
+/**
+ * The one rule every request-level reader shares: a request belongs to the range its first span
+ * starts in, whole, so its spans after `to` come along. Each span carries that start as
+ * `request_start_unix_nano`.
+ */
+export const projectRequestSpans = (project_id: string, range: TimeRange): SQL =>
+  requestSpans((alias) => sql`${sql.raw(spanProjectId(alias))} = ${project_id}`, range);
+
+/** `projectRequestSpans` for every project at once. */
+export const fleetRequestSpans = (range: TimeRange): SQL =>
+  requestSpans((alias) => sql`${sql.raw(spanProjectId(alias))} is not null`, range);
+
+/** The start of the request a `projectRequestSpans` row belongs to. */
+export const requestStart = (alias: string): string =>
+  `to_timestamp(${alias}.request_start_unix_nano / 1e9)`;

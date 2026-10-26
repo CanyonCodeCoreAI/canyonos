@@ -5,14 +5,14 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDownIcon } from 'lucide-react';
 import { useState } from 'react';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
-import type { MonitoringLog, MonitoringLogsResponse } from '@canyonos/api/monitoring';
+import type { MonitoringLog } from '@canyonos/api/monitoring';
 
 import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { apiCall, forgeAuthApi } from '@/api';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { logsQueryOptions } from '@/modules/monitoring/monitoring.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 const LOG_LIMIT = 200;
 
@@ -26,7 +26,7 @@ const SEVERITY_CLASS: Record<string, string> = {
 
 interface LogListProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   readonly errors_only?: boolean;
   readonly agent?: string;
   readonly replica?: string;
@@ -37,7 +37,7 @@ interface LogListProps {
 
 export function LogList({
   project_id,
-  time_window,
+  range,
   errors_only = false,
   agent,
   replica,
@@ -45,31 +45,9 @@ export function LogList({
   error_message,
   test_id,
 }: LogListProps) {
-  const query = useQuery({
-    queryKey: [
-      'projects',
-      project_id,
-      'monitoring',
-      'logs',
-      time_window,
-      errors_only,
-      agent ?? null,
-      replica ?? null,
-    ],
-    queryFn: () =>
-      apiCall<MonitoringLogsResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.logs.get({
-          $query: {
-            time_window,
-            limit: LOG_LIMIT,
-            errors_only,
-            ...(agent === undefined ? {} : { agent }),
-            ...(replica === undefined ? {} : { replica }),
-          },
-        })
-      ),
-    retry: false,
-  });
+  const query = useQuery(
+    logsQueryOptions(project_id, { range, limit: LOG_LIMIT, errors_only, agent, replica })
+  );
 
   if (query.error) {
     return (

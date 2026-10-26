@@ -26,6 +26,11 @@ const DAY_MS = 24 * HOUR_MS;
 // wall-clock latency fixtures by the milliseconds between inserts.
 const BASE_MS = Date.now();
 
+const range = (days: number) => ({
+  from: new Date(BASE_MS - days * DAY_MS).toISOString(),
+  to: new Date(BASE_MS).toISOString(),
+});
+
 const nanos_ago = (ms_ago: number): bigint => BigInt(BASE_MS - Math.round(ms_ago)) * NANOS_PER_MS;
 
 const agent_names = new Map<string, string>();
@@ -193,79 +198,54 @@ beforeAll(async () => {
 });
 
 describe('GET /projects/:project_id/metrics/kpis', () => {
-  test('every window aggregates exactly the spans and traces inside it', async () => {
-    const res = await api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) });
-    expect(res.error).toBeNull();
-    const { windows } = res.data!;
-
-    expect(windows['1d']).toEqual({
-      request_count: 1,
-      block_count: 2,
-      failed_block_count: 0,
-      tokens: 300,
-      per_block_tokens: 150,
-      harness_cost: '0.0000300000',
-      llm_cost: '0.0003000000',
-      total_cost: '0.0003300000',
-      // Only kpi-b-recent-2 retried: it ran twice for one result, so half its 0.000220 is waste.
-      recoverable_cost: '0.0001100000',
-      per_block_cost: '0.0001650000',
-      per_block_latency_ms: 2000,
-      costed_block_count: 2,
-      costed_request_count: 1,
-      per_costed_request_cost: '0.0003300000',
+  test('aggregates exactly the spans and traces inside the range', async () => {
+    const query = range(30);
+    const res = await api.projects[project_id]!.metrics.kpis.get({
+      $query: query,
+      $headers: bearer(token),
     });
-
-    expect(windows['7d'].request_count).toBe(2);
-    expect(windows['7d'].block_count).toBe(3);
-    expect(windows['7d'].tokens).toBe(350);
-    expect(windows['7d'].per_block_tokens).toBeCloseTo(350 / 3, 6);
-    expect(windows['7d'].llm_cost).toBe('0.0003500000');
-    expect(windows['7d'].harness_cost).toBe('0.0000350000');
-    expect(windows['7d'].total_cost).toBe('0.0003850000');
-    expect(windows['7d'].per_block_cost).toBe('0.0001283333');
-    expect(windows['7d'].per_block_latency_ms).toBe(2000);
-    // kpi-b-failed-1 failed with errors=2: it is counted once, at its full 0.000055, on top of the
-    // 0.000110 retry waste already in the 1d window.
-    expect(windows['7d'].failed_block_count).toBe(1);
-    expect(windows['7d'].recoverable_cost).toBe('0.0001650000');
-
-    expect(windows['30d'].request_count).toBe(4);
-    expect(windows['30d'].block_count).toBe(6);
-    expect(windows['30d'].costed_block_count).toBe(4);
-    expect(windows['30d'].costed_request_count).toBe(3);
-    expect(windows['30d'].tokens).toBe(400);
-    expect(windows['30d'].per_block_tokens).toBeCloseTo(400 / 6, 6);
-    expect(windows['30d'].total_cost).toBe('0.0004400000');
-    expect(windows['30d'].per_block_cost).toBe('0.0001100000');
+    expect(res.error).toBeNull();
+    const kpi = res.data!;
+    expect(kpi).toMatchObject({ project_id, ...query });
+    expect(kpi.request_count).toBe(4);
+    expect(kpi.block_count).toBe(6);
+    expect(kpi.costed_block_count).toBe(4);
+    expect(kpi.costed_request_count).toBe(3);
+    expect(kpi.tokens).toBe(400);
+    expect(kpi.per_block_tokens).toBeCloseTo(400 / 6, 6);
+    expect(kpi.total_cost).toBe('0.0004400000');
+    expect(kpi.per_block_cost).toBe('0.0001100000');
     // Averaged over the three costed traces (0.000330, 0.000055, 0.000055), not over all four.
-    expect(windows['30d'].per_costed_request_cost).toBe('0.0001466667');
-    expect(windows['30d'].per_block_latency_ms).toBe(1250);
-    expect(windows['30d'].recoverable_cost).toBe('0.0001650000');
-
-    expect(windows['1q'].request_count).toBe(5);
-    expect(windows['1q'].block_count).toBe(7);
-    expect(windows['1q'].costed_block_count).toBe(5);
-    expect(windows['1q'].costed_request_count).toBe(4);
-    expect(windows['1q'].failed_block_count).toBe(1);
-    expect(windows['1q'].tokens).toBe(900);
-    expect(windows['1q'].per_block_tokens).toBeCloseTo(900 / 7, 6);
-    expect(windows['1q'].harness_cost).toBe('0.0000900000');
-    expect(windows['1q'].llm_cost).toBe('0.0009000000');
-    expect(windows['1q'].total_cost).toBe('0.0009900000');
-    // The whole 0.000990 spread over the four costed traces, not over all five.
-    expect(windows['1q'].per_costed_request_cost).toBe('0.0002475000');
-    expect(windows['1q'].recoverable_cost).toBe('0.0001650000');
-    expect(windows['1q'].per_block_latency_ms).toBeCloseTo(11500 / 7, 6);
+    expect(kpi.per_costed_request_cost).toBe('0.0001466667');
+    expect(kpi.per_block_latency_ms).toBe(1250);
+    expect(kpi.recoverable_cost).toBe('0.0001650000');
   });
 
-  test('a project with no telemetry spans returns zeroed windows', async () => {
+  test('a past half-open range excludes spans at and after to', async () => {
+    const query = {
+      from: new Date(BASE_MS - 4 * DAY_MS).toISOString(),
+      to: new Date(BASE_MS - 2 * HOUR_MS).toISOString(),
+    };
+    const res = await api.projects[project_id]!.metrics.kpis.get({
+      $query: query,
+      $headers: bearer(token),
+    });
+    expect(res.error).toBeNull();
+    expect(res.data).toMatchObject({ ...query, request_count: 1, block_count: 1, tokens: 50 });
+  });
+
+  test('a project with no telemetry spans returns zeroed totals', async () => {
     const empty = await create_project('metrics-empty@canyonos.test');
+    const query = range(90);
     const res = await api.projects[empty.project_id]!.metrics.kpis.get({
+      $query: query,
       $headers: bearer(empty.token),
     });
     expect(res.error).toBeNull();
-    expect(res.data!.windows['1q']).toEqual({
+    expect(res.data).toEqual({
+      project_id: empty.project_id,
+      generated_at: expect.any(String),
+      ...query,
       request_count: 0,
       block_count: 0,
       failed_block_count: 0,
@@ -280,7 +260,18 @@ describe('GET /projects/:project_id/metrics/kpis', () => {
       costed_block_count: 0,
       costed_request_count: 0,
       per_costed_request_cost: null,
+      run_rate: '0.0000000000',
+      run_rate_per: 'day',
     });
+  });
+
+  test('from must be earlier than to', async () => {
+    const at = new Date(BASE_MS).toISOString();
+    const res = await api.projects[project_id]!.metrics.kpis.get({
+      $query: { from: at, to: at },
+      $headers: bearer(token),
+    });
+    expect(res.error?.status as number).toBe(422);
   });
 });
 
@@ -288,7 +279,7 @@ describe('GET /projects/:project_id/metrics/distribution', () => {
   test('latency: every request in the window, wall-clock ms, exact stats', async () => {
     const res = await api.projects[project_id]!.metrics.distribution.get({
       $headers: bearer(token),
-      $query: { metric: 'latency', time_window: '30d', buckets: 2 },
+      $query: { metric: 'latency', ...range(30), buckets: 2 },
     });
     expect(res.error).toBeNull();
     const dist = res.data!;
@@ -316,7 +307,7 @@ describe('GET /projects/:project_id/metrics/distribution', () => {
   test('tokens_per_request over the full quarter includes every request', async () => {
     const res = await api.projects[project_id]!.metrics.distribution.get({
       $headers: bearer(token),
-      $query: { metric: 'tokens_per_request', time_window: '1q', buckets: 3 },
+      $query: { metric: 'tokens_per_request', ...range(90), buckets: 3 },
     });
     expect(res.error).toBeNull();
     const dist = res.data!;
@@ -334,7 +325,7 @@ describe('GET /projects/:project_id/metrics/distribution', () => {
   test('cost_per_request keeps window scoping (1d sees only the recent request)', async () => {
     const res = await api.projects[project_id]!.metrics.distribution.get({
       $headers: bearer(token),
-      $query: { metric: 'cost_per_request', time_window: '1d', buckets: 5 },
+      $query: { metric: 'cost_per_request', ...range(1), buckets: 5 },
     });
     expect(res.error).toBeNull();
     const dist = res.data!;
@@ -350,13 +341,13 @@ describe('GET /projects/:project_id/metrics/distribution', () => {
     const empty = await create_project('metrics-empty-dist@canyonos.test');
     const res = await api.projects[empty.project_id]!.metrics.distribution.get({
       $headers: bearer(empty.token),
-      $query: { metric: 'latency', time_window: '1q', buckets: 10 },
+      $query: { metric: 'latency', ...range(90), buckets: 10 },
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       project_id: empty.project_id,
       metric: 'latency',
-      time_window: '1q',
+      ...range(90),
       request_count: 0,
       mean: null,
       std: null,
@@ -373,7 +364,7 @@ describe('GET /projects/:project_id/metrics/distribution', () => {
     const res = await api.projects[project_id]!.metrics.distribution.get({
       $headers: bearer(token),
       // @ts-expect-error deliberately invalid metric
-      $query: { metric: 'nope', time_window: '1d', buckets: 5 },
+      $query: { metric: 'nope', ...range(1), buckets: 5 },
     });
     expect(res.error?.status as number).toBe(422);
   });
@@ -382,17 +373,11 @@ describe('GET /projects/:project_id/metrics/distribution', () => {
 describe('GET /projects/:project_id/metrics/timeseries', () => {
   let series_token: string;
   let series_project: string;
-  let calendar_token: string;
-  let calendar_project: string;
 
-  // The grid snaps to whole hours, so the shared fixture's blocks (exactly 2h ago) sit on an edge
-  // and split unpredictably. These sit mid-bucket at 2.5h and 5.5h, so each one stays inside a
-  // single bucket however long the fixture takes to reach the query.
   beforeAll(async () => {
     ({ token: series_token, project_id: series_project } = await create_project(
       'metrics-series@canyonos.test'
     ));
-
     await insert_span(series_project, {
       span_id: 'ser-b-1',
       trace_id: 'ser-recent',
@@ -426,250 +411,104 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
       server_cost: '0.0000050000',
       total_cost: '0.0000550000',
     });
-
-    // Two calendar days apart on purpose: one block inside today, one older than any day-grid the
-    // week window can start on.
-    ({ token: calendar_token, project_id: calendar_project } = await create_project(
-      'metrics-calendar@canyonos.test'
-    ));
-    await insert_span(calendar_project, {
-      span_id: 'cal-b-today',
-      trace_id: 'cal-today',
-      ms_ago: 0,
-      execution_time_ms: 1000,
-      input_token_count: 60,
-      output_token_count: 40,
-      token_cost: '0.0001000000',
-      server_cost: '0.0000100000',
-      total_cost: '0.0001100000',
-    });
-    await insert_span(calendar_project, {
-      span_id: 'cal-b-old',
-      trace_id: 'cal-old',
-      ms_ago: 8 * DAY_MS,
-      execution_time_ms: 1000,
-      input_token_count: 10,
-      output_token_count: 10,
-      token_cost: '0.0000500000',
-      server_cost: '0.0000050000',
-      total_cost: '0.0000550000',
-    });
   });
 
-  test('a day is 24 hourly buckets, each block in the bucket its start falls in', async () => {
-    const res = await api.projects[series_project]!.metrics.timeseries.get({
-      $headers: bearer(series_token),
-      $query: { time_window: '1d' },
-    });
-    expect(res.error).toBeNull();
-    const series = res.data!;
-
-    expect(series.time_window).toBe('1d');
-    expect(series.bucket_seconds).toBe(3600);
-    expect(series.points).toHaveLength(24);
-
-    for (const point of series.points) {
-      expect(new Date(point.start_at).toISOString()).toMatch(/T\d{2}:00:00\.000Z$/);
-    }
-
-    const busy = series.points
-      .map((point, index) => ({ index, point }))
-      .filter(({ point }) => point.block_count > 0);
-    // The two traces ran three hours apart, so they fall three hourly buckets apart.
-    expect(busy).toHaveLength(2);
-    expect(busy[1]!.index - busy[0]!.index).toBe(3);
-
-    const covers = (start_at: string, ms_ago: number): boolean => {
-      const start = Date.parse(start_at);
-      const started_at = BASE_MS - ms_ago;
-      return started_at >= start && started_at < start + series.bucket_seconds * 1000;
-    };
-    expect(covers(busy[0]!.point.start_at, 5.5 * HOUR_MS)).toBe(true);
-    expect(covers(busy[1]!.point.start_at, 2.5 * HOUR_MS)).toBe(true);
-
-    expect(busy[0]!.point).toMatchObject({
-      request_count: 1,
-      block_count: 1,
-      tokens: 50,
-      llm_cost: '0.0000500000',
-      harness_cost: '0.0000050000',
-      total_cost: '0.0000550000',
-    });
-    expect(busy[1]!.point).toMatchObject({
-      request_count: 1,
-      block_count: 2,
-      tokens: 300,
-      llm_cost: '0.0003000000',
-      harness_cost: '0.0000300000',
-      total_cost: '0.0003300000',
-    });
-
-    const empty = series.points.filter((point) => point.block_count === 0);
-    expect(empty).toHaveLength(22);
-    expect(empty[0]).toMatchObject({
-      request_count: 0,
-      tokens: 0,
-      llm_cost: '0.0000000000',
-      harness_cost: '0.0000000000',
-      total_cost: '0.0000000000',
-    });
-
-    const starts = series.points.map((point) => Date.parse(point.start_at));
-    expect(starts).toEqual([...starts].sort((a, b) => a - b));
-    expect(starts[1]! - starts[0]!).toBe(3600 * 1000);
-  });
-
-  test("the longer windows bucket on the reader's local midnight, the current day last", async () => {
-    const grids = [
-      { time_window: '7d', buckets: 7, bucket_seconds: 86_400 },
-      { time_window: '30d', buckets: 30, bucket_seconds: 86_400 },
-      { time_window: '1q', buckets: 30, bucket_seconds: 3 * 86_400 },
-    ] as const;
-    const time_zone = 'Asia/Shanghai';
-    const local_hour = new Intl.DateTimeFormat('en-US', {
-      timeZone: time_zone,
-      hour: 'numeric',
-      hourCycle: 'h23',
-    });
-
-    for (const grid of grids) {
-      const query = { time_window: grid.time_window, buckets: grid.buckets, time_zone } as const;
-      const res = await api.projects[calendar_project]!.metrics.timeseries.get({
-        $headers: bearer(calendar_token),
-        $query: query,
-      });
-      expect(res.error).toBeNull();
-      const series = res.data!;
-      expect(series.bucket_seconds).toBe(grid.bucket_seconds);
-      expect(series.points).toHaveLength(grid.buckets);
-
-      const starts = series.points.map((point) => new Date(point.start_at).getTime());
-      for (const start of starts) {
-        expect(local_hour.format(start)).toBe('00');
-      }
-      const step = grid.bucket_seconds * 1000;
-      expect(starts).toEqual(starts.map((_start, index) => starts[0]! + index * step));
-
-      // The newest bucket is the one now falls inside — today so far, not a full period.
-      const last = starts.at(-1)!;
-      expect(Date.now()).toBeGreaterThanOrEqual(last);
-      expect(Date.now()).toBeLessThan(last + step);
-    }
-  });
-
-  test('a block from today lands in the last bucket, one before the grid start is dropped', async () => {
-    const [week, month] = await Promise.all([
-      api.projects[calendar_project]!.metrics.timeseries.get({
-        $headers: bearer(calendar_token),
-        $query: { time_window: '7d', buckets: 7 },
-      }),
-      api.projects[calendar_project]!.metrics.timeseries.get({
-        $headers: bearer(calendar_token),
-        $query: { time_window: '30d', buckets: 30 },
-      }),
-    ]);
-    expect(week.error).toBeNull();
-    expect(month.error).toBeNull();
-
-    const week_points = week.data!.points;
-    expect(week_points.at(-1)).toMatchObject({
-      request_count: 1,
-      block_count: 1,
-      total_cost: '0.0001100000',
-    });
-    // Seven midnight-aligned days reach back six days, so the 8-day-old block is outside them.
-    expect(week_points.reduce((sum, point) => sum + point.block_count, 0)).toBe(1);
-
-    const month_points = month.data!.points;
-    expect(month_points.reduce((sum, point) => sum + point.block_count, 0)).toBe(2);
-    expect(month_points.at(-1)!.block_count).toBe(1);
-    // Thirty daily buckets ending with today: eight days back is the ninth from the end.
-    expect(month_points.findIndex((point) => point.block_count > 0)).toBe(month_points.length - 9);
-  });
-
-  test('the quarter sums back to the 1q KPI window', async () => {
+  test('the grid sits on whole hours and sums back to the KPI totals', async () => {
+    const query = range(1);
     const [series, kpis] = await Promise.all([
-      api.projects[project_id]!.metrics.timeseries.get({
-        $headers: bearer(token),
-        $query: { time_window: '1q', buckets: 90 },
+      api.projects[series_project]!.metrics.timeseries.get({
+        $headers: bearer(series_token),
+        $query: query,
       }),
-      api.projects[project_id]!.metrics.kpis.get({ $headers: bearer(token) }),
+      api.projects[series_project]!.metrics.kpis.get({
+        $headers: bearer(series_token),
+        $query: query,
+      }),
     ]);
     expect(series.error).toBeNull();
     expect(kpis.error).toBeNull();
+    expect(series.data).toMatchObject({
+      project_id: series_project,
+      ...query,
+      bucket_seconds: 3600,
+    });
+    const origin = Math.floor(Date.parse(query.from) / HOUR_MS) * HOUR_MS;
+    expect(series.data!.points).toHaveLength(Math.ceil((Date.parse(query.to) - origin) / HOUR_MS));
+    expect(Date.parse(series.data!.points[0]!.start_at)).toBe(origin);
 
     const points = series.data!.points;
-    expect(points).toHaveLength(90);
-    expect(series.data!.bucket_seconds).toBe(86400);
-
-    const time_window = kpis.data!.windows['1q'];
-    expect(points.reduce((sum, point) => sum + point.block_count, 0)).toBe(time_window.block_count);
-    expect(points.reduce((sum, point) => sum + point.tokens, 0)).toBe(time_window.tokens);
-    const total = points.reduce((sum, point) => sum + Number(point.total_cost), 0);
-    expect(total).toBeCloseTo(Number(time_window.total_cost), 10);
+    expect(points.reduce((sum, point) => sum + point.block_count, 0)).toBe(kpis.data!.block_count);
+    expect(points.reduce((sum, point) => sum + point.tokens, 0)).toBe(kpis.data!.tokens);
+    expect(points.reduce((sum, point) => sum + Number(point.total_cost), 0)).toBeCloseTo(
+      Number(kpis.data!.total_cost),
+      10
+    );
   });
 
-  test('buckets default per time_window: 30 outside a day', async () => {
-    const res = await api.projects[project_id]!.metrics.timeseries.get({
-      $headers: bearer(token),
-      $query: { time_window: '7d' },
-    });
-    expect(res.error).toBeNull();
-    expect(res.data!.points).toHaveLength(30);
-    expect(res.data!.bucket_seconds).toBe((7 * 24 * 3600) / 30);
-  });
-
-  test('a project with no telemetry spans still emits every bucket, all zeroed', async () => {
+  test('an empty project still emits the shared time grid', async () => {
     const empty = await create_project('metrics-empty-series@canyonos.test');
+    const query = range(30);
     const res = await api.projects[empty.project_id]!.metrics.timeseries.get({
       $headers: bearer(empty.token),
-      $query: { time_window: '30d', buckets: 5 },
+      $query: query,
     });
     expect(res.error).toBeNull();
-    expect(res.data!.points).toHaveLength(5);
+    expect(res.data).toMatchObject({ project_id: empty.project_id, ...query });
+    // With no zone, daily buckets sit on UTC midnights, so a mid-day start touches one more day.
+    const origin = Math.floor(Date.parse(query.from) / DAY_MS) * DAY_MS;
+    expect(res.data!.points).toHaveLength(Math.ceil((Date.parse(query.to) - origin) / DAY_MS));
     expect(res.data!.points.every((point) => point.total_cost === '0.0000000000')).toBe(true);
     expect(res.data!.points.every((point) => point.request_count === 0)).toBe(true);
   });
 
-  test('a bucket count above the cap is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.metrics.timeseries.get({
-      $headers: bearer(token),
-      $query: { time_window: '30d', buckets: 121 },
+  test("daily buckets sit on the given zone's midnights", async () => {
+    const time_zone = 'Asia/Kolkata';
+    const local_time = new Intl.DateTimeFormat('en-US', {
+      timeZone: time_zone,
+      hour: 'numeric',
+      minute: 'numeric',
+      hourCycle: 'h23',
     });
-    expect(res.error?.status as number).toBe(422);
+    const res = await api.projects[series_project]!.metrics.timeseries.get({
+      $headers: bearer(series_token),
+      $query: { ...range(30), time_zone },
+    });
+    expect(res.error).toBeNull();
+    expect(res.data!.bucket_seconds).toBe(DAY_MS / 1000);
+    for (const point of res.data!.points) {
+      expect(local_time.format(new Date(point.start_at))).toBe('00:00');
+    }
   });
 
   test('an invalid time zone is rejected by validation (422)', async () => {
-    const query = { time_window: '30d', time_zone: 'Mars/Olympus_Mons' } as const;
-    const res = await api.projects[project_id]!.metrics.timeseries.get({
-      $headers: bearer(token),
-      $query: query,
+    const res = await api.projects[series_project]!.metrics.timeseries.get({
+      $headers: bearer(series_token),
+      $query: { ...range(30), time_zone: 'Mars/Olympus_Mons' },
     });
     expect(res.error?.status as number).toBe(422);
   });
 
-  test('a zone ICU accepts but Postgres rejects is remapped to 422, not a 500', async () => {
-    const query = { time_window: '30d', time_zone: '-0800' } as const;
-    const res = await api.projects[project_id]!.metrics.timeseries.get({
-      $headers: bearer(token),
-      $query: query,
+  test('a zone ICU accepts but Postgres rejects is a 422, not a 500', async () => {
+    const res = await api.projects[series_project]!.metrics.timeseries.get({
+      $headers: bearer(series_token),
+      $query: { ...range(30), time_zone: 'US/Pacific-New' },
     });
     expect(res.error?.status as number).toBe(422);
-    expect((res.error?.value as { error?: string })?.error).toBe('metrics.invalid_time_zone');
+    expect((res.error?.value as { error?: string })?.error).toBe('time_range.invalid_time_zone');
   });
 
-  test('an unknown window is rejected by validation (422)', async () => {
+  test('from must be earlier than to', async () => {
+    const at = new Date(BASE_MS).toISOString();
     const res = await api.projects[project_id]!.metrics.timeseries.get({
       $headers: bearer(token),
-      // @ts-expect-error deliberately invalid window
-      $query: { time_window: '2y' },
+      $query: { from: at, to: at },
     });
     expect(res.error?.status as number).toBe(422);
   });
 
   test('a request without a token is rejected with 401', async () => {
     const res = await api.projects[project_id]!.metrics.timeseries.get({
-      $query: { time_window: '30d' },
+      $query: range(30),
     });
     expect(res.error?.status as number).toBe(401);
   });
@@ -678,7 +517,7 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
     const other_user = await authenticate('metrics-series-intruder@canyonos.test');
     const res = await api.projects[project_id]!.metrics.timeseries.get({
       $headers: bearer(other_user),
-      $query: { time_window: '30d' },
+      $query: range(30),
     });
     expect(res.error).toBeNull();
     expect(res.data!.points.length).toBeGreaterThan(0);
@@ -728,8 +567,8 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     // Failed *and* retried three times: recoverable_cost must charge it once, in full.
     await insert_span(blocks_project, {
       span_id: 'blk-b-harness-1',
-      trace_id: 'blk-session',
-      // Outside 1d, inside 30d: the only span the narrower window drops.
+      trace_id: 'blk-old-session',
+      // A request outside 1d, inside 30d: the only one the narrower range drops.
       ms_ago: 3 * DAY_MS,
       execution_time_ms: 2000,
       input_token_count: 0,
@@ -746,7 +585,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
   test('groups per agent, orders by cost desc, and derives kind from the model', async () => {
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
       $headers: bearer(blocks_token),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     expect(res.error).toBeNull();
     const { total_cost, blocks } = res.data!;
@@ -794,7 +633,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
   test('the window scopes the breakdown (1d drops the older harness span)', async () => {
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
       $headers: bearer(blocks_token),
-      $query: { time_window: '1d' },
+      $query: { ...range(1) },
     });
     expect(res.error).toBeNull();
     expect(res.data!.blocks.map((block) => block.label)).toEqual(['blk-agent-model']);
@@ -805,12 +644,12 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     const empty = await create_project('metrics-empty-blocks@canyonos.test');
     const res = await api.projects[empty.project_id]!.metrics.blocks.get({
       $headers: bearer(empty.token),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       project_id: empty.project_id,
-      time_window: '30d',
+      ...range(30),
       total_cost: '0.0000000000',
       blocks: [],
     });
@@ -819,7 +658,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
   test('spans reporting no agent id are addressed by the name they ran under', async () => {
     const res = await api.projects[project_id]!.metrics.blocks.get({
       $headers: bearer(token),
-      $query: { time_window: '1q' },
+      $query: { ...range(90) },
     });
     expect(res.error).toBeNull();
     expect(res.data!.blocks).toHaveLength(1);
@@ -835,18 +674,9 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     });
   });
 
-  test('an unknown window is rejected by validation (422)', async () => {
-    const res = await api.projects[blocks_project]!.metrics.blocks.get({
-      $headers: bearer(blocks_token),
-      // @ts-expect-error deliberately invalid window
-      $query: { time_window: 'forever' },
-    });
-    expect(res.error?.status as number).toBe(422);
-  });
-
   test('a request without a token is rejected with 401', async () => {
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     expect(res.error?.status as number).toBe(401);
   });
@@ -855,7 +685,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     const other_user = await authenticate('metrics-blocks-intruder@canyonos.test');
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
       $headers: bearer(other_user),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     expect(res.error).toBeNull();
     expect(res.data!.blocks.length).toBeGreaterThan(0);
@@ -948,7 +778,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
 
   test('returns one 30-day agent aggregate across models and its request-cost histogram', async () => {
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
-      $query: {},
+      $query: range(30),
       $headers: bearer(details_token),
     });
     expect(res.error).toBeNull();
@@ -958,7 +788,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       project_id: details_project,
       agent_id: 'detail-agent',
       label: 'Drawer Agent',
-      time_window: '30d',
+      ...range(30),
       project: {
         // A request is its spans, so the three in-window traces count and detail-old does not.
         request_count: 3,
@@ -995,15 +825,17 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
   });
 
   test('the same request carries a 30-day cost series that sums to the agent total', async () => {
+    const query = range(30);
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
-      $query: { time_zone: 'UTC' },
+      $query: query,
       $headers: bearer(details_token),
     });
     expect(res.error).toBeNull();
     const { timeseries, agent } = res.data!;
 
-    // One bucket per calendar day, zero-filled, so a quiet day is a zero rather than a hole.
-    expect(timeseries.points).toHaveLength(30);
+    // One bucket per UTC day the range touches, zero-filled, so a quiet day is a zero, not a hole.
+    const origin = Math.floor(Date.parse(query.from) / DAY_MS) * DAY_MS;
+    expect(timeseries.points).toHaveLength(Math.ceil((Date.parse(query.to) - origin) / DAY_MS));
     expect(timeseries.bucket_seconds).toBeCloseTo(86_400, 6);
 
     const summed = timeseries.points.reduce((total, point) => total + Number(point.total_cost), 0);
@@ -1012,33 +844,14 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
       agent.block_count
     );
 
-    // The window ends on the next day boundary, so the newest bucket is today and every start is
-    // ordered and distinct.
     const starts = timeseries.points.map((point) => Date.parse(point.start_at));
     expect(starts).toEqual([...starts].sort((left, right) => left - right));
-    expect(new Set(starts).size).toBe(30);
-  });
-
-  test('an invalid time zone is rejected by validation (422)', async () => {
-    const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
-      $query: { time_zone: 'Mars/Olympus_Mons' },
-      $headers: bearer(details_token),
-    });
-    expect(res.error?.status as number).toBe(422);
-  });
-
-  test('a zone ICU accepts but Postgres rejects is remapped to 422, not a 500', async () => {
-    const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
-      $query: { time_zone: '-0800' },
-      $headers: bearer(details_token),
-    });
-    expect(res.error?.status as number).toBe(422);
-    expect((res.error?.value as { error?: string })?.error).toBe('metrics.invalid_time_zone');
+    expect(new Set(starts).size).toBe(starts.length);
   });
 
   test('the same request carries the token and latency distributions for the agent', async () => {
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
-      $query: {},
+      $query: range(30),
       $headers: bearer(details_token),
     });
     expect(res.error).toBeNull();
@@ -1107,7 +920,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
     });
 
     const res = await api.projects[partial.project_id]!.metrics.agents['partial-agent']!.get({
-      $query: {},
+      $query: range(30),
       $headers: bearer(partial.token),
     });
     expect(res.error).toBeNull();
@@ -1132,7 +945,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
 
   test('an agent with no execution in the last 30 days gets 404', async () => {
     const res = await api.projects[details_project]!.metrics.agents['detail-old-agent']!.get({
-      $query: {},
+      $query: range(30),
       $headers: bearer(details_token),
     });
     expect(res.error?.status as number).toBe(404);
@@ -1141,7 +954,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
 
   test('a request without a token is rejected with 401', async () => {
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
-      $query: {},
+      $query: range(30),
     });
     expect(res.error?.status as number).toBe(401);
   });
@@ -1149,7 +962,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
   test("another user reads the agent's metrics", async () => {
     const other_user = await authenticate('metrics-agent-details-intruder@canyonos.test');
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
-      $query: {},
+      $query: range(30),
       $headers: bearer(other_user),
     });
     expect(res.error).toBeNull();
@@ -1179,7 +992,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
 
     // No single replica speaks for the group, so the name is what addresses it.
     const drawer = await api.projects[rep.project_id]!.metrics.agents['DrawerAgent']!.get({
-      $query: {},
+      $query: range(30),
       $headers: bearer(rep.token),
     });
     expect(drawer.error).toBeNull();
@@ -1193,7 +1006,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
     // The block breakdown advertises that same address, so clicking it opens exactly this drawer.
     const blocks = await api.projects[rep.project_id]!.metrics.blocks.get({
       $headers: bearer(rep.token),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     const card = blocks.data!.blocks.find((block) => block.label === 'DrawerAgent')!;
     expect(card.agent_id).toBe('DrawerAgent');
@@ -1201,7 +1014,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
 
     // An id the runtime never ran is still a 404, not an empty aggregate.
     const missing = await api.projects[rep.project_id]!.metrics.agents['drawer-rep-ghost']!.get({
-      $query: {},
+      $query: range(30),
       $headers: bearer(rep.token),
     });
     expect(missing.error?.status as number).toBe(404);
@@ -1252,7 +1065,7 @@ describe('stored runtime pricing', () => {
   test('reads stored cost columns without repricing zero values', async () => {
     const res = await api.projects[price_project]!.metrics.blocks.get({
       $headers: bearer(price_token),
-      $query: { time_window: '1d' },
+      $query: { ...range(1) },
     });
     expect(res.error).toBeNull();
     const by_agent = new Map(res.data!.blocks.map((block) => [block.agent_id, block]));
@@ -1272,21 +1085,24 @@ describe('stored runtime pricing', () => {
 
   test('the KPI, timeseries, and requests surfaces agree on the same dollars', async () => {
     const [kpis, series, requests] = await Promise.all([
-      api.projects[price_project]!.metrics.kpis.get({ $headers: bearer(price_token) }),
+      api.projects[price_project]!.metrics.kpis.get({
+        $query: range(30),
+        $headers: bearer(price_token),
+      }),
       api.projects[price_project]!.metrics.timeseries.get({
         $headers: bearer(price_token),
-        $query: { time_window: '1d' },
+        $query: { ...range(1) },
       }),
       api.projects[price_project]!.requests.get({
         $headers: bearer(price_token),
-        $query: { limit: 20, offset: 0 },
+        $query: { ...range(30), limit: 20, offset: 0 },
       }),
     ]);
     expect(kpis.error).toBeNull();
     expect(series.error).toBeNull();
     expect(requests.error).toBeNull();
 
-    expect(kpis.data!.windows['1d']).toMatchObject({
+    expect(kpis.data!).toMatchObject({
       llm_cost: '0.0046000000',
       harness_cost: '0.0000000000',
       total_cost: '0.0046000000',
@@ -1348,7 +1164,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
     test(`${metric}: every bucket's count equals the listing it filters`, async () => {
       const distribution = await api.projects[coh_project]!.metrics.distribution.get({
         $headers: bearer(coh_token),
-        $query: { metric, time_window: '30d', buckets: 4 },
+        $query: { metric, ...range(30), buckets: 4 },
       });
       expect(distribution.error).toBeNull();
       const { buckets, request_count } = distribution.data!;
@@ -1364,7 +1180,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
             metric,
             min: bucket.lower,
             max: bucket.upper,
-            time_window: '30d',
+            ...range(30),
           },
           $headers: bearer(coh_token),
         });
@@ -1411,10 +1227,11 @@ describe('project scoping at the data boundary', () => {
     });
 
     const kpis = await api.projects[owner.project_id]!.metrics.kpis.get({
+      $query: range(30),
       $headers: bearer(owner.token),
     });
     expect(kpis.error).toBeNull();
-    expect(kpis.data!.windows['30d']).toMatchObject({
+    expect(kpis.data!).toMatchObject({
       request_count: 1,
       block_count: 1,
       tokens: 20,
@@ -1422,7 +1239,7 @@ describe('project scoping at the data boundary', () => {
     });
 
     const requests = await api.projects[owner.project_id]!.requests.get({
-      $query: { limit: 20, offset: 0 },
+      $query: { ...range(30), limit: 20, offset: 0 },
       $headers: bearer(owner.token),
     });
     expect(requests.error).toBeNull();
@@ -1465,9 +1282,10 @@ describe('project scoping at the data boundary', () => {
       [project_b, '0.0007000000', 700, 900],
     ] as const) {
       const kpis = await api.projects[project_id]!.metrics.kpis.get({
+        $query: range(30),
         $headers: bearer(owner.token),
       });
-      expect(kpis.data!.windows['30d']).toMatchObject({
+      expect(kpis.data!).toMatchObject({
         request_count: 1,
         block_count: 1,
         tokens,
@@ -1476,13 +1294,13 @@ describe('project scoping at the data boundary', () => {
 
       const distribution = await api.projects[project_id]!.metrics.distribution.get({
         $headers: bearer(owner.token),
-        $query: { metric: 'latency', time_window: '30d', buckets: 4 },
+        $query: { metric: 'latency', ...range(30), buckets: 4 },
       });
       expect(distribution.data!.request_count).toBe(1);
       expect(distribution.data!.max).toBe(latency);
 
       const requests = await api.projects[project_id]!.requests.get({
-        $query: { limit: 20, offset: 0 },
+        $query: { ...range(30), limit: 20, offset: 0 },
         $headers: bearer(owner.token),
       });
       expect(requests.data!.total).toBe(1);
@@ -1517,10 +1335,11 @@ describe('project scoping at the data boundary', () => {
     });
 
     const kpis = await api.projects[owner.project_id]!.metrics.kpis.get({
+      $query: range(30),
       $headers: bearer(owner.token),
     });
     expect(kpis.error).toBeNull();
-    expect(kpis.data!.windows['30d']).toMatchObject({
+    expect(kpis.data!).toMatchObject({
       request_count: 1,
       block_count: 1,
       tokens: 0,
@@ -1536,7 +1355,7 @@ describe('project scoping at the data boundary', () => {
 
     const blocks = await api.projects[owner.project_id]!.metrics.blocks.get({
       $headers: bearer(owner.token),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     expect(blocks.error).toBeNull();
     expect(blocks.data!.total_cost).toBe('0.0000000000');
@@ -1590,7 +1409,7 @@ describe('every executed agent has an address', () => {
   test('every block group is addressable', async () => {
     const res = await api.projects[addr_project]!.metrics.blocks.get({
       $headers: bearer(addr_token),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     expect(res.error).toBeNull();
 
@@ -1610,14 +1429,14 @@ describe('every executed agent has an address', () => {
   test('each address the block breakdown advertises opens a drawer', async () => {
     const blocks = await api.projects[addr_project]!.metrics.blocks.get({
       $headers: bearer(addr_token),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     const addresses = blocks.data!.blocks.map((block) => block.agent_id);
     expect(addresses).toHaveLength(3);
 
     for (const agent_id of addresses) {
       const drawer = await api.projects[addr_project]!.metrics.agents[agent_id]!.get({
-        $query: {},
+        $query: range(30),
         $headers: bearer(addr_token),
       });
       expect(drawer.error).toBeNull();
@@ -1628,24 +1447,28 @@ describe('every executed agent has an address', () => {
 
 describe('metrics auth & access', () => {
   test('requests without a token are rejected with 401', async () => {
-    const res = await api.projects[project_id]!.metrics.kpis.get();
+    const res = await api.projects[project_id]!.metrics.kpis.get({ $query: range(30) });
     expect(res.error?.status as number).toBe(401);
   });
 
   test("another user reads the project's metrics", async () => {
     const other_user = await authenticate('metrics-intruder@canyonos.test');
     const res = await api.projects[project_id]!.metrics.kpis.get({
+      $query: range(30),
       $headers: bearer(other_user),
     });
     expect(res.error).toBeNull();
-    expect(res.data!.windows['30d'].block_count).toBeGreaterThan(0);
+    expect(res.data!.block_count).toBeGreaterThan(0);
   });
 
   test('an unknown project id is 404 projects.not_found', async () => {
     const token = await authenticate('metrics-unknown-project@canyonos.test');
     const unknown = '00000000-0000-4000-8000-000000000000';
 
-    const res = await api.projects[unknown]!.metrics.kpis.get({ $headers: bearer(token) });
+    const res = await api.projects[unknown]!.metrics.kpis.get({
+      $query: range(30),
+      $headers: bearer(token),
+    });
 
     expect(res.error?.status as number).toBe(404);
     expect((res.error?.value as { error?: string })?.error).toBe('projects.not_found');
@@ -1692,20 +1515,21 @@ describe('a request spends the sum of its spans', () => {
 
   test('KPIs sum the executions once', async () => {
     const res = await api.projects[once_project]!.metrics.kpis.get({
+      $query: range(30),
       $headers: bearer(once_token),
     });
-    const time_window = res.data!.windows['30d'];
-    expect(time_window.block_count).toBe(2);
-    expect(time_window.total_cost).toBe('0.0006600000');
-    expect(time_window.llm_cost).toBe('0.0006000000');
-    expect(time_window.harness_cost).toBe('0.0000600000');
-    expect(time_window.tokens).toBe(300);
+    const kpi = res.data!;
+    expect(kpi.block_count).toBe(2);
+    expect(kpi.total_cost).toBe('0.0006600000');
+    expect(kpi.llm_cost).toBe('0.0006000000');
+    expect(kpi.harness_cost).toBe('0.0000600000');
+    expect(kpi.tokens).toBe(300);
   });
 
   test('the block breakdown has no agent-less group', async () => {
     const res = await api.projects[once_project]!.metrics.blocks.get({
       $headers: bearer(once_token),
-      $query: { time_window: '30d' },
+      $query: { ...range(30) },
     });
     expect(res.data!.total_cost).toBe('0.0006600000');
     expect(res.data!.blocks).toHaveLength(1);
@@ -1717,7 +1541,7 @@ describe('a request spends the sum of its spans', () => {
   test('the requests listing rolls up the executions once', async () => {
     const res = await api.projects[once_project]!.requests.get({
       $headers: bearer(once_token),
-      $query: { limit: 20, offset: 0 },
+      $query: { ...range(30), limit: 20, offset: 0 },
     });
     const request = res.data!.items[0]!;
     expect(request.block_count).toBe(2);
@@ -1739,8 +1563,11 @@ describe('a request spends the sum of its spans', () => {
       total_cost: '0.0001100000',
     });
 
-    const res = await api.projects[solo_project]!.metrics.kpis.get({ $headers: bearer(token) });
-    expect(res.data!.windows['30d'].block_count).toBe(1);
-    expect(res.data!.windows['30d'].total_cost).toBe('0.0001100000');
+    const res = await api.projects[solo_project]!.metrics.kpis.get({
+      $query: range(30),
+      $headers: bearer(token),
+    });
+    expect(res.data!.block_count).toBe(1);
+    expect(res.data!.total_cost).toBe('0.0001100000');
   });
 });

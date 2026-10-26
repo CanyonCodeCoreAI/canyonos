@@ -3,13 +3,12 @@
 
 import type { ReactNode } from 'react';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
-
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@repo/ui/shadcn/tabs';
 import { ProjectAgentSpend } from '@/modules/projects/components/project-agent-spend';
 import { ProjectCostTimeseries } from '@/modules/projects/components/project-cost-timeseries';
 import { ProjectMetricsSection } from '@/modules/projects/components/project-metrics-section';
 import { ProjectSpendHighlights } from '@/modules/projects/components/project-spend-highlights';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 export type SpendTab = 'overview' | 'agent' | 'query';
 
@@ -21,7 +20,7 @@ const SPEND_TAB_LABEL: Record<SpendTab, string> = {
 
 const SPEND_TITLE = 'Where the money sits';
 const SPEND_DESCRIPTION =
-  'Spend across the selected window, read three ways — over time, by agent, and by query.';
+  'Spend across the selected range, read three ways — over time, by agent, and by query.';
 
 function isSpendTab(value: string): value is SpendTab {
   return value === 'overview' || value === 'agent' || value === 'query';
@@ -29,7 +28,7 @@ function isSpendTab(value: string): value is SpendTab {
 
 interface ProjectCostFlowProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
   readonly tab: SpendTab;
   readonly onTabChange: (tab: SpendTab) => void;
   readonly query_panel: ReactNode;
@@ -37,7 +36,7 @@ interface ProjectCostFlowProps {
 
 export function ProjectCostFlow({
   project_id,
-  time_window,
+  range,
   tab,
   onTabChange,
   query_panel,
@@ -47,7 +46,8 @@ export function ProjectCostFlow({
       title={SPEND_TITLE}
       description={SPEND_DESCRIPTION}
       test_id="project-cost-flow"
-      className="min-h-0"
+      // Fits the viewport only while it holds a list that scrolls; every other view keeps its height.
+      className="has-[.scroll-area]:min-h-0"
       framed
     >
       <Tabs
@@ -68,11 +68,11 @@ export function ProjectCostFlow({
         </TabsList>
 
         <TabsContent value="overview" className="mt-0 flex min-w-0 flex-col gap-5">
-          <ProjectCostTimeseries project_id={project_id} time_window={time_window} framed={false} />
-          <ProjectSpendHighlights project_id={project_id} time_window={time_window} />
+          <ProjectCostTimeseries project_id={project_id} range={range} framed={false} />
+          <ProjectSpendHighlights project_id={project_id} range={range} />
         </TabsContent>
         <TabsContent value="agent" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col">
-          <ProjectAgentSpend project_id={project_id} time_window={time_window} />
+          <ProjectAgentSpend project_id={project_id} range={range} />
         </TabsContent>
         <TabsContent value="query" className="mt-0">
           {query_panel}

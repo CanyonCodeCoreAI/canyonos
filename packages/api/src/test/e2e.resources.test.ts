@@ -67,10 +67,14 @@ async function insert_span(project_id: string, span: SpanSeed): Promise<void> {
   });
 }
 
-type Window = '1d' | '7d' | '30d' | '1q';
+// The range [now - from_ms_ago, now - to_ms_ago), as the dashboard would send it.
+const range = (from_ms_ago: number, to_ms_ago = 0) => ({
+  from: new Date(Date.now() - from_ms_ago).toISOString(),
+  to: new Date(Date.now() - to_ms_ago).toISOString(),
+});
 
-const overview = (token: string, time_window: Window) =>
-  api.resources.overview.get({ $headers: bearer(token), $query: { time_window } });
+const overview = (token: string, query: { from: string; to: string }) =>
+  api.resources.overview.get({ $headers: bearer(token), $query: query });
 
 const tokens_usage = (project: {
   resource_usage: { resource_id: string; usage: number }[];
@@ -87,7 +91,7 @@ const fleet_rows = (data: { projects: FleetProject[] }, ids: string[]): FleetPro
 
 describe('GET /resources/overview', () => {
   test('a request without a token is rejected with 401', async () => {
-    const res = await api.resources.overview.get({ $query: { time_window: '30d' } });
+    const res = await api.resources.overview.get({ $query: range(30 * DAY_MS) });
     expect(res.error?.status as number).toBe(401);
   });
 
@@ -123,12 +127,11 @@ describe('GET /resources/overview', () => {
       cost: 1,
     });
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     const data = res.data!;
 
     const mine = fleet_rows(data, [alpha, bravo, charlie]);
-    expect(data.time_window).toBe('30d');
     expect(mine.map((project) => project.id)).toEqual([alpha, bravo, charlie]);
     expect(mine.map((project) => project.name)).toEqual(['Alpha', 'Bravo', 'Charlie']);
     expect(mine.map((project) => project.requests)).toEqual([2, 1, 0]);
@@ -175,7 +178,7 @@ describe('GET /resources/overview', () => {
       cost: 0.3,
     });
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     const project_row = fleet_row(res.data!, project);
 
@@ -206,7 +209,7 @@ describe('GET /resources/overview', () => {
       cost: 9.99,
     });
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     const project_row = fleet_row(res.data!, project);
 
@@ -238,7 +241,7 @@ describe('GET /resources/overview', () => {
       cost: 0.3,
     });
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     const first_row = fleet_row(res.data!, first);
     const second_row = fleet_row(res.data!, second);
@@ -272,7 +275,7 @@ describe('GET /resources/overview', () => {
       cost: 5,
     });
 
-    const res = await overview(mine.token, '30d');
+    const res = await overview(mine.token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     expect(fleet_row(res.data!, my_project).cost).toBe(0.1);
     expect(fleet_row(res.data!, their_project)).toMatchObject({ name: 'Theirs', cost: 5 });
@@ -299,15 +302,28 @@ describe('GET /resources/overview', () => {
       cost: 0.2,
     });
 
-    const day = await overview(token, '1d');
+    const day = await overview(token, range(DAY_MS));
     expect(day.error).toBeNull();
     expect(fleet_row(day.data!, project).requests).toBe(1);
     expect(tokens_usage(fleet_row(day.data!, project))).toBe(0.1);
 
-    const week = await overview(token, '7d');
+    const week = await overview(token, range(7 * DAY_MS));
     expect(week.error).toBeNull();
     expect(fleet_row(week.data!, project).requests).toBe(2);
     expect(tokens_usage(fleet_row(week.data!, project))).toBe(0.3);
+
+    const before_today = await overview(token, range(7 * DAY_MS, DAY_MS));
+    expect(before_today.error).toBeNull();
+    expect(fleet_row(before_today.data!, project).requests).toBe(1);
+    expect(tokens_usage(fleet_row(before_today.data!, project))).toBe(0.2);
+  });
+
+  test('a range whose from is not before its to is rejected with 422', async () => {
+    const { token } = await authed_user('fleet-backwards@canyonos.test');
+    const { from, to } = range(DAY_MS);
+
+    const res = await overview(token, { from: to, to: from });
+    expect(res.error?.status as number).toBe(422);
   });
 
   test('an ERROR status span drives the error rate', async () => {
@@ -340,7 +356,7 @@ describe('GET /resources/overview', () => {
       failed: true,
     });
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     expect(fleet_row(res.data!, project).error_rate_pct).toBeCloseTo(100 / 3, 10);
   });
@@ -366,7 +382,7 @@ describe('GET /resources/overview', () => {
       cost: 0.5,
     });
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     const project_row = fleet_row(res.data!, project);
 
@@ -403,7 +419,7 @@ describe('GET /resources/overview', () => {
       cost: 0.25,
     });
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     const project_row = fleet_row(res.data!, project);
 
@@ -428,7 +444,7 @@ describe('GET /resources/overview', () => {
 
     const token = await authenticate('fleet-no-projects@canyonos.test');
 
-    const res = await overview(token, '30d');
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     expect(fleet_row(res.data!, owned)).toMatchObject({ name: 'Shared Fleet', cost: 0.2 });
     expect(res.data!.resources.map((resource) => resource.id)).toEqual([

@@ -20,13 +20,14 @@ import {
   REQUESTS_COMPLETED_METRIC,
   REQUESTS_STARTED_METRIC,
   RESOURCE_PROJECT_ATTRIBUTE,
+  SATURATION_METRIC,
 } from '@api/modules/monitoring/monitoring.signals';
-import type { MetricsWindow } from '@api/modules/metrics/metrics.types';
 import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitoring/monitoring.types';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
 import { reset_controller, seed_endpoint, seed_running_project } from './redis-test.utils';
+import { write_project_span } from './telemetry-test.utils';
 
 setupE2ETests();
 
@@ -36,6 +37,15 @@ const DAY_MS = 24 * HOUR_MS;
 
 // One frozen reference time, so every fixture's offset is exact relative to the others.
 const BASE_MS = Date.now();
+const RANGE_END_MS = Math.ceil(BASE_MS / HOUR_MS) * HOUR_MS;
+
+const range_days = (days: number) => ({
+  from: new Date(RANGE_END_MS - days * DAY_MS).toISOString(),
+  to: new Date(RANGE_END_MS).toISOString(),
+});
+
+const ONE_DAY_RANGE = range_days(1);
+const SEVEN_DAY_RANGE = range_days(7);
 
 const nanos_ago = (ms_ago: number): bigint => BigInt(BASE_MS - Math.round(ms_ago)) * NANOS_PER_MS;
 
@@ -243,7 +253,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
   test('the four golden signals on one 24-hour grid, scoped to the project', async () => {
     const res = await api.projects[project_id]!.monitoring.series.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     expect(res.error).toBeNull();
     const grid = res.data!;
@@ -252,7 +262,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
 
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       bucket_seconds: SECONDS_PER_HOUR,
       bucket_start_ats: grid.bucket_start_ats,
       series: [
@@ -311,7 +321,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
   test('the grid is 24 hourly buckets ending on the current hour', async () => {
     const res = await api.projects[project_id]!.monitoring.series.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     const starts = res.data!.bucket_start_ats.map((start_at) => Date.parse(start_at));
 
@@ -322,30 +332,57 @@ describe('GET /projects/:project_id/monitoring/series', () => {
     expect(starts.at(-1)).toBe(Math.floor(Date.now() / HOUR_MS) * HOUR_MS);
   });
 
-  test('the longer windows are 30 buckets each', async () => {
-    const windows: [MetricsWindow, number][] = [
-      ['7d', (7 * DAY_MS) / 30 / 1000],
-      ['30d', DAY_MS / 1000],
-      ['1q', (90 * DAY_MS) / 30 / 1000],
+  test('longer ranges use the shared bucket grid', async () => {
+    const ranges = [
+      { range: range_days(7), bucket_seconds: 6 * SECONDS_PER_HOUR },
+      { range: range_days(30), bucket_seconds: DAY_MS / 1000 },
+      { range: range_days(90), bucket_seconds: (3 * DAY_MS) / 1000 },
     ];
-    for (const [time_window, bucket_seconds] of windows) {
+    for (const { range, bucket_seconds } of ranges) {
       const res = await api.projects[project_id]!.monitoring.series.get({
         $headers: bearer(token),
-        $query: { time_window },
+        $query: range,
       });
       expect(res.error).toBeNull();
-      expect(res.data!.time_window).toBe(time_window);
+      expect(res.data).toMatchObject(range);
       expect(res.data!.bucket_seconds).toBe(bucket_seconds);
-      expect(res.data!.bucket_start_ats).toHaveLength(30);
-      for (const series of res.data!.series) expect(series.values).toHaveLength(30);
+      for (const series of res.data!.series) {
+        expect(series.values).toHaveLength(res.data!.bucket_start_ats.length);
+      }
     }
+  });
+
+  test("daily buckets sit on the given zone's midnights", async () => {
+    const time_zone = 'Asia/Kolkata';
+    const local_time = new Intl.DateTimeFormat('en-US', {
+      timeZone: time_zone,
+      hour: 'numeric',
+      minute: 'numeric',
+      hourCycle: 'h23',
+    });
+    const res = await api.projects[project_id]!.monitoring.series.get({
+      $headers: bearer(token),
+      $query: { ...range_days(30), time_zone },
+    });
+    expect(res.error).toBeNull();
+    for (const start_at of res.data!.bucket_start_ats) {
+      expect(local_time.format(new Date(start_at))).toBe('00:00');
+    }
+  });
+
+  test('a zone ICU accepts but Postgres rejects is a 422, not a 500', async () => {
+    const res = await api.projects[project_id]!.monitoring.series.get({
+      $headers: bearer(token),
+      $query: { ...range_days(30), time_zone: '-0800' },
+    });
+    expect(res.error?.status as number).toBe(422);
   });
 
   test('a project with no telemetry has zero flows and unmeasured stocks', async () => {
     const { project_id: empty_id } = await create_project(token, 'Empty Series');
     const res = await api.projects[empty_id]!.monitoring.series.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     expect(res.error).toBeNull();
 
@@ -355,7 +392,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
     const unmeasured = { values: nulls, average: null, peak: null, latest: null, samples: 0 };
     expect(res.data).toEqual({
       project_id: empty_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       bucket_seconds: SECONDS_PER_HOUR,
       bucket_start_ats: res.data!.bucket_start_ats,
       series: [
@@ -370,7 +407,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
   test('the foreign project sees only its own trace and reading', async () => {
     const res = await api.projects[foreign_id]!.monitoring.series.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     const by_signal = Object.fromEntries(res.data!.series.map((series) => [series.signal, series]));
 
@@ -380,11 +417,10 @@ describe('GET /projects/:project_id/monitoring/series', () => {
     expect(by_signal.saturation!.average).toBe(100);
   });
 
-  test('an unknown window is rejected by validation (422)', async () => {
+  test('a range whose from is not before its to is rejected by validation (422)', async () => {
     const res = await api.projects[project_id]!.monitoring.series.get({
       $headers: bearer(token),
-      // @ts-expect-error -- an invalid window is the point of the test
-      $query: { time_window: '2d' },
+      $query: { from: ONE_DAY_RANGE.to, to: ONE_DAY_RANGE.from },
     });
     expect(res.error?.status as number).toBe(422);
   });
@@ -471,7 +507,7 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
   const read_logs = (query: Partial<MonitoringLogsQuery>, id = project_id) =>
     api.projects[id]!.monitoring.logs.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 200, errors_only: false, ...query },
+      $query: { ...ONE_DAY_RANGE, limit: 200, errors_only: false, ...query },
     });
 
   test('every log of the project, newest first, with promoted keys out of attributes', async () => {
@@ -480,7 +516,7 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
 
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       logs: [
         {
           at: at_ago(HOUR_MS),
@@ -563,7 +599,7 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
   });
 
   test('the window bounds the records', async () => {
-    const res = await read_logs({ time_window: '7d' });
+    const res = await read_logs({ ...SEVEN_DAY_RANGE });
     expect(res.data!.logs.map((log) => log.body)).toEqual([
       'hello',
       'boom',
@@ -582,7 +618,7 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
   test('a project with no logs returns an empty list', async () => {
     const { project_id: empty_id } = await create_project(token, 'Empty Logs');
     const res = await read_logs({}, empty_id);
-    expect(res.data).toEqual({ project_id: empty_id, time_window: '1d', logs: [] });
+    expect(res.data).toEqual({ project_id: empty_id, ...ONE_DAY_RANGE, logs: [] });
   });
 
   test('a limit outside 1..500 is rejected by validation (422)', async () => {
@@ -621,12 +657,12 @@ describe('GET /projects/:project_id/monitoring/logs/sources', () => {
 
     const res = await api.projects[project_id]!.monitoring.logs.sources.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       sources: [
         { agent: 'Price', replicas: ['p-0', 'p-1'] },
         { agent: 'Risk', replicas: ['r-0'] },
@@ -641,9 +677,9 @@ describe('GET /projects/:project_id/monitoring/logs/sources', () => {
     const { project_id } = await create_project(token, 'Empty Sources');
     const res = await api.projects[project_id]!.monitoring.logs.sources.get({
       $headers: bearer(token),
-      $query: { time_window: '7d' },
+      $query: SEVEN_DAY_RANGE,
     });
-    expect(res.data).toEqual({ project_id, time_window: '7d', sources: [] });
+    expect(res.data).toEqual({ project_id, ...SEVEN_DAY_RANGE, sources: [] });
   });
 });
 
@@ -702,12 +738,12 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
   test('only model spans of the project, newest first, with usage mapped', async () => {
     const res = await api.projects[project_id]!.monitoring.llm.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 200 },
+      $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       calls: [
         {
           at: at_ago(HOUR_MS),
@@ -752,7 +788,7 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
   test('limit keeps the newest calls', async () => {
     const res = await api.projects[project_id]!.monitoring.llm.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 1 },
+      $query: { ...ONE_DAY_RANGE, limit: 1 },
     });
     expect(res.data!.calls.map((call) => call.span_id)).toEqual(['llm-1']);
   });
@@ -761,9 +797,9 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
     const { project_id: empty_id } = await create_project(token, 'Empty LLM');
     const res = await api.projects[empty_id]!.monitoring.llm.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 200 },
+      $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
-    expect(res.data).toEqual({ project_id: empty_id, time_window: '1d', calls: [] });
+    expect(res.data).toEqual({ project_id: empty_id, ...ONE_DAY_RANGE, calls: [] });
   });
 });
 
@@ -835,12 +871,12 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
   test('traces newest first, each with its spans in start order', async () => {
     const res = await api.projects[project_id]!.monitoring.traces.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 200 },
+      $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       traces: [
         {
           at: at_ago(HOUR_MS),
@@ -962,7 +998,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
 
     const res = await api.projects[llm_id]!.monitoring.traces.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 200 },
+      $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
 
     expect(res.error).toBeNull();
@@ -985,13 +1021,13 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
   test('limit counts traces, not spans', async () => {
     const res = await api.projects[project_id]!.monitoring.traces.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 1 },
+      $query: { ...ONE_DAY_RANGE, limit: 1 },
     });
     expect(res.data!.traces.map((trace) => trace.trace_id)).toEqual(['tr-b']);
 
     const oldest = await api.projects[project_id]!.monitoring.traces.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 3 },
+      $query: { ...ONE_DAY_RANGE, limit: 3 },
     });
     expect(oldest.data!.traces.at(-1)!.spans).toHaveLength(3);
   });
@@ -1000,9 +1036,9 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
     const { project_id: empty_id } = await create_project(token, 'Empty Traces');
     const res = await api.projects[empty_id]!.monitoring.traces.get({
       $headers: bearer(token),
-      $query: { time_window: '1d', limit: 200 },
+      $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
-    expect(res.data).toEqual({ project_id: empty_id, time_window: '1d', traces: [] });
+    expect(res.data).toEqual({ project_id: empty_id, ...ONE_DAY_RANGE, traces: [] });
   });
 });
 
@@ -1036,12 +1072,12 @@ describe('GET /projects/:project_id/monitoring/errors/summary', () => {
 
     const res = await api.projects[project_id]!.monitoring.errors.summary.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       total: 6,
       by_type: [
         { key: 'ValueError', count: 3 },
@@ -1064,7 +1100,7 @@ describe('GET /projects/:project_id/monitoring/errors/summary', () => {
 
     const res = await api.projects[project_id]!.monitoring.errors.summary.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     expect(res.data!.total).toBe(12);
     expect(res.data!.by_type).toEqual(types.slice(0, 10).map((key) => ({ key, count: 1 })));
@@ -1075,11 +1111,11 @@ describe('GET /projects/:project_id/monitoring/errors/summary', () => {
     const { project_id } = await create_project(token, 'No Errors');
     const res = await api.projects[project_id]!.monitoring.errors.summary.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       total: 0,
       by_type: [],
       by_agent: [],
@@ -1153,7 +1189,7 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
 
     const res = await api.projects[project_id]!.monitoring.resources.get({
       $headers: bearer(token),
-      $query: { time_window: '1d' },
+      $query: ONE_DAY_RANGE,
     });
     expect(res.error).toBeNull();
     const grid = res.data!;
@@ -1171,7 +1207,7 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
 
     expect(res.data).toEqual({
       project_id,
-      time_window: '1d',
+      ...ONE_DAY_RANGE,
       bucket_seconds: SECONDS_PER_HOUR,
       bucket_start_ats: grid.bucket_start_ats,
       machines: [
@@ -1228,24 +1264,21 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
 
   test('a project with no readings keeps the full grid', async () => {
     const { project_id } = await create_project(token, 'Empty Resources');
-    for (const [time_window, buckets] of [
-      ['1d', 24],
-      ['7d', 30],
-    ] as const) {
+    for (const range of [ONE_DAY_RANGE, SEVEN_DAY_RANGE]) {
       const res = await api.projects[project_id]!.monitoring.resources.get({
         $headers: bearer(token),
-        $query: { time_window },
+        $query: range,
       });
       expect(res.error).toBeNull();
       expect(res.data).toEqual({
         project_id,
-        time_window,
+        ...range,
         bucket_seconds: res.data!.bucket_seconds,
         bucket_start_ats: res.data!.bucket_start_ats,
         machines: [],
         agents: [],
       });
-      expect(res.data!.bucket_start_ats).toHaveLength(buckets);
+      expect(res.data!.bucket_start_ats.length).toBeGreaterThan(0);
     }
   });
 });
@@ -1449,7 +1482,7 @@ describe('monitoring access', () => {
     const unknown = '00000000-0000-4000-8000-000000000000';
     const routes = (id: string, headers: Record<string, string> = {}) => {
       const monitoring = api.projects[id]!.monitoring;
-      const read = { $headers: headers, $query: { time_window: '1d' } as const };
+      const read = { $headers: headers, $query: ONE_DAY_RANGE };
       const list = { ...read, $query: { ...read.$query, limit: 200 } };
       return Promise.all([
         monitoring.series.get(read),
@@ -1469,5 +1502,165 @@ describe('monitoring access', () => {
       expect(res.error?.status as number).toBe(404);
       expect((res.error?.value as { error?: string })?.error).toBe('projects.not_found');
     }
+  });
+});
+
+describe('monitoring endpoints read exactly [from, to)', () => {
+  const start_ms = Date.parse('2026-01-01T00:00:00.000Z');
+  const minute_ms = 60_000;
+  const range = {
+    from: new Date(start_ms).toISOString(),
+    to: new Date(start_ms + 60 * minute_ms).toISOString(),
+  };
+  const list_query = { ...range, limit: 200, errors_only: false };
+  const nanos = (minutes: number): bigint => BigInt(start_ms + minutes * minute_ms) * NANOS_PER_MS;
+
+  let project_id: string;
+
+  const monitoring = () => api.projects[project_id]!.monitoring;
+
+  async function write_range_log(minutes: number, severity_text: string, body: string) {
+    await db.insert(otelLogs).values({
+      service_name: 'Researcher',
+      resource_attributes: { [RESOURCE_PROJECT_ATTRIBUTE]: project_id },
+      time_unix_nano: nanos(minutes),
+      observed_time_unix_nano: nanos(minutes),
+      severity_text,
+      severity_number: severity_text === 'ERROR' ? 17 : 9,
+      body,
+      attributes: { 'canyonos.agent.name': 'Researcher' },
+    });
+  }
+
+  async function write_range_cpu(minutes: number, value: number) {
+    await db.insert(otelMetrics).values({
+      service_name: 'host',
+      resource_attributes: { [RESOURCE_PROJECT_ATTRIBUTE]: project_id, 'host.name': 'box-1' },
+      metric_name: SATURATION_METRIC,
+      metric_type: 'gauge',
+      time_unix_nano: nanos(minutes),
+      value,
+    });
+  }
+
+  beforeAll(async () => {
+    ({ project_id } = await create_project(token, 'Ranged Monitoring'));
+
+    await write_project_span(project_id, {
+      span_id: 'range-in-llm',
+      trace_id: 'range-trace-in',
+      name: 'Researcher.answer',
+      start_time_unix_nano: nanos(2),
+      model: 'gpt-test',
+      input_tokens: 10,
+      output_tokens: 5,
+    });
+    await write_project_span(project_id, {
+      span_id: 'range-in-failed',
+      trace_id: 'range-trace-failed',
+      name: 'Researcher.search',
+      start_time_unix_nano: nanos(7),
+      failed: true,
+    });
+    await write_project_span(project_id, {
+      span_id: 'range-before',
+      trace_id: 'range-trace-before',
+      start_time_unix_nano: nanos(-1),
+      model: 'gpt-test',
+    });
+    await write_project_span(project_id, {
+      span_id: 'range-at-end',
+      trace_id: 'range-trace-at-end',
+      start_time_unix_nano: nanos(60),
+      model: 'gpt-test',
+    });
+
+    await write_range_log(3, 'ERROR', 'inside error');
+    await write_range_log(4, 'INFO', 'inside info');
+    await write_range_log(60, 'ERROR', 'at the end');
+    await write_range_cpu(2, 40);
+    await write_range_cpu(60, 99);
+  });
+
+  test('series lays one grid of five-minute buckets from from', async () => {
+    const res = await monitoring().series.get({ $headers: bearer(token), $query: range });
+    expect(res.error).toBeNull();
+    const data = res.data!;
+
+    expect(data).toMatchObject({ ...range, bucket_seconds: 300 });
+    expect(data.bucket_start_ats).toHaveLength(12);
+    expect(Date.parse(data.bucket_start_ats[0]!)).toBe(start_ms);
+    expect(Date.parse(data.bucket_start_ats[11]!)).toBe(start_ms + 55 * minute_ms);
+
+    const values = (signal: string) => data.series.find((entry) => entry.signal === signal)!.values;
+    expect(values('traffic').slice(0, 3)).toEqual([1, 1, 0]);
+    expect(values('traffic').reduce((sum, value) => sum! + value!, 0)).toBe(2);
+    expect(values('errors').slice(0, 3)).toEqual([0, 1, 0]);
+    expect(values('saturation')[0]).toBe(40);
+    expect(
+      values('saturation')
+        .slice(1)
+        .every((value) => value === null)
+    ).toBe(true);
+  });
+
+  test('traces and LLM calls leave out spans outside the range', async () => {
+    const traces = await monitoring().traces.get({
+      $headers: bearer(token),
+      $query: list_query,
+    });
+    expect(traces.data!.traces.map((trace) => trace.trace_id).sort()).toEqual([
+      'range-trace-failed',
+      'range-trace-in',
+    ]);
+
+    const calls = await monitoring().llm.get({ $headers: bearer(token), $query: list_query });
+    expect(calls.data!.calls.map((call) => call.span_id)).toEqual(['range-in-llm']);
+  });
+
+  test('logs, sources and errors leave out records outside the range', async () => {
+    const logs = await monitoring().logs.get({ $headers: bearer(token), $query: list_query });
+    expect(logs.data!.logs.map((log) => log.body)).toEqual(['inside info', 'inside error']);
+
+    const errors_only = await monitoring().logs.get({
+      $headers: bearer(token),
+      $query: { ...list_query, errors_only: true },
+    });
+    expect(errors_only.data!.logs.map((log) => log.body)).toEqual(['inside error']);
+
+    const sources = await monitoring().logs.sources.get({
+      $headers: bearer(token),
+      $query: range,
+    });
+    expect(sources.data!.sources.map((source) => source.agent)).toEqual(['Researcher']);
+
+    const summary = await monitoring().errors.summary.get({
+      $headers: bearer(token),
+      $query: range,
+    });
+    expect(summary.data!.total).toBe(1);
+  });
+
+  test('resource utilization shares the same grid', async () => {
+    const res = await monitoring().resources.get({ $headers: bearer(token), $query: range });
+    expect(res.data!.bucket_seconds).toBe(300);
+    expect(res.data!.bucket_start_ats).toHaveLength(12);
+    const cpu = res.data!.machines[0]!.series.find((series) => series.resource === 'cpu')!;
+    expect(cpu).toMatchObject({ average: 40, peak: 40, samples: 1 });
+    expect(cpu.values[0]).toBe(40);
+  });
+
+  test('from greater than or equal to to is rejected with 422', async () => {
+    const reversed = await monitoring().series.get({
+      $headers: bearer(token),
+      $query: { from: range.to, to: range.from },
+    });
+    expect(reversed.error?.status as number).toBe(422);
+
+    const empty = await monitoring().series.get({
+      $headers: bearer(token),
+      $query: { from: range.from, to: range.from },
+    });
+    expect(empty.error?.status as number).toBe(422);
   });
 });

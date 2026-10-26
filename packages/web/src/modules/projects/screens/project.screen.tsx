@@ -1,69 +1,39 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useQuery } from '@tanstack/react-query';
+import { hashKey, useQuery } from '@tanstack/react-query';
 import { useReducer, useState } from 'react';
 
-import type { DistributionMetric, MetricsWindow } from '@canyonos/api/metrics';
+import type { DistributionMetric } from '@canyonos/api/metrics';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { ProjectCostDistribution } from '@/modules/projects/components/project-cost-distribution';
 import { ProjectCostFlow } from '@/modules/projects/components/project-cost-flow';
 import { ProjectCostRibbon } from '@/modules/projects/components/project-cost-ribbon';
-import { ProjectRequestsTable } from '@/modules/projects/components/project-requests-table';
+import {
+  INITIAL_REQUESTS_TABLE,
+  ProjectRequestsTable,
+  requestsTableReducer,
+} from '@/modules/projects/components/project-requests-table';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
 import { projectDetailQueryOptions } from '@/modules/projects/projects.queries';
+import type { RangeSelection } from '@/modules/core/time-range';
 import type { SpendTab } from '@/modules/projects/components/project-cost-flow';
 import type { DistributionSelection } from '@/modules/projects/projects.metrics';
 
-interface DashboardState {
-  readonly metric: DistributionMetric;
-  readonly selection: DistributionSelection | null;
-}
-
-type DashboardAction =
-  | { readonly type: 'metric'; readonly metric: DistributionMetric }
-  | { readonly type: 'select'; readonly selection: DistributionSelection | null };
-
-const INITIAL_DASHBOARD: DashboardState = {
-  metric: 'cost_per_request',
-  selection: null,
-};
-
-/**
- * The two controls the query panel reads itself through: the metric the histogram plots, and the
- * bucket of it the query table lists. The range lives in the URL, owned by the route.
- *
- * A selected bucket only means something against the metric it was read from, so moving the metric
- * drops it — stated once here rather than at each call site that used to repeat it.
- * Unchanged actions return the same state, so re-picking what is already selected costs no render.
- */
-function reduceDashboard(state: DashboardState, action: DashboardAction): DashboardState {
-  switch (action.type) {
-    case 'metric':
-      return state.metric === action.metric
-        ? state
-        : { ...state, metric: action.metric, selection: null };
-    case 'select':
-      return { ...state, selection: action.selection };
-  }
-}
-
 interface ProjectScreenProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
-export function ProjectScreen({ project_id, time_window }: ProjectScreenProps) {
+export function ProjectScreen({ project_id, range }: ProjectScreenProps) {
   // Held here rather than in the URL: picking a metric or a bucket is exploration, and routing every
   // click re-renders the whole app shell, which the sidebar and the header both subscribe to.
-  const [dashboard, dispatch] = useReducer(reduceDashboard, INITIAL_DASHBOARD);
+  const [metric, setMetric] = useState<DistributionMetric>('cost_per_request');
   // Which cut of the spend is showing. Held here because the sections below the flow card are only
   // meaningful against the overview: the per-agent and per-query lists carry their own totals.
   const [spend_tab, setSpendTab] = useState<SpendTab>('overview');
-  // The window is the route's, so a bucket read under another window is ignored rather than cleared.
-  const selection = dashboard.selection?.time_window === time_window ? dashboard.selection : null;
 
   const project_query = useQuery(projectDetailQueryOptions(project_id));
 
@@ -96,33 +66,68 @@ export function ProjectScreen({ project_id, time_window }: ProjectScreenProps) {
         <ProjectWindowControl />
       </header>
 
-      <ProjectCostRibbon project_id={project_id} time_window={time_window} />
+      <ProjectCostRibbon project_id={project_id} range={range} />
       <ProjectCostFlow
         project_id={project_id}
-        time_window={time_window}
+        range={range}
         tab={spend_tab}
         onTabChange={setSpendTab}
-        // The Per-Query cut is the histogram and the queries in the bucket picked from it, read
-        // side by side. Composed here because it needs the dashboard's metric and selection; passed
-        // into the tab card so the panel holds its own content instead of trailing below it.
+        // The Per-Query cut is the histogram and the queries in the bucket picked from it, read side
+        // by side. Everything picked in it was read under one range, so it starts over on another.
         query_panel={
-          <div className="grid min-w-0 shrink-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-            <ProjectCostDistribution
-              project_id={project_id}
-              time_window={time_window}
-              metric={dashboard.metric}
-              selection={selection}
-              onMetricChange={(metric) => dispatch({ type: 'metric', metric })}
-              onSelect={(selection) => dispatch({ type: 'select', selection })}
-            />
-            <ProjectRequestsTable
-              project_id={project_id}
-              time_window={time_window}
-              selection={selection}
-            />
-          </div>
+          <QueryPanel
+            key={hashKey([range])}
+            project_id={project_id}
+            range={range}
+            metric={metric}
+            onMetricChange={setMetric}
+          />
         }
       />
     </main>
+  );
+}
+
+function QueryPanel({
+  project_id,
+  range,
+  metric,
+  onMetricChange,
+}: {
+  readonly project_id: string;
+  readonly range: RangeSelection;
+  readonly metric: DistributionMetric;
+  readonly onMetricChange: (metric: DistributionMetric) => void;
+}) {
+  const [selection, setSelection] = useState<DistributionSelection | null>(null);
+  const [table, dispatchTable] = useReducer(requestsTableReducer, INITIAL_REQUESTS_TABLE);
+  // A bucket only means something against the metric it was read from, and the page the listing
+  // was on described the previous bucket.
+  const select = (next: DistributionSelection | null) => {
+    setSelection(next);
+    dispatchTable({ type: 'page-offset', offset: 0 });
+  };
+
+  return (
+    <div className="grid min-w-0 shrink-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+      <ProjectCostDistribution
+        project_id={project_id}
+        range={range}
+        metric={metric}
+        selection={selection}
+        onMetricChange={(next) => {
+          onMetricChange(next);
+          select(null);
+        }}
+        onSelect={select}
+      />
+      <ProjectRequestsTable
+        project_id={project_id}
+        range={range}
+        selection={selection}
+        state={table}
+        dispatch={dispatchTable}
+      />
+    </div>
   );
 }

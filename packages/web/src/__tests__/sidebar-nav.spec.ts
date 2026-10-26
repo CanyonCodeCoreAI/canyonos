@@ -89,6 +89,31 @@ test('@smoke project row opens Status in one click and the chevron folds it away
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 });
 
+test('the selected time range carries from page to page', async ({ page }) => {
+  await authenticate(page);
+  await stubProjectsList(page, [PROJECT]);
+  await stubProjectDashboard(page, PROJECT);
+  await stubFleetSpend(page);
+
+  await page.goto(`/projects/${PROJECT.id}`);
+  const thirty_days = page
+    .getByTestId('project-window-toggle')
+    .getByRole('radio', { name: '30 days' });
+  await thirty_days.click();
+  await expect(page).toHaveURL(/[?&]range=30d\b/);
+
+  await page.getByTestId(`nav-project-logs-${PROJECT.id}`).click();
+  await expectPath(page, `/projects/${PROJECT.id}/logs`);
+  await expect(thirty_days).toHaveAttribute('data-state', 'on');
+
+  // Status has no range control of its own, and must not drop the range on the way through.
+  await page.getByTestId(`nav-project-status-${PROJECT.id}`).click();
+  await expectPath(page, `/projects/${PROJECT.id}/status`);
+  await page.getByTestId(`nav-project-monitoring-${PROJECT.id}`).click();
+  await expectPath(page, `/projects/${PROJECT.id}/monitoring`);
+  await expect(thirty_days).toHaveAttribute('data-state', 'on');
+});
+
 test('Monitoring and Configuration are dropdowns, open only where the current page is', async ({
   page,
 }) => {

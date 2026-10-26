@@ -2,22 +2,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { MetricsWindow } from '@canyonos/api/metrics';
 import type {
   MonitoringResource,
   MonitoringResourceUtilizationResponse,
 } from '@canyonos/api/monitoring';
 
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { apiCall, forgeAuthApi } from '@/api';
 import { QueryError } from '@/modules/core/components/QueryError';
+import { LOCAL_TIME_ZONE } from '@/modules/core/time-range';
 import { ResourceLegend, ResourceSection } from '@/modules/monitoring/components/resource-section';
+import { resourcesQueryOptions } from '@/modules/monitoring/monitoring.queries';
 import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
+import type { RangeSelection } from '@/modules/core/time-range';
 
 interface MetricsScreenProps {
   readonly project_id: string;
-  readonly time_window: MetricsWindow;
+  readonly range: RangeSelection;
 }
 
 function presentResources(data: MonitoringResourceUtilizationResponse): MonitoringResource[] {
@@ -28,15 +30,8 @@ function presentResources(data: MonitoringResourceUtilizationResponse): Monitori
   return [...seen];
 }
 
-export function MetricsScreen({ project_id, time_window }: MetricsScreenProps) {
-  const query = useQuery({
-    queryKey: ['projects', project_id, 'monitoring', 'resources', time_window],
-    queryFn: () =>
-      apiCall<MonitoringResourceUtilizationResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.resources.get({ $query: { time_window } })
-      ),
-    retry: false,
-  });
+export function MetricsScreen({ project_id, range }: MetricsScreenProps) {
+  const query = useQuery(resourcesQueryOptions(project_id, { range, time_zone: LOCAL_TIME_ZONE }));
 
   return (
     <main
@@ -50,22 +45,34 @@ export function MetricsScreen({ project_id, time_window }: MetricsScreenProps) {
         <ProjectWindowControl />
       </header>
 
-      {query.error ? (
-        <QueryError
-          message="Could not load resource metrics."
-          onRetry={() => void query.refetch()}
-          test_id="metrics-error"
-        />
-      ) : query.isPending ? (
-        <div className="flex flex-col gap-5">
-          <Skeleton className="h-64 w-full rounded-lg" />
-          <Skeleton className="h-64 w-full rounded-lg" />
-        </div>
-      ) : (
-        <MetricsSections data={query.data} />
-      )}
+      <MetricsBody query={query} />
     </main>
   );
+}
+
+function MetricsBody({
+  query,
+}: {
+  readonly query: UseQueryResult<MonitoringResourceUtilizationResponse>;
+}) {
+  if (query.error) {
+    return (
+      <QueryError
+        message="Could not load resource metrics."
+        onRetry={() => void query.refetch()}
+        test_id="metrics-error"
+      />
+    );
+  }
+  if (query.isPending) {
+    return (
+      <div className="flex flex-col gap-5">
+        <Skeleton className="h-64 w-full rounded-lg" />
+        <Skeleton className="h-64 w-full rounded-lg" />
+      </div>
+    );
+  }
+  return <MetricsSections data={query.data} />;
 }
 
 function MetricsSections({ data }: { readonly data: MonitoringResourceUtilizationResponse }) {
