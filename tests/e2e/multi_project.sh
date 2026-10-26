@@ -7,8 +7,8 @@
 # helloworld and the portfolio fixture are deployed at the same time, each on
 # its own ports, and the dashboard must list both and read each one's Redis.
 # Then one project is quit, the other keeps answering, `canyonos serve` from it
-# re-registers without recreating the api, and the last quit takes the
-# dashboard down.
+# re-registers without recreating the api, a redeploy of it keeps the dashboard,
+# and the last quit takes the dashboard down.
 #
 # Usage: tests/e2e/multi_project.sh
 #
@@ -197,6 +197,12 @@ step "canyonos serve from portfolio re-registers without recreating the api"
 (cd "$WORK_DIR/portfolio" && canyonos serve) | tee "$ARTIFACTS_DIR/serve-portfolio.log"
 grep -q "Registered portfolio with the dashboard" "$ARTIFACTS_DIR/serve-portfolio.log" || fail "serve did not re-register portfolio"
 [ "$(docker inspect -f '{{.Created}}' "$DASHBOARD_API")" = "$API_CREATED" ] || fail "serve recreated the api container"
+
+step "canyonos deploy portfolio again keeps the dashboard running"
+(cd "$WORK_DIR/portfolio" && canyonos deploy </dev/null >"$ARTIFACTS_DIR/redeploy-portfolio.log" 2>&1) ||
+  { cat "$ARTIFACTS_DIR/redeploy-portfolio.log"; fail "portfolio redeploy failed"; }
+grep -q "Registered portfolio with the dashboard" "$ARTIFACTS_DIR/redeploy-portfolio.log" || fail "the redeploy did not re-register portfolio"
+[ "$(docker inspect -f '{{.Created}}' "$DASHBOARD_API")" = "$API_CREATED" ] || fail "the redeploy recreated the api container"
 
 step "canyonos quit portfolio takes the dashboard down"
 (cd "$WORK_DIR/portfolio" && canyonos quit)

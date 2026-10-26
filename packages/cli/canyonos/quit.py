@@ -45,23 +45,18 @@ def _container_state(container_id, env):
     return True, result.stdout.strip() == "true"
 
 
-def run_quit():
-    """Tear down the project's container and volume, and the dashboard when no other
-    project still uses it; returns what it couldn't.
+def quit_project(state):
+    """Tear down the project's container and volume, leaving the dashboard; returns
+    what it couldn't.
 
     Teardown reports rather than raises. It runs both on its own and as the
     first step of `canyonos deploy`, so a resource that won't go away must not
     also block starting over -- the state file is preserved either way, which
     is what makes a later retry possible.
     """
-    state = require_state()
-    if state is None:
-        return []
-
     container_id = state["container_id"]
     state_path = project.state_path()
     volume = project.workspace_volume()
-    dashboard_kept = False
     # The exact engine this deploy's container was created on, not whatever
     # context is active now -- they can differ (see docker_env).
     env = docker_env(state)
@@ -116,10 +111,6 @@ def run_quit():
         )
         if failure:
             failures.append(failure)
-        if project.other_global_controllers_running(container_id, env):
-            dashboard_kept = True
-        elif not teardown_dashboard():
-            failures.append("Removing the dashboard stack failed")
 
         if not failures:
             # The controller's gone, so this file would just point commands at a ghost.
@@ -143,9 +134,23 @@ def run_quit():
         ui.ok(
             f"Global Controller container {container_id[:12]} torn down (volume removed)"
         )
+    return failures
+
+
+def run_quit():
+    """`canyonos quit`: `quit_project`, then the dashboard if no other project runs."""
+    state = require_state()
+    if state is None:
+        return
+    quit_project(state)
+    with ui.status("Tearing down the dashboard..."):
+        dashboard_kept = project.other_global_controllers_running(
+            state["container_id"], docker_env(state)
+        )
+        if not dashboard_kept and not teardown_dashboard():
+            ui.fail("Removing the dashboard stack failed")
     if dashboard_kept and _existing_dashboard_port() is not None:
         ui.hint(
             "The dashboard was left running because another CanyonOS project is "
             "still deployed. Run `canyonos quit` in that project's folder to remove it."
         )
-    return failures

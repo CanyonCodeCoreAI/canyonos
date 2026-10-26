@@ -294,7 +294,7 @@ def deployable(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "endpoint_api_port", lambda _config: 8080)
     monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *_a: None)
-    monkeypatch.setattr(deploy_cmd, "run_quit", lambda: None)
+    monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: None)
     monkeypatch.setattr(
         deploy_cmd,
         "_stream_logs_and_autoserve",

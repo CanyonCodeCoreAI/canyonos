@@ -37,12 +37,13 @@ from canyonos.constants import (
     port_in_use,
     workspace_relative,
 )
+from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
 from canyonos.gc import GCError, deploy_status, deployed_endpoint, post_deploy
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import docker_env, load_state, run_init
-from canyonos.quit import run_quit
+from canyonos.quit import quit_project
 from canyonos.resources import configure_resources
-from canyonos.serve import serve_dashboard
+from canyonos.serve import _register_running_project, serve_dashboard
 from canyonos.sync import run_sync
 from canyonos.usage.consent import offer_after_first_deploy
 
@@ -342,7 +343,7 @@ def run_deploy(
         # Torn down only if it never came up; a failure after that is just a reporting problem.
         if not ready:
             try:
-                run_quit()
+                quit_project(load_state())
             except Exception as teardown_error:
                 # Otherwise an unexpected teardown failure would replace the
                 # real deploy error below instead of just supplementing it.
@@ -418,6 +419,10 @@ def _print_deploy_summary(dashboard_url, endpoint):
 
 def _start_dashboard(report_failure=True):
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy."""
+    port = _existing_dashboard_port()
+    if port is not None:
+        _register_running_project()
+        return dashboard_url(port)
     try:
         result = serve_dashboard(report_failure=report_failure)
     except Exception as e:

@@ -446,9 +446,9 @@ def quit_existing():
     orphans the last one, which then can't be reached through state.json.
     """
     # Deferred: quit.py imports from this module, so a top-level import cycles.
-    from canyonos.quit import run_quit
+    from canyonos.quit import quit_project
 
-    if os.path.isfile(project.state_path()) and run_quit():
+    if os.path.isfile(project.state_path()) and quit_project(load_state()):
         ui.warn(
             "Starting a new Global Controller anyway; the leftovers above need cleaning up by hand."
         )

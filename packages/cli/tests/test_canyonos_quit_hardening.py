@@ -8,6 +8,8 @@ from pathlib import Path
 from canyonos import dashboard_stack, docker_cmd, project, quit as quit_cmd
 from canyonos.gc import GCError
 
+STATE = {"container_id": "abcdef123456", "port": 8000}
+
 
 def _state(monkeypatch, tmp_path):
     (tmp_path / "portfolio").mkdir()
@@ -15,11 +17,7 @@ def _state(monkeypatch, tmp_path):
     state_path = Path(project.state_path())
     state_path.parent.mkdir(parents=True)
     state_path.write_text('{"container_id": "abcdef123456", "port": 8000}')
-    monkeypatch.setattr(
-        quit_cmd,
-        "require_state",
-        lambda: {"container_id": "abcdef123456", "port": 8000},
-    )
+    monkeypatch.setattr(quit_cmd, "require_state", lambda: dict(STATE))
     monkeypatch.setattr(
         quit_cmd, "_container_state", lambda _container_id, _env: (True, True)
     )
@@ -45,7 +43,7 @@ def test_controller_cleanup_failure_preserves_state(monkeypatch, tmp_path):
 
     monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
 
-    failures = quit_cmd.run_quit()
+    failures = quit_cmd.quit_project(dict(STATE))
 
     assert any("controller stuck" in failure for failure in failures)
     assert state_path.exists()
@@ -67,7 +65,7 @@ def test_docker_cleanup_failure_preserves_state(monkeypatch, tmp_path):
 
     monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
 
-    failures = quit_cmd.run_quit()
+    failures = quit_cmd.quit_project(dict(STATE))
 
     assert any("daemon error" in failure for failure in failures)
     assert state_path.exists()
@@ -82,7 +80,7 @@ def test_successful_cleanup_removes_state(monkeypatch, tmp_path):
         lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
     )
 
-    assert quit_cmd.run_quit() == []
+    quit_cmd.run_quit()
 
     assert not state_path.exists()
 
@@ -102,7 +100,7 @@ def test_stopped_controller_is_removed_without_calling_clean(monkeypatch, tmp_pa
 
     monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
 
-    assert quit_cmd.run_quit() == []
+    quit_cmd.run_quit()
 
     assert clean_calls == []
     assert ["docker", "stop", "abcdef123456"] not in docker_calls
@@ -110,7 +108,9 @@ def test_stopped_controller_is_removed_without_calling_clean(monkeypatch, tmp_pa
     assert not state_path.exists()
 
 
-def test_dashboard_teardown_failure_preserves_state(monkeypatch, tmp_path):
+def test_a_dashboard_teardown_failure_is_reported_after_the_project_is_gone(
+    monkeypatch, tmp_path, capsys
+):
     state_path = _state(monkeypatch, tmp_path)
     monkeypatch.setattr(quit_cmd, "post_clean", lambda _port: None)
     monkeypatch.setattr(quit_cmd, "teardown_dashboard", lambda: False)
@@ -120,16 +120,16 @@ def test_dashboard_teardown_failure_preserves_state(monkeypatch, tmp_path):
         lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
     )
 
-    failures = quit_cmd.run_quit()
+    quit_cmd.run_quit()
 
-    assert any("dashboard stack failed" in failure for failure in failures)
-    assert state_path.exists()
+    assert "dashboard stack failed" in capsys.readouterr().out
+    assert not state_path.exists()
 
 
 def test_quit_outside_the_project_fails_while_dashboard_containers_remain(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, capsys
 ):
-    state_path = _state(monkeypatch, tmp_path)
+    _state(monkeypatch, tmp_path)
     monkeypatch.setattr(quit_cmd, "post_clean", lambda _port: None)
     monkeypatch.setattr(
         quit_cmd, "teardown_dashboard", dashboard_stack.teardown_dashboard
@@ -143,8 +143,7 @@ def test_quit_outside_the_project_fails_while_dashboard_containers_remain(
 
     monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
 
-    failures = quit_cmd.run_quit()
+    quit_cmd.run_quit()
 
     assert ["docker", "compose", "-p", "canyonos-dashboard", "down"] in docker_calls
-    assert any("dashboard stack failed" in failure for failure in failures)
-    assert state_path.exists()
+    assert "dashboard stack failed" in capsys.readouterr().out
