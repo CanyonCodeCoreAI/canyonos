@@ -241,7 +241,7 @@ def images(recorder) -> None:
         ],
     ]
     for args in builds:
-        docker(recorder, ["build", "-q", *args], timeout=BUILD_TIMEOUT)
+        docker(recorder, ["build", "--progress=plain", *args], timeout=BUILD_TIMEOUT)
 
 
 @dataclass(frozen=True)
