@@ -16,11 +16,13 @@ def run_logs():
     """Run `canyonos logs`: stream the deploy's Global Controller logs until Ctrl-C."""
     state = require_state()
     if state is None:
-        raise RuntimeError("No Global Controller container is available for logs.")
+        return
 
     status = deploy_status(state["port"])
     if status is None:
-        raise RuntimeError("Could not reach Global Controller container.")
+        raise RuntimeError(
+            "Nothing is running for this project. Run `canyonos quit` to clean up."
+        )
 
     if not status.get("running"):
         raise RuntimeError("No deploy is running. Run `canyonos deploy` first.")

@@ -18,17 +18,14 @@ ARN_RESOURCE_MARKERS = ("foundation-model/", "inference-profile/")
 
 # None until the first successful load, so calls are refused rather than let through unchecked.
 llms_by_model_id: Optional[dict] = None
-load_error: Optional[str] = None
 
 
 def refresh_llms(redis) -> None:
-    global llms_by_model_id, load_error
+    global llms_by_model_id
     try:
         raw = redis.get(LLMS_CONFIG_KEY)
         llms_by_model_id = index_llms(json.loads(raw) if raw else {})
-        load_error = None
     except Exception as e:
-        load_error = str(e)
         log.warning(
             "Failed to refresh %s; keeping the last config: %s", LLMS_CONFIG_KEY, e
         )
@@ -58,7 +55,13 @@ def index_llms(llms) -> dict:
 
 def _validate_priced_entry(name: str, llm: dict) -> None:
     """Raise ValueError if an entry with a cap lacks the numbers needed to price a call."""
-    caps = (llm.get("agents") or {}).items()
+    agents = llm.get("agents") or {}
+    if not isinstance(agents, dict):
+        raise ValueError(
+            f"llms.yaml entry {name}: agents must map each agent name to its cap, "
+            "like `IntentAgent: 0.01`"
+        )
+    caps = agents.items()
     if all(cap is None for _, cap in caps):
         return
     if not _is_number(llm.get("max_tokens")):

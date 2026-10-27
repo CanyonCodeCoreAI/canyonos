@@ -166,7 +166,7 @@ class SeedPromptsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as config_dir:
             controller = _controller(config_dir, {})
             with self.assertRaisesRegex(
-                ValueError, "prompt 'a' must be a list of versions"
+                RuntimeError, "prompt 'a' must be a list of versions"
             ):
                 _seed(controller, config_dir, "prompts:\n  a: some text\n")
 
@@ -175,7 +175,7 @@ class SeedPromptsTests(unittest.TestCase):
     def test_a_file_without_a_prompts_mapping_is_rejected(self):
         with tempfile.TemporaryDirectory() as config_dir:
             controller = _controller(config_dir, {})
-            with self.assertRaisesRegex(ValueError, "must have a `prompts:` mapping"):
+            with self.assertRaisesRegex(RuntimeError, "must have a `prompts:` mapping"):
                 _seed(controller, config_dir, "- a\n")
 
 

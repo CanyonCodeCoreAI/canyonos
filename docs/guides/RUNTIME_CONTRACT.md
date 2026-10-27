@@ -225,8 +225,8 @@ or left in the returned value, so a call that runs longer, for example by asking
 questions that each take 40 minutes, makes that wait raise `TimeoutError`. The asking
 agent, and every call waiting on it, keep their slots until the answer comes. A
 replica that dies meanwhile loses the request, and an answer sent to it is lost too.
-A scale-down that drains the asking replica fails the request with
-`ReplicaRemovedError` once the drain's 180 s limit passes.
+A scale-down that drains the asking replica fails the request once the drain's
+180 s limit passes.
 
 ## Build context
 
@@ -275,10 +275,10 @@ first rule whose keys all equal the request's `_context`. `access: all`
 allows everything; otherwise the agent has to be listed. Calls to
 `endpoint`, which `ask_human` makes, are always allowed. No matching rule
 denies. A denied call fails after the request was accepted, with
-`Unauthorized: Policy denied access to agent`.
+`Policy denied the call to <Agent>.<method>`.
 
-The file is not schema-checked. An empty file or `rules:` with no list
-crashes the controller with an `AttributeError`.
+The file is not schema-checked. An empty file, or `rules:` that is not a list
+of mappings, fails the deploy with an error naming the file.
 
 ## Stopping and cleaning
 

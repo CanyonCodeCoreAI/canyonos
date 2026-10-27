@@ -62,13 +62,6 @@ def _otel_entry(
     }
 
 
-def error_type_name(error, error_name=None):
-    """Return the category name for the future's cheap `error` field, or the error_name override for a non-exception failure."""
-    return error_name or (
-        type(error).__name__ if isinstance(error, BaseException) else "RuntimeError"
-    )
-
-
 def build_failure_entry(
     error, agent_id=None, agent_name=None, address=None, error_name=None
 ):
@@ -81,7 +74,8 @@ def build_failure_entry(
         agent_id=agent_id,
         agent_name=agent_name,
         address=address,
-        exception_type=error_type_name(error, error_name),
+        exception_type=error_name
+        or (type(error).__name__ if is_exception else "RuntimeError"),
         exception_message=str(error) if is_exception else None,
         exception_stacktrace=(
             "".join(traceback.format_exception(type(error), error, error.__traceback__))

@@ -102,9 +102,22 @@ def docker_start_command():
 def _ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
     if docker_running():
         return
+    if shutil.which("docker") is None:
+        raise RuntimeError(
+            "Docker isn't installed. Install Docker Desktop or OrbStack, then rerun."
+        )
 
     command = docker_start_command()
     if command is None:
+        info = run_docker(
+            ["docker", "info"], timeout=DOCKER_QUICK_TIMEOUT, action="docker info"
+        )
+        if "permission denied" in info.stderr.lower():
+            raise RuntimeError(
+                "Docker is running, but this user isn't allowed to use it. Add yourself "
+                "to the docker group (`sudo usermod -aG docker $USER`, then log in "
+                "again) and rerun."
+            )
         # Linux/systemd wants root here; escalating on the user's behalf is not
         # this CLI's call to make.
         raise RuntimeError(
@@ -374,7 +387,10 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
         if is_port_conflict(result.stderr):
             port += 1
             continue
-        raise RuntimeError(result.stderr)
+        raise RuntimeError(
+            "Could not start the CanyonOS controller container: "
+            f"{result.stderr.strip()}"
+        )
     raise RuntimeError(
         f"no free port found after {max_attempts} attempts starting at {GC_CONTAINER_PORT}"
     )

@@ -54,6 +54,8 @@ _REVEAL_GRACE_SECONDS = 30.0
 _IDLE_WARN_SECONDS = 180.0
 STARTUP_TIMEOUT_SECONDS = 30 * 60
 
+_TRACEBACK = "Traceback (most recent call last):"
+
 # Substrings that mean the in-container deploy hit something fatal. `WARNING:` is
 # deliberately absent: the OTel-not-configured notice and stub_generator's
 # "Warning:" lines are benign and fire on nearly every run. `CRITICAL:` is the
@@ -62,7 +64,7 @@ STARTUP_TIMEOUT_SECONDS = 30 * 60
 _ERROR_MARKERS = (
     "ERROR:",
     "CRITICAL:",
-    "Traceback (most recent call last):",
+    _TRACEBACK,
     "ERROR: failed to solve",
     "process did not complete successfully",
 )
@@ -91,6 +93,8 @@ UP_MARKER = "Global controller started, polling every"
 # The global controller's verdict when a replica never came up. Its own words
 # only name the agent; the reason is in the container log quoted before it.
 _READINESS_FAILED = "failed to become healthy"
+# Its verdict when a replica's launch failed, e.g. an EC2 replica that never answered.
+_LAUNCH_FAILED = "could not start:"
 
 # uv's own explanation inside a buildx step, e.g. `#22 0.419 error: No solution found`.
 _STEP_DETAIL = re.compile(r"#(\d+) [\d.]+\s+((?:error|cause|hint): .*)")
@@ -104,6 +108,9 @@ _EXCEPTION_LINE = re.compile(
     r"[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)\b(?::.*)?"
 )
 
+# Strict, so buildx's `ERROR: failed to solve: ...` is not read as a log line.
+_LOG_LINE = re.compile(r"[A-Z]+:[^\s:]+:(.*)")
+
 
 def _log_message(line):
     """The message of a `LEVEL:logger:message` line, or "" for anything else.
@@ -112,8 +119,8 @@ def _log_message(line):
     is indented, so text that merely mentions one can never open or close a
     block.
     """
-    parts = line.split(":", 2)
-    return parts[2] if len(parts) == 3 else ""
+    log = _LOG_LINE.match(line)
+    return log.group(1) if log else ""
 
 
 # (substring, spinner message, completed message). A None spinner message keeps
@@ -241,7 +248,7 @@ class PhaseTracker:
 
     def _quote(self, payload):
         if payload.startswith("ERROR:") and self._quoted_error is None:
-            self._quoted_error = payload
+            self._quoted_error = _log_message(payload) or payload
         elif _EXCEPTION_LINE.fullmatch(payload):
             self._quoted_exception = payload
 
@@ -250,19 +257,27 @@ class PhaseTracker:
         if error:
             self.agent_errors.append(f"{self._quoted_agent}: {error}")
 
-    def explain_failure(self, trigger):
+    def explain_failure(self, trigger, after):
         """Say why the deploy failed, for the Root Cause line in the terminal.
 
-        A failed build step is explained by uv's own lines for that step, and a
-        replica that never came up by the error its container logged. Any other
-        failure line explains itself.
+        A failed build step is explained by uv's own lines for that step, a
+        replica that never came up by the error its container logged, and a
+        traceback by the exception line that ends it, found in the log lines
+        `after` the trigger. Any other failure line explains itself, without its
+        log prefix.
         """
         step = re.match(r"#(\d+) ERROR: ", trigger)
         if step and step.group(1) in self.step_details:
             return "\n".join(self.step_details[step.group(1)])
-        if _READINESS_FAILED in trigger and self.agent_errors:
+        if self.agent_errors and (
+            _READINESS_FAILED in trigger or _LAUNCH_FAILED in trigger
+        ):
             return "\n".join(self.agent_errors)
-        return trigger.strip()
+        if _TRACEBACK in trigger:
+            for line in after:
+                if _EXCEPTION_LINE.fullmatch(line.rstrip()):
+                    return line.rstrip()
+        return (_log_message(trigger) or trigger).strip()
 
     def agents_ready_message(self):
         """(message, all_ready). Stays partial-aware because the up-marker can
@@ -290,14 +305,13 @@ def run_deploy(
     after the deploy is triggered -- for a caller (`canyonos test`) that wants
     its own readiness check instead of this command's own output.
     """
+    config_file = workspace_relative(config_path or default_config_path())
     # Left as None when unset: canyonos resolves the artifact layout itself.
     if config_path is not None:
-        config_path = workspace_relative(config_path)
-        if config_path is None:
-            raise RuntimeError("The config file must be inside this project folder")
+        config_path = config_file
 
     # `canyonos test` (quiet) deploys the config as-is, without the picker.
-    if not quiet and not configure_resources(config_path or default_config_path()):
+    if not quiet and not configure_resources(config_file):
         ui.say("Deploy cancelled.")
         return None
 
@@ -313,14 +327,14 @@ def run_deploy(
         state = load_state()
 
         # Read for display only -- canyonos resolves the path it actually deploys.
-        api_port = endpoint_api_port(config_path or default_config_path())
+        api_port = endpoint_api_port(config_file)
 
         # Checked here, after run_init() has already torn down any previous deploy,
         # so a still-live prior run doesn't read as an unrelated conflict.
         if api_port is not None and port_in_use(api_port):
             raise RuntimeError(
                 f"Port {api_port} is already in use, and the endpoint needs it. Free it "
-                f"or change `endpoint.api_port` in {config_path or default_config_path()}."
+                f"or change `endpoint.api_port` in {config_file}."
             )
 
         try:
@@ -473,10 +487,10 @@ def _tail_verbose(lines, state, serve, on_ready):
         print(line, end="")
         _, _, is_error = tracker.parse_line(line)
         if is_error:
-            _echo_until_the_deploy_is_gone(lines, state)
+            after = _echo_until_the_deploy_is_gone(lines, state)
             raise RuntimeError(
-                f"Deploy failed: {tracker.explain_failure(line)} "
-                "Automatic cleanup will be attempted; see the log above for the cause."
+                f"Deploy failed: {tracker.explain_failure(line, after)}\n"
+                "The full log is above."
             )
         if UP_MARKER in line and not tracker.in_container_log:
             return _deploy_summary(state, serve, on_ready)
@@ -490,12 +504,13 @@ def _tail_verbose(lines, state, serve, on_ready):
 
 def _echo_until_the_deploy_is_gone(lines, state):
     """Keep echoing after a fatal line until the container confirms the deploy
-    has stopped, or the reveal grace passes.
+    has stopped, or the reveal grace passes; return the lines echoed.
 
     The global controller tears its agents down on the way out, which takes
     seconds; quitting the moment the verdict lands kills it mid-teardown and
     leaves the agent containers, Redis and the endpoint's port behind.
     """
+    echoed = []
     for line in drain(
         lines,
         state,
@@ -503,6 +518,8 @@ def _echo_until_the_deploy_is_gone(lines, state):
         hide_status_requests=False,
     ):
         print(line, end="")
+        echoed.append(line)
+    return echoed
 
 
 def _tail_quiet(lines, state, serve, on_ready):
@@ -523,7 +540,7 @@ def _tail_quiet(lines, state, serve, on_ready):
     # The spinner is exited before the summary panel or the dashboard's own
     # spinner is drawn, and on the way out of a Ctrl+C, so the cursor is restored.
     # A nested spinner wouldn't raise, it would silently render nothing.
-    root_cause = None
+    trigger = None
     last_output = time.monotonic()
     stalled = False
     with ui.status("Deploying agents...") as spinner:
@@ -544,7 +561,7 @@ def _tail_quiet(lines, state, serve, on_ready):
             recent.append(line)
             message, done, is_error = tracker.parse_line(line)
             if is_error:
-                root_cause = tracker.explain_failure(line)
+                trigger = line
                 break
             if done:
                 ui.ok(done)
@@ -559,17 +576,16 @@ def _tail_quiet(lines, state, serve, on_ready):
                     for buffered in recent:
                         print(buffered, end="")
                     ui.blank()
-                    raise RuntimeError(
-                        f"Deploy is incomplete: {summary_line.lower()}. "
-                        "The failed deployment will be cleaned up."
-                    )
+                    raise RuntimeError(f"Deploy is incomplete: {summary_line.lower()}.")
                 reached_up_marker = True
                 break
 
     if reached_up_marker:
         return _deploy_summary(state, serve, on_ready)
 
-    _reveal_failure(lines, recent, state, root_cause)
+    _reveal_failure(lines, recent, state, tracker, trigger)
+    if trigger:
+        raise RuntimeError("Deploy failed. Run `canyonos deploy -v` for the full log.")
     raise RuntimeError(
         "Deploy stopped or timed out before the workflow became ready. "
         "Automatic cleanup will be attempted; rerun with `canyonos deploy -v` "
@@ -652,9 +668,12 @@ def drain(lines, state, deadline=None, hide_status_requests=True, heartbeat=Fals
             raise RuntimeError(
                 f"Could not read Global Controller logs: {line}"
             ) from None
-        misses = 0
+        # The line our own /status poll logs is not a sign the deploy is alive.
+        status_request = "GET /status HTTP/1.1" in line
+        if not status_request:
+            misses = 0
         # Otherwise the container logs its own polling into the stream being read.
-        if not hide_status_requests or "GET /status HTTP/1.1" not in line:
+        if not hide_status_requests or not status_request:
             yield line
 
 
@@ -671,31 +690,33 @@ def _deploy_is_dead(state, misses):
     return misses >= 2, misses
 
 
-def _reveal_failure(lines, recent, state, root_cause=None):
+def _reveal_failure(lines, recent, state, tracker, trigger):
     """Stop hiding: replay what was suppressed, then keep echoing.
 
     The cause is usually still in flight when the verdict lands, so this keeps
     draining until the container confirms the deploy is gone. That drain is
     unfiltered, so an unrelated process still logging in the container (e.g.
     a background poller retrying a connection) can scroll the actual cause
-    off screen -- `root_cause` (what explains the line that tripped the
-    failure) is printed at the end so it's the last thing visible either way.
+    off screen -- the Root Cause (what explains `trigger`, the line that
+    tripped the failure) is printed at the end so it's the last thing visible
+    either way.
     """
     ui.fail("Deploy failed.")
     ui.blank()
     for buffered in recent:
         print(buffered, end="")
 
+    after = []
     for line in drain(lines, state, deadline=time.monotonic() + _REVEAL_GRACE_SECONDS):
         print(line, end="")
+        after.append(line)
 
-    if root_cause:
+    if trigger:
         ui.blank()
         ui.hint("Recent Logging Trace Above, Root Cause Below.")
-        ui.root_cause(root_cause)
+        ui.root_cause(tracker.explain_failure(trigger, after))
 
     ui.blank()
-    ui.hint("Run `canyonos deploy -v` or `canyonos logs` for the full container log.")
 
 
 def follow_gc_log(state):

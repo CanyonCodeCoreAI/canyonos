@@ -35,7 +35,6 @@ try:
     from canyonos_core.controller.utils.log_entry import (
         build_failure_entry,
         append_log_entry,
-        error_type_name,
     )
 except ImportError:
     import gateway_headers
@@ -44,7 +43,7 @@ except ImportError:
     from log_handler import LogHandler
     from redis_client import RedisClient
     from grpc_options import GRPC_CHANNEL_OPTIONS, call_with_retry
-    from log_entry import build_failure_entry, append_log_entry, error_type_name
+    from log_entry import build_failure_entry, append_log_entry
 
 # Add local generated grpc_stubs to path (Docker context copies them directly to /app)
 sys.path.insert(0, ".")
@@ -64,13 +63,20 @@ import local_controller_pb2_grpc
 try:
     from canyonos_core.controller.future import (
         ENDPOINT_AGENT_NAME,
+        AgentCallError,
         Future,
         notify_result,
         wait_for_result,
     )
     from canyonos_core.controller.utils import human_input
 except ImportError:
-    from future import ENDPOINT_AGENT_NAME, Future, notify_result, wait_for_result
+    from future import (
+        ENDPOINT_AGENT_NAME,
+        AgentCallError,
+        Future,
+        notify_result,
+        wait_for_result,
+    )
     import human_input
 
 human_input.install()
@@ -82,6 +88,15 @@ gateway_headers.install(
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# CanyonOS's own modules, whose frames are cut from the traceback logged for an agent's failure.
+CANYONOS_FILES = {
+    __file__,
+    canyonos_context.__file__,
+    gateway_headers.__file__,
+    human_input.__file__,
+    sys.modules[Future.__module__].__file__,
+}
 
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
@@ -99,10 +114,6 @@ FUTURE_RESULT_TIMEOUT_SECONDS = human_input.QUESTION_TIMEOUT_SECONDS + 300
 ENDPOINT_LOG_SOURCE = "Endpoint"
 # Every outbound call goes through the gateway, so a gateway that keeps dying fails the replica.
 MAX_GATEWAY_RESTARTS = 3
-
-
-class ReplicaRemovedError(RuntimeError):
-    """A call could not finish before its replica was removed at the end of a drain."""
 
 
 def log_source_name(agent_name):
@@ -185,6 +196,10 @@ class LocalController(object):
                 agent_id=self.replica_id,
                 agent_name=log_source_name(self.agent_name),
                 address=self._my_address,
+            )
+            # CanyonOS's own per-call lines go to stdout only, not into the agent's logs.
+            self._log_handler.addFilter(
+                lambda record: record.name not in (logger.name, Future.__module__)
             )
             logging.getLogger().addHandler(self._log_handler)
 
@@ -516,7 +531,7 @@ class LocalController(object):
         except Exception as e:
             # The traceback is what names the import that actually failed.
             logger.exception(
-                f"Failed to load agent {self.agent_name} from {agent_path}: {e}"
+                f"Failed to load agent {self.agent_name} from {self.agent_file}: {type(e).__name__}: {e}"
             )
             return None
 
@@ -671,26 +686,33 @@ class LocalController(object):
         except KeyboardInterrupt:
             self.stop()
 
-    def _mark_future_failed(self, future_id, error, origin=None, error_name=None):
+    def _mark_future_failed(
+        self, future_id, error, origin=None, error_name=None, log_entry=True
+    ):
         """Persist a terminal failure locally and, when needed, notify the origin."""
         if not future_id:
             return
 
         try:
-            name = error_type_name(error, error_name)
+            record = self.redis.hgetall(f"future:{future_id}")
+            message = str(error)
+            # A failure passed on from a called agent keeps that agent's wording.
+            if isinstance(error, BaseException) and not isinstance(
+                error, AgentCallError
+            ):
+                message = f"{record.get('service')}.{record.get('method')} failed: {type(error).__name__}: {message}"
             self.redis.hset_multiple(
                 f"future:{future_id}",
-                {"error": name, "failed": 1},
+                {"error": message, "failed": 1},
             )
             # A root call, one with no parent, rejected before it started still
             # needs its request cleaned up.
-            record = self.redis.hgetall(f"future:{future_id}")
             if record.get("request_id") and not record.get("parent"):
                 self.redis.sadd("request:completed", record["request_id"])
 
             # logs_enabled only gates this richer entry -- the error/failed fields above and
             # the fan-out/relay below must never be made conditional on it.
-            if getattr(self, "logs_enabled", True):
+            if log_entry and getattr(self, "logs_enabled", True):
                 entry = build_failure_entry(
                     error,
                     agent_id=self.replica_id,
@@ -701,14 +723,14 @@ class LocalController(object):
                 append_log_entry(self.redis, f"future:{future_id}", entry)
 
             # Unblock any consumers waiting on this future so a failed dependency surfaces as an error.
-            self._fan_out_to_consumers(future_id, failed=1, error_message=name)
+            self._fan_out_to_consumers(future_id, failed=1, error_message=message)
 
             if origin and origin != self._my_address:
                 self._send_result_callback(
                     origin,
                     future_id,
                     failed=1,
-                    error_message=name,
+                    error_message=message,
                 )
         except Exception as e:
             # Never let the failure-recording path itself raise -- callers rely on this being a safe sink.
@@ -777,7 +799,7 @@ class LocalController(object):
 
         # Check policy before routing
         if not self._check_policy(agent_name, context):
-            err_msg = f"Unauthorized: Policy denied access to agent '{agent_name}'"
+            err_msg = f"Policy denied the call to {agent_name}.{function}: no rule in policy.yaml allows it for this request."
             logger.warning(err_msg)
             self._mark_future_failed(
                 future_id,
@@ -800,9 +822,10 @@ class LocalController(object):
                 )
                 self._mark_future_failed(
                     future_id,
-                    f"No address found for agent '{agent_name}'",
+                    f"No running replica of {agent_name} right now; all are starting, "
+                    "restarting or being removed.",
                     origin,
-                    error_name="NoEndpointFound",
+                    error_name="NoRunningReplica",
                 )
                 return
 
@@ -815,9 +838,9 @@ class LocalController(object):
                 ):
                     self._mark_future_failed(
                         future_id,
-                        f"Arg '{key}' is not a future of this request",
+                        f"Argument '{key}' of {agent_name}.{function} comes from a different request.",
                         origin,
-                        error_name="InvalidFutureArg",
+                        error_name="InvalidArgument",
                     )
                     return
 
@@ -869,7 +892,12 @@ class LocalController(object):
                 future_args,
             )
             with self._executor_futures_lock:
-                self._executor_futures[executor_future] = (future_id, origin)
+                self._executor_futures[executor_future] = (
+                    future_id,
+                    origin,
+                    agent_name,
+                    function,
+                )
             executor_future.add_done_callback(self._forget_executor_future)
         else:
             # Register the target as a consumer for any Future args
@@ -888,7 +916,7 @@ class LocalController(object):
                 # this consumer registered, since _fan_out_to_consumers couldn't
                 # have seen it.
                 existing_result = self.redis.hget(future_key, "result")
-                if existing_result is not None and existing_result != "":
+                if existing_result is not None:
                     logger.info(
                         "Future %s already resolved, pushing value %s to %s",
                         value,
@@ -942,9 +970,15 @@ class LocalController(object):
                 try:
                     resolved[key] = wait_for_result(self.redis, value, timeout)
                 except TimeoutError:
+                    # Another machine's Redis has no record of a producer that ran elsewhere.
+                    producer = self.redis.hgetall(f"future:{value}")
+                    source = (
+                        f" from {producer['service']}.{producer['method']}"
+                        if producer
+                        else ""
+                    )
                     raise TimeoutError(
-                        f"Timed out waiting for future {value} (arg '{key}') "
-                        f"after {timeout}s"
+                        f"Timed out after {timeout}s waiting for argument '{key}'{source}."
                     ) from None
                 logger.info("Future %s resolved for arg '%s'", value, key)
             else:
@@ -978,7 +1012,6 @@ class LocalController(object):
         initial_fields = {
             "id": future_id,
             "request_id": request_id or "",
-            "result": "",
             "parent": parent or "",
             "service": agent_name,
             "method": function,
@@ -1020,6 +1053,7 @@ class LocalController(object):
         self.redis.hincrby(self._metrics_key, "requests_served", 1)
 
         succeeded = False
+        started = False
         serialized = None
         try:
             # Resolve any Future IDs in the args before executing
@@ -1028,15 +1062,35 @@ class LocalController(object):
             logger.info(
                 "Executing %s.%s (future=%s) locally", agent_name, function, future_id
             )
-            result = method(**args)
+            started = True
+            returned = result = method(**args)
             if is_root:
-                result = _resolved(result)
+                returned = result = _resolved(result)
                 if not isinstance(result, dict):
                     result = {"value": result}
 
             # Serialize the result
             if isinstance(result, (dict, list)):
-                serialized = json.dumps(result)
+                try:
+                    serialized = json.dumps(result)
+                except TypeError as error:
+                    # Only on failure: name the top-level key or index that can't be converted.
+                    reason = f"{error}."
+                    is_dict = isinstance(result, dict)
+                    # A wrapped non-dict return has no key of its own to name.
+                    if result is returned:
+                        for key, value in (
+                            result.items() if is_dict else enumerate(result)
+                        ):
+                            try:
+                                json.dumps(value)
+                            except TypeError as value_error:
+                                place = f"key '{key}'" if is_dict else f"index {key}"
+                                reason = f"{value_error} (at {place})."
+                                break
+                    raise TypeError(
+                        f"its return value can't be converted to JSON: {reason}"
+                    ) from None
             else:
                 serialized = str(result)
 
@@ -1060,12 +1114,21 @@ class LocalController(object):
         except Exception as e:
             logger.error("Failed to execute %s.%s: %s", agent_name, function, e)
 
-            # `error` holds only the type name; the callback snapshot carries this
-            # text to the origin.
-            if is_root:
-                self.redis.hset(f"future:{future_id}", "error_message", str(e))
-            self._mark_future_failed(future_id, e)
-            self.redis.hincrby(self._metrics_key, "full_failures", 1)
+            # Keep only the agent's own frames in the logged traceback.
+            kept, tb = [], e.__traceback__
+            while tb is not None:
+                if tb.tb_frame.f_code.co_filename not in CANYONOS_FILES:
+                    kept.append(tb)
+                tb = tb.tb_next
+            for earlier, later in zip(kept, kept[1:] + [None]):
+                earlier.tb_next = later
+            e.__traceback__ = kept[0] if kept else None
+
+            # A call whose arguments never arrived, or that only passed on a called agent's failure, is not this agent's failure.
+            own_failure = started and not isinstance(e, AgentCallError)
+            self._mark_future_failed(future_id, e, log_entry=own_failure)
+            if own_failure:
+                self.redis.hincrby(self._metrics_key, "full_failures", 1)
         finally:
             wall_end = time.time()
             wall_duration = max(wall_end - wall_start, 0.0)
@@ -1178,13 +1241,21 @@ class LocalController(object):
             self._count_unsent(-1)
             return
         retries = data.get("retries", 0) + 1
-        if (
-            error.code()
-            not in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED)
-            or retries > FORWARD_RETRIES
-        ):
+        no_answer = error.code() in (
+            grpc.StatusCode.UNAVAILABLE,
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+        )
+        if not no_answer or retries > FORWARD_RETRIES:
             logger.error("Failed to forward request to %s: %s", address, error)
-            self._mark_future_failed(data.get("future_id"), error)
+            reason = error.details()
+            if no_answer:
+                replicas = len(self._routing.get(data.get("service")) or [])
+                reason = f"it didn't answer in time ({retries} tries across its {replicas} replica(s))"
+            self._mark_future_failed(
+                data.get("future_id"),
+                f"Could not send the call to {data.get('service')}.{data.get('function')}: {reason}",
+                error_name="SendFailed",
+            )
             self._count_unsent(-1)
             return
         self._down_until[address] = time.monotonic() + REPLICA_DOWN_SECONDS
@@ -1218,7 +1289,7 @@ class LocalController(object):
         retry.start()
 
     def _send_result_callback(
-        self, origin, future_id, result="", failed=0, error_message=""
+        self, origin, future_id, result=None, failed=0, error_message=""
     ):
         """Send the future's full Redis hash to the originating controller."""
         if not result:
@@ -1235,11 +1306,13 @@ class LocalController(object):
         snapshot.update(
             {
                 "future_id": future_id,
-                "result": result,
                 "failed": int(bool(failed)),
                 "error": str(error_message or ""),
             }
         )
+        # An absent result means not finished, so a failure must not send one.
+        if result is not None:
+            snapshot["result"] = result
         payload = json.dumps(snapshot)
         logger.info("Payload: Future %s,Sent %s ", future_id, payload)
         request = local_controller_pb2.JsonResponse(response=payload)
@@ -1256,11 +1329,29 @@ class LocalController(object):
             logger.error("Failed to send result callback to %s: %s", origin, e)
             # Otherwise marking it failed sends to the same unreachable consumer again.
             self.redis.srem(f"future:{future_id}:consumers", origin)
-            self._mark_future_failed(
-                future_id,
-                f"Result callback failed: {e}",
-                error_name="ResultCallbackFailed",
+            # A failed call keeps its own error; only an undeliverable result becomes one.
+            if not failed:
+                reason = e.details() if isinstance(e, grpc.Call) else e
+                error_message = (
+                    f"Could not send the result of {snapshot.get('service')}."
+                    f"{snapshot.get('method')} back to its caller: {reason}"
+                )
+                self._mark_future_failed(
+                    future_id, error_message, error_name="ResultNotDelivered"
+                )
+            # One plain try with a small note, since the full hash may be over gRPC's size limit.
+            note = json.dumps(
+                {"future_id": future_id, "failed": 1, "error": error_message}
             )
+            try:
+                stub.WriteResult(local_controller_pb2.JsonResponse(response=note))
+            except Exception as note_error:
+                logger.error(
+                    "Could not tell %s that future %s failed: %s",
+                    origin,
+                    future_id,
+                    note_error,
+                )
 
     def _fail_calls_to_gone_replicas(self):
         """Fail every call handed to a replica that is neither routed nor draining, such
@@ -1270,10 +1361,15 @@ class LocalController(object):
         known = {address for addresses in known for address in json.loads(addresses)}
         for future_id, address in list(self._forwarded.items()):
             if address not in known:
-                error = ReplicaRemovedError(f"Replica {address} is gone")
-                self._mark_future_failed(future_id, error)
+                call = self.redis.hgetall(f"future:{future_id}")
+                self._mark_future_failed(
+                    future_id,
+                    f"{call.get('service')}.{call.get('method')} stopped before it "
+                    "finished: its replica is gone (its machine may have stopped).",
+                    error_name="ReplicaRemovedError",
+                )
 
-    def _fan_out_to_consumers(self, future_id, result="", failed=0, error_message=""):
+    def _fan_out_to_consumers(self, future_id, result=None, failed=0, error_message=""):
         """Push a completed future (result or failure) to every address registered
         as a consumer on THIS machine's Redis.
 
@@ -1310,9 +1406,6 @@ class LocalController(object):
     def _fail_unfinished(self):
         """Fail every call still running or queued here, so its caller gets an error
         instead of waiting on a replica that is about to be removed."""
-        error = ReplicaRemovedError(
-            f"Replica {self._my_address} was removed before the call finished"
-        )
         with self._executor_futures_lock:
             unfinished = list(self._executor_futures.values())
         while True:
@@ -1326,11 +1419,24 @@ class LocalController(object):
                 data = json.loads(raw)
             except ValueError:
                 continue
-            unfinished.append((data.get("future_id"), data.get("origin")))
-        self._cut_off.update(future_id for future_id, _ in unfinished)
-        for future_id, origin in unfinished:
+            unfinished.append(
+                (
+                    data.get("future_id"),
+                    data.get("origin"),
+                    data.get("service"),
+                    data.get("function"),
+                )
+            )
+        self._cut_off.update(future_id for future_id, *_ in unfinished)
+        for future_id, origin, agent_name, function in unfinished:
             logger.warning("Failing %s: its replica's drain timed out.", future_id)
-            self._mark_future_failed(future_id, error, origin)
+            self._mark_future_failed(
+                future_id,
+                f"{agent_name}.{function} stopped before it finished: its replica "
+                "was removed (scaled down or replaced).",
+                origin,
+                error_name="ReplicaRemovedError",
+            )
 
     def _forget_executor_future(self, executor_future):
         with self._executor_futures_lock:

@@ -110,6 +110,24 @@ out="$ARTIFACTS_DIR/new-app-test.json"
 (cd "$STARTER_DIR" && canyonos new-app && canyonos test --json >"$out") || { cat "$out"; exit 1; }
 grep -q '"MyAgent got: hello"' "$out" || { cat "$out"; exit 1; }
 
+# A replica that can't launch has to fail the deploy at once, naming the agent and why.
+step "canyonos test names an agent whose replica can't launch"
+LAUNCH_DIR="$(mktemp -d)/starter"
+cp -R "$STARTER_DIR" "$LAUNCH_DIR"
+perl -0pi -e 's|(    entrypoint: agents/my_agent.py\n)|$1    resources: {cpu: 999}\n|' "$LAUNCH_DIR/config/global_controller.yaml"
+out="$ARTIFACTS_DIR/new-app-unlaunchable.json"
+(cd "$LAUNCH_DIR" && canyonos test --json >"$out") && { cat "$out"; exit 1; }
+grep -q '"root_cause": "MyAgent could not start: ' "$out" || { cat "$out"; exit 1; }
+(cd "$LAUNCH_DIR" && canyonos quit)
+
+# A config file that is not valid YAML has to fail the deploy with one line naming it.
+step "canyonos test names a config file that is not valid YAML"
+printf 'models:\n  bad: [\n' >>"$STARTER_DIR/config/llms.yaml"
+out="$ARTIFACTS_DIR/new-app-broken-llms.json"
+(cd "$STARTER_DIR" && canyonos test --json >"$out") && { cat "$out"; exit 1; }
+grep -q '"root_cause": "config/llms.yaml:[0-9]*: is not valid YAML' "$out" || { cat "$out"; exit 1; }
+(cd "$STARTER_DIR" && canyonos quit)
+
 # `canyonos test` queries a deploy that is already up instead of standing up its
 # own, so start from nothing to make it deploy this fixture.
 step "canyonos quit (any previous deploy)"
@@ -160,10 +178,27 @@ python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" deadbeefdeadbeef 60 
 cat "$ARTIFACTS_DIR/hex-query.log"
 if grep -q "did not finish" "$ARTIFACTS_DIR/hex-query.log"; then exit 1; fi
 workflow="$(docker ps --filter name=-workflow- --format '{{.Names}}' | head -n 1)"
-if docker logs "$workflow" 2>&1 | grep -E "waiting for result|Timed out waiting for future"; then
+if docker logs "$workflow" 2>&1 | grep -E "waiting for result|waiting for argument"; then
   echo "the workflow treated the 16-hex-character argument as a Future"
   exit 1
 fi
+
+# A called agent's failure must reach the caller as that agent's own error, not a bare type name.
+step "Query $API_URL/$ROUTE with a request that has no holdings"
+python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" "I own no stocks" 120 \
+  >/dev/null 2>"$ARTIFACTS_DIR/error-query.log" || true
+cat "$ARTIFACTS_DIR/error-query.log"
+if ! grep -q "workflow error: IntentAgent.parse failed: " "$ARTIFACTS_DIR/error-query.log"; then
+  echo "the error does not name the agent that failed"
+  exit 1
+fi
+
+# A body missing the endpoint's argument has to be refused before anything runs.
+step "POST $API_URL/$ROUTE without $ARGUMENT"
+code="$(curl -s -o "$ARTIFACTS_DIR/missing-argument.json" -w '%{http_code}' \
+  -X POST "$API_URL/$ROUTE" -H 'Content-Type: application/json' -d '{}')"
+cat "$ARTIFACTS_DIR/missing-argument.json"
+[ "$code" = 400 ] || { echo "expected a 400, got $code"; exit 1; }
 
 # Last, since it kills a gateway: LLM calls, streams, child processes, passthrough, prices and restart, from inside a replica.
 step "LLM gateway and proxy inside an agent replica"

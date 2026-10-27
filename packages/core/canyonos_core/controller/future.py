@@ -30,10 +30,9 @@ try:
     from canyonos_core.controller.utils.log_entry import (
         build_failure_entry,
         append_log_entry,
-        error_type_name,
     )
 except ImportError:
-    from log_entry import build_failure_entry, append_log_entry, error_type_name
+    from log_entry import build_failure_entry, append_log_entry
 
 # How often a wait reads Redis anyway, for a value written by another process. A value
 # this process's local controller writes wakes it at once (notify_result).
@@ -53,8 +52,12 @@ def notify_result(future_id):
         arrived.set()
 
 
+class AgentCallError(RuntimeError):
+    """Raised when a called agent failed; the text is that agent's own error."""
+
+
 def wait_for_result(redis_client, future_id, timeout=None):
-    """Wait for a future's result in Redis and return it. Raises RuntimeError with the
+    """Wait for a future's result in Redis and return it. Raises AgentCallError with the
     future's error once it failed, and TimeoutError after `timeout` seconds (None: no
     limit). Reads Redis when woken and once every RESULT_RECHECK_SECONDS otherwise."""
     key = f"future:{future_id}"
@@ -67,11 +70,11 @@ def wait_for_result(redis_client, future_id, timeout=None):
         while True:
             error = redis_client.hget(key, "error")
             if error or str(redis_client.hget(key, "failed")) == "1":
-                raise RuntimeError(
+                raise AgentCallError(
                     error or redis_client.hget(key, "error") or "Unknown error"
                 )
             result = redis_client.hget(key, "result")
-            if result is not None and result != "":
+            if result is not None:
                 return result
             wait = RESULT_RECHECK_SECONDS
             if deadline is not None:
@@ -160,6 +163,20 @@ class Future(object):
         # Send Future args as their ids, listing which arg names are Futures for the controller to resolve.
         self.future_args = [k for k, v in args.items() if isinstance(v, Future)]
         self.args = {k: v.id if isinstance(v, Future) else v for k, v in args.items()}
+        try:
+            args_json = json.dumps(self.args)
+        except TypeError:
+            # Only on failure: find the argument that can't be sent, to name it.
+            for key, value in self.args.items():
+                try:
+                    json.dumps(value)
+                except TypeError as error:
+                    reason = f"{error}."
+                    if "of type Future " in reason:
+                        reason = f"it holds a Future inside a {type(value).__name__}. Pass a Future as its own argument, or call .value() on it first."
+                    raise TypeError(
+                        f"Argument '{key}' of {agent_name}.{method} can't be sent: {reason}"
+                    ) from None
         self.children = []
         self.consumers = []
         # For simplicity I am making a decision here, the future value only be sent back to the parent
@@ -169,11 +186,10 @@ class Future(object):
             {
                 "id": self.id,
                 "request_id": self.request_id or "",
-                "result": "",
                 "parent": self.parent,
                 "service": self.agent_name,
                 "method": self.method,
-                "args": json.dumps(self.args),
+                "args": args_json,
             },
         )
         # Register this future under its request so local controllers can clean it up
@@ -209,16 +225,28 @@ class Future(object):
             logger.error(
                 "gRPC call failed for %s.%s: %s", self.agent_name, self.method, e
             )
+            # A failed RPC's own text is a multi-line dump; its details are the reason.
+            reason = e.details() if isinstance(e, grpc.Call) else e
+            if isinstance(e, grpc.Call) and e.code() in (
+                grpc.StatusCode.UNAVAILABLE,
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+            ):
+                reason = "CanyonOS in the calling container didn't answer in time"
+            message = (
+                f"Could not send the call to {self.agent_name}.{self.method}: {reason}"
+            )
             try:
                 self.redis.hset_multiple(
                     f"future:{self.id}",
                     {
-                        "error": error_type_name(e),
+                        "error": message,
                         "failed": 1,
                     },
                 )
                 append_log_entry(
-                    self.redis, f"future:{self.id}", build_failure_entry(e)
+                    self.redis,
+                    f"future:{self.id}",
+                    build_failure_entry(message, error_name="SendFailed"),
                 )
             except Exception as record_error:
                 # Never let the failure-recording path itself raise out of the constructor.
@@ -244,9 +272,9 @@ class Future(object):
         """Check Redis for a computed result and cache it locally."""
         error = self.redis.hget(self._key(), "error")
         if error:
-            raise RuntimeError(error)
+            raise AgentCallError(error)
         result = self.redis.hget(self._key(), "result")
-        if result is not None and result != "":
+        if result is not None:
             self.result = result
 
         return self.result
@@ -259,12 +287,19 @@ class Future(object):
         """
         failed = self.redis.hget(self._key(), "failed")
         if str(failed) == "1":
-            raise RuntimeError(self.redis.hget(self._key(), "error") or "Unknown error")
+            raise AgentCallError(
+                self.redis.hget(self._key(), "error") or "Unknown error"
+            )
 
         if self.result is not None:
             return self.result
 
-        self.result = wait_for_result(self.redis, self.id, timeout)
+        try:
+            self.result = wait_for_result(self.redis, self.id, timeout)
+        except TimeoutError:
+            raise TimeoutError(
+                f"{self.agent_name}.{self.method} did not finish within {timeout} seconds"
+            ) from None
         self.calculated = True
 
         # Note: consumer fan-out is handled entirely by the local controllers at

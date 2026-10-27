@@ -22,7 +22,7 @@ sys.path.insert(
 
 import canyonos_core.controller.future as future_module
 import canyonos_core.controller.canyonos_context as canyonos_context
-from fakes import _FakeRedis
+from fakes import _FakeRedis, _RpcError
 
 
 class _Unavailable(grpc.RpcError, grpc.Call):
@@ -85,20 +85,21 @@ class FutureParentIdTests(unittest.TestCase):
         )
 
     def test_submission_failure_is_raised_by_value_not_constructor(self):
-        future_module.Future._stub.Execute.side_effect = RuntimeError("submit failed")
+        future_module.Future._stub.Execute.side_effect = _RpcError(
+            grpc.StatusCode.RESOURCE_EXHAUSTED, "message too large"
+        )
 
         future = future_module.Future(
             parent="ignored/file.py", agent_name="Svc", method="do_thing"
         )
 
-        # The hash's `error` field is just the exception type name; the full
-        # message lives in `logs` instead.
-        with self.assertRaisesRegex(RuntimeError, "RuntimeError"):
+        message = "Could not send the call to Svc.do_thing: message too large"
+        with self.assertRaisesRegex(RuntimeError, f"^{message}$"):
             future.value()
 
         logs = json.loads(self.fake_redis.hashes[f"future:{future.id}"]["logs"])
-        self.assertEqual(logs[0]["Attributes"]["exception.type"], "RuntimeError")
-        self.assertEqual(logs[0]["Body"], "submit failed")
+        self.assertEqual(logs[0]["Attributes"]["exception.type"], "SendFailed")
+        self.assertEqual(logs[0]["Body"], message)
 
     def test_submit_request_never_raises_when_redis_fails_while_recording(self):
         """A Redis blip while recording a submission failure must not escape

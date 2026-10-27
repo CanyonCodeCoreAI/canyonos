@@ -94,7 +94,7 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "!tests/e2e/**",
-        "$TURBO_ROOT$/skills/porting-to-canyonos/**",
+        "$TURBO_ROOT$/skills/converting-to-canyonos/**",
         "$TURBO_ROOT$/packages/cli-usage-api/src/usage.contract.ts",
         "$TURBO_ROOT$/docs/**",
         "$TURBO_ROOT$/README.md"

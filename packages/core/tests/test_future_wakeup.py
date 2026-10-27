@@ -34,6 +34,9 @@ class _Redis:
         self.reads += 1
         return self.fields.get(field)
 
+    def hgetall(self, key):
+        return dict(self.fields)
+
 
 def _in_thread(target):
     out = {}
@@ -136,7 +139,7 @@ class CallersTests(unittest.TestCase):
 
     def test_a_future_argument_that_never_arrives_names_the_argument(self):
         controller = SimpleNamespace(redis=_Redis())
-        with self.assertRaisesRegex(TimeoutError, "arg 'x'"):
+        with self.assertRaisesRegex(TimeoutError, "argument 'x'"):
             LocalController._resolve_future_args(
                 controller, {"x": "f-8"}, {"x"}, timeout=0.2
             )

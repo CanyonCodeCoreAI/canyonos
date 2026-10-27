@@ -123,7 +123,7 @@ class FutureWaitTests(unittest.TestCase):
                 f"Future {future_id} not available within {timeout} seconds"
             )
 
-        with self.assertRaisesRegex(TimeoutError, "f1"):
+        with self.assertRaisesRegex(TimeoutError, "argument 'x'"):
             self._resolve(never_answered)
 
 
@@ -249,7 +249,12 @@ class AskHumanTests(unittest.TestCase):
         [(asker, sent)] = _sent(controller)
         self.assertEqual(
             (asker, sent["future_id"], sent["failed"], sent["error"]),
-            ("risk-0:50051", "q1", 1, "RequestFinished"),
+            (
+                "risk-0:50051",
+                "q1",
+                1,
+                "Request finished before the question was answered",
+            ),
         )
         self.assertEqual(redis.lrange("request:r1:waiting"), [])
 
@@ -278,8 +283,18 @@ class FinishedRequestTests(unittest.TestCase):
         self.assertEqual(
             [(e, s["future_id"], s["failed"], s["error"]) for e, s in sent],
             [
-                ("risk-0:50051", "q1", 1, "RequestFinished"),
-                ("price-0:50051", "q2", 1, "RequestFinished"),
+                (
+                    "risk-0:50051",
+                    "q1",
+                    1,
+                    "Request finished before the question was answered",
+                ),
+                (
+                    "price-0:50051",
+                    "q2",
+                    1,
+                    "Request finished before the question was answered",
+                ),
             ],
         )
         # Telemetry exports only finished spans, so a failed question needs finished_at too.
@@ -301,8 +316,12 @@ class FinishedRequestTests(unittest.TestCase):
 
         LocalControllerServicer._cleanup_request(servicer, "r1")
 
-        self.assertEqual(write.call_count, 1)
-        self.assertEqual(redis.hget("future:q1", "error"), "ResultCallbackFailed")
+        # The full hash, then one short failure note.
+        self.assertEqual(write.call_count, 2)
+        self.assertEqual(
+            redis.hget("future:q1", "error"),
+            "Request finished before the question was answered",
+        )
         self.assertEqual(
             {key: redis.ttls.get(key) for key in redis.scan_keys("*")},
             dict.fromkeys(redis.scan_keys("*"), FUTURE_CLEANUP_GRACE_SECONDS),

@@ -20,6 +20,9 @@ STOPPING_KEY = "reconciler:stopping"
 # Expires so a hard-killed controller cannot hold the fleet at zero forever.
 STOPPING_TTL_SECONDS = 60
 
+# Agent name -> why its last launch failed; a launch that succeeds clears it.
+LAUNCH_ERRORS_KEY = "reconciler:launch_errors"
+
 
 # ------------------------------------------------------------------ #
 #  Desired replica counts                                            #

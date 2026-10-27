@@ -11,6 +11,7 @@ import urllib.request
 
 import yaml
 from ruamel.yaml import YAML
+from ruamel.yaml.error import MarkedYAMLError
 
 from canyonos.port_utils import is_port_free
 
@@ -33,6 +34,19 @@ def default_config_path():
         if os.path.isfile(canyon)
         else os.path.join("config", "global_controller.yaml")
     )
+
+
+def load_yaml(config_path, load):
+    """The file at `config_path` parsed by `load`. A YAML syntax error is raised as a
+    RuntimeError naming the line and what is wrong there."""
+    with open(config_path) as f:
+        try:
+            return load(f)
+        except (yaml.MarkedYAMLError, MarkedYAMLError) as e:
+            raise RuntimeError(
+                f"{config_path} line {e.problem_mark.line + 1}: not valid YAML "
+                f"({e.problem}). Fix it and rerun."
+            ) from None
 
 
 def read_config(config_path):
@@ -96,8 +110,8 @@ def _ec2_metadata(url, timeout):
 def endpoint_api_port(config_path):
     """Return the host port the endpoint answers on, or None when the config has no
     `endpoint:` block or its `api_port` is not a port number, which the deploy's
-    schema check then reports."""
-    endpoint = read_config(config_path).get("endpoint")
+    schema check then reports. Raises when the config is not valid YAML."""
+    endpoint = (load_yaml(config_path, yaml.safe_load) or {}).get("endpoint")
     if not isinstance(endpoint, dict):
         return None
     port = endpoint.get("api_port", DEFAULT_API_PORT)
@@ -152,7 +166,7 @@ def dashboard_port(config_path):
 
 
 def workspace_relative(config_path):
-    """`config_path` relative to the cwd, or None if it falls outside it.
+    """`config_path` relative to the cwd; raises when it falls outside it or is missing.
 
     The container only ever receives a copy of the current directory, and it
     resolves what it's given against /workspace -- so an absolute path silently
@@ -165,7 +179,12 @@ def workspace_relative(config_path):
         os.path.realpath(config_path), os.path.realpath(os.getcwd())
     )
     if relative == ".." or relative.startswith(f"..{os.sep}"):
-        return None
+        raise RuntimeError("The config file must be inside this project folder")
+    if not os.path.isfile(relative):
+        raise RuntimeError(
+            f"No {relative} here. Run `canyonos convert` first, or rerun from your "
+            "project folder."
+        )
     return relative
 
 

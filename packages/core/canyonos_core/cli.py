@@ -258,9 +258,16 @@ def _run_build(config_path):
             image = agent_spec["image"]
             target_image = image_name(agent_name)
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
-            subprocess.run(
-                ["docker", "pull", "--platform", platform, image], check=True
+            pull = subprocess.run(
+                ["docker", "pull", "--platform", platform, image],
+                stderr=subprocess.PIPE,
+                text=True,
             )
+            if pull.returncode:
+                raise RuntimeError(
+                    f"Could not pull image {image} for database agent {agent_name}: "
+                    f"{pull.stderr.strip()}. Check `image:` in {config_path}."
+                )
             subprocess.run(["docker", "tag", image, target_image], check=True)
             continue
 
@@ -351,7 +358,16 @@ def _cmd_deploy(args):
 
     # Build first (stubs, protos, Docker contexts, images), then deploy them.
     # `canyonos build` was merged into `canyonos deploy`.
-    _run_build(config_path)
+    try:
+        _run_build(config_path)
+    except RuntimeError as e:
+        logger.critical("%s", e)
+        sys.exit(1)
+    except subprocess.CalledProcessError:
+        logger.critical(
+            "Could not build the agent images; the build output above says why."
+        )
+        sys.exit(1)
 
     config = load_config(config_path)
     project_dir = os.path.abspath(os.getcwd())
@@ -407,7 +423,7 @@ def _cmd_deploy(args):
         # One CRITICAL line, not a traceback: `canyonos deploy` reports the line
         # that tripped the failure as the root cause, and the cause itself sits in
         # the container logs dumped just above it.
-        logger.critical("Controller readiness failed: %s", e)
+        logger.critical("%s", e)
         sys.exit(1)
     controller.run()
 

@@ -16,6 +16,7 @@ def _running_deploy(monkeypatch, reported):
         "require_state",
         lambda: {"container_id": "abcdef123456", "port": 8000},
     )
+    monkeypatch.setattr(stop_cmd, "deploy_status", lambda _port: {"running": True})
     monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: None)
     monkeypatch.setattr(
         project, "other_global_controllers_running", lambda _id, _env=None: False

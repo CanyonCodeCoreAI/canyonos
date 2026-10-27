@@ -222,19 +222,19 @@ def test_success_follows_the_exit_status_and_the_exit_is_unchanged(
     assert event["succeeded"] is succeeded
 
 
-@pytest.mark.parametrize("error", [ValueError("bug"), KeyboardInterrupt()])
-def test_an_error_or_ctrl_c_is_a_failure_and_still_propagates(
-    monkeypatch, reporting, error
-):
+@pytest.mark.parametrize(
+    "error, ends_with",
+    [(ValueError("bug"), ValueError), (KeyboardInterrupt(), SystemExit)],
+)
+def test_an_error_or_ctrl_c_is_a_failure(monkeypatch, reporting, error, ends_with):
     def command():
         raise error
 
     monkeypatch.setattr(cli, "run_stop", command)
 
-    with pytest.raises(type(error)) as raised:
+    with pytest.raises(ends_with):
         run_cli(monkeypatch, "stop")
 
-    assert raised.value is error
     [event] = events()
     assert event["succeeded"] is False
 

@@ -26,7 +26,7 @@ import uuid
 
 from canyonos import env, ui
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
-from canyonos.init import active_docker_socket
+from canyonos.init import active_docker_socket, docker_running
 
 DEFAULT_ARTIFACT_ROOT = ".canyon"
 # Distinct from 1 (findings) the way grep and diff use it: trouble, not a result.
@@ -140,6 +140,8 @@ def _in_image(artifact_root, config):
             "`canyonos validate` needs either canyonos-core installed here or "
             "Docker to run it in the core image; neither is available."
         )
+    if not docker_running():
+        raise RuntimeError("Docker isn't running. Start it, then rerun.")
     if active_docker_socket() is None:
         raise RuntimeError(
             "Docker is not reachable over a local socket (remote context, or the "

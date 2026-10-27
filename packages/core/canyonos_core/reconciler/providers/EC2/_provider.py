@@ -68,8 +68,10 @@ def _ensure_ssh_key():
     if not os.path.isfile(key_path):
         if configured_path:
             raise ValueError(
-                f"EC2 SSH private key does not exist: {key_path}. "
-                "Set ssh_private_key_path to the controller key."
+                f"EC2 SSH private key {configured_path} was not found. CanyonOS deploys "
+                "from a container that sees only the project folder, so put the key in "
+                "the project and give ssh_private_key_path relative to it, or leave it "
+                "unset to use a generated key."
             )
         _generate_default_key(key_path)
     if not os.access(key_path, os.R_OK):
@@ -173,10 +175,18 @@ def start_machine(machine_spec, launch_id):
     """Launch one machine of the spec's `machine_type`, without waiting for it to boot,
     and return its EC2 id as `machine_id`."""
     import boto3
+    from botocore.exceptions import NoCredentialsError
 
     cfg = _ec2_config()
     client = boto3.client("ec2", region_name=cfg["region"])
-    key_name = _ensure_key_pair_imported(cfg, _ensure_ssh_key(), client)
+    try:
+        key_name = _ensure_key_pair_imported(cfg, _ensure_ssh_key(), client)
+    except NoCredentialsError:
+        raise RuntimeError(
+            "No AWS credentials found. CanyonOS deploys from a container that can't "
+            "read your ~/.aws, so put AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in "
+            "the project's .env."
+        ) from None
     request = {
         "ImageId": cfg.get("ami_id", DEFAULT_AMI_ID),
         "InstanceType": machine_spec["machine_type"],

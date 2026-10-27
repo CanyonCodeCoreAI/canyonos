@@ -170,6 +170,7 @@ def docker(monkeypatch, no_core):
     calls = {}
 
     monkeypatch.setattr(validate_cmd.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(validate_cmd, "docker_running", lambda: True)
     monkeypatch.setattr(
         validate_cmd, "active_docker_socket", lambda: "/var/run/docker.sock"
     )

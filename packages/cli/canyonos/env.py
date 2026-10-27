@@ -67,7 +67,7 @@ PROD_USAGE_URL = "https://lgfqg03dz2.execute-api.us-east-1.amazonaws.com"
 
 # `local` artifacts, i.e. what this checkout builds or ships.
 LOCAL_CORE_IMAGE = "canyonos-core:dev"
-LOCAL_SKILL_DIR = str(REPO_ROOT / "skills" / "porting-to-canyonos")
+LOCAL_SKILL_DIR = str(REPO_ROOT / "skills" / "converting-to-canyonos")
 LOCAL_API_IMAGE = "canyonos-api:dev"
 LOCAL_WEB_IMAGE = "canyonos-web:dev"
 

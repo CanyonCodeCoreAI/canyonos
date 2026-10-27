@@ -1,5 +1,5 @@
 ---
-name: porting-to-canyonos
+name: converting-to-canyonos
 description: Port a Python agent project to CanyonOS by preparing and validating a `.canyon`.
 ---
 # Port an agent project to CanyonOS

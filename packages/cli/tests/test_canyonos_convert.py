@@ -32,14 +32,14 @@ def test_the_tarball_url_is_a_bare_ref(ref):
 
 @pytest.fixture
 def skill_dir(tmp_path):
-    source = tmp_path / "porting-to-canyonos"
+    source = tmp_path / "converting-to-canyonos"
     source.mkdir()
-    (source / "SKILL.md").write_text("---\nname: porting-to-canyonos\n---\n")
+    (source / "SKILL.md").write_text("---\nname: converting-to-canyonos\n---\n")
     return source
 
 
 def test_a_local_skill_directory_is_copied_into_place(skill_dir, tmp_path):
-    dest = tmp_path / "skills" / "porting-to-canyonos"
+    dest = tmp_path / "skills" / "converting-to-canyonos"
 
     assert convert_cmd._install_skill(str(dest), str(skill_dir)) is True
     assert (dest / "SKILL.md").is_file()
@@ -61,7 +61,7 @@ def test_convert_installs_checkout_skill_in_agent_directory(
     monkeypatch.setattr(convert_cmd, "_report_port", lambda: True)
 
     assert convert_cmd.run_convert(agent=agent, scope="local", yes=True)
-    destination = tmp_path / f".{agent}" / "skills" / "porting-to-canyonos"
+    destination = tmp_path / f".{agent}" / "skills" / "converting-to-canyonos"
     for filename in ("SKILL.md", "prepare.py"):
         assert (destination / filename).read_bytes() == (
             Path(env.LOCAL_SKILL_DIR) / filename
@@ -75,7 +75,7 @@ def test_fetch_installs_skill_from_repository_root(
     transport: Literal["git", "tarball"],
 ) -> None:
     repository = tmp_path / "repository"
-    source = repository / "skills" / "porting-to-canyonos"
+    source = repository / "skills" / "converting-to-canyonos"
     shutil.copytree(env.LOCAL_SKILL_DIR, source)
     (repository / "README.md").write_text("Not part of the skill.\n")
     destination = tmp_path / "installed"
@@ -118,7 +118,7 @@ def test_fetch_installs_skill_from_repository_root(
 def test_a_failed_copy_is_an_install_failure_not_a_traceback(
     monkeypatch, skill_dir, tmp_path
 ):
-    dest = tmp_path / "skills" / "porting-to-canyonos"
+    dest = tmp_path / "skills" / "converting-to-canyonos"
     dest.mkdir(parents=True)
     (dest / "SKILL.md").write_text("previous install\n")
 

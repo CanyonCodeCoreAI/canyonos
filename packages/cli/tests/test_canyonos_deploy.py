@@ -25,13 +25,13 @@ def deployable(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: None)
 
 
-def test_a_config_path_outside_the_project_raises(monkeypatch, deployable):
-    monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda _p: None)
+def test_a_config_path_outside_the_project_raises(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
 
     with pytest.raises(
         RuntimeError, match="The config file must be inside this project folder"
     ):
-        deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
+        deploy_cmd.run_deploy("../global_controller.yaml", quiet=True)
 
 
 def test_a_sync_failure_raises(monkeypatch, deployable):

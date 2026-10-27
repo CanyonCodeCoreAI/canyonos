@@ -22,7 +22,7 @@ from canyonos_core.controller.utils.container_names import (
     container_name,
     image_name,
 )
-from canyonos_core.reconciler import placement, replicas
+from canyonos_core.reconciler import placement, replicas, state
 from canyonos_core.reconciler.parallel import run_in_parallel
 from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
     transfer_image,
@@ -168,8 +168,14 @@ class ReplicaProvisioner(object):
             for replica_id, replica, error in run_in_parallel(launches):
                 if error:
                     logger.warning("Failed to provision %s: %r", replica_id, error)
+                    self.redis.hset(
+                        state.LAUNCH_ERRORS_KEY,
+                        replica_id.rsplit("-", 1)[0],
+                        str(error),
+                    )
                     failures.append(error)
                     continue
+                self.redis.hdel(state.LAUNCH_ERRORS_KEY, replica["agent_name"])
                 provisioned.append((replica["agent_name"], replica_id, replica))
 
         for agent_name, replica_id, replica in existing + provisioned:

@@ -457,10 +457,7 @@ def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(
         test_cmd._wait_for_endpoint({"port": 1, "container_id": "cid"}, 2)
 
     assert str(err.value) == "Timed out after 0s waiting for the workflow to come up."
-    assert err.value.root_cause == (
-        "CRITICAL:canyonos_core.controller.global_controller:"
-        "Failed to launch Redis on 127.0.0.1: port taken"
-    )
+    assert err.value.root_cause == "Failed to launch Redis on 127.0.0.1: port taken"
 
 
 def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(

@@ -26,7 +26,7 @@ class _Redis:
         return list(self.records)
 
     def hgetall(self, key):
-        return self.records[key]
+        return self.records.get(key, {})
 
 
 class _StatusRedis:

@@ -25,7 +25,9 @@ def _wait(redis, request_id, future_id, question):
 class EndpointHumanReplyTests(unittest.TestCase):
     def setUp(self):
         self.redis = _FakeRedis()
-        self.client = create_app("Workflow", "main", self.redis).test_client()
+        self.client = create_app(
+            "Workflow", "main", ["query"], self.redis
+        ).test_client()
         patcher = patch("canyonos_core.endpoint.app.Future")
         self.future = patcher.start()
         self.addCleanup(patcher.stop)
@@ -133,15 +135,14 @@ class EndpointHumanReplyTests(unittest.TestCase):
 
     def test_status_reports_error_with_its_message(self):
         self.redis.set("request:r1:future", "f1")
-        self.redis.hset_multiple(
-            "future:f1", {"failed": 1, "error": "ValueError", "error_message": "boom"}
-        )
+        error = "Greeter.greet failed: ValueError: boom"
+        self.redis.hset_multiple("future:f1", {"failed": 1, "error": error})
 
         response = self.client.get("/status/r1")
 
         self.assertEqual(
             response.get_json(),
-            {"request_id": "r1", "status": "error", "error": "boom"},
+            {"request_id": "r1", "status": "error", "error": error},
         )
 
 

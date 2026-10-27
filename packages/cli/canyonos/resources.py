@@ -8,14 +8,13 @@ any of them, and the result is written back to the global controller config.
 """
 
 import math
-import os
 import sys
 
 from rich.text import Text
 from ruamel.yaml.comments import CommentedMap
 
 from canyonos import ui
-from canyonos.constants import round_trip_yaml
+from canyonos.constants import load_yaml, round_trip_yaml
 from canyonos.theme import GREEN, WHITE
 from utils.tui import input_line, select_menu
 
@@ -210,15 +209,16 @@ def _pick(agent_specs):
 
 def configure_resources(config_path):
     """Fill, let the user edit, and save every agent's resources. Returns False if cancelled."""
-    if not os.path.isfile(config_path):
-        return True
-
     yaml_rt = round_trip_yaml()
-    with open(config_path) as f:
-        data = yaml_rt.load(f)
+    data = load_yaml(config_path, yaml_rt.load)
 
-    agent_specs = (data or {}).get("agents") or []
-    if not agent_specs:
+    agent_specs = data.get("agents") if isinstance(data, dict) else None
+    # Any other shape is left for the deploy's schema check to report.
+    if (
+        not agent_specs
+        or not isinstance(agent_specs, list)
+        or not all(isinstance(agent_spec, dict) for agent_spec in agent_specs)
+    ):
         return True
     for agent_spec in agent_specs:
         _fill_defaults(agent_spec)

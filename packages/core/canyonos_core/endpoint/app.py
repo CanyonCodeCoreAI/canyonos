@@ -59,10 +59,11 @@ def _record_from_dashboard(request_id):
     return {"result": output}
 
 
-def create_app(agent, method, redis_client):
-    """Build the Flask app that queues calls to the agent's method at `POST /<method>`
-    and reports their results at `GET /status/<request_id>`; `POST /answer/<request_id>`
-    answers that request's oldest waiting question."""
+def create_app(agent, method, arguments, redis_client):
+    """Build the Flask app that queues calls to the agent's method at `POST /<method>`,
+    refusing a body that lacks one of the method's declared `arguments`, and reports
+    their results at `GET /status/<request_id>`; `POST /answer/<request_id>` answers
+    that request's oldest waiting question."""
     app = Flask("canyonos-endpoint")
 
     @app.errorhandler(404)
@@ -75,7 +76,9 @@ def create_app(agent, method, redis_client):
     @app.errorhandler(405)
     def method_not_allowed(_error):
         """Answer a known route called with the wrong HTTP method with a JSON error."""
-        return jsonify({"error": "Method not allowed"}), 405
+        return jsonify(
+            {"error": f"Method not allowed; this endpoint serves POST /{method}"}
+        ), 405
 
     @app.route(f"/{method}", methods=["POST"])
     @app.route("/answer/<request_id>", methods=["POST"])
@@ -117,6 +120,16 @@ def create_app(agent, method, redis_client):
             return jsonify({"request_id": request_id}), 202
 
         context = kwargs.pop("_context", {})
+        if not isinstance(context, dict):
+            return jsonify({"error": "_context must be a JSON object"}), 400
+        missing = [name for name in arguments if name not in kwargs]
+        if missing:
+            return jsonify(
+                {
+                    "error": f"Missing argument(s) {', '.join(missing)}; "
+                    f"POST /{method} takes {', '.join(arguments)}"
+                }
+            ), 400
         request_id = uuid.uuid4().hex
         if context:
             redis_client.set(f"request:{request_id}:context", json.dumps(context))
@@ -152,7 +165,7 @@ def create_app(agent, method, redis_client):
 
         if str(record.get("failed")) == "1":
             response["status"] = "error"
-            response["error"] = record.get("error_message") or record.get("error")
+            response["error"] = record.get("error")
         elif record.get("result"):
             response["status"] = "done"
             response["result"] = json.loads(record["result"])
@@ -170,6 +183,7 @@ def worker_app():
     return create_app(
         os.environ["CANYONOS_ENDPOINT_AGENT"],
         os.environ["CANYONOS_ENDPOINT_METHOD"],
+        [name for name in os.environ["CANYONOS_ENDPOINT_ARGUMENTS"].split(",") if name],
         Future.redis,
     )
 

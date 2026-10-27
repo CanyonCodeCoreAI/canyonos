@@ -196,8 +196,9 @@ agent sees the same stream it would without the gateway.
 
 - OpenAI-format and Anthropic upstream HTTP errors pass through with their status
   and body.
-- An exception inside the gateway returns `502` with
-  `{"error": "gateway_error", "detail": ...}`. An unknown provider prefix
+- A provider that times out returns `504`; one that can't be reached, or any
+  other exception inside the gateway, returns `502`. Both send
+  `{"error": {"message": ..., "type": "gateway_error"}}`. An unknown provider prefix
   returns `404`. A Bedrock request with a bad JSON body returns `400`.
 - Bedrock `ClientError` bodies are rebuilt as JSON with the upstream status,
   not passed through byte for byte.

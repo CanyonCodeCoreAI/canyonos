@@ -213,6 +213,11 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
                 )
             host_port += 1
             continue
+        if "contains whitespaces" in result.stderr:
+            raise RuntimeError(
+                f"{result.stderr.strip()} Docker reads env_file lines only as "
+                "KEY=value, with no `export` and no spaces around `=`."
+            )
         raise RuntimeError(f"Failed to launch {container}: {result.stderr}")
     else:
         raise RuntimeError(
@@ -325,6 +330,13 @@ def _image_args(controller, agent_spec, image, host, user):
                 "CANYONOS_CONTROLLER_IMAGE is unset, so the endpoint has no image to "
                 "run. Redeploy with `canyonos deploy`."
             )
+        served = controller.agent_specs_by_name[agent_spec["agent"]]
+        function = next(
+            function
+            for function in served["functions"]
+            if function["name"] == agent_spec["method"]
+        )
+        arguments = [argument["name"] for argument in function.get("arguments") or []]
         yield [
             "-p",
             f"{agent_spec['api_port']}:{ENDPOINT_PORT}",
@@ -332,6 +344,8 @@ def _image_args(controller, agent_spec, image, host, user):
             f"CANYONOS_ENDPOINT_AGENT={agent_spec['agent']}",
             "-e",
             f"CANYONOS_ENDPOINT_METHOD={agent_spec['method']}",
+            "-e",
+            f"CANYONOS_ENDPOINT_ARGUMENTS={','.join(arguments)}",
             "--entrypoint",
             "python",
             CONTROLLER_IMAGE,

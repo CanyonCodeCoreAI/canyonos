@@ -163,7 +163,7 @@ sequenceDiagram
     S->>D: Execute with route_to
     D-->>S: UNAVAILABLE, never queued
     Note over S: _on_forwarded marks it down<br/>and resolves another replica
-    Note over D: two heartbeats before the removal time: fail every call it<br/>still runs or has queued with ReplicaRemovedError, then report<br/>nothing those calls do afterwards
+    Note over D: two heartbeats before the removal time: fail every call it<br/>still runs or has queued, then report<br/>nothing those calls do afterwards
     RC->>NR: HGETALL controller:{address}:metrics (_is_idle)
     Note over RC: remove_replica once idle,<br/>or at the 180 s limit
 ```
@@ -178,7 +178,7 @@ sequenceDiagram
 | `open_requests` | `0` | stateful requests bound to it |
 | `pending_requests` | `0` | its incoming queue, the request in hand, sends not yet taken or waiting to retry |
 
-A call waiting for a person's answer counts as running, so a drain that reaches the 180 s limit fails it with `ReplicaRemovedError` and its request ends as `error`.
+A call waiting for a person's answer counts as running, so a drain that reaches the 180 s limit fails it and its request ends as `error`.
 
 ### Who reads draining_at
 

@@ -8,7 +8,7 @@ Global Controller container (SIGTERM, same teardown as Ctrl+C would trigger).
 
 from canyonos import project, ui
 from canyonos.dashboard_stack import _existing_dashboard_port, stop_dashboard
-from canyonos.gc import GCError, post_clean, require_state
+from canyonos.gc import GCError, deploy_status, post_clean, require_state
 from canyonos.init import docker_env
 
 
@@ -18,6 +18,9 @@ def run_stop():
     in place for the next deploy. `canyonos quit` removes those too."""
     state = require_state()
     if state is None:
+        return
+    if deploy_status(state["port"]) is None:
+        ui.warn("Nothing is running for this project. Run `canyonos quit` to clean up.")
         return
 
     try:

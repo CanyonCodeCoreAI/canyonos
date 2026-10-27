@@ -251,11 +251,12 @@ class BedrockProvider(Provider):
     def _parse(subpath):
         # subpath looks like "model/<modelId>/<op>"; the modelId may itself
         # contain "/" (inference-profile ARNs), so peel the op off the right.
-        if not subpath.startswith("model/"):
-            raise ValueError(f"unrecognized bedrock path: /{subpath}")
         model_id, sep, op = subpath[len("model/") :].rpartition("/")
-        if not sep or op not in _SUPPORTED_OPS:
-            raise ValueError(f"unrecognized bedrock path: /{subpath}")
+        if not subpath.startswith("model/") or not sep or op not in _SUPPORTED_OPS:
+            raise ValueError(
+                f"the CanyonOS LLM gateway does not support the Bedrock call /{subpath}; "
+                f"it supports only {', '.join(sorted(_SUPPORTED_OPS))}"
+            )
         return model_id, op
 
     @staticmethod

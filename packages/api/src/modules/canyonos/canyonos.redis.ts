@@ -62,7 +62,7 @@ export async function assert_project_running(
   if (controller_project_id !== project_id) {
     throw notFound(
       'canyonos.project_not_running',
-      `No running controller was found for project "${project_id}"`
+      "This project isn't running. Deploy it again with `canyonos deploy` from its folder."
     );
   }
 }

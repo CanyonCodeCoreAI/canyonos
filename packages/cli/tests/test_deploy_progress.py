@@ -359,7 +359,7 @@ def test_reveal_failure_reprints_the_cause_after_unrelated_noise(capsys):
     cause = "CRITICAL:canyonos_core:Failed to launch configured runtimes: Unable to locate credentials\n"
     lines = deploy_cmd.queued_lines(iter([noise, noise, noise]))
 
-    deploy_cmd._reveal_failure(lines, [cause], {"port": 1}, cause)
+    deploy_cmd._reveal_failure(lines, [cause], {"port": 1}, PhaseTracker(), cause)
 
     out = capsys.readouterr().out
     # "Cause:" only prefixes the pinned reprint -- rich's own line-wrapping can
@@ -374,7 +374,7 @@ def test_reveal_failure_prints_no_cause_line_when_nothing_tripped_it(capsys):
     """
     lines = deploy_cmd.queued_lines(iter([]))
 
-    deploy_cmd._reveal_failure(lines, [], {"port": 1})
+    deploy_cmd._reveal_failure(lines, [], {"port": 1}, PhaseTracker(), None)
 
     assert "Cause:" not in capsys.readouterr().out
 
@@ -439,7 +439,7 @@ def test_an_up_marker_quoted_from_a_container_log_is_not_the_deploys_own(monkeyp
         )
     )
 
-    with pytest.raises(RuntimeError, match="stopped or timed out"):
+    with pytest.raises(RuntimeError, match="Deploy failed. Run `canyonos deploy -v`"):
         deploy_cmd._tail_quiet(
             lines,
             {"port": 1},
@@ -463,7 +463,7 @@ def test_verbose_fails_on_a_fatal_line_instead_of_waiting_for_the_timeout(
 
     with pytest.raises(
         RuntimeError,
-        match="Deploy failed: Broken: ERROR:local_controller:Failed to load agent Broken",
+        match="Deploy failed: Broken: Failed to load agent Broken",
     ):
         deploy_cmd._tail_verbose(
             lines,
@@ -517,7 +517,9 @@ def test_verbose_keeps_echoing_after_a_fatal_line_until_the_deploy_is_gone(
     lines = deploy_cmd.queued_lines(iter([verdict, teardown]))
     lines.put = lambda *a, **k: None
 
-    with pytest.raises(RuntimeError, match="Deploy failed: CRITICAL"):
+    with pytest.raises(
+        RuntimeError, match="Deploy failed: Controller readiness failed: Broken 0/1"
+    ):
         deploy_cmd._tail_verbose(
             lines,
             {"port": 1},
@@ -575,9 +577,9 @@ class _Spinner:
 
 def _explain(lines):
     tracker = deploy_cmd.PhaseTracker()
-    for line in lines:
+    for index, line in enumerate(lines):
         if tracker.parse_line(line)[2]:
-            return tracker.explain_failure(line)
+            return tracker.explain_failure(line, lines[index + 1 :])
     return None
 
 
@@ -622,8 +624,7 @@ def test_a_replica_that_never_came_up_is_explained_by_its_container_log():
     )
 
     assert explained == (
-        "HelloAgent: ERROR:__main__:Failed to load agent HelloAgent "
-        "from /app/hello_agent.py: boom"
+        "HelloAgent: Failed to load agent HelloAgent from /app/hello_agent.py: boom"
     )
 
 
@@ -644,7 +645,7 @@ def test_a_quoted_traceback_without_an_error_line_is_explained_by_its_last_line(
 
 def test_a_replica_whose_log_names_no_error_is_explained_by_the_verdict():
     verdict = (
-        "CRITICAL:canyonos_core:Controller readiness failed: Agent replica(s) "
+        "Controller readiness failed: Agent replica(s) "
         "failed to become healthy within 361s: Workflow 0/1"
     )
     explained = _explain(
@@ -652,7 +653,7 @@ def test_a_replica_whose_log_names_no_error_is_explained_by_the_verdict():
             f"{_GC}--- begin container log: Workflow (localhost:8001) status=initializing ---\n",
             f"{_GC}  INFO:__main__:Started LLM gateway on 127.0.0.1:8081 (PID: 20)\n",
             f"{_GC}--- end container log: Workflow ---\n",
-            verdict + "\n",
+            f"CRITICAL:canyonos_core:{verdict}\n",
         ]
     )
 
@@ -661,7 +662,7 @@ def test_a_replica_whose_log_names_no_error_is_explained_by_the_verdict():
 
 def test_any_other_trigger_is_its_own_explanation():
     line = "CRITICAL:canyonos_core:Failed to launch Redis\n"
-    assert _explain([line]) == line.strip()
+    assert _explain([line]) == "Failed to launch Redis"
 
 
 def test_the_stalled_spinner_text_is_not_read_as_markup():

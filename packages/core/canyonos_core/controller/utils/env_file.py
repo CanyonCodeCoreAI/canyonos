@@ -79,11 +79,15 @@ def _resolve_project_env_file(config, base_dir):
     if not os.path.isabs(path):
         path = os.path.join(base_dir or os.getcwd(), path)
     path = os.path.abspath(path)
+    shown = os.path.relpath(path, base_dir or os.getcwd())
 
     if not os.path.exists(path):
-        raise ValueError(f"env_file does not exist: {path} (from env_file: {raw})")
+        raise ValueError(
+            f"`env_file: {raw}` points to {shown}, which doesn't exist. "
+            "Create it or remove `env_file` from global_controller.yaml."
+        )
     if not os.path.isfile(path):
-        raise ValueError(f"env_file is not a file: {path} (from env_file: {raw})")
+        raise ValueError(f"`env_file: {raw}` points to {shown}, which is not a file.")
     if not os.access(path, os.R_OK):
         raise ValueError(f"env_file is not readable: {path}")
     return path

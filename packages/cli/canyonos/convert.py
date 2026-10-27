@@ -27,7 +27,7 @@ from utils.tui import select_menu
 SKILL_OWNER = "CanyonCodeCoreAI"
 SKILL_REPO = "canyonos"
 SKILL_REF = env.PROD_SKILL_REF
-SKILL_NAME = "porting-to-canyonos"
+SKILL_NAME = "converting-to-canyonos"
 SKILL_PATH = f"skills/{SKILL_NAME}"
 
 # Where the skill comes from: the ref above for a released CLI, or a directory
@@ -56,7 +56,7 @@ CONVERT_PROMPT = (
     f"Use the CanyonOS {SKILL_NAME} skill to convert the codebase in this directory to a "
     "canyonos-compatible format. Put every conversion result in a new .canyon folder and "
     "leave the application's own source untouched. Three files outside .canyon are yours to "
-    "update, because the port needs them and the skill's own preparation step already "
+    "update, because the conversion needs them and the skill's own preparation step already "
     "writes one of them: .gitignore, .env and .env.example. The skill states how each is "
     "written; follow it rather than deciding for yourself."
 )

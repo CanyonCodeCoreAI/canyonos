@@ -75,10 +75,6 @@ def test_edits_from_the_picker_are_saved(config, monkeypatch):
     assert "replicas: 2" in text
 
 
-def test_a_missing_config_is_left_to_the_deploy_to_report(tmp_path):
-    assert resources.configure_resources(str(tmp_path / "nope.yaml")) is True
-
-
 @pytest.mark.parametrize(
     "field, raw, expected",
     [

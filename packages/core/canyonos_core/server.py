@@ -4,6 +4,7 @@
 """HTTP server that runs in the Global Controller container; the CLI calls it to start,
 stop, and check a deploy."""
 
+import logging
 import os
 import signal
 import subprocess
@@ -13,6 +14,7 @@ import threading
 import redis
 import yaml
 from flask import Flask, jsonify, request
+from werkzeug.serving import run_simple
 
 from canyonos_core.cli import _artifact_prefix
 from canyonos_core.controller.controller_context import _redis_connect_host
@@ -143,4 +145,6 @@ def endpoint():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    # No banner or request lines in the deploy log `canyonos deploy` replays on a failure.
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    run_simple("0.0.0.0", 8000, app, threaded=True)

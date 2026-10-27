@@ -16,7 +16,6 @@ This file will also need lots of iteration based on what is needed, will expect 
 """
 
 import json
-import os
 import subprocess
 import time
 import urllib.error
@@ -88,9 +87,9 @@ def _root_cause(state):
         return None
     lines = result.stdout.splitlines()
     tracker = PhaseTracker()
-    for line in lines:
+    for index, line in enumerate(lines):
         if tracker.parse_line(line)[2]:
-            return tracker.explain_failure(line)
+            return tracker.explain_failure(line, lines[index + 1 :])
     return None
 
 
@@ -327,10 +326,6 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
     """Query the workflow, standing up our own local deploy first unless one is
     already up. The config is restored whatever happens."""
     config_path = workspace_relative(default_config_path())
-    if config_path is None:
-        raise RuntimeError("The config file must be inside this project folder")
-    if not os.path.isfile(config_path):
-        raise RuntimeError(f"No config at {config_path}. Run `canyonos convert` first.")
 
     existing = _existing_deploy()
     if existing is not None:
@@ -418,7 +413,6 @@ def _print_failure_logs(run):
         ui.hint(f"last {LOG_TAIL_LINES} lines of the Global Controller log:")
         ui.say(run.log_tail)
         ui.blank()
-    ui.hint("Containers left running for inspection: `canyonos logs` | `canyonos quit`")
 
 
 def _payload(run):

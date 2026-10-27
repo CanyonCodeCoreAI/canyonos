@@ -44,8 +44,10 @@ def route(model_id: str, body: bytes, prefix: Optional[str] = None) -> Optional[
     """Why this agent's call to model_id, served by LiteLLM's provider `prefix`, is refused,
     or None to let it through."""
     if llms.llms_by_model_id is None:
-        detail = f": {llms.load_error}" if llms.load_error else " yet"
-        return f"canyonos denied: {llms.LLMS_CONFIG_KEY} has not loaded{detail}"
+        return (
+            "LLM calls are blocked: CanyonOS could not load llms.yaml yet "
+            f"(it retries every {REFRESH_SECONDS}s)."
+        )
     llm = llms.llms_by_model_id.get(llms.normalize_model_id(model_id))
     if not llm or "agents" not in llm:
         return None
@@ -60,7 +62,8 @@ def route(model_id: str, body: bytes, prefix: Optional[str] = None) -> Optional[
     if pricing.token_prices(llms.normalize_model_id(llm["model_id"]), prefix) is None:
         return (
             f"canyonos denied: {AGENT_NAME} has a per-request cap on {llm['name']}, "
-            "but llm_prices.json has no price for it at the provider serving this call"
+            "but CanyonOS has no price for it at the provider serving this call, so the "
+            "cap can't be checked; remove the cap in llms.yaml"
         )
     try:
         cost = worst_case_cost(body, llm, prefix)

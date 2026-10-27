@@ -43,6 +43,6 @@ def litellm_prices(source_url=LITELLM_PRICING_URL):
                     costs[local_key] = remote[remote_key] * 1_000_000
             models[model_id] = costs
         return models
-    except Exception:
-        logger.warning("LLM price fetch from %s failed.", source_url, exc_info=True)
+    except Exception as e:
+        logger.warning("LLM price fetch from %s failed: %s", source_url, e)
         return {}

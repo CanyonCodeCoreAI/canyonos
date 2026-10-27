@@ -23,7 +23,7 @@ sys.path.insert(
 
 from canyonos_core.controller.local_controller import LocalController
 from canyonos_core.controller.local_controller_frontend import LocalControllerServicer
-from canyonos_core.controller.future import Future
+from canyonos_core.controller.future import AgentCallError, Future
 from canyonos_core.controller.utils.log_handler import LogHandler
 from canyonos_core.controller.utils.log_entry import (
     append_log_entry,
@@ -89,9 +89,11 @@ class ErrorPropagationTests(unittest.TestCase):
 
         self.assertEqual(data["origin"], "172.31.19.107:50051")
         self.assertEqual(controller._unsent, 0)
-        self.assertEqual(redis.hget("future:future-1", "error"), "_RpcError")
+        message = "Could not send the call to ExampleAgent.hello: boom"
+        self.assertEqual(redis.hget("future:future-1", "error"), message)
         logs = json.loads(redis.hget("future:future-1", "logs"))
-        self.assertEqual(logs[0]["Body"], "boom")
+        self.assertEqual(logs[0]["Body"], message)
+        self.assertEqual(logs[0]["Attributes"]["exception.type"], "SendFailed")
         stub.Execute.future.assert_called_once()
 
     def test_future_value_raises_runtime_error_when_error_is_present(self):
@@ -163,7 +165,6 @@ class ErrorPropagationTests(unittest.TestCase):
             json.loads(payload),
             {
                 "future_id": "future-1",
-                "result": "",
                 "failed": 1,
                 "error": "agent exploded",
             },
@@ -241,7 +242,10 @@ class ErrorPropagationTests(unittest.TestCase):
 
         LocalController._process_request(controller, {"future_id": "future-1"})
 
-        self.assertEqual(redis.hget("future:future-1", "error"), "MalformedRequest")
+        self.assertEqual(
+            redis.hget("future:future-1", "error"),
+            "Malformed request: missing service, function, or future_id",
+        )
         self.assertEqual(redis.hget("future:future-1", "failed"), 1)
         logs = json.loads(redis.hget("future:future-1", "logs"))
         self.assertEqual(
@@ -273,7 +277,10 @@ class ErrorPropagationTests(unittest.TestCase):
             {"service": "SomeAgent", "function": "do", "future_id": "future-2"},
         )
 
-        self.assertEqual(redis.hget("future:future-2", "error"), "PolicyDenied")
+        self.assertEqual(
+            redis.hget("future:future-2", "error"),
+            "Policy denied the call to SomeAgent.do: no rule in policy.yaml allows it for this request.",
+        )
         logs = json.loads(redis.hget("future:future-2", "logs"))
         self.assertEqual(logs[0]["Attributes"]["exception.type"], "PolicyDenied")
         self.assertIn("Policy denied", logs[0]["Body"])
@@ -299,9 +306,13 @@ class ErrorPropagationTests(unittest.TestCase):
             {"service": "SomeAgent", "function": "do", "future_id": "future-3"},
         )
 
-        self.assertEqual(redis.hget("future:future-3", "error"), "NoEndpointFound")
+        self.assertEqual(
+            redis.hget("future:future-3", "error"),
+            "No running replica of SomeAgent right now; all are starting, "
+            "restarting or being removed.",
+        )
         logs = json.loads(redis.hget("future:future-3", "logs"))
-        self.assertEqual(logs[0]["Attributes"]["exception.type"], "NoEndpointFound")
+        self.assertEqual(logs[0]["Attributes"]["exception.type"], "NoRunningReplica")
 
     def test_unknown_method_is_marked_failed_with_category(self):
         redis = _FakeRedis()
@@ -320,12 +331,18 @@ class ErrorPropagationTests(unittest.TestCase):
             controller, "ExampleAgent", "missing_method", {}, "future-4"
         )
 
-        self.assertEqual(redis.hget("future:future-4", "error"), "UnknownMethod")
+        self.assertEqual(
+            redis.hget("future:future-4", "error"),
+            "Agent ExampleAgent has no method 'missing_method'",
+        )
         logs = json.loads(redis.hget("future:future-4", "logs"))
         self.assertEqual(logs[0]["Attributes"]["exception.type"], "UnknownMethod")
 
     def test_result_callback_failure_is_marked_with_category(self):
         redis = _FakeRedis()
+        redis.hset_multiple(
+            "future:future-5", {"service": "ExampleAgent", "method": "hello"}
+        )
         stub = SimpleNamespace(WriteResult=MagicMock(side_effect=RuntimeError("boom")))
         controller = _bind_failure_marker(
             SimpleNamespace(
@@ -341,17 +358,21 @@ class ErrorPropagationTests(unittest.TestCase):
             controller,
             "origin:50051",
             "future-5",
-            failed=1,
-            error_message="agent exploded",
+            result="hello",
         )
 
-        self.assertEqual(redis.hget("future:future-5", "error"), "ResultCallbackFailed")
-        logs = json.loads(redis.hget("future:future-5", "logs"))
-        self.assertEqual(
-            logs[0]["Attributes"]["exception.type"], "ResultCallbackFailed"
+        message = (
+            "Could not send the result of ExampleAgent.hello back to its caller: boom"
         )
-        self.assertIn("Result callback failed", logs[0]["Body"])
-        stub.WriteResult.assert_called()
+        self.assertEqual(redis.hget("future:future-5", "error"), message)
+        logs = json.loads(redis.hget("future:future-5", "logs"))
+        self.assertEqual(logs[0]["Attributes"]["exception.type"], "ResultNotDelivered")
+        self.assertEqual(logs[0]["Body"], message)
+        # After the full hash fails, a short note still tells the caller.
+        note = stub.WriteResult.call_args.args[0].response
+        self.assertEqual(
+            json.loads(note), {"future_id": "future-5", "failed": 1, "error": message}
+        )
 
     def test_log_handler_never_duplicates_a_failure_already_recorded(self):
         """LogHandler must refuse WARNING+ so ambient capture can never double-record
@@ -426,8 +447,8 @@ class ErrorPropagationTests(unittest.TestCase):
             _resolve_future_args=lambda args, future_args: args,
             _get_remote_stub=lambda address: stub,
         )
-        executor._mark_future_failed = lambda future_id, error, origin=None: (
-            LocalController._mark_future_failed(executor, future_id, error, origin)
+        executor._mark_future_failed = lambda *a, **k: (
+            LocalController._mark_future_failed(executor, *a, **k)
         )
         executor._send_result_callback = lambda *a, **k: (
             LocalController._send_result_callback(executor, *a, **k)
@@ -448,7 +469,8 @@ class ErrorPropagationTests(unittest.TestCase):
             LocalControllerServicer.WriteResult(origin_servicer, request, context)
 
         self.assertEqual(origin_redis.hget("future:future-1", "failed"), 1)
-        self.assertEqual(origin_redis.hget("future:future-1", "error"), "ValueError")
+        message = "Greeter.greet failed: ValueError: executor exploded"
+        self.assertEqual(origin_redis.hget("future:future-1", "error"), message)
         self.assertIn("cpu_resource", origin_redis.hashes["future:future-1"])
         self.assertIn("finished_at", origin_redis.hashes["future:future-1"])
         self.assertEqual(
@@ -474,11 +496,11 @@ class ErrorPropagationTests(unittest.TestCase):
             id="future-1",
             result=None,
         )
-        with self.assertRaisesRegex(RuntimeError, "ValueError"):
+        with self.assertRaisesRegex(AgentCallError, f"^{message}$"):
             Future.value(origin_future)
 
         # Executor's own local copy is untouched by the origin-side merge.
-        self.assertEqual(executor_redis.hget("future:future-1", "error"), "ValueError")
+        self.assertEqual(executor_redis.hget("future:future-1", "error"), message)
 
     def test_same_host_relay_does_not_duplicate_logs(self):
         """Two replicas sharing one Redis (the default same-host topology) must
@@ -507,8 +529,8 @@ class ErrorPropagationTests(unittest.TestCase):
             _resolve_future_args=lambda args, future_args: args,
             _get_remote_stub=lambda address: stub,
         )
-        executor._mark_future_failed = lambda future_id, error, origin=None: (
-            LocalController._mark_future_failed(executor, future_id, error, origin)
+        executor._mark_future_failed = lambda *a, **k: (
+            LocalController._mark_future_failed(executor, *a, **k)
         )
         executor._send_result_callback = lambda *a, **k: (
             LocalController._send_result_callback(executor, *a, **k)

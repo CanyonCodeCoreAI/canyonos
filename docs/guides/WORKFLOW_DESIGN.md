@@ -33,6 +33,6 @@ Only `global_controller.yaml` is needed to deploy, and it has to list at least o
 
 ## Converting a existing workflow
 
-When converting an existing workflow, we have a skill file that any agent can download, `porting-to-canyonos` that gives an agent the tools and context needed to initally break up your project according to our 2 pillars.
+When converting an existing workflow, we have a skill file that any agent can download, `converting-to-canyonos` that gives an agent the tools and context needed to initally break up your project according to our 2 pillars.
 
 Note: This skill file is not fool-proof, the agent can reformat 80% of your workflow, but the configurations you set in the config folder will still be up to you.

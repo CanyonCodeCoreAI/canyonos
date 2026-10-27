@@ -34,7 +34,7 @@ def _bind_failure_marker(controller):
         LocalController._mark_future_failed(controller, *a, **k)
     )
     controller._send_result_callback = (
-        lambda origin, future_id, result="", failed=0, error_message="": (
+        lambda origin, future_id, result=None, failed=0, error_message="": (
             LocalController._send_result_callback(
                 controller, origin, future_id, result, failed, error_message
             )
@@ -234,25 +234,45 @@ class LocalControllerMetricsTests(unittest.TestCase):
         failed = []
         controller = SimpleNamespace(
             _my_address="10.0.0.1:50051",
-            _executor_futures={object(): ("running", "10.0.0.9:50051")},
+            _executor_futures={
+                object(): ("running", "10.0.0.9:50051", "Risk", "assess")
+            },
             _executor_futures_lock=threading.Lock(),
             request_queue=__import__("queue").Queue(),
             _cut_off=set(),
-            _mark_future_failed=lambda future_id, error, origin: failed.append(
-                (future_id, origin, type(error).__name__)
+            _mark_future_failed=lambda future_id, error, origin, error_name: (
+                failed.append((future_id, origin, error, error_name))
             ),
         )
         controller.request_queue.put(
-            json.dumps({"future_id": "queued", "origin": "10.0.0.8:50051"})
+            json.dumps(
+                {
+                    "future_id": "queued",
+                    "origin": "10.0.0.8:50051",
+                    "service": "Price",
+                    "function": "quote",
+                }
+            )
         )
 
         LocalController._fail_unfinished(controller)
 
+        removed = "stopped before it finished: its replica was removed (scaled down or replaced)."
         self.assertEqual(
             sorted(failed),
             [
-                ("queued", "10.0.0.8:50051", "ReplicaRemovedError"),
-                ("running", "10.0.0.9:50051", "ReplicaRemovedError"),
+                (
+                    "queued",
+                    "10.0.0.8:50051",
+                    f"Price.quote {removed}",
+                    "ReplicaRemovedError",
+                ),
+                (
+                    "running",
+                    "10.0.0.9:50051",
+                    f"Risk.assess {removed}",
+                    "ReplicaRemovedError",
+                ),
             ],
         )
         self.assertTrue(controller.request_queue.empty())
@@ -314,7 +334,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             )
 
         # Its caller already got ReplicaRemovedError; that answer stands.
-        self.assertEqual(redis.hget("future:future-5", "result"), "")
+        self.assertIsNone(redis.hget("future:future-5", "result"))
         stub.WriteResult.assert_not_called()
 
     def test_a_stateful_request_run_here_is_held_open_until_cleanup(self):
@@ -459,8 +479,11 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 controller, "Greeter", "greet", {"name": "world"}, "future-2"
             )
 
-        self.assertEqual(redis.hget("future:future-2", "error"), "ValueError")
-        self.assertEqual(redis.hget("future:future-2", "result"), "")
+        self.assertEqual(
+            redis.hget("future:future-2", "error"),
+            "Greeter.greet failed: ValueError: nope",
+        )
+        self.assertIsNone(redis.hget("future:future-2", "result"))
         self.assertEqual(redis.hget("future:future-2", "failed"), 1)
         logs = json.loads(redis.hget("future:future-2", "logs"))
         self.assertEqual(logs[0]["Body"], "nope")
@@ -493,7 +516,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 controller, "MissingAgent", "greet", {}, "future-3"
             )
 
-        self.assertEqual(redis.hget("future:future-3", "error"), "NoAgentLoaded")
+        self.assertEqual(redis.hget("future:future-3", "error"), "No agent loaded")
         self.assertEqual(redis.hget("future:future-3", "failed"), 1)
         self.assertNotIn("future:future-3:metrics", redis.hashes)
         logs = json.loads(redis.hget("future:future-3", "logs"))
@@ -533,12 +556,13 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 origin="origin:50051",
             )
 
-        self.assertEqual(redis.hget("future:future-4", "error"), "ValueError")
+        message = "Greeter.greet failed: ValueError: remote nope"
+        self.assertEqual(redis.hget("future:future-4", "error"), message)
         payload = json.loads(stub.WriteResult.call_args.args[0].response)
         self.assertEqual(payload["future_id"], "future-4")
-        self.assertEqual(payload["result"], "")
+        self.assertNotIn("result", payload)
         self.assertEqual(payload["failed"], 1)
-        self.assertEqual(payload["error"], "ValueError")
+        self.assertEqual(payload["error"], message)
         # The callback fires only after the finally block writes final metrics,
         # so the snapshot sent to origin carries the full execution record.
         self.assertEqual(payload["agent"], "agent-1")
@@ -573,7 +597,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             _metrics_key="controller:target:50051:metrics",
             _cut_off=set(),
             _resolve_future_args=lambda args, future_args: args,
-            _mark_future_failed=lambda future_id, error, origin=None: None,
+            _mark_future_failed=lambda *a, **k: None,
             _send_result_callback=spy_send_result_callback,
         )
 

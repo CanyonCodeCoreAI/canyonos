@@ -66,6 +66,9 @@ def main():
         return
     try:
         _run_command()
+    except KeyboardInterrupt:
+        ui.say("Cancelled.")
+        sys.exit(130)
     finally:
         start_delivery()
 

@@ -105,7 +105,8 @@ core.proxy_request
      │                                    Response to agent                    │
      │                                                             hooks.on_response
      │
-     └─ any exception ──▶ 502 gateway_error
+     ├─ provider timeout ──▶ 504 gateway_error
+     └─ any other exception ──▶ 502 gateway_error
 ```
 
 ## Providers

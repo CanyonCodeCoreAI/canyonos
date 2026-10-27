@@ -144,7 +144,7 @@ gunicorn worker (×2) ─────────────▶ create_app(CANY
                          │                                          ├─ GET request:<id>:future
                          ├─ kwargs.pop("_context", {})              │    └─ missing ──▶ 404
                          ├─ uuid.uuid4().hex                        └─ HGETALL future:<future_id>
-                         ├─ SET request:<id>:context                     ├─ failed ──▶ error (error_message)
+                         ├─ SET request:<id>:context                     ├─ failed ──▶ error
                          ├─ set_request_id                               ├─ result ──▶ done
                          ├─ Future(parent=None, agent, method,           ├─ oldest of request:<id>:waiting ──▶ input_required (question)
                          │         args=kwargs)                          └─ else   ──▶ pending
@@ -155,7 +155,6 @@ gunicorn worker (×2) ─────────────▶ create_app(CANY
                            _execute_locally (parent is None)
                                   ├─ <method>(**kwargs) ──▶ _resolved
                                   ├─ non-dict result ──▶ {"value": result}
-                                  ├─ error ──▶ HSET error_message
                                   ├─ WriteResult ──▶ endpoint LocalController
                                   └─ SADD request:completed
 
@@ -181,7 +180,7 @@ root result arrives at the endpoint (WriteResult, no parent)
                                                     └─ RPOP each ──▶ _mark_future_failed ──▶ _fan_out_to_consumers ──▶ asking replica
 ```
 
-A root call is one whose Future has no parent. `_execute_locally` resolves every nested Future in its result, wraps a non-dict result in `{"value": ...}`, stores `error_message` on failure, and adds the request to `request:completed`.
+A root call is one whose Future has no parent. `_execute_locally` resolves every nested Future in its result, wraps a non-dict result in `{"value": ...}`, and adds the request to `request:completed`.
 
 ## Request lifecycle
 

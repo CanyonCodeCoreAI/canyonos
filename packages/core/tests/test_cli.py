@@ -263,7 +263,7 @@ class CliBuildTests(unittest.TestCase):
         config_path = artifact_root / "config" / "global_controller.yaml"
         docker_calls = []
 
-        def fake_run(cmd, check):
+        def fake_run(cmd, **kwargs):
             docker_calls.append(cmd)
             return SimpleNamespace(returncode=0)
 

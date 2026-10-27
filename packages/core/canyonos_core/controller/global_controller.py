@@ -41,7 +41,7 @@ from canyonos_core.controller.utils.container_names import (
     project_label_args,
     redis_container_name,
 )
-from canyonos_core.llm_gateway import pricing
+from canyonos_core.llm_gateway import llms, pricing
 from canyonos_core.reconciler import state
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.env_file import resolve_env_file
@@ -54,7 +54,7 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 from canyonos_core.schema import SchemaError, check_project, load_manifest
-from canyonos_core.schema.yaml_lines import load_yaml_lines
+from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
 
 # Add generated grpc_stubs from the local project to the path. Projects using
 # the .canyon artifact layout keep grpc_stubs under .canyon/; older/plain layouts
@@ -99,18 +99,18 @@ def _live_first(version):
     )
 
 
-def _live_prompts(document):
+def _live_prompts(document, path):
     """Checks that prompts.yaml is well formed and returns the version agents should get for each prompt, raising an error that names the problem if the file is malformed."""
     prompts = (document.get("prompts") or {}) if isinstance(document, dict) else None
     if not isinstance(prompts, dict):
-        raise ValueError("prompts.yaml must have a `prompts:` mapping of prompt names")
+        raise RuntimeError(f"{path} must have a `prompts:` mapping of prompt names.")
     live = {}
     for name, versions in prompts.items():
         if not isinstance(versions, list) or not all(
             isinstance(version, dict) for version in versions
         ):
-            raise ValueError(
-                f"prompts.yaml: prompt {name!r} must be a list of versions, each with `version` and `content`"
+            raise RuntimeError(
+                f"{path}: prompt {name!r} must be a list of versions, each with `version` and `content`."
             )
         if versions:
             live[name] = max(versions, key=_live_first)
@@ -166,6 +166,8 @@ class GlobalController(ControllerContext):
             )
             # A stop killed midway leaves the flag set; clear it or the fleet stays at zero.
             state.clear_stopping(self.redis)
+            # A reused Redis may still hold an earlier deploy's launch errors.
+            self.redis.delete(state.LAUNCH_ERRORS_KEY)
             logger.info(
                 "Global controller initialized with %d controller(s).",
                 len(self.agent_specs),
@@ -381,7 +383,15 @@ class GlobalController(ControllerContext):
         with open(policy_path, "r") as f:
             policy_config = yaml.safe_load(f)
 
-        rules = policy_config.get("rules", [])
+        rules = (
+            policy_config.get("rules", []) if isinstance(policy_config, dict) else None
+        )
+        if not isinstance(rules, list) or not all(
+            isinstance(rule, dict) for rule in rules
+        ):
+            raise RuntimeError(
+                f"{os.path.relpath(policy_path)} must be a mapping with a `rules:` list of mappings."
+            )
 
         # Sort rules by specificity: most match keys first
         # This way the local controller can iterate and use the first matching rule.
@@ -389,21 +399,42 @@ class GlobalController(ControllerContext):
         return rules
 
     def _read_config_folder(self):
-        """Parse policy rules and every YAML file in the config folder; returns (rules, payloads by Redis key, prompts.yaml's live versions or None)."""
-        rules = self._load_policy_rules()
+        """Parse every YAML file in the config folder and the policy rules; returns
+        (rules, payloads by Redis key, prompts.yaml's live versions or None). A file
+        that is not UTF-8, not valid YAML, or not the expected shape raises a
+        RuntimeError that names it."""
         config_dir = os.path.dirname(os.path.abspath(self.config_path))
         payloads = {}
         live_prompts = None
         for filename in sorted(os.listdir(config_dir)):
             name, extension = os.path.splitext(filename)
             if extension in (".yaml", ".yml"):
-                with open(os.path.join(config_dir, filename), "r") as f:
+                # Project-relative, so an error names the file as the user knows it.
+                path = os.path.relpath(os.path.join(config_dir, filename))
+                with open(path, "r") as f:
                     # prompts.yaml only seeds the prompts the dashboard API stores and publishes.
                     key = "prompts:yaml" if name == "prompts" else f"{name}:config"
-                    payloads[key] = json.dumps(yaml.safe_load(f) or {}, default=str)
+                    try:
+                        payloads[key] = json.dumps(yaml.safe_load(f) or {}, default=str)
+                    except yaml.YAMLError as exc:
+                        line, detail = parse_failure(exc)
+                        raise RuntimeError(
+                            f"{path}:{line}: is not valid YAML: {detail}"
+                        ) from exc
+                    except UnicodeDecodeError as exc:
+                        raise RuntimeError(
+                            f"{path} is not UTF-8 text; save it as UTF-8."
+                        ) from exc
                 if name == "prompts":
-                    live_prompts = _live_prompts(json.loads(payloads[key]))
-        return rules, payloads, live_prompts
+                    live_prompts = _live_prompts(json.loads(payloads[key]), path)
+                if name == "llms":
+                    # The gateway would refuse every LLM call over this; fail the deploy instead.
+                    try:
+                        llms.index_llms(json.loads(payloads[key]))
+                    except ValueError as exc:
+                        raise RuntimeError(str(exc)) from exc
+        # After the loop, which reports a syntax error in policy.yaml with its line.
+        return self._load_policy_rules(), payloads, live_prompts
 
     def _write_policies(self, rules, payloads, live_prompts):
         """Publish policy rules, LiteLLM's prices, and each config file under its key, to every host Redis."""
@@ -803,6 +834,19 @@ class GlobalController(ControllerContext):
 
             if all(healthy.get(name, 0) >= want for name, want in expected.items()):
                 return
+            # The reconciler retries a failed launch, but the deploy fails at once with its reason.
+            launch_errors = {
+                name: error
+                for name, error in self.redis.hgetall(state.LAUNCH_ERRORS_KEY).items()
+                if healthy.get(name, 0) < expected.get(name, 0)
+            }
+            if launch_errors:
+                raise RuntimeError(
+                    "; ".join(
+                        f"{name} could not start: {error}"
+                        for name, error in launch_errors.items()
+                    )
+                )
             terminal = [
                 (replica, status)
                 for replica, status in pending

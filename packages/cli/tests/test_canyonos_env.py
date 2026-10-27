@@ -253,11 +253,11 @@ def test_a_local_skill_source_is_the_directory_in_the_checkout(environment):
     resolved = env_module._resolve_skill_source(environment, "local")
 
     assert resolved == env_module.LOCAL_SKILL_DIR
-    assert resolved == str(env_module.REPO_ROOT / "skills" / "porting-to-canyonos")
+    assert resolved == str(env_module.REPO_ROOT / "skills" / "converting-to-canyonos")
     assert os.path.isdir(resolved)
 
 
-@pytest.mark.parametrize("value", ["some-branch", "/tmp/porting-to-canyonos"])
+@pytest.mark.parametrize("value", ["some-branch", "/tmp/converting-to-canyonos"])
 def test_any_other_skill_source_is_taken_literally(value):
     assert env_module._resolve_skill_source(DEV, value) == value
 

@@ -72,7 +72,7 @@ class EC2ProviderTests(unittest.TestCase):
     def test_ensure_ssh_key_rejects_missing_ssh_private_key(self):
         self.controller.config["ssh_private_key_path"] = "/tmp/missing-canyonos-key"
 
-        with self.assertRaisesRegex(ValueError, "does not exist"):
+        with self.assertRaisesRegex(ValueError, "was not found"):
             ec2_provider._ensure_ssh_key()
 
     def test_ensure_ssh_key_rejects_insecure_ssh_private_key_permissions(self):

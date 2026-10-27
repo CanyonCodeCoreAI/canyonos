@@ -72,9 +72,7 @@ def require_state():
     try:
         return load_state()
     except FileNotFoundError:
-        ui.warn(
-            "No Global Controller container is running. Run `canyonos deploy` first."
-        )
+        ui.warn("No deploy is running.")
         return None
 
 

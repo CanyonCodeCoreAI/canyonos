@@ -223,7 +223,7 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
                     if token_count
                     else 0.0,
                     "error_name": raw.get("error_name"),
-                    "error_message": raw.get("error") or raw.get("error_message"),
+                    "error_message": raw.get("error"),
                     "name": name or agent_id or "unknown_agent",
                     "input": _normalize_json_text(raw.get("args")),
                     "output": _normalize_json_text(result),

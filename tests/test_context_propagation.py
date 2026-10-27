@@ -26,7 +26,7 @@ CONCURRENT_REQUESTS = 3
 
 
 def _run_request():
-    response = requests.post(f"{BASE_URL}/main", json={})
+    response = requests.post(f"{BASE_URL}/main", json={"query": "World"})
     if response.status_code != 202:
         print(f"Error submitting request: HTTP {response.status_code} {response.text}")
         sys.exit(1)

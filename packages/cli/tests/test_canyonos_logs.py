@@ -14,7 +14,7 @@ def test_unreachable_controller_fails_logs(monkeypatch):
     )
     monkeypatch.setattr(logs, "deploy_status", lambda _port: None)
 
-    with pytest.raises(RuntimeError, match="Could not reach"):
+    with pytest.raises(RuntimeError, match="Nothing is running for this project"):
         logs.run_logs()
 
 

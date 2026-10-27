@@ -158,9 +158,6 @@ class RefreshTests(unittest.TestCase):
         patcher = mock.patch.object(llms, "llms_by_model_id", {})
         patcher.start()
         self.addCleanup(patcher.stop)
-        error_patcher = mock.patch.object(llms, "load_error", None)
-        error_patcher.start()
-        self.addCleanup(error_patcher.stop)
 
     def test_refresh_loads_the_published_config(self):
         llms.refresh_llms(
@@ -174,14 +171,16 @@ class RefreshTests(unittest.TestCase):
         llms.refresh_llms(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
         self.assertIn("haiku", _loaded_names())
 
-    def test_first_load_failure_is_named_in_the_denial(self):
+    def test_first_load_failure_blocks_calls(self):
         bad = {"haiku": {**HAIKU, "max_tokens": None}}
         with mock.patch.object(llms, "llms_by_model_id", None):
             llms.refresh_llms(mock.Mock(get=mock.Mock(return_value=json.dumps(bad))))
             reason = routing.route(HAIKU["model_id"], _body(1))
-        self.assertTrue(reason.startswith("canyonos denied: "))
-        self.assertIn("haiku", reason)
-        self.assertIn("max_tokens", reason)
+        self.assertEqual(
+            reason,
+            "LLM calls are blocked: CanyonOS could not load llms.yaml yet "
+            "(it retries every 5s).",
+        )
 
     def test_redis_failure_keeps_the_last_config(self):
         llms.llms_by_model_id = llms.index_llms({"haiku": HAIKU})

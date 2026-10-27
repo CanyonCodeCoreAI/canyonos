@@ -127,13 +127,9 @@ def quit_project(state):
             f"State was preserved at {state_path}, so `canyonos quit` can be retried."
         )
     elif not exists:
-        ui.warn(
-            f"Global Controller container {container_id[:12]} was already gone; cleaned up local state."
-        )
+        ui.warn("The deploy was already gone; cleaned up local state.")
     else:
-        ui.ok(
-            f"Global Controller container {container_id[:12]} torn down (volume removed)"
-        )
+        ui.ok("Deploy torn down")
     return failures
 
 

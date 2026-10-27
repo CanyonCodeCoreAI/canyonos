@@ -12,8 +12,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import yaml
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from canyonos_core.controller.global_controller import GlobalController
@@ -283,7 +281,7 @@ class ScalingEntryPointTests(unittest.TestCase):
             "agents": [{**ALPHA_SPEC, "replicas": 5}]
         }
 
-        with self.assertRaises(yaml.YAMLError):
+        with self.assertRaisesRegex(RuntimeError, r"broken\.yaml:2: is not valid YAML"):
             controller.reload_config()
 
         self.assertEqual(
