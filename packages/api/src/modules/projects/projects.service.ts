@@ -5,7 +5,7 @@ import { conflict, notFound } from '@core/errors';
 
 import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
 import { projects_repo } from './projects.repo';
-import type { ProjectStats, ProjectSummary } from './projects.types';
+import type { ProjectDeleted, ProjectStats, ProjectSummary } from './projects.types';
 
 function project_not_found(project_id: string) {
   return notFound('projects.not_found', `Project "${project_id}" was not found`);
@@ -30,7 +30,7 @@ export async function get_project_stats(project_id: string): Promise<ProjectStat
 }
 
 // A project whose Redis can't be reached counts as stopped: stopping it removes that Redis.
-export async function delete_project(project_id: string): Promise<{ project_id: string }> {
+export async function delete_project(project_id: string): Promise<ProjectDeleted> {
   const running = await with_redis(project_id, (redis) =>
     assert_project_running(redis, project_id)
   ).then(

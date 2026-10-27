@@ -18,6 +18,7 @@ Your deploy appears under **Projects**, named after your project folder. Open it
 
 ## What each page shows
 
+- **Status** (the project's row in the sidebar): whether it is running, its endpoint, and its replicas. A stopped project can be deleted from here, which removes it and its telemetry from the dashboard.
 - **Overview** (the page you land on when you open a project): query count, spend, tokens, and cost per query, by agent or by query.
 - **Traces**: traffic and p95 latency, and one row per request. Expand a row to see each agent call on a timeline.
 - **Logs**: log lines, filterable by agent and replica.

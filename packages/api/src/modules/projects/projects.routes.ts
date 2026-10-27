@@ -12,7 +12,12 @@ import { promptsRoutes } from '../prompts/prompts.routes';
 import { requestsRoutes } from '../requests/requests.routes';
 import { scalingRoutes } from '../scaling/scaling.routes';
 import { delete_project, get_project, get_project_stats, list_projects } from './projects.service';
-import { ProjectIdParams, ProjectStatsSchema, ProjectSummarySchema } from './projects.types';
+import {
+  ProjectDeletedSchema,
+  ProjectIdParams,
+  ProjectStatsSchema,
+  ProjectSummarySchema,
+} from './projects.types';
 
 const doc = { tags: ['Projects'], security: [{ bearerAuth: [] }] };
 
@@ -30,7 +35,7 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
   })
   .delete('/:project_id', ({ params }) => delete_project(params.project_id), {
     params: ProjectIdParams,
-    response: { 200: ProjectIdParams },
+    response: { 200: ProjectDeletedSchema },
     detail: { ...doc, summary: 'Delete a project that is not running' },
   })
   .get('/:project_id/stats', ({ params }) => get_project_stats(params.project_id), {

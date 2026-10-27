@@ -22,5 +22,8 @@ export const ProjectStatsSchema = z.object({
   tool_count: z.number().int().nonnegative(),
 });
 
+export const ProjectDeletedSchema = z.object({ project_id: z.string().uuid() });
+
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 export type ProjectStats = z.infer<typeof ProjectStatsSchema>;
+export type ProjectDeleted = z.infer<typeof ProjectDeletedSchema>;

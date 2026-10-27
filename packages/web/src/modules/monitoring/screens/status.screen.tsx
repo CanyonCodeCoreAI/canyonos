@@ -4,7 +4,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { Trash2Icon } from 'lucide-react';
-import { useState } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { MonitoringEndpoint, MonitoringEndpointResponse } from '@canyonos/api/monitoring';
@@ -83,7 +82,11 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
           {project.data?.name ?? 'Status'}
         </h1>
         <StatusBadge deployment={deployment} />
-        <DeleteProjectButton project_id={project_id} name={project.data?.name} />
+        <DeleteProjectButton
+          project_id={project_id}
+          name={project.data?.name}
+          deployment={deployment}
+        />
       </header>
 
       <EndpointCard deployment={deployment} endpoint={endpoint.data?.endpoint} />
@@ -159,27 +162,14 @@ function StatusBadge({ deployment }: { readonly deployment: Deployment }) {
 function DeleteProjectButton({
   project_id,
   name,
+  deployment,
 }: {
   readonly project_id: string;
   readonly name: string | undefined;
+  readonly deployment: Deployment;
 }) {
-  const navigate = useNavigate();
-  const remove = useDeleteProject(project_id);
-  const [open, setOpen] = useState(false);
-  const destroy = () =>
-    remove.mutate(undefined, {
-      onSuccess: () => {
-        toast.success('Project deleted.', TOAST);
-        void navigate({ to: '/' });
-      },
-      onError: (error) => {
-        setOpen(false);
-        toast.error(error.message, TOAST);
-      },
-    });
-
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
+    <AlertDialog>
       <AlertDialogTrigger asChild>
         <Button
           size="sm"
@@ -192,31 +182,94 @@ function DeleteProjectButton({
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent data-testid="status-delete-dialog">
+        <DeleteProjectDialog
+          project_id={project_id}
+          name={name ?? 'this project'}
+          deployment={deployment}
+        />
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// Mounted by the dialog while it is open, so each opening starts from a fresh mutation.
+function DeleteProjectDialog({
+  project_id,
+  name,
+  deployment,
+}: {
+  readonly project_id: string;
+  readonly name: string;
+  readonly deployment: Deployment;
+}) {
+  const navigate = useNavigate();
+  const remove = useDeleteProject(project_id);
+
+  if (deployment === 'running') {
+    return (
+      <>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete {name ?? 'this project'}?</AlertDialogTitle>
+          <AlertDialogTitle>{name} is still running</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes the project and all its telemetry from the dashboard. This can&apos;t be
-            undone.
+            Run <code>canyonos quit</code> in its folder, then delete it.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel asChild>
-            <Button size="sm" variant="outline" disabled={remove.isPending}>
-              Cancel
+            <Button size="sm" variant="outline">
+              Close
             </Button>
           </AlertDialogCancel>
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={remove.isPending}
-            onClick={destroy}
-            data-testid="status-delete-confirm"
-          >
-            {remove.isPending ? 'Deleting…' : 'Delete'}
-          </Button>
         </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      </>
+    );
+  }
+
+  const destroy = () =>
+    remove.mutate(undefined, {
+      onSuccess: () => {
+        toast.success('Project deleted.', TOAST);
+        void navigate({ to: '/' });
+      },
+    });
+
+  return (
+    <>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
+        <AlertDialogDescription>
+          This removes the project and all its telemetry from the dashboard. This can&apos;t be
+          undone.
+        </AlertDialogDescription>
+        <DeleteError message={remove.error?.message} />
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel asChild>
+          <Button size="sm" variant="outline" disabled={remove.isPending}>
+            Cancel
+          </Button>
+        </AlertDialogCancel>
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={remove.isPending}
+          onClick={destroy}
+          data-testid="status-delete-confirm"
+        >
+          {remove.isPending ? 'Deleting…' : 'Delete'}
+        </Button>
+      </AlertDialogFooter>
+    </>
+  );
+}
+
+function DeleteError({ message }: { readonly message: string | undefined }) {
+  if (!message) return null;
+
+  return (
+    <p className="text-destructive text-sm" role="alert" data-testid="status-delete-error">
+      {message}
+    </p>
   );
 }
 

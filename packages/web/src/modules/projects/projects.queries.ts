@@ -11,7 +11,7 @@ import type {
   MetricsKpis,
   MetricsTimeseries,
 } from '@canyonos/api/metrics';
-import type { ProjectSummary } from '@canyonos/api/projects';
+import type { ProjectDeleted, ProjectSummary } from '@canyonos/api/projects';
 import type { RequestList, RequestStatus, RequestTrace } from '@canyonos/api/requests';
 import type { FleetOverview } from '@canyonos/api/resources';
 
@@ -58,8 +58,7 @@ export function useDeleteProject(project_id: string) {
   const query_client = useQueryClient();
 
   return useMutation({
-    mutationFn: () =>
-      apiCall<{ project_id: string }>(() => forgeAuthApi.projects[project_id]!.delete()),
+    mutationFn: () => apiCall<ProjectDeleted>(() => forgeAuthApi.projects[project_id]!.delete()),
     onSuccess: () =>
       query_client.invalidateQueries({ queryKey: projectQueryKeys.all, exact: true }),
   });

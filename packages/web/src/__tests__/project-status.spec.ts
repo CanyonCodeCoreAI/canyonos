@@ -12,10 +12,17 @@ import type {
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/projects';
-import { PROJECT, stubFleetSpend, stubProjectDashboard, stubProjectsList } from './helpers/session';
+import {
+  expectPath,
+  PROJECT,
+  stubFleetSpend,
+  stubProjectDashboard,
+  stubProjectsList,
+} from './helpers/session';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
-const STATUS_PATH = `/projects/${PROJECT.id}/status`;
+const PROJECT_PATH = `/projects/${PROJECT.id}`;
+const STATUS_PATH = `${PROJECT_PATH}/status`;
 const MONITORING_PATH = `/projects/${PROJECT.id}/monitoring`;
 const ENDPOINT_URL = 'http://203.0.113.7:8080/main';
 const STATUS_URL = 'http://203.0.113.7:8080/status';
@@ -112,6 +119,23 @@ const notRunning: Handler = (route) =>
     404
   );
 
+const STILL_RUNNING =
+  'This project is still running. Run `canyonos quit` in its folder, then delete it.';
+
+/** Answers the project's DELETE and records each one; reads fall through to the page stubs. */
+async function stubDelete(page: Page, handler: Handler): Promise<string[]> {
+  const deletes: string[] = [];
+  await page.route(
+    (url) => url.origin === apiOrigin && url.pathname === PROJECT_PATH,
+    (route) => {
+      if (route.request().method() !== 'DELETE') return route.fallback();
+      deletes.push(route.request().url());
+      return handler(route);
+    }
+  );
+  return deletes;
+}
+
 test('a running project shows its endpoint, the summary tiles and the containers by agent', async ({
   page,
 }) => {
@@ -199,4 +223,51 @@ test('no replicas up shows the empty containers state', async ({ page }) => {
   await expect(page.getByTestId('metrics-containers-error')).toHaveCount(0);
   await expect(page.getByTestId('status-tile-replicas-value')).toHaveText('0');
   await expect(page.getByTestId('status-tile-agents-value')).toHaveText('0');
+});
+
+test('a running project cannot be deleted; the dialog says to quit it first', async ({ page }) => {
+  await openStatus(page);
+  const deletes = await stubDelete(page, (route) => fulfillJson(route, { project_id: PROJECT.id }));
+  await expect(page.getByTestId('status-badge')).toHaveText('Running');
+
+  await page.getByTestId('status-delete-project').click();
+  const dialog = page.getByTestId('status-delete-dialog');
+  await expect(dialog).toContainText(`${PROJECT.name} is still running`);
+  await expect(page.getByTestId('status-delete-confirm')).toHaveCount(0);
+
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
+  expect(deletes).toEqual([]);
+});
+
+test('deleting a stopped project removes it and returns to the projects list', async ({ page }) => {
+  await openStatus(page, { endpoint: notRunning });
+  const deletes = await stubDelete(page, (route) => fulfillJson(route, { project_id: PROJECT.id }));
+  await expect(page.getByTestId('status-badge')).toHaveText('Not running');
+
+  await page.getByTestId('status-delete-project').click();
+  await expect(page.getByTestId('status-delete-dialog')).toContainText(`Delete ${PROJECT.name}?`);
+  await page.getByTestId('status-delete-confirm').click();
+
+  await expect(page.getByTestId('app-toast')).toContainText('Project deleted.');
+  await expectPath(page, '/projects');
+  expect(deletes).toHaveLength(1);
+});
+
+test('a delete the API refuses keeps the dialog open with the reason', async ({ page }) => {
+  await openStatus(page, { endpoint: notRunning });
+  await stubDelete(page, (route) =>
+    fulfillJson(route, { error: 'projects.running', message: STILL_RUNNING }, 409)
+  );
+  await expect(page.getByTestId('status-badge')).toHaveText('Not running');
+
+  await page.getByTestId('status-delete-project').click();
+  await page.getByTestId('status-delete-confirm').click();
+
+  const dialog = page.getByTestId('status-delete-dialog');
+  await expect(dialog.getByTestId('status-delete-error')).toHaveText(STILL_RUNNING);
+  await expect(page.getByTestId('status-delete-confirm')).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+  await expectPath(page, STATUS_PATH);
 });
