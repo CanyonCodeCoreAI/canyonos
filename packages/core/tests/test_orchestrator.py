@@ -4,11 +4,18 @@
 """The seam between deciding and running replicas: the Global Controller asks
 `gc.orchestrator`."""
 
+import os
 import unittest
 from unittest.mock import MagicMock, call, patch
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.controller.orchestrator import CanyonOrchestrator
+from canyonos_core.controller.kubernetes_api import KubernetesError
+from canyonos_core.controller.orchestrator import (
+    TARGET_ENV,
+    KubernetesOrchestrator,
+    CanyonOrchestrator,
+    orchestrator_for,
+)
 
 
 def _controller():
@@ -25,6 +32,122 @@ class OrchestratorForTests(unittest.TestCase):
         controller = _controller()
         self.assertIsInstance(controller.orchestrator, CanyonOrchestrator)
         self.assertIs(controller.orchestrator, controller.orchestrator)
+
+    def test_kubernetes_means_operator_managed(self):
+        with (
+            patch.dict(os.environ, {TARGET_ENV: "kubernetes"}),
+            patch(
+                "canyonos_core.controller.orchestrator.KubernetesApi.from_environment"
+            ),
+        ):
+            self.assertIsInstance(
+                orchestrator_for(_controller()), KubernetesOrchestrator
+            )
+
+
+class OperatorManagedTests(unittest.TestCase):
+    def setUp(self):
+        self.gc = _controller()
+        self.api = MagicMock()
+        self.manager = KubernetesOrchestrator(self.gc, api=self.api)
+
+    def test_it_uses_the_project_redis_the_operator_names(self):
+        with patch.dict(
+            os.environ,
+            {"CANYONOS_REDIS_HOST": "canyonos-redis", "CANYONOS_REDIS_PORT": "6380"},
+        ):
+            self.manager.start_support_services()
+        kwargs = self.gc.redis.client.connection_pool.connection_kwargs
+        self.assertEqual((kwargs["host"], kwargs["port"]), ("canyonos-redis", 6380))
+        self.assertEqual(self.gc._redis_addr, ("canyonos-redis", 6380))
+        self.assertIs(
+            self.manager.machine_redis_for_replica({"private_host": "pod-0"}),
+            self.gc.redis,
+        )
+
+    def test_without_a_named_redis_it_refuses_to_start(self):
+        with patch.dict(os.environ):
+            os.environ.pop("CANYONOS_REDIS_HOST", None)
+            with self.assertRaisesRegex(RuntimeError, "CANYONOS_REDIS_HOST"):
+                self.manager.start_support_services()
+
+    def test_scaling_patches_the_canyonagent(self):
+        self.assertEqual(self.manager.set_replicas("Alpha", 3), 3)
+        self.api.scale_canyon_agent.assert_called_once_with("Alpha", 3)
+        self.assertEqual(self.manager.set_replicas("Alpha", -2), 0)
+
+    def test_configured_counts_are_left_to_the_canyonagents(self):
+        self.manager.apply_configured_replicas({"Alpha": 2})
+        self.api.scale_canyon_agent.assert_not_called()
+
+    def test_it_starts_runs_and_removes_nothing(self):
+        supervisor = MagicMock()
+        self.manager.remove_stale_containers()
+        self.manager.register_background_processes(supervisor)
+        self.assertIsNone(self.manager.replace_replica("Alpha", 0))
+        self.manager.forget_removed_agents({"Gone"})
+        self.assertTrue(self.manager.remove_all_replicas())
+        self.assertEqual(self.manager.stop_support_services(clean=True), [])
+        supervisor.register.assert_not_called()
+        self.api.assert_not_called()
+        self.assertEqual(self.api.method_calls, [])
+
+
+class OperatorManagedMachineMetricsTests(unittest.TestCase):
+    def setUp(self):
+        self.gc = _controller()
+        self.gc.config = {"project_id": "p1"}
+        self.api = MagicMock()
+        self.manager = KubernetesOrchestrator(self.gc, api=self.api)
+
+    @patch("canyonos_core.controller.orchestrator.otel_writer.metric_write_rows")
+    def test_pod_usage_is_recorded(self, write_rows):
+        self.api.project_pods.return_value = [
+            {
+                "metadata": {"name": "a-0"},
+                "spec": {"containers": [{"resources": {"limits": {"cpu": "1"}}}]},
+            }
+        ]
+        self.api.pod_metrics.return_value = [
+            {
+                "metadata": {"name": "a-0"},
+                "containers": [{"usage": {"cpu": "500m", "memory": "1Mi"}}],
+            }
+        ]
+        self.manager.poll_machine_metrics()
+        (rows,), _ = write_rows.call_args
+        self.assertEqual([(r["host"], r["project_id"]) for r in rows], [("a-0", "p1")])
+
+    @patch("canyonos_core.controller.orchestrator.otel_writer.metric_write_rows")
+    def test_no_metrics_api_warns_once_until_it_answers_again(self, write_rows):
+        self.api.pod_metrics.side_effect = KubernetesError("404 metrics.k8s.io")
+        with self.assertLogs(
+            "canyonos_core.controller.orchestrator", "WARNING"
+        ) as logs:
+            self.manager.poll_machine_metrics()
+            self.manager.poll_machine_metrics()
+        self.assertEqual(len(logs.output), 1)
+        write_rows.assert_not_called()
+
+        self.api.pod_metrics.side_effect = None
+        self.api.pod_metrics.return_value = []
+        self.manager.poll_machine_metrics()
+        self.assertFalse(self.manager._metrics_unavailable)
+
+
+class ConfiguredReplicasTests(unittest.TestCase):
+    def test_the_controller_hands_valid_counts_to_its_manager(self):
+        controller = _controller()
+        controller.agent_specs = [
+            {"name": "Alpha", "replicas": 2},
+            {"name": "Beta", "replicas": "lots"},
+        ]
+        controller.orchestrator = MagicMock()
+        with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
+            controller._apply_configured_replicas()
+        controller.orchestrator.apply_configured_replicas.assert_called_once_with(
+            {"Alpha": 2}
+        )
 
 
 class TheControllerGoesThroughItsOrchestratorTests(unittest.TestCase):

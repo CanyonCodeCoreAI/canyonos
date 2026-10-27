@@ -71,16 +71,36 @@ should have, cleanup and telemetry. Starting, replacing and removing those repli
 the orchestrator's job. It goes through one object, `gc.orchestrator`
 (`controller/orchestrator.py`), so no other Global Controller code knows what runs them.
 
-`CanyonOrchestrator` (Docker and EC2): CanyonOS runs the replicas itself.
+`orchestrator_for` picks one, once, from `CANYONOS_TARGET`:
 
-| `gc.orchestrator` | What `CanyonOrchestrator` does |
+- `CanyonOrchestrator` (unset: Docker and EC2): CanyonOS runs the replicas itself.
+- `KubernetesOrchestrator` (`kubernetes`, set by the operator on the Global
+  Controller's pod): the operator turns each CanyonAgent into a StatefulSet and
+  Kubernetes keeps its pods running.
+
+| `gc.orchestrator` | `CanyonOrchestrator` | `KubernetesOrchestrator` |
+| --- | --- | --- |
+| `start_support_services()` | one Redis and one metrics collector per machine | connects to the project's Redis, which the operator runs |
+| `register_background_processes()` | the reconciler process, under the process supervisor | nothing: there is no reconciler |
+| `set_replicas(agent, n)` | the agent's desired count in Redis, then wakes the reconciler | patches the CanyonAgent's `/scale` |
+| `replace_replica(agent, slot)` | a replacement request the reconciler acts on | nothing: Kubernetes replaces failed pods |
+| `replica_log_tail(replica, lines)` | the replica container's last output, read on its machine | none: `kubectl logs` reads a pod's |
+| `remove_all_replicas()`, `stop_support_services(clean)` | the reconciler drains and removes every replica, then Redis and the collectors go | nothing: the agents keep running, and removing a project is the operator's job |
+
+The methods are only half of the contract. The Global Controller reads desired counts
+and the replica list straight from the project's Redis (`state.get_desired`,
+`list_replicas`), so every orchestrator must keep these up to date in the reconciler's
+format; the reconciler writes them on Docker and EC2, the operator on Kubernetes:
+
+| Key | Value |
 | --- | --- |
-| `start_support_services()` | one Redis and one metrics collector per machine |
-| `register_background_processes()` | the reconciler process, under the process supervisor |
-| `set_replicas(agent, n)` | the agent's desired count in Redis, then wakes the reconciler |
-| `replace_replica(agent, slot)` | a replacement request the reconciler acts on |
-| `replica_log_tail(replica, lines)` | the replica container's last output, read on its machine |
-| `remove_all_replicas()`, `stop_support_services(clean)` | the reconciler drains and removes every replica, then Redis and the collectors go |
+| `agent:<agent>:desired_replicas` | the agent's desired replica count |
+| `agent_instance:<agent>-<slot>` | one hash per running replica, with at least `agent_name`, `replica_index`, `private_host`, `host_port` and `address`; `address` is written last, so a record without it is a replica still starting |
+
+Settings that only differ by environment are not orchestrator methods: whatever
+launches the Global Controller sets an environment variable, and the code that needs
+it reads it (`CANYONOS_PUBLIC_IP` and `CANYONOS_ENDPOINT_URL` in `endpoint_record`,
+`CANYONOS_TARGET` in `_otel_destinations`).
 
 ## Local Controller startup
 

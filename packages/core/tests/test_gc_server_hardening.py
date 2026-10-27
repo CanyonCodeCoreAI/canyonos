@@ -86,4 +86,5 @@ def _get_endpoint(monkeypatch, tmp_path, config_yaml):
     monkeypatch.setattr(server, "_config_path", str(config))
     monkeypatch.setattr(server, "_gc_process", SimpleNamespace(poll=lambda: None))
     monkeypatch.delenv("CANYONOS_PUBLIC_IP", raising=False)
+    monkeypatch.delenv("CANYONOS_ENDPOINT_URL", raising=False)
     return server.app.test_client().get("/endpoint").get_json()

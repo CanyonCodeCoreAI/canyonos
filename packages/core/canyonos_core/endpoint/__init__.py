@@ -11,6 +11,7 @@ question it is waiting on.
 
 import json
 import os
+from urllib.parse import urlsplit
 
 # The HTTP port inside the endpoint's container, and the default `api_port` it is
 # published on.
@@ -29,7 +30,11 @@ ADDRESS_KEY = "endpoint:address"
 def endpoint_record(manifest):
     """Return where callers reach the endpoint of a validated manifest: its public host,
     port and URL, the agent and method it serves, and that method's argument names
-    from its `functions:` entry. The Global Controller publishes it at ADDRESS_KEY."""
+    from its `functions:` entry. The Global Controller publishes it at ADDRESS_KEY.
+
+    CANYONOS_ENDPOINT_URL, when set, is the endpoint's base URL (on Kubernetes the
+    operator sets its Route, Ingress or in-cluster Service). Otherwise it is the
+    `api_port` published on CANYONOS_PUBLIC_IP, or on 127.0.0.1."""
     endpoint = manifest.endpoint
     agent_spec = next(
         agent_spec
@@ -37,14 +42,23 @@ def endpoint_record(manifest):
         if agent_spec.name == endpoint.agent
     )
     function = next(f for f in agent_spec.functions if f.name == endpoint.method)
-    public_host = os.environ.get("CANYONOS_PUBLIC_IP") or "127.0.0.1"
+    base_url = os.environ.get("CANYONOS_ENDPOINT_URL")
+    if base_url:
+        parts = urlsplit(base_url)
+        public_host = parts.hostname
+        api_port = parts.port or (443 if parts.scheme == "https" else 80)
+        base_url = base_url.rstrip("/")
+    else:
+        public_host = os.environ.get("CANYONOS_PUBLIC_IP") or "127.0.0.1"
+        api_port = endpoint.api_port
+        base_url = f"http://{public_host}:{api_port}"
     return {
         "public_host": public_host,
-        "api_port": endpoint.api_port,
+        "api_port": api_port,
         "agent": endpoint.agent,
         "method": endpoint.method,
         "arguments": [argument.name for argument in function.arguments],
-        "url": f"http://{public_host}:{endpoint.api_port}/{endpoint.method}",
+        "url": f"{base_url}/{endpoint.method}",
     }
 
 

@@ -416,6 +416,16 @@ def _cmd_deploy(args):
     controller.run()
 
 
+def _cmd_run_gc(args):
+    """Run the Global Controller on its own, as a Kubernetes pod (controller/run_gc.py)."""
+    from canyonos_core.controller import run_gc
+
+    if not os.path.isfile(args.config):
+        logger.error("Config file not found: %s", args.config)
+        sys.exit(1)
+    run_gc.run(args.config)
+
+
 # ------------------------------------------------------------------ #
 #  canyonos clean                                                        #
 # ------------------------------------------------------------------ #
@@ -477,6 +487,19 @@ def main():
         help=f"Path to global controller config (default: {default_config_path})",
     )
     deploy.set_defaults(func=_cmd_deploy)
+
+    # canyonos_core run-gc: the Global Controller alone, as a Kubernetes pod
+    run_gc = subparsers.add_parser(
+        "run-gc",
+        help="Run only the Global Controller, on Kubernetes (no build, no containers)",
+    )
+    run_gc.add_argument(
+        "-c",
+        "--config",
+        default=default_config_path,
+        help=f"Path to global controller config (default: {default_config_path})",
+    )
+    run_gc.set_defaults(func=_cmd_run_gc)
 
     # canyonos clean
     clean = subparsers.add_parser(

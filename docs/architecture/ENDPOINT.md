@@ -140,6 +140,10 @@ config and deletes it when the deploy stops:
 | `arguments` | JSON list of the method's argument names, from `functions` |
 | `url` | `http://<public_host>:<api_port>/<method>` |
 
+When `CANYONOS_ENDPOINT_URL` is set (on Kubernetes the operator sets it to the
+endpoint's Route, Ingress or in-cluster Service), `url` is `<CANYONOS_ENDPOINT_URL>/<method>`
+and `public_host` and `api_port` come from that URL.
+
 Readers:
 
 - the Global Controller container's server answers `GET /endpoint` on port `8000` with

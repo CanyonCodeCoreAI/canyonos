@@ -29,7 +29,7 @@ from canyonos_core.controller.controller_context import (
     list_replicas,
 )
 from canyonos_core.controller import scaling
-from canyonos_core.controller.orchestrator import CanyonOrchestrator
+from canyonos_core.controller.orchestrator import TARGET_ENV, orchestrator_for
 from canyonos_core.endpoint import ADDRESS_KEY, endpoint_record
 from canyonos_core.scaling import contract
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
@@ -77,6 +77,8 @@ logger = logging.getLogger(__name__)
 STOP_TIMEOUT_SECONDS = 240
 
 LOCAL_NETWORK = "canyonos-local"
+# Docker Desktop's name for the host machine; it means nothing inside a cluster.
+DOCKER_HOST = "host.docker.internal"
 GLOBAL_CONTROLLER_LOG_SOURCE = "Global Controller"
 
 # How long a replica may stay short of "healthy" before the deploy is called dead; covers the slowest cold start.
@@ -229,8 +231,8 @@ class GlobalController(ControllerContext):
 
     @cached_property
     def orchestrator(self):
-        """Who runs this project's replicas (controller/orchestrator.py)."""
-        return CanyonOrchestrator(self)
+        """Who runs this project's replicas (controller/orchestrator.py), picked on first use."""
+        return orchestrator_for(self)
 
     # ------------------------------------------------------------------ #
     #  Stale container removal                                             #
@@ -292,10 +294,28 @@ class GlobalController(ControllerContext):
 
     @staticmethod
     def _otel_destinations(otel_cfg):
-        """Resolve otel.destinations (${ENV_VAR} refs expanded), or None if absent."""
+        """Resolve otel.destinations (${ENV_VAR} refs expanded), or None if absent.
+
+        On Kubernetes, destinations on host.docker.internal (Docker Desktop's way back
+        to the laptop, which no cluster has) are skipped, and None is returned when
+        nothing is left: the exporter then flushes instead of exporting."""
         if "destinations" not in otel_cfg:
             return None
-        return ControllerContext._expand_env_value(otel_cfg["destinations"])
+        destinations = ControllerContext._expand_env_value(otel_cfg["destinations"])
+        if os.environ.get(TARGET_ENV) != "kubernetes":
+            return destinations
+        kept = []
+        for destination in destinations or []:
+            if DOCKER_HOST in str(destination.get("endpoint", "")):
+                logger.info(
+                    "Skipping OTel destination %s on Kubernetes: %s is unreachable "
+                    "in a cluster.",
+                    destination.get("name"),
+                    DOCKER_HOST,
+                )
+            else:
+                kept.append(destination)
+        return kept or None
 
     def _write_otel_destinations(self, destinations):
         try:
@@ -1165,6 +1185,7 @@ class GlobalController(ControllerContext):
 
     def _apply_configured_replicas(self):
         """Reset every agent's replica count to what the YAML says, at startup and on reload."""
+        counts = {}
         for agent_spec in self.agent_specs:
             count = state.replica_count(agent_spec)
             if count is None:
@@ -1175,7 +1196,8 @@ class GlobalController(ControllerContext):
                     agent_spec.get("replicas"),
                 )
                 continue
-            self._set_replicas(agent_spec["name"], count)
+            counts[agent_spec["name"]] = count
+        self.orchestrator.apply_configured_replicas(counts)
 
     def _replace_replica(self, agent_name, replica_index):
         """Remove one replica; the desired count is unchanged, so the slot is refilled."""

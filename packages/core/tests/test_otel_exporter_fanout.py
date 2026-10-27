@@ -42,6 +42,20 @@ if "local_controller_pb2_grpc" not in sys.modules:
     sys.modules["local_controller_pb2_grpc"] = local_pb2_grpc
 
 
+DOCKER_DESKTOP = {
+    "name": "local",
+    "protocol": "http",
+    "endpoint": "http://host.docker.internal:3000",
+    "headers": {},
+}
+IN_CLUSTER = {
+    "name": "collector",
+    "protocol": "grpc",
+    "endpoint": "otel-collector.monitoring:4317",
+    "headers": {},
+}
+
+
 class OTelExporterFanoutTests(unittest.TestCase):
     def setUp(self):
         self.db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -166,6 +180,24 @@ class OTelExporterFanoutTests(unittest.TestCase):
         from canyonos_core.controller.global_controller import GlobalController
 
         self.assertIsNone(GlobalController._otel_destinations({}))
+
+    def _destinations_on(self, target, destinations):
+        from canyonos_core.controller.global_controller import GlobalController
+
+        with patch.dict(os.environ, {"CANYONOS_TARGET": target}, clear=True):
+            return GlobalController._otel_destinations({"destinations": destinations})
+
+    def test_docker_keeps_docker_desktop_destinations(self):
+        self.assertEqual(self._destinations_on("", [DOCKER_DESKTOP]), [DOCKER_DESKTOP])
+
+    def test_kubernetes_skips_docker_desktop_destinations(self):
+        destinations = self._destinations_on("kubernetes", [DOCKER_DESKTOP, IN_CLUSTER])
+
+        self.assertEqual(destinations, [IN_CLUSTER])
+
+    def test_kubernetes_with_nothing_left_has_no_destinations(self):
+        """The exporter refuses an empty list; None makes it flush instead."""
+        self.assertIsNone(self._destinations_on("kubernetes", [DOCKER_DESKTOP]))
 
     def _insert_pending_row(self):
         conn = sqlite3.connect(self.db_path)
