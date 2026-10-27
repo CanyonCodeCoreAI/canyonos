@@ -23,6 +23,8 @@ STOPPING_TTL_SECONDS = 60
 # Agent name -> why its last launch failed; a launch that succeeds clears it.
 LAUNCH_ERRORS_KEY = "reconciler:launch_errors"
 
+IMAGES_READY_KEY = "reconciler:images_ready"
+
 
 # ------------------------------------------------------------------ #
 #  Desired replica counts                                            #
@@ -148,3 +150,23 @@ def is_stopping(redis_client):
     """Return True while the Global Controller is tearing the fleet down, during which
     every agent is held at zero replicas."""
     return redis_client.get(STOPPING_KEY) is not None
+
+
+# ------------------------------------------------------------------ #
+#  Images                                                            #
+# ------------------------------------------------------------------ #
+
+
+def set_images_ready(redis_client):
+    """Let launches start their containers: this deploy's images are built."""
+    redis_client.set(IMAGES_READY_KEY, 1)
+
+
+def clear_images_ready(redis_client):
+    """Hold launches until this deploy's images are built."""
+    redis_client.delete(IMAGES_READY_KEY)
+
+
+def images_ready(redis_client):
+    """Return True once this deploy's images are built."""
+    return redis_client.get(IMAGES_READY_KEY) is not None

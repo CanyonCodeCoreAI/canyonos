@@ -125,9 +125,11 @@ class Reconciler(object):
                 for machine in self.machine_provisioner.machines_for_replicas()
                 if machine["launch_id"] not in surplus
             ]
-            self.replica_provisioner.ensure_replicas(
-                agent_specs, machines, only=agent_names
-            )
+            # Replicas wait for this deploy's images; marking them built wakes this loop.
+            if state.images_ready(self.context.redis):
+                self.replica_provisioner.ensure_replicas(
+                    agent_specs, machines, only=agent_names
+                )
         except Exception as e:
             logger.warning("Failed to provision missing replicas: %s", e)
 

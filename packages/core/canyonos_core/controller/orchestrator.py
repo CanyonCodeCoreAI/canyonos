@@ -97,6 +97,12 @@ class CanyonOrchestrator:
                 cleanup_error,
             )
 
+    def mark_images_ready(self):
+        """Let the reconciler launch replicas, once this deploy's images are built, and
+        wake it to do so."""
+        state.set_images_ready(self.gc.redis)
+        self.gc._request_reconcile(state.WAKE_ALL)
+
     def set_replicas(self, agent_name, count):
         """Make `count` the agent's desired replica count; the reconciler converges."""
         desired = state.set_desired(self.gc.redis, agent_name, count)

@@ -17,7 +17,7 @@ from botocore.exceptions import ClientError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.reconciler import providers
+from canyonos_core.reconciler import providers, state
 
 
 class _FakeRedis:
@@ -234,6 +234,7 @@ def _bare_reconciler(context, provisioner, **overrides):
     from canyonos_core.reconciler.reconciler import Reconciler
 
     _seed_replica_records(context.redis, provisioner)
+    state.set_images_ready(context.redis)
     provisioner.redis = context.redis
     reconciler = Reconciler.__new__(Reconciler)
     reconciler.context = context
@@ -295,7 +296,7 @@ class _FakeWaiter:
     def __init__(self):
         self.calls = []
 
-    def wait(self, InstanceIds):
+    def wait(self, InstanceIds, WaiterConfig=None):
         self.calls.append(list(InstanceIds))
 
 

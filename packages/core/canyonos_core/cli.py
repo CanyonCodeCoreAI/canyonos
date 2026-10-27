@@ -16,6 +16,8 @@ import logging
 import os
 import subprocess
 import sys
+import threading
+from functools import partial
 
 from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.controller.utils.docker_utils import docker_available
@@ -29,6 +31,8 @@ from canyonos_core.schema import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("canyonos_core")
+
+BUILD_FAILED = "Could not build the agent images; the build output above says why."
 ARTIFACT_DIR_NAME = ".canyon"
 SOURCE_DIR_NAME = "app"
 
@@ -142,8 +146,10 @@ def _ensure_grpc_stubs_importable(project_dir):
 
 def _run_build(config_path):
     """
-    Generate stubs, compile gRPC protos, generate Docker contexts,
-    and build Docker images.
+    Generate stubs, compile gRPC protos and generate Docker contexts, and start
+    pulling database images. Returns a function that, given a list to add its build
+    processes to, builds the agent images and waits for those pulls, so
+    `canyonos deploy` can start the Global Controller while the images build.
 
     Must be run from the project root (where config/ lives). Invoked as the
     first phase of `canyonos deploy`.
@@ -247,6 +253,8 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     platform = target_docker_platform(config.get("provider", providers.DEFAULT))
     bake_targets = []
+    # Pulled while the agent images build, by processes so a stop never waits on one.
+    database_pulls = []
     for agent_spec in agent_specs:
         agent_name = agent_spec["name"]
         agent_type = agent_spec.get("type", "agent")
@@ -258,17 +266,12 @@ def _run_build(config_path):
             image = agent_spec["image"]
             target_image = image_name(agent_name)
             logger.info("Pulling database image '%s' as '%s'", image, target_image)
-            pull = subprocess.run(
+            pull = subprocess.Popen(
                 ["docker", "pull", "--platform", platform, image],
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            if pull.returncode:
-                raise RuntimeError(
-                    f"Could not pull image {image} for database agent {agent_name}: "
-                    f"{pull.stderr.strip()}. Check `image:` in {config_path}."
-                )
-            subprocess.run(["docker", "tag", image, target_image], check=True)
+            database_pulls.append((pull, image, target_image, agent_name))
             continue
 
         # Every key read below is one the schema requires and has checked,
@@ -296,9 +299,29 @@ def _run_build(config_path):
             }
         )
 
-    # -------------------------------------------------------------- #
-    #  Step 5: Build all Docker images                                #
-    # -------------------------------------------------------------- #
+    return partial(
+        _build_images,
+        config_path,
+        artifact_root,
+        bake_targets,
+        platform,
+        database_pulls,
+    )
+
+
+def _build_images(
+    config_path, artifact_root, bake_targets, platform, database_pulls, processes
+):
+    """Build every agent image `_run_build` generated a Docker context for, adding each
+    build process to `processes`, then wait for its database image pulls and tag them;
+    raises if any of them fails."""
+
+    def run_build(cmd):
+        build = subprocess.Popen(cmd)
+        processes.append(build)
+        if build.wait():
+            raise subprocess.CalledProcessError(build.returncode, cmd)
+
     if not bake_targets:
         logger.info("No Docker images to build.")
     elif docker_available() and docker_available(("docker", "buildx", "version")):
@@ -312,17 +335,16 @@ def _run_build(config_path):
             "Building %d Docker image(s) via `docker buildx bake`.",
             len(bake_targets),
         )
-        subprocess.run(
-            ["docker", "buildx", "bake", "--file", bake_file_path, *target_names],
-            check=True,
-        )
+        run_build(["docker", "buildx", "bake", "--file", bake_file_path, *target_names])
     else:
         logger.info(
-            "docker buildx unavailable; falling back to sequential `docker build`."
+            "Building %d Docker image(s) via sequential `docker build`: docker buildx "
+            "is unavailable.",
+            len(bake_targets),
         )
         for target in bake_targets:
             logger.info("Building Docker image: %s", target["image_name"])
-            subprocess.run(
+            run_build(
                 [
                     "docker",
                     "build",
@@ -331,10 +353,17 @@ def _run_build(config_path):
                     "-t",
                     target["image_name"],
                     target["context"],
-                ],
-                check=True,
+                ]
             )
 
+    for pull, image, target_image, agent_name in database_pulls:
+        _, stderr = pull.communicate()
+        if pull.returncode:
+            raise RuntimeError(
+                f"Could not pull image {image} for database agent {agent_name}: "
+                f"{stderr.strip()}. Check `image:` in {config_path}."
+            )
+        subprocess.run(["docker", "tag", image, target_image], check=True)
     logger.info("Build complete.")
 
 
@@ -356,17 +385,14 @@ def _cmd_deploy(args):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
 
-    # Build first (stubs, protos, Docker contexts, images), then deploy them.
-    # `canyonos build` was merged into `canyonos deploy`.
+    # Stubs, protos and Docker contexts first; the images build while the controller starts.
     try:
-        _run_build(config_path)
+        build_images = _run_build(config_path)
     except RuntimeError as e:
         logger.critical("%s", e)
         sys.exit(1)
     except subprocess.CalledProcessError:
-        logger.critical(
-            "Could not build the agent images; the build output above says why."
-        )
+        logger.critical(BUILD_FAILED)
         sys.exit(1)
 
     config = load_config(config_path)
@@ -386,6 +412,28 @@ def _cmd_deploy(args):
     _ensure_grpc_stubs_importable(artifact_root)
 
     providers.get(config.get("provider", providers.DEFAULT)).preflight()
+
+    build_failures = []
+    build_processes = []
+
+    def _build():
+        try:
+            build_images(build_processes)
+        except subprocess.CalledProcessError:
+            build_failures.append(BUILD_FAILED)
+        except Exception as e:
+            build_failures.append(str(e))
+
+    # Stopped at exit, so an abandoned build never tags images over the next deploy's.
+    def _stop_builds():
+        for build in build_processes:
+            build.terminate()
+
+    atexit.register(_stop_builds)
+
+    # Daemon, so a stop during the build exits without waiting for it to finish.
+    builder = threading.Thread(target=_build, daemon=True)
+    builder.start()
 
     from canyonos_core.controller.global_controller import GlobalController
 
@@ -415,6 +463,13 @@ def _cmd_deploy(args):
             logger.error("Reload failed: %s", e)
 
     signal.signal(signal.SIGHUP, _reload_handler)
+
+    # Joined first, so readiness's timeout does not run during a long build.
+    builder.join()
+    if build_failures:
+        logger.critical("%s", build_failures[0])
+        sys.exit(1)
+    controller.orchestrator.mark_images_ready()
 
     logger.info("Deploying from config: %s", config_path)
     try:

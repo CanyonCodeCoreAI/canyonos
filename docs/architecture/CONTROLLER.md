@@ -39,29 +39,33 @@ POST /deploy
 canyonos_core.server.deploy
      └─▶ python -m canyonos_core.cli deploy -c <config_path>
               │
-              ├─ _run_build
+              ├─ _run_build ──▶ stubs, protos, Docker contexts; database pulls start
               ├─ _ensure_grpc_stubs_importable
-              └─ GlobalController(config_path)
-                    ├─ ControllerContext.__init__
-                    │    ├─ _load_config ──▶ .env + global_controller.yaml
-                    │    │                    + endpoint spec after the agents
-                    │    ├─ resolve_env_file
-                    │    └─ RedisClient
-                    ├─ orchestrator.remove_stale_containers ──▶ _remove_stale_containers
-                    ├─ orchestrator.start_support_services ──▶ _launch_redis_containers
-                    │                         _launch_metrics_collectors
-                    ├─ _apply_config
-                    │    ├─ write_config_specs
-                    │    ├─ _apply_configured_replicas
-                    │    ├─ _write_policies
-                    │    ├─ _write_identity
-                    │    └─ HSET endpoint:address
-                    ├─ schema.init_db
-                    ├─ ProcessSupervisor.start_all
-                    │    ├─ reconciler (orchestrator.register_background_processes)
-                    │    └─ otel_exporter
-                    └─ _cleanup_loop ──▶ _wait_for_healthy ──▶ run
-                                                               └─ _poll_controllers
+              ├─ builder thread: _build_images ──▶ buildx bake, then database tags
+              ├─ GlobalController(config_path)          (while the images build)
+              │     ├─ ControllerContext.__init__
+              │     │    ├─ _load_config ──▶ .env + global_controller.yaml
+              │     │    │                    + endpoint spec after the agents
+              │     │    ├─ resolve_env_file
+              │     │    └─ RedisClient
+              │     ├─ orchestrator.remove_stale_containers ──▶ _remove_stale_containers
+              │     ├─ orchestrator.start_support_services ──▶ _launch_redis_containers
+              │     │                         _launch_metrics_collectors
+              │     ├─ _apply_config
+              │     │    ├─ write_config_specs
+              │     │    ├─ _apply_configured_replicas
+              │     │    ├─ _write_policies
+              │     │    ├─ _write_identity
+              │     │    └─ HSET endpoint:address
+              │     ├─ state.clear_images_ready ──▶ replicas wait for the build
+              │     ├─ schema.init_db
+              │     ├─ ProcessSupervisor.start_all
+              │     │    ├─ reconciler (orchestrator.register_background_processes)
+              │     │    └─ otel_exporter
+              │     └─ _cleanup_loop
+              ├─ builder.join ──▶ orchestrator.mark_images_ready ──▶ wakes the reconciler
+              └─ _wait_for_healthy ──▶ run
+                                       └─ _poll_controllers
 ```
 
 ## The orchestrator

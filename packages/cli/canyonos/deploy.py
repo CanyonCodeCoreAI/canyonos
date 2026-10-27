@@ -32,12 +32,18 @@ from rich.text import Text
 
 from canyonos import project, ui
 from canyonos.constants import (
+    dashboard_port,
     default_config_path,
     endpoint_api_port,
     port_in_use,
     workspace_relative,
 )
-from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
+from canyonos.dashboard_stack import (
+    _dashboard_lock,
+    _existing_dashboard_port,
+    dashboard_url,
+    run_dashboard,
+)
 from canyonos.gc import GCError, deploy_status, deployed_endpoint, post_deploy
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import docker_env, load_state, run_init
@@ -131,7 +137,6 @@ _PHASES = (
     ("Generating stub:", "Generating stubs and Docker contexts...", None),
     ("Compiling gRPC proto:", "Generating stubs and Docker contexts...", None),
     ("Generating Docker context", "Generating stubs and Docker contexts...", None),
-    ("Building Docker image:", "Building images...", None),
     ("No Docker images to build.", None, "No images to build"),
     ("Build complete.", None, "Build complete"),
     ("Deploying from config:", "Starting deploy...", None),
@@ -153,6 +158,8 @@ class PhaseTracker:
         self.replicas_total = 0
         self.replicas_ready = set()
         self.open_steps = {}
+        # The controller starts while images build; its steps must not hide the build.
+        self.building = False
         self.in_container_log = False
         self.step_details = {}
         self.agent_errors = []
@@ -203,9 +210,11 @@ class PhaseTracker:
             self.open_steps.pop(closed.group(1), None)
         if "Build complete." in line:
             self.open_steps.clear()
+            self.building = False
 
         count = re.search(r"Building (\d+) Docker image\(s\) via", line)
         if count:
+            self.building = True
             self.spinner = f"Building {count.group(1)} images..."
             return self.spinner, None, False
 
@@ -226,7 +235,7 @@ class PhaseTracker:
             if marker in line:
                 # Repeats (one `Generating stub:` per agent) collapse: the
                 # spinner is only re-emitted when the message actually changes.
-                if spinner and spinner != self.spinner:
+                if spinner and spinner != self.spinner and not self.building:
                     self.spinner = spinner
                     return spinner, done, False
                 return None, done, False
@@ -316,6 +325,13 @@ def run_deploy(
         return None
 
     run_init(banner=banner)
+    if serve and not quiet and _existing_dashboard_port() is None:
+        # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
+        threading.Thread(
+            target=run_dashboard,
+            args=(None, dashboard_port(default_config_path())),
+            daemon=True,
+        ).start()
 
     # Non-empty once the workflow has reported ready; see the handler below.
     ready = []
@@ -433,11 +449,13 @@ def _print_deploy_summary(dashboard_url, endpoint):
 
 def _start_dashboard(report_failure=True):
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy."""
-    port = _existing_dashboard_port()
-    if port is not None:
-        _register_running_project()
-        return dashboard_url(port)
     try:
+        # Waits out a background start, so a half-started dashboard is not registered.
+        with ui.status("Starting the dashboard..."), _dashboard_lock():
+            port = _existing_dashboard_port()
+        if port is not None:
+            _register_running_project()
+            return dashboard_url(port)
         result = serve_dashboard(report_failure=report_failure)
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")

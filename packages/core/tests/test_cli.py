@@ -267,6 +267,12 @@ class CliBuildTests(unittest.TestCase):
             docker_calls.append(cmd)
             return SimpleNamespace(returncode=0)
 
+        def fake_popen(cmd, **_kwargs):
+            docker_calls.append(cmd)
+            return SimpleNamespace(
+                wait=lambda: 0, communicate=lambda: ("", ""), returncode=0
+            )
+
         with (
             patch(
                 "canyonos_core.cli._get_package_dir",
@@ -275,6 +281,7 @@ class CliBuildTests(unittest.TestCase):
             patch("canyonos_core.cli.glob.glob", return_value=["proto/a.proto"]),
             patch("canyonos_core.stub_generator.generate_docker") as generate_docker,
             patch("canyonos_core.cli.subprocess.run", side_effect=fake_run),
+            patch("canyonos_core.cli.subprocess.Popen", side_effect=fake_popen),
             patch("canyonos_core.cli.docker_available", return_value=buildx_available),
             patch(
                 "canyonos_core.stub_generator.target_docker_platform",
@@ -284,7 +291,7 @@ class CliBuildTests(unittest.TestCase):
             cwd = os.getcwd()
             os.chdir(project_dir)
             try:
-                cli._run_build(str(config_path))
+                cli._run_build(str(config_path))([])
             finally:
                 os.chdir(cwd)
 

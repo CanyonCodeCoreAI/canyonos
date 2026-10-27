@@ -320,6 +320,8 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
             "docker",
             "run",
             "-d",
+            # As PID 1 the server ignores SIGTERM, making `docker stop` wait 10s.
+            "--init",
             *project.project_label_args(),
             *project.gc_role_label_args(),
             "--name",

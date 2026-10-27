@@ -244,7 +244,10 @@ def wait_for_machine(machine):
     machine_id = machine["machine_id"]
     client = boto3.client("ec2", region_name=cfg["region"])
     try:
-        client.get_waiter("instance_running").wait(InstanceIds=[machine_id])
+        # Every 2s instead of the default 15s, keeping the default's 10-minute limit.
+        client.get_waiter("instance_running").wait(
+            InstanceIds=[machine_id], WaiterConfig={"Delay": 2, "MaxAttempts": 300}
+        )
     except WaiterError as e:
         reasons = [
             found["StateReason"]["Message"]

@@ -7,12 +7,10 @@ exporter beside it, and tracks controller health in Redis."""
 # Daemon process that maintains a routing table in Redis for multiple local controllers.
 # Periodically polls Redis to check controller health and updates the routing table.
 
-import atexit
 import json
 import logging
 import os
 import re
-import signal
 import sys
 import threading
 import time
@@ -168,6 +166,8 @@ class GlobalController(ControllerContext):
             state.clear_stopping(self.redis)
             # A reused Redis may still hold an earlier deploy's launch errors.
             self.redis.delete(state.LAUNCH_ERRORS_KEY)
+            # A flag left by the last deploy would launch its images before these are built.
+            state.clear_images_ready(self.redis)
             logger.info(
                 "Global controller initialized with %d controller(s).",
                 len(self.agent_specs),
@@ -1464,45 +1464,3 @@ class GlobalController(ControllerContext):
         else:
             logger.info("Global controller shut down.")
         return failures
-
-
-if __name__ == "__main__":
-    default_config = os.path.join(_artifact_prefix, "config", "global_controller.yaml")
-
-    import argparse
-
-    parser = argparse.ArgumentParser(description="CanyonOS Global Controller daemon.")
-    parser.add_argument(
-        "-c",
-        "--config",
-        default=default_config,
-        help=f"Path to the YAML config file (default: {default_config})",
-    )
-    args = parser.parse_args()
-
-    controller = GlobalController(args.config)
-
-    # Register cleanup on Ctrl+C (SIGINT) and kill (SIGTERM)
-    def _signal_handler(sig, frame):
-        logger.info("Received signal %s, shutting down...", signal.Signals(sig).name)
-        controller.cleanup()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
-
-    # Register config reload on SIGHUP and reload
-    def _reload_handler(sig, frame):
-        logger.info("Received SIGHUP, reloading config...")
-        try:
-            controller.reload_config()
-        except Exception as e:
-            logger.warning(
-                "Reload Failed, A configuration file change is invalid: %s", e
-            )
-
-    signal.signal(signal.SIGHUP, _reload_handler)
-    atexit.register(controller.cleanup)
-
-    controller._wait_for_healthy()
-    controller.run()
