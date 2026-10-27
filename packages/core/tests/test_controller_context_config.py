@@ -99,6 +99,7 @@ class ReconcilerContextParityTests(unittest.TestCase):
                 f"env_file: {self.env_file}\n"
                 "agents:\n  - name: Alpha\n    host: localhost\n    replicas: 1\n"
                 "endpoint: {agent: Alpha, method: main}\n"
+                "project_id: fixed\n"
             )
 
     def test_containerized_redis_host_override_reaches_the_context(self):
@@ -129,7 +130,7 @@ class ReconcilerContextParityTests(unittest.TestCase):
         with open(self.config_path, "w") as f:
             f.write(
                 f"env_file: {other}\nagents: []\nec2:\n  region: us-west-2\n"
-                "endpoint:\n  agent: Alpha\n  method: main\n"
+                "endpoint:\n  agent: Alpha\n  method: main\nproject_id: fixed\n"
             )
         context.refresh_config()
         self.assertEqual(context.env_file_path, other)
@@ -138,6 +139,7 @@ class ReconcilerContextParityTests(unittest.TestCase):
         with open(self.config_path, "w") as f:
             f.write(
                 "env_file: /does/not/exist.env\nagents: []\nendpoint: {agent: Alpha, method: main}\n"
+                "project_id: fixed\n"
             )
         context.refresh_config()
         self.assertEqual(context.env_file_path, other)

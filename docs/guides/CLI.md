@@ -19,7 +19,7 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `serve` | Start the local dashboard separately |
 | `stop` | Stop the running workflow, keep the container |
 | `quit` | Full teardown — remove the container and workspace |
-| `clean` | Remove the generated `.canyon` folder, the project's CanyonOS skill, the `.env` keys `serve` wrote, and the Docker images of the agents in this project's `global_controller.yaml` |
+| `clean` | Remove the generated `.canyon` folder (and the project id, when `global_controller.yaml` lives there, so the next deploy is a new dashboard project), the project's CanyonOS skill, the `.env` keys `serve` wrote, and the Docker images of the agents in this project's `global_controller.yaml` |
 | `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 | `validate` | Check a converted `.canyon` against the CanyonOS contract |
 | `doctor` | Check that your environment is ready |

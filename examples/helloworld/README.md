@@ -101,8 +101,6 @@ curl http://127.0.0.1:8082/status/<request_id>
 
 Open the dashboard URL, then **Projects** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see `Workflow` call `HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
 
-Each redeploy starts the dashboard's history fresh.
-
 ## 5. Try a policy rule
 
 Rules in `config/policy.yaml` decide which agents a request may reach, based on the `_context` you send with it. The rule with the most matching keys wins, and `match: {}` is the fallback. By default every agent is allowed.

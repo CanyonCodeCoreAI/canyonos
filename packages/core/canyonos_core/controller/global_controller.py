@@ -14,7 +14,6 @@ import re
 import sys
 import threading
 import time
-import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property
@@ -52,7 +51,7 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 from canyonos_core.schema import SchemaError, check_project, load_manifest
-from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
+from canyonos_core.schema.yaml_lines import parse_failure
 
 # Add generated grpc_stubs from the local project to the path. Projects using
 # the .canyon artifact layout keep grpc_stubs under .canyon/; older/plain layouts
@@ -263,36 +262,6 @@ class GlobalController(ControllerContext):
     # ------------------------------------------------------------------ #
     #  Config                                                             #
     # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _load_config(config_path):
-        """The shared config load, plus minting a project_id when the file omits one."""
-        config = ControllerContext._load_config(config_path)
-        if not config.get("project_id"):
-            config["project_id"] = GlobalController._assign_new_project_id(config_path)
-        return config
-
-    @staticmethod
-    def _assign_new_project_id(config_path):
-        """Generate a project_id and write it to the config file so it stays stable across reloads/restarts.
-
-        A `project_id:` already in the file with no value is replaced in place;
-        appending a second one would make the file a duplicate-key error.
-        """
-        project_id = str(uuid.uuid4())
-        entry = f'project_id: "{project_id}"\n'
-        document = load_yaml_lines(config_path)
-        with open(config_path, "r") as f:
-            lines = f.readlines()
-        if isinstance(document, dict) and "project_id" in document:
-            lines[document.key_lines["project_id"] - 1] = entry
-        else:
-            if lines and not lines[-1].endswith("\n"):
-                lines[-1] += "\n"
-            lines.append(entry)
-        with open(config_path, "w") as f:
-            f.writelines(lines)
-        return project_id
 
     @staticmethod
     def _otel_destinations(otel_cfg):

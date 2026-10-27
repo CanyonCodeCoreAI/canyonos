@@ -41,6 +41,7 @@ from canyonos.deploy import (
     follow_gc_log,
     queued_lines,
     run_deploy,
+    save_project_id,
 )
 from canyonos.gc import _error_detail, deploy_status, deployed_endpoint
 from canyonos.init import docker_env, load_state, quit_existing
@@ -351,6 +352,8 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
             "nothing to test."
         )
 
+    # Minted here, before the snapshot, so restoring the file keeps the id.
+    save_project_id(config_path)
     original_config = _force_local_providers(config_path)
     try:
         state = _deploy_locally(run, config_path, api_port)

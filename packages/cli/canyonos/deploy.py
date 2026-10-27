@@ -25,6 +25,7 @@ import re
 import subprocess
 import threading
 import time
+import uuid
 from collections import deque
 
 from rich.panel import Panel
@@ -35,8 +36,11 @@ from canyonos.constants import (
     dashboard_port,
     default_config_path,
     endpoint_api_port,
+    load_yaml,
     port_in_use,
+    round_trip_yaml,
     workspace_relative,
+    write_config,
 )
 from canyonos.dashboard_stack import (
     _dashboard_lock,
@@ -303,6 +307,18 @@ class PhaseTracker:
         return f"{ready} agent(s) ready", True
 
 
+def save_project_id(config_path):
+    """Add a project_id to the config when it has none, before the sync, so the
+    container's copy carries it and every later deploy keeps the same dashboard
+    project. A config that is not a mapping is left for the schema check to report."""
+    yaml_rt = round_trip_yaml()
+    data = load_yaml(config_path, yaml_rt.load)
+    if not isinstance(data, dict) or data.get("project_id"):
+        return
+    data["project_id"] = str(uuid.uuid4())
+    write_config(config_path, data, yaml_rt)
+
+
 def run_deploy(
     config_path=None,
     serve=True,
@@ -336,6 +352,8 @@ def run_deploy(
     # Non-empty once the workflow has reported ready; see the handler below.
     ready = []
     try:
+        save_project_id(config_file)
+
         # Copy the current project into the container before building/deploying.
         if not run_sync():
             raise RuntimeError("Could not sync the project into the container.")

@@ -14,6 +14,7 @@ STATE = {"container_id": "abc", "port": 8000}
 def deployable(monkeypatch):
     """Every step run_deploy drives succeeds unless overridden."""
     monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda p: p)
+    monkeypatch.setattr(deploy_cmd, "save_project_id", lambda _path: None)
     monkeypatch.setattr(deploy_cmd, "run_init", lambda banner=True: None)
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
     monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)

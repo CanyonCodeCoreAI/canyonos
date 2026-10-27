@@ -123,8 +123,9 @@ def _remove_canyon_env_vars():
 
 
 def run_clean():
-    """Remove the current project's `.canyon` folder, CanyonOS skill and the `.env`
-    keys `canyonos serve` wrote, and the Docker images built for its agents."""
+    """Remove the current project's `.canyon` folder (and the project id, when
+    `global_controller.yaml` lives there), CanyonOS skill, the `.env` keys
+    `canyonos serve` wrote, and the Docker images built for its agents."""
     # A built project keeps its agent list inside .canyon, which goes first.
     images = _project_images()
     canyon_dir = os.path.join(os.getcwd(), ".canyon")

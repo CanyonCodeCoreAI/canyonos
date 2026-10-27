@@ -3,6 +3,7 @@
 
 import io
 import json
+import re
 import queue
 import subprocess
 import urllib.error
@@ -171,12 +172,16 @@ def test_the_dashboard_is_not_started_under_test(monkeypatch, deployable):
     assert seen["serve"] is False
 
 
-def test_the_provider_is_restored_after_the_run(project, deployable):
+def test_the_provider_is_restored_and_the_project_id_kept_after_the_run(
+    project, deployable
+):
     config = project / ".canyon" / "config" / "global_controller.yaml"
 
     test_cmd.run_test("hi")
 
-    assert config.read_text() == CONFIG
+    assert re.fullmatch(
+        re.escape(CONFIG) + r"project_id: [0-9a-f-]{36}\n", config.read_text()
+    )
 
 
 def test_a_failed_deploy_keeps_the_container_and_reads_its_log(

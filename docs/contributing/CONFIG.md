@@ -60,9 +60,9 @@ Cross-field rules live in `_service`, `_check_provider_sections` and `_endpoint`
 
 ## Applying it
 
-`GlobalController._load_config` adds a `project_id` on first load and writes it back
-into the file, so it stays the same across reloads. `_apply_config` then publishes the
-config to Redis:
+`ControllerContext._load_config` fails when the config has no `project_id`.
+`canyonos deploy` adds one on the first deploy, so it stays the same across reloads and
+redeploys. `_apply_config` then publishes the config to Redis:
 
 | What | Redis key | Written by |
 |---|---|---|

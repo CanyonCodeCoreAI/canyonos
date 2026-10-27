@@ -129,7 +129,7 @@ canyonos stop   # stop this project's containers; keeps CanyonOS's own container
 canyonos quit   # full teardown — also removes CanyonOS's container, its copy of your project, and the dashboard if no other project is running
 ```
 
-`quit` leaves your project folder (including `.canyon/` and `.env`) and the built images in place. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images, the installed skill and the `CANYONOS_*` `.env` keys older versions of `canyonos serve` wrote.
+`quit` leaves your project folder (including `.canyon/` and `.env`) and the built images in place. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images, the installed skill and the `CANYONOS_*` `.env` keys older versions of `canyonos serve` wrote. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
 
 ### Clean generated files
 

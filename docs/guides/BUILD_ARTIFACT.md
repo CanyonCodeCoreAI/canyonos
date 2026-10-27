@@ -52,10 +52,11 @@ and what gets overwritten.
 
 ## What the platform writes outside `app/`
 
-Deploying writes one thing into your files: if the manifest has no
-`project_id`, the Global Controller generates a UUID and appends
-`project_id: "<uuid>"` to `global_controller.yaml` so it survives restarts.
-If the key is present with no value, it fills that line in place.
+Deploying writes one thing into your files: the first `canyonos deploy` adds
+`project_id: <uuid>` to the `global_controller.yaml` it deploys, here
+`.canyon/config/global_controller.yaml`. Every later deploy reuses it, so the project
+stays one project on the dashboard. Deleting that line, or running `canyonos clean`
+when the file is under `.canyon/`, starts a new one.
 
 `canyonos convert` runs a coding agent that follows the porting skill. That
 procedure may append `.canyon/` to your `.gitignore` and add key names to

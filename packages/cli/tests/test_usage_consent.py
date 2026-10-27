@@ -289,6 +289,7 @@ def deployable(monkeypatch):
     """A deploy whose every step succeeds and whose workflow comes up."""
     monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda p: p)
     monkeypatch.setattr(deploy_cmd, "run_init", lambda **_k: None)
+    monkeypatch.setattr(deploy_cmd, "save_project_id", lambda _path: None)
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
     monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)
     monkeypatch.setattr(deploy_cmd, "load_state", lambda: {"port": 8000})

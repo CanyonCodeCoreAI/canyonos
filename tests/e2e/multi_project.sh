@@ -204,6 +204,11 @@ step "canyonos deploy portfolio again keeps the dashboard running"
 grep -q "Registered portfolio with the dashboard" "$ARTIFACTS_DIR/redeploy-portfolio.log" || fail "the redeploy did not re-register portfolio"
 [ "$(docker inspect -f '{{.Created}}' "$DASHBOARD_API")" = "$API_CREATED" ] || fail "the redeploy recreated the api container"
 
+step "The redeploy is the same dashboard project"
+[ "$(api GET /projects)" = 200 ] || fail "GET /projects failed after the redeploy"
+[ "$(project_names)" = "helloworld portfolio" ] || fail "projects listed after the redeploy: $(project_names)"
+[ "$(project_id portfolio)" = "$PORTFOLIO_ID" ] || fail "portfolio changed id on redeploy: $(project_id portfolio) was $PORTFOLIO_ID"
+
 step "canyonos quit portfolio takes the dashboard down"
 (cd "$WORK_DIR/portfolio" && canyonos quit)
 leftovers="$(docker ps -a --format '{{.Names}}' | grep -E '^canyonos-(helloworld|portfolio|dashboard)-' || true)"
