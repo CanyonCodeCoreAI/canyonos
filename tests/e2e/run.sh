@@ -140,8 +140,15 @@ step "canyonos doctor"
 canyonos doctor
 
 step "Query $API_URL/$ROUTE"
-python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" "$QUERY" "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/deploy-result.json"
+python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" "$QUERY" "$REQUEST_TIMEOUT" \
+  >"$ARTIFACTS_DIR/deploy-result.json" 2> >(tee "$ARTIFACTS_DIR/deploy-query.log" >&2)
 python3 "$CHECK" <"$ARTIFACTS_DIR/deploy-result.json"
+
+# Cleanup expires a finished request's keys 30s after delivery; /status must still answer.
+step "Status of the request after cleanup"
+sleep 60
+request_id="$(sed -n 's/.*-> request //p' "$ARTIFACTS_DIR/deploy-query.log")"
+curl -fsS "$API_URL/status/$request_id" | grep -q '"status":"done"'
 
 # A 16-hex-character argument is a plain string, not a Future id. Before CAN-452
 # the workflow's own request waited 300s for `future:deadbeefdeadbeef` and timed

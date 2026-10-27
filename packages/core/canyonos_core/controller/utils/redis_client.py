@@ -51,6 +51,10 @@ class RedisClient(object):
             "EXPIRE", key, seconds, *(["NX"] if nx else [])
         )
 
+    def ttl(self, key):
+        """Seconds left before a key expires: -1 when it never does, -2 when it is gone."""
+        return self.client.ttl(key)
+
     # --- List operations ---
 
     def lpush(self, key, *values):

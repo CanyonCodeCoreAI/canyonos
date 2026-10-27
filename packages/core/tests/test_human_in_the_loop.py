@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-import itertools
 import json
 import logging
 import unittest
@@ -100,41 +99,31 @@ class FutureWaitTests(unittest.TestCase):
         self.assertEqual(calls, [{"timeout": FUTURE_RESULT_TIMEOUT_SECONDS}])
         self.assertGreater(FUTURE_RESULT_TIMEOUT_SECONDS, QUESTION_TIMEOUT_SECONDS)
 
-    def _resolve_with_clock_step(self, redis, step, on_sleep=lambda sleeps: None):
-        sleeps = []
-
-        def fake_sleep(seconds):
-            sleeps.append(seconds)
-            on_sleep(sleeps)
-
-        with (
-            patch(
-                "canyonos_core.controller.local_controller.time.time",
-                side_effect=itertools.count(0, step),
-            ),
-            patch("canyonos_core.controller.local_controller.time.sleep", fake_sleep),
-        ):
+    def _resolve(self, wait):
+        with patch("canyonos_core.controller.local_controller.wait_for_result", wait):
             return LocalController._resolve_future_args(
-                SimpleNamespace(redis=redis), {"x": "f1"}, ["x"]
+                SimpleNamespace(redis=_FakeRedis()), {"x": "f1"}, ["x"]
             )
 
     def test_resolve_future_args_waits_past_the_question_limit(self):
-        redis = _FakeRedis(hashes={"future:f1": {"result": ""}})
+        waits = []
 
-        def answer_after_an_hour(sleeps):
-            if len(sleeps) == 3:
-                redis.hset("future:f1", "result", "done")
+        def answered(_redis, future_id, timeout):
+            waits.append((future_id, timeout))
+            return "done"
 
-        # Clock reads at 0, 1200, 2400 and 3600 seconds before the result lands.
-        resolved = self._resolve_with_clock_step(redis, 1200, answer_after_an_hour)
-
-        self.assertEqual(resolved, {"x": "done"})
+        self.assertEqual(self._resolve(answered), {"x": "done"})
+        # A question can take QUESTION_TIMEOUT_SECONDS to answer; the wait outlasts it.
+        self.assertEqual(waits, [("f1", FUTURE_RESULT_TIMEOUT_SECONDS)])
 
     def test_resolve_future_args_gives_up_after_its_limit(self):
-        redis = _FakeRedis(hashes={"future:f1": {"result": ""}})
+        def never_answered(_redis, future_id, timeout):
+            raise TimeoutError(
+                f"Future {future_id} not available within {timeout} seconds"
+            )
 
-        with self.assertRaises(TimeoutError):
-            self._resolve_with_clock_step(redis, FUTURE_RESULT_TIMEOUT_SECONDS)
+        with self.assertRaisesRegex(TimeoutError, "f1"):
+            self._resolve(never_answered)
 
 
 class AskHumanTests(unittest.TestCase):
@@ -172,13 +161,15 @@ class AskHumanTests(unittest.TestCase):
             patch.object(Future, "redis", _FakeRedis()),
             patch.object(Future, "_submit_request", lambda future: None),
             patch(
-                "canyonos_core.controller.future.time.time",
-                side_effect=itertools.count(0, 1200),
-            ),
-            patch("canyonos_core.controller.future.time.sleep"),
+                "canyonos_core.controller.future.wait_for_result",
+                side_effect=TimeoutError("no reply"),
+            ) as wait,
         ):
             with self.assertRaisesRegex(TimeoutError, "did not answer within an hour"):
                 ask_human("Sell TSLA?", {"input": "str"})
+
+        # The question is waited on for its whole hour, then given up.
+        self.assertEqual(wait.call_args.args[2], QUESTION_TIMEOUT_SECONDS)
 
     def test_ask_human_outside_a_request_raises_at_once(self):
         redis = _FakeRedis()

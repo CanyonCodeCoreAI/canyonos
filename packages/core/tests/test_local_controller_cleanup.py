@@ -250,6 +250,43 @@ class CleanupRequestTests(unittest.TestCase):
         # Expired last, so it can't lapse before the futures and be re-marked.
         self.assertEqual(list(redis.ttls)[-1], "telemetry:delivered:req1")
 
+    def test_a_request_already_cleaned_up_is_not_redone(self):
+        # The GC sends Cleanup for a request every cycle until its keys expire, to
+        # every replica; repeats used to re-run it all (lock, members, every EXPIRE).
+        redis = _FakeRedis(
+            sets={"request:req1:futures": {"fut1"}},
+            strings={"telemetry:delivered:req1": "1", "future:fut1": "x"},
+        )
+        servicer = _bare_servicer(redis)
+        servicer._cleanup_request("req1")
+
+        calls = []
+        for name in ("setnx", "smembers", "expire", "get"):
+            original = getattr(redis, name)
+            setattr(
+                redis,
+                name,
+                lambda *a, _o=original, _n=name, **k: calls.append(_n) or _o(*a, **k),
+            )
+        servicer._cleanup_request("req1")
+
+        self.assertEqual(calls, [])
+
+    def test_a_cleanup_cut_short_is_redone(self):
+        # The marker gets its TTL last; without one the next cycle does it all again.
+        redis = _FakeRedis(
+            sets={"request:req1:futures": {"fut1"}},
+            strings={"telemetry:delivered:req1": "1", "future:fut1": "x"},
+        )
+        redis.ttls["future:fut1"] = FUTURE_CLEANUP_GRACE_SECONDS
+        servicer = _bare_servicer(redis)
+
+        servicer._cleanup_request("req1")
+
+        self.assertEqual(
+            redis.ttls.get("telemetry:delivered:req1"), FUTURE_CLEANUP_GRACE_SECONDS
+        )
+
     def test_cleanup_still_deletes_affinity_bindings_outright(self):
         # Affinity bindings aren't read by the telemetry poll loop, so there's
         # no race to protect against here -- immediate deletion is still fine.

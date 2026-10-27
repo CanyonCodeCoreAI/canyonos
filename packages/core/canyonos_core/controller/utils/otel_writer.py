@@ -439,29 +439,64 @@ class ProcessLogHandler(logging.Handler):
         self._conn = None
 
 
-def _pull_telemetry(redis_client):
+def _is_finished(row):
+    """Whether a future ended, for delivery: it finished or failed."""
+    return bool(row.get("finished_at")) or str(row.get("failed")) == "1"
+
+
+def _pull_telemetry(redis_client, finished=None):
     """Scan a machine's Redis for per-execution future rows; each future's identity and
     execution metrics both live at future:{future_id}.
+
+    `finished`, when given, is the set of futures already queued with `finished_at`
+    from this Redis: they are not read again, and the set is kept to what is still in
+    Redis. `finished_at` is the last write a future gets when its call ends; a failure
+    marks `failed` before it, so a failed future without it is read again.
     """
     rows = []
+    present = set()
     for key in redis_client.scan_keys("future:*"):
         if key.endswith(":children") or key.endswith(":consumers"):
             continue
+        future_id = key.split(":")[1]
+        present.add(future_id)
+        if finished is not None and future_id in finished:
+            continue
         data = redis_client.hgetall(key)
         if data:
-            data["future_id"] = data.get("id") or key.split(":")[1]
+            data["future_id"] = data.get("id") or future_id
+            rows.append(data)
+    if finished is not None:
+        finished &= present
+    return rows
+
+
+def _read_futures(redis_client, future_ids):
+    """Rows for exactly these futures, from one Redis (missing ones skipped)."""
+    rows = []
+    for future_id in future_ids:
+        data = redis_client.hgetall(f"future:{future_id}")
+        if data:
+            data["future_id"] = data.get("id") or future_id
             rows.append(data)
     return rows
 
 
-def send_telemetry(redis_client, project_id=None, db_path=DB_PATH):
-    """Pull per-execution future rows from Redis and queue them into the ``traces_waiting``
-    and ``logs_waiting`` tables for OTLP export. GC's ``_poll_one_replica`` calls this once
-    per poll. Returns the rows it wrote.
-    """
-    rows = _pull_telemetry(redis_client)
+def _queue_rows(rows, redis_client, project_id, db_path):
     _trace_write_rows(rows, redis_client, project_id, db_path)
     _log_write_rows(rows, project_id, db_path)
+
+
+def send_telemetry(redis_client, project_id=None, db_path=DB_PATH, finished=None):
+    """Pull per-execution future rows from Redis and queue them into the ``traces_waiting``
+    and ``logs_waiting`` tables for OTLP export. The GC calls this once per poll for each
+    machine's Redis, keeping `finished` (see _pull_telemetry) between polls. Returns the
+    rows it wrote.
+    """
+    rows = _pull_telemetry(redis_client, finished)
+    _queue_rows(rows, redis_client, project_id, db_path)
+    if finished is not None:
+        finished.update(row["future_id"] for row in rows if row.get("finished_at"))
     return rows
 
 
@@ -482,22 +517,41 @@ def deliver_completed_requests(
     if not request_ids:
         return set(), set()
 
-    expected_by_request = {request_id: set() for request_id in request_ids}
+    def futures_of(requests):
+        expected = {request_id: set() for request_id in requests}
+        for redis_client in redis_clients:
+            for request_id in requests:
+                expected[request_id].update(
+                    redis_client.smembers(f"request:{request_id}:futures")
+                )
+        return expected
+
+    # Marked on every machine by an earlier cycle: delivered already, nothing to re-read;
+    # only whether its futures are gone yet matters.
+    marked = {
+        request_id
+        for request_id in request_ids
+        if all(
+            redis_client.get(f"telemetry:delivered:{request_id}")
+            for redis_client in redis_clients
+        )
+    }
+    pending = request_ids - marked
+
+    # Only these requests' futures are read (not every future in Redis), from every
+    # machine, and written before anything is judged.
+    wanted = set().union(*futures_of(pending).values()) if pending else set()
     terminal_by_request = {request_id: set() for request_id in request_ids}
     for redis_client in redis_clients:
-        # Judge delivery from the rows just written, not a fresh pull: a future that
-        # finished after this write would otherwise be marked delivered unpersisted.
-        rows = send_telemetry(redis_client, project_id, db_path)
-        for request_id in request_ids:
-            expected_by_request[request_id].update(
-                redis_client.smembers(f"request:{request_id}:futures")
-            )
+        rows = _read_futures(redis_client, wanted)
+        _queue_rows(rows, redis_client, project_id, db_path)
         for row in rows:
             request_id = row.get("request_id")
-            if request_id not in request_ids:
-                continue
-            if row.get("finished_at") or str(row.get("failed")) == "1":
+            if request_id in pending and _is_finished(row):
                 terminal_by_request[request_id].add(row["future_id"])
+    # Read again after writing, so a future added meanwhile, unread, is still expected
+    # and holds its request back.
+    expected_by_request = futures_of(request_ids)
 
     gone = {
         request_id for request_id in request_ids if not expected_by_request[request_id]
@@ -505,7 +559,8 @@ def deliver_completed_requests(
     delivered = {
         request_id
         for request_id in request_ids - gone
-        if expected_by_request[request_id] <= terminal_by_request[request_id]
+        if request_id in marked
+        or expected_by_request[request_id] <= terminal_by_request[request_id]
     }
     for redis_client in redis_clients:
         for request_id in delivered:

@@ -100,6 +100,7 @@ class ErrorPropagationTests(unittest.TestCase):
             redis=redis,
             _key=lambda: "future:future-1",
             _poll_redis=lambda: Future._poll_redis(future),
+            id="future-1",
             result=None,
         )
 

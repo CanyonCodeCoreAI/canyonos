@@ -89,6 +89,7 @@ class EndpointHumanReplyTests(unittest.TestCase):
 
     def test_reply_answers_oldest_question_first(self):
         self.redis.set("request:r1:future", "f1")
+        self.redis.hset("future:f1", "method", "main")
         _wait(self.redis, "r1", "q1", "first?")
         _wait(self.redis, "r1", "q2", "second?")
 
@@ -100,6 +101,7 @@ class EndpointHumanReplyTests(unittest.TestCase):
 
     def test_status_reports_input_required_with_the_oldest_question(self):
         self.redis.set("request:r1:future", "f1")
+        self.redis.hset("future:f1", "method", "main")
         _wait(self.redis, "r1", "q1", "Sell TSLA?")
         _wait(self.redis, "r1", "q2", "Buy NVDA?")
 

@@ -13,7 +13,10 @@ sys.path.insert(
     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "grpc_stubs"))
 )
 
-from canyonos_core.controller.global_controller import GlobalController
+from canyonos_core.controller.global_controller import (
+    CLEANUP_RESEND_SECONDS,
+    GlobalController,
+)
 from fakes import _FakeRedis
 import local_controller_pb2
 
@@ -131,6 +134,39 @@ class TriggerCleanupTests(unittest.TestCase):
         self.assertEqual(set(good_stub.calls[0]["request_ids"]), expected)
         self.assertEqual(redis.smembers("request:completed"), expected)
 
+    def test_a_request_every_replica_was_told_about_is_not_sent_each_cycle(self):
+        redis = _FakeRedis(sets={"request:completed": {"req1"}})
+        replicas = [{"address": f"host{i}:50051"} for i in range(2)]
+        controller = _bare_controller(self, redis, replicas)
+        stubs = {replica["address"]: _FakeStub() for replica in replicas}
+        controller._get_lc_stub = lambda address: stubs[address]
+
+        controller._trigger_cleanup()
+        controller._trigger_cleanup()
+        self.assertEqual([len(stub.calls) for stub in stubs.values()], [1, 1])
+
+        # Sent again once the resend interval passes, in case a Cleanup was lost.
+        for request_id in controller._cleanup_sent:
+            controller._cleanup_sent[request_id] -= CLEANUP_RESEND_SECONDS
+        controller._trigger_cleanup()
+        self.assertEqual([len(stub.calls) for stub in stubs.values()], [2, 2])
+
+    def test_a_request_a_replica_missed_is_sent_again_next_cycle(self):
+        redis = _FakeRedis(sets={"request:completed": {"req1"}})
+        replicas = [
+            {"address": "good:50051"},
+            {"address": "bad:50051"},
+        ]
+        controller = _bare_controller(self, redis, replicas)
+        good = _FakeStub()
+        stubs = {"good:50051": good, "bad:50051": _FailingStub()}
+        controller._get_lc_stub = lambda address: stubs[address]
+
+        controller._trigger_cleanup()
+        controller._trigger_cleanup()
+
+        self.assertEqual(len(good.calls), 2)
+
     def test_gone_requests_are_drained_and_not_sent_again(self):
         redis = _FakeRedis(sets={"request:completed": {"req1", "req2"}})
         controller = _bare_controller(self, redis, [{"address": "host:50051"}])
@@ -193,7 +229,7 @@ class TriggerCleanupTests(unittest.TestCase):
 
 
 class MultiMachineTriggerCleanupTests(unittest.TestCase):
-    """Bug D: _trigger_cleanup must not be blind to non-localhost machine Redis instances.
+    """Bug D: _trigger_cleanup must not be blind to non-localhost machine Redis replicas.
 
     Each replica (local or EC2) records its own completions in its own Redis, never centrally.
     """

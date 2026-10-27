@@ -62,10 +62,15 @@ import local_controller_pb2
 import local_controller_pb2_grpc
 
 try:
-    from canyonos_core.controller.future import ENDPOINT_AGENT_NAME, Future
+    from canyonos_core.controller.future import (
+        ENDPOINT_AGENT_NAME,
+        Future,
+        notify_result,
+        wait_for_result,
+    )
     from canyonos_core.controller.utils import human_input
 except ImportError:
-    from future import ENDPOINT_AGENT_NAME, Future
+    from future import ENDPOINT_AGENT_NAME, Future, notify_result, wait_for_result
     import human_input
 
 human_input.install()
@@ -192,7 +197,8 @@ class LocalController(object):
         self._failed_leftovers = False
         # Calls the drain failed back to their callers; nothing they do later is reported.
         self._cut_off = set()
-        # Requests taken off the queue or sent on, not yet with their next holder.
+        # Forwards sent on, not yet taken by their target. A queued request is counted
+        # by the queue itself (unfinished_tasks) until run() has processed it.
         self._unsent = 0
         self._unsent_lock = threading.Lock()
         self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
@@ -398,7 +404,7 @@ class LocalController(object):
             "queue_length": str(self._executor._work_queue.qsize()),
             "draining": str(int(self._draining)),
             "open_requests": str(len(self.servicer.open_requests)),
-            "pending_requests": str(self.request_queue.qsize() + self._unsent),
+            "pending_requests": str(self.request_queue.unfinished_tasks + self._unsent),
             "observed_at": str(time.time()),
         }
 
@@ -637,30 +643,28 @@ class LocalController(object):
     # ------------------------------------------------------------------ #
 
     def run(self):
-        """Poll the request queue and process incoming requests."""
-        logger.info("Local controller started, polling request queue...")
+        """Take requests off the queue and process them, sleeping while it is empty."""
+        logger.info("Local controller started, waiting for requests...")
         try:
             while True:
-                if not self.request_queue.empty():
-                    # Before the get, so a heartbeat never misses it between the two.
-                    self._count_unsent(1)
-                    raw = self.request_queue.get()
-                    data = None
-                    try:
-                        data = json.loads(raw)
-                        self._process_request(data)
-                    except json.JSONDecodeError:
-                        logger.error("Invalid JSON in request: %s", raw)
-                    except Exception as e:
-                        logger.error("Error processing request: %s", e)
-                        if isinstance(data, dict):
-                            self._mark_future_failed(
-                                data.get("future_id"), e, data.get("origin")
-                            )
-                    finally:
-                        self._count_unsent(-1)
-                else:
-                    time.sleep(0.001)
+                # Blocks until a request is queued.
+                raw = self.request_queue.get()
+                data = None
+                try:
+                    data = json.loads(raw)
+                    self._process_request(data)
+                except json.JSONDecodeError:
+                    logger.error("Invalid JSON in request: %s", raw)
+                except Exception as e:
+                    logger.error("Error processing request: %s", e)
+                    if isinstance(data, dict):
+                        self._mark_future_failed(
+                            data.get("future_id"), e, data.get("origin")
+                        )
+                finally:
+                    # Pending from its put until here, so a drain never sees a request
+                    # in no one's hands; a forward is counted in _unsent before this.
+                    self.request_queue.task_done()
         except KeyboardInterrupt:
             self.stop()
 
@@ -917,49 +921,29 @@ class LocalController(object):
             self._forward_request(address, data)
 
     def _resolve_future_args(
-        self,
-        args,
-        future_args,
-        poll_interval=0.01,
-        timeout=FUTURE_RESULT_TIMEOUT_SECONDS,
+        self, args, future_args, timeout=FUTURE_RESULT_TIMEOUT_SECONDS
     ):
         """
         Replace each arg named in future_args (its value is a Future id) with
-        that Future's result, polling Redis until it is available. Other args
+        that Future's result, waiting for it (wait_for_result). Other args
         pass through unchanged.
         """
         resolved = {}
         for key, value in args.items():
             if key in future_args:
-                future_key = f"future:{value}"
                 logger.info(
                     "Arg '%s' is Future %s, waiting for result...",
                     key,
                     value,
                 )
-                start = time.time()
-                while True:
-                    error = self.redis.hget(future_key, "error")
-                    if error:
-                        raise RuntimeError(error)
-                    failed = self.redis.hget(future_key, "failed")
-                    if str(failed) == "1":
-                        raise RuntimeError(
-                            self.redis.hget(future_key, "error") or "Unknown error"
-                        )
-                    # print("Waiting for result for future next iteration %s", value)
-                    result = self.redis.hget(future_key, "result")
-                    if result is not None and result != "":
-                        logger.info("Future %s resolved for arg '%s'", value, key)
-                        resolved[key] = result
-                        break
-                    if time.time() - start > timeout:
-                        raise TimeoutError(
-                            f"Timed out waiting for future {value} (arg '{key}') "
-                            f"after {timeout}s"
-                        )
-                    time.sleep(poll_interval)
-                print("Resolved arg '%s' to %s", key, resolved[key])
+                try:
+                    resolved[key] = wait_for_result(self.redis, value, timeout)
+                except TimeoutError:
+                    raise TimeoutError(
+                        f"Timed out waiting for future {value} (arg '{key}') "
+                        f"after {timeout}s"
+                    ) from None
+                logger.info("Future %s resolved for arg '%s'", value, key)
             else:
                 resolved[key] = value
         return resolved
@@ -1169,8 +1153,8 @@ class LocalController(object):
         call.add_done_callback(lambda done: self._on_forwarded(done, address, data))
 
     def _count_unsent(self, change):
-        """Adjust the count of requests this replica took on but has not handed on yet,
-        which a drain waits for."""
+        """Adjust the count of forwards this replica sent on that their target has not
+        taken yet, which a drain waits for."""
         with self._unsent_lock:
             self._unsent += change
 
@@ -1285,6 +1269,8 @@ class LocalController(object):
         """
         if not future_id:
             return
+        # Code in this process waiting on the value (wait_for_result) wakes at once.
+        notify_result(future_id)
         for address in self.redis.smembers(f"future:{future_id}:consumers"):
             if address and address != self._my_address:
                 self._send_result_callback(
@@ -1309,9 +1295,13 @@ class LocalController(object):
             unfinished = list(self._executor_futures.values())
         while True:
             try:
-                data = json.loads(self.request_queue.get_nowait())
+                raw = self.request_queue.get_nowait()
             except queue.Empty:
                 break
+            # Taken and never run: done, for the queue's count of pending requests.
+            self.request_queue.task_done()
+            try:
+                data = json.loads(raw)
             except ValueError:
                 continue
             unfinished.append((data.get("future_id"), data.get("origin")))

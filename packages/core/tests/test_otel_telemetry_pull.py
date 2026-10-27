@@ -265,5 +265,117 @@ class SendTelemetryTests(unittest.TestCase):
         self.assertEqual(redis.get("telemetry:delivered:req1"), "expiring")
 
 
+class _CountingRedis(_FakeRedis):
+    """Records which future hashes are read."""
+
+    def __init__(self, hashes):
+        super().__init__(hashes)
+        self.read = []
+
+    def hgetall(self, name):
+        self.read.append(name)
+        return super().hgetall(name)
+
+
+def _future(future_id, request_id, finished=True):
+    row = {"id": future_id, "request_id": request_id, "created_at": "1.0"}
+    if finished:
+        row["finished_at"] = "2.0"
+    return row
+
+
+class ReadOnlyWhatIsNeededTests(unittest.TestCase):
+    """A poll used to read every future in Redis, twice (telemetry and delivery)."""
+
+    def setUp(self):
+        self.tmp = os.path.join(tempfile.mkdtemp(), "q.db")
+        schema.init_db(self.tmp)
+
+    def test_a_finished_future_is_not_read_again_on_later_polls(self):
+        redis = _CountingRedis(
+            {
+                "future:a": _future("a", "r1"),
+                "future:b": _future("b", "r1", finished=False),
+            }
+        )
+        finished = set()
+        send_telemetry(redis, db_path=self.tmp, finished=finished)
+        redis.read.clear()
+
+        send_telemetry(redis, db_path=self.tmp, finished=finished)
+
+        self.assertEqual(redis.read, ["future:b"])
+        self.assertEqual(finished, {"a"})
+
+    def test_a_failed_future_is_read_again_until_its_finished_at_is_written(self):
+        # A failure writes `failed` first; `finished_at`, CPU and timing come a moment
+        # later, and a future skipped in between would never get them.
+        row = _future("a", "r1", finished=False)
+        row["failed"] = "1"
+        redis = _CountingRedis({"future:a": row})
+        finished = set()
+        send_telemetry(redis, db_path=self.tmp, finished=finished)
+        self.assertEqual(finished, set())
+
+        row["finished_at"] = "2.0"
+        redis.read.clear()
+        send_telemetry(redis, db_path=self.tmp, finished=finished)
+
+        self.assertEqual(redis.read, ["future:a"])
+        self.assertEqual(finished, {"a"})
+
+    def test_finished_futures_that_expired_are_forgotten(self):
+        redis = _CountingRedis({"future:a": _future("a", "r1")})
+        finished = set()
+        send_telemetry(redis, db_path=self.tmp, finished=finished)
+        del redis.hashes["future:a"]
+
+        send_telemetry(redis, db_path=self.tmp, finished=finished)
+
+        self.assertEqual(finished, set())
+
+    def test_delivery_reads_only_the_completed_requests_futures(self):
+        redis = _CountingRedis(
+            {
+                "future:a": _future("a", "r1"),
+                "future:other": _future("other", "r2", finished=False),
+                "request:r1:futures": {"a"},
+            }
+        )
+
+        delivered, _ = deliver_completed_requests([redis], {"r1"}, db_path=self.tmp)
+
+        self.assertEqual(delivered, {"r1"})
+        self.assertEqual(redis.read, ["future:a"])
+
+    def test_a_request_marked_on_every_node_is_not_read_again(self):
+        redis = _CountingRedis(
+            {"future:a": _future("a", "r1"), "request:r1:futures": {"a"}}
+        )
+        redis.strings["telemetry:delivered:r1"] = "1"
+
+        delivered, gone = deliver_completed_requests([redis], {"r1"}, db_path=self.tmp)
+
+        self.assertEqual((delivered, gone), ({"r1"}, set()))
+        self.assertEqual(redis.read, [])
+
+    def test_a_future_added_while_reading_holds_its_request_back(self):
+        redis = _CountingRedis(
+            {"future:a": _future("a", "r1"), "request:r1:futures": {"a"}}
+        )
+        original = redis.hgetall
+
+        def hgetall(name):
+            # A new future of r1 appears just as its known ones are read.
+            redis.hashes["request:r1:futures"] = {"a", "late"}
+            return original(name)
+
+        redis.hgetall = hgetall
+
+        delivered, _ = deliver_completed_requests([redis], {"r1"}, db_path=self.tmp)
+
+        self.assertEqual(delivered, set())
+
+
 if __name__ == "__main__":
     unittest.main()

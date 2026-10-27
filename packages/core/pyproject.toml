@@ -23,6 +23,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "gunicorn>=26.2.0",
+    "psycopg[binary]>=3.3.6",
 ]
 
 # Import-only: the core runtime ships no console script. The user-facing `canyonos`

@@ -66,6 +66,10 @@ import local_controller_pb2_grpc
 import grpc
 
 logging.basicConfig(level=logging.INFO)
+# How long before the GC tells every replica again to clean up a request it already
+# told them about, should a Cleanup have been lost.
+CLEANUP_RESEND_SECONDS = 30
+
 logger = logging.getLogger(__name__)
 
 # Teardown waits this long for the reconciler to drain every replica and terminate every
@@ -898,6 +902,8 @@ class GlobalController(ControllerContext):
             with ThreadPoolExecutor(max_workers=len(replicas)) as executor:
                 replica_samples = list(executor.map(self._poll_one_replica, replicas))
 
+        self._send_telemetry_per_host()
+
         # Machine-level metrics are per-host, so they're read once per host here rather
         # than inside the per-replica loop above (N replicas on a box would otherwise
         # re-read and re-write the same machine sample N times).
@@ -910,6 +916,41 @@ class GlobalController(ControllerContext):
                 if sample and "draining_at" not in replica
             ]
         )
+
+    def _send_telemetry_per_host(self):
+        """Queue the futures' telemetry from each machine's Redis, once per poll.
+
+        Telemetry lives in the machine's Redis, not in a replica: polled per replica,
+        every replica on a machine would scan and queue the same futures again. Hosts
+        are read in parallel, like _poll_machine_metrics, so a slow one does not hold
+        up the others.
+        """
+        hosts = dict(self.machine_redis)
+        # Futures already queued finished, per host, so a poll reads only those still
+        # running or new. One set per host: the threads share nothing.
+        finished = self.__dict__.setdefault("_finished_futures", {})
+        for host in list(finished):
+            if host not in hosts:
+                del finished[host]
+        for host in hosts:
+            finished.setdefault(host, set())
+        if not hosts:
+            return
+
+        def send(host):
+            try:
+                send_telemetry(
+                    hosts[host],
+                    self.config.get("project_id"),
+                    finished=finished[host],
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to queue telemetry for host %s (non-fatal): %s", host, e
+                )
+
+        with ThreadPoolExecutor(max_workers=len(hosts)) as executor:
+            list(executor.map(send, hosts))
 
     def _poll_machine_metrics(self):
         """Read this machine's metrics hash (written by its collector, see
@@ -944,17 +985,6 @@ class GlobalController(ControllerContext):
             logger.warning("Failed to poll replica %s: %s", replica, e)
             return
 
-        try:
-            send_telemetry(machine_redis, self.config.get("project_id"))
-        except Exception as e:
-            logger.warning(
-                "Failed to write runtime information for replica %s (%s:%s) "
-                "(non-fatal): %s",
-                name,
-                host,
-                port,
-                e,
-            )
         address = replica["address"]
         status_key = f"controller:{address}:status"
         metrics_key = f"controller:{address}:metrics"
@@ -1237,6 +1267,20 @@ class GlobalController(ControllerContext):
         if gone:
             logger.info("Drained %d cleaned-up request(s)", len(gone))
 
+        # Requests every replica was told about recently stay delivered until their
+        # keys expire; telling them again each cycle only repeats the work. They are
+        # sent again after CLEANUP_RESEND_SECONDS, in case a Cleanup was lost.
+        sent_at = self.__dict__.setdefault("_cleanup_sent", {})
+        now = time.monotonic()
+        for request_id in list(sent_at):
+            if request_id not in delivered:
+                del sent_at[request_id]
+        delivered = {
+            request_id
+            for request_id in delivered
+            if now - sent_at.get(request_id, -CLEANUP_RESEND_SECONDS)
+            >= CLEANUP_RESEND_SECONDS
+        }
         if not delivered:
             return
 
@@ -1269,6 +1313,8 @@ class GlobalController(ControllerContext):
 
         with ThreadPoolExecutor(max_workers=len(replicas)) as executor:
             sent = sum(executor.map(_send, replicas))
+        if sent == len(replicas):
+            sent_at.update(dict.fromkeys(delivered, now))
         logger.info(
             "Sent cleanup for %d delivered request(s) to %d of %d replica(s)",
             len(delivered),

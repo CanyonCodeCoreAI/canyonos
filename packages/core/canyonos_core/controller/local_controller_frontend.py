@@ -39,6 +39,7 @@ FUTURE_CLEANUP_GRACE_SECONDS = math.ceil(
     )
 )
 EXECUTE_DEDUP_TTL_SECONDS = 3600
+RESULT_TTL_SECONDS = 24 * 3600
 
 
 class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer):
@@ -173,8 +174,13 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
 
     def _cleanup_request(self, request_id):
         """Expire a request's consolidated future hashes and bookkeeping, once the GC
-        has marked its telemetry delivered."""
+        has marked its telemetry delivered, and keep its outcome a day for /status."""
         delivered_key = f"telemetry:delivered:{request_id}"
+        # The GC sends Cleanup for a request on every cycle until its keys are gone,
+        # to every replica. Its marker gets a TTL last, after every key it vouches for:
+        # with one, the request's cleanup is already done and need not be redone.
+        if self.redis.ttl(delivered_key) > 0:
+            return
         if not self.redis.get(delivered_key):
             logger.info(
                 "Telemetry for request %s is not yet delivered; skipping cleanup.",
@@ -201,6 +207,18 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
                     "No futures found for request %s on this machine.", request_id
                 )
                 return
+
+            # Keep the request's outcome for /status after its futures expire.
+            root_id = self.redis.get(f"request:{request_id}:future")
+            if root_id:
+                record = self.redis.hgetall(f"future:{root_id}")
+                outcome = {
+                    key: record[key]
+                    for key in ("result", "failed", "error", "error_message")
+                    if key in record
+                }
+                self.redis.hset_multiple(f"request:{request_id}:result", outcome)
+                self.redis.expire(f"request:{request_id}:result", RESULT_TTL_SECONDS)
 
             keys_to_expire = [
                 futures_key,

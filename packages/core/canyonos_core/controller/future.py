@@ -9,6 +9,7 @@ import secrets
 import sys
 import os
 import logging
+import threading
 
 import grpc
 
@@ -33,6 +34,61 @@ try:
     )
 except ImportError:
     from log_entry import build_failure_entry, append_log_entry, error_type_name
+
+# How often a wait reads Redis anyway, for a value written by another process. A value
+# this process's local controller writes wakes it at once (notify_result).
+RESULT_RECHECK_SECONDS = 1.0
+
+# future_id -> one Event per call in this process waiting on it.
+_result_waiters = {}
+_result_waiters_lock = threading.Lock()
+
+
+def notify_result(future_id):
+    """Wake every wait in this process on `future_id`. The local controller calls it
+    wherever it writes a future's result or failure."""
+    with _result_waiters_lock:
+        waiters = list(_result_waiters.get(future_id, ()))
+    for arrived in waiters:
+        arrived.set()
+
+
+def wait_for_result(redis_client, future_id, timeout=None):
+    """Wait for a future's result in Redis and return it. Raises RuntimeError with the
+    future's error once it failed, and TimeoutError after `timeout` seconds (None: no
+    limit). Reads Redis when woken and once every RESULT_RECHECK_SECONDS otherwise."""
+    key = f"future:{future_id}"
+    # Registered before the first read, so a value written in between still wakes it.
+    arrived = threading.Event()
+    with _result_waiters_lock:
+        _result_waiters.setdefault(future_id, set()).add(arrived)
+    try:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            error = redis_client.hget(key, "error")
+            if error or str(redis_client.hget(key, "failed")) == "1":
+                raise RuntimeError(
+                    error or redis_client.hget(key, "error") or "Unknown error"
+                )
+            result = redis_client.hget(key, "result")
+            if result is not None and result != "":
+                return result
+            wait = RESULT_RECHECK_SECONDS
+            if deadline is not None:
+                wait = min(wait, deadline - time.monotonic())
+                if wait <= 0:
+                    raise TimeoutError(
+                        f"Future {future_id} not available within {timeout} seconds"
+                    )
+            if arrived.wait(wait):
+                arrived.clear()
+    finally:
+        with _result_waiters_lock:
+            waiters = _result_waiters[future_id]
+            waiters.discard(arrived)
+            if not waiters:
+                del _result_waiters[future_id]
+
 
 # Add generated grpc_stubs to path (Docker context copies them directly to /app, and local relies on project dir)
 sys.path.insert(0, ".")
@@ -199,7 +255,7 @@ class Future(object):
         """
         This method will block until the value is computed or the timeout is reached.
         Returns immediately if the result is already available locally.
-        Polls Redis periodically to check for computed results.
+        Waits for the result in Redis (see wait_for_result).
         """
         failed = self.redis.hget(self._key(), "failed")
         if str(failed) == "1":
@@ -208,17 +264,7 @@ class Future(object):
         if self.result is not None:
             return self.result
 
-        if timeout is None:
-            while self._poll_redis() is None:
-                time.sleep(0.01)
-        else:
-            start_time = time.time()
-            while self._poll_redis() is None and time.time() - start_time < timeout:
-                time.sleep(0.01)
-            if self.result is None:
-                raise TimeoutError(
-                    f"Future value not available within {timeout} seconds"
-                )
+        self.result = wait_for_result(self.redis, self.id, timeout)
         self.calculated = True
 
         # Note: consumer fan-out is handled entirely by the local controllers at

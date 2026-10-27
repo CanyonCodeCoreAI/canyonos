@@ -69,6 +69,11 @@ class _FakeRedis:
         self.ttls[key] = seconds
         return True
 
+    def ttl(self, key):
+        if not self._key_exists(key):
+            return -2
+        return self.ttls.get(key, -1)
+
     def lpush(self, key, *values):
         self.lists.setdefault(key, [])[:0] = [str(value) for value in values]
 

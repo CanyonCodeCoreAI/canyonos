@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 
+import psycopg
 from flask import Flask, jsonify, request
 
 from canyonos_core.controller import canyonos_context
@@ -31,6 +32,31 @@ logger = logging.getLogger(__name__)
 
 # How many requests each worker serves at once; the rest wait for a free thread.
 WORKER_THREADS = 16
+# The local dashboard's Postgres, as published on the host.
+DASHBOARD_DATABASE_URL = (
+    "postgresql://canyonos:canyonos@host.docker.internal:5432/canyonos"
+)
+
+
+def _record_from_dashboard(request_id):
+    """Look up a finished request's root span in the dashboard's Postgres, shaped like
+    its future record; empty when it isn't there or the database can't be reached."""
+    try:
+        with psycopg.connect(DASHBOARD_DATABASE_URL, connect_timeout=2) as conn:
+            row = conn.execute(
+                "select output, status_code, status_message from otel_spans"
+                " where trace_id = %s and parent_span_id is null limit 1",
+                (request_id,),
+            ).fetchone()
+    except Exception as e:
+        logger.warning("Dashboard lookup for request %s failed: %s", request_id, e)
+        return {}
+    if row is None:
+        return {}
+    output, status_code, status_message = row
+    if status_code == "STATUS_CODE_ERROR":
+        return {"failed": "1", "error_message": status_message}
+    return {"result": output}
 
 
 def create_app(agent, method, redis_client):
@@ -113,12 +139,15 @@ def create_app(agent, method, redis_client):
         """Report a request's status, and its result or error once it has one, or the
         question it is waiting on."""
         future_id = redis_client.get(f"request:{request_id}:future")
-        if future_id is None:
-            # Cleanup expires a finished request's keys; durable history lives in
-            # the external API.
+        record = (
+            redis_client.hgetall(f"future:{future_id}")
+            if future_id
+            else redis_client.hgetall(f"request:{request_id}:result")
+            or _record_from_dashboard(request_id)
+        )
+        if not record:
             return jsonify({"error": "Request not found"}), 404
 
-        record = redis_client.hgetall(f"future:{future_id}")
         response = {"request_id": request_id, "status": "pending"}
 
         if str(record.get("failed")) == "1":

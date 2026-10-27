@@ -256,7 +256,37 @@ class LocalControllerMetricsTests(unittest.TestCase):
             ],
         )
         self.assertTrue(controller.request_queue.empty())
+        self.assertEqual(controller.request_queue.unfinished_tasks, 0)
         self.assertEqual(controller._cut_off, {"running", "queued"})
+
+    def test_a_request_is_pending_until_the_loop_has_processed_it(self):
+        pending = []
+        controller = SimpleNamespace(
+            _executor=ThreadPoolExecutor(max_workers=1),
+            _metrics_interval=5,
+            _draining=True,
+            servicer=SimpleNamespace(open_requests=set()),
+            request_queue=__import__("queue").Queue(),
+            _unsent=0,
+            stop=lambda: None,
+        )
+
+        def process(data):
+            pending.append(
+                LocalController._collect_metrics(controller)["pending_requests"]
+            )
+            # Ends the loop, which would otherwise block on the empty queue.
+            raise KeyboardInterrupt
+
+        controller._process_request = process
+        controller.request_queue.put(json.dumps({"future_id": "f1"}))
+
+        LocalController.run(controller)
+
+        self.assertEqual(pending, ["1"])
+        self.assertEqual(
+            LocalController._collect_metrics(controller)["pending_requests"], "0"
+        )
 
     def test_a_call_the_drain_failed_reports_nothing_when_it_finishes(self):
         redis = _FakeRedis()
