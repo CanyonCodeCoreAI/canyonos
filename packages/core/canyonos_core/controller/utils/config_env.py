@@ -43,7 +43,9 @@ def expand_env_value(value):
     if isinstance(value, str):
         return ENV_REF.sub(lambda m: os.environ.get(m.group(1), m.group(0)), value)
     if isinstance(value, dict):
-        return {key: expand_env_value(item) for key, item in value.items()}
+        return {
+            expand_env_value(key): expand_env_value(item) for key, item in value.items()
+        }
     if isinstance(value, list):
         return [expand_env_value(item) for item in value]
     return value

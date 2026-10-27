@@ -4,7 +4,7 @@
 """Fix C: a restart must not unconditionally wipe and recreate each machine's Redis container.
 
 _launch_redis_containers() used to `docker run` a fresh canyonos-redis-<host> container on every
-__init__, unconditionally -- wiping every `agent_instance:*` record the Provisioner needs to
+__init__, unconditionally -- wiping every `agent_instance:*` record the replica provisioner needs to
 recognize already-running EC2 replicas as reusable. ensure_replicas()'s dedup logic was already
 correct; it was just fed an empty Redis on every restart, so it reprovisioned everything from
 scratch and orphaned the previous replicas. The fix: check whether the existing container is

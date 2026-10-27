@@ -5,6 +5,9 @@
 # portfolio-level risk, then generates an LLM briefing. Resource classes below
 # reflect each stage's real cost so the scheduler has placement decisions to make.
 
+# Where every replica runs: `local` (this machine) or `EC2` (machines from `ec2:`).
+provider: local
+
 agents:
   # Stage 0: parse the free-text request into structured holdings + lookback
   # window (calls Bedrock via boto3, routed through the CanyonOS LLM proxy). Cheap CPU, one
@@ -15,8 +18,6 @@ agents:
       cpu: 1
       memory: 256
     entrypoint: agents/intent_agent.py
-    provider: local
-    machine_type: t3.micro
 
   # Stage 0b: price history fetch. Network/IO-bound, cheap CPU. Called by
   # MetricsAgent, one fetch per ticker — high fan-out, so multiple replicas.
@@ -26,8 +27,6 @@ agents:
       cpu: 1
       memory: 256
     entrypoint: agents/price_agent.py
-    provider: local
-    machine_type: t3.micro
     requirements: [yfinance]
 
   # Stage 1: per-ticker metrics. Cheap CPU, high fan-out (one call per holding).
@@ -38,8 +37,6 @@ agents:
       cpu: 1
       memory: 256
     entrypoint: agents/metrics_agent.py
-    provider: local
-    machine_type: t3.micro
 
   # Stage 2: portfolio-level risk aggregation. Single call per request; needs
   # every ticker's metrics (the barrier).
@@ -49,8 +46,6 @@ agents:
       cpu: 1
       memory: 256
     entrypoint: agents/risk_agent.py
-    provider: local
-    machine_type: t3.micro
 
   # Stage 3: LLM briefing via Bedrock. On the critical path, one call per
   # request.
@@ -60,15 +55,11 @@ agents:
       cpu: 1
       memory: 512
     entrypoint: agents/advisor_agent.py
-    provider: local
-    machine_type: t3.micro
 
   # The workflow, exposed as a REST API.
   - name: Workflow
     replicas: 1
     entrypoint: agents/workflow.py
-    provider: local
-    machine_type: t3.micro
 
   # Example: a shared Postgres state store (commented out, not used by this pipeline).
   # - name: StateDB
@@ -80,7 +71,6 @@ agents:
   #     POSTGRES_USER: username
   #     POSTGRES_PASSWORD: password
   #     POSTGRES_DB: canyonos_state_db
-  #   provider: local
 
 endpoint:
   api_port: 8080         # REST API port
@@ -110,9 +100,11 @@ redis:
   port: 6379
   db: 0
 
-# EC2 defaults for `provider: EC2` replicas.
+# Machines for `provider: EC2`.
 ec2:
   region: ${EC2_REGION}
+  machine_type:          # how many machines of each type the deploy starts
+    t3.micro: 3
   ami_id: ${EC2_AMI_ID}
   subnet_id: ${EC2_SUBNET_ID}
   security_group_ids:

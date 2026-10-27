@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Policy-Based Routing Rules
+# Each rule defines a match condition (key-value pairs to check against
+# request context) and an access list of allowed agents.
+# Rules are evaluated most-specific-first (most matching keys wins).
+# An empty match ({}) acts as a default fallback.
+
+rules:
+  - match:
+      origin: admin
+    access: all
+
+  - match: {}
+    access:
+      - HelloAgent
+      - Workflow

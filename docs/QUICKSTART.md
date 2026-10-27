@@ -34,7 +34,7 @@ canyonos test "your query"
 
 With no query, `hello` is sent. If you ran `canyonos convert`, it saved a sample query from your project: `canyonos test "$(cat .car/config/test_query.txt)"`.
 
-- Every agent runs locally during the test, whatever its `provider`.
+- Every agent runs locally during the test, whatever the `provider`.
 - If the test fails, see [Troubleshooting](guides/TROUBLESHOOTING.md#canyonos-test-fails).
 - If a deploy is already running, the query is sent to that deploy instead, and it stays running.
 - Add `--timeout SECONDS` to wait longer than the default 300 seconds.
@@ -120,7 +120,7 @@ Run `canyonos deploy` again to apply your changes.
 
 Every setting is described in [global_controller.yaml](guides/GLOBAL_CONTROLLER.md).
 
-For `provider: EC2` agents specifically (AMI/IAM/security group requirements, the `ec2:` config block), see [EC2 deployment](guides/EC2.md).
+For `provider: EC2` specifically (AMI/IAM/security group requirements, the `ec2:` config block), see [EC2 deployment](guides/EC2.md).
 
 ### 6. Stop or quit
 

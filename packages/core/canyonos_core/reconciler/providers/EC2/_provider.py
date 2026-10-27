@@ -14,6 +14,7 @@ It does three things:
 they can read config and run commands over SSH.
 """
 
+import functools
 import hashlib
 import logging
 import os
@@ -59,7 +60,7 @@ def _generate_default_key(key_path):
         os.chmod(key_path, 0o600)
 
 
-def _ssh_key_path():
+def _ensure_ssh_key():
     """Return the path to the SSH private key, creating the default key if it doesn't
     exist yet. Raises if a configured key is missing, unreadable, or open to other users."""
     configured_path = _controller.config.get("ssh_private_key_path")
@@ -98,9 +99,30 @@ def machine_platform():
     return MACHINE_PLATFORM
 
 
-def hourly_cost(machine):
-    """The USD per hour of the machine's `machine_type`, or 0 if it has no listed price."""
-    return pricing.machine_hourly_cost(machine["machine_type"])
+def hourly_cost(machine_spec):
+    """The USD per hour of one machine of the spec's `machine_type`, or 0 if it has no
+    listed price."""
+    return pricing.machine_hourly_cost(machine_spec["machine_type"])
+
+
+def machine_capacity(machine_spec):
+    """The vCPUs and memory (MiB) of one machine of the spec's `machine_type`, which
+    placement fills with replicas."""
+    return _machine_type_capacity(_ec2_config()["region"], machine_spec["machine_type"])
+
+
+@functools.cache
+def _machine_type_capacity(region, machine_type):
+    """Ask AWS once per machine type for its vCPUs and memory."""
+    import boto3
+
+    described = boto3.client("ec2", region_name=region).describe_instance_types(
+        InstanceTypes=[machine_type]
+    )["InstanceTypes"][0]
+    return {
+        "cpu": described["VCpuInfo"]["DefaultVCpus"],
+        "memory": described["MemoryInfo"]["SizeInMiB"],
+    }
 
 
 def _ec2_config():
@@ -109,8 +131,8 @@ def _ec2_config():
     cfg = _controller.config.get("ec2")
     if not cfg:
         raise RuntimeError(
-            f"{_controller.config_path} has no ec2: section, which launching or "
-            "removing an EC2 replica needs"
+            f"{_controller.config_path} has no ec2: section, which starting or "
+            "terminating an EC2 machine needs"
         )
     return cfg
 
@@ -148,13 +170,13 @@ def _ensure_key_pair_imported(cfg, key_path, client):
 
 
 def start_machine(machine_spec, launch_id):
-    """Launch one EC2 machine of the spec's `machine_type`, without waiting for it to
-    boot, and return its EC2 id as `machine_id`."""
+    """Launch one machine of the spec's `machine_type`, without waiting for it to boot,
+    and return its EC2 id as `machine_id`."""
     import boto3
 
     cfg = _ec2_config()
     client = boto3.client("ec2", region_name=cfg["region"])
-    key_name = _ensure_key_pair_imported(cfg, _ssh_key_path(), client)
+    key_name = _ensure_key_pair_imported(cfg, _ensure_ssh_key(), client)
     request = {
         "ImageId": cfg.get("ami_id", DEFAULT_AMI_ID),
         "InstanceType": machine_spec["machine_type"],
@@ -260,6 +282,26 @@ def wait_for_machine(machine):
         "user": user,
         "container_timeout": cfg.get("controller_health_timeout", 180),
     }
+
+
+def machine_alive(machine):
+    """Whether the machine still exists: AWS lists it as pending or running. One that
+    AWS no longer lists at all is gone too."""
+    import boto3
+    from botocore.exceptions import ClientError
+
+    client = boto3.client("ec2", region_name=_ec2_config()["region"])
+    try:
+        response = client.describe_instances(InstanceIds=[machine["machine_id"]])
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "InvalidInstanceID.NotFound":
+            return False
+        raise
+    return any(
+        found["State"]["Name"] in ("pending", "running")
+        for reservation in response["Reservations"]
+        for found in reservation["Instances"]
+    )
 
 
 def terminate_machine(machine):

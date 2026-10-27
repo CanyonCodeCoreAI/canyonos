@@ -113,6 +113,21 @@ def _mapping(collector, node, key, prefix, allowed):
     return value
 
 
+def _counts(collector, node, key, prefix):
+    """Check a mapping of names to how many of each, such as `{t3.micro: 2}`."""
+    value = node.get(key)
+    if not isinstance(value, dict) or not value:
+        collector.add(
+            node,
+            key,
+            _field(prefix, key),
+            f"expected a mapping of names to counts, got {_describe(value)}",
+        )
+        return
+    for name in value:
+        _integer(collector, value, name, _field(prefix, key), None, 1)
+
+
 def _integer(collector, node, key, prefix, default, minimum=None, maximum=None):
     """Read a whole-number setting from a config file, using the default when it's
     missing; a wrong type or out-of-range value is reported as a violation."""

@@ -356,52 +356,39 @@ class ProviderTests(_ManifestCase):
     def test_a_provider_in_any_casing_is_normalized(self):
         for provider, normalized in (("LOCAL", "local"), ("Local", "local")):
             with self.subTest(provider=provider):
-                manifest = self.load({"agents": [_agent(provider=provider)]})
-                self.assertEqual(manifest.agents[0].provider, normalized)
+                manifest = self.load({"provider": provider, "agents": [_agent()]})
+                self.assertEqual(manifest.provider, normalized)
 
         for provider in ("Ec2", "ec2"):
             with self.subTest(provider=provider):
                 manifest = self.load(
-                    {
-                        "agents": [_agent(provider=provider, machine_type="t3.micro")],
-                        "ec2": _EC2_BLOCK,
-                    }
+                    {"provider": provider, "agents": [_agent()], "ec2": _EC2_BLOCK}
                 )
-                self.assertEqual(manifest.agents[0].provider, "EC2")
+                self.assertEqual(manifest.provider, "EC2")
 
     def test_a_lowercase_ec2_still_needs_the_ec2_block(self):
-        violation = self.one(
-            {"agents": [_agent(provider="ec2", machine_type="t3.micro")]}
-        )
+        violation = self.one({"provider": "ec2", "agents": [_agent()]})
 
         self.assertEqual(violation.field, "ec2")
 
     def test_a_misspelled_provider_is_rejected(self):
         for provider in ("locale", "EC2 ", "aws"):
             with self.subTest(provider=provider):
-                violation = self.one({"agents": [_agent(provider=provider)]})
-                self.assertEqual(violation.field, "agents[0].provider")
+                violation = self.one({"provider": provider, "agents": [_agent()]})
+                self.assertEqual(violation.field, "provider")
                 self.assertEqual(
                     violation.message,
                     f"expected one of ['local', 'EC2'], got the string {provider!r}",
                 )
 
-    def test_an_ec2_agent_needs_a_machine_type(self):
-        violation = self.one({"agents": [_agent(provider="EC2")], "ec2": _EC2_BLOCK})
-
-        self.assertEqual(violation.field, "agents[0].machine_type")
-        self.assertEqual(violation.message, "is required when provider is 'EC2'")
-
-    def test_an_ec2_agent_needs_the_ec2_block(self):
-        violation = self.one(
-            {"agents": [_agent(provider="EC2", machine_type="t3.micro")]}
-        )
+    def test_ec2_needs_the_ec2_block(self):
+        violation = self.one({"provider": "EC2", "agents": [_agent()]})
 
         self.assertEqual(violation.field, "ec2")
         self.assertEqual(
             violation.message,
-            "is required because an agent declares provider 'EC2'; it must set "
-            "region, subnet_id, security_group_ids",
+            "is required because provider is 'EC2'; it must set "
+            "region, machine_type, subnet_id, security_group_ids",
         )
         self.assertEqual(violation.line, 0)
 
@@ -410,12 +397,7 @@ class ProviderTests(_ManifestCase):
         del block["subnet_id"]
 
         self.assertEqual(
-            self.fields(
-                {
-                    "agents": [_agent(provider="EC2", machine_type="t3.micro")],
-                    "ec2": block,
-                }
-            ),
+            self.fields({"provider": "EC2", "agents": [_agent()], "ec2": block}),
             ["ec2.subnet_id"],
         )
 
@@ -424,7 +406,8 @@ class ProviderTests(_ManifestCase):
         # dropped without a violation: an EC2 agent with Manifest.ec2 None.
         violation = self.one(
             {
-                "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+                "provider": "EC2",
+                "agents": [_agent()],
                 "ec2": {**_EC2_BLOCK, "security_group_ids": []},
             }
         )
@@ -440,7 +423,8 @@ class ProviderTests(_ManifestCase):
     def test_the_ec2_block_accepts_an_iam_profile(self):
         self.load(
             {
-                "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+                "provider": "EC2",
+                "agents": [_agent()],
                 "ec2": {**_EC2_BLOCK, "iam_profile_name": "my-profile"},
             }
         )
@@ -448,6 +432,7 @@ class ProviderTests(_ManifestCase):
 
 _EC2_BLOCK = {
     "region": "us-east-1",
+    "machine_type": {"t3.micro": 2},
     "ami_id": "ami-0123456789abcdef0",
     "subnet_id": "subnet-0123456789abcdef0",
     "security_group_ids": ["sg-0123456789abcdef0"],
@@ -478,9 +463,9 @@ class DefaultsTests(_ManifestCase):
         self.assertEqual(manifest.redis.port, 6379)
         self.assertEqual(manifest.redis.db, 0)
         self.assertIsNone(manifest.otel)
+        self.assertEqual(manifest.provider, "local")
 
         self.assertIsInstance(agent, CodeAgent)
-        self.assertEqual(agent.provider, "local")
         self.assertEqual(agent.replicas, 1)
         self.assertEqual(agent.resources.cpu, 1)
         self.assertEqual(agent.resources.memory, 512)
@@ -746,7 +731,8 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_string_field_takes_the_variable_s_text(self):
         config = {
-            "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+            "provider": "EC2",
+            "agents": [_agent()],
             "ec2": {**_EC2_BLOCK, "region": "${CANYONOS_TEST_REGION}"},
         }
 
@@ -755,7 +741,8 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_string_list_takes_the_variable_s_text(self):
         config = {
-            "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+            "provider": "EC2",
+            "agents": [_agent()],
             "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
         }
 
@@ -775,7 +762,8 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_ref_that_resolves_to_nothing_in_a_list_names_the_variable(self):
         config = {
-            "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+            "provider": "EC2",
+            "agents": [_agent()],
             "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
         }
 
@@ -801,7 +789,8 @@ class EnvExpansionTests(_ManifestCase):
         ):
             with self.subTest(key=key):
                 config = {
-                    "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+                    "provider": "EC2",
+                    "agents": [_agent()],
                     "ec2": {**_EC2_BLOCK, key: value},
                 }
                 environ = {
@@ -879,7 +868,8 @@ class EveryProblemInAnEntryTests(_ManifestCase):
         del block["region"]
         fields = self.fields(
             {
-                "agents": [_agent(provider="EC2", machine_type="t3.micro")],
+                "provider": "EC2",
+                "agents": [_agent()],
                 "ec2": block,
             }
         )

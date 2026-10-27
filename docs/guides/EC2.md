@@ -1,15 +1,22 @@
 # EC2 deployment
 
-Any agent can run on EC2 instead of the local Docker engine. Set
-`provider: EC2` on the entry and give it a `machine_type`. Then add an
-`ec2:` block at the top of the manifest. The provider value is accepted in
-any casing.
+A deployment can run its agents on EC2 instead of the local Docker engine. Set
+the top-level `provider: EC2` and add an `ec2:` block whose `machine_type` maps
+each machine type to how many of it to start. The deploy starts all of them, and
+every agent runs on them: each replica goes on the least loaded machine, by its
+`resources`, and a pool smaller than the agents' `resources` is shared rather than
+refused. The provider value is accepted in any casing.
 
 ## Configuration
 
 ```yaml
+provider: EC2
+
 ec2:
   region: us-east-1
+  machine_type:
+    t3.micro: 2
+    t3.large: 1
   subnet_id: subnet-0123456789abcdef0
   security_group_ids:
     - sg-0123456789abcdef0
@@ -17,8 +24,6 @@ ec2:
 agents:
   - name: ExampleAgent
     entrypoint: agents/example_agent.py
-    provider: EC2
-    machine_type: t3.micro
     functions:
       - name: run
         arguments:
@@ -30,8 +35,8 @@ endpoint:
   method: run
 ```
 
-Required: `region`, `subnet_id`, `security_group_ids`, and `machine_type` on
-each EC2 entry. There is no default for these.
+Required: `region`, `machine_type`, `subnet_id` and `security_group_ids`. There
+is no default for these.
 
 Optional, with defaults:
 
@@ -39,6 +44,7 @@ Optional, with defaults:
 |---|---|
 | `ami_id` | CanyonOS's own Ubuntu AMI in `us-east-1`. Any AMI with Docker and `zstd` works. |
 | `ssh_user` | `ubuntu` |
+| `market_type` | `on-demand`. `spot` requests spot machines. |
 | `iam_profile_name` | none. The name of an IAM instance profile, which attaches an IAM role to each machine; the deploying identity then needs `iam:PassRole`. |
 | `public_ip_timeout` | `120` seconds |
 | `controller_health_timeout` | `180` seconds |
@@ -49,10 +55,10 @@ The SSH key is the top-level `ssh_private_key_path`. It defaults to `~/.ssh/cany
 
 The machine running `canyonos deploy` needs Docker, AWS credentials with
 `ec2:RunInstances`, `ec2:TerminateInstances`, `ec2:DescribeInstances`,
-`ec2:CreateTags` and `ec2:ImportKeyPair`, and a route to the machines'
+`ec2:DescribeInstanceTypes`, `ec2:CreateTags` and `ec2:ImportKeyPair`, and a route to the machines'
 private IPs, which in practice means running inside the same VPC as
-`subnet_id`. The machines' security group has to allow 22, 50051 and 6379
-from itself. The endpoint and dashboard run on the deploying machine, so it has
+`subnet_id`. The machines' security group has to allow 22, 6379 and 50051–50150
+from itself: replicas sharing a machine publish on 50051, 50052 and up. The endpoint and dashboard run on the deploying machine, so it has
 to allow their ports (8080 and 8081 by default) from whoever calls the
 endpoint, and the gRPC port the endpoint publishes from the machines' security
 group: agents send results back there, and without it every request stays
@@ -99,10 +105,13 @@ machine it recorded in Redis through the AWS API. The stop waits 4 minutes, enou
 the 180-second drain; whatever is still going after that is left for the next start to
 reconcile.
 
-Until then a machine keeps running, and billing, after its replica is gone: when its
-container fails to start, or when its replica is scaled away. A scale-up starts a new
-machine. Each machine is recorded in Redis before `RunInstances` is called, under a token
+Every machine in the pool runs, and bills, from deploy to stop, whether or not replicas
+are on it. Each machine is recorded in Redis before `RunInstances` is called, under a token
 AWS keeps, so a machine that never got a public IP is still found by that token and
-terminated at stop. If `canyonos stop` moved on after its 4
+terminated at stop. A machine AWS no longer lists as running, such as a reclaimed spot
+machine, is replaced, and its replicas start again on the least loaded machines. Changing
+`machine_type` or `market_type` and reloading the config starts the machines it adds and
+terminates the ones it drops; their replicas start again on the machines kept, and calls
+they were running fail. If `canyonos stop` moved on after its 4
 minutes, look for machines tagged `Name=canyonos-<launch id>` and
 `CreatedBy=EC2 Fast Launch` in the region and terminate those specifically.

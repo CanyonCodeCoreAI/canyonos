@@ -490,7 +490,7 @@ class GlobalController(ControllerContext):
 
     def _launch_redis_containers(self):
         """Launch this machine's Redis container, reusing one that's already healthy.
-        A machine started for replicas gets its Redis when its first replica launches."""
+        A machine in the pool gets its Redis when the reconciler starts it."""
         host = "localhost"
         redis_port = self.config.get("redis", {}).get("port", 6379)
         container_name = redis_container_name(host)

@@ -722,10 +722,10 @@ class GenerateStubTests(unittest.TestCase):
 
 
 class TargetDockerPlatformTests(unittest.TestCase):
-    """An explicit platform wins; otherwise images are built for the platform the agents'
-    machines run, or for this Docker daemon's when every agent runs here."""
+    """An explicit platform wins; otherwise images are built for the platform the
+    provider's machines run, or for this Docker daemon's when every replica runs here."""
 
-    def _platform(self, agents, explicit=None):
+    def _platform(self, provider, explicit=None):
         daemon = unittest.mock.Mock(returncode=0, stdout="linux/arm64\n", stderr="")
         with (
             unittest.mock.patch(
@@ -736,26 +736,20 @@ class TargetDockerPlatformTests(unittest.TestCase):
             os.environ.pop("CANYONOS_DOCKER_PLATFORM", None)
             if explicit:
                 os.environ["CANYONOS_DOCKER_PLATFORM"] = explicit
-            return stub_generator.target_docker_platform(agents), run
+            return stub_generator.target_docker_platform(provider), run
 
     def test_an_explicit_platform_wins_over_the_daemons(self):
-        platform, run = self._platform(
-            [{"name": "A", "provider": "local"}], explicit="linux/amd64"
-        )
+        platform, run = self._platform("local", explicit="linux/amd64")
         self.assertEqual(platform, "linux/amd64")
         run.assert_not_called()
 
-    def test_agents_on_this_machine_build_for_the_daemons_platform(self):
-        platform, run = self._platform(
-            [{"name": "A", "provider": "local"}, {"name": "B", "provider": "local"}]
-        )
+    def test_replicas_on_this_machine_build_for_the_daemons_platform(self):
+        platform, run = self._platform("local")
         self.assertEqual(platform, "linux/arm64")
         run.assert_called_once()
 
-    def test_an_ec2_agent_builds_for_its_machines_platform(self):
-        platform, run = self._platform(
-            [{"name": "A", "provider": "local"}, {"name": "B", "provider": "EC2"}]
-        )
+    def test_ec2_builds_for_its_machines_platform(self):
+        platform, run = self._platform("EC2")
         self.assertEqual(platform, "linux/amd64")
         run.assert_not_called()
 
@@ -771,4 +765,4 @@ class TargetDockerPlatformTests(unittest.TestCase):
         ):
             os.environ.pop("CANYONOS_DOCKER_PLATFORM", None)
             with self.assertRaisesRegex(RuntimeError, "Cannot connect to the Docker"):
-                stub_generator.target_docker_platform([{"name": "A"}])
+                stub_generator.target_docker_platform("local")

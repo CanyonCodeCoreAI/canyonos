@@ -4,10 +4,12 @@
 # Global Controller Configuration
 # Lists all agents that CanyonOS manages.
 
+# Where every replica runs: `local` (this machine) or `EC2` (machines from `ec2:`).
+provider: local
+
 agents:
   - name: HelloAgent
     replicas: 1
-    machine_type: t3.micro
     resources:
       cpu: 1
       memory: 512
@@ -19,7 +21,6 @@ agents:
             type: str
         returns:
           type: str
-    provider: local
 
   - name: Workflow
     replicas: 1
@@ -31,7 +32,6 @@ agents:
             type: str
         returns:
           type: dict
-    provider: local
 
 endpoint:
   api_port: 8082 # Defaults to 8080 if not filled

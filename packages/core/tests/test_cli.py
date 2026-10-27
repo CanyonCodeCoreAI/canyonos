@@ -43,7 +43,7 @@ class CliDeployTests(unittest.TestCase):
         controller = MagicMock()
         controller_module = self._fake_controller_module(controller)
         args = SimpleNamespace(config="config/global_controller.yaml")
-        config = {"agents": [{"name": "LocalAgent", "provider": "local"}]}
+        config = {"agents": [{"name": "LocalAgent"}]}
 
         with (
             patch("canyonos_core.cli.os.path.isfile", return_value=True),
@@ -68,7 +68,7 @@ class CliDeployTests(unittest.TestCase):
     @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
     @patch("canyonos_core.reconciler.providers.EC2._provider.preflight")
     @patch("canyonos_core.reconciler.providers.Local._provider.preflight")
-    def test_deploy_runs_each_used_providers_preflight_once(
+    def test_deploy_runs_only_the_deployments_providers_preflight(
         self,
         local_preflight,
         ec2_preflight,
@@ -81,11 +81,8 @@ class CliDeployTests(unittest.TestCase):
         controller_module = self._fake_controller_module(controller)
         args = SimpleNamespace(config="config/global_controller.yaml")
         config = {
-            "agents": [
-                {"name": "Ec2Agent", "provider": "EC2"},
-                {"name": "LocalAgent", "provider": "local"},
-                {"name": "Ec2Worker", "provider": "EC2"},
-            ]
+            "provider": "EC2",
+            "agents": [{"name": "Ec2Agent"}, {"name": "Ec2Worker"}],
         }
 
         with (
@@ -102,7 +99,7 @@ class CliDeployTests(unittest.TestCase):
 
         ensure_grpc.assert_called_once_with(os.getcwd())
         ec2_preflight.assert_called_once_with()
-        local_preflight.assert_called_once_with()
+        local_preflight.assert_not_called()
         controller.run.assert_called_once_with()
 
     @patch("atexit.register")
@@ -158,7 +155,7 @@ class CliDeployTests(unittest.TestCase):
         )
         controller_module = self._fake_controller_module(controller)
         args = SimpleNamespace(config="config/global_controller.yaml")
-        config = {"agents": [{"name": "Broken", "provider": "local"}]}
+        config = {"agents": [{"name": "Broken"}]}
 
         with (
             patch("canyonos_core.cli.os.path.isfile", return_value=True),
@@ -312,13 +309,11 @@ class CliBuildTests(unittest.TestCase):
                             "name": "ExampleAgent",
                             "entrypoint": "agents/example_agent.py",
                             "functions": [{"name": "work"}],
-                            "provider": "local",
                         },
                         {
                             "name": "SecondAgent",
                             "entrypoint": "agents/second_agent.py",
                             "functions": [{"name": "main"}],
-                            "provider": "local",
                         },
                     ],
                     "endpoint": ENDPOINT,
@@ -383,7 +378,6 @@ class CliBuildTests(unittest.TestCase):
                             "arguments": [{"name": "key", "type": "str"}],
                         }
                     ],
-                    "provider": "local",
                 },
                 {"name": "postgres", "type": "database", "image": "postgres:16"},
             ]
@@ -488,7 +482,7 @@ class CliBuildTests(unittest.TestCase):
                 yaml.safe_dump(
                     {
                         "agents": [
-                            {"name": "NoEntrypointAgent", "provider": "local"},
+                            {"name": "NoEntrypointAgent"},
                         ]
                     }
                 )
@@ -523,20 +517,17 @@ class CliBuildTests(unittest.TestCase):
                             "name": "ExampleAgent",
                             "entrypoint": "agents/example_agent.py",
                             "functions": [{"name": "work"}],
-                            "provider": "local",
                         },
                         {
                             "name": "VllmAgent",
                             "entrypoint": "agents/vllm_agent.py",
                             "functions": [{"name": "work"}],
-                            "provider": "local",
                             "requirements": ["yfinance"],
                         },
                         {
                             "name": "SecondAgent",
                             "entrypoint": "agents/second_agent.py",
                             "functions": [{"name": "main"}],
-                            "provider": "local",
                             "requirements": ["humanize"],
                         },
                     ],
@@ -636,7 +627,6 @@ class CliBuildTests(unittest.TestCase):
                                 "name": "ExampleAgent",
                                 "entrypoint": "agents/example_agent.py",
                                 "functions": [{"name": "work"}],
-                                "provider": "local",
                                 "requirements": "boto3",
                             },
                         ]

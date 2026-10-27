@@ -147,10 +147,7 @@ class EC2ProviderLimitTests(unittest.TestCase):
             "public_host": "54.10.20.30",
             "user": "ubuntu",
         }
-        with (
-            patch.object(replicas, "transfer_image"),
-            patch.object(replicas, "_wait_for_redis"),
-        ):
+        with patch.object(replicas, "_wait_for_redis"):
             replicas.launch(self.controller, machine, spec, 0, None, "agent-id-0")
         redis_cmd, agent_cmd = (
             call.args[0]

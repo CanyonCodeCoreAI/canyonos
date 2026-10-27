@@ -72,8 +72,8 @@ external stores and concurrency controls; follow the
   unless disabled or another destination was chosen.
 - For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
 - For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
-  using developer-supplied identifiers. If unavailable, leave `provider: local`
-  and report that EC2 is not configured.
+  using developer-supplied identifiers. If unavailable, leave the top-level
+  `provider: local` and report that EC2 is not configured.
 
 ## 4. Validate and stop
 

@@ -541,19 +541,15 @@ def _copy_files(output_dir, files_to_copy):
         shutil.copy2(src, dest_path)
 
 
-# Bandage: revisit once resources are pooled and agents no longer declare a provider.
-def target_docker_platform(agent_specs):
+def target_docker_platform(provider):
     """Return the platform `canyonos deploy` builds and pulls every image for:
-    `CANYONOS_DOCKER_PLATFORM` when set, else the one the agents' providers run their
-    machines on, else this Docker daemon's own, since every replica runs here."""
-    explicit = os.environ.get("CANYONOS_DOCKER_PLATFORM")
-    if explicit:
-        return explicit
-    named = {
-        providers.get(agent_spec.get("provider", providers.DEFAULT)).machine_platform()
-        for agent_spec in agent_specs
-    } - {None}
-    return named.pop() if named else _docker_daemon_platform()
+    `CANYONOS_DOCKER_PLATFORM` when set, else the one the provider runs its machines on,
+    else this Docker daemon's own, since every replica runs here."""
+    return (
+        os.environ.get("CANYONOS_DOCKER_PLATFORM")
+        or providers.get(provider).machine_platform()
+        or _docker_daemon_platform()
+    )
 
 
 def _docker_daemon_platform():

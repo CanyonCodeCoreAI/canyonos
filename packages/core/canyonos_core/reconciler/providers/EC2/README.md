@@ -14,8 +14,8 @@
 
 - **Security group** (everything is inbound, same permissions needed for outbound unless you allow all outbound traffic)
   - The endpoint and dashboard run on the host, not on a launched machine. Their ports are by default 8080 and 8081, and are referred as such below
-  - On the machines' security group, ports 50051, 6379, and 22 need to be accessible by the security group itself. The host must run inside the same VPC, since it reaches every machine over its private IP.
-    - 50051 and 6379 must be accessible over custom TCP.
+  - On the machines' security group, ports 50051–50150, 6379, and 22 need to be accessible by the security group itself; replicas sharing a machine publish on 50051, 50052 and up. The host must run inside the same VPC, since it reaches every machine over its private IP.
+    - 50051–50150 and 6379 must be accessible over custom TCP.
     - 22 must be accessible over ssh.
   - On the host, ports 8080 and 8081 need to be accessible by whoever queries the endpoint (0.0.0.0 for example)
   - On the host, the port the endpoint publishes for its gRPC controller needs to be accessible by the machines' security group over custom TCP. Agents send results back there; without it every request stays "pending".
@@ -25,23 +25,18 @@
 You need to add this block to global_controller.yaml, to give canyonos the necessary credentials to launch agents on EC2.
 
 ```yaml
+provider: EC2
+
 ec2:
   region: us-east-1
+  machine_type:
+    t3.micro: 2
   subnet_id: subnet-0123456789abcdef0
   security_group_ids:
     - sg-0123456789abcdef0
 ```
 
-`canyonos convert` handles this automatically, but each EC2 agent's spec also needs its own `machine_type` (e.g. `t3.micro`), example below. 
-
-Example:
-
-```yaml
-  - name: ExampleAgent
-    entrypoint: agents/example_agent.py
-    provider: EC2
-    machine_type: t3.micro
-```
+The deploy starts every machine listed, and every agent runs on them, each replica on the least loaded machine.
 
 ## IAM permissions
 
@@ -51,6 +46,7 @@ The host machine needs these IAM Permissions to be able to launch external EC2 m
   - RunInstances
   - TerminateInstances
   - DescribeInstances
+  - DescribeInstanceTypes
   - CreateTags
   - ImportKeyPair
 - IAM:
@@ -69,6 +65,7 @@ You can paste the exact JSON below in the "create manual policy" field in IAM wh
         "ec2:RunInstances",
         "ec2:TerminateInstances",
         "ec2:DescribeInstances",
+        "ec2:DescribeInstanceTypes",
         "ec2:CreateTags",
         "ec2:ImportKeyPair"
       ],
@@ -87,11 +84,14 @@ The ec2 config block given above has the bare minimum needed to get the machines
 ec2:
   # Required Commands
   region: us-east-1
+  machine_type:
+    t3.micro: 2
   subnet_id: subnet-0123456789abcdef0
   security_group_ids:
     - sg-0123456789abcdef0
 
   # Optional Commands
+  market_type: spot # For every machine in the pool; on-demand when left out.
   iam_profile_name: ec2launch # For the launched machines, if you want a specific IAM role attached to each machine, pass this variable in.
   ami_id: ami-0123456789abcdef0 # Look at `Creating your own AMI` below
   ssh_user: ubuntu # Look at `Creating your own AMI` below

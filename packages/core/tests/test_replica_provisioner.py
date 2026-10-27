@@ -15,13 +15,18 @@ from canyonos_core.reconciler import replicas
 from canyonos_core.controller.controller_context import (
     list_replicas,
 )
-from canyonos_core.reconciler.provisioner import DRAIN_TIMEOUT_SECONDS, Provisioner
+from canyonos_core.reconciler.machine_provisioner import MachineProvisioner
+from canyonos_core.reconciler.replica_provisioner import (
+    DRAIN_TIMEOUT_SECONDS,
+    ReplicaProvisioner,
+)
 from fakes import _fake_controller, _replica
 
 
 def _fake_provider(**kwargs):
     provider = SimpleNamespace(
         hourly_cost=MagicMock(return_value=0),
+        machine_capacity=MagicMock(return_value=None),
         start_machine=MagicMock(
             return_value={"private_host": "localhost", "public_host": "localhost"}
         ),
@@ -34,7 +39,19 @@ def _fake_provider(**kwargs):
     return provider
 
 
-class ProvisionerTests(unittest.TestCase):
+def _ensure(manager, agent_specs, **kwargs):
+    """Start the machines the specs need, as the reconciler does, then their replicas."""
+    machines = MachineProvisioner(manager.controller)
+    machines.start_missing(agent_specs)
+    # Machines start in the background; the reconciler places onto them on a later pass.
+    while machines._starting:
+        time.sleep(0.01)
+    return manager.ensure_replicas(
+        agent_specs, machines.machines_for_replicas(), **kwargs
+    )
+
+
+class ReplicaProvisionerTests(unittest.TestCase):
     def test_launch_removes_an_orphaned_running_container_before_recreating(
         self,
     ):
@@ -55,9 +72,9 @@ class ProvisionerTests(unittest.TestCase):
             return "true\n" if cmd[3] == "{{.State.Running}}" else "canyonos\n"
 
         controller._run_cmd = fake_run_cmd
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         self.assertEqual(
             [c[:3] for c in calls],
@@ -73,9 +90,9 @@ class ProvisionerTests(unittest.TestCase):
         """Redis listens on the declared port inside the container, so agents use it too."""
         controller = _fake_controller()
         controller.redis_ports["localhost"] = 9002
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        replica = manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])[0]
+        replica = _ensure(manager, [{"name": "Alpha", "provider": "local"}])[0]
 
         self.assertEqual(replica["redis_port"], "9002")
         run_argv = controller._run_cmd.call_args_list[1].args[0]
@@ -83,10 +100,10 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_local_replicas_keep_default_host_and_increment_host_ports(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        alpha = manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])[0]
-        beta = manager.ensure_replicas([{"name": "Beta", "provider": "local"}])[0]
+        alpha = _ensure(manager, [{"name": "Alpha", "provider": "local"}])[0]
+        beta = _ensure(manager, [{"name": "Beta", "provider": "local"}])[0]
 
         self.assertEqual(
             alpha,
@@ -170,10 +187,11 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_a_local_database_is_routed_on_its_container_port(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
         with patch.object(replicas, "_port_bound", return_value=False):
-            replica = manager.ensure_replicas(
+            replica = _ensure(
+                manager,
                 [
                     {
                         "name": "Pg",
@@ -181,7 +199,7 @@ class ProvisionerTests(unittest.TestCase):
                         "type": "database",
                         "db_port": 5433,
                     }
-                ]
+                ],
             )[0]
 
         run_cmd = next(
@@ -196,9 +214,10 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_only_limits_which_agents_get_replicas_but_routing_keeps_every_agent(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas(
+        _ensure(
+            manager,
             [
                 {"name": "Alpha", "provider": "local"},
                 {"name": "Beta", "provider": "local"},
@@ -217,9 +236,9 @@ class ProvisionerTests(unittest.TestCase):
     def test_launch_passes_poll_interval_env_var(self):
         controller = _fake_controller()
         controller.config = {"poll_interval": 7}
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         cmd = controller._run_cmd.call_args.args[0]
         self.assertIn("CANYONOS_POLL_INTERVAL=7", cmd)
@@ -230,9 +249,9 @@ class ProvisionerTests(unittest.TestCase):
         positional argument, breaking the launch entirely."""
         controller = _fake_controller()
         controller.config = {"logs": True}
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         cmd = controller._run_cmd.call_args.args[0]
         index = cmd.index("CANYONOS_LOGS_ENABLED=true")
@@ -241,9 +260,9 @@ class ProvisionerTests(unittest.TestCase):
     def test_local_bootstrap_defaults_logs_enabled_to_true(self):
         controller = _fake_controller()
         controller.config = {}
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         cmd = controller._run_cmd.call_args.args[0]
         index = cmd.index("CANYONOS_LOGS_ENABLED=true")
@@ -252,9 +271,9 @@ class ProvisionerTests(unittest.TestCase):
     def test_local_bootstrap_honors_explicit_logs_false(self):
         controller = _fake_controller()
         controller.config = {"logs": False}
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         cmd = controller._run_cmd.call_args.args[0]
         index = cmd.index("CANYONOS_LOGS_ENABLED=false")
@@ -262,16 +281,17 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_local_agent_and_resource_flags_stay_the_same(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas(
+        _ensure(
+            manager,
             [
                 {
                     "name": "Workflow",
                     "provider": "local",
                     "resources": {"cpu": 2, "memory": 1024, "gpu": 1},
                 }
-            ]
+            ],
         )
 
         self.assertNotIn(
@@ -337,9 +357,9 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_replica_id_is_published_under_the_controller_address_key(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         self.assertEqual(
             controller.redis.get("controller:canyonos-alpha-0:50051:replica_id"),
@@ -348,28 +368,31 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_one_failed_replica_still_registers_and_routes_the_others(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
-        provision_one = manager._provision_one
+        manager = ReplicaProvisioner(controller)
+        launch_replica = manager._launch_replica
 
-        def fail_beta(job):
-            if job["agent_name"] == "Beta":
+        def fail_beta(machine, new_replica, hourly_cost, image_sent):
+            if new_replica["agent_spec"]["name"] == "Beta":
                 raise RuntimeError("beta failed")
-            return provision_one(job)
+            return launch_replica(machine, new_replica, hourly_cost, image_sent)
 
-        manager._provision_one = fail_beta
+        manager._launch_replica = fail_beta
 
         with (
             patch(
-                "canyonos_core.reconciler.provisioner.publish_routing_snapshot"
+                "canyonos_core.reconciler.replica_provisioner.publish_routing_snapshot"
             ) as publish,
-            self.assertLogs("canyonos_core.reconciler.provisioner", "WARNING") as logs,
+            self.assertLogs(
+                "canyonos_core.reconciler.replica_provisioner", "WARNING"
+            ) as logs,
             self.assertRaisesRegex(RuntimeError, "beta failed"),
         ):
-            manager.ensure_replicas(
+            _ensure(
+                manager,
                 [
                     {"name": "Alpha", "provider": "local"},
                     {"name": "Beta", "provider": "local"},
-                ]
+                ],
             )
 
         self.assertEqual(
@@ -380,7 +403,7 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_missing_container_behind_stale_record_is_reprovisioned(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
         key = "agent_instance:Alpha-0"
         stale = {
             "agent_name": "Alpha",
@@ -399,8 +422,10 @@ class ProvisionerTests(unittest.TestCase):
         controller.redis.hset_multiple(key, stale)
         controller.redis.sadd("agent:Alpha:instances", "Alpha-0")
 
-        with self.assertLogs("canyonos_core.reconciler.provisioner", "WARNING") as logs:
-            manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        with self.assertLogs(
+            "canyonos_core.reconciler.replica_provisioner", "WARNING"
+        ) as logs:
+            _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         self.assertIn("Replacing Alpha-0", logs.output[0])
         commands = [call.args[0] for call in controller._run_cmd.call_args_list]
@@ -423,15 +448,22 @@ class ProvisionerTests(unittest.TestCase):
             return reachable(cmd, host, user)
 
         controller._run_cmd.side_effect = run_cmd
+        controller.config["ec2"] = {"machine_type": {"t3.small": 1}}
         stale = {**_replica("Alpha", 0), "provider": "EC2", "private_host": "10.0.0.9"}
         controller.redis.hset_multiple("agent_instance:Alpha-0", stale)
 
-        with self.assertLogs("canyonos_core.reconciler.provisioner", "WARNING"):
-            Provisioner(controller).ensure_replicas(
+        with (
+            patch(
+                "canyonos_core.reconciler.providers.get", return_value=_fake_provider()
+            ),
+            self.assertLogs("canyonos_core.reconciler.replica_provisioner", "WARNING"),
+        ):
+            _ensure(
+                ReplicaProvisioner(controller),
                 [
                     {"name": "Alpha", "provider": "EC2"},
                     {"name": "Beta", "provider": "local"},
-                ]
+                ],
             )
 
         self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), stale)
@@ -439,8 +471,8 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_local_remove_replica_still_removes_the_same_container(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        manager = ReplicaProvisioner(controller)
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         controller._run_cmd.reset_mock()
         manager.remove_replica("Alpha-0", drain=False)
@@ -453,10 +485,15 @@ class ProvisionerTests(unittest.TestCase):
 
     def test_another_machine_gets_its_redis_before_the_container(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
-        spec = {"name": "Remote", "provider": "EC2", "machine_type": "t3.small"}
+        controller.config["ec2"] = {
+            "region": "us-east-1",
+            "machine_type": {"t3.small": 1},
+        }
+        manager = ReplicaProvisioner(controller)
+        spec = {"name": "Remote", "provider": "EC2"}
         provider = _fake_provider(
             hourly_cost=MagicMock(return_value=0.0208),
+            machine_capacity=MagicMock(return_value={"cpu": 2, "memory": 2048}),
             start_machine=MagicMock(return_value={"machine_id": "i-test1"}),
             wait_for_machine=MagicMock(
                 return_value={
@@ -469,10 +506,11 @@ class ProvisionerTests(unittest.TestCase):
 
         with (
             patch("canyonos_core.reconciler.providers.get", return_value=provider),
-            patch.object(replicas, "transfer_image"),
+            patch("canyonos_core.reconciler.replica_provisioner.transfer_image"),
         ):
-            created = manager.ensure_replicas([spec])[0]
+            created = _ensure(manager, [spec])[0]
 
+        # Only what describes the machine, not the rest of the ec2: block.
         provider.hourly_cost.assert_called_once_with({"machine_type": "t3.small"})
         provider.start_machine.assert_called_once_with(
             {"machine_type": "t3.small"}, ANY
@@ -506,28 +544,47 @@ class ProvisionerTests(unittest.TestCase):
             },
         )
         record = controller.redis.hgetall("agent_instance:Remote-0")
-        machine = controller.redis.hgetall(f"machine_record:{record['launch_id']}")
+        machine = controller.redis.hgetall(f"machine_record:{record['machine']}")
         self.assertNotIn("machine_id", record)
         self.assertEqual(
-            {key: machine[key] for key in ("provider", "machine_id", "private_host")},
-            {"provider": "EC2", "machine_id": "i-test1", "private_host": "10.0.0.30"},
+            {
+                key: machine[key]
+                for key in (
+                    "provider",
+                    "machine_type",
+                    "machine_id",
+                    "private_host",
+                    "cpu",
+                    "memory",
+                )
+            },
+            {
+                "provider": "EC2",
+                "machine_type": "t3.small",
+                "machine_id": "i-test1",
+                "private_host": "10.0.0.30",
+                "cpu": "2",
+                "memory": "2048",
+            },
         )
-        self.assertEqual(controller.redis.get("agent:Remote-0:hourly_cost"), "0.0208")
+        # One of the machine's two vCPUs.
+        self.assertEqual(controller.redis.get("agent:Remote-0:hourly_cost"), "0.0104")
 
     def test_removing_a_replica_leaves_its_machine_running(self):
         controller = _fake_controller()
+        controller.config["ec2"] = {"machine_type": {"t3.small": 1}}
         provider = _fake_provider(
             start_machine=MagicMock(return_value={"machine_id": "i-1"}),
             wait_for_machine=MagicMock(
                 return_value={"private_host": "10.0.0.30", "public_host": "54.1.2.3"}
             ),
         )
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
         with (
             patch("canyonos_core.reconciler.providers.get", return_value=provider),
-            patch.object(replicas, "transfer_image"),
+            patch("canyonos_core.reconciler.replica_provisioner.transfer_image"),
         ):
-            manager.ensure_replicas([{"name": "Remote", "provider": "EC2"}])
+            _ensure(manager, [{"name": "Remote", "provider": "EC2"}])
             controller._run_cmd.reset_mock()
 
             self.assertTrue(manager.remove_replica("Remote-0", drain=False))
@@ -544,7 +601,7 @@ class DrainTests(unittest.TestCase):
     def setUp(self):
         self.controller = _fake_controller()
         self.redis = self.controller.redis
-        self.manager = Provisioner(self.controller)
+        self.manager = ReplicaProvisioner(self.controller)
         self.manager._agent_specs = []
         self.replica = _replica("Alpha", 1)
         self.key = "agent_instance:Alpha-1"
@@ -625,18 +682,9 @@ class TerminateMachinesTests(unittest.TestCase):
 
     def _terminate(self, provider):
         with patch("canyonos_core.reconciler.providers.get", return_value=provider):
-            Provisioner(self.controller).terminate_machines()
+            MachineProvisioner(self.controller).terminate()
 
-    def test_machines_wait_until_every_replica_is_removed(self):
-        self.redis.hset_multiple("agent_instance:Alpha-0", _replica("Alpha", 0))
-        provider = _fake_provider()
-
-        self._terminate(provider)
-
-        provider.terminate_machine.assert_not_called()
-        self.assertEqual(len(self.redis.scan_keys("machine_record:*")), 2)
-
-    def test_every_machine_is_terminated_and_forgotten_once_no_replica_is_left(self):
+    def test_every_machine_is_terminated_and_forgotten(self):
         provider = _fake_provider()
 
         self._terminate(provider)
@@ -655,7 +703,7 @@ class TerminateMachinesTests(unittest.TestCase):
             if machine["launch_id"] == "l-1":
                 raise RuntimeError("AWS does not list launch l-1 yet")
 
-        with self.assertLogs("canyonos_core.reconciler.provisioner", "WARNING"):
+        with self.assertLogs("canyonos_core.reconciler.machine_provisioner", "WARNING"):
             self._terminate(
                 _fake_provider(terminate_machine=MagicMock(side_effect=terminate))
             )
@@ -688,7 +736,7 @@ class PortClaimTests(unittest.TestCase):
     def test_a_port_claim_still_blocks_its_port_for_the_next_replica(self):
         controller = _fake_controller()
         self._claim(controller.redis, 0, 50051)
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
         port = manager._claim_host_port("localhost", "agent_instance:Alpha-1")
 
@@ -698,7 +746,7 @@ class PortClaimTests(unittest.TestCase):
         controller = _fake_controller()
         self._claim(controller.redis, 3, 50054)
         provider = _fake_provider()
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
         with patch("canyonos_core.reconciler.providers.get", return_value=provider):
             manager.remove_unfinished()
@@ -709,44 +757,31 @@ class PortClaimTests(unittest.TestCase):
             ["docker", "rm", "-f", "canyonos-alpha-3"],
         )
 
-    def test_a_failed_launch_leaves_its_record_for_remove_unfinished(self):
-        """One cleanup path covers a launch that raised and one whose process died."""
+    def test_a_machine_that_fails_to_start_keeps_its_record_until_stop(self):
         controller = _fake_controller()
+        controller.config["ec2"] = {"machine_type": {"t3.small": 1}}
         provider = _fake_provider(
             start_machine=MagicMock(return_value={"machine_id": "i-1"}),
             wait_for_machine=MagicMock(side_effect=RuntimeError("boom")),
         )
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        with self.assertRaisesRegex(RuntimeError, "boom"):
-            manager._provision_one(
-                {
-                    "agent_name": "Alpha",
-                    "agent_spec": {"name": "Alpha"},
-                    "provider": provider,
-                    "machine_spec": {},
-                    "replica_index": 0,
-                    "replica_id": "Alpha-0",
-                    "launch_id": "launch-1",
-                }
-            )
+        with (
+            patch("canyonos_core.reconciler.providers.get", return_value=provider),
+            self.assertLogs(
+                "canyonos_core.reconciler.machine_provisioner", "WARNING"
+            ) as logs,
+        ):
+            _ensure(manager, [{"name": "Alpha", "provider": "EC2"}])
+            # It still counts, so the next pass does not start another.
+            _ensure(manager, [{"name": "Alpha", "provider": "EC2"}])
 
-        self.assertEqual(
-            controller.redis.hgetall("machine_record:launch-1"), {"machine_id": "i-1"}
-        )
-        # No container could have started, so there is none to name yet.
-        self.assertNotIn(
-            "container_name", controller.redis.hgetall("agent_instance:Alpha-0")
-        )
-
-        manager.remove_unfinished()
-
-        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})
-        controller._run_cmd.assert_not_called()
+        self.assertIn("Failed to start machine", "\n".join(logs.output))
+        provider.start_machine.assert_called_once()
         provider.terminate_machine.assert_not_called()
-        self.assertEqual(
-            controller.redis.hgetall("machine_record:launch-1"), {"machine_id": "i-1"}
-        )
+        (machine_key,) = controller.redis.scan_keys("machine_record:*")
+        self.assertEqual(controller.redis.hgetall(machine_key)["machine_id"], "i-1")
+        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})
 
 
 ENDPOINT_SPEC = {
@@ -772,9 +807,9 @@ class ControllerStatusKeyTests(unittest.TestCase):
         previous run's "healthy" would pass for the new container's."""
         controller = _fake_controller()
         controller.redis.set(self.STATUS_KEY, "healthy")
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         self.assertNotIn(self.STATUS_KEY, controller.redis.strings)
 
@@ -790,9 +825,9 @@ class ControllerStatusKeyTests(unittest.TestCase):
             return run_cmd(cmd, host, user)
 
         controller._run_cmd = observe
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         self.assertEqual(seen_at_run, [None])
 
@@ -803,18 +838,18 @@ class ControllerStatusKeyTests(unittest.TestCase):
             raise ConnectionError("redis away")
 
         controller.redis.delete = refuse
-        manager = Provisioner(controller)
+        manager = ReplicaProvisioner(controller)
 
         with self.assertRaisesRegex(RuntimeError, "could not clear the stale"):
-            manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+            _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         commands = [call.args[0][:2] for call in controller._run_cmd.call_args_list]
         self.assertNotIn(["docker", "run"], commands)
 
     def test_remove_replica_deletes_the_status_before_removing_the_container(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        manager = ReplicaProvisioner(controller)
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
         controller.redis.set(self.STATUS_KEY, "healthy")
         seen_at_rm = []
         run_cmd = controller._run_cmd.side_effect
@@ -833,8 +868,8 @@ class ControllerStatusKeyTests(unittest.TestCase):
 
     def test_a_status_that_cannot_be_deleted_does_not_stop_the_teardown(self):
         controller = _fake_controller()
-        manager = Provisioner(controller)
-        manager.ensure_replicas([{"name": "Alpha", "provider": "local"}])
+        manager = ReplicaProvisioner(controller)
+        _ensure(manager, [{"name": "Alpha", "provider": "local"}])
         delete = controller.redis.delete
 
         def refuse_status(*keys):
@@ -844,7 +879,9 @@ class ControllerStatusKeyTests(unittest.TestCase):
 
         controller.redis.delete = refuse_status
 
-        with self.assertLogs("canyonos_core.reconciler.provisioner", level="WARNING"):
+        with self.assertLogs(
+            "canyonos_core.reconciler.replica_provisioner", level="WARNING"
+        ):
             manager.remove_replica("Alpha-0", drain=False)
 
         self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})

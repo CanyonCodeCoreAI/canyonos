@@ -153,20 +153,22 @@ class DesiredStateTests(unittest.TestCase):
 
 class WakeQueueTests(unittest.TestCase):
     def test_drain_returns_an_empty_set_when_nothing_is_queued(self):
-        self.assertEqual(state.drain(_FakeRedis(), timeout=0), set())
+        self.assertEqual(state.wait_for_wake_signals(_FakeRedis(), timeout=0), set())
 
     def test_drain_coalesces_a_burst_of_duplicate_signals(self):
         redis = _FakeRedis()
         for _ in range(5):
             state.request_reconcile(redis, "Alpha")
 
-        self.assertEqual(state.drain(redis, timeout=0), {"Alpha"})
+        self.assertEqual(state.wait_for_wake_signals(redis, timeout=0), {"Alpha"})
         self.assertEqual(redis.lists[state.WAKE_QUEUE_KEY], [])
 
     def test_request_reconcile_defaults_to_the_wake_all_signal(self):
         redis = _FakeRedis()
         state.request_reconcile(redis)
-        self.assertEqual(state.drain(redis, timeout=0), {state.WAKE_ALL})
+        self.assertEqual(
+            state.wait_for_wake_signals(redis, timeout=0), {state.WAKE_ALL}
+        )
 
 
 class ReplaceRequestTests(unittest.TestCase):
@@ -696,7 +698,7 @@ class StopReconcileTests(unittest.TestCase):
 
         self._reconciler(redis, manager)._reconcile(["Alpha"])
 
-        self.assertEqual(manager.removed, ["Alpha-0", "Alpha-1", "Alpha-2"])
+        self.assertEqual(sorted(manager.removed), ["Alpha-0", "Alpha-1", "Alpha-2"])
         # desired_agent_specs falls back to the configured count, so a fill would undo it.
         self.assertEqual(manager.ensure_calls, [])
         self.assertEqual(manager.machine_terminations, 1)
@@ -711,7 +713,7 @@ class StopReconcileTests(unittest.TestCase):
         self._reconciler(redis, manager)._reconcile()
 
         self.assertEqual(
-            (manager.draining, manager.removed), (["Alpha-0", "Alpha-1"], [])
+            (sorted(manager.draining), manager.removed), (["Alpha-0", "Alpha-1"], [])
         )
 
     def test_full_pass_while_stopping_removes_every_agent_and_fills_nothing(self):

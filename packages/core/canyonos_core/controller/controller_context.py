@@ -14,7 +14,7 @@ What it holds:
 The reconciler runs as a separate process and cannot import global_controller.py, which
 adds a grpc_stubs folder to the import path based on the current directory. GlobalController
 extends this class with the controller-only work; the reconciler creates one directly and
-hands it to the Provisioner.
+hands it to the machine and replica provisioners.
 """
 
 import logging
@@ -80,7 +80,7 @@ def list_replicas(redis_client, agent_name=None):
 
 
 class ControllerContext(object):
-    """Everything the provisioner and providers read off `controller`."""
+    """Everything the provisioners and providers read off `controller`."""
 
     def __init__(self, config_path):
         self.config_path = config_path
@@ -107,13 +107,16 @@ class ControllerContext(object):
     def _load_config(config_path):
         """Load the YAML config, importing root .env values and expanding ${VAR} refs,
         and add the `endpoint:` block as one more replica spec after the agents.
-        Also rewrites each spec's provider name to its standard spelling (`ec2` becomes
-        `EC2`), which is how replica records spell it."""
+        Also gives each agent spec the deployment's `provider`, in the spelling replica
+        records use (`ec2` becomes `EC2`); the endpoint stays on this machine."""
         config = config_env.load_config(config_path)
         if not isinstance(config, dict):
             raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
         agent_specs = config["agents"]
         endpoint = config["endpoint"]
+        provider = providers.canonical_name(config.get("provider", providers.DEFAULT))
+        for agent_spec in agent_specs:
+            agent_spec["provider"] = provider
         agent_specs.append(
             {
                 "name": ENDPOINT_AGENT_NAME,
@@ -123,12 +126,9 @@ class ControllerContext(object):
                 "api_port": endpoint.get("api_port", ENDPOINT_PORT),
                 "agent": endpoint["agent"],
                 "method": endpoint["method"],
+                "provider": providers.DEFAULT,
             }
         )
-        for agent_spec in agent_specs:
-            agent_spec["provider"] = providers.canonical_name(
-                agent_spec.get("provider", providers.DEFAULT)
-            )
         return config
 
     # Kept as aliases for callers that use these helpers directly. The parser
@@ -198,7 +198,8 @@ class ControllerContext(object):
         """Drop the Redis clients of machines other than this one that no given replica runs on."""
         hosts = {"localhost"} | {replica["private_host"] for replica in replicas}
         for host in set(self.machine_redis) - hosts:
-            del self.machine_redis[host]
+            # Two threads may drop the same client at once.
+            self.machine_redis.pop(host, None)
 
     def _run_cmd(self, cmd, host, user=None):
         """Run a command locally, or on a remote host over SSH."""

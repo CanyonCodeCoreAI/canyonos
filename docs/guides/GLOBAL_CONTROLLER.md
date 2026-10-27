@@ -93,12 +93,6 @@ class in its `entrypoint` file.
   `[yfinance, pandas]`. CanyonOS installs these into that entry only. It does not read
   your app's own `requirements.txt`, so list everything the entry needs here.
 
-### Where it runs
-
-- `provider`: `local` (the default) runs on this machine. `EC2` runs on Amazon EC2
-  and also needs `machine_type`, such as `t3.micro`, and the top-level `ec2` section
-  below.
-
 ### Other settings
 
 - `env`: environment variables for this entry only, on top of the ones from
@@ -112,15 +106,19 @@ class in its `entrypoint` file.
 
 These go at the top level of the file, next to `agents`:
 
+- `provider`: where every entry runs. `local` (the default) is this machine. `EC2`
+  runs them on Amazon EC2 machines from the `ec2` section below, each replica on the least
+  loaded machine by its `resources`.
 - `env_file`: a `.env` file whose variables every entry gets. Put API keys here, not
   in the YAML.
 - `endpoint` (required): the web address requests arrive at. `api_port` is its port
   (default `8080`), and `agent` and `method` name the agent method served at
   `POST /<method>`. The method must be listed in that agent's `functions`.
 - `dashboard_port`: where the dashboard opens (default `8081`).
-- `ec2`: the AWS details used for every entry with `provider: EC2`: `region`,
-  `subnet_id`, and `security_group_ids` are required; `ami_id` and `ssh_user` have
-  defaults. See [EC2 deployment](EC2.md).
+- `ec2`: the AWS details used when `provider` is `EC2`: `region`, `machine_type`
+  (each machine type and how many to start, such as `{t3.micro: 2}`), `subnet_id`,
+  and `security_group_ids` are required; `ami_id`, `ssh_user` and
+  `market_type` have defaults. See [EC2 deployment](EC2.md).
 - `otel`: where to send your app's traces, metrics, and logs, if you use an
   observability tool. Each destination has a `name`, a `protocol` (`grpc`, `http`, or
   `http/protobuf`), and an `endpoint`.
@@ -167,13 +165,11 @@ Keys every entry accepts:
 |---|---|---|
 | `name` | required | Must equal the class name in the entrypoint. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one manifest is a duplicate and the deploy is rejected. |
 | `type` | `agent` | One of `agent`, `database`. |
-| `provider` | `local` | `local` or `EC2`, in any casing. |
 | `replicas` | `1` | Integer, at least 1. A database must be 1. |
 | `resources.cpu` | `1` | Passed to `docker run --cpus`. |
 | `resources.memory` | `512` | MiB, passed to `--memory`. |
 | `resources.gpu` | none | Integer. `0` means no GPU. Passed to `--gpus`. |
 | `stateful` | `false` | Marks the agent stateful in the routing table, so every call within one request goes to the same replica. |
-| `machine_type` | none | Required when `provider: EC2`. |
 | `env` | `{}` | Extra `-e` variables. Only applied to `database` entries today. |
 
 Agent entries add:
@@ -214,7 +210,8 @@ instead of an in-process store, and the agent no longer needs
 | `env_file` | none | Secrets file passed to every container. Resolved against the directory `canyonos deploy` runs from, the one holding `.canyon`. A missing or unreadable file fails the deploy before anything starts. |
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
-| `ec2` | none | Required when any entry uses `provider: EC2`. See [EC2 deployment](EC2.md). |
+| `provider` | `local` | `local` or `EC2`, in any casing. Where every entry runs. |
+| `ec2` | none | Required when `provider: EC2`. See [EC2 deployment](EC2.md). |
 | `endpoint.api_port` | `8080` | Host port of the HTTP endpoint, published on the machine that runs `canyonos deploy`. |
 | `endpoint.agent` | required | The entry of type `agent` the endpoint serves. |
 | `endpoint.method` | required | One of that agent's `functions`, served at `POST /<method>`. |
@@ -259,7 +256,6 @@ The local dashboard's API listens on port 3000 on the host, which is what
 agents:
   - name: EmailAgent
     entrypoint: email_assistant.py
-    provider: local
     replicas: 1
     resources:
       cpu: 1

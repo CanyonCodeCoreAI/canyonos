@@ -12,6 +12,7 @@ import signal
 import socket
 import sys
 import time
+from functools import partial
 
 from canyonos_core.controller.controller_context import (
     ControllerContext,
@@ -20,7 +21,9 @@ from canyonos_core.controller.controller_context import (
     list_replicas,
 )
 from canyonos_core.reconciler import state
-from canyonos_core.reconciler.provisioner import Provisioner
+from canyonos_core.reconciler.machine_provisioner import MachineProvisioner
+from canyonos_core.reconciler.parallel import run_in_parallel
+from canyonos_core.reconciler.replica_provisioner import ReplicaProvisioner
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,7 +47,8 @@ class Reconciler(object):
     def __init__(self, config_path, sweep_interval=None):
         self.context = ControllerContext(config_path)
         self.context.attach_local_machine_redis()
-        self.provisioner = Provisioner(self.context)
+        self.machine_provisioner = MachineProvisioner(self.context)
+        self.replica_provisioner = ReplicaProvisioner(self.context)
         self.sweep_interval = sweep_interval or self.context.poll_interval
 
         # A replica reports on GlobalController's poll cadence; allow a couple of misses.
@@ -65,6 +69,17 @@ class Reconciler(object):
             logger.info(
                 "Adopted %d published agent spec(s).", len(self.context.agent_specs)
             )
+        try:
+            # Replicas first: if this stops halfway, the machine is still recorded and found again.
+            dead = self.machine_provisioner.find_dead()
+            if dead:
+                # Their relaunches start fresh, with the startup grace a new replica gets.
+                self._seen_healthy.difference_update(
+                    self.replica_provisioner.forget_replicas_on(dead)
+                )
+                self.machine_provisioner.terminate(dead)
+        except Exception as e:
+            logger.warning("Could not check for dead machines: %s", e)
         # desired_agent_specs falls back to the configured count, so a fill would undo the stop.
         if state.is_stopping(self.context.redis):
             self._terminate_machines()
@@ -88,7 +103,7 @@ class Reconciler(object):
                 logger.warning("Failed to remove replicas of removed agents: %s", e)
 
         try:
-            self.provisioner.remove_unfinished()
+            self.replica_provisioner.remove_unfinished()
         except Exception as e:
             logger.warning("Failed to remove unfinished launches: %s", e)
 
@@ -97,9 +112,21 @@ class Reconciler(object):
             return
         try:
             # The whole spec list: ensure_replicas republishes routing from what it is handed.
-            self.provisioner.ensure_replicas(
-                state.desired_agent_specs(self.context.redis, self.context.agent_specs),
-                only=agent_names,
+            agent_specs = state.desired_agent_specs(
+                self.context.redis, self.context.agent_specs
+            )
+            self.machine_provisioner.start_missing(agent_specs)
+            # After start_missing, which records the machines replacing them.
+            surplus = self.machine_provisioner.find_surplus(agent_specs)
+            if surplus:
+                self._terminate_machines(surplus)
+            machines = [
+                machine
+                for machine in self.machine_provisioner.machines_for_replicas()
+                if machine["launch_id"] not in surplus
+            ]
+            self.replica_provisioner.ensure_replicas(
+                agent_specs, machines, only=agent_names
             )
         except Exception as e:
             logger.warning("Failed to provision missing replicas: %s", e)
@@ -109,7 +136,9 @@ class Reconciler(object):
     # ------------------------------------------------------------------ #
 
     def _remove_unwanted(self, agent_name):
-        """Remove an agent's unhealthy replicas and drain its surplus and replaced ones."""
+        """Remove an agent's unhealthy replicas and drain its surplus and replaced ones.
+        Returns False when it could not check the agent: it is unknown, or its replicas
+        value isn't a whole number."""
         agent_spec = self.context.agent_specs_by_name.get(agent_name)
         if agent_spec is None:
             logger.warning(
@@ -147,7 +176,7 @@ class Reconciler(object):
             if reason is None:
                 continue
             if reason == "unhealthy":
-                self._remove_replica(replica_id, reason)
+                self._remove_without_draining(replica_id, reason)
             # Still draining: a replace request stays pending until the replica is gone.
             elif not self._drain_replica(replica_id, replica, reason):
                 continue
@@ -167,10 +196,11 @@ class Reconciler(object):
             return "unhealthy"
         return None
 
-    def _remove_replica(self, replica_id, reason):
+    def _remove_without_draining(self, replica_id, reason):
+        """Remove a replica that can't drain, an unhealthy one or a database, at once."""
         logger.info("Removing replica %s (%s)", replica_id, reason)
         self._seen_healthy.discard(replica_id)
-        self.provisioner.remove_replica(replica_id, drain=False)
+        self.replica_provisioner.remove_replica(replica_id, drain=False)
 
     def _remove_replicas_of_removed_agents(self):
         """Drain replicas of agents that are no longer in the published specs."""
@@ -184,19 +214,32 @@ class Reconciler(object):
                 "agent removed from config",
             )
 
-    def _terminate_machines(self):
-        """Tear the deployment down, one step per pass: drain every replica, then terminate
-        every machine once no replica is left."""
+    def _terminate_machines(self, launch_ids=None):
+        """Terminate these machines, or every machine when launch_ids is None, one step per
+        pass: drain the replicas on them, all at once, then terminate each machine once none
+        is left."""
+        drains = {}
         for replica in list_replicas(self.context.redis):
+            if launch_ids is not None and replica["machine"] not in launch_ids:
+                continue
             replica_id = replica_id_from_record(replica)
-            try:
-                self.context.machine_redis_for_replica(replica)
-                self._drain_replica(replica_id, replica, "deployment stopping")
-            except Exception as e:
-                logger.warning("Failed to remove %s while stopping: %s", replica_id, e)
+            self.context.machine_redis_for_replica(replica)
+            drains[replica_id] = partial(
+                self._drain_replica, replica_id, replica, "its machine is terminating"
+            )
+        for replica_id, _, error in run_in_parallel(drains):
+            if error:
+                logger.warning(
+                    "Failed to remove %s off its machine: %s", replica_id, error
+                )
         try:
-            self.provisioner.remove_unfinished()
-            self.provisioner.terminate_machines()
+            self.replica_provisioner.remove_unfinished()
+            # A machine goes only once every replica on it, unfinished launches too, is gone.
+            occupied = {
+                self.context.redis.hget(key, "machine")
+                for key in self.context.redis.scan_keys("agent_instance:*")
+            }
+            self.machine_provisioner.terminate(launch_ids, keep=occupied)
         except Exception as e:
             logger.warning("Failed to terminate machines: %s", e)
 
@@ -213,16 +256,16 @@ class Reconciler(object):
             self.context.agent_specs_by_name.get(replica["agent_name"], {}).get("type")
             == "database"
         ):
-            self._remove_replica(replica_id, reason)
+            self._remove_without_draining(replica_id, reason)
             return True
         # One that stopped answering has no requests left to finish.
         if not self._is_healthy(replica, replica_id):
-            self._remove_replica(replica_id, "unhealthy")
+            self._remove_without_draining(replica_id, "unhealthy")
             return True
 
         if "draining_at" not in replica:
             logger.info("Draining replica %s (%s)", replica_id, reason)
-        if not self.provisioner.remove_replica(replica_id):
+        if not self.replica_provisioner.remove_replica(replica_id):
             return False
         logger.info("Removed replica %s (drained)", replica_id)
         self._seen_healthy.discard(replica_id)
@@ -311,7 +354,9 @@ class Reconciler(object):
 
         while _running:
             try:
-                signals = state.drain(self.context.redis, timeout=WAKE_TIMEOUT_SECONDS)
+                signals = state.wait_for_wake_signals(
+                    self.context.redis, timeout=WAKE_TIMEOUT_SECONDS
+                )
             except Exception as e:
                 logger.warning("Failed to read the wake queue: %s", e)
                 time.sleep(WAKE_TIMEOUT_SECONDS)

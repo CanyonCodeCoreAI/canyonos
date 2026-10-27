@@ -57,7 +57,6 @@ def _agents_table(agent_specs):
         "Replicas",
         "CPU",
         "Mem",
-        "Provider",
         "Entrypoint",
     ):
         table.add_column(col)
@@ -71,7 +70,6 @@ def _agents_table(agent_specs):
             _fmt(agent_spec.get("replicas")),
             _fmt(resources.get("cpu")),
             _fmt(resources.get("memory")),
-            _fmt(agent_spec.get("provider")),
             entry,
         )
     return table

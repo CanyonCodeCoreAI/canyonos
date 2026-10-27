@@ -168,7 +168,7 @@ class LocalController(object):
                 self.server.stop(0)
                 raise
 
-        # Written by the Provisioner; stamps completed requests with the replica that ran them.
+        # Written by the replica provisioner; stamps completed requests with the replica that ran them.
         self.replica_id = self.redis.get(
             f"controller:{self.agent_host}:{self.public_port}:replica_id"
         )
@@ -243,6 +243,8 @@ class LocalController(object):
         self._executor_futures_lock = threading.Lock()
         # address -> time.monotonic() until which new picks skip it
         self._down_until = {}
+        # self._forwarded is how a replica remembers which replica is running each call it handed off, so it can fail those calls if that replica disappears.
+        self._forwarded = {}
 
         # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
         self._metrics_thread.start()
@@ -463,6 +465,7 @@ class LocalController(object):
                         self.redis.set(self._status_key, "healthy")
                 self._load_policy_rules(reload=True)
                 self._load_routing()
+                self._fail_calls_to_gone_replicas()
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             self._metrics_stop_event.wait(self._metrics_interval)
@@ -1144,6 +1147,7 @@ class LocalController(object):
         # instead of re-resolving it (which would let stateless requests
         # ping-pong between replicas).
         data["route_to"] = address
+        self._forwarded[data.get("future_id")] = address
         request = local_controller_pb2.JsonResponse(response=json.dumps(data))
         call = self._get_remote_stub(address).Execute.future(
             request, timeout=FORWARD_TIMEOUT_SECONDS
@@ -1159,8 +1163,10 @@ class LocalController(object):
             self._unsent += change
 
     def _resend(self, payload):
-        """Put a forward back on the request queue once its backoff is over."""
-        self.request_queue.put(payload)
+        """Put a forward back on the request queue once its backoff is over, unless its
+        call settled meanwhile."""
+        if json.loads(payload).get("future_id") in self._forwarded:
+            self.request_queue.put(payload)
         self._count_unsent(-1)
 
     def _on_forwarded(self, call, address, data):
@@ -1182,6 +1188,10 @@ class LocalController(object):
             self._count_unsent(-1)
             return
         self._down_until[address] = time.monotonic() + REPLICA_DOWN_SECONDS
+        if data.get("future_id") not in self._forwarded:
+            # Settled meanwhile, by its result or as lost: nothing left to send.
+            self._count_unsent(-1)
+            return
         data["retries"] = retries
         if error.code() == grpc.StatusCode.UNAVAILABLE:
             # Never reached, so routing picks again; a timed-out one may have queued
@@ -1252,6 +1262,17 @@ class LocalController(object):
                 error_name="ResultCallbackFailed",
             )
 
+    def _fail_calls_to_gone_replicas(self):
+        """Fail every call handed to a replica that is neither routed nor draining, such
+        as one on a machine that died, so its caller gets an error instead of waiting."""
+        # Not routing_table:addresses, which drops a draining replica whose calls still finish.
+        known = self.redis.hgetall("routing_table:replicas").values()
+        known = {address for addresses in known for address in json.loads(addresses)}
+        for future_id, address in list(self._forwarded.items()):
+            if address not in known:
+                error = ReplicaRemovedError(f"Replica {address} is gone")
+                self._mark_future_failed(future_id, error)
+
     def _fan_out_to_consumers(self, future_id, result="", failed=0, error_message=""):
         """Push a completed future (result or failure) to every address registered
         as a consumer on THIS machine's Redis.
@@ -1271,6 +1292,7 @@ class LocalController(object):
             return
         # Code in this process waiting on the value (wait_for_result) wakes at once.
         notify_result(future_id)
+        self._forwarded.pop(future_id, None)
         for address in self.redis.smembers(f"future:{future_id}:consumers"):
             if address and address != self._my_address:
                 self._send_result_callback(

@@ -34,9 +34,6 @@ from canyonos_core.reconciler.providers.shared_utils.docker_host import (
     container_log_tail,
     container_running,
 )
-from canyonos_core.reconciler.providers.shared_utils.image_transfer import (
-    transfer_image,
-)
 from canyonos_core.reconciler.providers.shared_utils.llm_gateway_env import (
     llm_gateway_docker_env_args,
 )
@@ -102,8 +99,8 @@ def _refuse_other_projects_container(controller, container, host, user):
 def launch(controller, machine, agent_spec, replica_index, host_port, replica_id):
     """Start a replica's container on its machine, publishing it on `host_port` or the
     next free port (replacing a leftover one with the same name), and return the
-    replica's record. Starts another machine's Redis first if it isn't running. Used by the
-    provisioner for every launch."""
+    replica's record. The image must already be on the machine. Starts another machine's
+    Redis first if it isn't running. Used by the provisioner for every launch."""
     agent_name = agent_spec["name"]
     agent_type = agent_spec.get("type", "agent")
     image = image_name(agent_name)
@@ -139,14 +136,8 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
     machine_redis = controller.machine_redis_for_replica(
         {"private_host": host, "redis_port": redis_port}
     )
-    # This machine's Redis is the Global Controller's; any other machine gets its own here.
-    if not is_local and not container_running(
-        controller, redis_container_name(host), host, user
-    ):
-        _start_redis(controller, machine_redis, host, user, redis_port)
-
-    if not is_local:
-        transfer_image(controller, image, host, user)
+    # Started with its machine; this restarts one that died since.
+    start_redis(controller, host, user)
 
     callback_host = _callback_host(agent_spec)
     for attempt in range(MAX_PORT_ATTEMPTS):
@@ -249,7 +240,7 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
         replica["user"] = user
     if machine.get("container_timeout"):
         try:
-            _check_controller_health(address, machine["container_timeout"])
+            _wait_until_reachable(address, int(machine["container_timeout"]))
         except TimeoutError:
             # Show the log now: removing a failed launch can take its machine and log with it.
             dump_container_log(replica, "unreachable", partial(log_tail, controller))
@@ -258,8 +249,18 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
     return replica
 
 
-def _start_redis(controller, machine_redis, host, user, redis_port):
-    """Start the Redis container on a machine and wait until it answers."""
+def start_redis(controller, host, user):
+    """Start a machine's Redis container, unless it is already running, and wait until it
+    answers. This machine's Redis is the Global Controller's, so only another machine gets
+    one here."""
+    if _is_local_host(host) or container_running(
+        controller, redis_container_name(host), host, user
+    ):
+        return
+    redis_port = controller.redis_ports.get(host, 6379)
+    machine_redis = controller.machine_redis_for_replica(
+        {"private_host": host, "redis_port": redis_port}
+    )
     result = controller._run_cmd(
         [
             "docker",
@@ -286,7 +287,7 @@ def _start_redis(controller, machine_redis, host, user, redis_port):
     _wait_for_redis(machine_redis, host, redis_port)
 
 
-def _check_controller_health(address, timeout):
+def _wait_until_reachable(address, timeout):
     """Wait until the launched container accepts TCP connections."""
     host, port = address.split(":")
     deadline = time.time() + timeout
@@ -370,7 +371,7 @@ def _clear_stale_status(machine_redis, host, address, container):
         ) from e
 
 
-def remove(controller, record):
+def remove_container(controller, record):
     """Remove a replica's container from its machine; a container that is already gone
     is not an error. Its machine is left running."""
     container = record.get("container_name")

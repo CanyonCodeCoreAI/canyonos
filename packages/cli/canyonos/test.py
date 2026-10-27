@@ -5,7 +5,7 @@
 Logic for `canyonos test`: check a project end to end on this machine.
 
 Three phases, each ending the run if it fails:
-- The project is deployed locally (every agent's `provider` rewritten to `local` for the duration, the original file restored verbatim afterwards)
+- The project is deployed locally (the deployment's `provider` set to `local` for the duration, the original file restored verbatim afterwards)
 - The running containers are checked against what the config declared
 - One prompt is sent to the endpoint.
 
@@ -57,15 +57,14 @@ DOCKER_LOGS_TIMEOUT = 30
 
 
 def _force_local_providers(config_path):
-    """Set every agent's provider to `local`. Returns the original file text."""
+    """Set the deployment's provider to `local`. Returns the original file text."""
     with open(config_path) as f:
         original = f.read()
 
     yaml_rt = round_trip_yaml()
     data = yaml_rt.load(original)
 
-    for agent_spec in data.get("agents") or []:
-        agent_spec["provider"] = "local"
+    data["provider"] = "local"
 
     with open(config_path, "w") as f:
         yaml_rt.dump(data, f)

@@ -10,8 +10,11 @@ from canyonos_core.controller.controller_context import list_replicas
 
 logger = logging.getLogger(__name__)
 
+# Where new calls go: a draining replica leaves this list as soon as its drain starts.
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
+# Every replica that still exists, draining ones too, so their running calls can finish.
+ROUTING_REPLICAS_KEY = "routing_table:replicas"
 AGENTS_SET_KEY = "routing_table:agents"
 
 
@@ -33,6 +36,7 @@ def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
                 redis_client.srem(AGENTS_SET_KEY, stale)
                 redis_client.hdel(ROUTING_STATEFUL_KEY, stale)
                 redis_client.hdel(ROUTING_ADDRESSES_KEY, stale)
+                redis_client.hdel(ROUTING_REPLICAS_KEY, stale)
             for agent_name in agent_names:
                 redis_client.sadd(AGENTS_SET_KEY, agent_name)
                 if agent_name in stateful:
@@ -48,6 +52,10 @@ def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
                     )
                     if "draining_at" not in item
                 ]
+                known = [
+                    item["address"] for item in list_replicas(primary_redis, agent_name)
+                ]
+                redis_client.hset(ROUTING_REPLICAS_KEY, agent_name, json.dumps(known))
                 if addresses:
                     redis_client.hset(
                         ROUTING_ADDRESSES_KEY, agent_name, json.dumps(addresses)

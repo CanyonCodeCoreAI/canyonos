@@ -19,9 +19,14 @@ def machine_platform():
     return None
 
 
-def hourly_cost(machine):
+def hourly_cost(machine_spec):
     """Return 0: this machine has no hourly cost."""
     return 0
+
+
+def machine_capacity(machine_spec):
+    """Return None: replicas on this machine are not limited by its size."""
+    return None
 
 
 def start_machine(machine_spec, launch_id):
@@ -32,6 +37,11 @@ def start_machine(machine_spec, launch_id):
 def wait_for_machine(machine):
     """Return nothing more: this machine is already up."""
     return {}
+
+
+def machine_alive(machine):
+    """Return True: this machine is up while the controller runs on it."""
+    return True
 
 
 def terminate_machine(machine):

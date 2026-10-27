@@ -31,8 +31,7 @@ def _controller():
 
 
 def _launch(controller, spec, machine):
-    with patch.object(replicas, "transfer_image"):
-        return replicas.launch(controller, machine, spec, 0, 50051, "agent-id-0")
+    return replicas.launch(controller, machine, spec, 0, 50051, "agent-id-0")
 
 
 class LaunchTests(unittest.TestCase):
@@ -47,7 +46,7 @@ class LaunchTests(unittest.TestCase):
     def test_a_container_timeout_waits_for_the_address(self):
         machine = {**MACHINE, "container_timeout": 180}
 
-        with patch.object(replicas, "_check_controller_health") as check:
+        with patch.object(replicas, "_wait_until_reachable") as check:
             _launch(_controller(), {"name": "A", "provider": "EC2"}, machine)
 
         check.assert_called_once_with("10.0.0.30:50051", 180)
@@ -58,9 +57,7 @@ class LaunchTests(unittest.TestCase):
         machine = {**MACHINE, "container_timeout": 180}
 
         with (
-            patch.object(
-                replicas, "_check_controller_health", side_effect=TimeoutError
-            ),
+            patch.object(replicas, "_wait_until_reachable", side_effect=TimeoutError),
             patch.object(replicas, "dump_container_log") as dump,
             self.assertRaises(TimeoutError),
         ):
@@ -81,7 +78,7 @@ class LaunchTests(unittest.TestCase):
                 TimeoutError, "never became reachable at 10.0.0.30:50051"
             ),
         ):
-            replicas._check_controller_health("10.0.0.30:50051", timeout=1)
+            replicas._wait_until_reachable("10.0.0.30:50051", timeout=1)
 
 
 if __name__ == "__main__":

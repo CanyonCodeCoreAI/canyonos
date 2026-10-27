@@ -16,7 +16,7 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 |---|---|
 | `agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
 | `agents/workflow.py` | `Workflow.main(query)` calls `HelloAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. |
-| `config/global_controller.yaml` | What to run: the two agents, both on `provider: local`, and the `endpoint` that serves `Workflow.main` at `POST /main`, published on the host at `api_port: 8082`. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
+| `config/global_controller.yaml` | What to run: the two agents, on this machine (`provider: local`), and the `endpoint` that serves `Workflow.main` at `POST /main`, published on the host at `api_port: 8082`. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
 | `config/policy.yaml` | Which callers can reach which agents. |
 
 ## Before you start

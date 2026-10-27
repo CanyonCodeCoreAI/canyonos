@@ -1,7 +1,9 @@
+# Where every replica runs: `local` (this machine) or `EC2` (machines from `ec2:`).
+provider: local
+
 agents:
   - name: IntentAgent
     entrypoint: agents/intent_agent.py
-    provider: local
     replicas: 1
     resources:
       cpu: 1
@@ -18,7 +20,6 @@ agents:
 
   - name: PriceAgent
     entrypoint: agents/price_agent.py
-    provider: local
     replicas: 1
     resources:
       cpu: 1
@@ -37,7 +38,6 @@ agents:
 
   - name: MetricsAgent
     entrypoint: agents/metrics_agent.py
-    provider: local
     replicas: 1
     resources:
       cpu: 1
@@ -55,7 +55,6 @@ agents:
 
   - name: RiskAgent
     entrypoint: agents/risk_agent.py
-    provider: local
     replicas: 1
     resources:
       cpu: 1
@@ -73,7 +72,6 @@ agents:
 
   - name: AdvisorAgent
     entrypoint: agents/advisor_agent.py
-    provider: local
     replicas: 1
     resources:
       cpu: 1
@@ -94,7 +92,6 @@ agents:
 
   - name: Workflow
     entrypoint: agents/workflow.py
-    provider: local
     replicas: 1
     requirements: []
     functions:

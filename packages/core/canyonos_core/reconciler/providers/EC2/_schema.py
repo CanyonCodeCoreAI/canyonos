@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""What `global_controller.yaml` may set for EC2: the `ec2:` section and per-agent keys."""
+"""What `global_controller.yaml` may set for EC2: the `ec2:` section."""
 
 SECTION = "ec2"
 SECTION_KEYS = {
     "region": (str, True),
+    "machine_type": (dict, True),
+    "market_type": (str, False),
     "ami_id": (str, False),
     "subnet_id": (str, True),
     "ssh_user": (str, False),
@@ -18,7 +20,7 @@ SECTION_KEYS = {
 RETIRED_KEYS = {
     "ssh_private_key_path": "moved to the top-level ssh_private_key_path",
 }
-AGENT_KEYS = {
-    "machine_type": (str, True),
-    "market_type": (str, False),
-}
+# The key mapping each machine type to how many to start; each type becomes a `machine_spec`.
+MACHINE_TYPES = "machine_type"
+# Section keys every machine shares, added to each type's `machine_spec`.
+MACHINE_KEYS = ("market_type",)

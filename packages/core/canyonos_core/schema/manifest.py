@@ -24,6 +24,7 @@ from canyonos_core.controller.utils.config_env import (
 from canyonos_core.endpoint import ENDPOINT_PORT, ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
 from canyonos_core.schema._checks import (
+    _counts,
     _ENV_REF_HINT,
     _boolean,
     _check_keys,
@@ -53,23 +54,15 @@ from canyonos_core.schema.yaml_lines import load_yaml_lines, parse_failure
 
 AGENT_TYPES = ("agent", "database")
 
-# Every provider's agent keys, all optional here, so any entry may set them.
-_PROVIDER_AGENT_KEYS = {
-    key: (kind, False)
-    for schema in providers.SCHEMAS.values()
-    for key, (kind, _) in schema.AGENT_KEYS.items()
-}
 # Keys every entry in `agents` may carry, whatever its type.
 _COMMON_AGENT_KEYS = frozenset(
     {
         "name",
         "type",
-        "provider",
         "replicas",
         "resources",
         "stateful",
         "env",
-        *_PROVIDER_AGENT_KEYS,
     }
 )
 _CODE_AGENT_KEYS = _COMMON_AGENT_KEYS | {"entrypoint", "requirements", "functions"}
@@ -82,6 +75,7 @@ _AGENT_KEYS_BY_TYPE = {
 
 _MANIFEST_KEYS = frozenset(
     {
+        "provider",
         "agents",
         "poll_interval",
         "cleanup_interval",
@@ -163,7 +157,6 @@ class _Agent:
     """Fields shared by every entry in `agents`."""
 
     name: str
-    provider: str = providers.DEFAULT
     replicas: int = 1
     resources: Resources = field(default_factory=Resources)
     stateful: bool = False
@@ -200,6 +193,7 @@ class Manifest:
     """The project's `global_controller.yaml`, checked and parsed by `load_manifest`."""
 
     agents: tuple
+    provider: str = providers.DEFAULT
     poll_interval: float = 5
     cleanup_interval: float = 10
     project_id: str | None = None
@@ -360,21 +354,11 @@ def _agent(collector, entries, index):
     )
     common = {
         "name": name,
-        "provider": _provider(collector, node, prefix),
         "replicas": _integer(collector, node, "replicas", prefix, 1, 1),
         "resources": _resources(collector, node, prefix),
         "stateful": _boolean(collector, node, "stateful", prefix, False),
         "env": _string_mapping(collector, node, "env", prefix),
     }
-    provider = common["provider"]
-    _check_declared(
-        collector,
-        node,
-        prefix,
-        {**_PROVIDER_AGENT_KEYS, **providers.SCHEMAS[provider].AGENT_KEYS},
-        f"is required when provider is {provider!r}",
-    )
-
     if agent_type == "database":
         if common["replicas"] != 1:
             collector.add(
@@ -578,14 +562,16 @@ def _check_declared(collector, node, prefix, keys, missing="is required but miss
             _integer(collector, node, key, prefix, None, 1)
         elif kind is list:
             _string_list(collector, node, key, prefix, required)
+        elif kind is dict:
+            _counts(collector, node, key, prefix)
         else:
             _string(collector, node, key, prefix, required=required)
 
 
-def _check_provider_sections(collector, node, agent_specs):
+def _check_provider_sections(collector, node, provider):
     """Check each provider's top-level section of `global_controller.yaml`, such as
     `ec2:`. Unknown and retired keys are always reported. The section is required, and
-    its values checked, only when an agent uses that provider."""
+    its values checked, only for the deployment's `provider`."""
     for name, schema in providers.SCHEMAS.items():
         if not schema.SECTION:
             continue
@@ -599,8 +585,8 @@ def _check_provider_sections(collector, node, agent_specs):
         for key, message in schema.RETIRED_KEYS.items():
             if key in (block or {}):
                 collector.add(block, key, _field(schema.SECTION, key), message)
-        if not any(agent_spec.provider == name for agent_spec in agent_specs):
-            # Skip the values when no agent uses this provider; their ${VAR}s may be unset.
+        if provider != name:
+            # Skip the values of a provider not in use; their ${VAR}s may be unset.
             continue
         if block is None:
             required = [
@@ -612,8 +598,8 @@ def _check_provider_sections(collector, node, agent_specs):
                     collector.path,
                     0,
                     schema.SECTION,
-                    f"is required because an agent declares provider {name!r}; it "
-                    f"must set {', '.join(required)}",
+                    f"is required because provider is {name!r}; it must set "
+                    f"{', '.join(required)}",
                 )
             )
             continue
@@ -656,8 +642,10 @@ def load_manifest(path):
             collector.add(document, key, key, message)
     _check_keys(collector, document, "", _MANIFEST_KEYS | _RETIRED_KEYS.keys())
     agent_specs = _agents(collector, document)
+    provider = _provider(collector, document, "")
     manifest = Manifest(
         agents=agent_specs,
+        provider=provider,
         poll_interval=_number(collector, document, "poll_interval", "", 5, 0),
         cleanup_interval=_number(collector, document, "cleanup_interval", "", 10, 0),
         project_id=_string(collector, document, "project_id", ""),
@@ -669,7 +657,7 @@ def load_manifest(path):
         dashboard_port=_port(collector, document, "dashboard_port", "", 8081),
         path=path,
     )
-    _check_provider_sections(collector, document, agent_specs)
+    _check_provider_sections(collector, document, provider)
     _string(collector, document, "ssh_private_key_path", "")
     if collector.violations:
         raise SchemaError(collector.violations)

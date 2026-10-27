@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 WAKE_QUEUE_KEY = "reconciler:wake"
 WAKE_ALL = "*"
-# One drain must not spin forever on a queue being written to concurrently.
-_DRAIN_LIMIT = 1000
+# One read must not spin forever on a queue being written to concurrently.
+_WAKE_SIGNAL_LIMIT = 1000
 
 REPLACE_SET_KEY = "reconciler:replace"
 
@@ -85,14 +85,14 @@ def request_reconcile(redis_client, agent_name=WAKE_ALL):
     redis_client.lpush(WAKE_QUEUE_KEY, agent_name)
 
 
-def drain(redis_client, timeout=1):
+def wait_for_wake_signals(redis_client, timeout=1):
     """Block for the first wake signal, then take the rest so a burst collapses into one pass."""
     first = redis_client.brpop(WAKE_QUEUE_KEY, timeout=timeout)
     if first is None:
         return set()
 
     signals = {first}
-    for _ in range(_DRAIN_LIMIT):
+    for _ in range(_WAKE_SIGNAL_LIMIT):
         signal = redis_client.rpop(WAKE_QUEUE_KEY)
         if signal is None:
             break

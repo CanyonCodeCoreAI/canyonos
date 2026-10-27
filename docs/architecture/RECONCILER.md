@@ -41,12 +41,12 @@ removing index 1 leaves a hole the same pass's fill step provisions into.
 | `reconciler:stopping` | string (TTL) | GlobalController — `set_stopping` / `clear_stopping` | Reconciler (`is_stopping`, once per pass) |
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
 | `agents:active` | string (JSON list) | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
-| `agent:{name}:instances` | set | `Provisioner` | both |
-| `agent_instance:{name}-{index}` | hash | `Provisioner`; `draining_at`: `Provisioner.remove_replica` with drain | both |
-| `machine_record:{launch_id}` | hash | `Provisioner`, before `start_machine` | `Provisioner.terminate_machines`, at stop |
+| `agent:{name}:instances` | set | `ReplicaProvisioner` | both |
+| `agent_instance:{name}-{index}` | hash | `ReplicaProvisioner`; `draining_at`: `ReplicaProvisioner.remove_replica` with drain | both |
+| `machine_record:{launch_id}` | hash | `MachineProvisioner`, before `start_machine` | `MachineProvisioner`: the machines up for placement, `find_dead` and `find_surplus` each pass, and `terminate` |
 | `routing_table:agents` / `:addresses` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
 | `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness and idle checks |
-| `controller:{host}:{port}:draining` | string | `Provisioner.remove_replica` with drain | the agent's `LocalController`, each metrics interval |
+| `controller:{host}:{port}:draining` | string | `ReplicaProvisioner.remove_replica` with drain | the agent's `LocalController`, each metrics interval |
 | `controller:{host}:{port}:status` | string | the agent's `LocalController` | GlobalController only — deliberately not a health signal |
 | `endpoint:address` | hash | GlobalController — `_apply_config`, deleted once a stop empties the fleet | dashboard API |
 
@@ -71,12 +71,11 @@ never import it. The slice provisioning needs is `ControllerContext`, which
 GlobalController subclasses and the reconciler constructs directly; cluster bootstrap
 (cleanup, launching Redis, policies, identity) stays the controller's.
 
-The write side (`provisioner.py`, `replicas.py`, `providers/`, `routing.py`) lives under `reconciler/`, and
-the record readers are plain functions in `controller_context.py`. The controller uses a
-provider only through `providers.get`, and only to look things up (`ssh_user`), and reads a
-failed replica's log with `replicas.log_tail`,
-so **only the provisioner ever creates or removes a replica's container, or starts or terminates its machine**
-(the Global Controller still runs its own Redis and metrics containers). The provisioner saves each
+The write side (`replica_provisioner.py`, `machine_provisioner.py`, `placement.py`, `replicas.py`, `providers/`, `routing.py`) lives under `reconciler/`, and
+the record readers are plain functions in `controller_context.py`. The controller calls no
+provider function, and reads a failed replica's log with `replicas.log_tail`,
+so **only the replica provisioner ever creates or removes a replica's container, and only the machine provisioner starts or terminates a machine**
+(the Global Controller still runs its own Redis and metrics containers). The replica provisioner saves each
 replica's address in its record (`address`), so the controller reads it there
 instead of importing provisioning code.
 
@@ -97,7 +96,7 @@ only there. `machine_redis_for_replica(replica)` connects on demand from the rec
 miss, which would have the reconciler read a local key, call a remote replica's metrics
 stale, and remove every remote replica on the first pass. Each process also drops the Redis
 clients of machines other than this one that no replica record points to (`remove_unused_redis_clients`):
-the GC on every poll, the provisioner before it publishes routing. Without this, a
+the GC on every poll, the replica provisioner before it publishes routing. Without this, a
 terminated EC2 host stays in the map and every later write to it waits on a dead address.
 
 **`attach_local_machine_redis()` must run in the reconciler's `__init__`.** GlobalController
@@ -135,8 +134,8 @@ flowchart TD
     unwanted["_remove_unwanted<br/>surplus · replacement requested · drain in progress"] --> drain
     gone["_remove_replicas_of_removed_agents<br/>agent removed from config"] --> drain
     stop["_terminate_machines<br/>deployment stopping"] --> drain
-    drain{"_drain_replica<br/>one step per pass"} -->|database| now["_remove_replica"]
-    drain -->|not _is_healthy| unhealthy["_remove_replica (unhealthy)"]
+    drain{"_drain_replica<br/>one step per pass"} -->|database| now["_remove_without_draining"]
+    drain -->|not _is_healthy| unhealthy["_remove_without_draining (unhealthy)"]
     drain -->|otherwise| mark["remove_replica(drain=True): HSET agent_instance:{id}<br/>draining_at, first pass only"]
     mark --> flag["SET controller:{address}:draining = removal time<br/>on the replica's Redis, every pass"]
     flag --> idle{"_is_idle, or 180 s<br/>since draining_at?"}
@@ -166,7 +165,7 @@ sequenceDiagram
     Note over S: _on_forwarded marks it down<br/>and resolves another replica
     Note over D: two heartbeats before the removal time: fail every call it<br/>still runs or has queued with ReplicaRemovedError, then report<br/>nothing those calls do afterwards
     RC->>NR: HGETALL controller:{address}:metrics (_is_idle)
-    Note over RC: _remove_replica once idle,<br/>or at the 180 s limit
+    Note over RC: remove_replica once idle,<br/>or at the 180 s limit
 ```
 
 ### When it counts as idle

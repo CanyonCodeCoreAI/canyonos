@@ -12,7 +12,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `Config file not found: .canyon/config/global_controller.yaml` | The command ran in a directory without that file. `canyonos deploy` looks for `.canyon` in the current directory. |
 | `the project source directory .canyon/app does not exist` | `.canyon/app` was never created, or the command ran from the wrong directory |
 | `duplicate agent name ... (names are lowercased into one image tag)` | Two entries differ only in case |
-| `is required when provider is 'EC2'` | An EC2 entry has no `machine_type` |
+| `is required because provider is 'EC2'` | `provider: EC2` with no `ec2:` block |
 | `expected an integer >= 1` on `replicas` | `replicas` is a string or zero |
 | `is not a single PEP 508 requirement` | A `requirements` item has several packages or a stray flag |
 | `is not built from builtin types` on an argument or `returns` `type` | A typing name like `List[str]`; use `list[str]` |

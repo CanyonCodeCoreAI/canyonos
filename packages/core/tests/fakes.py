@@ -160,7 +160,8 @@ def _replica(agent_name, replica_index, created_at=None, host_port=None):
 
 
 class _FakeProvisioner:
-    """Records what the reconciler asked for without touching Docker."""
+    """Records what the reconciler asked of the machine and replica provisioners, without
+    touching Docker or a provider."""
 
     def __init__(self, replicas=None, raise_for=None, remove_raises=False, idle=True):
         self.replicas = replicas or {}
@@ -182,12 +183,25 @@ class _FakeProvisioner:
             self.draining.append(replica_id)
             return False
         self.removed.append(replica_id)
+        self.redis.delete(f"agent_instance:{replica_id}")
         return True
 
-    def terminate_machines(self):
+    def find_dead(self):
+        return []
+
+    def find_surplus(self, agent_specs):
+        return []
+
+    def start_missing(self, agent_specs):
+        pass
+
+    def machines_for_replicas(self):
+        return []
+
+    def terminate(self, launch_ids=None, keep=()):
         self.machine_terminations += 1
 
-    def ensure_replicas(self, agent_specs, only=None):
+    def ensure_replicas(self, agent_specs, machines, only=None):
         self.ensure_calls.append(agent_specs)
         self.ensure_only.append(only)
         return []
@@ -220,9 +234,11 @@ def _bare_reconciler(context, provisioner, **overrides):
     from canyonos_core.reconciler.reconciler import Reconciler
 
     _seed_replica_records(context.redis, provisioner)
+    provisioner.redis = context.redis
     reconciler = Reconciler.__new__(Reconciler)
     reconciler.context = context
-    reconciler.provisioner = provisioner
+    reconciler.machine_provisioner = provisioner
+    reconciler.replica_provisioner = provisioner
     reconciler.sweep_interval = 5
     reconciler.stale_after = 15
     reconciler.startup_grace = 30

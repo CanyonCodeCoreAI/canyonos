@@ -245,7 +245,7 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     #  Step 4: Generate Docker contexts                               #
     # -------------------------------------------------------------- #
-    platform = target_docker_platform(agent_specs)
+    platform = target_docker_platform(config.get("provider", providers.DEFAULT))
     bake_targets = []
     for agent_spec in agent_specs:
         agent_name = agent_spec["name"]
@@ -369,11 +369,7 @@ def _cmd_deploy(args):
 
     _ensure_grpc_stubs_importable(artifact_root)
 
-    for name in dict.fromkeys(
-        agent_spec.get("provider", providers.DEFAULT)
-        for agent_spec in config.get("agents", [])
-    ):
-        providers.get(name).preflight()
+    providers.get(config.get("provider", providers.DEFAULT)).preflight()
 
     from canyonos_core.controller.global_controller import GlobalController
 
