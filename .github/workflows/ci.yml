@@ -70,6 +70,40 @@ jobs:
       - name: Run the repository script tests
         run: bun test scripts
 
+  # The CLI runs on people's own machines, so its tests also run on macOS and Windows
+  # (the test job above runs them on Linux). Core and the other packages are Linux-only.
+  cli:
+    name: CLI on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.15"
+          python-version: "3.11.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Just the CLI: the released CLI has none of core in it.
+      - name: Sync the CLI
+        run: uv sync --locked --package canyonos
+
+      - name: Check that the CLI starts
+        run: uv run --frozen --package canyonos canyonos --help
+
+      - name: Run the CLI tests
+        working-directory: packages/cli
+        run: uv run --frozen --package canyonos pytest tests --ignore=tests/e2e
+
 # If you want to run this locally, install act and run "act pull_request"
 # For the same checks without act: bun run check && bun run test
 # For reporting Ruff lint errors: bun run lint

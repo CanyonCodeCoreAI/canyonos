@@ -15,12 +15,14 @@ DOCKER_RETRY_DELAY = 0.5
 
 
 def run_docker(argv, *, timeout, action, check=False, env=None):
-    """Run Docker with a bounded wait and a user-facing failure message."""
+    """Run Docker with a bounded wait and a user-facing failure message. Docker writes
+    UTF-8 whatever the console's code page is, so its output is read as that."""
     try:
         result = subprocess.run(
             argv,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
             env=env,

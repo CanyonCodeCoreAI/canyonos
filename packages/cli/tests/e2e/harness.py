@@ -72,7 +72,7 @@ def _terminate_process_group(process: subprocess.Popen[Any]) -> None:
 def _log_tail(path: Path, limit: int = 4000) -> str:
     """Read the useful end of a service log for a startup error."""
     try:
-        return path.read_text(errors="replace")[-limit:]
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
     except OSError:
         return ""
 
@@ -402,7 +402,7 @@ def reported_tcp_address(path: Path) -> Callable[[OwnedService], str | None]:
 
     def probe(_service: OwnedService) -> str | None:
         try:
-            address = path.read_text().strip()
+            address = path.read_text(encoding="utf-8").strip()
             parsed = urlsplit(address)
             if parsed.scheme != "tcp" or parsed.hostname is None or parsed.port is None:
                 return None

@@ -21,6 +21,7 @@ import tempfile
 import urllib.request
 
 from canyonos import env, ui
+from canyonos.os_support import is_terminal
 from canyonos.validate import UNCHECKED, run_validate
 from utils.tui import select_menu
 
@@ -229,12 +230,13 @@ def _pin_doc_links(dest, ref):
             if not name.endswith(".md"):
                 continue
             path = os.path.join(root, name)
-            with open(path, encoding="utf-8") as source:
+            # newline="": the skill's own line endings, the same on every OS.
+            with open(path, encoding="utf-8", newline="") as source:
                 text = source.read()
             pinned = text.replace(f"{RAW_URL}/main/", f"{RAW_URL}/{ref}/")
             if pinned == text:
                 continue
-            with open(path, "w", encoding="utf-8") as target:
+            with open(path, "w", encoding="utf-8", newline="") as target:
                 target.write(pinned)
 
 
@@ -291,7 +293,7 @@ def _launch_agent(agent: str, prompt: str, unattended: bool) -> int | None:
 
     # The agent's TUI wants stdin and stdout; anything less -- or a caller who
     # already said not to ask -- and it gets the unattended flags instead.
-    attended = not unattended and sys.stdin.isatty() and sys.stdout.isatty()
+    attended = not unattended and is_terminal(sys.stdin) and is_terminal(sys.stdout)
     if not attended:
         prompt += UNATTENDED_NOTE
     unattended_args = [] if attended else spec["unattended"]
@@ -338,7 +340,7 @@ def run_convert(
     """
     # The menus read keys off stdin and draw on stderr; without both, flags are
     # the only way in.
-    can_prompt = sys.stdin.isatty() and sys.stderr.isatty()
+    can_prompt = is_terminal(sys.stdin) and is_terminal(sys.stderr)
     if not yes and (agent is None or scope is None) and not can_prompt:
         ui.fail("`canyonos convert` needs a terminal for the agent and scope menus.")
         ui.hint(

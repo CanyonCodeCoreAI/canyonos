@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import subprocess
+import sys
 
 from canyonos import docker_cmd
 
@@ -36,3 +37,14 @@ def test_cleanup_retries_once_and_returns_final_failure(monkeypatch):
     assert error == "Removing x failed: busy"
     assert len(calls) == 2
     assert all(timeout == 7 for _, timeout in calls)
+
+
+def test_run_docker_reads_utf8_output_whatever_the_console_code_page_is():
+    # Docker writes UTF-8; "Ł" is bytes the Windows ANSI code page can't decode.
+    result = docker_cmd.run_docker(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write('Ł'.encode())"],
+        timeout=30,
+        action="Printing",
+    )
+
+    assert result.stdout == "Ł"

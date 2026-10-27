@@ -45,6 +45,8 @@ curl -fsSL https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/pack
 uv tool install canyonos
 ```
 
+On Windows, install with `uv tool install canyonos` or `pip install canyonos`: the install script and the standalone binary are for Linux and macOS.
+
 Run canyonos doctor to verify all prerequisites are set up before your first deploy:
 
 ```bash

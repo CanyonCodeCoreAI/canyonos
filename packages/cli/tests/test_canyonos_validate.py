@@ -156,7 +156,8 @@ def test_a_config_written_as_a_path_into_the_artifact_is_accepted(in_process, tm
 
     validate_cmd.run_validate(str(root), config=str(root / "config" / "other.yaml"))
 
-    assert seen["config_path"] == os.path.join("config", "other.yaml")
+    # As the core image names it, whatever this machine's separator.
+    assert seen["config_path"] == "config/other.yaml"
 
 
 # ------------------------------------------------------------------ #
@@ -171,9 +172,7 @@ def docker(monkeypatch, no_core):
 
     monkeypatch.setattr(validate_cmd.shutil, "which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(validate_cmd, "docker_running", lambda: True)
-    monkeypatch.setattr(
-        validate_cmd, "active_docker_socket", lambda: "/var/run/docker.sock"
-    )
+    monkeypatch.setattr(validate_cmd, "docker_is_local", lambda: True)
 
     def install(stdout, returncode=0, stderr=""):
         class _Result:
@@ -257,12 +256,12 @@ def test_a_container_that_says_nothing_is_a_failure(docker, capsys):
     assert "Unable to find image" in flat(capsys)
 
 
-def test_a_docker_that_is_not_on_a_local_socket_says_so(monkeypatch, docker, capsys):
+def test_a_docker_that_is_not_on_this_machine_says_so(monkeypatch, docker, capsys):
     docker("")
-    monkeypatch.setattr(validate_cmd, "active_docker_socket", lambda: None)
+    monkeypatch.setattr(validate_cmd, "docker_is_local", lambda: False)
 
     assert validate_cmd.run_validate(".canyon") == validate_cmd.UNCHECKED
-    assert "not reachable over a local socket" in flat(capsys)
+    assert "running on another machine" in flat(capsys)
 
 
 def test_neither_core_nor_docker_is_one_line(monkeypatch, no_core, capsys):
@@ -382,3 +381,13 @@ def test_the_cli_dispatches_to_run_validate(monkeypatch):
 
     assert exit_info.value.code == 0
     assert seen == {"root": "port/.canyon", "config": None, "as_json": True}
+
+
+def test_a_config_on_another_drive_is_outside_the_artifact(monkeypatch):
+    def another_drive(*_args):
+        raise ValueError("path is on mount 'D:', start on mount 'C:'")
+
+    monkeypatch.setattr(validate_cmd.os.path, "relpath", another_drive)
+
+    with pytest.raises(RuntimeError, match="is outside"):
+        validate_cmd._relative_config(".canyon", "D:\\other\\global_controller.yaml")

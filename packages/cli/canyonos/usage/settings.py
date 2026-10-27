@@ -16,7 +16,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-PRIVATE_DIR_MODE = 0o700
+from canyonos.os_support import make_private_dir
 
 
 @dataclass(frozen=True)
@@ -76,8 +76,7 @@ def load_settings() -> UsageSettings | None:
 def ensure_private_dir(path: Path) -> None:
     """Create `path` if needed and make it readable only by you, tightening a folder
     that already exists with looser permissions."""
-    path.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
-    os.chmod(path, PRIVATE_DIR_MODE)
+    make_private_dir(path)
 
 
 def write_private_json(path: Path, data: dict) -> None:

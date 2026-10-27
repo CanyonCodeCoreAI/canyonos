@@ -186,8 +186,7 @@ def agent_on_path(monkeypatch):
 
 
 def _set_tty(monkeypatch, attached):
-    monkeypatch.setattr(convert_cmd.sys.stdin, "isatty", lambda: attached)
-    monkeypatch.setattr(convert_cmd.sys.stdout, "isatty", lambda: attached)
+    monkeypatch.setattr(convert_cmd, "is_terminal", lambda _stream: attached)
 
 
 def test_an_attended_launch_passes_no_unattended_flags(monkeypatch, agent_on_path):

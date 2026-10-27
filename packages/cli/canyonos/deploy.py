@@ -747,7 +747,8 @@ def follow_gc_log(state):
         env=docker_env(state),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
     )
 

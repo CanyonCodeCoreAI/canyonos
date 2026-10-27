@@ -9,6 +9,7 @@ up in a terminal, and again whenever you run `canyonos contact` without flags.
 import sys
 
 from canyonos import ui
+from canyonos.os_support import is_terminal
 from canyonos.usage.settings import UsageSettings, load_settings, set_usage_reporting
 from utils.tui import select_menu
 
@@ -23,7 +24,9 @@ HOW_TO_CHANGE = "Change this any time with `canyonos contact`."
 def is_interactive() -> bool:
     """Whether someone is at a terminal to answer: stdin, stdout and stderr (where the
     menu draws) are all attached to one."""
-    return sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty()
+    return (
+        is_terminal(sys.stdin) and is_terminal(sys.stdout) and is_terminal(sys.stderr)
+    )
 
 
 def ask_usage_reporting() -> bool | None:

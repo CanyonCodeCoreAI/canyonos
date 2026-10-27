@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-import fcntl
 import json
 import math
 import os
@@ -17,6 +16,7 @@ import cli
 import pytest
 
 from canyonos import env
+from canyonos.os_support import file_lock
 from canyonos.usage import delivery, outbox, settings
 
 CONTRACT = (
@@ -170,7 +170,7 @@ class Spawned:
         def record(command, **options):
             self.calls.append((command, options))
 
-        monkeypatch.setattr(delivery.subprocess, "Popen", popen or record)
+        monkeypatch.setattr(delivery, "spawn_detached", popen or record)
 
 
 def test_starts_a_detached_sender_when_events_wait(monkeypatch, reporting, home):
@@ -182,14 +182,7 @@ def test_starts_a_detached_sender_when_events_wait(monkeypatch, reporting, home)
 
     [(command, options)] = spawned.calls
     assert command == delivery.delivery_command()
-    assert options == {
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-        "cwd": settings.usage_dir(),
-        "start_new_session": True,
-        "close_fds": True,
-    }
+    assert options == {"cwd": settings.usage_dir()}
 
 
 def test_no_sender_without_a_usage_url(monkeypatch, reporting):
@@ -427,8 +420,8 @@ def test_nothing_is_sent_without_a_usage_url(reporting):
 
 def test_only_one_sender_runs_at_a_time(reporting, api):
     queue(2)
-    with open(settings.usage_dir() / "delivery.lock", "w") as held:
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with file_lock(settings.usage_dir() / "delivery.lock", wait=False) as held:
+        assert held
 
         delivery.deliver_pending_events()
 

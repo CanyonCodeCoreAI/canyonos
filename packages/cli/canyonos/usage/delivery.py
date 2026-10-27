@@ -8,12 +8,10 @@ that does the sending, so it never slows a command down, shows anything or chang
 the command exits. Events stay in the outbox until the API has stored them.
 """
 
-import fcntl
 import http.client
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import urllib.request
@@ -22,6 +20,7 @@ from pathlib import Path
 
 from canyonos import env
 from canyonos.env import VERSION
+from canyonos.os_support import file_lock, spawn_detached
 from canyonos.usage.outbox import (
     REPORTED_COMMANDS,
     is_reportable_version,
@@ -72,15 +71,7 @@ def start_delivery() -> None:
     try:
         if env.usage_url is None or not _reporting_is_on() or not pending_events():
             return
-        subprocess.Popen(
-            delivery_command(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=usage_dir(),
-            start_new_session=True,
-            close_fds=True,
-        )
+        spawn_detached(delivery_command(), cwd=usage_dir())
     # Usage reporting must never change what the command printed or how it exited.
     except Exception:
         pass
@@ -202,18 +193,9 @@ def deliver_pending_events() -> None:
     if url is None:
         return
     try:
-        lock = os.open(
-            usage_dir() / "delivery.lock",
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
-            0o600,
-        )
-    except OSError:
-        return
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        _deliver(url)
+        with file_lock(usage_dir() / "delivery.lock", wait=False) as held:
+            if held:
+                _deliver(url)
     # Running detached with nowhere to report to: whatever is left waits for next time.
     except Exception:
         pass
-    finally:
-        os.close(lock)

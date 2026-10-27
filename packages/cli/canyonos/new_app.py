@@ -25,7 +25,9 @@ def template_files():
         for filename in filenames:
             source = os.path.join(directory, filename)
             relative = os.path.relpath(source, str(root))
-            yield relative.removesuffix(PYTHON_TEMPLATE_SUFFIX), open(source).read()
+            # newline="": each file's own line endings, the same on every OS.
+            with open(source, encoding="utf-8", newline="") as f:
+                yield relative.removesuffix(PYTHON_TEMPLATE_SUFFIX), f.read()
 
 
 def run_new_app():
@@ -37,7 +39,7 @@ def run_new_app():
 
     for path, content in template_files():
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
 
     ui.ok("Created new CanyonOS project.")

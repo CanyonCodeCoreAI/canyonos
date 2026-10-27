@@ -108,6 +108,7 @@ def test_emptied_skill_folders_are_removed_and_user_skills_kept(monkeypatch, tmp
     assert not (tmp_path / ".codex").exists()
 
 
+@pytest.mark.needs_symlinks("the skill is linked into the project")
 def test_symlinked_skill_is_unlinked_and_its_target_kept(monkeypatch, tmp_path):
     target = tmp_path / "checkout" / "skill"
     target.mkdir(parents=True)

@@ -19,6 +19,7 @@ import tempfile
 from canyonos import project, ui
 from canyonos.docker_cmd import DOCKER_RUN_TIMEOUT, run_docker
 from canyonos.gc import require_state
+from canyonos.constants import container_path
 from canyonos.init import GC_WORKSPACE_PATH
 
 
@@ -77,7 +78,7 @@ def _project_entries(project_root):
     for directory, dirnames, filenames in os.walk(project_root, followlinks=False):
         for name in dirnames + filenames:
             path = os.path.join(directory, name)
-            relative = os.path.relpath(path, project_root).replace(os.sep, "/")
+            relative = container_path(os.path.relpath(path, project_root))
             entries[relative] = (
                 "directory"
                 if os.path.isdir(path) and not os.path.islink(path)
@@ -149,7 +150,11 @@ def _remove_stale_entries(container_id, stale_entries):
     local_path = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", prefix="canyonos-sync-stale-", suffix=".json", delete=False
+            mode="w",
+            encoding="utf-8",
+            prefix="canyonos-sync-stale-",
+            suffix=".json",
+            delete=False,
         ) as manifest_file:
             local_path = manifest_file.name
             json.dump(stale_entries, manifest_file)
@@ -200,6 +205,7 @@ def _save_sync_state(container_id, entries):
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
+            encoding="utf-8",
             dir=os.path.dirname(manifest_path),
             prefix="sync-manifest.",
             suffix=".tmp",

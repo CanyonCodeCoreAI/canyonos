@@ -5,6 +5,7 @@
 
 Config/data layer. Holds shared values and parsing helpers"""
 
+import codecs
 import os
 import urllib.error
 import urllib.request
@@ -39,7 +40,7 @@ def default_config_path():
 def load_yaml(config_path, load):
     """The file at `config_path` parsed by `load`. A YAML syntax error is raised as a
     RuntimeError naming the line and what is wrong there."""
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         try:
             return load(f)
         except (yaml.MarkedYAMLError, MarkedYAMLError) as e:
@@ -53,7 +54,7 @@ def read_config(config_path):
     """The config at `config_path` as loaded YAML, or {} when it is missing, empty or
     not valid YAML."""
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except (OSError, yaml.YAMLError):
         return {}
@@ -175,9 +176,13 @@ def workspace_relative(config_path):
     """
     # realpath on both sides: a symlinked project dir (or macOS's /tmp ->
     # /private/tmp) otherwise makes an in-project absolute path look external.
-    relative = os.path.relpath(
-        os.path.realpath(config_path), os.path.realpath(os.getcwd())
-    )
+    try:
+        relative = os.path.relpath(
+            os.path.realpath(config_path), os.path.realpath(os.getcwd())
+        )
+    except ValueError:
+        # Windows: another drive has no relative path at all.
+        relative = ".."
     if relative == ".." or relative.startswith(f"..{os.sep}"):
         raise RuntimeError("The config file must be inside this project folder")
     if not os.path.isfile(relative):
@@ -185,7 +190,35 @@ def workspace_relative(config_path):
             f"No {relative} here. Run `canyonos convert` first, or rerun from your "
             "project folder."
         )
-    return relative
+    return container_path(relative)
+
+
+def container_path(relative):
+    """`relative`, a path under the project on this machine, as a Linux container
+    names it: with forward slashes, which this machine reads too, even on Windows."""
+    return relative.replace(os.sep, "/")
+
+
+def write_config(config_path, data, yaml_rt):
+    """Write `data`, loaded with `yaml_rt` (round_trip_yaml), back to the user's YAML
+    file at `config_path`: UTF-8, with the line endings and the byte-order mark the
+    file already has (a Windows checkout's CRLF stays CRLF, LF stays LF), so only
+    what changed shows in git."""
+    encoding, newline = _text_layout(config_path)
+    with open(config_path, "w", encoding=encoding, newline=newline) as f:
+        yaml_rt.dump(data, f)
+
+
+def _text_layout(path):
+    """The encoding name and line ending that write the file at `path` back the way it
+    is: "utf-8-sig" keeps a byte-order mark; "\\n" for a new or one-line file."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(64 * 1024)
+    except FileNotFoundError:
+        return "utf-8", "\n"
+    encoding = "utf-8-sig" if head.startswith(codecs.BOM_UTF8) else "utf-8"
+    return encoding, "\r\n" if b"\r\n" in head else "\n"
 
 
 def round_trip_yaml():

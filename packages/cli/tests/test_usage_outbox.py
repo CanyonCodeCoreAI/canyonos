@@ -271,8 +271,10 @@ def test_a_recording_failure_keeps_the_command_exit(monkeypatch, reporting, caps
     assert capsys.readouterr().err == ""
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+@pytest.mark.posix_only("a read-only folder is a permission bit Windows doesn't have")
 def test_an_unwritable_usage_folder_is_silent(monkeypatch, reporting, capsys):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
     settings.usage_dir().chmod(0o500)
     monkeypatch.setattr(cli, "run_stop", lambda: None)
     try:
@@ -330,6 +332,7 @@ def test_pending_events_is_empty_without_an_outbox():
     assert outbox.pending_events() == []
 
 
+@pytest.mark.posix_only("Windows has no permission bits")
 def test_the_outbox_and_its_events_are_private(home, reporting):
     settings.outbox_dir().mkdir(mode=0o755)
 

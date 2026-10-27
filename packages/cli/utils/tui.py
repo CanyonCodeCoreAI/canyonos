@@ -7,12 +7,9 @@ Minimal arrow-key select menu, no dependency beyond the standard library.
 Used by any command that involves selecting options, no other purpose beyond this.
 """
 
-import os
-import select as select_syscall
 import sys
-import termios
-import tty
 
+from canyonos.os_support import is_terminal, keypresses
 from canyonos.theme import GREEN
 
 UP_KEYS = ("\x1b[A", "\x1bOA", "k")
@@ -31,21 +28,6 @@ DELETE_ACTION = object()
 # from None (which callers use for a single-level cancel/back) so a caller can
 # unwind an entire nested session. Callers check `result is QUIT_ACTION`.
 QUIT_ACTION = object()
-
-
-def _read_key(fd):
-    # Reads straight off the fd (not sys.stdin) so this stays in sync with
-    # the select() call below -- stdin's own buffering can silently swallow
-    # an arrow key's trailing bytes before select() ever sees them queued.
-    ch = os.read(fd, 1).decode()
-    if ch == "\x1b":
-        # An arrow key arrives as a multi-byte escape sequence; a bare Esc
-        # press has nothing queued right behind it.
-        if select_syscall.select([fd], [], [], 0.01)[0]:
-            ch += os.read(fd, 1).decode()
-            if ch[-1] in ("[", "O"):
-                ch += os.read(fd, 1).decode()
-    return ch
 
 
 def select_menu(
@@ -68,11 +50,9 @@ def select_menu(
     first line. `header` lines are drawn above the options and `footer` lines
     under them; neither can be selected.
     """
-    if not options or not sys.stdin.isatty():
+    if not options or not is_terminal(sys.stdin):
         return None
 
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
     out = sys.stderr
     idx = 0
     n = len(options)
@@ -99,69 +79,65 @@ def select_menu(
         return "\x1b[K\r\n".join(lines) + "\x1b[K"
 
     prev_frame = None
-    try:
-        tty.setraw(fd)
-        out.write("\x1b[?25l")
-        while True:
-            text = frame()
-            # Synchronized update: supporting terminals paint the whole frame at once.
-            out.write("\x1b[?2026h")
-            if prev_frame is not None:
-                # How far back up to move is read off the frame we actually
-                # wrote last time, not recomputed separately -- it can't drift
-                # out of sync with what's really on screen.
-                out.write(f"\r\x1b[{prev_frame.count(chr(10))}A")
-            out.write(text + "\x1b[J\x1b[?2026l")
-            out.flush()
-            prev_frame = text
+    with keypresses(sys.stdin) as read_key:
+        try:
+            out.write("\x1b[?25l")
+            while True:
+                text = frame()
+                # Synchronized update: supporting terminals paint the whole frame at once.
+                out.write("\x1b[?2026h")
+                if prev_frame is not None:
+                    # How far back up to move is read off the frame we actually
+                    # wrote last time, not recomputed separately -- it can't drift
+                    # out of sync with what's really on screen.
+                    out.write(f"\r\x1b[{prev_frame.count(chr(10))}A")
+                out.write(text + "\x1b[J\x1b[?2026l")
+                out.flush()
+                prev_frame = text
 
-            key = _read_key(fd)
-            if key in ("\r", "\n"):
-                return options[idx][0]
-            if key in CANCEL_KEYS:
-                return None
-            if key in UP_KEYS:
-                idx = (idx - 1) % n
-            elif key in DOWN_KEYS:
-                idx = (idx + 1) % n
-            elif deletable and key in DELETE_KEYS:
-                return (DELETE_ACTION, options[idx][0])
-            elif quittable and key in QUIT_KEYS:
-                return QUIT_ACTION
-            elif key.isdigit() and key != "0" and int(key) <= n:
-                return options[int(key) - 1][0]
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        out.write("\x1b[?25h\r\n")
-        out.flush()
+                key = read_key()
+                if key in ("\r", "\n"):
+                    return options[idx][0]
+                if key in CANCEL_KEYS:
+                    return None
+                if key in UP_KEYS:
+                    idx = (idx - 1) % n
+                elif key in DOWN_KEYS:
+                    idx = (idx + 1) % n
+                elif deletable and key in DELETE_KEYS:
+                    return (DELETE_ACTION, options[idx][0])
+                elif quittable and key in QUIT_KEYS:
+                    return QUIT_ACTION
+                elif key.isdigit() and key != "0" and int(key) <= n:
+                    return options[int(key) - 1][0]
+        finally:
+            out.write("\x1b[?25h\r\n")
+            out.flush()
 
 
 def input_line(prompt, hint="enter save · esc back", error=None):
     """Read one line of typed text, with an optional red error under it; returns None on Esc/Ctrl-C."""
-    if not sys.stdin.isatty():
+    if not is_terminal(sys.stdin):
         return None
 
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
     out = sys.stderr
     buffer = ""
-    try:
-        tty.setraw(fd)
-        error_line = f"\x1b[1;31m✗ {error}\x1b[0m" if error else ""
-        out.write(f"\x1b[?25h{prompt}\r\n{error_line}\r\n{hint}\x1b[2A")
-        while True:
-            out.write(f"\r\x1b[K{prompt}{buffer}")
+    with keypresses(sys.stdin) as read_key:
+        try:
+            error_line = f"\x1b[1;31m✗ {error}\x1b[0m" if error else ""
+            out.write(f"\x1b[?25h{prompt}\r\n{error_line}\r\n{hint}\x1b[2A")
+            while True:
+                out.write(f"\r\x1b[K{prompt}{buffer}")
+                out.flush()
+                key = read_key()
+                if key in ("\r", "\n"):
+                    return buffer.strip()
+                if key in CANCEL_KEYS:
+                    return None
+                if key in ("\x7f", "\x08"):
+                    buffer = buffer[:-1]
+                elif len(key) == 1 and key.isprintable():
+                    buffer += key
+        finally:
+            out.write("\r\n")
             out.flush()
-            key = _read_key(fd)
-            if key in ("\r", "\n"):
-                return buffer.strip()
-            if key in CANCEL_KEYS:
-                return None
-            if key in ("\x7f", "\x08"):
-                buffer = buffer[:-1]
-            elif len(key) == 1 and key.isprintable():
-                buffer += key
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        out.write("\r\n")
-        out.flush()

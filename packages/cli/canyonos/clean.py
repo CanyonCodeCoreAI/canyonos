@@ -19,7 +19,7 @@ def _project_images():
     """Return the image name of every agent in the project's `global_controller.yaml`,
     or None when the file is missing or can't be read."""
     try:
-        with open(default_config_path()) as f:
+        with open(default_config_path(), encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
     except (OSError, yaml.YAMLError):
         return None
@@ -48,7 +48,8 @@ def _remove_canyon_images(images):
         result = subprocess.run(
             ["docker", "images", *filters, "-q"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
     except OSError as error:
@@ -69,7 +70,8 @@ def _remove_canyon_images(images):
             result = subprocess.run(
                 ["docker", "image", "rm", *image_ids],
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
     except OSError as error:

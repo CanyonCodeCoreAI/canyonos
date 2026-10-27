@@ -14,7 +14,8 @@ from rich.text import Text
 from ruamel.yaml.comments import CommentedMap
 
 from canyonos import ui
-from canyonos.constants import load_yaml, round_trip_yaml
+from canyonos.constants import load_yaml, round_trip_yaml, write_config
+from canyonos.os_support import is_terminal
 from canyonos.theme import GREEN, WHITE
 from utils.tui import input_line, select_menu
 
@@ -223,9 +224,8 @@ def configure_resources(config_path):
     for agent_spec in agent_specs:
         _fill_defaults(agent_spec)
 
-    if sys.stdin.isatty() and not _pick(agent_specs):
+    if is_terminal(sys.stdin) and not _pick(agent_specs):
         return False
 
-    with open(config_path, "w") as f:
-        yaml_rt.dump(data, f)
+    write_config(config_path, data, yaml_rt)
     return True

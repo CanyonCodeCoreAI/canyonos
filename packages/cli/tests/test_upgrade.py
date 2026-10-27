@@ -15,6 +15,7 @@ import pytest
 
 import cli
 from canyonos import env, upgrade
+from canyonos.os_support import shell_command
 
 POLICY = {"latest": "0.1.734", "supported": ["0.1.734", "0.1.733", "0.1.732"]}
 CLI_DIR = Path(__file__).resolve().parents[1]
@@ -353,30 +354,29 @@ def test_the_installed_cli_keeps_validate_json_on_stdout(tmp_path, policy, expec
 
 
 @pytest.fixture
-def fake_uv(tmp_path, monkeypatch):
+def fake_uv(tmp_path, fake_command):
     """A `uv` on PATH that logs its arguments, lists canyonos as `listed`, and exits
     `upgrade_status` from `uv tool upgrade`."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
     state = tmp_path / "uv"
     state.mkdir()
-    (state / "listed").write_text("canyonos v0.1.734\n- canyonos\n")
-    (state / "upgrade_status").write_text("0")
-    script = bin_dir / "uv"
-    script.write_text(
+    (state / "listed").write_text("canyonos v0.1.734\n- canyonos\n", encoding="utf-8")
+    (state / "upgrade_status").write_text("0", encoding="utf-8")
+    fake_command(
+        "uv",
         textwrap.dedent(
             f"""\
-            #!/bin/sh
-            echo "$*" >> {state}/log
-            case "$*" in
-                "tool upgrade canyonos") exit "$(cat {state}/upgrade_status)" ;;
-                "tool list --show-version-specifiers") cat {state}/listed ;;
-            esac
+            import pathlib, sys
+            state = pathlib.Path({str(state)!r})
+            arguments = " ".join(sys.argv[1:])
+            with open(state / "log", "a", encoding="utf-8") as log:
+                log.write(arguments + "\\n")
+            if arguments == "tool upgrade canyonos":
+                sys.exit(int((state / "upgrade_status").read_text(encoding="utf-8")))
+            if arguments == "tool list --show-version-specifiers":
+                sys.stdout.write((state / "listed").read_text(encoding="utf-8"))
             """
-        )
+        ),
     )
-    script.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return state
 
 
@@ -488,9 +488,10 @@ def test_upgrade_leaves_a_pip_install_alone_and_names_its_command(
     assert _run_cli(monkeypatch, "upgrade") == 0
 
     assert _uv_calls(fake_uv) == []
-    assert f"{sys.executable} -m pip install --upgrade canyonos" in _flat(
-        capsys.readouterr().out
+    command = shell_command(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "canyonos"]
     )
+    assert command in _flat(capsys.readouterr().out)
 
 
 def test_upgrade_names_uv_for_a_python_environment_without_pip(
@@ -500,11 +501,13 @@ def test_upgrade_names_uv_for_a_python_environment_without_pip(
 
     assert _run_cli(monkeypatch, "upgrade") == 0
 
-    assert f"uv pip install --python {sys.executable} --upgrade canyonos" in _flat(
-        capsys.readouterr().out
+    command = shell_command(
+        ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "canyonos"]
     )
+    assert command in _flat(capsys.readouterr().out)
 
 
+@pytest.mark.needs_symlinks("Homebrew links its binary into bin")
 def test_upgrade_sees_through_the_homebrew_bin_symlink(
     fake_uv, released, monkeypatch, tmp_path, capsys
 ):
@@ -539,6 +542,7 @@ def test_upgrade_sees_through_the_homebrew_bin_symlink(
     ],
     ids=["homebrew", "install.sh", "install.sh elsewhere"],
 )
+@pytest.mark.posix_only("the standalone binary is released for Linux and macOS only")
 def test_upgrade_names_the_reinstall_for_the_standalone_binary(
     fake_uv, released, monkeypatch, tmp_path, capsys, location, expected
 ):

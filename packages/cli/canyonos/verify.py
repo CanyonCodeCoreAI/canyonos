@@ -30,7 +30,8 @@ def _built_images():
     result = subprocess.run(
         ["docker", "images", "--format", "{{.Repository}}"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return set(result.stdout.split())
 
@@ -46,7 +47,8 @@ def _running_containers():
             "{{.Names}}",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return result.stdout.split()
 

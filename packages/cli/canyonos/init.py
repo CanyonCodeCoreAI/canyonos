@@ -94,9 +94,27 @@ def docker_start_command():
     command, app = DOCKER_RUNTIMES.get(context, (None, "Docker"))
     if command and shutil.which(command[0]):
         return command
+    # Docker Desktop's own CLI starts it wherever it was installed, on any OS;
+    # --detach returns once the start is requested, and the caller waits on the daemon.
+    if app == "Docker" and _docker_desktop_cli():
+        return ["docker", "desktop", "start", "--detach"]
+    # A Docker Desktop too old for that CLI, or another macOS app.
     if app and sys.platform == "darwin" and os.path.isdir(f"/Applications/{app}.app"):
         return ["open", "-a", app]
     return None
+
+
+def _docker_desktop_cli():
+    """True when `docker desktop` (Docker Desktop 4.37 and later) is installed."""
+    try:
+        result = run_docker(
+            ["docker", "desktop", "version"],
+            timeout=DOCKER_QUICK_TIMEOUT,
+            action="docker desktop version",
+        )
+    except RuntimeError:
+        return False
+    return result.returncode == 0
 
 
 def _ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
@@ -149,24 +167,38 @@ def _ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
 GC_DOCKER_SOCKET = "/var/run/docker.sock"
 
 
-def active_docker_socket():
-    """Real path of the unix socket plain `docker` calls resolve to right now,
-    or None if that's a remote/TCP endpoint (nothing to compare against a
-    bind-mounted host socket for).
-    """
+def _docker_endpoint():
+    """The engine plain `docker` calls reach right now (`DOCKER_HOST`, else the active
+    context's): `unix://` a socket, `npipe://` Docker Desktop's pipe on Windows,
+    `tcp://` or `ssh://` a remote engine. None when the context can't be read."""
     host = os.environ.get("DOCKER_HOST")
-    if host is None:
-        result = subprocess.run(
-            ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return None
-        host = result.stdout.strip()
-    if not host.startswith("unix://"):
+    if host is not None:
+        return host
+    result = subprocess.run(
+        ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
         return None
-    return os.path.realpath(host[len("unix://") :])
+    return result.stdout.strip()
+
+
+def docker_is_local():
+    """True when plain `docker` talks to an engine on this machine, so a folder here
+    can be bind-mounted: a unix socket, or Docker Desktop's named pipe on Windows."""
+    endpoint = _docker_endpoint()
+    return endpoint is not None and endpoint.startswith(("unix://", "npipe://"))
+
+
+def active_docker_socket():
+    """Real path of the unix socket plain `docker` calls resolve to right now, or None
+    for a named pipe or a remote endpoint (no socket on this machine to name)."""
+    endpoint = _docker_endpoint()
+    if endpoint is None or not endpoint.startswith("unix://"):
+        return None
+    return os.path.realpath(endpoint[len("unix://") :])
 
 
 def docker_env(state):
@@ -295,7 +327,10 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
     # /var/run/docker.sock alias -- some other app can hold that alias and
     # point it at a different engine than the one every other `docker`
     # command here is actually using.
-    host_socket = active_docker_socket() or GC_DOCKER_SOCKET
+    active_socket = active_docker_socket()
+    # Without a unix socket here (Docker Desktop's named pipe on Windows), the engine
+    # still serves the alias inside its own VM, so that is what gets mounted.
+    host_socket = active_socket or GC_DOCKER_SOCKET
     # Idempotent: succeeds silently if the network already exists (created by
     # this or a prior GC/Redis launch).
     network = run_docker(
@@ -374,7 +409,9 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
                     "Docker started the Global Controller but returned no container ID."
                 )
             if _port_reachable(port):
-                return container_id, port, host_socket
+                # Only a real socket on this machine is recorded: later host-side
+                # `docker` calls are pointed at it, and the alias names no socket here.
+                return container_id, port, active_socket
             # Port bound fine but never actually became reachable -- treat
             # like a conflict, since that's effectively what it is.
             failure = cleanup_docker(
@@ -405,7 +442,12 @@ def _save_state(container_id, port, docker_socket=None):
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", dir=state_dir, prefix="state.", suffix=".tmp", delete=False
+            mode="w",
+            encoding="utf-8",
+            dir=state_dir,
+            prefix="state.",
+            suffix=".tmp",
+            delete=False,
         ) as f:
             temporary_path = f.name
             json.dump(
@@ -433,7 +475,7 @@ def load_state():
     under `~/.canyonos/projects`."""
     state_path = project.state_path()
     try:
-        with open(state_path) as f:
+        with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
     except FileNotFoundError:
         raise

@@ -25,6 +25,7 @@ from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
+from canyonos.os_support import prepare_console
 from canyonos.quit import run_quit
 from canyonos.serve import run_serve
 from canyonos.status import run_status
@@ -64,6 +65,7 @@ def main():
     if sys.argv[1:] == [DELIVERY_ARGUMENT]:
         deliver_pending_events()
         return
+    prepare_console()
     try:
         _run_command()
     except KeyboardInterrupt:

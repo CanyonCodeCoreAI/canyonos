@@ -135,10 +135,8 @@ def test_redaction_removes_urls_secrets_and_credentials():
     assert "other:credential@" not in redacted
 
 
-@pytest.mark.parametrize("had_containers", [False, True])
-def test_start_failure_saves_log_and_cleans_up_only_new_stack(
-    monkeypatch, project, had_containers
-):
+def _fail_start(monkeypatch, had_containers):
+    """Run the dashboard with a start that fails; returns its result and the docker calls."""
     calls = []
 
     def response(argv):
@@ -153,18 +151,30 @@ def test_start_failure_saves_log_and_cleans_up_only_new_stack(
         return completed(argv)
 
     install_docker(monkeypatch, calls, response)
-    result = dashboard_stack.run_dashboard()
+    return dashboard_stack.run_dashboard(), calls
+
+
+@pytest.mark.parametrize("had_containers", [False, True])
+def test_start_failure_saves_log_and_cleans_up_only_new_stack(
+    monkeypatch, project, had_containers
+):
+    result, calls = _fail_start(monkeypatch, had_containers)
 
     assert result.ok is False
     assert result.phase == "start"
     assert result.log_path is not None
-    assert Path(result.log_path).stat().st_mode & 0o777 == 0o600
-    assert (
-        "postgres://user:password@db.example/canyonos"
-        not in Path(result.log_path).read_text()
-    )
+    assert "postgres://user:password@db.example/canyonos" not in Path(
+        result.log_path
+    ).read_text(encoding="utf-8")
     assert any("logs" in command for command in calls)
     assert any(command[-1] == "down" for command in calls) is (not had_containers)
+
+
+@pytest.mark.posix_only("Windows has no permission bits; the user folder's access list")
+def test_the_saved_start_log_is_readable_only_by_you(monkeypatch, project):
+    result, _ = _fail_start(monkeypatch, had_containers=False)
+
+    assert Path(result.log_path).stat().st_mode & 0o777 == 0o600
 
 
 def test_pull_failure_includes_redacted_stderr(monkeypatch, project):

@@ -39,7 +39,7 @@ def run_detached_child(child_file: Path, new_session: bool) -> int:
         stdin=subprocess.DEVNULL,
         start_new_session=new_session,
     )
-    child_file.write_text(f"{child.pid}\n")
+    child_file.write_text(f"{child.pid}\n", encoding="utf-8")
     print("leader done", flush=True)
     return 0
 
@@ -74,7 +74,7 @@ def run_service(address_file: Path, child_file: Path | None) -> int:
     server.bind(("127.0.0.1", 0))
     server.listen()
     host, port = server.getsockname()
-    address_file.write_text(f"tcp://{host}:{port}\n")
+    address_file.write_text(f"tcp://{host}:{port}\n", encoding="utf-8")
     print(f"ready tcp://{host}:{port}", flush=True)
 
     try:

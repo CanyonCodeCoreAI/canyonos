@@ -12,6 +12,7 @@ from canyonos import init as init_cmd, project
 
 def test_docker_runtime_start_uses_bounded_translated_command(monkeypatch):
     calls = []
+    monkeypatch.setattr(init_cmd.shutil, "which", lambda _name: "/usr/local/bin/docker")
     monkeypatch.setattr(init_cmd, "docker_running", lambda: False)
     monkeypatch.setattr(init_cmd, "docker_start_command", lambda: ["orb", "start"])
 

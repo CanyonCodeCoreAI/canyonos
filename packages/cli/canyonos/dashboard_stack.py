@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import importlib.resources
 import json
 import os
@@ -24,6 +23,7 @@ from typing import Callable, Iterator
 
 from canyonos import env
 from canyonos.constants import DEFAULT_DASHBOARD_PORT, public_ip
+from canyonos.os_support import file_lock, make_private_dir, write_private_file
 from canyonos.port_utils import find_free_port, is_port_conflict
 
 COMPOSE_PROJECT = "canyonos-dashboard"
@@ -82,7 +82,14 @@ class DashboardStack:
 def _run(
     argv: list[str], env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, check=False, text=True, env=env)
+    return subprocess.run(
+        argv,
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
 
 
 def _state_dir() -> Path:
@@ -102,18 +109,14 @@ def _dashboard_lock(on_wait: Callable[[], None] | None = None) -> Iterator[None]
     state_dir = _state_dir()
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = open(state_dir / ".lock", "a", encoding="utf-8")
     except OSError:
         raise PhaseFailure("validate", "dashboard state directory is not writable")
 
-    with lock_file:
+    with ExitStack() as held:
         try:
-            try:
-                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                if on_wait is not None:
-                    on_wait()
-                fcntl.flock(lock_file, fcntl.LOCK_EX)
+            held.enter_context(
+                file_lock(state_dir / ".lock", wait=True, on_wait=on_wait)
+            )
         except OSError as e:
             raise PhaseFailure("validate", f"could not lock the dashboard: {e}") from e
         yield
@@ -217,18 +220,6 @@ def _read_existing_secret(env_path: Path) -> str | None:
     return None
 
 
-def _write_private_file(path: Path, contents: str) -> None:
-    """Write 0600 from the start, so the contents are never briefly world-readable.
-
-    The open mode only applies when creating, so an already-loose file (a `.env`
-    the user wrote by hand) is tightened explicitly rather than left as it was.
-    """
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-        os.fchmod(output.fileno(), 0o600)
-        output.write(contents)
-
-
 def _env_line(key: str, value: str) -> str:
     if " " in value or "#" in value:
         return f'{key}="{value}"\n'
@@ -247,14 +238,13 @@ def remove_project_env_keys(env_path: Path) -> int:
     ]
     removed = len(lines) - len(kept)
     if removed:
-        _write_private_file(env_path, "".join(kept))
+        write_private_file(env_path, "".join(kept))
     return removed
 
 
 def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
     try:
-        stack.state_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(stack.state_dir, 0o700)
+        make_private_dir(stack.state_dir)
         managed_env = {
             "CANYONOS_JWT_SECRET": _read_existing_secret(stack.env_path)
             or secrets.token_urlsafe(32),
@@ -262,7 +252,7 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
             "CANYONOS_WEB_IMAGE": WEB_IMAGE,
             "CANYONOS_WEB_PORT": str(stack.web_port),
         }
-        _write_private_file(
+        write_private_file(
             stack.env_path,
             "".join(_env_line(key, value) for key, value in managed_env.items()),
         )
@@ -419,7 +409,7 @@ def _capture_failure_logs(
     log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"serve-{timestamp}.log"
-    _write_private_file(
+    write_private_file(
         log_path,
         _redact_logs(logs, managed_env["CANYONOS_JWT_SECRET"]),
     )

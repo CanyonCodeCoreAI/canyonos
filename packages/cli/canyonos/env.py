@@ -155,7 +155,8 @@ LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 def _resolve_usage_url(environment, value):
     """The usage API that `CANYONOS_USAGE_URL` points at, without a trailing slash, or
-    None when it is explicitly empty or unsafe: anything but https, or plain http to a
+    None when it is explicitly empty, not a URL (`off`, which also works on Windows,
+    where a variable can't be empty) or unsafe: anything but https, or plain http to a
     host other than this machine. An unset value uses the production API only in a
     released CLI; development and test environments have no remote default."""
     if value is None and environment == PRODUCTION:

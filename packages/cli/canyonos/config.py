@@ -12,7 +12,7 @@ import os
 import yaml
 from rich.table import Table
 
-from canyonos.constants import default_config_path, round_trip_yaml
+from canyonos.constants import default_config_path, round_trip_yaml, write_config
 from canyonos.theme import GREEN, WHITE
 from canyonos import ui
 from utils.tui import DELETE_ACTION, QUIT_ACTION, select_menu
@@ -132,7 +132,7 @@ def _run_view_config(config_path=None):
     if config_path is None:
         return
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
 
     ui.console.print(_agents_table(config.get("agents") or []))
@@ -332,7 +332,7 @@ def _run_change_config(config_path=None):
         return
 
     yaml_rt = round_trip_yaml()
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         data = yaml_rt.load(f)
 
     if not data:
@@ -350,8 +350,7 @@ def _run_change_config(config_path=None):
             # None = backed out at root, QUIT_ACTION = quit from any depth.
             if changed is None or changed is QUIT_ACTION:
                 break
-            with open(config_path, "w") as f:
-                yaml_rt.dump(data, f)
+            write_config(config_path, data, yaml_rt)
             saves += 1
             screen.status = f"Saved to {config_path}"
     finally:

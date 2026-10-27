@@ -31,6 +31,7 @@ from canyonos.constants import (
     endpoint_api_port,
     round_trip_yaml,
     workspace_relative,
+    write_config,
 )
 from canyonos.deploy import (
     STARTUP_TIMEOUT_SECONDS,
@@ -56,17 +57,18 @@ DOCKER_LOGS_TIMEOUT = 30
 
 
 def _force_local_providers(config_path):
-    """Set the deployment's provider to `local`. Returns the original file text."""
-    with open(config_path) as f:
+    """Set the deployment's provider to `local`. Returns the original file's bytes,
+    which put it back exactly, line endings included."""
+    with open(config_path, "rb") as f:
         original = f.read()
 
     yaml_rt = round_trip_yaml()
-    data = yaml_rt.load(original)
+    # Without the CRs: ruamel keeps them inside comments and write_config adds its own.
+    data = yaml_rt.load(original.decode("utf-8").replace("\r\n", "\n"))
 
     data["provider"] = "local"
 
-    with open(config_path, "w") as f:
-        yaml_rt.dump(data, f)
+    write_config(config_path, data, yaml_rt)
 
     return original
 
@@ -79,7 +81,8 @@ def _root_cause(state):
             ["docker", "logs", state["container_id"]],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             env=docker_env(state),
             timeout=DOCKER_LOGS_TIMEOUT,
         )
@@ -176,7 +179,8 @@ def _log_tail(state):
     result = subprocess.run(
         ["docker", "logs", "--tail", str(LOG_TAIL_LINES), state["container_id"]],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=docker_env(state),
         timeout=DOCKER_LOGS_TIMEOUT,
     )
@@ -353,7 +357,7 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
         _verify_runtime(run, config_path)
         _query(run, deployed_endpoint(state["port"]), timeout)
     finally:
-        with open(config_path, "w") as f:
+        with open(config_path, "wb") as f:
             f.write(original_config)
 
 

@@ -26,6 +26,7 @@ from http.client import HTTPException
 from pathlib import Path
 
 from canyonos import env, ui
+from canyonos.os_support import shell_command
 
 _RAW_MAIN = "https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main"
 POLICY_URL = f"{_RAW_MAIN}/packages/cli/supported-versions.json"
@@ -71,7 +72,7 @@ def _read_cache():
     """Read the last policy check from `~/.canyonos`, or return None when there is no
     readable, well-formed record."""
     try:
-        cache = json.loads(CACHE_PATH.read_text())
+        cache = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(cache, dict):
@@ -90,7 +91,9 @@ def _write_cache(checked_at, policy):
     try:
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         partial = CACHE_PATH.with_suffix(f".{os.getpid()}.tmp")
-        partial.write_text(json.dumps({"checked_at": checked_at, "policy": policy}))
+        partial.write_text(
+            json.dumps({"checked_at": checked_at, "policy": policy}), encoding="utf-8"
+        )
         os.replace(partial, CACHE_PATH)
     except OSError:
         pass
@@ -170,11 +173,24 @@ def _reinstall_command():
     environment."""
     # Nuitka defines `__compiled__` in every module of the standalone binary.
     if "__compiled__" not in globals():
-        python = shlex.quote(sys.executable)
         # Environments uv makes (`uv venv`, `uv add`, `uvx`) ship without pip.
         if importlib.util.find_spec("pip") is None:
-            return f"uv pip install --python {python} --upgrade canyonos"
-        return f"{python} -m pip install --upgrade canyonos"
+            return shell_command(
+                [
+                    "uv",
+                    "pip",
+                    "install",
+                    "--python",
+                    sys.executable,
+                    "--upgrade",
+                    "canyonos",
+                ]
+            )
+        return shell_command(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "canyonos"]
+        )
+    # The standalone binary is released for Linux and macOS only: its reinstall is a
+    # POSIX shell pipeline.
     binary = os.path.realpath(shutil.which(sys.argv[0]) or sys.argv[0])
     if f"{os.sep}Cellar{os.sep}" in binary:
         return "brew upgrade canyonos"
@@ -194,7 +210,8 @@ def _explain_held_back(uv):
     listed = subprocess.run(
         [uv, "tool", "list", "--show-version-specifiers"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     entry = _UV_TOOL_ENTRY.search(listed.stdout) if listed.returncode == 0 else None
     if entry is None or entry.group(2) is None:

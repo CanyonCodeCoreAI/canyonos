@@ -199,6 +199,7 @@ def test_opting_back_in_starts_a_new_installation_id():
     assert saved()["installation_id"] == second
 
 
+@pytest.mark.posix_only("Windows has no permission bits")
 def test_settings_are_private(home):
     (home / ".canyonos" / "usage").mkdir(parents=True, mode=0o755)
 

@@ -26,7 +26,8 @@ import uuid
 
 from canyonos import env, ui
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
-from canyonos.init import active_docker_socket, docker_running
+from canyonos.constants import container_path
+from canyonos.init import docker_is_local, docker_running
 
 DEFAULT_ARTIFACT_ROOT = ".canyon"
 # Distinct from 1 (findings) the way grep and diff use it: trouble, not a result.
@@ -54,13 +55,17 @@ def _relative_config(artifact_root, config):
     if config is None:
         return None
     root = os.path.abspath(artifact_root)
-    relative = os.path.relpath(os.path.abspath(os.path.join(root, config)), root)
+    try:
+        relative = os.path.relpath(os.path.abspath(os.path.join(root, config)), root)
+    except ValueError:
+        # Windows: another drive has no relative path at all.
+        relative = os.pardir
     if relative == os.pardir or relative.startswith(os.pardir + os.sep):
         raise RuntimeError(
             f"--config {config} is outside {artifact_root}; the manifest has to "
             "live in the .canyon that is being checked."
         )
-    return relative
+    return container_path(relative)
 
 
 def _import_validate_canyon():
@@ -142,10 +147,10 @@ def _in_image(artifact_root, config):
         )
     if not docker_running():
         raise RuntimeError("Docker isn't running. Start it, then rerun.")
-    if active_docker_socket() is None:
+    if not docker_is_local():
         raise RuntimeError(
-            "Docker is not reachable over a local socket (remote context, or the "
-            "daemon is not running), so the .canyon cannot be bind-mounted into the "
+            "Docker is running on another machine (DOCKER_HOST or the active context "
+            "is tcp:// or ssh://), so the .canyon cannot be bind-mounted into the "
             "core image."
         )
 
@@ -155,7 +160,8 @@ def _in_image(artifact_root, config):
         result = subprocess.run(
             _docker_argv(artifact_root, config, name),
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=DOCKER_PULL_TIMEOUT,
         )
     except subprocess.TimeoutExpired:

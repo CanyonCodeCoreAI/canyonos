@@ -39,3 +39,42 @@ dev = [
 release = [
     "nuitka==4.2.2",
 ]
+
+# The CLI runs on Linux, macOS and Windows; core and the other packages only on Linux.
+[tool.ruff]
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint]
+# Preview only for the rules named below: open() without an encoding reads and writes
+# cp1252 on Windows, which mangles UTF-8 files.
+preview = true
+explicit-preview-rules = true
+extend-select = ["TID251", "PLW1514"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"fcntl".msg = "Unix only: use canyonos.os_support (file_lock)."
+"termios".msg = "Unix only: use canyonos.os_support (keypresses, query_terminal)."
+"tty".msg = "Unix only: use canyonos.os_support (keypresses)."
+"pty".msg = "Unix only."
+"pwd".msg = "Unix only."
+"grp".msg = "Unix only."
+"resource".msg = "Unix only."
+"msvcrt".msg = "Windows only: use canyonos.os_support."
+"winreg".msg = "Windows only."
+"os.fchmod".msg = "Unix only: use canyonos.os_support (write_private_file)."
+"os.fchown".msg = "Unix only."
+"os.getuid".msg = "Unix only."
+"os.geteuid".msg = "Unix only."
+"os.getgid".msg = "Unix only."
+"os.setsid".msg = "Unix only: use canyonos.os_support (spawn_detached)."
+"os.killpg".msg = "Unix only."
+"os.getpgid".msg = "Unix only."
+"os.O_NOFOLLOW".msg = "Unix only: use canyonos.os_support (file_lock)."
+"select.select".msg = "Only sockets on Windows: use canyonos.os_support for terminal input."
+
+[tool.ruff.lint.per-file-ignores]
+# The one place each OS's own modules may be used.
+"canyonos/os_support/_posix.py" = ["TID251"]
+"canyonos/os_support/_windows.py" = ["TID251"]
+# Tests may exercise one OS's behaviour, skipped elsewhere with the posix_only marker.
+"tests/**" = ["TID251"]
