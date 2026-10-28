@@ -48,7 +48,7 @@ def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
                     item["address"]
                     for item in sorted(
                         list_replicas(primary_redis, agent_name),
-                        key=lambda item: int(item["replica_index"]),
+                        key=lambda item: float(item["created_at"]),
                     )
                     if "draining_at" not in item
                 ]

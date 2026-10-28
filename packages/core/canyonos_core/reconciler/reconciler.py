@@ -16,7 +16,6 @@ from functools import partial
 
 from canyonos_core.controller.controller_context import (
     ControllerContext,
-    replica_id_from_record,
     list_replicas,
 )
 from canyonos_core.controller.utils.container_log import dump_container_log
@@ -168,13 +167,21 @@ class Reconciler(object):
             self.context.machine_redis_for_replica(replica)
 
         # A request for a replica that no longer exists has nothing left to do.
-        existing_ids = {replica_id_from_record(replica) for replica in replicas}
+        existing_ids = {replica["replica_id"] for replica in replicas}
         state.clear_replace_requests(redis_client, *(replace_requested - existing_ids))
 
+        # Scale-down drains the newest replicas; draining ones no longer count.
+        surplus = {
+            replica["replica_id"]
+            for replica in sorted(
+                (replica for replica in replicas if "draining_at" not in replica),
+                key=lambda replica: float(replica["created_at"]),
+            )[desired:]
+        }
         for replica in replicas:
-            replica_id = replica_id_from_record(replica)
+            replica_id = replica["replica_id"]
             reason = self._removal_reason(
-                replica, replica_id, desired, replace_requested
+                replica, replica_id, desired, surplus, replace_requested
             )
             if reason is None:
                 continue
@@ -187,13 +194,13 @@ class Reconciler(object):
                 state.clear_replace_requests(redis_client, replica_id)
         return True
 
-    def _removal_reason(self, replica, replica_id, desired, replace_requested):
+    def _removal_reason(self, replica, replica_id, desired, surplus, replace_requested):
         # Once started, a drain runs to the end even if the replica is wanted again.
         if "draining_at" in replica:
             return "drain in progress"
         if replica_id in replace_requested:
             return "replacement requested"
-        if int(replica["replica_index"]) >= desired:
+        if replica_id in surplus:
             return f"surplus to desired count {desired}"
         if not self._is_healthy(replica, replica_id):
             return "unhealthy"
@@ -217,7 +224,7 @@ class Reconciler(object):
                 continue
             self.context.machine_redis_for_replica(replica)
             self._drain_replica(
-                replica_id_from_record(replica),
+                replica["replica_id"],
                 replica,
                 "agent removed from config",
             )
@@ -230,7 +237,7 @@ class Reconciler(object):
         for replica in list_replicas(self.context.redis):
             if launch_ids is not None and replica["machine"] not in launch_ids:
                 continue
-            replica_id = replica_id_from_record(replica)
+            replica_id = replica["replica_id"]
             self.context.machine_redis_for_replica(replica)
             drains[replica_id] = partial(
                 self._drain_replica, replica_id, replica, "its machine is terminating"

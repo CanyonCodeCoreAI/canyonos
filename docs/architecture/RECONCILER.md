@@ -16,7 +16,7 @@ converges even when every signal is lost.
 **The queue carries wake signals only** — an agent name or `"*"`, never "add 2". The count
 is already durable; a delta would be a second source of truth that a re-delivered or
 dropped message would permanently skew. The queue decouples callers from provisioning
-latency and serializes reconciles into one worker, so two cannot race on a slot.
+latency and serializes reconciles into one worker, so two cannot race on one agent.
 
 **The YAML is the source of truth.** Startup and every reload write each agent's configured
 `replicas` through `_set_replicas`, overwriting whatever Redis holds, so a changed config
@@ -25,11 +25,11 @@ Each pass removes, then fills. A replica that is no longer wanted drains gracefu
 before it is removed; a database or an unhealthy one is removed at once. A stop drains
 every replica the same way, then terminates every machine.
 
-The removal rule is on the **index**, not "remove the last N": that makes scale-down
-deterministic and idempotent (5→2 always removes 2, 3, 4) and removes orphans a count-based
-rule cannot see, since `ensure_replicas` only looks at `range(0, desired)`. Replacement
-needs no code of its own — `ensure_replicas` is create-only and per-slot idempotent, so
-removing index 1 leaves a hole the same pass's fill step provisions into.
+Scale-down drains the newest replicas: sorted by `created_at`, every replica that is not
+already draining and is past the desired count drains, so 5→2 keeps the two oldest.
+Replacement needs no code of its own — `ensure_replicas` counts the agent's records,
+leaving out draining ones, and launches only the shortfall, so a replica that starts
+draining gets its replacement in the same pass instead of after its drain ends.
 
 ## Redis schema
 
@@ -42,7 +42,7 @@ removing index 1 leaves a hole the same pass's fill step provisions into.
 | `agent:{name}:spec` | string (JSON) | GlobalController — `write_config_specs` | Reconciler (`read_config_specs`) |
 | `agents:active` | string (JSON list) | GlobalController — `write_config_specs`, written after the specs | Reconciler (`read_config_specs`, read **first**) |
 | `agent:{name}:instances` | set | `ReplicaProvisioner` | both |
-| `agent_instance:{name}-{index}` | hash | `ReplicaProvisioner`; `draining_at`: `ReplicaProvisioner.remove_replica` with drain | both |
+| `agent_instance:{replica_id}` | hash | `ReplicaProvisioner`; `draining_at`: `ReplicaProvisioner.remove_replica` with drain | both |
 | `machine_record:{launch_id}` | hash | `MachineProvisioner`, before `start_machine` | `MachineProvisioner`: the machines up for placement, `find_dead` and `find_surplus` each pass, and `terminate` |
 | `routing_table:agents` / `:addresses` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
 | `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness and idle checks |
@@ -142,9 +142,9 @@ flowchart TD
     mark --> flag["SET controller:{address}:draining = removal time<br/>on the replica's Redis, every pass"]
     flag --> idle{"_is_idle, or 180 s<br/>since draining_at?"}
     idle -->|no| next(["next pass"])
-    idle -->|yes| drained["container removed, record deleted, slot free<br/>machine kept until stop"]
-    drained --> refill["ensure_replicas refills the slot if still wanted"]
-    refill --> clear["replicas.launch: _clear_stale_status deletes<br/>the slot's old :status and :draining keys"]
+    idle -->|yes| drained["container removed, record deleted<br/>machine kept until stop"]
+    mark --> refill["ensure_replicas starts a replacement if still wanted"]
+    refill --> clear["replicas.launch: _clear_stale_status deletes<br/>the address's old :status and :draining keys"]
 ```
 
 ### The draining replica
@@ -209,14 +209,14 @@ what removes replicas), then `clear_stopping()` (or the live reconciler refills)
 anything is launched, so a launch that crashes partway through can always be found again.
 The record is marked finished only at the very end, and the rest of the system ignores the
 replica until then. Every pass, the reconciler removes launches that never finished: first
-the container, then the record. If that removal fails, the record stays and the slot is not
-refilled, so a half-started replica is never forgotten and left running. Machines have their
+the container, then the record. If that removal fails, the record stays and still counts
+as one of the agent's replicas, so a half-started replica is never forgotten and left running. Machines have their
 own records, saved before they start, and are terminated only at stop, once every replica
 record is gone.
 
 Nothing else sweeps at startup, deliberately: the first full `_reconcile()` removes a leftover
-record whose container is gone (probe fails, `created_at` is old so no grace) and refills
-the slot in the same pass, while a still-healthy leftover is reused — which an
+record whose container is gone (probe fails, `created_at` is old so no grace) and starts
+a replacement in the same pass, while a still-healthy leftover is reused — which an
 unconditional sweep would remove.
 
 ## Config and spec handoff
@@ -249,6 +249,5 @@ read from the YAML by both processes at construction, and again by the reconcile
 - **A list-form `replicas` is unsupported, just not silently** — `ensure_replicas` raises
   `TypeError`, and `desired_agent_specs` passes the spec through rather than drop the agent
   from routing.
-- **Smaller, known:** replica identity is a slot index, not a UUID; `replace_requests`
-  matches by substring, so an agent name containing a colon mis-claims; a vanished machine is
-  removed one slot at a time as "unhealthy".
+- **Smaller, known:** `replace_requests` matches by substring, so an agent name containing
+  a colon mis-claims; a vanished machine is removed one replica at a time as "unhealthy".

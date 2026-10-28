@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -57,7 +58,7 @@ func load(t *testing.T) contract {
 // replicaFromRecord rebuilds the inputs of a contract record, to check Record()
 // produces the same record from them.
 func replicaFromRecord(c contract, record map[string]string) Replica {
-	index, _ := strconv.Atoi(record["replica_index"])
+	index, _ := strconv.Atoi(strings.TrimPrefix(record["replica_id"], record["agent_name"]+"-"))
 	resource := map[string]string{helloAgent: "helloagent", workflowAgent: "workflow"}[record["agent_name"]]
 	return Replica{
 		AgentName: record["agent_name"], ResourceName: resource, Index: index,

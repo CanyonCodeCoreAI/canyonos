@@ -22,7 +22,6 @@ import yaml
 from canyonos_core.controller.controller_context import (
     ControllerContext,
     _redis_connect_host,
-    replica_id_from_record,
     list_replicas,
 )
 from canyonos_core.controller import scaling
@@ -1037,7 +1036,7 @@ class GlobalController(ControllerContext):
                         [
                             {
                                 "kind": "agent",
-                                "agent_id": replica_id_from_record(replica),
+                                "agent_id": replica["replica_id"],
                                 "agent_name": name,
                                 "host": host,
                                 "port": port,
@@ -1115,7 +1114,7 @@ class GlobalController(ControllerContext):
 
     def _record_replica_sample(self, replica, metrics):
         """Record one replica's load for the scaling policy and return the sample."""
-        key = contract.replica_key(replica_id_from_record(replica))
+        key = contract.replica_key(replica["replica_id"])
         previous = contract.latest(self.redis, key)
         observed_at = contract.now()
         counters = {
@@ -1210,12 +1209,12 @@ class GlobalController(ControllerContext):
             counts[agent_spec["name"]] = count
         self.orchestrator.apply_configured_replicas(counts)
 
-    def _replace_replica(self, agent_name, replica_index):
-        """Remove one replica; the desired count is unchanged, so the slot is refilled."""
+    def _replace_replica(self, agent_name, replica_id):
+        """Remove one replica; the desired count is unchanged, so a new one starts in its place."""
         if agent_name not in self.agent_specs_by_name:
             logger.warning("Cannot replace a replica of unknown agent %s", agent_name)
             return None
-        return self.orchestrator.replace_replica(agent_name, replica_index)
+        return self.orchestrator.replace_replica(agent_name, replica_id)
 
     def _request_reconcile(self, agent_name):
         """Wake the reconciler, without letting a Redis failure break the caller."""

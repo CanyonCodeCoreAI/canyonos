@@ -31,7 +31,7 @@
       "published_address": "helloagent-0.helloagent.acme.svc:50051",
       "redis_host": "canyonos-redis.acme.svc",
       "redis_port": "6379",
-      "replica_index": "0"
+      "replica_id": "HelloAgent-0"
     },
     "agent_instance:HelloAgent-1": {
       "address": "helloagent-1.helloagent.acme.svc:50051",
@@ -47,7 +47,7 @@
       "published_address": "helloagent-1.helloagent.acme.svc:50051",
       "redis_host": "canyonos-redis.acme.svc",
       "redis_port": "6379",
-      "replica_index": "1"
+      "replica_id": "HelloAgent-1"
     },
     "agent_instance:Workflow-0": {
       "address": "workflow-0.workflow.acme.svc:50051",
@@ -63,7 +63,7 @@
       "published_address": "workflow-0.workflow.acme.svc:50051",
       "redis_host": "canyonos-redis.acme.svc",
       "redis_port": "6379",
-      "replica_index": "0"
+      "replica_id": "Workflow-0"
     }
   },
   "replica_port": 50051,

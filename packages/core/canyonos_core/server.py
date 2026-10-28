@@ -20,7 +20,6 @@ from werkzeug.serving import run_simple
 from canyonos_core.controller.controller_context import (
     _redis_connect_host,
     list_replicas,
-    replica_id_from_record,
     run_on_machine,
 )
 from canyonos_core.controller.utils import config_env
@@ -216,7 +215,7 @@ def logs(name):
         matching = [
             replica
             for replica in list_replicas(redis_client)
-            if name in (replica["agent_name"], replica_id_from_record(replica))
+            if name in (replica["agent_name"], replica["replica_id"])
         ]
     except (OSError, yaml.YAMLError, redis.RedisError) as e:
         return jsonify({"error": f"Could not read the replicas: {e}"}), 503
@@ -228,9 +227,7 @@ def logs(name):
         ), 404
     run_cmd = partial(run_on_machine, config)
     jobs = {
-        replica_id_from_record(replica): partial(
-            replicas.log_tail, run_cmd, replica, tail
-        )
+        replica["replica_id"]: partial(replicas.log_tail, run_cmd, replica, tail)
         for replica in matching
     }
     logs = {

@@ -109,7 +109,7 @@ def publishes_port(controller, machine, agent_spec):
     )
 
 
-def launch(controller, machine, agent_spec, replica_index, host_port, replica_id):
+def launch(controller, machine, agent_spec, host_port, replica_id):
     """Start a replica's container on its machine, publishing it on `host_port` or the
     next free port when `publishes_port` says so (replacing a leftover one with the same
     name), and return the replica's record. The image must already be on the machine.
@@ -120,7 +120,7 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
     image = image_name(agent_name)
     host = machine["private_host"]
     user = machine.get("user")
-    container = container_name(agent_name, replica_index)
+    container = container_name(replica_id)
     is_local = _is_local_host(host)
     # A remote machine has no canyonos-local network, so reach its Redis via the host.
     redis_host = redis_container_name(host) if is_local else HOST_GATEWAY
@@ -247,7 +247,7 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
     replica = {
         "agent_name": agent_name,
         "provider": agent_spec["provider"],
-        "replica_index": str(replica_index),
+        "replica_id": replica_id,
         "private_host": host,
         "public_host": machine["public_host"],
         "host_port": str(host_port),

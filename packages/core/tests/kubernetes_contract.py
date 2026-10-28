@@ -29,11 +29,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from canyonos_core.controller.controller_context import (  # noqa: E402
-    list_replicas,
-    replica_id,
-    replica_key,
-)
+from canyonos_core.controller.controller_context import list_replicas  # noqa: E402
 from canyonos_core.kubernetes import manifests  # noqa: E402
 from canyonos_core.kubernetes.api import resource_name  # noqa: E402
 from canyonos_core.reconciler import routing, state  # noqa: E402
@@ -75,7 +71,7 @@ def replica_record(
     return {
         "agent_name": agent_name,
         "provider": PROVIDER,
-        "replica_index": str(replica_index),
+        "replica_id": f"{agent_name}-{replica_index}",
         "private_host": host,
         "public_host": host,
         "host_port": str(REPLICA_PORT),
@@ -113,9 +109,8 @@ def contract():
     ]
     redis = _FakeRedis()
     for record in replicas:
-        name, index = record["agent_name"], int(record["replica_index"])
-        redis.hset_multiple(replica_key(name, index), record)
-        redis.sadd(f"agent:{name}:instances", replica_id(name, index))
+        redis.hset_multiple(f"agent_instance:{record['replica_id']}", record)
+        redis.sadd(f"agent:{record['agent_name']}:instances", record["replica_id"])
 
     agent_specs = [{"name": "HelloAgent", "stateful": True}, {"name": "Workflow"}]
     routing.publish_routing_snapshot(agent_specs, redis)
@@ -131,10 +126,7 @@ def contract():
             "redis_port": REDIS_PORT,
             "created_at": str(CREATED_AT),
         },
-        "records": {
-            replica_key(r["agent_name"], int(r["replica_index"])): r
-            for r in kubernetes_records
-        },
+        "records": {f"agent_instance:{r['replica_id']}": r for r in kubernetes_records},
         "replica_sets": {key: sorted(members) for key, members in redis.sets.items()},
         "desired_replicas_key": state.desired_key("HelloAgent"),
         "routing": {

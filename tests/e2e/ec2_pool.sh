@@ -7,8 +7,9 @@
 # checks the pool end to end: the provider and machine_type config rules, every machine
 # starting at deploy, least-loaded placement with memory counted, CPU-share prices, a
 # call lost with its machine failing fast, the dead machine replaced and its replicas
-# relaunched, a reload that drops a machine, scale-ups, a full pool shared instead of
-# refused, and `canyonos quit` terminating every machine.
+# relaunched, a busy replica scaled away draining while its replacement starts, a reload
+# that drops a machine, scale-ups, a full pool shared instead of refused, and
+# `canyonos quit` terminating every machine.
 #
 # Needs AWS access allowed to run EC2, either this machine's own role or
 # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, and EC2_REGION, EC2_SUBNET_ID and
@@ -148,11 +149,16 @@ step "A call lost with its machine fails fast, and the machine is replaced"
 request="$(pool call 600)"
 # Long enough for SlowAgent to be running the call.
 sleep 15
-dead="$(pool kill SlowAgent-0)"
+dead="$(pool kill SlowAgent)"
 pool status "$request" 180 error
 pool replaced "$dead" 600
 pool instances "$START" 4 running shutting-down terminated
 pool status "$(pool call 1)" 120 done
+
+step "A busy replica scaled away drains while its replacement starts"
+request="$(pool call 90)"
+pool drain-overlap SlowAgent 300
+pool status "$request" 120 done
 
 step "A reload with one t3.micro fewer terminates the newest and keeps every replica"
 pool shrink t3.micro 600
@@ -164,7 +170,7 @@ step "A full pool is shared instead of refusing replicas"
 pool oversubscribe SlowAgent 6 600
 
 step "canyonos quit terminates every machine, even with one just gone"
-pool kill Big-0 >/dev/null
+pool kill Big >/dev/null
 canyonos quit
 sleep 30
 # A pass between the kill and the quit may have started a replacement.

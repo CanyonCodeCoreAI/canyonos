@@ -44,6 +44,14 @@ def replicas():
     }
 
 
+def replicas_of(agent_name):
+    return {
+        replica_id: record
+        for replica_id, record in replicas().items()
+        if record.get("agent_name") == agent_name
+    }
+
+
 def machines():
     """The EC2 machines of the pool, by launch id."""
     found = (
@@ -79,16 +87,16 @@ def check_pool():
 def check_placement():
     """Workflow alone, Small with SlowAgent because Big's machine has more memory in
     use, the endpoint on this machine, and each replica priced by its CPU share."""
-    on = {
-        replica_id: record.get("machine") for replica_id, record in replicas().items()
-    }
-    check(list(on.values()).count(on["Workflow-0"]) == 1, f"Workflow shares: {on}")
-    check(on["Small-0"] == on["SlowAgent-0"], f"Small is not with SlowAgent: {on}")
-    check(on["Big-0"] not in (on["SlowAgent-0"], on["Workflow-0"]), on)
-    check(replica("endpoint-0")["private_host"] == "localhost", "endpoint moved")
+    on = {record["agent_name"]: record.get("machine") for record in replicas().values()}
+    check(list(on.values()).count(on["Workflow"]) == 1, f"Workflow shares: {on}")
+    check(on["Small"] == on["SlowAgent"], f"Small is not with SlowAgent: {on}")
+    check(on["Big"] not in (on["SlowAgent"], on["Workflow"]), on)
+    (endpoint,) = replicas_of("endpoint").values()
+    check(endpoint["private_host"] == "localhost", "endpoint moved")
     pool = machines()
-    for replica_id in ("Workflow-0", "SlowAgent-0", "Big-0", "Small-0"):
-        record = replica(replica_id)
+    for replica_id, record in replicas().items():
+        if record["agent_name"] == "endpoint":
+            continue
         machine = pool[record["machine"]]
         price = redis.Redis(host=record["private_host"], decode_responses=True).get(
             f"agent:{replica_id}:hourly_cost"
@@ -100,9 +108,10 @@ def check_placement():
         )
 
 
-def kill(replica_id):
-    """Terminate the machine a replica runs on, as a spot reclaim would."""
-    machine = machines()[replica(replica_id)["machine"]]
+def kill(agent_name):
+    """Terminate the machine an agent's one replica runs on, as a spot reclaim would."""
+    (record,) = replicas_of(agent_name).values()
+    machine = machines()[record["machine"]]
     ec2.terminate_instances(InstanceIds=[machine["machine_id"]])
     print(machine["private_host"])
 
@@ -229,20 +238,65 @@ def scale_up(agent_name, count, timeout):
     pool = machines()
     loads = {machine_id: load(machine_id, pool) for machine_id in pool}
     least = {m for m, value in loads.items() if value == min(loads.values())}
+    before = replicas_of(agent_name).keys()
     scale(agent_name, count)
-    new = f"{agent_name}-{int(count) - 1}"
-    wait(lambda: replica(new).get("address"), timeout, f"{new} never started")
-    check(replica(new)["machine"] in least, f"{new} not on the least loaded {loads}")
+
+    def started():
+        return [
+            record
+            for replica_id, record in replicas_of(agent_name).items()
+            if replica_id not in before and record.get("address")
+        ]
+
+    wait(started, timeout, f"no new {agent_name} replica started")
+    (new,) = started()
+    check(new["machine"] in least, f"{new} not on the least loaded {loads}")
     check(machines().keys() == pool.keys(), "a machine was started or lost")
+
+
+def drain_overlap(agent_name, timeout):
+    """Scale an agent's one replica, busy with a call, to 0 and back to 1: its
+    replacement starts while it still drains, instead of after its drain ends."""
+    ((old, record),) = replicas_of(agent_name).items()
+    machine_redis = redis.Redis(
+        host=record["private_host"], port=record["redis_port"], decode_responses=True
+    )
+
+    def busy():
+        metrics = machine_redis.hgetall(f"controller:{record['address']}:metrics")
+        # Served counts calls started, completed those finished.
+        return int(metrics.get("requests_served", 0)) > int(
+            metrics.get("requests_completed", 0)
+        )
+
+    # An idle replica drains at once, which would leave nothing to overlap with.
+    wait(busy, timeout, f"{old} never started the call")
+    scale(agent_name, 0)
+    wait(lambda: "draining_at" in replica(old), timeout, f"{old} never drained")
+    scale(agent_name, 1)
+    wait(
+        lambda: replicas_of(agent_name).keys() - {old},
+        timeout,
+        f"no replacement for {old} started",
+    )
+    check("draining_at" in replica(old), f"{old} was gone before its replacement")
+    wait(lambda: not replica(old), timeout, f"{old} never finished draining")
+    wait(
+        lambda: all(r.get("address") for r in replicas_of(agent_name).values()),
+        timeout,
+        f"the replacement for {old} never started",
+    )
 
 
 def oversubscribe(agent_name, count, timeout):
     """More replicas than the pool's CPU: every one still starts, on the same machines."""
     pool = machines()
     scale(agent_name, count)
-    wanted = [f"{agent_name}-{index}" for index in range(int(count))]
     wait(
-        lambda: all(replica(r).get("address") for r in wanted),
+        lambda: (
+            sum(1 for r in replicas_of(agent_name).values() if r.get("address"))
+            == int(count)
+        ),
         timeout,
         f"not every {agent_name} replica started",
     )
@@ -283,6 +337,7 @@ COMMANDS = {
     "status": status,
     "shrink": shrink,
     "scale-up": scale_up,
+    "drain-overlap": drain_overlap,
     "oversubscribe": oversubscribe,
     "instances": instances,
 }

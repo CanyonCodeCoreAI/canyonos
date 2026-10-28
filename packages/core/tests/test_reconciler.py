@@ -320,7 +320,7 @@ class ScalingEntryPointTests(unittest.TestCase):
     def test_the_named_replica_is_queued_for_replacement_and_the_reconciler_woken(self):
         controller = self._controller()
 
-        target = controller._replace_replica("Alpha", 1)
+        target = controller._replace_replica("Alpha", "Alpha-1")
 
         self.assertEqual(target, "Alpha-1")
         self.assertEqual(controller.redis.smembers(state.REPLACE_SET_KEY), {"Alpha-1"})
@@ -330,7 +330,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller = self._controller(agent_specs_by_name={})
 
         with self.assertLogs("canyonos_core.controller.global_controller", "WARNING"):
-            self.assertIsNone(controller._replace_replica("Nope", 0))
+            self.assertIsNone(controller._replace_replica("Nope", "Nope-0"))
 
         self.assertEqual(controller.redis.smembers(state.REPLACE_SET_KEY), set())
 
@@ -350,7 +350,8 @@ class ReconcileTests(unittest.TestCase):
         redis = _FakeRedis()
         state.set_desired(redis, "Alpha", 1)
         manager = _FakeProvisioner(
-            {"Alpha": [_replica("Alpha", i) for i in range(3)]}, idle=False
+            {"Alpha": [_replica("Alpha", i, created_at=i) for i in range(3)]},
+            idle=False,
         )
         reconciler = self._healthy(_bare_reconciler(_fake_context(redis), manager))
 

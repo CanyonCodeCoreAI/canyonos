@@ -141,16 +141,16 @@ class _FakeRedis:
         )
 
 
-def _replica(agent_name, replica_index, created_at=None):
+def _replica(agent_name, n, created_at=None):
     """An agent_instance:* record as the Provisioner writes it for a local agent, which
     publishes no port."""
-    address = f"canyonos-{agent_name.lower()}-{replica_index}:50051"
+    address = f"canyonos-{agent_name.lower()}-{n}:50051"
     return {
         "agent_name": agent_name,
         "provider": "local",
-        "container_name": f"canyonos-{agent_name.lower()}-{replica_index}",
+        "container_name": f"canyonos-{agent_name.lower()}-{n}",
         "container_port": "50051",
-        "replica_index": str(replica_index),
+        "replica_id": f"{agent_name}-{n}",
         "private_host": "localhost",
         "public_host": "localhost",
         "host_port": "50051",
@@ -215,7 +215,7 @@ def _seed_replica_records(redis, provisioner):
     """Write the fake provisioner's replicas into Redis, where the reconciler reads them."""
     for agent_name, records in getattr(provisioner, "replicas", {}).items():
         for record in records:
-            replica_id = f"{agent_name}-{record['replica_index']}"
+            replica_id = record["replica_id"]
             redis.hset_multiple(f"agent_instance:{replica_id}", record)
             redis.sadd(f"agent:{agent_name}:instances", replica_id)
     raise_for = getattr(provisioner, "raise_for", None)

@@ -20,7 +20,7 @@
 ┌──────────────────────── GC's host (localhost) ───────────────────────┐
 │                                                                      │
 │  ┌────────────────────────────────┐   clients                        │
-│  │ canyonos-<p>-endpoint-0        │◀─ POST /<method>                 │
+│  │ canyonos-<p>-endpoint-<id>     │◀─ POST /<method>                 │
 │  │  core image, gunicorn + Flask  │   GET  /status/<request_id>      │
 │  │  :api_port ─▶ 8080             │                                  │
 │  │  LocalController (routing only)│                                  │
@@ -34,7 +34,7 @@
 │         ▲  ▲  ▲                 (machine_metrics_poller)             │
 │         │  │  │                                                      │
 │  ┌──────┴──┴──┴───────────────┐  ┌────────────────────────────────┐  │
-│  │ canyonos-<p>-<agent>-<i>   │  │ canyonos-<p>-<target>-<i>      │  │
+│  │ canyonos-<p>-<agent>-<id>  │  │ canyonos-<p>-<target>-<id>     │  │
 │  │  LocalController  :50051   │  │  LocalController  :50051       │  │
 │  │  agent code (real class)   │  │  target class + agent stubs    │  │
 │  │ llm_gateway 127.0.0.1:8081 │  │  llm_gateway  127.0.0.1:8081   │  │
@@ -50,7 +50,7 @@
   YAML ─▶ write_config_specs ───────▶ agent:<n>:spec
                                        agents:active  ───────────────▶ refresh specs
           set_replicas ─────────────▶ agent:<n>:desired_replicas ───▶ get_desired
-          replace_replica ──────────▶ reconciler:replace ───────────▶ remove slot
+          replace_replica ──────────▶ reconciler:replace ───────────▶ drain replica
           stop() ───────────────────▶ reconciler:stopping (TTL) ────▶ desired = 0
           _request_reconcile ─LPUSH─▶ reconciler:wake ─────BRPOP────▶ reconcile()
                                                                          │
@@ -59,7 +59,7 @@
                                    remove unwanted / unhealthy ─▶ docker rm -f / terminate EC2
                                    ensure_replicas             ─▶ docker run / EC2 + ssh
                                                   │
-                                                  ├─▶ agent_instance:<name>-<i>
+                                                  ├─▶ agent_instance:<name>-<id>
                                                   └─▶ routing_table:* ──▶ every machine Redis
                                                                                │
                               LocalController (each container)                 │
@@ -100,8 +100,8 @@
 ## Request lifecycle (endpoint API)
 
 ```
- client                 canyonos-<p>-endpoint-0            target replica                  agents
- ──────                 ───────────────────────            ──────────────                  ──────
+ client                 canyonos-<p>-endpoint-<id>         target replica                  agents
+ ──────                 ──────────────────────────         ──────────────                  ──────
  POST /<method>
    {body} ────────────▶ request_id = new
                         SET request:<id>:context

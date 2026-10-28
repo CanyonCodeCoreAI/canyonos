@@ -26,8 +26,8 @@ other half is in the project's Redis, which the Global Controller reads directly
 date in the reconciler's format:
 
 - `agent:<agent>:desired_replicas`: each agent's desired replica count.
-- `agent_instance:<agent>-<slot>`: one hash per running replica, with at least
-  `agent_name`, `replica_index`, `private_host`, `host_port` and `address`. `address`
+- `agent_instance:<replica_id>`: one hash per running replica, with at least
+  `agent_name`, `replica_id`, `private_host`, `host_port` and `address`. `address`
   is written last: a record without it is a replica still starting.
 
 On Docker and EC2 the reconciler writes them; on Kubernetes the operator does.
@@ -37,7 +37,6 @@ import logging
 import os
 import sys
 
-from canyonos_core.controller.controller_context import replica_id
 from canyonos_core.reconciler import replicas, state
 
 logger = logging.getLogger(__name__)
@@ -103,12 +102,11 @@ class CanyonOrchestrator:
         self.gc._request_reconcile(agent_name)
         return desired
 
-    def replace_replica(self, agent_name, replica_index):
-        """Destroy one replica; its slot is refilled since the desired count stays."""
-        target = replica_id(agent_name, int(replica_index))
-        state.request_replace(self.gc.redis, target)
+    def replace_replica(self, agent_name, replica_id):
+        """Destroy one replica; a new one starts in its place since the desired count stays."""
+        state.request_replace(self.gc.redis, replica_id)
         self.gc._request_reconcile(agent_name)
-        return target
+        return replica_id
 
     def apply_configured_replicas(self, counts):
         """Reset each agent to its configured replica count, {agent: count}: the YAML

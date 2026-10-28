@@ -4,6 +4,8 @@
 """The CLI flow on a committed port: validate it, then after deploy check the
 containers, status and doctor."""
 
+import re
+
 from ..harness import canyonos, docker
 
 
@@ -28,10 +30,15 @@ def test_containers_up(recorder, deployed):
     ).output
     states = dict(line.split("\t") for line in listing.splitlines() if "\t" in line)
     expected = [f"canyonos-{deployed.project.name}-global-controller"] + [
-        f"canyonos-{deployed.project.name}-{agent.lower()}-0"
+        f"canyonos-{deployed.project.name}-{agent.lower()}-[0-9a-f]{{8}}"
         for agent in deployed.agents
     ]
-    missing = [name for name in expected if states.get(name) != "running"]
+    running = [name for name, state in states.items() if state == "running"]
+    missing = [
+        pattern
+        for pattern in expected
+        if not any(re.fullmatch(pattern, name) for name in running)
+    ]
     assert not missing, f"not running: {missing}\n{listing}"
     dashboard = docker(
         recorder,

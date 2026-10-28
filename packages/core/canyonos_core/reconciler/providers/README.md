@@ -40,7 +40,7 @@ Every provider module implements:
 `machine_spec` is one machine type from the provider's section (`MACHINE_TYPES`) plus the keys
 every machine shares (`MACHINE_KEYS`).
 
-A replica's record has `agent_name`, `provider`, `replica_index`, `private_host`,
+A replica's record has `agent_name`, `provider`, `replica_id`, `private_host`,
 `public_host`, `host_port`, `container_port`, `published_address`, `address`, `redis_host`,
 `redis_port`, `container_name`, `machine`, `cpu` and `memory`, and optionally `user`. Its
 machine's record, `machine_record:<machine>`, holds its `machine_spec`, its capacity and what

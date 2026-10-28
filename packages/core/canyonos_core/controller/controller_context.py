@@ -97,22 +97,6 @@ def _redis_connect_host(host):
     return host
 
 
-def replica_id(agent_name, replica_index):
-    """Return one agent replica's ID (e.g. `Alpha-0`), used to key it in Redis and to
-    label its telemetry."""
-    return f"{agent_name}-{replica_index}"
-
-
-def replica_key(agent_name, replica_index):
-    """Return the Redis key of one replica's record."""
-    return f"agent_instance:{replica_id(agent_name, replica_index)}"
-
-
-def replica_id_from_record(replica):
-    """Return the replica ID for a record read back from Redis."""
-    return replica_id(replica["agent_name"], replica["replica_index"])
-
-
 def list_replicas(redis_client, agent_name=None):
     """Replica records straight from Redis."""
     if agent_name:

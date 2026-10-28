@@ -21,7 +21,7 @@ CLI host:         ──▶          8000
 │        │      address ──▶ <container_name>:50051 (local)                     │
 │        │      LLM gateway ──▶ 127.0.0.1:8081                                   │
 │        │                                                                     │
-│        ├── canyonos-<project>-endpoint-0 (GC's machine): routing-only        │
+│        ├── canyonos-<project>-endpoint-<id> (GC's machine): routing-only     │
 │        │      LocalController + gunicorn; host <api_port> ──▶ container 8080 │
 │        │      address ──▶ <container_name>:50051, or                         │
 │        │        <CANYONOS_PRIVATE_IP>:<host_port> for agents elsewhere       │
@@ -88,7 +88,7 @@ the orchestrator's job. It goes through one object, `gc.orchestrator`
 | `start_support_services()` | one Redis and one metrics collector per machine | connects to the project's Redis, which the operator runs |
 | `register_background_processes()` | the reconciler process, under the process supervisor | nothing: there is no reconciler |
 | `set_replicas(agent, n)` | the agent's desired count in Redis, then wakes the reconciler | patches the CanyonAgent's `/scale` |
-| `replace_replica(agent, slot)` | a replacement request the reconciler acts on | nothing: Kubernetes replaces failed pods |
+| `replace_replica(agent, replica_id)` | a replacement request the reconciler acts on | nothing: Kubernetes replaces failed pods |
 | `replica_log_tail(replica, lines)` | the replica container's last output, read on its machine | none: `kubectl logs` reads a pod's |
 | `remove_all_replicas()`, `stop_support_services(clean)` | the reconciler drains and removes every replica, then Redis and the collectors go | nothing: the agents keep running, and removing a project is the operator's job |
 
@@ -100,7 +100,7 @@ format; the reconciler writes them on Docker and EC2, the operator on Kubernetes
 | Key | Value |
 | --- | --- |
 | `agent:<agent>:desired_replicas` | the agent's desired replica count |
-| `agent_instance:<agent>-<slot>` | one hash per running replica, with at least `agent_name`, `replica_index`, `private_host`, `host_port` and `address`; `address` is written last, so a record without it is a replica still starting |
+| `agent_instance:<replica_id>` | one hash per running replica, with at least `agent_name`, `replica_id`, `private_host`, `host_port` and `address`; `address` is written last, so a record without it is a replica still starting |
 
 Settings that only differ by environment are not orchestrator methods: whatever
 launches the Global Controller sets an environment variable, and the code that needs
@@ -110,7 +110,7 @@ it reads it (`CANYONOS_PUBLIC_IP` and `CANYONOS_ENDPOINT_URL` in `endpoint_recor
 ## Local Controller startup
 
 ```
-agent image                              core image (canyonos-<project>-endpoint-0)
+agent image                              core image (canyonos-<project>-endpoint-<id>)
 python local_controller.py --port 50051  python -m canyonos_core.endpoint
              │                                      ├─ LocalController(
              │                                      │    publish_ready=False)

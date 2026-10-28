@@ -50,10 +50,10 @@ def project_label_args():
     return ["--label", f"{PROJECT_LABEL}={project_group()}"]
 
 
-def container_name(agent_name, replica_index):
+def container_name(replica_id):
     """Return the Docker container name for one agent replica,
-    `canyonos-<project>-<agent>-<replica>`."""
-    return f"{_prefix()}-{agent_name.lower()}-{replica_index}"
+    `canyonos-<project>-<replica ID>` (e.g. `canyonos-portfolio-intentagent-1a2b3c4d`)."""
+    return f"{_prefix()}-{replica_id.lower()}"
 
 
 def redis_container_name(host):

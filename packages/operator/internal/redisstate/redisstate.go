@@ -87,7 +87,7 @@ func (r Replica) Record() map[string]string {
 	return map[string]string{
 		"agent_name":        r.AgentName,
 		"provider":          Provider,
-		"replica_index":     strconv.Itoa(r.Index),
+		"replica_id":        ReplicaID(r.AgentName, r.Index),
 		"private_host":      host,
 		"public_host":       host,
 		"host_port":         strconv.Itoa(r.port()),

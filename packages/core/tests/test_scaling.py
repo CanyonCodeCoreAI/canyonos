@@ -26,7 +26,7 @@ POLICY = {
 REPLICA = {
     "provider": "local",
     "agent_name": "Alpha",
-    "replica_index": 0,
+    "replica_id": "Alpha-0",
     "host": "localhost",
 }
 

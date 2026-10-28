@@ -87,9 +87,10 @@ def image_name(agent):
     return f"canyonos-{project_name()}-{agent.lower()}"
 
 
-def container_name(agent, index):
-    """Return the container name of one replica of one of this project's agents."""
-    return f"canyonos-{project_name()}-{agent.lower()}-{index}"
+def replica_name_pattern(agent):
+    """Return the regex every replica container of one of this project's agents fully
+    matches by name: `canyonos-<project>-<agent>-` and 8 hex characters."""
+    return re.escape(f"canyonos-{project_name()}-{agent.lower()}-") + "[0-9a-f]{8}"
 
 
 def state_dir():

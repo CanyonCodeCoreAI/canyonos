@@ -31,7 +31,7 @@ def _controller():
 
 
 def _launch(controller, spec, machine):
-    return replicas.launch(controller, machine, spec, 0, 50051, "agent-id-0")
+    return replicas.launch(controller, machine, spec, 50051, f"{spec['name']}-0")
 
 
 class LaunchTests(unittest.TestCase):

@@ -7,13 +7,12 @@ from here."""
 
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 from canyonos_core.controller.controller_context import (
     _is_local_host,
-    replica_id as _replica_id,
-    replica_key as _replica_key,
     list_replicas,
 )
 from canyonos_core.controller.utils.container_names import (
@@ -32,6 +31,7 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
     DEFAULT_MEMORY_MB,
 )
 from canyonos_core.reconciler.routing import publish_routing_snapshot
+from canyonos_core.scaling import contract
 
 PORT_CLAIM_LOCK_SECONDS = 10
 # How long a draining replica may keep running before it is removed anyway.
@@ -64,30 +64,38 @@ class ReplicaProvisioner(object):
             agent_name = agent_spec["name"]
             if only is not None and agent_name not in only:
                 continue
-            for replica_index in range(int(agent_spec.get("replicas", 1))):
-                replica_id = _replica_id(agent_name, replica_index)
-                replica = self.redis.hgetall(_replica_key(agent_name, replica_index))
-
-                if replica:
-                    # An unfinished launch whose removal failed; remove_unfinished retries it.
-                    if not replica.get("address"):
-                        continue
-                    if replicas.is_running(self.controller, replica):
-                        existing.append((agent_name, replica_id, replica))
-                        continue
-                    logger.warning(
-                        "Replacing %s: its container %s is not running",
-                        replica_id,
-                        replica["container_name"],
-                    )
-                    try:
-                        replicas.remove_container(self.controller, replica)
-                    except Exception as e:
-                        # A machine that cannot be reached holds its slot until stop, not every launch.
-                        logger.warning("Could not remove %s: %s", replica_id, e)
-                        continue
-                    self._delete_replica_record(replica_id, replica)
-                wanted.append((agent_spec, replica_index))
+            counted = 0
+            for key in self.redis.scan_keys(f"agent_instance:{agent_name}-*"):
+                replica = self.redis.hgetall(key)
+                # The pattern also matches an agent whose name goes on after a "-".
+                if replica.get("agent_name") != agent_name:
+                    continue
+                # On its way out, so a new replica starts in its place right away.
+                if "draining_at" in replica:
+                    continue
+                # An unfinished launch whose removal failed; remove_unfinished retries it.
+                if not replica.get("address"):
+                    counted += 1
+                    continue
+                replica_id = replica["replica_id"]
+                if replicas.is_running(self.controller, replica):
+                    existing.append((agent_name, replica_id, replica))
+                    counted += 1
+                    continue
+                logger.warning(
+                    "Replacing %s: its container %s is not running",
+                    replica_id,
+                    replica["container_name"],
+                )
+                try:
+                    replicas.remove_container(self.controller, replica)
+                except Exception as e:
+                    # A machine that cannot be reached holds its place until stop, not every launch.
+                    logger.warning("Could not remove %s: %s", replica_id, e)
+                    counted += 1
+                    continue
+                self._delete_replica_record(replica_id, replica)
+            wanted += [agent_spec] * (int(agent_spec.get("replicas", 1)) - counted)
 
         # How much of each machine its replicas already take, from their records.
         used = {}
@@ -104,15 +112,21 @@ class ReplicaProvisioner(object):
             machine["used"] = {"cpu": cpu, "memory": memory}
             machine["replicas"] = []
 
-        for agent_spec, replica_index in wanted:
+        for agent_spec in wanted:
             resources = agent_spec.get("resources") or {}
             new_replica = {
                 "agent_spec": agent_spec,
-                "replica_index": replica_index,
-                "replica_id": _replica_id(agent_spec["name"], replica_index),
+                "replica_id": f"{agent_spec['name']}-{uuid.uuid4().hex[:8]}",
                 "cpu": float(resources.get("cpu") or DEFAULT_CPU),
                 "memory": int(resources.get("memory") or DEFAULT_MEMORY_MB),
             }
+            # Skipped, not launched over a live replica; the next pass draws a new ID.
+            if self.redis.hgetall(f"agent_instance:{new_replica['replica_id']}"):
+                logger.error(
+                    "Very Unlucky, 8 hex char collision on %s, try again!",
+                    new_replica["replica_id"],
+                )
+                continue
             machine = placement.place(machines, agent_spec["provider"], new_replica)
             if machine is None:
                 logger.warning("No machine for %s", new_replica["replica_id"])
@@ -121,11 +135,11 @@ class ReplicaProvisioner(object):
             if not machine["up"]:
                 continue
             self.redis.hset_multiple(
-                _replica_key(agent_spec["name"], replica_index),
+                f"agent_instance:{new_replica['replica_id']}",
                 {
                     "agent_name": agent_spec["name"],
                     "provider": agent_spec["provider"],
-                    "replica_index": str(replica_index),
+                    "replica_id": new_replica["replica_id"],
                     "machine": machine["launch_id"],
                     "cpu": str(new_replica["cpu"]),
                     "memory": str(new_replica["memory"]),
@@ -202,8 +216,8 @@ class ReplicaProvisioner(object):
         if image_sent:
             image_sent.result()
         agent_name = new_replica["agent_spec"]["name"]
-        replica_index = new_replica["replica_index"]
-        key = _replica_key(agent_name, replica_index)
+        replica_id = new_replica["replica_id"]
+        key = f"agent_instance:{replica_id}"
         if replicas.publishes_port(self.controller, machine, new_replica["agent_spec"]):
             host_port = self._claim_host_port(machine["private_host"], key)
         else:
@@ -211,7 +225,7 @@ class ReplicaProvisioner(object):
         # Saved before the container exists, so a failed launch can still remove it.
         saved = {
             "private_host": machine["private_host"],
-            "container_name": container_name(agent_name, replica_index),
+            "container_name": container_name(replica_id),
             "user": machine.get("user"),
         }
         self.redis.hset_multiple(
@@ -223,27 +237,24 @@ class ReplicaProvisioner(object):
                 self.controller,
                 machine,
                 new_replica["agent_spec"],
-                replica_index,
                 host_port,
-                new_replica["replica_id"],
+                replica_id,
             )
         except ForeignContainerError:
             # The container under this name is another project's: left in the
             # record, remove_unfinished would remove theirs as ours.
-            self._delete_replica_record(
-                new_replica["replica_id"], {"agent_name": agent_name}
-            )
+            self._delete_replica_record(replica_id, {"agent_name": agent_name})
             raise
         self._write_replica(replica, hourly_cost)
         return replica
 
     def _write_replica(self, replica, hourly_cost):
         """Save a new replica's record to Redis, plus the key that prices its compute."""
-        replica_id = _replica_id(replica["agent_name"], replica["replica_index"])
+        replica_id = replica["replica_id"]
         mapping = {
             "agent_name": replica["agent_name"],
             "provider": replica["provider"],
-            "replica_index": str(replica["replica_index"]),
+            "replica_id": replica_id,
             "private_host": replica["private_host"],
             "public_host": replica["public_host"],
             "host_port": str(replica["host_port"]),
@@ -282,8 +293,7 @@ class ReplicaProvisioner(object):
 
         self._delete_controller_status(replica)
         replicas.remove_container(self.controller, replica)
-        self.redis.delete(key)
-        self.redis.srem(f"agent:{replica['agent_name']}:instances", replica_id)
+        self._delete_replica_record(replica_id, replica)
         self.controller.remove_unused_redis_clients(list_replicas(self.redis))
         publish_routing_snapshot(
             self.controller.agent_specs
@@ -347,7 +357,9 @@ class ReplicaProvisioner(object):
             )
 
     def _delete_replica_record(self, replica_id, replica):
-        self.redis.delete(f"agent_instance:{replica_id}")
+        self.redis.delete(
+            f"agent_instance:{replica_id}", contract.replica_key(replica_id)
+        )
         self.redis.srem(f"agent:{replica['agent_name']}:instances", replica_id)
 
     def remove_unfinished(self):

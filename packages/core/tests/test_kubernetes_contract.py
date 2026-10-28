@@ -65,7 +65,7 @@ def _provisioner_record_fields():
             "container_name",
         )
     }
-    replica.update(provider="local", agent_name="Alpha", replica_index=0)
+    replica.update(provider="local", agent_name="Alpha", replica_id="Alpha-0")
     ReplicaProvisioner(controller)._write_replica(replica, 0.0)
     (record,) = redis.hashes.values()
     return set(record)

@@ -82,7 +82,7 @@ class LocalProviderLimitTests(unittest.TestCase):
     def _launch(self, spec):
         machine = {"private_host": "localhost", "public_host": "localhost"}
         with patch.object(replicas, "_port_bound", return_value=False):
-            replicas.launch(self.controller, machine, spec, 0, 8000, "agent-id-0")
+            replicas.launch(self.controller, machine, spec, 8000, "agent-id-0")
         return self.controller._run_cmd.call_args.args[0]
 
     def test_an_agent_without_a_resources_block_is_still_bounded(self):
@@ -148,7 +148,7 @@ class EC2ProviderLimitTests(unittest.TestCase):
             "user": "ubuntu",
         }
         with patch.object(replicas, "_wait_for_redis"):
-            replicas.launch(self.controller, machine, spec, 0, None, "agent-id-0")
+            replicas.launch(self.controller, machine, spec, None, "agent-id-0")
         redis_cmd, agent_cmd = (
             call.args[0]
             for call in self.controller._run_cmd.call_args_list

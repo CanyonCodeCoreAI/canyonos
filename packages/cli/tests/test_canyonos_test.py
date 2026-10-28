@@ -77,9 +77,9 @@ def runtime(monkeypatch):
 
 IMAGES = {"canyonos-portfolio-echoagent", "canyonos-portfolio-workflow"}
 ALL_UP = [
-    "canyonos-portfolio-echoagent-0",
-    "canyonos-portfolio-echoagent-1",
-    "canyonos-portfolio-workflow-0",
+    "canyonos-portfolio-echoagent-1a2b3c4d",
+    "canyonos-portfolio-echoagent-5e6f7a8b",
+    "canyonos-portfolio-workflow-9c0d1e2f",
 ]
 
 
@@ -106,7 +106,7 @@ def test_a_short_replica_count_fails(project, runtime):
 
 
 def test_an_image_that_was_never_built_fails(project, runtime):
-    runtime({"canyonos-portfolio-workflow"}, ["canyonos-portfolio-workflow-0"])
+    runtime({"canyonos-portfolio-workflow"}, ["canyonos-portfolio-workflow-9c0d1e2f"])
 
     with pytest.raises(
         RuntimeError, match="canyonos-portfolio-echoagent was never built"

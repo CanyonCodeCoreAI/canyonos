@@ -6,9 +6,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 package redisstate
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -103,7 +105,7 @@ func forgetGone(ctx context.Context, pipe redis.Pipeliner, agentName string, tra
 
 // PublishRouting writes the project's routing table from the replica records, as
 // core's publish_routing_snapshot does: every agent listed, its replicas' addresses
-// in index order, stateful flags, and agents no longer listed removed.
+// oldest first, stateful flags, and agents no longer listed removed.
 func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) error {
 	listed := make(map[string]bool, len(agents))
 	for _, agent := range agents {
@@ -143,16 +145,17 @@ func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) erro
 	return err
 }
 
-// routedAddresses are an agent's replica addresses in index order, read from its
-// records as core's list_replicas reads them (unfinished records skipped).
+// routedAddresses are an agent's replica addresses oldest first, ties in ID order, read
+// from its records as core's list_replicas reads them (unfinished records skipped).
 func routedAddresses(ctx context.Context, rdb redis.Cmdable, agentName string) ([]string, error) {
 	members, err := rdb.SMembers(ctx, ReplicaSetKey(agentName)).Result()
 	if err != nil {
 		return nil, err
 	}
 	type routed struct {
-		index   int
-		address string
+		createdAt float64
+		id        string
+		address   string
 	}
 	var replicas []routed
 	for _, id := range members {
@@ -163,10 +166,12 @@ func routedAddresses(ctx context.Context, rdb redis.Cmdable, agentName string) (
 		if record["address"] == "" {
 			continue
 		}
-		index, _ := strconv.Atoi(record["replica_index"])
-		replicas = append(replicas, routed{index, record["address"]})
+		createdAt, _ := strconv.ParseFloat(record["created_at"], 64)
+		replicas = append(replicas, routed{createdAt, id, record["address"]})
 	}
-	slices.SortFunc(replicas, func(a, b routed) int { return a.index - b.index })
+	slices.SortFunc(replicas, func(a, b routed) int {
+		return cmp.Or(cmp.Compare(a.createdAt, b.createdAt), strings.Compare(a.id, b.id))
+	})
 	addresses := make([]string, len(replicas))
 	for i, replica := range replicas {
 		addresses[i] = replica.address

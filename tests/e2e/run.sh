@@ -183,7 +183,7 @@ canyonos logs --no-follow >"$ARTIFACTS_DIR/logs-tail.log" 2>&1
 # One agent's logs come from its replicas, read on their machine; an unknown name lists the agents.
 step "canyonos logs IntentAgent"
 canyonos logs IntentAgent --tail 20 >"$ARTIFACTS_DIR/logs-intent.log"
-grep -qx -- "--- IntentAgent-0 ---" "$ARTIFACTS_DIR/logs-intent.log" || { cat "$ARTIFACTS_DIR/logs-intent.log"; exit 1; }
+grep -Eqx -- "--- IntentAgent-[0-9a-f]{8} ---" "$ARTIFACTS_DIR/logs-intent.log" || { cat "$ARTIFACTS_DIR/logs-intent.log"; exit 1; }
 canyonos logs NoSuchAgent >"$ARTIFACTS_DIR/logs-unknown.log" 2>&1 && { cat "$ARTIFACTS_DIR/logs-unknown.log"; exit 1; }
 grep -q "the agents are .*IntentAgent" "$ARTIFACTS_DIR/logs-unknown.log" || { cat "$ARTIFACTS_DIR/logs-unknown.log"; exit 1; }
 

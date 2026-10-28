@@ -25,20 +25,21 @@ ALPHA = {"name": "Alpha", "provider": "local"}
 BETA = {"name": "Beta", "provider": "local", "stateful": True}
 
 
-def _seed(redis, agent_name, replica_index):
-    replica_id = f"local:{agent_name}:{replica_index}"
+def _seed(redis, agent_name, n):
+    replica_id = f"local:{agent_name}:{n}"
     redis.sadd(f"agent:{agent_name}:instances", replica_id)
     redis.hashes[f"agent_instance:{replica_id}"] = {
         "agent_name": agent_name,
         "provider": "local",
-        "replica_index": str(replica_index),
+        "replica_id": replica_id,
+        "created_at": str(n),
         "private_host": "localhost",
         "public_host": "localhost",
-        "host_port": str(8000 + replica_index),
+        "host_port": str(8000 + n),
         "container_port": "50051",
-        "published_address": f"localhost:{8000 + replica_index}",
-        "address": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
-        "container_name": f"canyonos-{agent_name.lower()}-{replica_index}",
+        "published_address": f"localhost:{8000 + n}",
+        "address": f"canyonos-{agent_name.lower()}-{n}:50051",
+        "container_name": f"canyonos-{agent_name.lower()}-{n}",
     }
 
 
@@ -58,7 +59,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(redis.hget(ROUTING_STATEFUL_KEY, "Beta"), "true")
         self.assertIsNone(redis.hget(ROUTING_STATEFUL_KEY, "Alpha"))
 
-    def test_endpoints_are_ordered_by_replica_index_not_insertion(self):
+    def test_endpoints_are_ordered_by_creation_time_not_insertion(self):
         """Clients round-robin over this list, so the order has to be stable."""
         redis = _FakeRedis()
         for index in (2, 0, 1):

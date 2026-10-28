@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
@@ -21,6 +22,12 @@ from canyonos_core.reconciler.replica_provisioner import (
     ReplicaProvisioner,
 )
 from fakes import _fake_controller, _replica
+
+# Every replica these tests launch gets the ID `<agent>-00000000`.
+_FIXED_REPLICA_IDS = patch(
+    "canyonos_core.reconciler.replica_provisioner.uuid",
+    SimpleNamespace(uuid4=lambda: uuid.UUID(int=0)),
+)
 
 
 def _fake_provider(**kwargs):
@@ -51,6 +58,7 @@ def _ensure(manager, agent_specs, **kwargs):
     )
 
 
+@_FIXED_REPLICA_IDS
 class ReplicaProvisionerTests(unittest.TestCase):
     def test_launch_removes_an_orphaned_running_container_before_recreating(
         self,
@@ -110,23 +118,23 @@ class ReplicaProvisionerTests(unittest.TestCase):
             {
                 "agent_name": "Alpha",
                 "provider": "local",
-                "replica_index": "0",
+                "replica_id": "Alpha-00000000",
                 "private_host": "localhost",
                 "public_host": "localhost",
                 "host_port": "50051",
                 "container_port": "50051",
-                "published_address": "canyonos-alpha-0:50051",
-                "address": "canyonos-alpha-0:50051",
+                "published_address": "canyonos-alpha-00000000:50051",
+                "address": "canyonos-alpha-00000000:50051",
                 "redis_host": "canyonos-redis-localhost",
                 "redis_port": "6379",
-                "container_name": "canyonos-alpha-0",
+                "container_name": "canyonos-alpha-00000000",
             },
         )
 
         # Nothing is published, so a second local replica has no port to move off.
         self.assertEqual(beta["private_host"], "localhost")
         self.assertEqual(beta["host_port"], "50051")
-        self.assertEqual(beta["address"], "canyonos-beta-0:50051")
+        self.assertEqual(beta["address"], "canyonos-beta-00000000:50051")
         self.assertNotIn(
             "-it",
             controller._run_cmd.call_args_list[1].args[0],
@@ -145,15 +153,15 @@ class ReplicaProvisionerTests(unittest.TestCase):
                     "--network",
                     "canyonos-local",
                     "--name",
-                    "canyonos-alpha-0",
+                    "canyonos-alpha-00000000",
                     "--add-host",
                     "host.docker.internal:host-gateway",
                     "-e",
                     "CANYONOS_AGENT_PORT=50051",
                     "-e",
-                    "CANYONOS_AGENT_HOST=canyonos-alpha-0",
+                    "CANYONOS_AGENT_HOST=canyonos-alpha-00000000",
                     "-e",
-                    "CANYONOS_REPLICA_ID=Alpha-0",
+                    "CANYONOS_REPLICA_ID=Alpha-00000000",
                     "-e",
                     "CANYONOS_REDIS_HOST=canyonos-redis-localhost",
                     "-e",
@@ -209,10 +217,10 @@ class ReplicaProvisionerTests(unittest.TestCase):
             for call in controller._run_cmd.call_args_list
             if call.args[0][:2] == ["docker", "run"]
         )
-        self.assertIn("CANYONOS_AGENT_HOST=canyonos-pg-0", run_cmd)
+        self.assertIn("CANYONOS_AGENT_HOST=canyonos-pg-00000000", run_cmd)
         self.assertIn("CANYONOS_AGENT_PORT=5432", run_cmd)
         self.assertEqual(replica["host_port"], "5433")
-        self.assertEqual(replica["address"], "canyonos-pg-0:5432")
+        self.assertEqual(replica["address"], "canyonos-pg-00000000:5432")
 
     def test_only_limits_which_agents_get_replicas_but_routing_keeps_every_agent(self):
         controller = _fake_controller()
@@ -313,15 +321,15 @@ class ReplicaProvisionerTests(unittest.TestCase):
                     "--network",
                     "canyonos-local",
                     "--name",
-                    "canyonos-workflow-0",
+                    "canyonos-workflow-00000000",
                     "--add-host",
                     "host.docker.internal:host-gateway",
                     "-e",
                     "CANYONOS_AGENT_PORT=50051",
                     "-e",
-                    "CANYONOS_AGENT_HOST=canyonos-workflow-0",
+                    "CANYONOS_AGENT_HOST=canyonos-workflow-00000000",
                     "-e",
-                    "CANYONOS_REPLICA_ID=Workflow-0",
+                    "CANYONOS_REPLICA_ID=Workflow-00000000",
                     "-e",
                     "CANYONOS_REDIS_HOST=canyonos-redis-localhost",
                     "-e",
@@ -366,7 +374,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
         _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         self.assertIsNone(
-            controller.redis.get("controller:canyonos-alpha-0:50051:replica_id")
+            controller.redis.get("controller:canyonos-alpha-00000000:50051:replica_id")
         )
 
     def test_one_failed_replica_still_registers_and_routes_the_others(self):
@@ -399,10 +407,10 @@ class ReplicaProvisionerTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            controller.redis.smembers("agent:Alpha:instances"), {"Alpha-0"}
+            controller.redis.smembers("agent:Alpha:instances"), {"Alpha-00000000"}
         )
         publish.assert_called_once()
-        self.assertIn("Failed to provision Beta-0", "\n".join(logs.output))
+        self.assertIn("Failed to provision Beta-00000000", "\n".join(logs.output))
 
     def test_a_failed_local_launch_claims_no_port_but_can_still_be_removed(self):
         controller = _fake_controller()
@@ -420,9 +428,9 @@ class ReplicaProvisionerTests(unittest.TestCase):
         # Saved before the launch, private_host lets remove_unfinished find the container.
         self.assertEqual(
             controller._run_cmd.call_args.args,
-            (["docker", "rm", "-f", "canyonos-alpha-0"], "localhost", None),
+            (["docker", "rm", "-f", "canyonos-alpha-00000000"], "localhost", None),
         )
-        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})
+        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-00000000"), {})
 
     def test_missing_container_behind_stale_record_is_reprovisioned(self):
         controller = _fake_controller()
@@ -431,7 +439,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
         stale = {
             "agent_name": "Alpha",
             "provider": "local",
-            "replica_index": "0",
+            "replica_id": "Alpha-0",
             "private_host": "localhost",
             "public_host": "localhost",
             "host_port": "8000",
@@ -456,10 +464,10 @@ class ReplicaProvisionerTests(unittest.TestCase):
             any(command[:3] == ["docker", "run", "-d"] for command in commands)
         )
         self.assertEqual(
-            controller.redis.smembers("agent:Alpha:instances"), {"Alpha-0"}
+            controller.redis.smembers("agent:Alpha:instances"), {"Alpha-00000000"}
         )
 
-    def test_a_replica_on_an_unreachable_machine_keeps_its_slot_and_blocks_nothing_else(
+    def test_a_replica_on_an_unreachable_machine_still_counts_and_blocks_nothing_else(
         self,
     ):
         controller = _fake_controller()
@@ -490,7 +498,9 @@ class ReplicaProvisionerTests(unittest.TestCase):
             )
 
         self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), stale)
-        self.assertIn("address", controller.redis.hgetall("agent_instance:Beta-0"))
+        self.assertIn(
+            "address", controller.redis.hgetall("agent_instance:Beta-00000000")
+        )
 
     def test_local_remove_replica_still_removes_the_same_container(self):
         controller = _fake_controller()
@@ -498,13 +508,13 @@ class ReplicaProvisionerTests(unittest.TestCase):
         _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
         controller._run_cmd.reset_mock()
-        manager.remove_replica("Alpha-0", drain=False)
+        manager.remove_replica("Alpha-00000000", drain=False)
 
         self.assertEqual(
             controller._run_cmd.call_args.args,
-            (["docker", "rm", "-f", "canyonos-alpha-0"], "localhost", None),
+            (["docker", "rm", "-f", "canyonos-alpha-00000000"], "localhost", None),
         )
-        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})
+        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-00000000"), {})
 
     def test_another_machine_gets_its_redis_before_the_container(self):
         controller = _fake_controller()
@@ -545,7 +555,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
         ]
         self.assertEqual(
             [args[0][args[0].index("--name") + 1] for args in runs],
-            ["canyonos-redis-10-0-0-30", "canyonos-remote-0"],
+            ["canyonos-redis-10-0-0-30", "canyonos-remote-00000000"],
         )
         self.assertEqual({args[1:] for args in runs}, {("10.0.0.30", "ubuntu")})
         self.assertEqual(
@@ -553,7 +563,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
             {
                 "agent_name": "Remote",
                 "provider": "EC2",
-                "replica_index": "0",
+                "replica_id": "Remote-00000000",
                 "private_host": "10.0.0.30",
                 "public_host": "54.10.20.30",
                 "host_port": "50051",
@@ -562,11 +572,11 @@ class ReplicaProvisionerTests(unittest.TestCase):
                 "address": "10.0.0.30:50051",
                 "redis_host": "host.docker.internal",
                 "redis_port": "6379",
-                "container_name": "canyonos-remote-0",
+                "container_name": "canyonos-remote-00000000",
                 "user": "ubuntu",
             },
         )
-        record = controller.redis.hgetall("agent_instance:Remote-0")
+        record = controller.redis.hgetall("agent_instance:Remote-00000000")
         machine = controller.redis.hgetall(f"machine_record:{record['machine']}")
         self.assertNotIn("machine_id", record)
         self.assertEqual(
@@ -591,7 +601,9 @@ class ReplicaProvisionerTests(unittest.TestCase):
             },
         )
         # One of the machine's two vCPUs.
-        self.assertEqual(controller.redis.get("agent:Remote-0:hourly_cost"), "0.0104")
+        self.assertEqual(
+            controller.redis.get("agent:Remote-00000000:hourly_cost"), "0.0104"
+        )
 
     def test_removing_a_replica_leaves_its_machine_running(self):
         controller = _fake_controller()
@@ -610,11 +622,11 @@ class ReplicaProvisionerTests(unittest.TestCase):
             _ensure(manager, [{"name": "Remote", "provider": "EC2"}])
             controller._run_cmd.reset_mock()
 
-            self.assertTrue(manager.remove_replica("Remote-0", drain=False))
+            self.assertTrue(manager.remove_replica("Remote-00000000", drain=False))
 
         self.assertEqual(
             controller._run_cmd.call_args.args[0],
-            ["docker", "rm", "-f", "canyonos-remote-0"],
+            ["docker", "rm", "-f", "canyonos-remote-00000000"],
         )
         provider.terminate_machine.assert_not_called()
         self.assertEqual(len(controller.redis.scan_keys("machine_record:*")), 1)
@@ -737,15 +749,15 @@ class TerminateMachinesTests(unittest.TestCase):
 
 
 class PortClaimTests(unittest.TestCase):
-    def _claim(self, redis, replica_index, port):
+    def _claim(self, redis, n, port):
         redis.hset_multiple(
-            f"agent_instance:Alpha-{replica_index}",
+            f"agent_instance:Alpha-{n}",
             {
                 "agent_name": "Alpha",
                 "provider": "local",
-                "replica_index": str(replica_index),
+                "replica_id": f"Alpha-{n}",
                 "private_host": "localhost",
-                "container_name": f"canyonos-alpha-{replica_index}",
+                "container_name": f"canyonos-alpha-{n}",
                 "host_port": str(port),
             },
         )
@@ -804,7 +816,7 @@ class PortClaimTests(unittest.TestCase):
         provider.terminate_machine.assert_not_called()
         (machine_key,) = controller.redis.scan_keys("machine_record:*")
         self.assertEqual(controller.redis.hgetall(machine_key)["machine_id"], "i-1")
-        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})
+        self.assertEqual(controller.redis.scan_keys("agent_instance:*"), [])
 
 
 ENDPOINT_SPEC = {
@@ -822,8 +834,9 @@ if __name__ == "__main__":
     unittest.main()
 
 
+@_FIXED_REPLICA_IDS
 class ControllerStatusKeyTests(unittest.TestCase):
-    STATUS_KEY = "controller:canyonos-alpha-0:50051:status"
+    STATUS_KEY = "controller:canyonos-alpha-00000000:50051:status"
 
     def test_launch_clears_the_status_the_last_container_at_this_address_left(self):
         """The key has no TTL and the address is the container name, so a
@@ -884,7 +897,7 @@ class ControllerStatusKeyTests(unittest.TestCase):
 
         controller._run_cmd = observe
 
-        manager.remove_replica("Alpha-0", drain=False)
+        manager.remove_replica("Alpha-00000000", drain=False)
 
         self.assertEqual(seen_at_rm, [None])
         self.assertNotIn(self.STATUS_KEY, controller.redis.strings)
@@ -905,6 +918,6 @@ class ControllerStatusKeyTests(unittest.TestCase):
         with self.assertLogs(
             "canyonos_core.reconciler.replica_provisioner", level="WARNING"
         ):
-            manager.remove_replica("Alpha-0", drain=False)
+            manager.remove_replica("Alpha-00000000", drain=False)
 
-        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})
+        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-00000000"), {})

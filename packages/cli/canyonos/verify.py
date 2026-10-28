@@ -12,6 +12,7 @@ is not on its own proof that the deploy is complete.
 This file will also need lots of iteration based on what is needed, will expect it to change alot
 """
 
+import re
 import subprocess
 
 from rich.table import Table
@@ -90,9 +91,8 @@ def agent_rows(config_path):
             continue
         image = project.image_name(name)
         expected = int(agent_spec.get("replicas", 1) or 1)
-        running = sum(
-            1 for i in range(expected) if project.container_name(name, i) in containers
-        )
+        pattern = project.replica_name_pattern(name)
+        running = sum(1 for container in containers if re.fullmatch(pattern, container))
         image_built = image in images
 
         rows.append(

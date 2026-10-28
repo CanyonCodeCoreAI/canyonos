@@ -84,7 +84,7 @@ class OperatorManagedTests(unittest.TestCase):
         supervisor = MagicMock()
         self.manager.remove_stale_containers()
         self.manager.register_background_processes(supervisor)
-        self.assertIsNone(self.manager.replace_replica("Alpha", 0))
+        self.assertIsNone(self.manager.replace_replica("Alpha", "Alpha-0"))
         self.manager.forget_removed_agents({"Gone"})
         self.assertTrue(self.manager.remove_all_replicas())
         self.assertEqual(self.manager.stop_support_services(clean=True), [])
@@ -164,13 +164,13 @@ class TheControllerGoesThroughItsOrchestratorTests(unittest.TestCase):
 
     def test_an_unknown_agent_never_reaches_the_manager(self):
         self.assertIsNone(self.controller._set_replicas("Ghost", 3))
-        self.assertIsNone(self.controller._replace_replica("Ghost", 0))
+        self.assertIsNone(self.controller._replace_replica("Ghost", "Ghost-0"))
         self.manager.set_replicas.assert_not_called()
         self.manager.replace_replica.assert_not_called()
 
     def test_replacing_a_replica(self):
-        self.controller._replace_replica("Alpha", "1")
-        self.manager.replace_replica.assert_called_once_with("Alpha", "1")
+        self.controller._replace_replica("Alpha", "Alpha-1")
+        self.manager.replace_replica.assert_called_once_with("Alpha", "Alpha-1")
 
     def test_stop_terminates_then_stops_processes_then_tears_down(self):
         """Whatever removes the replicas must outlive `terminate`."""

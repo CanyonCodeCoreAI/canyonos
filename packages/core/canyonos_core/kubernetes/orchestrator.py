@@ -63,12 +63,12 @@ class KubernetesOrchestrator:
         applies it from the same file), and resetting it here would undo live scaling
         on every restart and fight GitOps tools."""
 
-    def replace_replica(self, agent_name, replica_index):
+    def replace_replica(self, agent_name, replica_id):
         """Nothing: Kubernetes replaces a failed pod by itself."""
         logger.info(
             "Not replacing %s replica %s: Kubernetes replaces failed pods itself.",
             agent_name,
-            replica_index,
+            replica_id,
         )
         return None
 
