@@ -1,0 +1,127 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The in-cluster image builder: BuildKit, the engine `docker buildx` uses, rootless. Every project's build Job sends its build here and the images are
+# pushed to the project's registry from here. Building images needs what no other
+# CanyonOS pod gets (seccomp and AppArmor unconfined, for the user namespaces BuildKit
+# builds in), so it lives alone in its own namespace, which this enables explicitly:
+# the one Pod Security exception CanyonOS asks for, and only when the builder is on.
+{{- if .Values.builder.enabled }}
+{{- $ns := .Values.builder.namespace }}
+{{- if .Values.builder.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/audit: privileged
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+data:
+  buildkitd.toml: |
+    {{- range .Values.builder.insecureRegistries }}
+    [registry."{{ . }}"]
+      http = true
+      insecure = true
+    {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkitd
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: canyonos-buildkitd}
+  ports: [{name: buildkit, port: 1234, targetPort: 1234}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkitd
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: canyonos-buildkitd}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: canyonos-buildkitd, app.kubernetes.io/part-of: canyonos}
+      annotations:
+        checksum/config: {{ toJson .Values.builder.insecureRegistries | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.builder.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: buildkitd
+          image: {{ .Values.builder.image }}
+          args:
+            - --addr
+            - unix:///run/user/1000/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+            # No process sandbox: runs without privileged mode.
+            - --oci-worker-no-process-sandbox
+          ports: [{name: buildkit, containerPort: 1234}]
+          readinessProbe:
+            exec: {command: [buildctl, debug, workers]}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: [buildctl, debug, workers]}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.builder.resources | nindent 12 }}
+          securityContext:
+            # Rootless: user 1000, never root, no added capability or privileged mode;
+            # BuildKit's user namespaces need seccomp and AppArmor unconfined.
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            seccompProfile: {type: Unconfined}
+            appArmorProfile: {type: Unconfined}
+          volumeMounts:
+            - {name: cache, mountPath: /home/user/.local/share/buildkit}
+            - {name: config, mountPath: /home/user/.config/buildkit}
+      volumes:
+        - name: config
+          configMap: {name: buildkitd}
+        - name: cache
+          emptyDir: {sizeLimit: {{ .Values.builder.cacheSize }}}
+---
+# Only CanyonOS build pods may send builds.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: buildkitd
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: canyonos-buildkitd}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchExpressions: [{key: canyonos.canyoncode.ai/build, operator: Exists}]
+      ports: [{port: 1234}]
+{{- end }}

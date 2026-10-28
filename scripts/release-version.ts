@@ -13,6 +13,15 @@ export const manifests: Manifest[] = [
   { path: 'packages/core/canyonos_core/__init__.py', pattern: /^(__version__ = ")([^"]+)(")$/m },
   { path: 'packages/api/package.json', pattern: /^(\s*"version": ")([^"]+)(",?)$/m },
   { path: 'packages/web/package.json', pattern: /^(\s*"version": ")([^"]+)(",?)$/m },
+  // The operator image defaults to the chart's appVersion, so both follow the release.
+  {
+    path: 'packages/operator/charts/canyonos-operator/Chart.yaml (version)',
+    pattern: /^(version: )([^\s"]+)()$/m,
+  },
+  {
+    path: 'packages/operator/charts/canyonos-operator/Chart.yaml (appVersion)',
+    pattern: /^(appVersion: ")([^"]+)(")$/m,
+  },
 ];
 
 export const lockfileEntries: Manifest[] = [
@@ -83,7 +92,7 @@ async function set(root: string, version: string): Promise<void> {
     throw new Error(`${version} is not a release version like 0.1.732.`);
   }
   for (const manifest of manifests) {
-    const file = Bun.file(join(root, manifest.path));
+    const file = Bun.file(join(root, fileOf(manifest)));
     await Bun.write(file, writeVersion(manifest, await file.text(), version));
   }
   const lock = Bun.spawnSync(['uv', 'lock'], { cwd: root, stdout: 'inherit', stderr: 'inherit' });

@@ -16,6 +16,8 @@ const pyproject = '[project]\nname = "canyonos"\nversion = "0.1.731"\nrequires-p
 const initFile = '# CanyonOS - Distributed Agent Framework\n__version__ = "0.3.0"\n';
 const packageJson =
   '{\n  "name": "web",\n  "private": true,\n  "version": "0.1.2",\n  "type": "module"\n}\n';
+const chart =
+  'apiVersion: v2\nname: canyonos-operator\nversion: 0.1.731\nappVersion: "0.1.731"\nkubeVersion: ">=1.32.0-0"\n';
 const lockfile =
   '[[package]]\nname = "canyonos"\nversion = "0.1.731"\nsource = { editable = "packages/cli" }\n\n[[package]]\nname = "canyonos-core"\nversion = "0.3.0"\nsource = { editable = "packages/core" }\n';
 
@@ -55,6 +57,22 @@ describe('writing versions', () => {
     ).toBe('# CanyonOS - Distributed Agent Framework\n__version__ = "0.1.732"\n');
     expect(writeVersion(manifest('packages/web/package.json'), packageJson, '0.1.732')).toBe(
       '{\n  "name": "web",\n  "private": true,\n  "version": "0.1.732",\n  "type": "module"\n}\n'
+    );
+  });
+});
+
+describe('the operator chart', () => {
+  const version = manifest('packages/operator/charts/canyonos-operator/Chart.yaml (version)');
+  const appVersion = manifest('packages/operator/charts/canyonos-operator/Chart.yaml (appVersion)');
+
+  test('reads the chart version and the app version, not kubeVersion', () => {
+    expect(readVersion(version, chart)).toBe('0.1.731');
+    expect(readVersion(appVersion, chart)).toBe('0.1.731');
+  });
+
+  test('rewrites both lines and leaves kubeVersion alone', () => {
+    expect(writeVersion(appVersion, writeVersion(version, chart, '0.1.732'), '0.1.732')).toBe(
+      'apiVersion: v2\nname: canyonos-operator\nversion: 0.1.732\nappVersion: "0.1.732"\nkubeVersion: ">=1.32.0-0"\n'
     );
   });
 });

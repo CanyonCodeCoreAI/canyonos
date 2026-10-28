@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The operator image. Set digest to pin it (preferred); otherwise tag is used.
+image:
+  repository: ghcr.io/canyoncodecoreai/canyonos-operator
+  tag: ""          # defaults to the chart's appVersion
+  digest: ""       # e.g. sha256:...; wins over tag
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The canyonos-core image every project's global controller and endpoint run, pinned to
+# this release (required). A project may point at its own mirror (spec.controllerImage).
+controllerImage: ""
+
+# The image of each project's internal Redis, e.g. from a registry mirror; empty uses
+# the operator's default.
+redisImage: ""
+
+# Empty: the operator runs projects in any namespace (cluster-wide permissions).
+# A list: only in these namespaces, with its permissions granted in them alone.
+watchNamespaces: []
+
+replicas: 1        # more than one only adds standbys: leader election picks one
+
+resources:
+  requests: {cpu: 10m, memory: 64Mi}
+  limits: {memory: 256Mi}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+# Prometheus metrics on :8443 (HTTPS; callers need the canyonos-metrics-reader role).
+metrics:
+  enabled: true
+
+# The in-cluster image builder (BuildKit, rootless) that `canyonos deploy --target
+# kubernetes` builds every project's images with. Its namespace gets the one Pod Security
+# exception CanyonOS asks for (privileged: seccomp and AppArmor unconfined for BuildKit's
+# user namespaces); nothing else runs there.
+builder:
+  enabled: false
+  namespace: canyonos-build
+  createNamespace: true
+  image: moby/buildkit:v0.25.1-rootless
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 4Gi}
+  cacheSize: 20Gi
+  nodeSelector: {}
+  # Registries the builder may push to over plain HTTP (a local kind registry only).
+  insecureRegistries: []
+  # A registry the builder reaches by another name than the nodes pull it by:
+  # {pull name: push name}, e.g. kind's {"localhost:5001": "kind-registry:5000"}.
+  registryAliases: {}
+
+# Aggregated admin/edit/view ClusterRoles for CanyonProject, CanyonAgent and
+# CanyonBuild, so whoever administers, edits or views a namespace can do the same with
+# its projects: `canyonos deploy` needs no more than a namespace's edit role.
+userRoles:
+  enabled: true

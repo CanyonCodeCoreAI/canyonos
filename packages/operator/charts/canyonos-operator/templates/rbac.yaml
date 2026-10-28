@@ -1,0 +1,129 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# What the operator may do: the rules `make manifests` generates from its code into
+# files/role.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: canyonos-manager-role
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+rules:
+  {{- (.Files.Get "files/role.yaml" | fromYaml).rules | toYaml | nindent 2 }}
+{{- if .Values.watchNamespaces }}
+{{- /* Granted in each watched namespace only: a RoleBinding to a ClusterRole gives its
+rules in that namespace and nowhere else. */}}
+{{- range .Values.watchNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canyonos-manager-rolebinding
+  namespace: {{ . }}
+  labels:
+    {{- include "canyonos.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: canyonos-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: canyonos-controller-manager
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- else }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: canyonos-manager-rolebinding
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: canyonos-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: canyonos-controller-manager
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canyonos-leader-election-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canyonos-leader-election-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: canyonos-leader-election-role
+subjects:
+  - kind: ServiceAccount
+    name: canyonos-controller-manager
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.userRoles.enabled }}
+{{- range $kind := list "canyonproject" "canyonagent" "canyonbuild" }}
+{{- $resource := printf "%ss" $kind }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: canyonos-{{ $kind }}-admin
+  labels:
+    {{- include "canyonos.labels" $ | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+  - apiGroups: [canyonos.canyoncode.ai]
+    resources: [{{ $resource }}, {{ $resource }}/scale]
+    verbs: [create, delete, deletecollection, get, list, patch, update, watch]
+  - apiGroups: [canyonos.canyoncode.ai]
+    resources: [{{ $resource }}/status]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: canyonos-{{ $kind }}-edit
+  labels:
+    {{- include "canyonos.labels" $ | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: [canyonos.canyoncode.ai]
+    resources: [{{ $resource }}, {{ $resource }}/scale]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [canyonos.canyoncode.ai]
+    resources: [{{ $resource }}/status]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: canyonos-{{ $kind }}-view
+  labels:
+    {{- include "canyonos.labels" $ | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: [canyonos.canyoncode.ai]
+    resources: [{{ $resource }}, {{ $resource }}/status, {{ $resource }}/scale]
+    verbs: [get, list, watch]
+{{- end }}
+{{- end }}

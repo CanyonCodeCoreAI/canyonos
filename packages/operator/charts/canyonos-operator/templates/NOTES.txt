@@ -1,0 +1,4 @@
+The CanyonOS operator is installed in {{ .Release.Namespace }}{{ if .Values.watchNamespaces }}, running projects in: {{ join ", " .Values.watchNamespaces }}{{ else }}, running projects in any namespace{{ end }}.
+
+Deploy a project with the CanyonOS CLI:  canyonos deploy --target kubernetes
+Check it:                                kubectl get canyonprojects,canyonagents -A

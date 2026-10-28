@@ -47,3 +47,26 @@ jobs:
       # above regenerated them). Fail when a change forgot to commit them.
       - name: Generated files are committed
         run: git diff --exit-code -- .
+
+  chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # helm 3.17.3, pinned by digest.
+    container: alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895
+    defaults:
+      run:
+        working-directory: packages/operator/charts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Both install modes must render: cluster-wide (with the builder) and limited
+      # to some namespaces.
+      - name: Lint and render the chart
+        run: |
+          helm lint canyonos-operator --set controllerImage=canyonos-core@sha256:0
+          helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
+            --set builder.enabled=true > /dev/null
+          helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
+            --set "watchNamespaces={team-a,team-b}" > /dev/null
