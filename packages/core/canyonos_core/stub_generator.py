@@ -301,7 +301,7 @@ def _format_source(source):
 # because the build context is assembled by hand, so Docker's own ignore
 # mechanism never gets to run.
 
-# Directories canyonos build itself generates inside a project -- never swept.
+# Directories canyonos deploy itself generates inside a project -- never swept.
 _GENERATED_DIRS = {"docker_container", "stubs", "grpc_stubs"}
 
 # The project's config/ is read by the Global Controller from /workspace; agents get

@@ -113,13 +113,17 @@ def quit_project(state):
             failures.append(failure)
 
         if not failures:
-            # The controller's gone, so this file would just point commands at a ghost.
-            try:
-                os.remove(state_path)
-            except FileNotFoundError:
-                pass
-            except OSError as e:
-                failures.append(f"Removing CanyonOS state at {state_path} failed: {e}")
+            # The controller's gone; state.json goes last so a failed removal can be retried.
+            for path in (
+                os.path.join(project.state_dir(), "deployed.json"),
+                state_path,
+            ):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    failures.append(f"Removing CanyonOS state at {path} failed: {e}")
 
     if failures:
         ui.fail("Teardown incomplete:\n- " + "\n- ".join(failures))

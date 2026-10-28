@@ -60,6 +60,7 @@ finish() {
   collect_logs
   (cd "$WORK_DIR/helloworld" && canyonos quit) || true
   (cd "$WORK_DIR/portfolio" && canyonos quit) || true
+  (cd "$WORK_DIR/twin/helloworld" && canyonos quit) || true
   docker compose -p canyonos-dashboard down --remove-orphans >/dev/null 2>&1 || true
   if [ "$status" -eq 0 ]; then
     step "PASS: multi-project"
@@ -149,9 +150,9 @@ grep -q "Registered portfolio with the dashboard" "$ARTIFACTS_DIR/deploy-portfol
 
 step "Each container sits in its project's Docker group"
 docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}' | sort | tee "$ARTIFACTS_DIR/groups.txt"
-grep -q 'canyonos-helloworld-global-controller.canyonos-helloworld$' "$ARTIFACTS_DIR/groups.txt" ||
+grep -qE 'canyonos-helloworld-[0-9a-f]{8}-global-controller.canyonos-helloworld-[0-9a-f]{8}$' "$ARTIFACTS_DIR/groups.txt" ||
   fail "helloworld's Global Controller is missing or in the wrong group"
-grep -q 'canyonos-portfolio-global-controller.canyonos-portfolio$' "$ARTIFACTS_DIR/groups.txt" ||
+grep -qE 'canyonos-portfolio-[0-9a-f]{8}-global-controller.canyonos-portfolio-[0-9a-f]{8}$' "$ARTIFACTS_DIR/groups.txt" ||
   fail "portfolio's Global Controller is missing or in the wrong group"
 [ "$(grep -c 'canyonos-dashboard$' "$ARTIFACTS_DIR/groups.txt")" = 3 ] || fail "expected one dashboard stack of three containers"
 API_CREATED="$(docker inspect -f '{{.Created}}' "$DASHBOARD_API")"
@@ -191,9 +192,21 @@ step "Query the helloworld endpoint at $HELLO_API"
 python3 "$E2E_DIR/query.py" "$HELLO_API" main query hello 60 >"$ARTIFACTS_DIR/helloworld-result.json"
 grep -q "greeting" "$ARTIFACTS_DIR/helloworld-result.json" || fail "helloworld returned no greeting"
 
+step "canyonos test in another folder named helloworld tests that folder, not the running one"
+mkdir "$WORK_DIR/twin"
+cp -R "$REPO_ROOT/examples/helloworld" "$WORK_DIR/twin/helloworld"
+perl -pi -e 's/api_port: 8082/api_port: 8092/; s/port: 6380/port: 6390/' "$WORK_DIR/twin/helloworld/config/global_controller.yaml"
+(cd "$WORK_DIR/twin/helloworld" && canyonos test hello --json >"$ARTIFACTS_DIR/test-twin.json") ||
+  { cat "$ARTIFACTS_DIR/test-twin.json"; fail "canyonos test failed in the second helloworld folder"; }
+grep -q '"against_existing_deploy": false' "$ARTIFACTS_DIR/test-twin.json" ||
+  fail "canyonos test in the second helloworld folder queried the first one's deploy"
+python3 "$E2E_DIR/query.py" "$HELLO_API" main query hello 60 >"$ARTIFACTS_DIR/helloworld-result.json"
+grep -q "greeting" "$ARTIFACTS_DIR/helloworld-result.json" || fail "the first helloworld stopped answering"
+
 step "canyonos quit helloworld leaves portfolio and the dashboard"
 (cd "$WORK_DIR/helloworld" && canyonos quit)
 docker ps --format '{{.Names}}' | grep -q '^canyonos-helloworld-' && fail "helloworld containers survived quit"
+compgen -G "$HOME/.canyonos/projects/helloworld-*/deployed.json" >/dev/null && fail "quit left helloworld's deployed.json behind"
 [ "$(docker ps --format '{{.Names}}' | grep -c '^canyonos-dashboard-')" = 3 ] || fail "the dashboard did not survive helloworld's quit"
 expect_routes portfolio "$PORTFOLIO_ID" 200
 [ "$(api GET "/projects/$HELLO_ID/prompts")" = 502 ] || fail "a quit project should read as unreachable"

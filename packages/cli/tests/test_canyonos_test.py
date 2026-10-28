@@ -235,6 +235,7 @@ def test_queries_the_existing_deploy_instead_of_standing_up_its_own(
     monkeypatch.setattr(
         test_cmd, "existing_deploy", lambda: {"container_id": "abc", "port": 8000}
     )
+    monkeypatch.setattr(test_cmd, "_require_current_deploy", lambda: None)
     monkeypatch.setattr(test_cmd, "deployed_endpoint", lambda _port: deployed)
     monkeypatch.setattr(test_cmd, "_send_query", lambda *a: sent.append(a) or "req-1")
 

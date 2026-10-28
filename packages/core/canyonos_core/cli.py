@@ -125,7 +125,7 @@ def _ensure_grpc_stubs_importable(project_dir):
 
 
 # ------------------------------------------------------------------ #
-#  canyonos build                                                        #
+#  Image build (run by canyonos deploy)                              #
 # ------------------------------------------------------------------ #
 
 

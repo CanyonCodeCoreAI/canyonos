@@ -47,6 +47,7 @@ from canyonos.deploy import (
 from canyonos.gc import _error_detail, deployed_endpoint, existing_deploy
 from canyonos.init import docker_env, load_state, quit_existing
 from canyonos.os_support import is_terminal
+from canyonos.sync import deployed_fingerprints, project_fingerprints
 from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
 
@@ -323,6 +324,21 @@ def _query(run, endpoint, timeout, number=3, total=3):
     run.done(f"answered in {run.elapsed()}s")
 
 
+def _require_current_deploy():
+    """Raise when the project's files changed since the running deploy took them in."""
+    deployed, current = deployed_fingerprints(), project_fingerprints()
+    if current["code"] != deployed["code"]:
+        raise RuntimeError(
+            "Files outside config/ changed since this deploy started. Run "
+            "`canyonos deploy`, then `canyonos test` again."
+        )
+    if current["config"] != deployed["config"]:
+        raise RuntimeError(
+            "Files in config/ changed since the last deploy or sync. Run "
+            "`canyonos sync`, then `canyonos test` again."
+        )
+
+
 def _run_test(run, timeout=REQUEST_TIMEOUT):
     """Query the workflow, standing up our own local deploy first unless one is
     already up. The config is restored whatever happens."""
@@ -330,6 +346,7 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
 
     existing = existing_deploy()
     if existing is not None:
+        _require_current_deploy()
         # A deploy is already up: query it exactly as it stands (its own
         # providers, no local flip) instead of tearing it down to stand up our
         # own. This is the only phase, and we leave it running.

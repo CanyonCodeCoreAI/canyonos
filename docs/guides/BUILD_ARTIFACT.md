@@ -14,8 +14,8 @@ CanyonOS Core is the product. `canyonos` is the CLI. Inside the platform the
 Python package is `canyonos_core`, environment variables start with
 `CANYONOS_`, and Docker images and containers are named
 `canyonos-<project>-*`, where `<project>` is the normalised name of the folder
-`canyonos` runs from. Image tags add the lowercased entry name
-(`canyonos-myapp-splitagent`), and containers are
+`canyonos` runs from plus the first 8 characters of its `project_id`. Image tags
+add the lowercased entry name (`canyonos-myapp-3f9a1c2e-splitagent`), and containers are
 `canyonos-<project>-<agent>-<replica>`.
 
 ## Layout

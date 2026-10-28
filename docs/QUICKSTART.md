@@ -36,7 +36,7 @@ With no query, `hello` is sent. If you ran `canyonos convert`, it saved a sample
 
 - Every agent runs locally during the test, whatever the `provider`.
 - If the test fails, see [Troubleshooting](guides/TROUBLESHOOTING.md#canyonos-test-fails).
-- If a deploy is already running, the query is sent to that deploy instead, and it stays running.
+- If a deploy is already running, the query is sent to that deploy instead, and it stays running. If your files changed since that deploy, the test fails and tells you to run `canyonos deploy` (code) or `canyonos sync` (`config/`) first.
 - Add `--timeout SECONDS` to wait longer than the default 300 seconds.
 
 ### 3. Deploy

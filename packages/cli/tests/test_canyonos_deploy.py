@@ -16,6 +16,7 @@ def deployable(monkeypatch, tmp_path):
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "global_controller.yaml").touch()
     monkeypatch.setattr(deploy_cmd, "save_project_id", lambda _path: None)
+    monkeypatch.setattr(deploy_cmd, "save_deployed_fingerprints", lambda _f: None)
     monkeypatch.setattr(deploy_cmd, "run_init", lambda banner=True: None)
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
     monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)

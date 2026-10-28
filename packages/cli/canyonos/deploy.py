@@ -56,7 +56,7 @@ from canyonos.os_support import is_terminal
 from canyonos.quit import quit_project
 from canyonos.resources import configure_resources
 from canyonos.serve import _register_running_project, serve_dashboard
-from canyonos.sync import run_sync
+from canyonos.sync import project_fingerprints, run_sync, save_deployed_fingerprints
 from canyonos.usage.consent import offer_after_first_deploy
 
 # Test seams: a failed-build test monkeypatches both down so it doesn't have to
@@ -338,6 +338,8 @@ def run_deploy(
         ui.say("Deploy cancelled.")
         return None
 
+    # Before run_init, which names the containers after the id.
+    save_project_id(config_path)
     run_init(banner=banner)
     if serve and not quiet and _existing_dashboard_port() is None:
         # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
@@ -350,11 +352,11 @@ def run_deploy(
     # Non-empty once the workflow has reported ready; see the handler below.
     ready = []
     try:
-        save_project_id(config_path)
-
+        fingerprints = project_fingerprints()
         # Copy the current project into the container before building/deploying.
         if not run_sync():
             raise RuntimeError("Could not sync the project into the container.")
+        save_deployed_fingerprints(fingerprints)
 
         state = load_state()
 

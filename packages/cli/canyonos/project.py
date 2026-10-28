@@ -19,6 +19,7 @@ two in step.
 import os
 import re
 
+from canyonos.constants import default_config_path, read_config
 from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
 
 DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
@@ -51,8 +52,11 @@ def normalise(name):
 
 
 def project_name():
-    """Return the project for the folder the command runs from."""
-    return normalise(folder_name())
+    """Return the project for the folder the command runs from: the folder's name and
+    the start of its `project_id`, so two folders with the same name never share one."""
+    name = normalise(folder_name())
+    project_id = read_config(default_config_path()).get("project_id")
+    return f"{name}-{project_id[:8]}" if project_id else name
 
 
 def project_group():

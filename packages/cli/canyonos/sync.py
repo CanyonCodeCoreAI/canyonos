@@ -13,6 +13,7 @@ only managed paths that disappeared from the host are removed; container-side
 build artifacts and other untracked workspace files are left alone.
 """
 
+import hashlib
 import json
 import os
 import tempfile
@@ -92,6 +93,57 @@ def _project_entries(project_root, env_path):
     if os.path.isfile(env_path):
         entries[ENV_NAME] = "entry"
     return entries
+
+
+# Keep in step with the folders `_sweep_project_files` in canyonos_core/stub_generator.py skips.
+_UNBUILT_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
+
+
+def project_fingerprints():
+    """Return SHA-256 digests of the files that can change a deploy, split into `config`,
+    which `canyonos sync` applies live, and `code`, which needs a redeploy. Leaves out
+    the folders the image build skips, such as `.venv` and `node_modules`."""
+    root = os.path.abspath(project_root())
+    env_path = os.path.abspath(project_env_path())
+    files = {}
+    for directory, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if not name.startswith(".")
+            and name not in _UNBUILT_DIRS
+            and not name.endswith(".egg-info")
+        ]
+        for name in filenames:
+            path = os.path.join(directory, name)
+            files[container_path(os.path.relpath(path, root))] = path
+    if os.path.isfile(env_path):
+        files[ENV_NAME] = env_path
+    digests = {"code": hashlib.sha256(), "config": hashlib.sha256()}
+    for relative, path in sorted(files.items()):
+        digest = digests["config" if relative.split("/")[0] == "config" else "code"]
+        digest.update(relative.encode() + b"\0")
+        if os.path.islink(path):
+            digest.update(os.readlink(path).encode())
+        else:
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    digest.update(chunk)
+    return {part: digest.hexdigest() for part, digest in digests.items()}
+
+
+def save_deployed_fingerprints(fingerprints):
+    """Record `fingerprints` as the files the running deploy holds."""
+    path = os.path.join(project.state_dir(), "deployed.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(fingerprints, f)
+
+
+def deployed_fingerprints():
+    """Return the fingerprints recorded for the running deploy."""
+    path = os.path.join(project.state_dir(), "deployed.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 # The manifest only records what the last sync copied, so discarding it costs
@@ -318,6 +370,7 @@ def run_sync_and_reload():
     if not status.get("running"):
         ui.say("No deploy running; changes apply on the next `canyonos deploy`.")
         return True
+    fingerprints = project_fingerprints()
     if not run_sync():
         return False
     try:
@@ -325,5 +378,9 @@ def run_sync_and_reload():
     except GCError as e:
         ui.fail(e)
         return False
+    # A reload applies the config; synced code waits for the next deploy.
+    save_deployed_fingerprints(
+        {**deployed_fingerprints(), "config": fingerprints["config"]}
+    )
     ui.ok("Controller received the reload; see `canyonos logs` for the result.")
     return True

@@ -54,8 +54,10 @@ Three things worth internalizing about this diagram:
 
 State connecting the CLI to its container is a single file per project:
 `~/.canyonos/projects/<project>/state.json` (container id + port), where
-`<project>` is the normalised name of the folder `canyonos` runs from. Every
-command that needs the container reads it.
+`<project>` is the normalised name of the folder `canyonos` runs from plus the
+first 8 characters of its `project_id`. Every command that needs the container
+reads it. Next to it, `deployed.json` holds fingerprints of the files the running
+deploy took in, which `canyonos test` checks; `canyonos quit` removes both.
 
 ---
 
@@ -123,13 +125,14 @@ the project-key design in CAN-521.
 INPUT: canyonos test "Test Query"
 
 1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [project_root()]
-2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
-3. Then we deploy [canyonos deploy]
+2. If a deploy is already running, checks the project's files against `deployed.json` and fails, naming `canyonos deploy` or `canyonos sync`, if they changed since; otherwise sends the query to that deploy and stops here [_require_current_deploy()]
+3. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
+4. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
    - All agent containers are up and their names are as expected
    - The number of replicas is as initialized
    - The endpoints are correctly working and queryable.
-4. Once everything is verified running, we send a test query and verify that it goes fully through
+5. Once everything is verified running, we send a test query and verify that it goes fully through
 
 #### Action Items:
 - Verify that there are valid timeouts and correct error tracing for everything

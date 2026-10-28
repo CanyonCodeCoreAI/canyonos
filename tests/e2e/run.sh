@@ -247,6 +247,22 @@ canyonos sync
 for _ in $(seq 30); do [ "$(intent_replicas)" = "2 2 None" ] && break; sleep 2; done
 [ "$(intent_replicas)" = "2 2 None" ] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
 
+# `canyonos test` queries the running deploy only while it holds the project's current files.
+step "canyonos test queries the running deploy after a sync"
+out="$ARTIFACTS_DIR/test-existing.json"
+canyonos test "$QUERY" --json --timeout "$REQUEST_TIMEOUT" >"$out" || { cat "$out"; exit 1; }
+grep -q '"against_existing_deploy": true' "$out" || { cat "$out"; exit 1; }
+
+step "canyonos test refuses a running deploy older than the config or the code"
+echo "# edited" >>"$PROJECT_DIR/.canyon/config/global_controller.yaml"
+out="$ARTIFACTS_DIR/test-stale-config.json"
+canyonos test --json >"$out" && { cat "$out"; exit 1; }
+grep -q 'Files in config/ changed' "$out" || { cat "$out"; exit 1; }
+echo "# edited" >>"$PROJECT_DIR/.canyon/agents/risk_agent.py"
+out="$ARTIFACTS_DIR/test-stale-code.json"
+canyonos test --json >"$out" && { cat "$out"; exit 1; }
+grep -q 'Files outside config/ changed' "$out" || { cat "$out"; exit 1; }
+
 step "canyonos stop, then canyonos status exits 1"
 canyonos stop
 # Nothing is left to stop, which is still a success.

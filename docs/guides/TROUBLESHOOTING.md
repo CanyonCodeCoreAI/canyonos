@@ -74,7 +74,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 
 If the test passes, everything is shut down. If it fails, the containers stay up so
 you can check `canyonos logs`, or one agent's logs with `docker logs canyonos-<project>-<agent>-<id>`
-(e.g. `canyonos-portfolio-intentagent-1a2b3c4d`). `docker ps --filter label=com.docker.compose.project=canyonos-<project>`
+(e.g. `canyonos-portfolio-3f9a1c2e-intentagent-1a2b3c4d`). `docker ps --filter label=com.docker.compose.project=canyonos-<project>`
 lists the project's containers. Run `canyonos quit` to remove them.
 
 ## Stopping and cleaning
