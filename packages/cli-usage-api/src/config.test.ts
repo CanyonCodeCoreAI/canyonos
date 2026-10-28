@@ -9,6 +9,7 @@ const PRODUCTION = {
   APP_ENV: 'production',
   AWS_REGION: 'us-east-1',
   CLI_USAGE_TABLE_NAME: 'canyonos-cli-usage-events',
+  CLI_FEEDBACK_TABLE_NAME: 'canyonos-cli-feedback',
 };
 
 describe('loadConfig', () => {
@@ -16,6 +17,7 @@ describe('loadConfig', () => {
     expect(loadConfig({})).toEqual({
       environment: 'development',
       tableName: LOCAL_DEFAULTS.tableName,
+      feedbackTableName: LOCAL_DEFAULTS.feedbackTableName,
       region: LOCAL_DEFAULTS.region,
       dynamodb: { kind: 'local', endpoint: LOCAL_DEFAULTS.dynamodbEndpoint },
       port: LOCAL_DEFAULTS.port,
@@ -81,7 +83,10 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...PRODUCTION, [name]: value })).toThrow(/production/);
   });
 
-  test.each(['CLI_USAGE_TABLE_NAME', 'AWS_REGION'])('production requires %s', (name) => {
-    expect(() => loadConfig({ ...PRODUCTION, [name]: '' })).toThrow(name);
-  });
+  test.each(['CLI_USAGE_TABLE_NAME', 'CLI_FEEDBACK_TABLE_NAME', 'AWS_REGION'])(
+    'production requires %s',
+    (name) => {
+      expect(() => loadConfig({ ...PRODUCTION, [name]: '' })).toThrow(name);
+    }
+  );
 });

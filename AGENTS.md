@@ -61,6 +61,18 @@ Run `bun run check` and `bun run test` before calling a change done.
   - Names that predate this and stay: stored Redis keys such as `agent_instance:*` and `agent:<name>:instances`, exported telemetry names such as `agent.id` (it holds a replica ID), and AWS API names such as `run_instances` or `InstanceType`.
 - Core modules are also imported as flat modules inside container images. Do not "fix" those fallback imports or the `E402` ignore in `pyproject.toml`.
 
+## Reporting CanyonOS bugs
+
+When you hit a bug in CanyonOS itself (the `canyonos` CLI, the runtime or the dashboard), ask your user whether to report it. Only if they agree, run:
+
+```bash
+canyonos feedback --yes "<what you ran, what you expected, what happened>"
+```
+
+- `--yes` stands for your user's agreement. Never pass it without asking.
+- Leave out anything personal or secret: no paths, keys, prompts or code.
+- Never change usage reporting (`canyonos contact`); that is your user's choice.
+
 ## Further reading
 
 - Style and docstrings: [docs/contributing/STYLE.md](docs/contributing/STYLE.md)

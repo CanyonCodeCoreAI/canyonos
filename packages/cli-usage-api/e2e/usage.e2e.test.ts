@@ -17,14 +17,18 @@ import type { Subprocess } from 'bun';
 
 import { loadConfig } from '../src/config';
 import { createDynamoClient } from '../src/dynamodb';
-import { usageEvent, usageEvents } from '../src/test.fixtures';
+import { MAX_FEEDBACK_MESSAGE_LENGTH } from '../src/feedback.contract';
+import { FEEDBACK_TABLE_PARTITION_KEY } from '../src/feedback.repository';
+import { feedback, usageEvent, usageEvents } from '../src/test.fixtures';
 import { MAX_REQUEST_BODY_BYTES } from '../src/usage.contract';
-import { ensureUsageTable, waitForDynamo } from '../src/usage.table';
+import { USAGE_TABLE_PARTITION_KEY } from '../src/usage.repository';
+import { ensureTable, waitForDynamo } from '../src/usage.table';
 import type { UsageEvent } from '../src/usage.contract';
 
 const PACKAGE_DIR = join(import.meta.dir, '..');
 const CONTAINER = `canyonos-cli-usage-e2e-${process.pid}`;
 const TABLE = 'canyonos-cli-usage-events-e2e';
+const FEEDBACK_TABLE = 'canyonos-cli-feedback-e2e';
 
 const composeImage = async () => {
   const compose = await Bun.file(join(PACKAGE_DIR, 'docker-compose.yml')).text();
@@ -47,6 +51,7 @@ const testEnv = {
   APP_ENV: 'test',
   CLI_USAGE_DYNAMODB_ENDPOINT: `http://127.0.0.1:${dynamoPort}`,
   CLI_USAGE_TABLE_NAME: TABLE,
+  CLI_FEEDBACK_TABLE_NAME: FEEDBACK_TABLE,
   CLI_USAGE_PORT: String(apiPort),
 };
 
@@ -66,8 +71,8 @@ const waitForApi = async () => {
   throw new Error(`The CLI usage API did not start on ${apiUrl}`);
 };
 
-const postBody = (body: string, contentType = 'application/json') =>
-  fetch(`${apiUrl}/usage/events`, {
+const postBody = (body: string, contentType = 'application/json', path = '/usage/events') =>
+  fetch(`${apiUrl}${path}`, {
     method: 'POST',
     headers: { 'content-type': contentType },
     body,
@@ -75,11 +80,14 @@ const postBody = (body: string, contentType = 'application/json') =>
 
 const postEvents = (events: unknown[]) => postBody(JSON.stringify({ events }));
 
-const storedItem = async (eventId: string) => {
+const postFeedback = (body: unknown) =>
+  postBody(JSON.stringify(body), 'application/json', '/feedback');
+
+const storedItem = async (id: string, table = TABLE, key = USAGE_TABLE_PARTITION_KEY) => {
   const { Item } = await dynamo.send(
     new GetItemCommand({
-      TableName: TABLE,
-      Key: { event_id: { S: eventId } },
+      TableName: table,
+      Key: { [key]: { S: id } },
       ConsistentRead: true,
     })
   );
@@ -106,8 +114,9 @@ beforeAll(async () => {
 
   dynamo = createDynamoClient(loadConfig(testEnv));
   await waitForDynamo(dynamo);
-  expect(await ensureUsageTable(dynamo, TABLE)).toBe('created');
-  expect(await ensureUsageTable(dynamo, TABLE)).toBe('existing');
+  expect(await ensureTable(dynamo, TABLE, USAGE_TABLE_PARTITION_KEY)).toBe('created');
+  expect(await ensureTable(dynamo, TABLE, USAGE_TABLE_PARTITION_KEY)).toBe('existing');
+  expect(await ensureTable(dynamo, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY)).toBe('created');
 
   server = Bun.spawn(['bun', 'run', 'src/server.ts'], {
     cwd: PACKAGE_DIR,
@@ -214,6 +223,69 @@ describe('POST /usage/events against DynamoDB Local', () => {
   });
 });
 
+describe('POST /feedback against DynamoDB Local', () => {
+  test('stores feedback without an installation id, stamped with the time received', async () => {
+    const sent = feedback();
+    const before = Date.now();
+
+    const response = await postFeedback(sent);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ stored: true });
+    const item = await storedItem(sent.feedback_id, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY);
+    expect(Object.keys(item ?? {}).sort()).toEqual([
+      'arch',
+      'cli_version',
+      'feedback_id',
+      'message',
+      'os',
+      'received_at',
+    ]);
+    expect(item).toMatchObject({ message: { S: sent.message }, os: { S: 'Darwin' } });
+    expect(Date.parse(item?.received_at?.S ?? '')).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  test('stores the installation id when one is sent', async () => {
+    const sent = feedback({ installation_id: usageEvent().installation_id });
+
+    expect((await postFeedback(sent)).status).toBe(200);
+
+    expect(
+      (await storedItem(sent.feedback_id, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY))
+        ?.installation_id
+    ).toEqual({
+      S: sent.installation_id ?? '',
+    });
+  });
+
+  test('keeps the first copy of a resent feedback', async () => {
+    const sent = feedback();
+    expect(await (await postFeedback(sent)).json()).toEqual({ stored: true });
+
+    const resent = await postFeedback({ ...sent, message: 'changed' });
+
+    expect(resent.status).toBe(200);
+    expect(await resent.json()).toEqual({ stored: false });
+    expect(
+      (await storedItem(sent.feedback_id, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY))?.message
+    ).toEqual({ S: sent.message });
+  });
+
+  test('rejects an empty or too long message and fields outside the contract', async () => {
+    for (const body of [
+      feedback({ message: '' }),
+      feedback({ message: 'x'.repeat(MAX_FEEDBACK_MESSAGE_LENGTH + 1) }),
+      { ...feedback(), email: 'ana@example.com' },
+    ]) {
+      expect((await postFeedback(body)).status).toBe(422);
+    }
+  });
+
+  test('serves no endpoint that reads feedback back', async () => {
+    expect((await fetch(`${apiUrl}/feedback`)).status).toBe(404);
+  });
+});
+
 describe('when DynamoDB is unavailable', () => {
   const earlier = usageEvent();
   const pending = usageEvents(5);
@@ -226,6 +298,13 @@ describe('when DynamoDB is unavailable', () => {
 
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ error: 'store_unavailable' });
+  });
+
+  test('answers feedback with an error', async () => {
+    const response = await postFeedback(feedback());
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ error: 'internal_error' });
   });
 
   test('stores the resent batch once DynamoDB is back, keeping the earlier events', async () => {

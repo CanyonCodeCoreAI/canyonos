@@ -4,7 +4,8 @@
 """
 What the CLI usage end-to-end tests run against: the real usage API server from
 `packages/cli-usage-api` on a free loopback port, backed by a disposable DynamoDB Local
-container, and a test-owned client that reads the stored events straight from the table.
+container, and a test-owned client that reads the stored events and feedback straight from
+the tables.
 """
 
 import json
@@ -23,6 +24,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_DIR = REPO_ROOT / "packages" / "cli-usage-api"
 TABLE = "canyonos-cli-usage-events-cli-e2e"
+FEEDBACK_TABLE = "canyonos-cli-feedback-cli-e2e"
 
 
 def free_port():
@@ -43,12 +45,13 @@ def wait_until(condition, timeout=30.0, interval=0.1):
 
 
 class DynamoTable:
-    """Direct reads of the usage events table in DynamoDB Local, owned by the tests.
-    DynamoDB Local checks that a request is signed but not the signature itself."""
+    """Direct reads of one table in DynamoDB Local, owned by the tests. DynamoDB Local
+    checks that a request is signed but not the signature itself."""
 
-    def __init__(self, endpoint, name):
+    def __init__(self, endpoint, name, key):
         self.endpoint = endpoint
         self.name = name
+        self.key = key
 
     def call(self, operation, payload):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -77,22 +80,23 @@ class DynamoTable:
                 "TableName": self.name,
                 "BillingMode": "PAY_PER_REQUEST",
                 "AttributeDefinitions": [
-                    {"AttributeName": "event_id", "AttributeType": "S"}
+                    {"AttributeName": self.key, "AttributeType": "S"}
                 ],
-                "KeySchema": [{"AttributeName": "event_id", "KeyType": "HASH"}],
+                "KeySchema": [{"AttributeName": self.key, "KeyType": "HASH"}],
             },
         )
 
-    def items_for(self, installation_id):
-        """Every stored event of one installation, as DynamoDB returns them."""
+    def items_where(self, name, value):
+        """Every stored item whose `name` attribute is `value`, as DynamoDB returns them."""
         items = []
         start = None
         while True:
             payload = {
                 "TableName": self.name,
                 "ConsistentRead": True,
-                "FilterExpression": "installation_id = :id",
-                "ExpressionAttributeValues": {":id": {"S": installation_id}},
+                "FilterExpression": "#name = :value",
+                "ExpressionAttributeNames": {"#name": name},
+                "ExpressionAttributeValues": {":value": {"S": value}},
             }
             if start is not None:
                 payload["ExclusiveStartKey"] = start
@@ -147,7 +151,9 @@ class UsageStack:
         self.dynamo_port = free_port()
         self.api_port = free_port()
         self.url = f"http://127.0.0.1:{self.api_port}"
-        self.table = DynamoTable(f"http://127.0.0.1:{self.dynamo_port}", TABLE)
+        dynamo = f"http://127.0.0.1:{self.dynamo_port}"
+        self.table = DynamoTable(dynamo, TABLE, "event_id")
+        self.feedback_table = DynamoTable(dynamo, FEEDBACK_TABLE, "feedback_id")
         self.server = None
 
     def start(self):
@@ -172,6 +178,7 @@ class UsageStack:
         )
         self.wait_for_dynamo()
         self.table.create()
+        self.feedback_table.create()
         self.server = subprocess.Popen(
             ["bun", "run", "src/server.ts"],
             cwd=API_DIR,
@@ -181,6 +188,7 @@ class UsageStack:
                 "APP_ENV": "test",
                 "CLI_USAGE_DYNAMODB_ENDPOINT": self.table.endpoint,
                 "CLI_USAGE_TABLE_NAME": TABLE,
+                "CLI_FEEDBACK_TABLE_NAME": FEEDBACK_TABLE,
                 "CLI_USAGE_PORT": str(self.api_port),
             },
             stdin=subprocess.DEVNULL,

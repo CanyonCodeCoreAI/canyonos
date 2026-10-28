@@ -23,7 +23,6 @@ CORE_COMMANDS = (
 
 UTIL_COMMANDS = (
     ("clean", "Delete .canyon, the project skill and the agents' images"),
-    ("contact", "See or change whether the CLI shares usage with Canyon Code"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
     ("doctor", "Check Docker and Compose are available"),
     ("logs", "Follow the running deploy's logs"),
@@ -41,12 +40,17 @@ UTIL_COMMANDS = (
     ("validate", "Check the project against the CanyonOS contract"),
 )
 
-DESCRIPTIONS = dict(CORE_COMMANDS + UTIL_COMMANDS)
+CONTACT_COMMANDS = (
+    ("contact", "See or change whether the CLI shares usage with Canyon Code"),
+    ("feedback", "Send a message to Canyon Code"),
+)
+
+_ALL_COMMANDS = CORE_COMMANDS + UTIL_COMMANDS + CONTACT_COMMANDS
+DESCRIPTIONS = dict(_ALL_COMMANDS)
 
 
-# Both columns are sized from the widest entry across BOTH tables, so Core and
-# Utils line up with each other instead of each shrinking to fit its own rows.
-_ALL_COMMANDS = CORE_COMMANDS + UTIL_COMMANDS
+# Both columns are sized from the widest entry across all tables, so the sections
+# line up with each other instead of each shrinking to fit its own rows.
 _NAME_WIDTH = max(len(name) for name, _ in _ALL_COMMANDS)
 _DESCRIPTION_WIDTH = max(len(description) for _, description in _ALL_COMMANDS)
 
@@ -73,6 +77,9 @@ def print_custom_help():
 
     ui.console.print(f"\n[bold {GREEN}]Utils[/]")
     ui.console.print(_command_table(UTIL_COMMANDS))
+
+    ui.console.print(f"\n[bold {GREEN}]Contact[/]")
+    ui.console.print(_command_table(CONTACT_COMMANDS))
 
     ui.console.print(f"\n[bold {GREEN}]Quick Start:[/]")
     ui.console.print(

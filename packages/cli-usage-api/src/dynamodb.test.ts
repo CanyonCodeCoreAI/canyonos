@@ -28,6 +28,7 @@ describe('createDynamoClient', () => {
         APP_ENV: 'production',
         AWS_REGION: 'eu-west-1',
         CLI_USAGE_TABLE_NAME: 'canyonos-cli-usage-events',
+        CLI_FEEDBACK_TABLE_NAME: 'canyonos-cli-feedback',
       })
     );
 

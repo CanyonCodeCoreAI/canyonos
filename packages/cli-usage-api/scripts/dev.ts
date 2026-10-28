@@ -3,8 +3,8 @@
 
 /**
  * Runs the CLI usage API on the host for the hot-reload loop: starts DynamoDB Local through this
- * package's own Compose project, creates the usage events table when it is missing, then serves
- * the API on the loopback interface in watch mode.
+ * package's own Compose project, creates the usage events and feedback tables when they are
+ * missing, then serves the API on the loopback interface in watch mode.
  */
 
 import { join } from 'node:path';
@@ -13,7 +13,9 @@ import { $ } from 'bun';
 
 import { loadConfig, LOCAL_DEFAULTS } from '../src/config';
 import { createDynamoClient } from '../src/dynamodb';
-import { ensureUsageTable, waitForDynamo } from '../src/usage.table';
+import { FEEDBACK_TABLE_PARTITION_KEY } from '../src/feedback.repository';
+import { USAGE_TABLE_PARTITION_KEY } from '../src/usage.repository';
+import { ensureTable, waitForDynamo } from '../src/usage.table';
 
 const PACKAGE_DIR = join(import.meta.dir, '..');
 const env = {
@@ -27,13 +29,18 @@ await $`docker compose -p canyonos-cli-usage -f ${join(PACKAGE_DIR, 'docker-comp
 
 const client = createDynamoClient(config);
 await waitForDynamo(client);
-const table = await ensureUsageTable(client, config.tableName);
+const table = await ensureTable(client, config.tableName, USAGE_TABLE_PARTITION_KEY);
+const feedbackTable = await ensureTable(
+  client,
+  config.feedbackTableName,
+  FEEDBACK_TABLE_PARTITION_KEY
+);
 client.destroy();
 
 const url = `http://127.0.0.1:${config.port}`;
 console.info(`
-DynamoDB Local: ${config.dynamodb.kind === 'local' ? config.dynamodb.endpoint : 'aws'} (table ${config.tableName}, ${table})
-CLI usage API:  ${url}/usage/events
+DynamoDB Local: ${config.dynamodb.kind === 'local' ? config.dynamodb.endpoint : 'aws'} (table ${config.tableName}, ${table}; table ${config.feedbackTableName}, ${feedbackTable})
+CLI usage API:  ${url}/usage/events and ${url}/feedback
 Point the dev CLI at it with: export CANYONOS_USAGE_URL=${url}
 Stop with Ctrl-C; \`bun run cli:usage:reset\` stops DynamoDB Local and deletes its data.
 `);

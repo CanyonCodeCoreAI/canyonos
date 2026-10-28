@@ -34,7 +34,11 @@ const MAX_CLI_VERSION_LENGTH = 64;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SEMVER_LIKE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
 
-const UuidV4Schema = z.string().regex(UUID_V4, 'Expected a lowercase UUID v4');
+export const UuidV4Schema = z.string().regex(UUID_V4, 'Expected a lowercase UUID v4');
+export const CliVersionSchema = z
+  .string()
+  .max(MAX_CLI_VERSION_LENGTH)
+  .regex(SEMVER_LIKE, 'Expected a version such as 1.2.3');
 
 export const UsageEventSchema = z
   .object({
@@ -43,10 +47,7 @@ export const UsageEventSchema = z
     command: z.enum(REPORTED_COMMANDS),
     succeeded: z.boolean(),
     occurred_at: z.string().datetime({ message: 'Expected an ISO-8601 UTC datetime' }),
-    cli_version: z
-      .string()
-      .max(MAX_CLI_VERSION_LENGTH)
-      .regex(SEMVER_LIKE, 'Expected a version such as 1.2.3'),
+    cli_version: CliVersionSchema,
   })
   .strict();
 

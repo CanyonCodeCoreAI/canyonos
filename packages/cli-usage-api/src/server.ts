@@ -9,11 +9,15 @@
 import { createApp } from './app';
 import { loadConfig } from './config';
 import { createDynamoClient } from './dynamodb';
+import { createFeedbackRepository } from './feedback.repository';
 import { createUsageRepository } from './usage.repository';
 
 const config = loadConfig();
-const repository = createUsageRepository(createDynamoClient(config), config.tableName);
-const app = createApp({ repository });
+const client = createDynamoClient(config);
+const app = createApp({
+  repository: createUsageRepository(client, config.tableName),
+  feedbackRepository: createFeedbackRepository(client, config.feedbackTableName),
+});
 const server = Bun.serve({
   hostname: '127.0.0.1',
   port: config.port,

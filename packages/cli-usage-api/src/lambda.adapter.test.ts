@@ -6,7 +6,7 @@ import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 
 import { createApp } from './app';
 import { toRequest, toResult } from './lambda.adapter';
-import { usageEvents } from './test.fixtures';
+import { unusedFeedbackRepository, usageEvents } from './test.fixtures';
 import type { UsageRepository } from './usage.repository';
 
 const apiGatewayEvent = (
@@ -123,7 +123,7 @@ describe('the Lambda round trip', () => {
   const repository: UsageRepository = {
     storeEvents: async (events) => ({ stored: events.length, duplicates: 0 }),
   };
-  const app = createApp({ repository });
+  const app = createApp({ repository, feedbackRepository: unusedFeedbackRepository });
   const invoke = async (event: APIGatewayProxyEventV2) =>
     toResult(await app.handle(toRequest(event)));
 

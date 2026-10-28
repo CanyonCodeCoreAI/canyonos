@@ -24,6 +24,7 @@ from canyonos.convert import (
 )
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
+from canyonos.feedback import run_feedback
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
 from canyonos.os_support import prepare_console
@@ -158,6 +159,14 @@ def _run_command():
         choices=("on", "off"),
         metavar="on|off",
         help="Turn usage reporting on or off without being asked (default: show and ask)",
+    )
+    feedback = add("feedback", lambda args: run_feedback(args.message, yes=args.yes))
+    feedback.add_argument("message", help="What to tell Canyon Code, in quotes")
+    feedback.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Send without asking while usage reporting is off; it still sends no installation id",
     )
 
     # Convert has args: --agent, --scope, -y, --install-only. With none of them it

@@ -8,6 +8,7 @@ that does the sending, so it never slows a command down, shows anything or chang
 the command exits. Events stay in the outbox until the API has stored them.
 """
 
+import hashlib
 import http.client
 import json
 import os
@@ -153,17 +154,20 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_RefuseRedirects)
 
 
-def send_events(url: str, events: list[dict]) -> bool:
-    """POST one batch of events to the usage API at `url`. Return whether it answered
-    200, which means it stored every one of them; any other answer, a redirect, a
-    timeout or no answer at all returns False."""
+def post_json(url: str, payload: dict) -> bool:
+    """POST `payload` as JSON to `url`, used for usage events and feedback. Return
+    whether it answered 200; any other answer, a redirect, a timeout or no answer at
+    all returns False."""
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     request = urllib.request.Request(
-        url + EVENTS_PATH,
-        data=json.dumps({"events": events}, separators=(",", ":")).encode(),
+        url,
+        data=body,
         method="POST",
         headers={
             "Content-Type": "application/json",
             "User-Agent": f"canyonos/{VERSION}",
+            # CloudFront needs the body's hash to sign the request it passes to the Lambda.
+            "x-amz-content-sha256": hashlib.sha256(body).hexdigest(),
         },
     )
     try:
@@ -171,6 +175,12 @@ def send_events(url: str, events: list[dict]) -> bool:
             return response.status == 200
     except (OSError, http.client.HTTPException):
         return False
+
+
+def send_events(url: str, events: list[dict]) -> bool:
+    """POST one batch of events to the usage API at `url`. Return whether it answered
+    200, which means it stored every one of them."""
+    return post_json(url + EVENTS_PATH, {"events": events})
 
 
 def _deliver(url: str) -> None:

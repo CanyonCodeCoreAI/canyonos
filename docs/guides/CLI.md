@@ -24,9 +24,15 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `validate` | Check the project root against the CanyonOS contract |
 | `doctor` | Check that your environment is ready |
 | `new-app` | Create a starter project with one agent in an empty folder |
-| `contact` | See or change whether the CLI shares usage reporting with Canyon Code |
 | `upgrade` | Upgrade the canyonos CLI to the latest release |
 | `-v`, `--version` | Print the installed version |
+
+## Contact
+
+| Command | What it does |
+|---|---|
+| `contact` | See or change whether the CLI shares usage reporting with Canyon Code |
+| `feedback` | Send a message to Canyon Code |
 
 ## Usage reporting
 
@@ -43,3 +49,7 @@ Each event holds only these fields:
 | `succeeded` | Whether the command succeeded |
 | `occurred_at` | When it ran, in UTC to the millisecond |
 | `cli_version` | The CLI version, for example `0.1.738` |
+
+## Feedback
+
+`canyonos feedback "your message"` sends your message to Canyon Code right away, with the CLI version, your OS and CPU type. When usage reporting is on, it also sends your installation id. When it is off, it sends no installation id and asks before sending; `--yes` skips the question, and a non-interactive run without it sends nothing.

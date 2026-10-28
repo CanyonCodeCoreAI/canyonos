@@ -113,3 +113,11 @@ project folder, with no terminal attached:
 - `canyonos stop` stops the agents; `canyonos quit` removes everything.
 
 Every command exits non-zero on failure.
+
+## Reporting a CanyonOS bug
+
+When a `canyonos` command fails because of CanyonOS itself, not the project, ask
+your user whether to report it. Only if they agree, run
+`canyonos feedback --yes "<what you ran, what you expected, what happened>"`.
+`--yes` stands for their agreement; never pass it without asking. Leave out
+paths, keys, prompts and code. Never change usage reporting with `canyonos contact`.

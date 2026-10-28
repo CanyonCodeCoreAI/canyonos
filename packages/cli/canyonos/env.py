@@ -63,7 +63,7 @@ PROD_CORE_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-core:{VERSION}"
 PROD_API_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-api:{VERSION}"
 PROD_WEB_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-web:{VERSION}"
 PROD_SKILL_REF = f"v{VERSION}"
-PROD_USAGE_URL = "https://lgfqg03dz2.execute-api.us-east-1.amazonaws.com"
+PROD_USAGE_URL = "https://d23tpmlxh0fxet.cloudfront.net"
 
 # `local` artifacts, i.e. what this checkout builds or ships.
 LOCAL_CORE_IMAGE = "canyonos-core:dev"

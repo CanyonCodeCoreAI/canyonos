@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-End-to-end tests of CLI usage reporting: the installed `canyonos` command runs as a
-real process with its home in a temporary folder, records events in its outbox, and
-its background sender delivers them to the real usage API, read back from DynamoDB.
+End-to-end tests of CLI usage reporting and feedback: the installed `canyonos` command
+runs as a real process with its home in a temporary folder, records events in its
+outbox, and its background sender delivers them to the real usage API, read back from
+DynamoDB. `canyonos feedback` sends to the same API right away.
 Run with `bun run cli:usage:test:cli-e2e`; it needs Docker and Bun.
 """
 
@@ -14,8 +15,10 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
+import pexpect
 import pytest
 
 from cli_usage_stack import free_port, wait_until
@@ -39,6 +42,7 @@ CONTRACT_KEYS = {
     "cli_version",
 }
 STORED_KEYS = CONTRACT_KEYS | {"received_at"}
+FEEDBACK_KEYS = {"feedback_id", "message", "cli_version", "os", "arch", "received_at"}
 NOT_REPORTED = [
     ["-v"],
     ["-h"],
@@ -59,7 +63,7 @@ class Cli:
         self.outbox = self.usage / "outbox"
         self.lock = self.usage / "delivery.lock"
 
-    def run(self, *argv, usage_url=None, cwd=None, extra_env=None):
+    def environment(self, usage_url=None, extra_env=None):
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -68,15 +72,35 @@ class Cli:
         environment.update({"HOME": str(self.home), **(extra_env or {})})
         url = self.usage_url if usage_url is None else usage_url
         environment["CANYONOS_USAGE_URL"] = url or ""
+        return environment
+
+    def run(self, *argv, usage_url=None, cwd=None, extra_env=None):
         return subprocess.run(
             [str(CANYONOS), *argv],
             cwd=cwd or self.home,
-            env=environment,
+            env=self.environment(usage_url, extra_env),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=120,
         )
+
+    def answer(self, *argv, keys):
+        """Run the CLI at a terminal, press `keys` at its first menu and return how it
+        exited."""
+        child = pexpect.spawn(
+            str(CANYONOS),
+            list(argv),
+            cwd=str(self.home),
+            env=self.environment(),
+            encoding="utf-8",
+            timeout=60,
+        )
+        child.expect("Yes, send it")
+        child.send(keys)
+        child.expect(pexpect.EOF)
+        child.close()
+        return child.exitstatus, child.before
 
     def run_and_settle(self, *argv, **options):
         """Run the CLI and wait until the background sender it starts has finished."""
@@ -123,7 +147,7 @@ def stored(stack, installation_id, count):
     """Wait until DynamoDB holds `count` events of this installation and return them."""
 
     def enough():
-        items = stack.table.items_for(installation_id)
+        items = stack.table.items_where("installation_id", installation_id)
         return items if len(items) >= count else None
 
     items = wait_until(enough)
@@ -200,7 +224,7 @@ def test_changing_the_preference_purges_and_starts_a_new_id(
 
     assert second_id != first_id
     assert len(stored(usage_stack, second_id, 1)) == 1
-    assert usage_stack.table.items_for(first_id) == []
+    assert usage_stack.table.items_where("installation_id", first_id) == []
 
 
 def test_only_commands_that_act_on_an_app_are_reported(cli, usage_stack):
@@ -216,7 +240,7 @@ def test_only_commands_that_act_on_an_app_are_reported(cli, usage_stack):
     outcomes = sorted((item["command"], item["succeeded"]) for item in items)
     assert outcomes == [("new-app", True), ("validate", False)]
     assert wait_until(lambda: cli.pending() == [])
-    assert len(usage_stack.table.items_for(installation_id)) == 2
+    assert len(usage_stack.table.items_where("installation_id", installation_id)) == 2
 
 
 def test_an_unreachable_api_changes_nothing_and_keeps_the_events(
@@ -279,7 +303,7 @@ def test_a_resent_event_is_stored_once(cli, usage_stack):
     cli.run_and_settle("-v")
 
     assert cli.pending() == []
-    assert usage_stack.table.items_for(installation_id) == [first]
+    assert usage_stack.table.items_where("installation_id", installation_id) == [first]
 
 
 def test_only_the_contract_fields_reach_the_table(cli, usage_stack):
@@ -304,3 +328,58 @@ def test_only_the_contract_fields_reach_the_table(cli, usage_stack):
         shutil.which("canyonos") or str(CANYONOS),
     ):
         assert private not in raw
+
+
+def test_feedback_while_reporting_is_on_carries_the_installation_id(cli, usage_stack):
+    installation_id = opt_in(cli)
+
+    result = cli.run("feedback", "deploy hangs at step 3")
+
+    assert result.returncode == 0, result.stderr
+    [item] = usage_stack.feedback_table.items_where("installation_id", installation_id)
+    assert set(item) == FEEDBACK_KEYS | {"installation_id"}
+    assert plain(item)["message"] == "deploy hangs at step 3"
+
+
+def test_feedback_while_reporting_is_off_asks_first_and_sends_no_id(cli, usage_stack):
+    message = f"sent after yes {uuid.uuid4()}"
+
+    status, output = cli.answer("feedback", message, keys="\r")
+
+    assert status == 0
+    assert "Thanks, your feedback was sent." in output
+    [item] = usage_stack.feedback_table.items_where("message", message)
+    assert set(item) == FEEDBACK_KEYS
+
+
+def test_feedback_declined_or_without_a_terminal_sends_nothing(cli, usage_stack):
+    declined = f"declined {uuid.uuid4()}"
+    no_terminal = f"no terminal {uuid.uuid4()}"
+
+    status, output = cli.answer("feedback", declined, keys="\x1b[B\r")
+    result = cli.run("feedback", no_terminal)
+
+    assert status == 0
+    assert "Nothing was sent." in output
+    assert result.returncode == 1
+    assert "--yes" in result.stderr
+    for message in (declined, no_terminal):
+        assert usage_stack.feedback_table.items_where("message", message) == []
+
+
+def test_feedback_outside_the_length_limit_names_the_limit(cli, usage_stack):
+    for message in ("", "x" * 4001):
+        result = cli.run("feedback", "--yes", message)
+
+        assert result.returncode == 1
+        assert "1 to 4000 characters" in result.stderr
+
+
+def test_feedback_with_yes_sends_without_asking_and_without_an_id(cli, usage_stack):
+    message = f"sent with --yes {uuid.uuid4()}"
+
+    result = cli.run("feedback", "--yes", message)
+
+    assert result.returncode == 0, result.stderr
+    [item] = usage_stack.feedback_table.items_where("message", message)
+    assert set(item) == FEEDBACK_KEYS

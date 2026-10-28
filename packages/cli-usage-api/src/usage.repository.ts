@@ -7,7 +7,7 @@
  */
 
 import { ConditionalCheckFailedException, PutItemCommand } from '@aws-sdk/client-dynamodb';
-import type { PutItemCommandOutput } from '@aws-sdk/client-dynamodb';
+import type { AttributeValue, PutItemCommandOutput } from '@aws-sdk/client-dynamodb';
 
 import type { UsageEvent, UsageEventsStored } from './usage.contract';
 
@@ -32,6 +32,29 @@ export interface UsageRepository {
   storeEvents(events: readonly UsageEvent[], receivedAt: string): Promise<UsageEventsStored>;
 }
 
+/** Write `item` unless the table already holds an item with the same `key`; say which happened. */
+export async function putIfAbsent(
+  client: PutItemSender,
+  tableName: string,
+  key: string,
+  item: Record<string, AttributeValue>
+): Promise<'stored' | 'duplicate'> {
+  try {
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: item,
+        ConditionExpression: `attribute_not_exists(#${key})`,
+        ExpressionAttributeNames: { [`#${key}`]: key },
+      })
+    );
+    return 'stored';
+  } catch (error) {
+    if (error instanceof ConditionalCheckFailedException) return 'duplicate';
+    throw error;
+  }
+}
+
 const toItem = (event: UsageEvent, receivedAt: string) => ({
   event_id: { S: event.event_id },
   installation_id: { S: event.installation_id },
@@ -50,27 +73,12 @@ const toItem = (event: UsageEvent, receivedAt: string) => ({
  * `UsageStoreUnavailableError`, and the events that did land are skipped on the resend.
  */
 export function createUsageRepository(client: PutItemSender, tableName: string): UsageRepository {
-  const putIfAbsent = async (event: UsageEvent, receivedAt: string) => {
-    try {
-      await client.send(
-        new PutItemCommand({
-          TableName: tableName,
-          Item: toItem(event, receivedAt),
-          ConditionExpression: 'attribute_not_exists(#event_id)',
-          ExpressionAttributeNames: { '#event_id': USAGE_TABLE_PARTITION_KEY },
-        })
-      );
-      return 'stored' as const;
-    } catch (error) {
-      if (error instanceof ConditionalCheckFailedException) return 'duplicate' as const;
-      throw error;
-    }
-  };
-
   return {
     async storeEvents(events, receivedAt) {
       const outcomes = await Promise.allSettled(
-        events.map((event) => putIfAbsent(event, receivedAt))
+        events.map((event) =>
+          putIfAbsent(client, tableName, USAGE_TABLE_PARTITION_KEY, toItem(event, receivedAt))
+        )
       );
       const failures = outcomes.filter((outcome) => outcome.status === 'rejected');
       if (failures.length > 0) {

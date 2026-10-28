@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { createApp } from './app';
-import { usageEvent, usageEvents } from './test.fixtures';
+import { unusedFeedbackRepository, usageEvent, usageEvents } from './test.fixtures';
 import { MAX_EVENTS_PER_BATCH, MAX_REQUEST_BODY_BYTES, REPORTED_COMMANDS } from './usage.contract';
 import { UsageStoreUnavailableError } from './usage.repository';
 import type { UsageEvent } from './usage.contract';
@@ -29,7 +29,8 @@ const failingRepository: UsageRepository = {
   },
 };
 
-const appWith = (repository: UsageRepository) => createApp({ repository, now: () => RECEIVED_AT });
+const appWith = (repository: UsageRepository) =>
+  createApp({ repository, feedbackRepository: unusedFeedbackRepository, now: () => RECEIVED_AT });
 
 const post = (body: unknown, headers: Record<string, string> = {}) =>
   new Request('http://localhost/usage/events', {

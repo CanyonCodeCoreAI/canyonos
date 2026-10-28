@@ -2,18 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * The CLI usage API: one public route, `POST /usage/events`, where the `canyonos` CLI reports a
- * batch of command outcomes. The local server and the Lambda handler both serve this app.
+ * The CLI usage API: two public routes, `POST /usage/events`, where the `canyonos` CLI reports a
+ * batch of command outcomes, and `POST /feedback`, where `canyonos feedback` sends a user's
+ * message. The local server and the Lambda handler both serve this app.
  */
 
 import { Elysia } from 'elysia';
 
+import { FeedbackSchema, FeedbackStoredSchema } from './feedback.contract';
 import {
   MAX_REQUEST_BODY_BYTES,
   UsageEventBatchSchema,
   UsageEventsStoredSchema,
 } from './usage.contract';
 import { UsageStoreUnavailableError } from './usage.repository';
+import type { FeedbackRepository } from './feedback.repository';
 import type { UsageRepository } from './usage.repository';
 
 type RejectionStatus = 400 | 413 | 415;
@@ -81,11 +84,16 @@ const log = (message: string, fields: Record<string, string | number>) =>
 
 export interface AppDependencies {
   readonly repository: UsageRepository;
+  readonly feedbackRepository: FeedbackRepository;
   readonly now?: () => Date;
 }
 
-/** Build the API around the repository it stores events with. */
-export const createApp = ({ repository, now = () => new Date() }: AppDependencies) =>
+/** Build the API around the repositories it stores events and feedback with. */
+export const createApp = ({
+  repository,
+  feedbackRepository,
+  now = () => new Date(),
+}: AppDependencies) =>
   new Elysia({ name: 'cli-usage-api' })
     .onError(({ code, error, status }) => {
       if (code === 'PARSE') {
@@ -127,6 +135,19 @@ export const createApp = ({ repository, now = () => new Date() }: AppDependencie
         parse: parseJsonBody,
         body: UsageEventBatchSchema,
         response: { 200: UsageEventsStoredSchema },
+      }
+    )
+    .post(
+      '/feedback',
+      async ({ body }) => {
+        const result = await feedbackRepository.storeFeedback(body, now().toISOString());
+        log('feedback_stored', { stored: Number(result.stored) });
+        return result;
+      },
+      {
+        parse: parseJsonBody,
+        body: FeedbackSchema,
+        response: { 200: FeedbackStoredSchema },
       }
     );
 

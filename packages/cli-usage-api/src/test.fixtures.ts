@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-/** Valid usage events for the unit and end-to-end tests of the CLI usage API. */
+/** Valid usage events and feedback for the unit and end-to-end tests of the CLI usage API. */
 
+import type { Feedback } from './feedback.contract';
+import type { FeedbackRepository } from './feedback.repository';
 import type { UsageEvent } from './usage.contract';
 
 export const usageEvent = (overrides: Partial<UsageEvent> = {}): UsageEvent => ({
@@ -17,3 +19,16 @@ export const usageEvent = (overrides: Partial<UsageEvent> = {}): UsageEvent => (
 
 export const usageEvents = (count: number): UsageEvent[] =>
   Array.from({ length: count }, () => usageEvent());
+
+export const feedback = (overrides: Partial<Feedback> = {}): Feedback => ({
+  feedback_id: crypto.randomUUID(),
+  message: 'deploy hangs at step 3',
+  cli_version: '0.1.734',
+  os: 'Darwin',
+  arch: 'arm64',
+  ...overrides,
+});
+
+export const unusedFeedbackRepository: FeedbackRepository = {
+  storeFeedback: async () => ({ stored: true }),
+};

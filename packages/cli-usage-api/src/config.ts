@@ -16,6 +16,7 @@ const SDK_ENDPOINT_OVERRIDES = ['AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_DYNAMODB']
 
 export const LOCAL_DEFAULTS = {
   tableName: 'canyonos-cli-usage-events',
+  feedbackTableName: 'canyonos-cli-feedback',
   region: 'us-east-1',
   dynamodbEndpoint: 'http://127.0.0.1:8010',
   port: 8787,
@@ -26,6 +27,7 @@ export type DynamoTarget = { kind: 'aws' } | { kind: 'local'; endpoint: string }
 export interface CliUsageConfig {
   readonly environment: AppEnvironment;
   readonly tableName: string;
+  readonly feedbackTableName: string;
   readonly region: string;
   readonly dynamodb: DynamoTarget;
   readonly port: number;
@@ -83,11 +85,14 @@ function loadProductionConfig(env: EnvSource): CliUsageConfig {
   }
   const tableName = present(env.CLI_USAGE_TABLE_NAME);
   if (!tableName) throw new Error('APP_ENV=production requires CLI_USAGE_TABLE_NAME.');
+  const feedbackTableName = present(env.CLI_FEEDBACK_TABLE_NAME);
+  if (!feedbackTableName) throw new Error('APP_ENV=production requires CLI_FEEDBACK_TABLE_NAME.');
   const region = present(env.AWS_REGION);
   if (!region) throw new Error('APP_ENV=production requires AWS_REGION.');
   return {
     environment: 'production',
     tableName,
+    feedbackTableName,
     region,
     dynamodb: { kind: 'aws' },
     port: resolvePort(present(env.CLI_USAGE_PORT)),
@@ -104,6 +109,7 @@ export function loadConfig(env: EnvSource = process.env): CliUsageConfig {
   return {
     environment,
     tableName: present(env.CLI_USAGE_TABLE_NAME) ?? LOCAL_DEFAULTS.tableName,
+    feedbackTableName: present(env.CLI_FEEDBACK_TABLE_NAME) ?? LOCAL_DEFAULTS.feedbackTableName,
     region: LOCAL_DEFAULTS.region,
     dynamodb: {
       kind: 'local',
