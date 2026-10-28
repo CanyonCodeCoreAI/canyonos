@@ -37,7 +37,7 @@ dev = [
     "pytest>=9.1.1",
 ]
 release = [
-    "nuitka==4.2.2",
+    "nuitka==4.3.1",
 ]
 
 # The CLI runs on Linux, macOS and Windows; core and the other packages only on Linux.

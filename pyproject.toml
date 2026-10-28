@@ -26,8 +26,8 @@ canyonos = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "ruff==0.16.10",
-    "ty==0.0.85",
+    "ruff==0.17.1",
+    "ty==0.0.90",
     "canyonos-core",
     "canyonos",
     "reuse==6.2.0",
