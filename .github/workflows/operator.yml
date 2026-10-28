@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Operator
+
+on:
+  pull_request:
+    paths:
+      - "packages/operator/**"
+      - ".github/workflows/operator.yml"
+  push:
+    branches: [ main ]
+    paths:
+      - "packages/operator/**"
+  workflow_dispatch:
+
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+
+permissions:
+  contents: read
+
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The Go toolchain the operator is developed with, as on a laptop.
+    container: golang:1.27.0
+    defaults:
+      run:
+        working-directory: packages/operator
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Generate, vet, test (envtest) and lint
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make manifests generate fmt vet test lint
+
+      # CRDs, RBAC and deep-copy code come from the Go types and markers (the test step
+      # above regenerated them). Fail when a change forgot to commit them.
+      - name: Generated files are committed
+        run: git diff --exit-code -- .

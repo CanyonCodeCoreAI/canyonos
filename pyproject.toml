@@ -6,10 +6,12 @@ name = "canyonos-python"
 
 [tool.uv.workspace]
 members = ["packages/*"]
-# TypeScript-only workspace packages; the glob above matches them, uv must not.
+# Non-Python workspace packages (TypeScript, and the Go operator); the glob above
+# matches them, uv must not.
 exclude = [
     "packages/api",
     "packages/cli-usage-api",
+    "packages/operator",
     "packages/tsconfig",
     "packages/ui",
     "packages/web",

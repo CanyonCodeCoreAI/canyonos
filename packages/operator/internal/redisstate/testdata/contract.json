@@ -1,0 +1,99 @@
+{
+  "desired_replicas_key": "agent:HelloAgent:desired_replicas",
+  "example": {
+    "created_at": "1791993600.0",
+    "namespace": "acme",
+    "redis_host": "canyonos-redis.acme.svc",
+    "redis_port": 6379
+  },
+  "llm_gateway_env": {
+    "AWS_CA_BUNDLE": "/tmp/canyonos-proxy/ca-bundle.pem",
+    "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "http://127.0.0.1:8081/bedrock",
+    "HTTPS_PROXY": "http://127.0.0.1:8082",
+    "HTTP_PROXY": "http://127.0.0.1:8082",
+    "NO_PROXY": "127.0.0.1,localhost,169.254.169.254,169.254.170.2",
+    "REQUESTS_CA_BUNDLE": "/tmp/canyonos-proxy/ca-bundle.pem",
+    "SSL_CERT_FILE": "/tmp/canyonos-proxy/ca-bundle.pem"
+  },
+  "provider": "kubernetes",
+  "records": {
+    "agent_instance:HelloAgent-0": {
+      "address": "helloagent-0.helloagent.acme.svc:50051",
+      "agent_name": "HelloAgent",
+      "container_name": "helloagent-0",
+      "container_port": "50051",
+      "created_at": "1791993600.0",
+      "host_port": "50051",
+      "pod_uid": "uid-helloagent-0",
+      "private_host": "helloagent-0.helloagent.acme.svc",
+      "provider": "kubernetes",
+      "public_host": "helloagent-0.helloagent.acme.svc",
+      "published_address": "helloagent-0.helloagent.acme.svc:50051",
+      "redis_host": "canyonos-redis.acme.svc",
+      "redis_port": "6379",
+      "replica_index": "0"
+    },
+    "agent_instance:HelloAgent-1": {
+      "address": "helloagent-1.helloagent.acme.svc:50051",
+      "agent_name": "HelloAgent",
+      "container_name": "helloagent-1",
+      "container_port": "50051",
+      "created_at": "1791993600.0",
+      "host_port": "50051",
+      "pod_uid": "uid-helloagent-1",
+      "private_host": "helloagent-1.helloagent.acme.svc",
+      "provider": "kubernetes",
+      "public_host": "helloagent-1.helloagent.acme.svc",
+      "published_address": "helloagent-1.helloagent.acme.svc:50051",
+      "redis_host": "canyonos-redis.acme.svc",
+      "redis_port": "6379",
+      "replica_index": "1"
+    },
+    "agent_instance:Workflow-0": {
+      "address": "workflow-0.workflow.acme.svc:50051",
+      "agent_name": "Workflow",
+      "container_name": "workflow-0",
+      "container_port": "50051",
+      "created_at": "1791993600.0",
+      "host_port": "50051",
+      "pod_uid": "uid-workflow-0",
+      "private_host": "workflow-0.workflow.acme.svc",
+      "provider": "kubernetes",
+      "public_host": "workflow-0.workflow.acme.svc",
+      "published_address": "workflow-0.workflow.acme.svc:50051",
+      "redis_host": "canyonos-redis.acme.svc",
+      "redis_port": "6379",
+      "replica_index": "0"
+    }
+  },
+  "replica_id": {
+    "key": "controller:helloagent-1.helloagent.acme.svc:50051:replica_id",
+    "value": "HelloAgent-1"
+  },
+  "replica_port": 50051,
+  "replica_sets": {
+    "agent:HelloAgent:instances": [
+      "HelloAgent-0",
+      "HelloAgent-1"
+    ],
+    "agent:Workflow:instances": [
+      "Workflow-0"
+    ],
+    "routing_table:agents": [
+      "HelloAgent",
+      "Workflow"
+    ]
+  },
+  "routing": {
+    "addresses": {
+      "HelloAgent": "[\"helloagent-0.helloagent.acme.svc:50051\", \"helloagent-1.helloagent.acme.svc:50051\"]",
+      "Workflow": "[\"workflow-0.workflow.acme.svc:50051\"]"
+    },
+    "addresses_key": "routing_table:addresses",
+    "agents_key": "routing_table:agents",
+    "stateful": {
+      "HelloAgent": "true"
+    },
+    "stateful_key": "routing_table:stateful"
+  }
+}

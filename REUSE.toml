@@ -27,6 +27,12 @@ path = [
   "tests/e2e/portfolio/.canyon/**",
   "packages/api/src/db/migrations/**",
   "packages/web/src/routeTree.gen.ts",
+  # Kubernetes YAML that controller-gen regenerates, and Go module files.
+  "packages/operator/charts/*/crds/**",
+  "packages/operator/charts/*/files/**",
+  "packages/operator/PROJECT",
+  "packages/operator/go.mod",
+  "packages/operator/go.sum",
   "LICENSE",
 ]
 precedence = "aggregate"

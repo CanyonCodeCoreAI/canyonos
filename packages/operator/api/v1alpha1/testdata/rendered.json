@@ -1,0 +1,263 @@
+{
+  "external_redis": [
+    {
+      "apiVersion": "v1",
+      "data": {
+        "global_controller.yaml": "agents: []\n"
+      },
+      "kind": "ConfigMap",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "demo-project-config",
+        "namespace": "acme"
+      }
+    },
+    {
+      "apiVersion": "canyonos.canyoncode.ai/v1alpha1",
+      "kind": "CanyonProject",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "demo-project",
+        "namespace": "acme"
+      },
+      "spec": {
+        "configRef": "demo-project-config",
+        "controllerImage": "registry.example.com/canyonos-core@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "displayName": "Demo_Project",
+        "endpoint": {
+          "agent": "Workflow",
+          "method": "main",
+          "url": "https://agents.example.com"
+        },
+        "logs": false,
+        "pollIntervalSeconds": 5,
+        "projectID": "4eeed6f3-1c2b-4c1d-9d8e-0a1b2c3d4e5f",
+        "redis": {
+          "host": "redis.example.com",
+          "mode": "external",
+          "passwordSecretRef": "redis-auth",
+          "port": 6380,
+          "tls": true
+        }
+      }
+    },
+    {
+      "apiVersion": "canyonos.canyoncode.ai/v1alpha1",
+      "kind": "CanyonAgent",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "workflow",
+        "namespace": "acme"
+      },
+      "spec": {
+        "agentName": "Workflow",
+        "image": "registry.example.com/acme/canyonos-workflow@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "projectRef": "demo-project",
+        "replicas": 1,
+        "resources": {
+          "limits": {
+            "cpu": "1",
+            "memory": "512Mi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "512Mi"
+          }
+        },
+        "stateful": false,
+        "type": "agent"
+      }
+    }
+  ],
+  "internal_redis": [
+    {
+      "apiVersion": "v1",
+      "data": {
+        "global_controller.yaml": "agents: []\n"
+      },
+      "kind": "ConfigMap",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "demo-project-config",
+        "namespace": "acme"
+      }
+    },
+    {
+      "apiVersion": "canyonos.canyoncode.ai/v1alpha1",
+      "kind": "CanyonProject",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "demo-project",
+        "namespace": "acme"
+      },
+      "spec": {
+        "agentServiceAccountName": "agents",
+        "configRef": "demo-project-config",
+        "controllerImage": "registry.example.com/canyonos-core@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "displayName": "Demo_Project",
+        "endpoint": {
+          "agent": "Workflow",
+          "ingress": {
+            "className": "nginx",
+            "host": "agents.example.com",
+            "tlsSecretName": "agents-tls"
+          },
+          "method": "main"
+        },
+        "envSecretRef": "demo-env",
+        "imagePullSecrets": [
+          {
+            "name": "registry-pull"
+          }
+        ],
+        "logs": true,
+        "placement": {
+          "nodeSelector": {
+            "pool": "agents"
+          }
+        },
+        "pollIntervalSeconds": 5,
+        "projectID": "4eeed6f3-1c2b-4c1d-9d8e-0a1b2c3d4e5f",
+        "redis": {
+          "mode": "internal",
+          "storage": "2Gi",
+          "storageClassName": "gp3"
+        }
+      }
+    },
+    {
+      "apiVersion": "canyonos.canyoncode.ai/v1alpha1",
+      "kind": "CanyonAgent",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "helloagent",
+        "namespace": "acme"
+      },
+      "spec": {
+        "agentName": "HelloAgent",
+        "env": [
+          {
+            "name": "GREETING",
+            "value": "hi"
+          }
+        ],
+        "image": "registry.example.com/acme/canyonos-helloagent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "placement": {
+          "nodeSelector": {
+            "pool": "agents"
+          }
+        },
+        "projectRef": "demo-project",
+        "replicas": 3,
+        "resources": {
+          "limits": {
+            "cpu": "1",
+            "memory": "512Mi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "512Mi"
+          }
+        },
+        "stateful": true,
+        "type": "agent"
+      }
+    },
+    {
+      "apiVersion": "canyonos.canyoncode.ai/v1alpha1",
+      "kind": "CanyonAgent",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "workflow",
+        "namespace": "acme"
+      },
+      "spec": {
+        "agentName": "Workflow",
+        "image": "registry.example.com/acme/canyonos-workflow@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "placement": {
+          "nodeSelector": {
+            "pool": "agents"
+          }
+        },
+        "projectRef": "demo-project",
+        "replicas": 1,
+        "resources": {
+          "limits": {
+            "cpu": "2",
+            "memory": "1024Mi",
+            "nvidia.com/gpu": "1"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "1024Mi"
+          }
+        },
+        "stateful": false,
+        "type": "agent"
+      }
+    },
+    {
+      "apiVersion": "canyonos.canyoncode.ai/v1alpha1",
+      "kind": "CanyonAgent",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/managed-by": "canyonos-cli",
+          "canyonos.canyoncode.ai/project": "demo-project"
+        },
+        "name": "statedb",
+        "namespace": "acme"
+      },
+      "spec": {
+        "agentName": "StateDB",
+        "database": {
+          "fsGroup": 70,
+          "mountPath": "/var/lib/postgresql/data",
+          "port": 5432,
+          "runAsUser": 70,
+          "storage": "5Gi",
+          "storageClassName": "gp3"
+        },
+        "image": "postgres:16-alpine",
+        "placement": {
+          "nodeSelector": {
+            "pool": "agents"
+          }
+        },
+        "projectRef": "demo-project",
+        "replicas": 1,
+        "resources": {
+          "limits": {
+            "cpu": "1",
+            "memory": "512Mi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "memory": "512Mi"
+          }
+        },
+        "type": "database"
+      }
+    }
+  ]
+}

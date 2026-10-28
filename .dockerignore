@@ -41,6 +41,7 @@ docs
 .venv
 **/__pycache__
 *.egg-info
+packages/operator/bin
 packages/core
 packages/cli
 Formula
