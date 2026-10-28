@@ -132,7 +132,7 @@ def test_cli_terminal_prompt_is_driven_through_pexpect(cli_case: CliCase):
     terminal.child.expect(pexpect.EOF)
     terminal.close()
 
-    assert terminal.child.exitstatus == 0
+    assert terminal.child.exitstatus == 1
     assert terminal.transcript_path.is_file()
 
 

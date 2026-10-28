@@ -177,9 +177,6 @@ def test_a_release_version_is_reportable(version):
     assert outbox.is_reportable_version(version)
 
 
-RETURNS = object()
-
-
 def raise_(error):
     raise error
 
@@ -187,7 +184,6 @@ def raise_(error):
 @pytest.mark.parametrize(
     "command, expected_exit, succeeded",
     [
-        (lambda: None, RETURNS, True),
         (lambda: sys.exit(), None, True),
         (lambda: sys.exit(0), 0, True),
         (lambda: sys.exit(1), 1, False),
@@ -196,7 +192,6 @@ def raise_(error):
         (lambda: raise_(RuntimeError("no workflow")), 1, False),
     ],
     ids=[
-        "returns",
         "exit-none",
         "exit-0",
         "exit-1",
@@ -210,12 +205,9 @@ def test_success_follows_the_exit_status_and_the_exit_is_unchanged(
 ):
     monkeypatch.setattr(cli, "run_clean", command)
 
-    if expected_exit is RETURNS:
+    with pytest.raises(SystemExit) as exited:
         run_cli(monkeypatch, "clean")
-    else:
-        with pytest.raises(SystemExit) as exited:
-            run_cli(monkeypatch, "clean")
-        assert exited.value.code == expected_exit
+    assert exited.value.code == expected_exit
 
     [event] = events()
     assert event["command"] == "clean"
@@ -245,7 +237,7 @@ def test_a_runtime_error_still_shows_the_same_message(monkeypatch, reporting, ca
     with pytest.raises(SystemExit):
         run_cli(monkeypatch, "quit")
 
-    assert "no workflow" in capsys.readouterr().out
+    assert "no workflow" in capsys.readouterr().err
 
 
 def test_a_recording_failure_is_silent(monkeypatch, reporting, capsys):
@@ -253,9 +245,10 @@ def test_a_recording_failure_is_silent(monkeypatch, reporting, capsys):
         raise PermissionError("denied")
 
     monkeypatch.setattr(outbox, "write_private_json", unwritable)
-    monkeypatch.setattr(cli, "run_clean", lambda: None)
+    monkeypatch.setattr(cli, "run_clean", lambda: True)
 
-    run_cli(monkeypatch, "clean")
+    with pytest.raises(SystemExit):
+        run_cli(monkeypatch, "clean")
 
     assert capsys.readouterr() == ("", "")
 
@@ -276,9 +269,10 @@ def test_an_unwritable_usage_folder_is_silent(monkeypatch, reporting, capsys):
     if os.geteuid() == 0:
         pytest.skip("root ignores directory permissions")
     settings.usage_dir().chmod(0o500)
-    monkeypatch.setattr(cli, "run_stop", lambda: None)
+    monkeypatch.setattr(cli, "run_stop", lambda: True)
     try:
-        run_cli(monkeypatch, "stop")
+        with pytest.raises(SystemExit):
+            run_cli(monkeypatch, "stop")
     finally:
         settings.usage_dir().chmod(0o700)
 

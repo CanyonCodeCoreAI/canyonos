@@ -8,6 +8,7 @@ Commands like doctor and new_app will not though
 
 import argparse
 import importlib.metadata
+import signal
 import sys
 
 from canyonos import env, ui
@@ -66,6 +67,8 @@ def main():
         deliver_pending_events()
         return
     prepare_console()
+    # A coding agent's shell stops a command with SIGTERM: take the Ctrl+C path, so cleanup runs.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         _run_command()
     except KeyboardInterrupt:
@@ -91,7 +94,9 @@ def _run_command():
 
     def add(name, run):
         # A KeyError here means the command has no entry on the help screen.
-        command = subparsers.add_parser(name, help=DESCRIPTIONS[name])
+        command = subparsers.add_parser(
+            name, help=DESCRIPTIONS[name], description=DESCRIPTIONS[name]
+        )
         command.set_defaults(func=run)
         return command
 
@@ -116,11 +121,35 @@ def _run_command():
         action="store_true",
         help="Stream the container's full build and deploy logs instead of a progress summary",
     )
-    add("clean", lambda args: run_clean())
-    add("stop", lambda args: run_stop())
-    add("logs", lambda args: run_logs())
-    add("quit", lambda args: run_quit())
-    add("config", lambda args: run_config())
+    add("clean", lambda args: sys.exit(0 if run_clean() else 1))
+    add("stop", lambda args: sys.exit(0 if run_stop() else 1))
+
+    logs = add(
+        "logs",
+        lambda args: sys.exit(
+            0 if run_logs(follow=args.follow, tail=args.tail, agent=args.agent) else 1
+        ),
+    )
+    logs.add_argument(
+        "agent",
+        nargs="?",
+        help="An agent, or one replica such as IntentAgent-1, whose logs to print "
+        "instead of the Global Controller's",
+    )
+    logs.add_argument(
+        "--no-follow",
+        dest="follow",
+        action="store_false",
+        help="Print the logs and exit instead of streaming them until Ctrl-C",
+    )
+    logs.add_argument(
+        "--tail",
+        default="200",
+        metavar="N",
+        help="Show only the last N lines, or `all` (default: 200)",
+    )
+    add("quit", lambda args: sys.exit(0 if run_quit() else 1))
+    add("config", lambda args: sys.exit(0 if run_config() else 1))
     contact = add("contact", lambda args: run_contact(usage=args.usage))
     contact.add_argument(
         "--usage",
@@ -129,8 +158,8 @@ def _run_command():
         help="Turn usage reporting on or off without being asked (default: show and ask)",
     )
 
-    # Convert has args: --agent, --scope, -y. With none of them it is the
-    # original two-menu interactive command.
+    # Convert has args: --agent, --scope, -y, --install-only. With none of them it
+    # is the original two-menu interactive command.
     convert = add(
         "convert",
         lambda args: sys.exit(
@@ -139,6 +168,7 @@ def _run_command():
                 agent=args.agent,
                 scope=args.scope,
                 yes=args.yes,
+                install_only=args.install_only,
             )
             else 1
         ),
@@ -162,9 +192,19 @@ def _run_command():
             "for whichever of them was not given, and run the agent unattended"
         ),
     )
+    convert.add_argument(
+        "--install-only",
+        action="store_true",
+        help="Install the CanyonOS skill and exit, without launching the coding agent",
+    )
     add("doctor", lambda args: sys.exit(0 if run_doctor() else 1))
     add("serve", lambda args: sys.exit(run_serve()))
-    add("status", lambda args: run_status())
+    status = add("status", lambda args: sys.exit(0 if run_status(args.json) else 1))
+    status.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a single JSON object with each agent's replica counts and nothing else",
+    )
     add("upgrade", lambda args: sys.exit(run_upgrade()))
 
     # Test has args: prompt, --json, --timeout.

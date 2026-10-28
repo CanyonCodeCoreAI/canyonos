@@ -48,6 +48,9 @@ def _fake_context(redis=None, agent_specs=None, machine_redis=None):
         config_path="/tmp/canyonos.yaml",
         machine_redis_for_replica=lambda replica: machine_redis or redis,
         refresh_agent_specs_from_redis=lambda: False,
+        _run_cmd=lambda cmd, host, user=None: SimpleNamespace(
+            returncode=0, stdout="", stderr=""
+        ),
     )
 
 

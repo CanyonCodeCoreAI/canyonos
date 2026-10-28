@@ -75,8 +75,9 @@ sequenceDiagram
 
 The body must be a JSON object. Each key becomes a keyword argument, and `_context` is
 taken out first and kept for policy. An empty body is a call with no arguments; anything
-else is a `400`. A finished request's keys expire after cleanup, and `GET /status` then
-answers `404`.
+else is a `400`. A finished request's keys expire after cleanup, but its result is kept
+for a day, then read from the dashboard's database. `GET /status` answers `404` only when
+neither has it.
 
 ## Answering a question
 

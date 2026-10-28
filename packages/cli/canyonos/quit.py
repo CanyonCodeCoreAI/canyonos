@@ -134,19 +134,22 @@ def quit_project(state):
 
 
 def run_quit():
-    """`canyonos quit`: `quit_project`, then the dashboard if no other project runs."""
+    """`canyonos quit`: `quit_project`, then the dashboard if no other project runs.
+    Returns True when everything was removed."""
     state = require_state()
     if state is None:
-        return
-    quit_project(state)
+        return True
+    failures = quit_project(state)
     with ui.status("Tearing down the dashboard..."):
         dashboard_kept = project.other_global_controllers_running(
             state["container_id"], docker_env(state)
         )
         if not dashboard_kept and not teardown_dashboard():
             ui.fail("Removing the dashboard stack failed")
+            return False
     if dashboard_kept and _existing_dashboard_port() is not None:
         ui.hint(
             "The dashboard was left running because another CanyonOS project is "
             "still deployed. Run `canyonos quit` in that project's folder to remove it."
         )
+    return not failures

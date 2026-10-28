@@ -42,6 +42,54 @@ def _is_local_host(host):
     return host in {"localhost", "127.0.0.1"}
 
 
+def ssh_args(config, host, user=None):
+    """Return the `ssh ... target` prefix that reaches a remote host with the key
+    `config` names."""
+    ssh_key_path = os.path.expanduser(
+        config.get("ssh_private_key_path", DEFAULT_SSH_KEY_PATH)
+    )
+    return [
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=10",
+        "-o",
+        "ServerAliveCountMax=3",
+        "-i",
+        ssh_key_path,
+        f"{user}@{host}" if user else host,
+    ]
+
+
+def run_on_machine(config, cmd, host, user=None):
+    """Run a command on the machine at `host`: here when it is this one, otherwise over
+    SSH with the key `config` names."""
+    try:
+        if _is_local_host(host):
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+
+        remote_cmd = " ".join(cmd)
+        if cmd and cmd[0] == "docker":
+            remote_cmd = f"sudo {remote_cmd}"
+        return subprocess.run(
+            ssh_args(config, host, user) + [remote_cmd],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"Command timed out after 180s on {host}: {' '.join(cmd)}"
+        ) from None
+    except OSError as e:
+        raise RuntimeError(f"Could not run command on {host}: {e}") from None
+
+
 def _redis_connect_host(host):
     """Host to open a Redis connection to from this process."""
     if _is_local_host(host):
@@ -203,26 +251,7 @@ class ControllerContext(object):
 
     def _run_cmd(self, cmd, host, user=None):
         """Run a command locally, or on a remote host over SSH."""
-        is_local = _is_local_host(host)
-        try:
-            if is_local:
-                return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-
-            remote_cmd = " ".join(cmd)
-            if cmd and cmd[0] == "docker":
-                remote_cmd = f"sudo {remote_cmd}"
-            return subprocess.run(
-                self._ssh_args(host, user) + [remote_cmd],
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(
-                f"Command timed out after 180s on {host}: {' '.join(cmd)}"
-            ) from None
-        except OSError as e:
-            raise RuntimeError(f"Could not run command on {host}: {e}") from None
+        return run_on_machine(self.config, cmd, host, user)
 
     def _push_file(self, local_path, host, user=None):
         """Copy a file into a new owner-only directory on a remote host; return its path."""
@@ -262,22 +291,4 @@ class ControllerContext(object):
 
     def _ssh_args(self, host, user=None):
         """Return the `ssh ... target` prefix used to reach a remote host."""
-        ssh_key_path = os.path.expanduser(
-            self.config.get("ssh_private_key_path", DEFAULT_SSH_KEY_PATH)
-        )
-        return [
-            "ssh",
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "IdentitiesOnly=yes",
-            "-o",
-            "ConnectTimeout=10",
-            "-o",
-            "ServerAliveInterval=10",
-            "-o",
-            "ServerAliveCountMax=3",
-            "-i",
-            ssh_key_path,
-            f"{user}@{host}" if user else host,
-        ]
+        return ssh_args(self.config, host, user)

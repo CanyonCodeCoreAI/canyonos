@@ -115,20 +115,8 @@ def _kv_table(title, data):
     return table
 
 
-def _require_config():
-    """Find the project's `global_controller.yaml`, which `canyonos config` opens. If it
-    doesn't exist, show an error in the terminal and return None."""
-    try:
-        return existing_config_path()
-    except RuntimeError as e:
-        ui.fail(str(e))
-        return None
-
-
 def _run_view_config():
-    config_path = _require_config()
-    if config_path is None:
-        return
+    config_path = existing_config_path()
 
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
@@ -325,9 +313,7 @@ def _navigate(screen, node, breadcrumb):
 
 
 def _run_change_config():
-    config_path = _require_config()
-    if config_path is None:
-        return
+    config_path = existing_config_path()
 
     yaml_rt = round_trip_yaml()
     with open(config_path, encoding="utf-8") as f:
@@ -361,13 +347,15 @@ def _run_change_config():
 
 
 def run_config():
-    """Run `canyonos config`: ask whether to view or change the config, then open it."""
+    """Run `canyonos config`: ask whether to view or change the config, then open it.
+    Returns False when cancelled."""
     choice = select_menu(OPTIONS, title="What do you want to do?")
     if choice is None:
         ui.say("Cancelled.")
-        return
+        return False
 
     if choice == "view":
         _run_view_config()
     elif choice == "change":
         _run_change_config()
+    return True

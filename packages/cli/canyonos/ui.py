@@ -9,22 +9,30 @@ Messages are emitted as literal text, never as rich markup, so a path or an
 error containing square brackets can't be swallowed as a style tag.
 """
 
+import sys
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 from rich.console import Console
 from rich.text import Text
 
+from canyonos.os_support import is_terminal
 from canyonos.theme import GRADIENT, GREEN, WHITE
 
-console = Console()
+# Off a terminal Rich wraps at 80 columns; this keeps a piped line, such as a curl command, whole.
+_PIPED_WIDTH = 1000
+
+console = Console(width=None if is_terminal(sys.stdout) else _PIPED_WIDTH)
 # For notices that are not the command's result, so `--json` output on stdout
 # stays a single parseable object.
-err_console = Console(stderr=True)
+err_console = Console(
+    stderr=True, width=None if is_terminal(sys.stderr) else _PIPED_WIDTH
+)
 
 
 def set_quiet(quiet):
     """Silence every helper here, so `canyonos test --json` emits only its payload."""
-    console.quiet = quiet
+    console.quiet = err_console.quiet = quiet
 
 
 def _emit(message, style, symbol=None, target=console):
@@ -44,18 +52,18 @@ def ok(message):
 
 
 def fail(message):
-    """Show an error message in the terminal, marked with a red ✗."""
-    _emit(message, "bold red", "✗")
+    """Show an error message on stderr, marked with a red ✗."""
+    _emit(message, "bold red", "✗", err_console)
 
 
 def root_cause(message):
-    """Show the line that explains a failure, marked with a bright red ✗."""
-    console.print(Text(f"✗ Root Cause: {message}", style="bold bright_red"))
+    """Show the line that explains a failure on stderr, marked with a bright red ✗."""
+    err_console.print(Text(f"✗ Root Cause: {message}", style="bold bright_red"))
 
 
 def warn(message):
-    """Show a warning in the terminal, marked with a yellow !."""
-    _emit(message, "yellow", "!")
+    """Show a warning on stderr, marked with a yellow !."""
+    _emit(message, "yellow", "!", err_console)
 
 
 def notice(message, urgent=False):
@@ -87,12 +95,19 @@ def gradient(text):
 
 
 def panel(renderable):
-    """Show a Rich panel or table in the terminal; hidden when `--json` output is on."""
-    console.print(renderable)
+    """Show a Rich panel or table in the terminal; hidden when `--json` output is on.
+    Piped, it is only as wide as its longest line, so no line wraps."""
+    width = None if is_terminal(sys.stdout) else console.measure(renderable).maximum
+    console.print(renderable, width=width)
 
 
 @contextmanager
 def status(message):
-    """Show a spinner and `message` in the terminal while the `with` block runs."""
+    """Show a spinner and `message` in the terminal while the `with` block runs.
+    Piped, print `message` and each update as a plain line instead."""
+    if not is_terminal(sys.stdout):
+        say(message)
+        yield SimpleNamespace(update=say)
+        return
     with console.status(message) as spinner:
         yield spinner

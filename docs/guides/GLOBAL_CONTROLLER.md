@@ -92,7 +92,7 @@ class in its `entrypoint` file.
 ### Other settings
 
 - `env`: environment variables for this entry only, on top of the ones from
-  `.env`.
+  `.env`. Only database entries use it today.
 - `stateful`: set to `true` if a copy keeps information in memory between calls in the
   same request. CanyonOS then sends every call in that request to the same copy.
 - For a database, `db_port` is the port it listens on (default `5432`), and

@@ -62,7 +62,7 @@ def print_custom_help():
     subtitle = Text(
         "\nBuild, deploy, and manage agentic workflows with ease", style="dim"
     )
-    ui.console.print(Panel(title + subtitle, border_style=GREEN, padding=(1, 2)))
+    ui.panel(Panel(title + subtitle, border_style=GREEN, padding=(1, 2)))
 
     ui.console.print(f"\n[bold {GREEN}]Core Commands[/]")
     ui.console.print(_command_table(CORE_COMMANDS))

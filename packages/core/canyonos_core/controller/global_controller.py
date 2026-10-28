@@ -162,8 +162,8 @@ class GlobalController(ControllerContext):
             )
             # A stop killed midway leaves the flag set; clear it or the fleet stays at zero.
             state.clear_stopping(self.redis)
-            # A reused Redis may still hold an earlier deploy's launch errors.
-            self.redis.delete(state.LAUNCH_ERRORS_KEY)
+            # A reused Redis may hold an earlier deploy's launch and machine errors.
+            self.redis.delete(state.LAUNCH_ERRORS_KEY, state.MACHINE_ERRORS_KEY)
             # A flag left by the last deploy would launch its images before these are built.
             state.clear_images_ready(self.redis)
             logger.info(
@@ -872,8 +872,13 @@ class GlobalController(ControllerContext):
         summary = ", ".join(
             f"{name} {have}/{want}" for name, (have, want) in failed.items()
         )
+        machine_errors = self.redis.hgetall(state.MACHINE_ERRORS_KEY)
         raise RuntimeError(
             f"Agent replica(s) failed to become healthy within {waited}s: {summary}"
+            + "".join(
+                f"; machine type {machine_type} could not start: {error}"
+                for machine_type, error in machine_errors.items()
+            )
         )
 
     # ------------------------------------------------------------------ #

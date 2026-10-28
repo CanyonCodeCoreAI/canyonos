@@ -24,8 +24,8 @@ def finding(code="CANYON-ADAPTER-ASYNC"):
 
 
 def flat(capsys):
-    """Console output as one line: rich wraps at the terminal width."""
-    return " ".join(capsys.readouterr().out.split())
+    """Console output, stdout then stderr, as one line: rich wraps at the terminal width."""
+    return " ".join(" ".join(capsys.readouterr()).split())
 
 
 @pytest.fixture(autouse=True)

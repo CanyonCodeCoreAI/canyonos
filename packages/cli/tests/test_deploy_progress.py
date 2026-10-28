@@ -350,11 +350,13 @@ def test_verbose_stops_tailing_once_the_workflow_is_up(monkeypatch):
     assert lines.get(timeout=1) == after_ready
 
 
-def test_reveal_failure_reprints_the_cause_after_unrelated_noise(capsys):
+def test_reveal_failure_reprints_the_cause_after_unrelated_noise(monkeypatch, capsys):
     """An unrelated process (e.g. a background poller) can keep logging after the
     real failure is detected, during the grace-drain -- the triggering line must
     still be the last thing on screen, not buried under that noise.
     """
+    # On one stream, so the order the screen shows them in can be checked.
+    monkeypatch.setattr(deploy_cmd.ui, "err_console", deploy_cmd.ui.console)
     noise = "ERROR:__main__:Failed to read otel:destinations from Redis; keeping the current 1 destination(s)\n"
     cause = "CRITICAL:canyonos_core:Failed to launch configured runtimes: Unable to locate credentials\n"
     lines = deploy_cmd.queued_lines(iter([noise, noise, noise]))
@@ -669,7 +671,7 @@ def test_the_stalled_spinner_text_is_not_read_as_markup():
     tracker = deploy_cmd.PhaseTracker()
     tracker.parse_line("#12 [indexagent stage-0 5/8] RUN uv pip install\n")
 
-    with deploy_cmd.ui.status("Deploying agents...") as spinner:
+    with deploy_cmd.ui.console.status("Deploying agents...") as spinner:
         spinner.update(
             deploy_cmd._still_running(tracker, "#12 1.0 copying [/workspace/app]", 200)
         )

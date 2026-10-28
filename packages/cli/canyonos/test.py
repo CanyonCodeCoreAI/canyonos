@@ -17,6 +17,7 @@ This file will also need lots of iteration based on what is needed, will expect 
 
 import json
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -36,6 +37,7 @@ from canyonos.deploy import (
     STARTUP_TIMEOUT_SECONDS,
     UP_MARKER,
     PhaseTracker,
+    _curl_example,
     drain,
     follow_gc_log,
     queued_lines,
@@ -44,6 +46,7 @@ from canyonos.deploy import (
 )
 from canyonos.gc import _error_detail, deploy_status, deployed_endpoint
 from canyonos.init import docker_env, load_state, quit_existing
+from canyonos.os_support import is_terminal
 from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
 
@@ -203,6 +206,8 @@ class _Run:
         self.runtime = None
         self.endpoint = None
         self.result = None
+        self.request_id = None
+        self.answer_url = None
         self.error = None
         self.log_tail = None
         self.root_cause = None
@@ -279,14 +284,17 @@ def _query(run, endpoint, timeout, number=3, total=3):
         f"http://{endpoint['public_host']}:{endpoint['api_port']}/answer/{request_id}"
     )
     while data.get("status") == "input_required":
-        # Quiet means --json: the question can't be shown, and a script can't answer it.
-        if ui.console.quiet:
-            raise RuntimeError(
-                "The workflow asked a question, which --json can't answer. "
-                "Run `canyonos test` without --json to answer it."
-            )
         asked = data["question"]
         schema = asked["input_schema"]
+        # Quiet means --json, which can't show the question; with no terminal, no one can type.
+        if ui.console.quiet or not is_terminal(sys.stdin):
+            run.request_id, run.answer_url = request_id, answer_url
+            example = {key: f"<{kind}>" for key, kind in schema.items()}
+            raise RuntimeError(
+                f"The workflow asks {json.dumps(asked['question'])}, but `canyonos test` can "
+                "only take an answer typed in a terminal, without --json. The deploy stays "
+                f"up, so answer request {request_id} with: {_curl_example(answer_url, example)}"
+            )
         ui.say(f"The workflow asks: {json.dumps(asked['question'])}")
         body = {}
         for key, kind in schema.items():
@@ -430,6 +438,8 @@ def _payload(run):
         "phases": run.phases,
         "runtime": run.runtime,
         "result": run.result,
+        "request_id": run.request_id,
+        "answer_url": run.answer_url,
         "error": run.error,
         "log_tail": run.log_tail,
         "root_cause": run.root_cause,

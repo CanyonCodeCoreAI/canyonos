@@ -355,6 +355,12 @@ def _cmd_deploy(args):
     import signal
     import atexit
 
+    # Ignores reloads while the deploy starts; a reload then would break the deploy.
+    def _ignore_reload(sig, frame):
+        logger.warning("Reload ignored: the deploy is still starting.")
+
+    signal.signal(signal.SIGHUP, _ignore_reload)
+
     config_path = CONFIG_PATH
     if not os.path.isfile(config_path):
         logger.error("Config file not found: %s", config_path)

@@ -139,10 +139,21 @@ canyonos test "$QUERY" --json --timeout "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/test
 python3 -c 'import json, sys; json.dump(json.load(sys.stdin)["result"], sys.stdout)' \
   <"$ARTIFACTS_DIR/test.json" | python3 "$CHECK"
 
+# Piped, the help screen shows every command name whole.
+step "canyonos -h"
+canyonos -h >"$ARTIFACTS_DIR/help.txt"
+grep -q " validate " "$ARTIFACTS_DIR/help.txt" || { cat "$ARTIFACTS_DIR/help.txt"; exit 1; }
+
+# A curl command printed whole on one line, as piped output has to keep it.
+WHOLE_CURL="curl -X POST http://[^ ]+ -H \"Content-Type: application/json\" -d '\{[^}]*\}'"
+
 # With no TTY on stdin, deploy fills in default resources where the fixture has none
 # instead of opening the interactive resource picker, so a local run is unattended too.
+# Piped, it still prints a line per phase.
 step "canyonos deploy"
-canyonos deploy --serve false </dev/null
+canyonos deploy --serve false </dev/null | tee "$ARTIFACTS_DIR/deploy.log"
+grep -q '^Starting agents (' "$ARTIFACTS_DIR/deploy.log"
+grep -qE "$WHOLE_CURL" "$ARTIFACTS_DIR/deploy.log"
 ENDPOINT="$(
   uv run --project "$REPO_ROOT" python -c \
     'from canyonos.gc import deployed_endpoint; from canyonos.init import load_state; endpoint = deployed_endpoint(load_state()["port"]); print(endpoint["api_port"], endpoint["method"], endpoint["arguments"][0])'
@@ -151,7 +162,30 @@ read -r API_PORT ROUTE ARGUMENT <<<"$ENDPOINT"
 API_URL="http://127.0.0.1:$API_PORT"
 
 step "canyonos status"
-canyonos status
+canyonos status | tee "$ARTIFACTS_DIR/status.log"
+grep -qE "$WHOLE_CURL" "$ARTIFACTS_DIR/status.log"
+
+# Prints "<desired> <running> <launch error>" for IntentAgent, read from `canyonos status --json`.
+intent_replicas() {
+  canyonos status --json >"$ARTIFACTS_DIR/status.json"
+  python3 -c 'import json, sys; agent = json.load(sys.stdin)["agents"]["IntentAgent"]; print(agent["desired_replicas"], agent["running_replicas"], agent["launch_error"])' \
+    <"$ARTIFACTS_DIR/status.json"
+}
+
+step "canyonos status --json"
+[ "$(intent_replicas)" = "1 1 None" ] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
+
+# Has to return instead of following the stream.
+step "canyonos logs --no-follow"
+canyonos logs --no-follow >"$ARTIFACTS_DIR/logs-tail.log" 2>&1
+[ -s "$ARTIFACTS_DIR/logs-tail.log" ]
+
+# One agent's logs come from its replicas, read on their machine; an unknown name lists the agents.
+step "canyonos logs IntentAgent"
+canyonos logs IntentAgent --tail 20 >"$ARTIFACTS_DIR/logs-intent.log"
+grep -qx -- "--- IntentAgent-0 ---" "$ARTIFACTS_DIR/logs-intent.log" || { cat "$ARTIFACTS_DIR/logs-intent.log"; exit 1; }
+canyonos logs NoSuchAgent >"$ARTIFACTS_DIR/logs-unknown.log" 2>&1 && { cat "$ARTIFACTS_DIR/logs-unknown.log"; exit 1; }
+grep -q "the agents are .*IntentAgent" "$ARTIFACTS_DIR/logs-unknown.log" || { cat "$ARTIFACTS_DIR/logs-unknown.log"; exit 1; }
 
 # Run after the deploy, so doctor checks the live stack.
 step "canyonos doctor"
@@ -200,8 +234,15 @@ code="$(curl -s -o "$ARTIFACTS_DIR/missing-argument.json" -w '%{http_code}' \
 cat "$ARTIFACTS_DIR/missing-argument.json"
 [ "$code" = 400 ] || { echo "expected a 400, got $code"; exit 1; }
 
-# Last, since it kills a gateway: LLM calls, streams, child processes, passthrough, prices and restart, from inside a replica.
+# After the queries, since it kills a gateway: LLM calls, streams, child processes, passthrough, prices and restart, from inside a replica.
 step "LLM gateway and proxy inside an agent replica"
 agent="$(docker ps --filter name=-priceagent- --format '{{.Names}}' | head -n 1)"
 docker cp "$E2E_DIR/gateway_check.py" "$agent:/tmp/gateway_check.py"
 docker exec "$agent" python /tmp/gateway_check.py | tee "$ARTIFACTS_DIR/gateway-check.log"
+
+step "canyonos stop, then canyonos status exits 1"
+canyonos stop
+# Nothing is left to stop, which is still a success.
+canyonos stop
+canyonos status --json >"$ARTIFACTS_DIR/stopped-status.json" && { cat "$ARTIFACTS_DIR/stopped-status.json"; exit 1; }
+grep -q '"running": false' "$ARTIFACTS_DIR/stopped-status.json" || { cat "$ARTIFACTS_DIR/stopped-status.json"; exit 1; }

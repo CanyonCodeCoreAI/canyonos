@@ -189,19 +189,16 @@ def _set_tty(monkeypatch, attached):
     monkeypatch.setattr(convert_cmd, "is_terminal", lambda _stream: attached)
 
 
-def test_an_attended_launch_passes_no_unattended_flags(monkeypatch, agent_on_path):
-    _set_tty(monkeypatch, True)
-
-    assert convert_cmd._launch_agent("claude", "port it", unattended=False) == 0
+def test_an_attended_launch_passes_no_unattended_flags(agent_on_path):
+    assert convert_cmd._launch_agent("claude", "port it", None) == 0
     assert agent_on_path[0] == ["claude", "port it"]
 
 
-def test_codex_has_network_in_both_modes(monkeypatch, agent_on_path):
-    _set_tty(monkeypatch, True)
+def test_codex_has_network_in_both_modes(agent_on_path, tmp_path):
     network = ["-c", "sandbox_workspace_write.network_access=true"]
 
-    convert_cmd._launch_agent("codex", "port it", unattended=False)
-    convert_cmd._launch_agent("codex", "port it", unattended=True)
+    convert_cmd._launch_agent("codex", "port it", None)
+    convert_cmd._launch_agent("codex", "port it", str(tmp_path / "convert.log"))
 
     attended, unattended = agent_on_path
     assert attended == ["codex", *network, "port it"]
@@ -209,20 +206,22 @@ def test_codex_has_network_in_both_modes(monkeypatch, agent_on_path):
     assert unattended[4:6] == network
 
 
-def test_an_unattended_launch_keeps_its_flags_on_a_tty(monkeypatch, agent_on_path):
+def test_an_unattended_launch_keeps_its_flags_on_a_tty(
+    monkeypatch, convertible, agent_on_path
+):
     _set_tty(monkeypatch, True)
 
-    convert_cmd._launch_agent("claude", "port it", unattended=True)
+    convert_cmd.run_convert(yes=True)
 
     argv = agent_on_path[0]
     assert argv[1:-1] == convert_cmd.AGENTS["claude"]["unattended"]
     assert argv[-1].endswith(convert_cmd.UNATTENDED_NOTE)
 
 
-def test_a_launch_without_a_tty_is_unattended(monkeypatch, agent_on_path):
+def test_a_launch_without_a_tty_is_unattended(monkeypatch, convertible, agent_on_path):
     _set_tty(monkeypatch, False)
 
-    convert_cmd._launch_agent("claude", "port it", unattended=False)
+    convert_cmd.run_convert(agent="claude", scope="local")
 
     argv = agent_on_path[0]
     assert argv[1:-1] == convert_cmd.AGENTS["claude"]["unattended"]
@@ -232,7 +231,7 @@ def test_a_launch_without_a_tty_is_unattended(monkeypatch, agent_on_path):
 def test_a_missing_agent_cli_reports_no_status(monkeypatch):
     monkeypatch.setattr(convert_cmd.shutil, "which", lambda _cli: None)
 
-    assert convert_cmd._launch_agent("claude", "port it", unattended=True) is None
+    assert convert_cmd._launch_agent("claude", "port it", None) is None
 
 
 def test_yes_runs_the_agent_unattended(monkeypatch, convertible, agent_on_path):
@@ -242,7 +241,11 @@ def test_yes_runs_the_agent_unattended(monkeypatch, convertible, agent_on_path):
     assert agent_on_path[0][1:-1] == convert_cmd.AGENTS["claude"]["unattended"]
 
 
-def test_a_failed_agent_never_consults_an_earlier_port(monkeypatch, convertible):
+def test_a_failed_agent_never_consults_an_earlier_port(
+    monkeypatch, convertible, tmp_path
+):
+    monkeypatch.setattr(convert_cmd.project, "state_dir", lambda: str(tmp_path))
+    (tmp_path / "convert.log").write_text("")
     monkeypatch.setattr(convert_cmd, "_launch_agent", lambda *_a, **_k: 1)
     monkeypatch.setattr(
         convert_cmd,
@@ -301,7 +304,7 @@ def test_a_port_takes_its_verdict_from_the_validator(
 
 
 def _flat(capsys):
-    return " ".join(capsys.readouterr().out.split())
+    return " ".join(" ".join(capsys.readouterr()).split())
 
 
 def test_a_port_with_findings_did_not_pass(monkeypatch, tmp_path, capsys):

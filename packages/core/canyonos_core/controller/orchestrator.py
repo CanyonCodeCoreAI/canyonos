@@ -138,7 +138,7 @@ class CanyonOrchestrator:
 
     def replica_log_tail(self, replica, lines):
         """The last lines of the replica container's output, read on its machine."""
-        return replicas.log_tail(self.gc, replica, lines)
+        return replicas.log_tail(self.gc._run_cmd, replica, lines)
 
     def remove_all_replicas(self):
         """At teardown, have the reconciler remove every replica. True once none are

@@ -104,7 +104,7 @@ curl http://localhost:8080/status/<request_id>
   - `"status": "input_required"` when an agent asks you a question, with the question and the `input_schema` of the answer it expects in `question`, such as `{"input": "str"}`. Answer with those keys at `POST /answer/<request_id>`, such as `{"input": "yes"}`.
   - `"status": "done"` when it finishes, with your workflow's return value in `result`.
   - `"status": "error"` if it failed.
-- Periodically we clean up all finished requests. Once a finished request is cleaned up, this returns `404` with `Request not found`.
+- Periodically we clean up all finished requests. A cleaned-up request's result is still kept for a day, then read from the dashboard. If neither has it, this returns `404` with `Request not found`.
 
 ### 5. Edit config
 

@@ -17,10 +17,12 @@ import re
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def load_dotenv(path):
-    """Load simple KEY=VALUE entries without overriding existing environment values."""
+def read_dotenv(path):
+    """Return the simple KEY=VALUE entries of a `.env` file, the first of a repeated key
+    winning, or {} when there is no file."""
+    values = {}
     if not os.path.isfile(path):
-        return
+        return values
     # utf-8-sig drops the byte-order mark some Windows editors (Notepad) save in front
     # of the first key, which would otherwise become part of its name; a file without
     # one reads exactly as with utf-8.
@@ -34,20 +36,29 @@ def load_dotenv(path):
             value = value.strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
                 value = value[1:-1]
-            if key and key not in os.environ:
-                os.environ[key] = value
+            if key:
+                values.setdefault(key, value)
+    return values
 
 
-def expand_env_value(value):
-    """Substitute `${VAR}` refs throughout a parsed config, leaving unset ones alone."""
+def load_dotenv(path):
+    """Load simple KEY=VALUE entries without overriding existing environment values."""
+    for key, value in read_dotenv(path).items():
+        os.environ.setdefault(key, value)
+
+
+def expand_env_value(value, env=os.environ):
+    """Substitute `${VAR}` refs from `env` throughout a parsed config, leaving unset ones
+    alone."""
     if isinstance(value, str):
-        return ENV_REF.sub(lambda m: os.environ.get(m.group(1), m.group(0)), value)
+        return ENV_REF.sub(lambda m: env.get(m.group(1), m.group(0)), value)
     if isinstance(value, dict):
         return {
-            expand_env_value(key): expand_env_value(item) for key, item in value.items()
+            expand_env_value(key, env): expand_env_value(item, env)
+            for key, item in value.items()
         }
     if isinstance(value, list):
-        return [expand_env_value(item) for item in value]
+        return [expand_env_value(item, env) for item in value]
     return value
 
 
@@ -66,6 +77,13 @@ def resolve_env_file(config_path):
     if not os.access(path, os.R_OK):
         raise ValueError(f".env is not readable: {path}")
     return path
+
+
+def read_root_dotenv(config_path):
+    """Return the entries of the project's `.env`, or {} when there is none, without
+    importing them."""
+    env_path = resolve_env_file(config_path)
+    return read_dotenv(env_path) if env_path else {}
 
 
 def load_root_dotenv(config_path):

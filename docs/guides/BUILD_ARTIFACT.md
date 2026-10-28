@@ -72,7 +72,7 @@ into the Global Controller's `/workspace`, which reads it for `${VAR}` reference
 in the manifest and for cloud credentials, and passes it to each agent replica
 with `--env-file`. The endpoint, Redis and metrics-collector containers do not
 get it. Put API keys and any other secrets your code reads there. Do not put
-model provider base URLs in it: the runtime sets those itself and its values win over the file. See
+the Bedrock endpoint URL or the proxy variables in it: the runtime sets those itself and its values win over the file. See
 [LLM gateway](LLM_GATEWAY.md).
 
 Hidden files such as `.env` never reach an image. Never put any other secret in

@@ -259,6 +259,7 @@ def _fake_test_command(monkeypatch):
 
     monkeypatch.setattr(cli, "run_test", run_test)
     monkeypatch.setattr(upgrade.ui.console, "quiet", False)
+    monkeypatch.setattr(upgrade.ui.err_console, "quiet", False)
 
 
 def test_the_notice_goes_to_stderr_and_leaves_json_on_stdout(
@@ -435,7 +436,7 @@ def test_upgrade_keeps_a_constraint_that_holds_it_back_and_explains_it(
     assert _run_cli(monkeypatch, "upgrade") == 0
 
     assert "tool install" not in " ".join(_uv_calls(fake_uv))
-    out = _flat(capsys.readouterr().out)
+    out = _flat(" ".join(capsys.readouterr()))
     assert (
         "canyonos stays at 0.1.733 because it was installed with the constraint "
         "`<0.1.734`, which uv keeps." in out
@@ -483,7 +484,7 @@ def test_upgrade_without_uv_on_path_says_how_to_finish(
 
     assert _run_cli(monkeypatch, "upgrade") == 1
     assert "Run `uv tool upgrade canyonos` once it is." in _flat(
-        capsys.readouterr().out
+        capsys.readouterr().err
     )
 
 

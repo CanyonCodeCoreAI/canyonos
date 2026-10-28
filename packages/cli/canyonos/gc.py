@@ -8,6 +8,7 @@ that talk to it don't each restate the same routes, payloads and failure modes.
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from canyonos import project, ui
@@ -16,6 +17,8 @@ from canyonos.init import load_state
 REQUEST_TIMEOUT_SECONDS = 60
 # Longer than the server's wait for the deploy to stop, which drains every replica first.
 CLEAN_REQUEST_TIMEOUT_SECONDS = 270
+# Longer than one log read on a replica's machine, which may take up to 180s over SSH.
+LOGS_REQUEST_TIMEOUT_SECONDS = 200
 
 
 class GCError(RuntimeError):
@@ -99,6 +102,13 @@ def post_clean(port):
     )
 
 
+def post_reload(port):
+    """Have the running deploy reload the config synced into its container, without
+    restarting the agents that stay. Raises GCError naming every problem when the
+    config is invalid."""
+    return _request(f"http://127.0.0.1:{port}/reload", "Reload", method="POST")
+
+
 def deploy_status(port):
     """Parsed /status payload, or None when the container can't be read.
 
@@ -121,3 +131,20 @@ def deployed_endpoint(port):
     return _request(f"http://127.0.0.1:{port}/endpoint", "Read endpoint", timeout=10)[
         "endpoint"
     ]
+
+
+def runtime_status(port):
+    """Return GET /runtime_status: each agent's `desired_replicas`, `running_replicas` and last
+    `launch_error` under `agents`, and each machine type's last start error under
+    `machine_errors`; raise GCError when the container can't say."""
+    return _request(
+        f"http://127.0.0.1:{port}/runtime_status", "Read runtime status", timeout=10
+    )
+
+
+def deployed_logs(port, name, tail):
+    """Return the last `tail` lines of each running replica of agent `name`, or of the
+    one replica whose ID is `name`, keyed by replica ID, from GET /logs; raise GCError
+    when the container can't say, naming the agents when `name` is neither."""
+    url = f"http://127.0.0.1:{port}/logs/{urllib.parse.quote(name)}?tail={tail}"
+    return _request(url, "Read logs", timeout=LOGS_REQUEST_TIMEOUT_SECONDS)["logs"]

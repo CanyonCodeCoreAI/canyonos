@@ -292,6 +292,7 @@ def _ask(monkeypatch, input_schema, *typed):
     monkeypatch.setattr(test_cmd, "_await_result", lambda *a: next(statuses))
     monkeypatch.setattr(test_cmd, "_send_query", lambda *a: sent.append(a) or "req-1")
     monkeypatch.setattr("builtins.input", lambda _prompt: next(lines))
+    monkeypatch.setattr(test_cmd, "is_terminal", lambda _stream: True)
     return sent
 
 
@@ -371,20 +372,18 @@ def test_a_refused_answer_reports_the_endpoint_reason(monkeypatch, deployable):
 
 
 def test_a_question_without_a_terminal_fails_the_run(monkeypatch, deployable):
-    _ask(monkeypatch, {"input": "str"})
+    sent = _ask(monkeypatch, {"input": "str"})
     errors = []
 
-    def no_terminal(_prompt):
-        raise EOFError
-
-    monkeypatch.setattr("builtins.input", no_terminal)
+    monkeypatch.setattr(test_cmd, "is_terminal", lambda _stream: False)
     monkeypatch.setattr(
         test_cmd, "_print_summary", lambda run: errors.append(run.error)
     )
 
     assert test_cmd.run_test("hi") == 1
 
-    assert "no terminal" in errors[0]
+    assert "answer request req-1 with: curl -X POST " + ANSWER_URL in errors[0]
+    assert len(sent) == 1
 
 
 def test_a_question_fails_a_json_run_without_prompting(monkeypatch, deployable, capsys):

@@ -275,7 +275,7 @@ def started(monkeypatch):
 )
 def test_every_invocation_ends_by_starting_delivery(monkeypatch, started, argv):
     monkeypatch.setattr(cli, "run_clean", lambda: None)
-    monkeypatch.setattr(cli, "run_status", lambda: None)
+    monkeypatch.setattr(cli, "run_status", lambda as_json: None)
 
     try:
         run_cli(monkeypatch, *argv)

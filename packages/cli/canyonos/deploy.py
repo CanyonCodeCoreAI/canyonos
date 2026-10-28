@@ -22,7 +22,9 @@ to it on demand.
 import json
 import queue
 import re
+import shlex
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -50,6 +52,7 @@ from canyonos.dashboard_stack import (
 from canyonos.gc import GCError, deploy_status, deployed_endpoint, post_deploy
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import docker_env, load_state, run_init
+from canyonos.os_support import is_terminal
 from canyonos.quit import quit_project
 from canyonos.resources import configure_resources
 from canyonos.serve import _register_running_project, serve_dashboard
@@ -407,10 +410,8 @@ def _curl_example(url, body):
     paste (some terminals/chat boxes drop the backslashes or the newlines), and
     a single line always works no matter where it lands.
     """
-    compact_body = json.dumps(body)
-    return (
-        f"curl -X POST {url} -H \"Content-Type: application/json\" -d '{compact_body}'"
-    )
+    compact_body = shlex.quote(json.dumps(body))
+    return f'curl -X POST {url} -H "Content-Type: application/json" -d {compact_body}'
 
 
 def summary_body(dashboard_url, endpoint):
@@ -578,7 +579,10 @@ def _tail_quiet(lines, state, serve, on_ready):
         for line in drain(lines, state, deadline=deadline, heartbeat=True):
             if line is None:
                 idle = time.monotonic() - last_output
-                if idle > _IDLE_WARN_SECONDS:
+                # Piped, each update prints a line: report a stall once, not every poll.
+                if idle > _IDLE_WARN_SECONDS and (
+                    is_terminal(sys.stdout) or not stalled
+                ):
                     spinner.update(
                         _still_running(tracker, recent[-1] if recent else "", idle)
                     )

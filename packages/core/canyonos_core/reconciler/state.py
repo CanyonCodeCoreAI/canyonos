@@ -23,6 +23,9 @@ STOPPING_TTL_SECONDS = 60
 # Agent name -> why its last launch failed; a launch that succeeds clears it.
 LAUNCH_ERRORS_KEY = "reconciler:launch_errors"
 
+# Machine type -> why its last start failed; a later start of that type clears it.
+MACHINE_ERRORS_KEY = "reconciler:machine_errors"
+
 IMAGES_READY_KEY = "reconciler:images_ready"
 
 

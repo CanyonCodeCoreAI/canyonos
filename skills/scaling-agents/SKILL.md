@@ -1,6 +1,6 @@
 ---
 name: scaling-agents
-description: Configure how a CanyonOS project's agents hold state, use models, and scale. Use when setting up or reviewing agent memory, `llms.yaml` model access and cost caps, or `scaling.yaml` autoscaling policies.
+description: Configure how a CanyonOS project's agents hold state, use models, and scale. Use when setting up or reviewing agent memory, `llms.yaml` model access and cost caps, or the `scaling.yaml` autoscaling policy.
 ---
 
 # Configure memory, models and scaling for CanyonOS
@@ -64,28 +64,35 @@ Follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
 
 Follow [Autoscaling](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/SCALING.md).
 
-- Write policies only for `type: agent` entries that step 2 found scalable.
-  Never scale a database entry.
-- `min_replicas` is the entry's current `replicas`. Use
-  `requests_per_minute_per_replica` for request-bound agents and
-  `queue_length_total` for agents whose calls queue behind slow work.
+- A workflow has one policy, under a top-level `scaling:` key. It applies to
+  every `type: agent` entry, the endpoint's agent included, each scaled on its
+  own load. Database entries never scale. No agent can be left out.
+- Write the policy only if step 2 found every agent scalable. If any agent keeps
+  state across requests in process, is an aggregation barrier, or has a
+  downstream dependency that cannot take more load, write no `scaling.yaml` and
+  report which agent blocks it and why.
+- `min_replicas` and `max_replicas` bound every agent, and an agent outside them
+  moves to the nearest bound at once. Use the smallest `replicas` of any agent
+  for `min_replicas`, and a `max_replicas` no lower than the largest.
+- Use `requests_per_minute_per_replica` when the agents are request-bound and
+  `queue_length_total` when their calls queue behind slow work.
 - Without developer values, use the guide's example numbers
   (`max_replicas: 6`, `scale_up_above: 10`, `scale_down_below: 1`) and report
-  them as defaults. Do not scale an aggregation barrier or an agent whose
-  downstream dependency cannot take more load; report why it was left out.
-- Each policy needs integer replicas of at least 1 with `min <= max`, numbers of
-  at least 0, and `scale_down_below < scale_up_above`. An invalid policy is
-  skipped with only a controller warning.
+  them as defaults.
+- The policy needs integer replicas of at least 1 with `min <= max`, numbers of
+  at least 0, and `scale_down_below < scale_up_above`. An invalid policy, or one
+  not under `scaling:`, is skipped with only a controller warning.
 
 ## 5. Verify and report
 
 - Parse both files. Check every rule in steps 3 and 4, and that every agent
-  named in either file is an entry in `global_controller.yaml`; a misspelled name
-  is refused in `llms.yaml` and ignored in `scaling.yaml`.
+  named in `llms.yaml` is an entry in `global_controller.yaml`; under a
+  misspelled name, the real agent's calls are refused.
 - Run `canyonos validate` from the project folder and resolve findings until
   exit 0, or report the blocker.
-- Report per agent: its state and whether it scales, the models it calls and
-  caps, its policy, and which values are defaults. List call paths whose model
+- Report per agent: its state and whether it scales, and the models it calls
+  and caps. Report the workflow's policy, or the agent that blocked one, and
+  which values are defaults. List call paths whose model
   could not be resolved and code changes proposed but not made.
 
 The Global Controller publishes both files on startup and reload. Gateways

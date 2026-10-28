@@ -45,12 +45,12 @@ allows `${VAR}` only in string fields.
   `entrypoint` exists inside the project.
 
 The allowed keys are declared once, at the top of `manifest.py`: top-level keys in
-`_MANIFEST_KEYS` and entry keys per type in `_SERVICE_KEYS_BY_TYPE`. Anything else is
+`_MANIFEST_KEYS` and entry keys per type in `_AGENT_KEYS_BY_TYPE`. Anything else is
 rejected. A key that no longer does anything goes in `_RETIRED_KEYS` with the message
 to show. A provider's own section is declared in its `_schema.py`
 instead; see `packages/core/canyonos_core/reconciler/providers/README.md`.
 
-Cross-field rules live in `_service`, `_check_provider_sections` and `_endpoint`:
+Cross-field rules live in `_agent`, `_agents`, `_check_provider_sections` and `_endpoint`:
 
 - `provider: EC2` needs the `ec2` section, with `machine_type` mapping each type to a count.
 - The `endpoint` names an entry of type `agent` and one of its `functions`.
@@ -87,7 +87,7 @@ today, so users apply changes with `canyonos deploy`.
 
 1. Add the key to `_MANIFEST_KEYS` or the right agent key set in `manifest.py`, and
    a field with its default to the matching dataclass.
-2. Parse it in `load_manifest` or `_service` with the helpers in `schema/_checks.py`.
+2. Parse it in `load_manifest` or `_agent` with the helpers in `schema/_checks.py`.
 3. Read it where it's used, and publish it in `_apply_config` if other processes need it.
 4. Add schema tests in `packages/core/tests/`, and document it in
    [the user guide](../guides/GLOBAL_CONTROLLER.md).

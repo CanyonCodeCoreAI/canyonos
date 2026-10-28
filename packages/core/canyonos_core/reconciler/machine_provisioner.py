@@ -12,7 +12,7 @@ import time
 import uuid
 from functools import partial
 
-from canyonos_core.reconciler import providers, replicas
+from canyonos_core.reconciler import providers, replicas, state
 from canyonos_core.reconciler.parallel import run_in_parallel
 
 logger = logging.getLogger(__name__)
@@ -91,10 +91,16 @@ class MachineProvisioner(object):
                     **machine_spec,
                     **{k: str(v) for k, v in (capacity or {}).items()},
                 }
-                missing += [(provider, machine_spec, fields)] * (count - len(started))
+                # A provider without machine types uses its own name.
+                machine_type = machine_spec.get(
+                    providers.SCHEMAS[provider_name].MACHINE_TYPES, provider_name
+                )
+                missing += [(provider, machine_spec, fields, machine_type)] * (
+                    count - len(started)
+                )
 
         # Saved only after every type is sized and priced, so a failed lookup starts nothing.
-        for provider, machine_spec, fields in missing:
+        for provider, machine_spec, fields, machine_type in missing:
             launch_id = uuid.uuid4().hex
             self.redis.hset_multiple(
                 f"machine_record:{launch_id}",
@@ -103,15 +109,16 @@ class MachineProvisioner(object):
             self._starting.add(launch_id)
             threading.Thread(
                 target=self._start_machine,
-                args=(provider, machine_spec, launch_id),
+                args=(provider, machine_spec, launch_id, machine_type),
                 name=f"start-machine-{launch_id}",
                 daemon=True,
             ).start()
 
-    def _start_machine(self, provider, machine_spec, launch_id):
+    def _start_machine(self, provider, machine_spec, launch_id, machine_type):
         """Start one machine, wait for it and start its Redis, saving what the provider
-        returns to its record. Runs in its own thread; a failed start is logged and leaves
-        the record without private_host, for find_dead to replace."""
+        returns to its record. Runs in its own thread. A failed start saves its error by
+        machine type until every machine of that type is up; find_dead replaces a record
+        left without private_host."""
         key = f"machine_record:{launch_id}"
         try:
             machine = provider.start_machine(machine_spec, launch_id)
@@ -126,8 +133,25 @@ class MachineProvisioner(object):
             self.redis.hset_multiple(
                 key, {field: str(value) for field, value in machine.items() if value}
             )
+            records = [
+                self.redis.hgetall(record_key)
+                for record_key in self.redis.scan_keys("machine_record:*")
+            ]
+            # Only once no machine of this type is left without a host, so the error of
+            # one that failed beside it stays.
+            if all(
+                record.get("private_host")
+                for record in records
+                if record.get(
+                    providers.SCHEMAS[record["provider"]].MACHINE_TYPES,
+                    record["provider"],
+                )
+                == machine_type
+            ):
+                self.redis.hdel(state.MACHINE_ERRORS_KEY, machine_type)
         except Exception as e:
             logger.warning("Failed to start machine %s: %r", launch_id, e)
+            self.redis.hset(state.MACHINE_ERRORS_KEY, machine_type, str(e))
         finally:
             self._starting.discard(launch_id)
 

@@ -30,7 +30,7 @@
 
 The gateway runs in its own separate VM, with two extra libraries installed: requests and ... to prevent images built from having more canyonos dependencies.
 
-All LLM calls supported by us go through the gateway, defaulting to the normal LLM call if something is ever wrong with the gateway (just with no telemetry).
+All LLM calls supported by us go through the gateway, with no fallback to a direct call: a gateway that keeps crashing fails its replica, which is then replaced.
 
 Our gateway is able to obtain LLM telemetry from every call made, as well as implement policies on requests going through, such as auth, limits, etc..
 

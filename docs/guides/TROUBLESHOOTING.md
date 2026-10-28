@@ -60,7 +60,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | Fan-out is no faster than sequential | Dispatch and `.value()` were fused in one comprehension |
 | `Lock is bound to a different event loop` on the second request | The agent runs `asyncio.run` per call while the instance holds loop-bound state. Use one persistent loop |
 | Wrong results under load | Concurrent calls share one instance; state on `self` is not thread-safe |
-| A model call reaches the provider directly | The SDK is not one of the three the gateway routes (Gemini, Cohere, Azure, ...), or the client was built with an explicit `base_url`. See [LLM gateway](LLM_GATEWAY.md) |
+| A model call reaches the provider directly | The call is not OpenAI-format, Anthropic or Bedrock (such as Gemini's or Cohere's own SDK), it goes over HTTPS to a host the gateway doesn't know, or the client ignores the proxy variables (such as `aiohttp` without `trust_env=True`). See [LLM gateway](LLM_GATEWAY.md) |
 
 ## Endpoint
 

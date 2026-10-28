@@ -20,10 +20,12 @@ from canyonos_core.controller.controller_context import (
     replica_id_from_record,
     list_replicas,
 )
+from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.reconciler import state
 from canyonos_core.reconciler.machine_provisioner import MachineProvisioner
 from canyonos_core.reconciler.parallel import run_in_parallel
 from canyonos_core.reconciler.replica_provisioner import ReplicaProvisioner
+from canyonos_core.reconciler.replicas import log_tail
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -178,7 +180,7 @@ class Reconciler(object):
             if reason is None:
                 continue
             if reason == "unhealthy":
-                self._remove_without_draining(replica_id, reason)
+                self._remove_without_draining(replica_id, replica, reason)
             # Still draining: a replace request stays pending until the replica is gone.
             elif not self._drain_replica(replica_id, replica, reason):
                 continue
@@ -198,9 +200,14 @@ class Reconciler(object):
             return "unhealthy"
         return None
 
-    def _remove_without_draining(self, replica_id, reason):
-        """Remove a replica that can't drain, an unhealthy one or a database, at once."""
+    def _remove_without_draining(self, replica_id, replica, reason):
+        """Remove a replica that can't drain, an unhealthy one or a database, at once,
+        first copying an unhealthy one's last output into this log."""
         logger.info("Removing replica %s (%s)", replica_id, reason)
+        if reason == "unhealthy":
+            dump_container_log(
+                replica, reason, partial(log_tail, self.context._run_cmd)
+            )
         self._seen_healthy.discard(replica_id)
         self.replica_provisioner.remove_replica(replica_id, drain=False)
 
@@ -258,11 +265,11 @@ class Reconciler(object):
             self.context.agent_specs_by_name.get(replica["agent_name"], {}).get("type")
             == "database"
         ):
-            self._remove_without_draining(replica_id, reason)
+            self._remove_without_draining(replica_id, replica, reason)
             return True
         # One that stopped answering has no requests left to finish.
         if not self._is_healthy(replica, replica_id):
-            self._remove_without_draining(replica_id, "unhealthy")
+            self._remove_without_draining(replica_id, replica, "unhealthy")
             return True
 
         if "draining_at" not in replica:

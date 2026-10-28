@@ -50,6 +50,7 @@ Run `bun run check` and `bun run test` before calling a change done.
 - Add or update tests next to the change: `packages/core/tests/`, `packages/cli/tests/`, `src/modules` in `api` and `web`, or `tests/` for cross-package behavior.
 - Keep tool versions pinned exactly (e.g. `ruff==`, `ty==`, SHA-pinned GitHub Actions).
 - Keep provider-specific logic (Local, EC2, and any new provider) inside `packages/core/canyonos_core/reconciler/providers/`. Callers go through `providers/__init__.py`, never a provider module or a provider name; see [its README](packages/core/canyonos_core/reconciler/providers/README.md).
+- A `canyonos` command that fails must exit non-zero, so a script or coding agent can tell. Its `run_*` function either returns `False` (or a non-zero code) and `cli.py` passes the result to `sys.exit`, or raises `RuntimeError`, which `cli.py` prints and exits 1. Never print an error and then `return` nothing.
 - Naming: one word per thing, in code, comments, logs and docs.
   - _machine_: a computer, this one or a cloud VM. Never "instance" or "node".
   - _agent_: one entry under `agents:` in `global_controller.yaml`, databases and the endpoint included. Never "service". Its config is an _agent spec_: `agent_spec` for one, `agent_specs` for the list, `agent_specs_by_name` for the lookup.

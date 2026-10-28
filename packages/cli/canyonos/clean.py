@@ -32,15 +32,16 @@ def _project_images():
 
 def _remove_canyon_images(images):
     """Remove the images CanyonOS built for this project's agents, leaving other
-    projects' images and the CanyonOS images themselves in place."""
+    projects' images and the CanyonOS images themselves in place. Returns False when
+    Docker refused."""
     if images is None:
         ui.hint(
             f"No readable {default_config_path()} here, so no Docker images were "
             "removed."
         )
-        return
+        return True
     if not images:
-        return
+        return True
 
     filters = [arg for image in images for arg in ("--filter", f"reference={image}")]
     try:
@@ -53,16 +54,16 @@ def _remove_canyon_images(images):
         )
     except OSError as error:
         ui.warn(f"Could not clean Docker images: {error}")
-        return
+        return False
 
     if result.returncode != 0:
         detail = result.stderr.strip() or "docker images failed"
         ui.warn(f"Could not list Canyon Docker images: {detail}")
-        return
+        return False
 
     image_ids = list(dict.fromkeys(result.stdout.split()))
     if not image_ids:
-        return
+        return True
 
     try:
         with ui.status("Removing Canyon Docker images..."):
@@ -75,14 +76,15 @@ def _remove_canyon_images(images):
             )
     except OSError as error:
         ui.warn(f"Could not clean Docker images: {error}")
-        return
+        return False
 
     if result.returncode != 0:
         detail = result.stderr.strip() or "docker image rm failed"
         ui.warn(f"Could not remove Canyon Docker images: {detail}")
-        return
+        return False
 
     ui.ok(f"Removed {len(image_ids)} Canyon Docker image(s).")
+    return True
 
 
 def _remove_emptied_parents(path):
@@ -93,7 +95,9 @@ def _remove_emptied_parents(path):
 
 
 def _remove_canyon_skills():
-    """Removes the skill `canyonos convert` installs into this project, leaving global installs."""
+    """Removes the skill `canyonos convert` installs into this project, leaving global
+    installs. Returns False when one could not be removed."""
+    removed_all = True
     for spec in convert.AGENTS.values():
         skill_dir = spec["skill_dirs"]["local"]
         try:
@@ -106,14 +110,16 @@ def _remove_canyon_skills():
             _remove_emptied_parents(skill_dir)
         except OSError as error:
             ui.warn(f"Could not remove {skill_dir}: {error}")
+            removed_all = False
             continue
         ui.ok(f"Removed {skill_dir}.")
+    return removed_all
 
 
 def run_clean():
     """Remove the current project's `.canyon` folder (and the project id, when
-    `global_controller.yaml` lives there), CanyonOS skill, and the Docker images built
-    for its agents."""
+    `global_controller.yaml` lives there), CanyonOS skill and its agents' Docker images.
+    Returns False if any could not be removed."""
     # A built project keeps its agent list inside .canyon, which goes first.
     images = _project_images()
     canyon_dir = os.path.join(os.getcwd(), CANYON_DIR)
@@ -125,6 +131,9 @@ def run_clean():
     else:
         ui.say(f"No {CANYON_DIR} folder to remove.")
 
-    _remove_canyon_skills()
-    _remove_canyon_images(images)
+    removed = [_remove_canyon_skills(), _remove_canyon_images(images)]
+    if not all(removed):
+        ui.fail("Clean incomplete; see the warnings above.")
+        return False
     ui.ok("Clean complete.")
+    return True

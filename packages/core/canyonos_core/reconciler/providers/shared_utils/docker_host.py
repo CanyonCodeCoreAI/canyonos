@@ -29,15 +29,13 @@ def container_running(controller, container, host, user):
     return result.stdout.strip() == "true"
 
 
-def container_log_tail(controller, container, host, user, lines):
+def container_log_tail(run_cmd, container, host, user, lines):
     """Used by `log_tail`: the last `lines` lines `container` wrote on `host`, stdout
-    then stderr, as a list. Raises RuntimeError with the reason when there is no
-    container or docker can't read its log."""
+    then stderr, as a list, read with `run_cmd`. Raises RuntimeError with the reason
+    when there is no container or docker can't read its log."""
     if not container:
         raise RuntimeError("no container")
-    result = controller._run_cmd(
-        ["docker", "logs", "--tail", str(lines), container], host, user
-    )
+    result = run_cmd(["docker", "logs", "--tail", str(lines), container], host, user)
     if result.returncode != 0:
         # stderr here is docker's complaint, not the agent's output.
         raise RuntimeError((result.stderr or result.stdout or "").strip())

@@ -158,7 +158,7 @@ def test_a_save_failure_warns_instead_of_failing_the_deploy(
 
     consent.offer_after_first_deploy()
 
-    assert "Could not save your usage reporting choice" in capsys.readouterr().out
+    assert "Could not save your usage reporting choice" in capsys.readouterr().err
 
 
 def test_the_question_says_exactly_what_is_sent(monkeypatch, capsys):

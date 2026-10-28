@@ -25,6 +25,7 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `doctor` | Check that your environment is ready |
 | `new-app` | Create a starter project with one agent in an empty folder |
 | `contact` | See or change whether the CLI shares usage reporting with Canyon Code |
+| `upgrade` | Upgrade the canyonos CLI to the latest release |
 | `-v`, `--version` | Print the installed version |
 
 ## Usage reporting

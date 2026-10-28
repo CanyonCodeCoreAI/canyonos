@@ -20,7 +20,7 @@ import tarfile
 import tempfile
 import urllib.request
 
-from canyonos import env, ui
+from canyonos import env, project, ui
 from canyonos.constants import CANYON_DIR
 from canyonos.os_support import is_terminal
 from canyonos.validate import UNCHECKED, run_validate
@@ -275,29 +275,31 @@ def _install_skill(dest, source=SKILL_SOURCE):
     return False
 
 
-def _launch_agent(agent: str, prompt: str, unattended: bool) -> int | None:
+def _launch_agent(agent: str, prompt: str, log_path: str | None) -> int | None:
     """Run the agent over `prompt`. Returns its exit status, or None if
     there was no agent to run.
 
-    Attended, the agent owns the screen with its own TUI. Unattended it is asked
-    for a transcript instead, since nobody is watching one, and told as much in
-    the prompt so it stops posing questions into an empty room.
+    Without `log_path`, the agent owns the screen with its own TUI. With one it runs
+    unattended, writing its transcript to `log_path` since nobody is watching, and is
+    told as much in the prompt so it stops posing questions into an empty room.
     """
     spec = AGENTS[agent]
     if not shutil.which(spec["cli"]):
         ui.fail(f"`{spec['cli']}` not found on PATH; install {spec['label']} first.")
         return None
 
-    # The agent's TUI wants stdin and stdout; anything less -- or a caller who
-    # already said not to ask -- and it gets the unattended flags instead.
-    attended = not unattended and is_terminal(sys.stdin) and is_terminal(sys.stdout)
-    if not attended:
+    if log_path:
         prompt += UNATTENDED_NOTE
-    unattended_args = [] if attended else spec["unattended"]
+    unattended_args = spec["unattended"] if log_path else []
     argv = [spec["cli"], *unattended_args, *spec["args"], prompt]
     # No check=True: the agent exiting non-zero (including the user quitting it)
     # is an ordinary outcome, not something to raise a traceback over.
-    return subprocess.run(argv, check=False).returncode
+    if not log_path:
+        return subprocess.run(argv, check=False).returncode
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    ui.say(f"{spec['label']} is running unattended; its output goes to {log_path}")
+    with open(log_path, "wb") as log:
+        return subprocess.run(argv, stdout=log, stderr=log, check=False).returncode
 
 
 def _report_port() -> bool:
@@ -327,13 +329,17 @@ def _report_port() -> bool:
 
 
 def run_convert(
-    agent: str | None = None, scope: str | None = None, yes: bool = False
+    agent: str | None = None,
+    scope: str | None = None,
+    yes: bool = False,
+    install_only: bool = False,
 ) -> bool:
     """Install the skill, hand the port to a coding agent, then check its work.
 
     True only if the agent ran to completion and the `.canyon` it left validates.
     A session that died says nothing about a `.canyon` an earlier run may have left
-    in the directory, so it fails without consulting it.
+    in the directory, so it fails without consulting it. With `install_only`, stop
+    once the skill is installed.
     """
     # The menus read keys off stdin and draw on stderr; without both, flags are
     # the only way in.
@@ -363,12 +369,23 @@ def run_convert(
     ui.say(f"Installing CanyonOS skill for {spec['label']} into {dest}...")
     if not _install_skill(dest):
         return False
+    if install_only:
+        ui.ok(f"{spec['label']} can use the skill in {dest} to convert this project.")
+        return True
 
+    # The agent's TUI needs stdin and stdout; without both, or with -y, run unattended.
+    attended = not yes and is_terminal(sys.stdin) and is_terminal(sys.stdout)
+    log_path = None if attended else os.path.join(project.state_dir(), "convert.log")
     ui.say(f"Launching {spec['label']}...")
-    status = _launch_agent(agent, CONVERT_PROMPT, unattended=yes)
+    status = _launch_agent(agent, CONVERT_PROMPT, log_path)
     if status is None:
         return False
     if status != 0:
         ui.fail(f"Conversion incomplete: {spec['label']} exited with status {status}.")
-        return False
-    return _report_port()
+    elif _report_port():
+        return True
+    if log_path:
+        with open(log_path, encoding="utf-8", errors="replace") as log:
+            ui.hint(f"Last lines of {log_path}:")
+            ui.say("".join(log.readlines()[-20:]).rstrip())
+    return False

@@ -124,7 +124,7 @@ def test_a_dashboard_teardown_failure_is_reported_after_the_project_is_gone(
 
     quit_cmd.run_quit()
 
-    assert "dashboard stack failed" in capsys.readouterr().out
+    assert "dashboard stack failed" in capsys.readouterr().err
     assert not state_path.exists()
 
 
@@ -148,4 +148,4 @@ def test_quit_outside_the_project_fails_while_dashboard_containers_remain(
     quit_cmd.run_quit()
 
     assert ["docker", "compose", "-p", "canyonos-dashboard", "down"] in docker_calls
-    assert "dashboard stack failed" in capsys.readouterr().out
+    assert "dashboard stack failed" in capsys.readouterr().err

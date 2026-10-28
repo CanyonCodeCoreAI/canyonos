@@ -1,6 +1,6 @@
 ---
 name: converting-to-canyonos
-description: Port a Python agent project to CanyonOS by preparing and validating a `.canyon`.
+description: Port a Python agent project to CanyonOS by preparing and validating a `.canyon`. Also use to deploy, inspect, or change a running CanyonOS project from the `canyonos` command line.
 ---
 # Port an agent project to CanyonOS
 
@@ -93,3 +93,23 @@ Report the validation result, blockers, chosen defaults and required credential
 names in the developer's language. Link to [Commands](https://canyonos.readthedocs.io/en/latest/#commands)
 for next steps, including `canyonos test "$(cat .canyon/config/test_query.txt)"`.
 Claim success only after validation exits 0 with no open blocker.
+
+## After the conversion: run the deploy
+
+Only once the conversion is reported and you are asked to run it. From the
+project folder, with no terminal attached:
+
+- `canyonos deploy --serve false`: build and start it without the dashboard, using
+  default resources instead of asking. It replaces this project's earlier deploy.
+- `canyonos status --json`: `running`, `endpoint`, `dashboard_url`, per agent the
+  desired and running replicas and last launch error, each machine type's last
+  start error, and `errors` for any part it could not read. Exits 1 if nothing runs.
+- `canyonos test --json "$(cat .canyon/config/test_query.txt)"`: send one query.
+- `canyonos logs --no-follow`: print the last 200 log lines and exit.
+- `canyonos logs <agent>`: print the last 200 lines of each of that agent's replicas,
+  or of one replica such as `IntentAgent-1`; `--tail N` or `--tail all` for more.
+- Any change, config or code, takes effect only after another `canyonos deploy`.
+- `canyonos validate --json`: recheck `.canyon` after an edit.
+- `canyonos stop` stops the agents; `canyonos quit` removes everything.
+
+Every command exits non-zero on failure.

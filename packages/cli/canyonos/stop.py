@@ -15,24 +15,30 @@ from canyonos.init import docker_env
 def run_stop():
     """Run `canyonos stop`: shut down the project's running agents, and the dashboard
     when no other project still uses it, but leave CanyonOS's own container and files
-    in place for the next deploy. `canyonos quit` removes those too."""
+    in place for the next deploy. `canyonos quit` removes those too. Returns True when
+    nothing is left running."""
     state = require_state()
     if state is None:
-        return
+        return True
     if deploy_status(state["port"]) is None:
         ui.warn("Nothing is running for this project. Run `canyonos quit` to clean up.")
-        return
+        return False
 
     try:
         with ui.status("Stopping deploy..."):
-            post_clean(state["port"])
+            try:
+                post_clean(state["port"])
+            except GCError as e:
+                # 409 is "no deploy running", which is the desired end state.
+                if e.code != 409:
+                    raise
             dashboard_kept = project.other_global_controllers_running(
                 state["container_id"], docker_env(state)
             )
             dashboard_stopped = not dashboard_kept and stop_dashboard()
     except GCError as e:
         ui.fail(e)
-        return
+        return False
 
     if dashboard_kept:
         ui.ok("Deploy stopped.")
@@ -41,10 +47,11 @@ def run_stop():
                 "The dashboard was left running because another CanyonOS project is "
                 "still deployed."
             )
-        return
+        return True
     if dashboard_stopped:
         ui.ok("Deploy stopped.")
     else:
         ui.warn(
             "Deploy stopped, but the dashboard did not. Run `canyonos quit` to remove it."
         )
+    return dashboard_stopped

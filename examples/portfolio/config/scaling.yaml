@@ -9,7 +9,7 @@
 #
 # Thresholds are read on the controller's poll interval and act on a sustained
 # breach, not a single sample: an agent gains (or loses) one replica only when
-# every sample in the last 10 polls is above scale_up_above (or below
+# every sample in the last 4 polls is above scale_up_above (or below
 # scale_down_below). min_replicas / max_replicas bound every decision;
 # min_replicas must be at least 1, since nothing is measured at zero replicas.
 # A policy that breaks these rules is skipped with a warning.

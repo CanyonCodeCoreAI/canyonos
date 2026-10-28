@@ -248,7 +248,9 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
             _wait_until_reachable(address, int(machine["container_timeout"]))
         except TimeoutError:
             # Show the log now: removing a failed launch can take its machine and log with it.
-            dump_container_log(replica, "unreachable", partial(log_tail, controller))
+            dump_container_log(
+                replica, "unreachable", partial(log_tail, controller._run_cmd)
+            )
             raise
     logger.info("Replica ready: %s -> %s", container, replica["published_address"])
     return replica
@@ -412,11 +414,11 @@ def is_running(controller, record):
     )
 
 
-def log_tail(controller, record, lines):
-    """Return the last `lines` lines of the replica container's output. Raises
-    RuntimeError with the reason if they can't be read."""
+def log_tail(run_cmd, record, lines):
+    """Return the last `lines` lines of the replica container's output, read with
+    `run_cmd` on its machine. Raises RuntimeError with the reason if they can't be read."""
     return container_log_tail(
-        controller,
+        run_cmd,
         record.get("container_name"),
         record["private_host"],
         record.get("user"),
