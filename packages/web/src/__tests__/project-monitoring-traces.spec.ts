@@ -9,9 +9,10 @@ import type {
   MonitoringSeriesResponse,
   MonitoringTrace,
 } from '@canyonos/api/monitoring';
+import type { RequestTrace } from '@canyonos/api/requests';
 
 import { authenticate } from './helpers/auth';
-import { apiBaseUrl, fulfillJson } from './helpers/projects';
+import { apiBaseUrl, failJson, fulfillJson } from './helpers/projects';
 import { PROJECT, stubFleetSpend, stubProjectDashboard, stubProjectsList } from './helpers/session';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
@@ -27,6 +28,7 @@ const PLAIN_TRACE: MonitoringTrace = {
   span_count: 1,
   duration_ms: 120,
   failed: false,
+  total_cost: null,
   spans: [
     {
       span_id: 'span-plain',
@@ -50,6 +52,7 @@ const LLM_TRACE: MonitoringTrace = {
   span_count: 3,
   duration_ms: 2400,
   failed: false,
+  total_cost: 0.0141,
   spans: [
     {
       span_id: 'span-root',
@@ -120,6 +123,30 @@ const LLM_CALL: MonitoringLlmCall = {
   attributes: {},
 };
 
+// The Costs tab's per-query read for LLM_TRACE, which the traces table opens as its details view.
+const LLM_REQUEST: RequestTrace = {
+  project_id: PROJECT.id,
+  session_id: LLM_TRACE.trace_id,
+  status: 'completed',
+  created_at: '2026-10-06T12:05:00.000Z',
+  started_at: '2026-10-06T12:05:00.000Z',
+  finished_at: '2026-10-06T12:05:02.400Z',
+  duration_ms: 2400,
+  input: 'What does the blue mug cost?',
+  output: 'The blue mug costs $4.',
+  total_cost: '0.0141000000',
+  median_cost: '0.0141000000',
+  cost_vs_median: 1,
+  harness_cost: '0.0008000000',
+  median_harness_cost: '0.0008000000',
+  harness_cost_vs_median: 1,
+  error_count: 0,
+  token_count: 1345,
+  median_token_count: 1345,
+  token_count_vs_median: 1,
+  blocks: [],
+};
+
 const EMPTY_SERIES: MonitoringSeriesResponse = {
   project_id: PROJECT.id,
   ...RANGE,
@@ -141,6 +168,7 @@ async function openMonitoring(
     [`${API_BASE}/series`]: EMPTY_SERIES,
     [`${API_BASE}/traces`]: { project_id: PROJECT.id, ...RANGE, traces },
     [`${API_BASE}/llm`]: { project_id: PROJECT.id, ...RANGE, calls: [LLM_CALL] },
+    [`/projects/${PROJECT.id}/requests/${LLM_TRACE.trace_id}`]: LLM_REQUEST,
   };
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname in answers,
@@ -155,38 +183,91 @@ const viewOption = (page: Page, name: string) =>
 
 const searchParam = (page: Page, key: string) => new URL(page.url()).searchParams.get(key);
 
-test('the default view lists every trace with its LLM call count and cost', async ({ page }) => {
+test('the default view lists every trace with its LLM call count and total cost', async ({
+  page,
+}) => {
   await openMonitoring(page, { traces: [PLAIN_TRACE, LLM_TRACE] });
 
   await expect(viewOption(page, 'All traces')).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByTestId('traces-table').getByRole('button')).toHaveCount(2);
   await expect(page.getByTestId('trace-row-llm-0')).toHaveText('—');
-  await expect(page.getByTestId('trace-row-llm-1')).toHaveText('2 · $0.0133');
+  await expect(page.getByTestId('trace-row-cost-0')).toHaveText('—');
+  await expect(page.getByTestId('trace-row-llm-1')).toHaveText('2');
+  await expect(page.getByTestId('trace-row-cost-1')).toHaveText('$0.014');
 });
 
-test('"With LLM calls" keeps only traces that made an LLM call', async ({ page }) => {
+test('an expanded trace opens its per-query details from the Costs tab', async ({ page }) => {
   await openMonitoring(page, { traces: [PLAIN_TRACE, LLM_TRACE] });
 
-  await viewOption(page, 'With LLM calls').click();
+  await page.getByTestId('trace-row-toggle-1').click();
+  const details = page.getByTestId(`trace-row-details-${LLM_TRACE.trace_id}`);
+  await details.click();
 
-  await expect.poll(() => searchParam(page, 'view')).toBe('llm_traces');
-  await expect(page.getByTestId('traces-table').getByRole('button')).toHaveCount(1);
-  await expect(page.getByTestId('trace-row-toggle-0')).toContainText('quote');
+  const drawer = page.getByTestId('project-query-drawer');
+  await expect(drawer).toBeVisible();
+  await expect(
+    drawer.getByTestId('project-query-drawer-ribbon-cost').getByText('$0.014', { exact: true })
+  ).toBeVisible();
 });
 
-test('"With LLM calls" says so when no trace made an LLM call', async ({ page }) => {
-  await openMonitoring(page, { traces: [PLAIN_TRACE], search: '?view=llm_traces' });
+test('the details drawer stays open through a failed refresh and hands focus back', async ({
+  page,
+}) => {
+  // Opened from the URL, so the trace's row comes back expanded once the table is rebuilt.
+  await openMonitoring(page, {
+    traces: [PLAIN_TRACE, LLM_TRACE],
+    search: `?view=traces&trace=${LLM_TRACE.trace_id}`,
+  });
+  const details = page.getByTestId(`trace-row-details-${LLM_TRACE.trace_id}`);
+  await details.click();
+  const drawer = page.getByTestId('project-query-drawer');
+  await expect(drawer).toBeVisible();
 
-  await expect(page.getByTestId('traces-empty')).toContainText(
-    'No traces with LLM calls in this window.'
+  let failing = true;
+  await page.route(
+    (url) => url.origin === apiOrigin && url.pathname === `${API_BASE}/traces`,
+    (route) =>
+      failing
+        ? failJson(route)
+        : fulfillJson(route, {
+            project_id: PROJECT.id,
+            ...RANGE,
+            traces: [PLAIN_TRACE, LLM_TRACE],
+          })
   );
+  const refetch = () => page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+
+  await refetch();
+  await expect(page.getByTestId('traces-error')).toBeVisible();
+  await expect(drawer).toBeVisible();
+
+  failing = false;
+  await refetch();
+  await expect(page.getByTestId('traces-table')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(details).toBeFocused();
+});
+
+test('a trace whose spans reported zero cost reads $0.00, not —', async ({ page }) => {
+  await openMonitoring(page, { traces: [{ ...PLAIN_TRACE, total_cost: 0 }] });
+
+  await expect(page.getByTestId('trace-row-cost-0')).toHaveText('$0.00');
 });
 
 test('a view in the URL renders that view on load', async ({ page }) => {
+  await openMonitoring(page, { traces: [PLAIN_TRACE, LLM_TRACE], search: '?view=llm_calls' });
+
+  await expect(viewOption(page, 'LLM calls')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('llm-table')).toBeVisible();
+});
+
+test('an old "With LLM calls" link lands on all traces', async ({ page }) => {
   await openMonitoring(page, { traces: [PLAIN_TRACE, LLM_TRACE], search: '?view=llm_traces' });
 
-  await expect(viewOption(page, 'With LLM calls')).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByTestId('traces-table').getByRole('button')).toHaveCount(1);
+  await expect(viewOption(page, 'All traces')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('traces-table').getByRole('button')).toHaveCount(2);
 });
 
 test('"LLM calls" lists the calls, and "Open trace" lands on that trace expanded', async ({

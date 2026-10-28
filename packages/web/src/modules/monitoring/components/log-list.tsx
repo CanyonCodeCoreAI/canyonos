@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDownIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import type { MonitoringLog } from '@canyonos/api/monitoring';
@@ -116,16 +115,10 @@ function LogRow({ log, index }: { readonly log: MonitoringLog; readonly index: n
         >
           {log.body}
         </td>
-        <td className="text-muted-foreground w-9 px-2 py-2 align-top">
-          <ChevronDownIcon
-            className={`size-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
-            aria-hidden
-          />
-        </td>
       </tr>
       {open ? (
         <tr className="border-border/50 border-b last:border-b-0">
-          <td colSpan={5} className="bg-foreground/[0.02] px-4 py-3">
+          <td colSpan={4} className="bg-foreground/[0.02] px-4 py-3">
             <pre className="text-foreground mb-3 break-words whitespace-pre-wrap">{log.body}</pre>
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
               <LogField label="replica" value={log.replica} />

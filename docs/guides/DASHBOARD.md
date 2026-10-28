@@ -20,11 +20,10 @@ Your deploy appears under **Projects**, named after your project folder. Open it
 
 - **Status** (the project's row in the sidebar): whether it is running, its endpoint, and its replicas. A stopped project can be deleted from here, which removes it and its telemetry from the dashboard.
 - **Overview** (the page you land on when you open a project): query count, spend, tokens, and cost per query, by agent or by query.
-- **Traces**: traffic and p95 latency, and one row per request. Expand a row to see each agent call on a timeline.
+- **Traces**: traffic and p95 latency, and one row per request with its LLM calls, total cost, and duration. Switch to **LLM calls** to see every model call with its model, agent, tokens, latency, and cost; expand a call to see its input and output.
 - **Logs**: log lines, filterable by agent and replica.
 - **Errors**: errors grouped by type and by agent, plus the full list.
 - **Metrics**: CPU and resource usage for each machine and each agent.
-- **LLM**: every model call with its model, agent, tokens, latency, and cost. Expand a row to see the input and output.
 - **Prompts**: your [prompts](PROMPTS.md). Edits apply to the running project until it reloads.
 - **Scaling**: each agent's [scaling policy](SCALING.md) (thresholds and min/max replicas). Changes apply to the running deploy right away.
 

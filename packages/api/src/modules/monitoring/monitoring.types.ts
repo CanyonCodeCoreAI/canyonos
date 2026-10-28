@@ -152,6 +152,7 @@ export const MonitoringTraceSchema = MonitoringTraceSpanSchema.pick({
   trace_id: z.string(),
   agents: z.array(z.string()),
   span_count: z.number().int(),
+  total_cost: z.number().nullable(),
   spans: z.array(MonitoringTraceSpanSchema),
 });
 

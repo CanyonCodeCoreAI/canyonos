@@ -3,7 +3,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ArrowUpRightIcon, ChevronDownIcon } from 'lucide-react';
+import { ArrowUpRightIcon } from 'lucide-react';
 
 import type { MonitoringLlmCall } from '@canyonos/api/monitoring';
 
@@ -65,7 +65,6 @@ export function LlmCallList({ project_id, range }: LlmCallListProps) {
             <th className="w-20 px-2 py-2 text-right font-normal">out</th>
             <th className="w-20 px-2 py-2 text-right font-normal">latency</th>
             <th className="w-20 px-2 py-2 text-right font-normal">cost</th>
-            <th className="w-9 px-2 py-2" />
           </tr>
         </thead>
         {query.data.calls.map((call, index) => (
@@ -113,16 +112,10 @@ function LlmCallRow({
           <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
             {formatCost(call.cost)}
           </td>
-          <td className="text-muted-foreground px-2 py-2 align-top">
-            <ChevronDownIcon
-              className="size-3.5 transition-transform group-data-[state=open]/call:rotate-180"
-              aria-hidden
-            />
-          </td>
         </tr>
         <CollapsibleContent asChild>
           <tr>
-            <td colSpan={9} className="bg-foreground/[0.02] px-4 py-3">
+            <td colSpan={8} className="bg-foreground/[0.02] px-4 py-3">
               <Link
                 to="/projects/$project_id/monitoring"
                 params={{ project_id }}

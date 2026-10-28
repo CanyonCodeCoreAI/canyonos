@@ -6,7 +6,7 @@ import { ChevronRightIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { RequestListItem, RequestTrace, RequestTraceBlock } from '@canyonos/api/requests';
+import type { RequestTrace, RequestTraceBlock } from '@canyonos/api/requests';
 
 import { CopyButton } from '@repo/ui/components/copy-button';
 import { SectionLabel } from '@repo/ui/components/section-label';
@@ -55,7 +55,7 @@ const TRACE_TICKS = [0, 0.25, 0.5, 0.75, 1] as const;
  * medians are read over the same range, so the comparison describes the rows beside it.
  */
 export interface OpenedQuery {
-  readonly request: RequestListItem;
+  readonly session_id: string;
   readonly range: TimeRange;
 }
 
@@ -107,7 +107,11 @@ export function ProjectQueryDrawer({
         data-testid={TEST_ID}
       >
         {shown === null ? null : (
-          <QueryDrawerBody project_id={project_id} request={shown.request} range={shown.range} />
+          <QueryDrawerBody
+            project_id={project_id}
+            session_id={shown.session_id}
+            range={shown.range}
+          />
         )}
       </SheetContent>
     </Sheet>
@@ -116,17 +120,15 @@ export function ProjectQueryDrawer({
 
 function QueryDrawerBody({
   project_id,
-  request,
+  session_id,
   range,
 }: {
   readonly project_id: string;
-  readonly request: RequestListItem;
+  readonly session_id: string;
   readonly range: TimeRange;
 }) {
-  const trace_query = useQuery(
-    projectRequestTraceQueryOptions(project_id, request.session_id, { range })
-  );
-  const short_id = shortRequestId(request.session_id);
+  const trace_query = useQuery(projectRequestTraceQueryOptions(project_id, session_id, { range }));
+  const short_id = shortRequestId(session_id);
 
   return (
     <>
@@ -140,14 +142,11 @@ function QueryDrawerBody({
           />
           {/* No `id` override: Radix points the dialog's `aria-labelledby` at the one it generates
               for this title, and replacing it leaves the panel with no accessible name at all. */}
-          <SheetTitle
-            className="min-w-0 truncate font-mono text-[0.9375rem]"
-            title={request.session_id}
-          >
+          <SheetTitle className="min-w-0 truncate font-mono text-[0.9375rem]" title={session_id}>
             {short_id}
           </SheetTitle>
           <CopyButton
-            value={request.session_id}
+            value={session_id}
             tooltip="Copy query id"
             className="size-7 shrink-0"
             data-testid={`${TEST_ID}-copy-id`}

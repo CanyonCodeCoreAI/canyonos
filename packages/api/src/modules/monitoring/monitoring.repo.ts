@@ -332,6 +332,7 @@ export const monitoring_repo = {
         count(*)::int as span_count,
         ((max(s.end_time_unix_nano) - r.start_nanos) / 1e6)::float8 as duration_ms,
         bool_or(${sql.raw(spanFailed('s'))}) as failed,
+        sum(${sql.raw(spanCost('s'))})::float8 as total_cost,
         json_agg(
           json_build_object(
             'span_id', s.span_id,

@@ -886,6 +886,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
           span_count: 1,
           duration_ms: 200,
           failed: false,
+          total_cost: null,
           spans: [
             {
               span_id: 'tr-b',
@@ -908,6 +909,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
           span_count: 1,
           duration_ms: 300,
           failed: false,
+          total_cost: null,
           spans: [
             {
               span_id: 'tr-c',
@@ -930,6 +932,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
           span_count: 3,
           duration_ms: 4000,
           failed: true,
+          total_cost: null,
           spans: [
             {
               span_id: 'tr-a-root',
@@ -970,7 +973,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
     });
   });
 
-  test('a model span carries its call details and any other span carries null', async () => {
+  test('a model span carries its call details, any other span null, and the trace sums every cost', async () => {
     const { project_id: llm_id } = await create_project(token, 'Traces LLM');
     await write_span(llm_id, {
       span_id: 'tr-llm-root',
@@ -978,6 +981,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
       name: 'Workflow.run',
       ms_ago: HOUR_MS,
       duration_ms: 50,
+      attributes: { [GEN_AI.USAGE_COST]: 0.05 },
     });
     await write_span(llm_id, {
       span_id: 'tr-llm-model',
@@ -1016,6 +1020,27 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
         },
       },
     ]);
+    expect(res.data!.traces[0]!.total_cost).toBeCloseTo(0.3, 10);
+  });
+
+  test('a trace whose spans report zero cost totals 0, not null', async () => {
+    const { project_id: free_id } = await create_project(token, 'Traces Zero Cost');
+    await write_span(free_id, {
+      span_id: 'tr-free',
+      trace_id: 'tr-free',
+      name: 'free',
+      ms_ago: HOUR_MS,
+      duration_ms: 10,
+      attributes: { [GEN_AI.USAGE_COST]: 0 },
+    });
+
+    const res = await api.projects[free_id]!.monitoring.traces.get({
+      $headers: bearer(token),
+      $query: { ...ONE_DAY_RANGE, limit: 200 },
+    });
+
+    expect(res.error).toBeNull();
+    expect(res.data!.traces[0]!.total_cost).toBe(0);
   });
 
   test('limit counts traces, not spans', async () => {

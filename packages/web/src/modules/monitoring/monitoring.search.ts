@@ -3,7 +3,7 @@
 
 import { z } from 'zod';
 
-export const TRACE_VIEWS = ['traces', 'llm_traces', 'llm_calls'] as const;
+export const TRACE_VIEWS = ['traces', 'llm_calls'] as const;
 
 export type TraceView = (typeof TRACE_VIEWS)[number];
 

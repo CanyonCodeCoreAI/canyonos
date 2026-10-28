@@ -3,7 +3,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { getRouteApi } from '@tanstack/react-router';
-import { ChevronDownIcon } from 'lucide-react';
+import { ArrowUpRightIcon } from 'lucide-react';
+import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { MonitoringTrace, MonitoringTraceSpan } from '@canyonos/api/monitoring';
@@ -11,14 +12,17 @@ import type { MonitoringTrace, MonitoringTraceSpan } from '@canyonos/api/monitor
 import { Card } from '@repo/ui/shadcn/card';
 import { Collapsible, CollapsibleContent } from '@repo/ui/shadcn/collapsible';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { cn } from '@repo/ui/utils';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { Payload } from '@/modules/monitoring/components/payload';
 import { RowTrigger } from '@/modules/monitoring/components/row-trigger';
 import { formatCost, formatTokens } from '@/modules/monitoring/monitoring.format';
 import { tracesQueryOptions } from '@/modules/monitoring/monitoring.queries';
+import { ProjectQueryDrawer } from '@/modules/projects/components/project-query-drawer';
+import { formatQueryCost } from '@/modules/projects/projects.format';
+import { COST_SPLIT } from '@/modules/projects/projects.metrics';
 import type { RangeSelection } from '@/modules/core/time-range';
+import type { OpenedQuery } from '@/modules/projects/components/project-query-drawer';
 
 const TRACE_LIMIT = 200;
 
@@ -31,19 +35,9 @@ const formatDuration = (ms: number) =>
 
 const scrollToRow = (row: HTMLTableRowElement | null) => row?.scrollIntoView({ block: 'center' });
 
-const hasLlmCall = (trace: MonitoringTrace) => trace.spans.some((span) => span.llm !== null);
-
 function spanBarColor(span: MonitoringTraceSpan) {
-  if (span.failed) return 'bg-red-500';
-  if (span.llm) return 'bg-chart-2';
-  return 'bg-primary/70';
-}
-
-function llmSummary(trace: MonitoringTrace) {
-  const calls = trace.spans.flatMap((span) => (span.llm ? [span.llm] : []));
-  if (calls.length === 0) return '—';
-  const cost = calls.reduce((total, call) => total + (call.cost ?? 0), 0);
-  return `${calls.length} · ${formatCost(cost)}`;
+  if (span.failed) return 'var(--destructive)';
+  return span.llm ? COST_SPLIT.llm_cost.color : COST_SPLIT.harness_cost.color;
 }
 
 interface TraceListProps {
@@ -52,7 +46,40 @@ interface TraceListProps {
 }
 
 export function TraceList({ project_id, range }: TraceListProps) {
-  const { view, trace: focused_trace_id } = route.useSearch();
+  const [opened, setOpened] = useState<OpenedQuery | null>(null);
+  const opened_trace_id = useRef<string | null>(null);
+
+  return (
+    <>
+      <TraceTable
+        project_id={project_id}
+        range={range}
+        onOpenDetails={(query) => {
+          opened_trace_id.current = query.session_id;
+          setOpened(query);
+        }}
+      />
+      {/* Outside the table's loading and error branches, so a refetch behind it never closes it. */}
+      <ProjectQueryDrawer
+        project_id={project_id}
+        opened={opened}
+        onClose={() => setOpened(null)}
+        returnFocusTo={() =>
+          document.querySelector<HTMLElement>(
+            `[data-testid="trace-row-details-${opened_trace_id.current}"]`
+          )
+        }
+      />
+    </>
+  );
+}
+
+function TraceTable({
+  project_id,
+  range,
+  onOpenDetails,
+}: TraceListProps & { readonly onOpenDetails: (query: OpenedQuery) => void }) {
+  const { trace: focused_trace_id } = route.useSearch();
   const query = useQuery(tracesQueryOptions(project_id, { range, limit: TRACE_LIMIT }));
 
   if (query.error) {
@@ -69,31 +96,24 @@ export function TraceList({ project_id, range }: TraceListProps) {
     return <Skeleton className="h-96 w-full rounded-lg" />;
   }
 
-  const llm_only = view === 'llm_traces';
-  const traces = llm_only ? query.data.traces.filter(hasLlmCall) : query.data.traces;
+  const { traces, from, to } = query.data;
 
   if (traces.length === 0) {
-    return (
-      <EmptyState test_id="traces-empty">
-        {llm_only
-          ? 'No traces with LLM calls in this window.'
-          : 'No traces recorded in this window.'}
-      </EmptyState>
-    );
+    return <EmptyState test_id="traces-empty">No traces recorded in this window.</EmptyState>;
   }
 
   return (
     <Card className="min-w-0 overflow-x-auto" data-testid="traces-table">
       <table className="w-full border-collapse text-left font-mono text-xs">
-        <thead className="text-muted-foreground border-border/50 border-b">
-          <tr>
+        <thead className="text-muted-foreground border-border/50 border-b whitespace-nowrap">
+          <tr className="divide-border/40 divide-x">
             <th className="w-44 px-4 py-2 font-normal">time</th>
             <th className="px-2 py-2 font-normal">trace</th>
             <th className="w-48 px-2 py-2 font-normal">agents</th>
             <th className="w-16 px-2 py-2 text-right font-normal">spans</th>
-            <th className="w-28 px-2 py-2 text-right font-normal">llm</th>
+            <th className="w-20 px-2 py-2 text-right font-normal">llm calls</th>
+            <th className="w-24 px-2 py-2 text-right font-normal">total cost</th>
             <th className="w-20 px-2 py-2 text-right font-normal">duration</th>
-            <th className="w-9 px-2 py-2" />
           </tr>
         </thead>
         {traces.map((trace, index) => (
@@ -102,6 +122,9 @@ export function TraceList({ project_id, range }: TraceListProps) {
             trace={trace}
             index={index}
             focused={trace.trace_id === focused_trace_id}
+            onOpenDetails={(trace_id) =>
+              onOpenDetails({ session_id: trace_id, range: { from, to } })
+            }
           />
         ))}
       </table>
@@ -115,12 +138,16 @@ function TraceRow({
   trace,
   index,
   focused,
+  onOpenDetails,
 }: {
   readonly trace: MonitoringTrace;
   readonly index: number;
   readonly focused: boolean;
+  readonly onOpenDetails: (trace_id: string) => void;
 }) {
   const navigate = route.useNavigate();
+  const llm_calls = trace.spans.filter((span) => span.llm !== null).length;
+  const tone = trace.failed ? 'text-destructive' : 'text-muted-foreground';
 
   return (
     <Collapsible
@@ -131,45 +158,52 @@ function TraceRow({
         void navigate({ search: (prev) => ({ ...prev, trace: undefined }), replace: true });
       }}
     >
-      <tbody className="group/trace border-border/50 border-b last:border-b-0">
+      <tbody className="border-border/50 border-b last:border-b-0">
         <tr
           ref={focused ? scrollToRow : undefined}
-          className="hover:bg-foreground/[0.03] has-[:focus-visible]:bg-foreground/[0.03] relative cursor-pointer"
+          className={`${tone} divide-border/40 hover:bg-foreground/[0.03] has-[:focus-visible]:bg-foreground/[0.03] relative cursor-pointer divide-x`}
         >
-          <td className="text-muted-foreground px-4 py-2 align-top whitespace-nowrap">
-            {trace.at}
-          </td>
+          <td className="px-4 py-2 align-top whitespace-nowrap">{trace.at}</td>
           <td
-            className={`truncate px-2 py-2 align-top ${trace.failed ? 'text-red-500' : 'text-foreground'}`}
+            className={`truncate px-2 py-2 align-top ${trace.failed ? 'text-destructive' : 'text-foreground'}`}
           >
             <RowTrigger data-testid={`trace-row-toggle-${index}`}>{trace.name}</RowTrigger>
           </td>
-          <td className="text-muted-foreground truncate px-2 py-2 align-top">
+          <td className="truncate px-2 py-2 align-top">
             {trace.agents.length === 0 ? '—' : trace.agents.join(', ')}
           </td>
-          <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
-            {trace.span_count}
-          </td>
+          <td className="px-2 py-2 text-right align-top whitespace-nowrap">{trace.span_count}</td>
           <td
-            className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap"
+            className="px-2 py-2 text-right align-top whitespace-nowrap"
             data-testid={`trace-row-llm-${index}`}
           >
-            {llmSummary(trace)}
+            {llm_calls === 0 ? '—' : llm_calls}
           </td>
-          <td className="text-muted-foreground px-2 py-2 text-right align-top whitespace-nowrap">
+          <td
+            className="px-2 py-2 text-right align-top whitespace-nowrap"
+            data-testid={`trace-row-cost-${index}`}
+          >
+            {trace.total_cost === null ? '—' : formatQueryCost(String(trace.total_cost))}
+          </td>
+          <td className="px-2 py-2 text-right align-top whitespace-nowrap">
             {formatDuration(trace.duration_ms)}
-          </td>
-          <td className="text-muted-foreground px-2 py-2 align-top">
-            <ChevronDownIcon
-              className="size-3.5 transition-transform group-data-[state=open]/trace:rotate-180"
-              aria-hidden
-            />
           </td>
         </tr>
         <CollapsibleContent asChild>
           <tr data-testid={`trace-spans-${index}`}>
             <td colSpan={7} className="bg-foreground/[0.02] px-4 py-3">
-              <div className="text-muted-foreground mb-3">trace_id {trace.trace_id}</div>
+              <div className="mb-3 flex items-center gap-3">
+                <span className="text-muted-foreground">trace_id {trace.trace_id}</span>
+                <button
+                  type="button"
+                  className="text-link inline-flex items-center gap-1"
+                  onClick={() => onOpenDetails(trace.trace_id)}
+                  data-testid={`trace-row-details-${trace.trace_id}`}
+                >
+                  Query details
+                  <ArrowUpRightIcon className="size-3" aria-hidden />
+                </button>
+              </div>
               <table className="w-full border-collapse">
                 {trace.spans.map((span) => (
                   <SpanRow key={span.span_id} span={span} total_ms={trace.duration_ms} />
@@ -267,7 +301,7 @@ function SpanCells({
   return (
     <>
       <td
-        className={`w-1/3 truncate py-1 pr-3 ${span.failed ? 'text-red-500' : 'text-foreground'}`}
+        className={`w-1/3 truncate py-1 pr-3 ${span.failed ? 'text-destructive' : 'text-foreground'}`}
       >
         {children}
       </td>
@@ -275,8 +309,12 @@ function SpanCells({
       <td className="py-1 pr-3">
         <div className="bg-foreground/[0.05] relative h-3 w-full rounded-sm">
           <div
-            className={cn('absolute h-3 min-w-px rounded-sm', spanBarColor(span))}
-            style={{ left: `${span.offset_ms * scale}%`, width: `${span.duration_ms * scale}%` }}
+            className="absolute h-3 min-w-px rounded-sm"
+            style={{
+              left: `${span.offset_ms * scale}%`,
+              width: `${span.duration_ms * scale}%`,
+              backgroundColor: spanBarColor(span),
+            }}
           />
         </div>
       </td>

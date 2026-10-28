@@ -2268,6 +2268,22 @@ async function openTrace(page: Page): Promise<void> {
 }
 
 test.describe('query trace drawer', () => {
+  test('the most expensive query tile opens that query and hands focus back', async ({ page }) => {
+    await authenticate(page);
+    await mockProjectCost(page);
+    await page.goto(`/projects/${PROJECT_ID}`);
+
+    const tile = page.getByTestId('project-highlight-query');
+    await tile.click();
+
+    await expect(page.getByRole('dialog', { name: '6215f346…0001' })).toBeVisible();
+    await expect(ribbonCell(page, 'cost').getByText('$2.046', { exact: true })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId(TRACE_DRAWER)).toHaveCount(0);
+    await expect(tile).toBeFocused();
+  });
+
   test('@smoke clicking a query row opens its trace drawer', async ({ page }) => {
     await authenticate(page);
     const calls = await mockProjectCost(page);

@@ -35,7 +35,6 @@ const SIGNAL_COLORS = {
 
 const VIEW_OPTIONS = [
   { value: 'traces', label: 'All traces' },
-  { value: 'llm_traces', label: 'With LLM calls' },
   { value: 'llm_calls', label: 'LLM calls' },
 ] as const satisfies readonly TimeRangeOption<TraceView>[];
 

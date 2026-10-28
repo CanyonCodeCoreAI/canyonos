@@ -250,7 +250,7 @@ export function ProjectRequestsTable({
           onStatusChange={filterByStatus}
           onRetry={() => void requests_query.refetch()}
           onSelect={(opened) => {
-            opened_session_id.current = opened.request.session_id;
+            opened_session_id.current = opened.session_id;
             dispatch({ type: 'open-request', opened });
           }}
         />
@@ -387,7 +387,7 @@ function ListedRows({
     <RequestRow
       key={request.session_id}
       request={request}
-      onSelect={() => onSelect({ request, range })}
+      onSelect={() => onSelect({ session_id: request.session_id, range })}
     />
   ));
 }

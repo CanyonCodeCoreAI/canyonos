@@ -154,7 +154,8 @@ export function ProjectSpendHighlights({ project_id, range }: ProjectSpendHighli
           opens="its trace"
           onOpen={
             dearest_request
-              ? () => setOpenedQuery({ request: dearest_request, range: { from, to } })
+              ? () =>
+                  setOpenedQuery({ session_id: dearest_request.session_id, range: { from, to } })
               : null
           }
           test_id="project-highlight-query"
