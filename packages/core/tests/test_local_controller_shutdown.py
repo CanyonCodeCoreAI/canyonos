@@ -39,11 +39,14 @@ class LocalControllerShutdownTests(unittest.TestCase):
             redis=MagicMock(),
             _status_key="controller:localhost:50051:status",
             _status_lock=threading.Lock(),
-            _ready=threading.Event(),
+            _status="healthy",
             server=MagicMock(),
             _log_handler=None,
+            _health_server=None,
         )
-        controller._ready.set()
+        controller._set_status = lambda status, **kwargs: LocalController._set_status(
+            controller, status, **kwargs
+        )
         controller.mark_stopped = lambda: LocalController.mark_stopped(controller)
         stop_finished = threading.Event()
         stop_errors = []
@@ -83,7 +86,7 @@ class LocalControllerShutdownTests(unittest.TestCase):
                 "controller:localhost:50051:status", "stopped"
             )
             # A heartbeat that outlives the join must not write "healthy" back.
-            self.assertFalse(controller._ready.is_set())
+            self.assertEqual(controller._status, "stopped")
             controller.server.stop.assert_called_once_with(0)
         finally:
             release_work.set()

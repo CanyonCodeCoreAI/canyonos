@@ -26,6 +26,7 @@ from canyonos_core.controller.local_controller import (
     LocalController,
 )
 from fakes import _FakeRedis
+from redis import RedisError
 
 
 def _bind_failure_marker(controller):
@@ -90,6 +91,46 @@ class LocalControllerMetricsTests(unittest.TestCase):
         server.stop.assert_called_once_with(0)
         gateway.kill.assert_called_once_with()
         self.assertFalse(controllers[0]._metrics_thread.is_alive())
+
+    def test_a_load_failure_during_a_redis_outage_still_cleans_up_and_says_why(self):
+        redis = _FakeRedis()
+        server = MagicMock()
+        gateway = MagicMock(**{"poll.return_value": None})
+        servicer = SimpleNamespace(request_queue=None, on_result=None)
+
+        def redis_goes_down_then_load_fails(controller):
+            controller.redis = MagicMock(**{"set.side_effect": RedisError("down")})
+            return None
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "CANYONOS_AGENT_NAME": "MissingAgent",
+                    "CANYONOS_AGENT_FILE": "/definitely/missing-agent.py",
+                },
+            ),
+            patch(
+                "canyonos_core.controller.local_controller.start_server",
+                return_value=(server, servicer),
+            ),
+            patch(
+                "canyonos_core.controller.local_controller.RedisClient",
+                return_value=redis,
+            ),
+            patch.object(LocalController, "_start_llm_gateway", return_value=gateway),
+            patch.object(
+                LocalController, "_load_agent", redis_goes_down_then_load_fails
+            ),
+            self.assertLogs("canyonos_core.controller.local_controller", "WARNING"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "Failed to load configured agent MissingAgent"
+            ):
+                LocalController()
+
+        server.stop.assert_called_once_with(0)
+        gateway.kill.assert_called_once_with()
 
     def test_heartbeat_is_running_while_the_agent_loads(self):
         redis = _FakeRedis()
@@ -160,9 +201,6 @@ class LocalControllerMetricsTests(unittest.TestCase):
 
     def _run_one_metrics_tick(self, redis, ready, stateful=(), controller=None):
         stop_event = threading.Event()
-        ready_event = threading.Event()
-        if ready:
-            ready_event.set()
         controller = controller or SimpleNamespace(
             redis=redis,
             agent_name="Alpha",
@@ -175,7 +213,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             _draining_key="controller:localhost:50051:draining",
             _metrics_stop_event=stop_event,
             _metrics_interval=5,
-            _ready=ready_event,
+            _status="healthy" if ready else "initializing",
             _status_lock=threading.Lock(),
             _load_policy_rules=lambda reload=False: None,
         )

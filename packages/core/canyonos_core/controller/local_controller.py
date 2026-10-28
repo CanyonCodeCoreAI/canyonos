@@ -19,11 +19,13 @@ import importlib.util
 from concurrent.futures import ThreadPoolExecutor, wait
 
 import grpc
+import redis
 
 from canyonos_core.llm_gateway.hooks import PROXY_PORT
 
 try:
     from canyonos_core.controller import gateway_headers
+    from canyonos_core.controller.health import start_health_server, stop_health_server
     from canyonos_core.controller.local_controller_frontend import start_server
     from canyonos_core.controller.utils.gpu_metrics import read_gpu_percent
     from canyonos_core.controller.utils.redis_client import RedisClient
@@ -38,6 +40,7 @@ try:
     )
 except ImportError:
     import gateway_headers
+    from canyonos_health import start_health_server, stop_health_server
     from gpu_metrics import read_gpu_percent
     from local_controller_frontend import start_server
     from log_handler import LogHandler
@@ -220,9 +223,12 @@ class LocalController(object):
         # One transaction, so a reader never sees "initializing" without a heartbeat to judge it by.
         # Cumulative request counters are always increasing, never reset. It is the consumers job to get the delta between polls to get the specific metrics.
         now = str(time.time())
+        # This replica's status, the one source of its health (see health()):
+        # initializing -> healthy -> failed or stopped. Redis gets a copy.
+        self._status = "initializing"
         self.redis.set_with_hash(
             self._status_key,
-            "initializing",
+            self._status,
             self._metrics_key,
             {
                 "started_at": now,
@@ -236,8 +242,10 @@ class LocalController(object):
         )
         self._metrics_stop_event = threading.Event()
         self._metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
-        self._ready = threading.Event()
         self._status_lock = threading.Lock()
+        # Before the agent loads, so a slow constructor reads as starting, not as a
+        # refused connection. Off unless CANYONOS_HEALTH_PORT is set.
+        self._health_server = start_health_server(self._health_checks())
 
         # Cache for gRPC stubs to remote controllers
         self._remote_channels = {}  # address -> grpc.Channel
@@ -275,6 +283,7 @@ class LocalController(object):
             self._metrics_thread.join(timeout=2)
             self.mark_failed()
             self.server.stop(0)
+            stop_health_server(self._health_server)
             # Otherwise the gateway keeps the container alive, answering every
             # request with "No agent loaded" long after the cause has scrolled by.
             self._gateway_process.kill()
@@ -297,21 +306,63 @@ class LocalController(object):
     def mark_ready(self):
         """Set this replica's status in Redis to `healthy`, which the Global Controller
         waits for before routing to it."""
-        with self._status_lock:
-            self._ready.set()
-            self.redis.set(self._status_key, "healthy")
+        self._set_status("healthy")
 
     def mark_failed(self):
-        """Set this replica's status in Redis to `failed`, so the Global Controller no
-        longer counts it as healthy."""
-        with self._status_lock:
-            self._ready.clear()
-            self.redis.set(self._status_key, "failed")
+        """Set this replica's status to `failed`, so the Global Controller no longer
+        counts it as healthy. Best effort in Redis, as it starts a teardown."""
+        self._set_status("failed", best_effort=True)
 
     def mark_stopped(self):
+        self._set_status("stopped", best_effort=True)
+
+    def _set_status(self, status, best_effort=False):
+        """Hold `status` (health() reads it) and copy it to Redis. `best_effort` is for
+        teardown: a Redis error is logged, not raised, so the error that started the
+        teardown and the rest of the cleanup still happen. The heartbeat then goes
+        stale, which the Global Controller reads as a replica that is gone."""
         with self._status_lock:
-            self._ready.clear()
-            self.redis.set(self._status_key, "stopped")
+            self._status = status
+            try:
+                self.redis.set(self._status_key, status)
+            except redis.RedisError as e:
+                if not best_effort:
+                    raise
+                logger.warning("Could not record status %r in Redis: %s", status, e)
+
+    def health(self):
+        """This replica's health, the one source for both reports: (status, alive,
+        reason). The status goes to Redis, where the Global Controller and reconciler
+        read it on Docker and EC2; _health_checks serves the same to Kubernetes probes.
+        Alive means its own threads and the LLM gateway still run. Nothing here reads
+        Redis: a Redis outage must not make every replica look dead at once."""
+        if not self._metrics_thread.is_alive():
+            return self._status, False, "metrics thread stopped"
+        gateway = getattr(self, "_gateway_process", None)
+        if gateway is not None and gateway.poll() is not None:
+            return (
+                self._status,
+                False,
+                f"LLM gateway exited with code {gateway.returncode}",
+            )
+        return self._status, True, "alive"
+
+    def _health_checks(self):
+        """health() as the HTTP checks Kubernetes probes: started (the agent loaded),
+        ready (it should get traffic) and alive (it should not be restarted)."""
+
+        def started():
+            status = self.health()[0]
+            return status != "initializing", status
+
+        def ready():
+            status = self.health()[0]
+            return status == "healthy", status
+
+        def alive():
+            return self.health()[1:]
+
+        return {"/startupz": started, "/readyz": ready, "/livez": alive}
 
     def _start_llm_gateway(self, redis_host, redis_port):
         """Start the LLM gateway as a subprocess in this container (127.0.0.1:8081).
@@ -476,7 +527,7 @@ class LocalController(object):
                 metrics = self._collect_metrics()
                 self.redis.hset_multiple(self._metrics_key, metrics)
                 with self._status_lock:
-                    if self._ready.is_set():
+                    if self._status == "healthy":
                         self.redis.set(self._status_key, "healthy")
                 self._load_policy_rules(reload=True)
                 self._load_routing()
@@ -1464,6 +1515,7 @@ class LocalController(object):
         if self._log_handler is not None:
             logging.getLogger().removeHandler(self._log_handler)
         self.server.stop(0)
+        stop_health_server(self._health_server)
 
 
 if __name__ == "__main__":

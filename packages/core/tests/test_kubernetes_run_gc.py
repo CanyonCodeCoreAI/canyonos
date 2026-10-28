@@ -118,11 +118,53 @@ class RunTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "CANYONOS_TARGET=kubernetes"):
                 run_gc.run("config.yaml")
 
+    def test_without_the_redis_host_it_exits_at_once(self):
+        with patch.dict(os.environ, {TARGET_ENV: "kubernetes"}):
+            os.environ.pop("CANYONOS_REDIS_HOST", None)
+            with (
+                patch.object(run_gc, "wait_for_redis") as wait,
+                self.assertRaisesRegex(SystemExit, "CANYONOS_REDIS_HOST is unset"),
+            ):
+                run_gc.run("config.yaml")
+        wait.assert_not_called()
+
+    def test_a_start_that_fails_logs_one_line_and_exits_1(self):
+        env = {TARGET_ENV: "kubernetes", "CANYONOS_REDIS_HOST": "canyonos-redis"}
+        for failing in ("start_health_server", "GlobalController"):
+            with self.subTest(failing=failing):
+                error = RuntimeError(f"{failing} said no")
+                with (
+                    patch.dict(os.environ, env),
+                    patch.object(
+                        run_gc,
+                        "start_health_server",
+                        side_effect=error if failing == "start_health_server" else None,
+                    ),
+                    patch.object(run_gc, "wait_for_redis"),
+                    patch(
+                        "canyonos_core.controller.global_controller.GlobalController",
+                        side_effect=error,
+                    ),
+                    self.assertLogs(
+                        "canyonos_core.kubernetes.run_gc", "CRITICAL"
+                    ) as logs,
+                    self.assertRaises(SystemExit) as exited,
+                ):
+                    run_gc.run("config.yaml")
+                self.assertEqual(exited.exception.code, 1)
+                self.assertEqual(
+                    logs.output, [f"CRITICAL:canyonos_core.kubernetes.run_gc:{error}"]
+                )
+
     def test_redis_first_then_the_controller_and_sigterm_stops_it(self):
         events = []
+        checks = {}
         controller = MagicMock()
         handlers = {}
-        controller.run.side_effect = lambda: events.append("run")
+        # Ready only once the Global Controller runs; alive all along.
+        controller.run.side_effect = lambda: events.append(
+            ("run", checks["/readyz"]()[0])
+        )
 
         def build(_path):
             events.append("controller")
@@ -133,8 +175,11 @@ class RunTests(unittest.TestCase):
                 os.environ,
                 {TARGET_ENV: "kubernetes", "CANYONOS_REDIS_HOST": "canyonos-redis"},
             ),
+            patch.object(run_gc, "start_health_server", side_effect=checks.update),
             patch.object(
-                run_gc, "wait_for_redis", side_effect=lambda *a: events.append(a)
+                run_gc,
+                "wait_for_redis",
+                side_effect=lambda *a: events.append((a, checks["/readyz"]()[0])),
             ),
             patch(
                 "canyonos_core.controller.global_controller.GlobalController",
@@ -145,7 +190,11 @@ class RunTests(unittest.TestCase):
         ):
             run_gc.run("/etc/canyonos/config/global_controller.yaml")
 
-        self.assertEqual(events, [("canyonos-redis", 6379), "controller", "run"])
+        self.assertEqual(
+            events,
+            [(("canyonos-redis", 6379), False), "controller", ("run", True)],
+        )
+        self.assertEqual(checks["/livez"](), (True, "alive"))
         self.assertNotIn(signal.SIGHUP, handlers)
 
         with self.assertRaises(SystemExit) as exited:

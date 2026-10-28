@@ -74,6 +74,7 @@ allowed-unresolved-imports = [
     "local_controller_frontend",
     "redis_client",
     "canyonos_context",
+    "canyonos_health",
     "deploy",
     "future",
     "human_input",

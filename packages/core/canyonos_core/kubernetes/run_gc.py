@@ -4,10 +4,10 @@
 """`canyonos_core.cli run-gc`: the Global Controller on its own, as a Kubernetes pod.
 
 No image build and no wait for replicas: the operator and Kubernetes run the pods. It
-waits for the project's Redis (no crash loop while it starts), then runs the Global
-Controller and watches its config: the config is a mounted ConfigMap, and a change to
-its files reloads it in place. SIGTERM stops the Global Controller and leaves the
-agents running.
+serves its health checks first, waits for the project's Redis (no crash loop while it
+starts), then runs the Global Controller and watches its config: the config is a
+mounted ConfigMap, and a change to its files reloads it in place. SIGTERM stops the
+Global Controller and leaves the agents running.
 """
 
 import hashlib
@@ -16,7 +16,9 @@ import os
 import signal
 import sys
 import threading
+from typing import NoReturn
 
+from canyonos_core.controller.health import start_health_server
 from canyonos_core.controller.orchestrator import TARGET_ENV
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
@@ -75,21 +77,52 @@ def watch_config(controller, config_dir, stop, interval=CONFIG_WATCH_SECONDS):
             logger.error("Reload failed; keeping the running config: %s", e)
 
 
+def _exit_with(error) -> NoReturn:
+    """One CRITICAL line, not a traceback (as `canyonos deploy` reports a start that
+    fails), then exit 1: the pod's log and status show the reason."""
+    logger.critical("%s", error)
+    sys.exit(1)
+
+
 def run(config_path):
     """Run the Global Controller in a Kubernetes pod until SIGTERM."""
     if os.environ.get(TARGET_ENV) != "kubernetes":
         raise SystemExit(
             f"run-gc runs the Global Controller on Kubernetes; set {TARGET_ENV}=kubernetes."
         )
+    redis_host = os.environ.get("CANYONOS_REDIS_HOST")
+    if not redis_host:
+        # Waiting on a default host would wait forever; the operator always sets it.
+        raise SystemExit(
+            "CANYONOS_REDIS_HOST is unset: the operator names the project's Redis there."
+        )
 
-    wait_for_redis(
-        os.environ.get("CANYONOS_REDIS_HOST", "localhost"),
-        int(os.environ.get("CANYONOS_REDIS_PORT") or 6379),
-    )
+    # Started and ready once the Global Controller runs; alive while this process
+    # answers, since a Global Controller that crashes exits.
+    running = threading.Event()
+
+    def check_running():
+        return running.is_set(), "running" if running.is_set() else "starting"
+
+    try:
+        start_health_server(
+            {
+                "/startupz": check_running,
+                "/readyz": check_running,
+                "/livez": lambda: (True, "alive"),
+            }
+        )
+    except RuntimeError as e:
+        _exit_with(e)
+
+    wait_for_redis(redis_host, int(os.environ.get("CANYONOS_REDIS_PORT") or 6379))
 
     from canyonos_core.controller.global_controller import GlobalController
 
-    controller = GlobalController(config_path)
+    try:
+        controller = GlobalController(config_path)
+    except RuntimeError as e:
+        _exit_with(e)
     stop = threading.Event()
 
     def on_stop(signum, frame):
@@ -108,4 +141,5 @@ def run(config_path):
         daemon=True,
     ).start()
 
+    running.set()
     controller.run()
