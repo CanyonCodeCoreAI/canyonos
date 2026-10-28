@@ -293,7 +293,8 @@ class Reconciler(object):
     def _is_healthy(self, replica, replica_id):
         # A stock database image has no controller to write the metrics heartbeat.
         """Return True if the replica answers on its port and reports fresh metrics, or
-        has not answered yet but may still be starting."""
+        has not answered yet but may still be starting. A database that answers is also
+        reported healthy in Redis, which its stock image can't do itself."""
         is_database = (
             self.context.agent_specs_by_name.get(replica["agent_name"], {}).get("type")
             == "database"
@@ -301,6 +302,10 @@ class Reconciler(object):
         if self._port_is_open(replica) and (
             is_database or self._reports_are_fresh(replica)
         ):
+            if is_database and replica_id not in self._seen_healthy:
+                self.context.machine_redis_for_replica(replica).set(
+                    f"controller:{replica['address']}:status", "healthy"
+                )
             self._seen_healthy.add(replica_id)
             return True
         if replica_id not in self._seen_healthy and self._may_still_be_booting(replica):

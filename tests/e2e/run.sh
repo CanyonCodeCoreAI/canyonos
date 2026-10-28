@@ -120,6 +120,16 @@ out="$ARTIFACTS_DIR/new-app-unlaunchable.json"
 grep -q '"root_cause": "MyAgent could not start: ' "$out" || { cat "$out"; exit 1; }
 (cd "$LAUNCH_DIR" && canyonos quit)
 
+# A database runs a stock image that never reports its own health, so the deploy must not wait on it.
+step "canyonos test deploys a project with a database agent"
+DATABASE_DIR="$(mktemp -d)/starter"
+cp -R "$STARTER_DIR" "$DATABASE_DIR"
+perl -0pi -e 's|(\n# `POST /main`)|\n  - name: StateDB\n    type: database\n    image: postgres:16-alpine\n    env:\n      POSTGRES_PASSWORD: password\n$1|' "$DATABASE_DIR/config/global_controller.yaml"
+out="$ARTIFACTS_DIR/new-app-database.json"
+(cd "$DATABASE_DIR" && canyonos test --json >"$out") || { cat "$out"; exit 1; }
+grep -q '"MyAgent got: hello"' "$out" || { cat "$out"; exit 1; }
+(cd "$DATABASE_DIR" && canyonos quit)
+
 # A config file that is not valid YAML has to fail the deploy with one line naming it.
 step "canyonos test names a config file that is not valid YAML"
 printf 'models:\n  bad: [\n' >>"$STARTER_DIR/config/llms.yaml"
