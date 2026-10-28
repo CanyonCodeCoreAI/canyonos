@@ -322,7 +322,7 @@ def _run_change_config():
 
     if not data:
         ui.warn("Config is empty; nothing to change.")
-        return
+        return True
 
     screen = _Screen(ui.console)
     saves = 0
@@ -343,14 +343,14 @@ def _run_change_config():
 
     if saves:
         ui.ok(f"Saved {saves} change(s) to {config_path}")
-        run_sync_and_reload()
-    else:
-        ui.say("No changes made.")
+        return run_sync_and_reload()
+    ui.say("No changes made.")
+    return True
 
 
 def run_config():
     """Run `canyonos config`: ask whether to view or change the config, then open it.
-    Returns False when cancelled."""
+    Returns False when cancelled or when applying a saved change fails."""
     choice = select_menu(OPTIONS, title="What do you want to do?")
     if choice is None:
         ui.say("Cancelled.")
@@ -359,5 +359,5 @@ def run_config():
     if choice == "view":
         _run_view_config()
     elif choice == "change":
-        _run_change_config()
+        return _run_change_config()
     return True

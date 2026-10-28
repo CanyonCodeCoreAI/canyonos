@@ -20,8 +20,8 @@ import tempfile
 from canyonos import project, ui
 from canyonos.constants import container_path, project_env_path, project_root
 from canyonos.docker_cmd import DOCKER_RUN_TIMEOUT, run_docker
-from canyonos.gc import GCError, existing_deploy, post_reload, require_state
-from canyonos.init import GC_WORKSPACE_PATH
+from canyonos.gc import GCError, deploy_status, post_reload, require_state
+from canyonos.init import GC_WORKSPACE_PATH, load_state
 
 
 _SYNC_STATE_VERSION = 1
@@ -307,8 +307,15 @@ def run_sync():
 def run_sync_and_reload():
     """Run `canyonos sync`: copy the project into the container, then have the running
     deploy reload its config. Returns True on success, or when no deploy is running."""
-    state = existing_deploy()
-    if state is None:
+    try:
+        state = load_state()
+    except FileNotFoundError:
+        state = None
+    status = deploy_status(state["port"]) if state else {}
+    if status is None:
+        ui.fail("Nothing is running for this project. Run `canyonos quit` to clean up.")
+        return False
+    if not status.get("running"):
         ui.say("No deploy running; changes apply on the next `canyonos deploy`.")
         return True
     if not run_sync():
