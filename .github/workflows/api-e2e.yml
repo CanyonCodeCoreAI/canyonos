@@ -66,6 +66,7 @@ jobs:
           NODE_ENV: test
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
+          AUTH_MODE: password
           JWT_SECRET: test-jwt-secret-not-for-production
           CANYONOS_REDIS_HOST: 127.0.0.1
           CANYONOS_REDIS_PORT: '6379'
@@ -84,6 +85,7 @@ jobs:
           NODE_ENV: test
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
+          AUTH_MODE: password
           JWT_SECRET: test-jwt-secret-not-for-production
 
       - name: Run migration tests on a populated database
@@ -92,7 +94,17 @@ jobs:
           NODE_ENV: test
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
+          AUTH_MODE: password
           JWT_SECRET: test-jwt-secret-not-for-production
+
+      - name: Run API tests with sign-in disabled
+        run: cd packages/api && bun run test:auth-none
+        env:
+          NODE_ENV: test
+          CI: true
+          DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
+          CANYONOS_REDIS_HOST: 127.0.0.1
+          CANYONOS_REDIS_PORT: '6379'
 
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -62,7 +62,12 @@ export const createApp = () =>
             path: '/docs',
             mapJsonSchema: { zod: zodToJsonSchema },
             documentation: {
-              info: { title: 'CanyonOS API', version: '0.1.0' },
+              info: {
+                title: 'CanyonOS API',
+                version: '0.1.0',
+                description:
+                  'Bearer authentication applies only with AUTH_MODE=password; with AUTH_MODE=none every route is open.',
+              },
               tags: [
                 { name: 'Projects' },
                 { name: 'Requests' },

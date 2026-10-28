@@ -5,6 +5,9 @@ import type { Route } from '@playwright/test';
 
 export const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';
 
+/** A second API on the same database with `AUTH_MODE=none`, started by the Playwright config. */
+export const noAuthApiBaseUrl = 'http://localhost:3010';
+
 export async function fulfillJson(route: Route, body: unknown, status = 200): Promise<void> {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }

@@ -4,6 +4,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import type { AuthStatus } from '@canyonos/api/auth';
+
 import { setToken, signIn, TEST_EMAIL, TEST_PASSWORD, validToken } from './helpers/auth';
 import { apiBaseUrl, fulfillJson } from './helpers/projects';
 import {
@@ -23,7 +25,7 @@ const uniqueEmail = (prefix: string) =>
 async function stubEmptyInstall(page: Page): Promise<void> {
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname === '/auth/status',
-    (route) => fulfillJson(route, { has_users: false })
+    (route) => fulfillJson(route, { mode: 'password', has_users: false } satisfies AuthStatus)
   );
 }
 

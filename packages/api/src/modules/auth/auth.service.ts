@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { config } from '@core/env';
 import { forbidden, unauthorized } from '@core/errors';
 
 import { authRepo } from './auth.repo';
@@ -27,7 +28,7 @@ const issueToken = async (row: UserRow): Promise<AuthToken> => ({
 
 export const authService = {
   async status(): Promise<AuthStatus> {
-    return { has_users: await authRepo.hasUsers() };
+    return { mode: config.auth.mode, has_users: await authRepo.hasUsers() };
   },
 
   async register(email: string, password: string): Promise<AuthToken> {

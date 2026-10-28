@@ -66,7 +66,7 @@ const postJson = async (url: string, payload: unknown): Promise<{ status: number
 };
 
 /** Register the smoke account, or log in once registration is closed by an earlier step. */
-async function signIn(apiUrl: string): Promise<string> {
+async function signInSmokeAccount(apiUrl: string): Promise<string> {
   const credentials = { email: SMOKE_EMAIL, password: SMOKE_PASSWORD };
   const registered = await postJson(`${apiUrl}/auth/register`, {
     ...credentials,
@@ -84,6 +84,39 @@ async function signIn(apiUrl: string): Promise<string> {
   return session.body.token as string;
 }
 
+/** How the API answers callers, read once from `/auth/status` after it starts. */
+interface Access {
+  /** The token a caller sends from `apiUrl`, or none when sign-in is off. */
+  signIn(apiUrl: string): Promise<string | undefined>;
+  /** What the project list answers a caller with no token. */
+  anonymousProjectsStatus: number;
+}
+
+const ACCESS_BY_MODE: Record<string, Access> = {
+  password: {
+    async signIn(apiUrl) {
+      const token = await signInSmokeAccount(apiUrl);
+      const response = await fetch(`${apiUrl}/auth/profile`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      equal(response.status, 200, `the profile route at ${apiUrl} accepts the new token`);
+      equal((await response.json()).email, SMOKE_EMAIL, 'the profile is the smoke account');
+      return token;
+    },
+    anonymousProjectsStatus: 401,
+  },
+  none: { signIn: async () => undefined, anonymousProjectsStatus: 200 },
+};
+
+async function readAccess(): Promise<Access> {
+  const status = await getJson('/auth/status');
+  equal(status.status, 200, 'the auth status route answers');
+  const access = ACCESS_BY_MODE[status.body?.mode];
+  check(access, `the API reports a known AUTH_MODE (got ${JSON.stringify(status.body?.mode)})`);
+  log(`the API runs with AUTH_MODE=${status.body.mode}`);
+  return access;
+}
+
 const waitForHealth = () =>
   waitFor('/healthz', 120_000, async () => {
     const { status } = await getJson('/healthz');
@@ -92,11 +125,10 @@ const waitForHealth = () =>
 
 const getProxiedJson = async (
   path: string,
-  token: string
+  token?: string
 ): Promise<{ status: number; body: any }> => {
-  const response = await fetch(`${WEB_URL}/api${path}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
+  const headers = token === undefined ? undefined : { authorization: `Bearer ${token}` };
+  const response = await fetch(`${WEB_URL}/api${path}`, { headers });
   return { status: response.status, body: await response.json().catch(() => null) };
 };
 
@@ -169,13 +201,15 @@ async function main() {
   await compose('up', '-d', 'api');
   await waitForHealth();
 
-  log('registering the smoke account');
-  const token = await signIn(BASE_URL);
-  const profile = await getJson('/auth/profile', token);
-  equal(profile.status, 200, 'the profile route accepts the new token');
-  equal(profile.body.email, SMOKE_EMAIL, 'the profile is the smoke account');
+  const access = await readAccess();
+  log('signing in, when the API asks for an account');
+  const token = await access.signIn(BASE_URL);
 
-  equal((await getJson('/projects')).status, 401, 'the project list still needs a token');
+  equal(
+    (await getJson('/projects')).status,
+    access.anonymousProjectsStatus,
+    'the project list answers a caller with no token as the auth mode says'
+  );
 
   log('checking the bootstrapped project');
   const projects = await getJson('/projects', token);
@@ -219,15 +253,12 @@ async function main() {
   equal(proxied_health.status, 200, 'the web image proxies /api to the api service by default');
   equal(
     (await fetch(`${WEB_URL}/api/projects`)).status,
-    401,
-    'the proxy forwards to the real API, which still refuses an unauthenticated read'
+    access.anonymousProjectsStatus,
+    'the proxy forwards a read with no token to the real API, which answers as it does directly'
   );
 
-  log('logging in through the web proxy, the way the dashboard does');
-  const proxied_token = await signIn(`${WEB_URL}/api`);
-  const proxied_profile = await getProxiedJson('/auth/profile', proxied_token);
-  equal(proxied_profile.status, 200, 'the proxied profile route accepts the token it just issued');
-  equal(proxied_profile.body.email, SMOKE_EMAIL, 'the proxied session is the smoke account');
+  log('signing in through the web proxy, the way the dashboard does');
+  const proxied_token = await access.signIn(`${WEB_URL}/api`);
   const proxied_projects = await getProxiedJson('/projects', proxied_token);
   equal(proxied_projects.status, 200, 'the user lists projects through the proxy');
   equal(
@@ -239,7 +270,7 @@ async function main() {
   log('restarting to prove the bootstrap is idempotent');
   await compose('restart', 'api');
   await waitForHealth();
-  const after = await getJson('/projects', await signIn(BASE_URL));
+  const after = await getJson('/projects', await access.signIn(BASE_URL));
   equal(
     after.body.filter((row: any) => row.id === PROJECT_ID).length,
     1,

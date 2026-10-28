@@ -3,6 +3,9 @@
 
 import { Elysia } from 'elysia';
 
+import { config } from '@core/env';
+import { notFound } from '@core/errors';
+
 import { resolveAuth } from './auth.middleware';
 import { authService } from './auth.service';
 import {
@@ -13,8 +16,14 @@ import {
   UserSchema,
 } from './types';
 
+const signInDisabled = () =>
+  notFound('auth.disabled', 'Sign-in is disabled; set AUTH_MODE=password to enable accounts');
+
 export const authRoutes = new Elysia({ prefix: '/auth', name: 'auth.routes' })
   .get('/status', () => authService.status(), { response: { 200: AuthStatusSchema } })
+  .onBeforeHandle(() => {
+    if (config.auth.mode === 'none') throw signInDisabled();
+  })
   .post(
     '/register',
     async ({ body, set }) => {
@@ -28,10 +37,11 @@ export const authRoutes = new Elysia({ prefix: '/auth', name: 'auth.routes' })
     body: LoginSchema,
     response: { 200: AuthTokenSchema },
   })
-  .group('', (app) =>
-    app
-      .resolve(async ({ request }) => ({ auth: await resolveAuth(request) }))
-      .get('/profile', ({ auth }) => authService.getProfile(auth.sub), {
-        response: { 200: UserSchema },
-      })
-  );
+  .resolve(async ({ request }) => {
+    const auth = await resolveAuth(request);
+    if (!auth) throw signInDisabled();
+    return { auth };
+  })
+  .get('/profile', ({ auth }) => authService.getProfile(auth.sub), {
+    response: { 200: UserSchema },
+  });

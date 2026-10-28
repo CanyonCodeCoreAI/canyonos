@@ -42,6 +42,8 @@ services:
       api:
         condition: service_healthy
     # Published on all interfaces so teammates can open the dashboard on the deploy
-    # host's address. Access is controlled by the API's sign-in, not by the bind.
+    # host's address. The API starts with AUTH_MODE=none, so by default anyone who
+    # can reach this port reads every project; set AUTH_MODE=password on the api
+    # service to require accounts.
     ports:
       - "${CANYONOS_WEB_PORT}:8080"

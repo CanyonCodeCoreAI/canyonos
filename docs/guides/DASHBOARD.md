@@ -4,13 +4,22 @@ The local dashboard shows what your deployed workflow is doing: each request, it
 
 ## Opening it
 
-When you run `canyonos deploy`, the dashboard starts automatically and the deploy prints its URL: `http://127.0.0.1:8081`, or the next free port if 8081 is taken. It signs you in by itself, so there's no account to create. You can also launch it without deploying:
+When you run `canyonos deploy`, the dashboard starts automatically and the deploy prints its URL: `http://127.0.0.1:8081`, or the next free port if 8081 is taken. There's no account to create: sign-in is off by default. You can also launch it without deploying:
 
 ```bash
 canyonos serve
 ```
 
 To use a different port, set the top-level `dashboard_port` in `config/global_controller.yaml`.
+
+## Sign-in
+
+The dashboard API reads `AUTH_MODE`:
+
+- `none`, the default: there is no sign-in. Anyone who can reach the API or the dashboard port reads every project.
+- `password`: the API also needs `JWT_SECRET`. Every project route asks for a bearer token and the dashboard opens on a login screen. The first visitor registers the first account; registration closes after that.
+
+The dashboard that `canyonos deploy` and `canyonos serve` start always runs with `none`; `canyonos` has no setting to change it.
 
 ## Finding your run
 

@@ -18,7 +18,7 @@ const LOGIN_BRAND: BrandCopy = {
 
 export const Route = createFileRoute('/_brand/login')({
   validateSearch: authSearchSchema,
-  beforeLoad: ({ search }) => leaveIfSignedIn(search),
+  beforeLoad: ({ context, search }) => leaveIfSignedIn(context.queryClient, search),
   loaderDeps: ({ search }) => search,
   loader: async ({ context, deps }) => {
     const { has_users } = await context.queryClient.fetchQuery(authStatusQuery);

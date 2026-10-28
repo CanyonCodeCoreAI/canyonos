@@ -65,6 +65,7 @@
     "test:unit": "bun test --isolate --env-file .env src/modules",
     "test:e2e": "bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/e2e.*.test.ts",
     "test:canyonos": "CANYONOS_REDIS_HOST=127.0.0.1 CANYONOS_REDIS_PORT=1 PORT=3002 API_URL=http://localhost:3002 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/self-host.bootstrap.test.ts",
+    "test:auth-none": "AUTH_MODE=none JWT_SECRET= PORT=3003 API_URL=http://localhost:3003 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/auth-mode.none.test.ts",
     "test:migration": "PORT=3004 API_URL=http://localhost:3004 bun test --bail --env-file .env --env-file .env.test --preload ./src/test/setup.ts src/test/migration.populated.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",

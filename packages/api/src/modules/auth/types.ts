@@ -25,7 +25,10 @@ export const RegisterSchema = LoginSchema.extend({ password_confirmation: z.stri
 );
 export type RegisterInput = z.infer<typeof RegisterSchema>;
 
-export const AuthStatusSchema = z.object({ has_users: z.boolean() });
+export const AUTH_MODES = ['none', 'password'] as const;
+export type AuthMode = (typeof AUTH_MODES)[number];
+
+export const AuthStatusSchema = z.object({ mode: z.enum(AUTH_MODES), has_users: z.boolean() });
 export type AuthStatus = z.infer<typeof AuthStatusSchema>;
 
 export const AuthTokenSchema = z.object({

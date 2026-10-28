@@ -5,6 +5,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 import './env-loader';
 
+import { noAuthApiBaseUrl } from './src/__tests__/helpers/projects';
+
 const webBaseUrl = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173';
 const apiBaseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -31,7 +33,8 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   // Keep API and dashboard as separately supervised processes. A root Turbo dev process can stay
   // alive while its API child is still starting (or has exited), causing Playwright to time out
-  // without exposing the actual readiness failure.
+  // without exposing the actual readiness failure. Playwright starts the entries one after another,
+  // so the sign-in-off API boots only after the first one has migrated and seeded the database.
   webServer: [
     {
       command: process.env.CI
@@ -40,7 +43,21 @@ export default defineConfig({
       url: `${apiBaseUrl}/healthz`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
-      env: { ...process.env, SEED_DEV_DATA: 'true' },
+      env: { ...process.env, AUTH_MODE: 'password', SEED_DEV_DATA: 'true' },
+    },
+    {
+      command: process.env.CI
+        ? 'cd ../.. && bun --filter @canyonos/api start'
+        : 'cd ../.. && bun --filter @canyonos/api dev:server',
+      url: `${noAuthApiBaseUrl}/healthz`,
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+      env: {
+        ...process.env,
+        AUTH_MODE: 'none',
+        PORT: new URL(noAuthApiBaseUrl).port,
+        API_URL: noAuthApiBaseUrl,
+      },
     },
     {
       command: process.env.CI

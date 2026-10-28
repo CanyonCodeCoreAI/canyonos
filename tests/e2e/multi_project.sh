@@ -78,7 +78,7 @@ config_port() {
 api() {
   local method="$1" path="$2" body="${3:-}" out="$ARTIFACTS_DIR/api-response.json"
   curl -s -o "$out" -w '%{http_code}' -X "$method" "$API_URL$path" \
-    -H "Authorization: Bearer ${TOKEN:-}" -H "Content-Type: application/json" \
+    ${TOKEN:+-H "Authorization: Bearer $TOKEN"} -H "Content-Type: application/json" \
     ${body:+-d "$body"}
 }
 
@@ -157,14 +157,19 @@ grep -q 'canyonos-portfolio-global-controller.canyonos-portfolio$' "$ARTIFACTS_D
 API_CREATED="$(docker inspect -f '{{.Created}}' "$DASHBOARD_API")"
 
 step "The dashboard lists both projects with their own Redis ports"
-E2E_CREDENTIALS='"email":"e2e@canyonos.test","password":"e2e-password-1"'
-registered="$(api POST /auth/register "{$E2E_CREDENTIALS,\"password_confirmation\":\"e2e-password-1\"}")"
-if [ "$registered" = 403 ]; then
-  [ "$(api POST /auth/login "{$E2E_CREDENTIALS}")" = 200 ] || fail "login failed"
-else
-  [ "$registered" = 201 ] || fail "registration failed with HTTP $registered"
+[ "$(api GET /auth/status)" = 200 ] || fail "GET /auth/status failed"
+auth_mode="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["mode"])' <"$ARTIFACTS_DIR/api-response.json")"
+# With AUTH_MODE=none, the default, every route answers without a token.
+if [ "$auth_mode" = password ]; then
+  E2E_CREDENTIALS='"email":"e2e@canyonos.test","password":"e2e-password-1"'
+  registered="$(api POST /auth/register "{$E2E_CREDENTIALS,\"password_confirmation\":\"e2e-password-1\"}")"
+  if [ "$registered" = 403 ]; then
+    [ "$(api POST /auth/login "{$E2E_CREDENTIALS}")" = 200 ] || fail "login failed"
+  else
+    [ "$registered" = 201 ] || fail "registration failed with HTTP $registered"
+  fi
+  TOKEN="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])' <"$ARTIFACTS_DIR/api-response.json")"
 fi
-TOKEN="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])' <"$ARTIFACTS_DIR/api-response.json")"
 [ "$(api GET /projects)" = 200 ] || fail "GET /projects failed"
 [ "$(project_names)" = "helloworld portfolio" ] || fail "projects listed: $(project_names)"
 HELLO_ID="$(project_id helloworld)"

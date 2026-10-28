@@ -7,6 +7,7 @@
   "globalPassThroughEnv": [
     "APP_ENV",
     "API_URL",
+    "AUTH_MODE",
     "CANYONOS_REDIS_HOST",
     "CANYONOS_REDIS_PORT",
     "DATABASE_URL",

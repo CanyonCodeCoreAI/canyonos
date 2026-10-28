@@ -59,7 +59,7 @@ describe('canyonos bootstrap', () => {
     expect(await count_users()).toBe(0);
 
     const status = await api.auth.status.get();
-    expect(status.data).toEqual({ has_users: false });
+    expect(status.data).toEqual({ mode: 'password', has_users: false });
   });
 
   test('an unusable identity creates no project and no user', async () => {

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Setup for one project of the ecosystem check: clone it at its pinned commit,
-build the images from this checkout, deploy, sign in to the dashboard and send one
-query. Cases then only assert. A failing case gets its calls, the doctor output
-and container logs written under the artifacts directory."""
+build the images from this checkout, deploy, sign in to the dashboard when it asks
+for an account, and send one query. Cases then only assert. A failing case gets its
+calls, the doctor output and container logs written under the artifacts directory."""
 
 from __future__ import annotations
 
@@ -307,8 +307,8 @@ def _endpoint(recorder: Recorder, workspace: Path) -> tuple[str, str, str]:
 
 @pytest.fixture(scope="session")
 def deployed(project, recorder, workspace, images, artifacts_dir) -> Deployed:
-    """Deploy the staged project with `canyonos deploy`, sign in to the dashboard
-    and hand cases the endpoint and API; afterwards save the container logs under
+    """Deploy the staged project with `canyonos deploy`, sign in to the dashboard if
+    it runs with accounts, and hand cases the endpoint and API; afterwards save the container logs under
     the artifacts directory and remove the deploy with `canyonos quit`."""
     canyonos(recorder, ["quit"], cwd=workspace, check=False)
     deploy = canyonos(recorder, ["deploy"], cwd=workspace, timeout=DEPLOY_TIMEOUT)

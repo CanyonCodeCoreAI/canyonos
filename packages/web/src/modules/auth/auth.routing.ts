@@ -3,7 +3,9 @@
 
 import { redirect } from '@tanstack/react-router';
 import { z } from 'zod';
+import type { QueryClient } from '@tanstack/react-query';
 
+import { authStatusQuery } from '@/modules/auth/auth.queries';
 import { authActions, useAuthStore } from '@/modules/auth/auth.store';
 
 /** Same-origin paths only: anything else would let a crafted link send a fresh session off-site. */
@@ -16,8 +18,18 @@ export const authSearchSchema = z.object({
 });
 export type AuthSearch = z.infer<typeof authSearchSchema>;
 
-/** The sign-in screens are for signed-out visitors; anyone else continues where they were going. */
-export function leaveIfSignedIn(search: AuthSearch): void {
+/** Only an API in password mode has accounts; in none mode every visitor is in without a session. */
+export async function signInRequired(queryClient: QueryClient): Promise<boolean> {
+  const { mode } = await queryClient.ensureQueryData(authStatusQuery);
+  return mode === 'password';
+}
+
+/**
+ * The sign-in screens are for signed-out visitors of a password-mode API; anyone else continues
+ * where they were going.
+ */
+export async function leaveIfSignedIn(queryClient: QueryClient, search: AuthSearch): Promise<void> {
+  if (!(await signInRequired(queryClient))) throw redirect({ to: '/' });
   if (!authActions.isAuthenticated()) {
     useAuthStore.getState().logout();
     return;

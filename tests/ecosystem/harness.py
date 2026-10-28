@@ -232,15 +232,16 @@ def poll(predicate, *, timeout: float, interval: float = 5, what: str):
 
 
 class Api:
-    """The dashboard API as one signed-in user."""
+    """The dashboard API as one signed-in user, or as anyone when sign-in is off
+    and there is no token to send."""
 
-    def __init__(self, recorder: Recorder, base_url: str, token: str):
+    def __init__(self, recorder: Recorder, base_url: str, token: str | None):
         self.recorder = recorder
         self.base_url = base_url.rstrip("/")
-        self.headers = {"Authorization": f"Bearer {token}"}
+        self.headers = {} if token is None else {"Authorization": f"Bearer {token}"}
 
     def request(self, method: str, path: str, *, json=None, check: bool = True) -> Call:
-        """Send `method` to `path` under the base URL with the bearer token."""
+        """Send `method` to `path` under the base URL, with the bearer token if any."""
         return http(
             self.recorder,
             method,
@@ -267,9 +268,12 @@ class Api:
         return self.request("DELETE", path, **kwargs)
 
 
-def sign_in(recorder: Recorder, base_url: str) -> str:
+def sign_in(recorder: Recorder, base_url: str) -> str | None:
     """Register the ecosystem account, or log in once registration is closed, and
-    return the bearer token."""
+    return the bearer token. Return None when the API runs with sign-in off
+    (`AUTH_MODE=none`), since every route then answers without a token."""
+    if http(recorder, "GET", f"{base_url}/auth/status").json()["mode"] == "none":
+        return None
     credentials = {"email": SIGN_IN_EMAIL, "password": SIGN_IN_PASSWORD}
     call = http(
         recorder,

@@ -18,7 +18,7 @@ const REGISTER_BRAND: BrandCopy = {
 
 export const Route = createFileRoute('/_brand/register')({
   validateSearch: authSearchSchema,
-  beforeLoad: ({ search }) => leaveIfSignedIn(search),
+  beforeLoad: ({ context, search }) => leaveIfSignedIn(context.queryClient, search),
   loaderDeps: ({ search }) => search,
   loader: async ({ context, deps }) => {
     const { has_users } = await context.queryClient.fetchQuery(authStatusQuery);

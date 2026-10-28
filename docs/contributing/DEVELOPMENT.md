@@ -98,10 +98,14 @@ bun run dashboard:dev
 That command ensures local Postgres is running, then starts the API at
 `http://localhost:3000` and Vite at `http://localhost:5173`. It uses local
 defaults: no deploy worker and `127.0.0.1:6379` as the default workflow Redis.
-The dashboard asks you to create the first account on an empty database; with
-`SEED_DEV_DATA=true` it also seeds `e2e@canyonos.test` / `e2e-password-1`. The defaults are in `scripts/dashboard-dev.ts`. A variable
-set in your shell wins over them, but they win over the same variables in
-`packages/api/.env` and `packages/web/.env`.
+The defaults are in `scripts/dashboard-dev.ts`. A variable set in your shell
+wins over them, but they win over the same variables in `packages/api/.env`
+and `packages/web/.env`.
+
+`packages/api/.env.example` sets `AUTH_MODE=none`, so the dashboard opens with
+no sign-in. With `AUTH_MODE=password` it asks you to create the first account
+on an empty database; `SEED_DEV_DATA=true` also seeds `e2e@canyonos.test` /
+`e2e-password-1` to sign in with.
 
 Unlike the `bun run docker:*` commands, `dashboard:dev` does not require
 `.docker/.env`: without it Compose uses its default ports and volume, and it

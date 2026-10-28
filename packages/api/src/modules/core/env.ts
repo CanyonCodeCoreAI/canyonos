@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { AUTH_MODES } from '@api/modules/auth/types';
+import type { AuthMode } from '@api/modules/auth/types';
+
 import { helpers } from './env.helpers';
 
 const env = Bun.env;
@@ -24,6 +27,14 @@ export function resolveConfiguredEnvironment(
 
 const environment = resolveConfiguredEnvironment(env.APP_ENV, env.NODE_ENV);
 
+export function resolveAuthMode(value: string | undefined): AuthMode {
+  if (value === undefined || value === '') return 'none';
+  if ((AUTH_MODES as readonly string[]).includes(value)) return value as AuthMode;
+  throw new Error(`AUTH_MODE must be one of ${AUTH_MODES.join(', ')}, got ${value}`);
+}
+
+const authMode = resolveAuthMode(env.AUTH_MODE);
+
 const EXAMPLE_JWT_SECRET = 'changeme-generate-with-openssl-rand-base64-32';
 const MIN_JWT_SECRET_LENGTH = 32;
 
@@ -42,7 +53,7 @@ export function assertJwtSecret(secret: string | undefined, environment: AppEnvi
   }
 }
 
-assertJwtSecret(env.JWT_SECRET, environment);
+if (authMode === 'password') assertJwtSecret(env.JWT_SECRET, environment);
 
 const canyonos = {
   redisHost: env.CANYONOS_REDIS_HOST ?? 'host.docker.internal',
@@ -84,7 +95,8 @@ export const config = {
     devData: parseBoolean(env.SEED_DEV_DATA, false),
   },
   auth: {
-    jwtSecret: requireEnv('JWT_SECRET'),
+    mode: authMode,
+    jwtSecret: authMode === 'password' ? requireEnv('JWT_SECRET') : (env.JWT_SECRET ?? ''),
     jwtIssuer: env.JWT_ISSUER ?? 'canyonos-api',
     jwtAudience: env.JWT_AUDIENCE ?? 'canyonos-clients',
     jwtTtlSeconds: parseDuration(env.JWT_TTL, 60 * 60 * 24),

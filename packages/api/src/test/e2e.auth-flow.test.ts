@@ -58,7 +58,7 @@ describe('password accounts', () => {
   test('status is false before anyone registers', async () => {
     const status = await api.auth.status.get();
     expect(status.error).toBeNull();
-    expect(status.data).toEqual({ has_users: false });
+    expect(status.data).toEqual({ mode: 'password', has_users: false });
 
     const login = await api.auth.login.post({
       email: 'first@canyonos.test',
@@ -99,7 +99,7 @@ describe('password accounts', () => {
     expect(first.token).toBeString();
     expect(first.user).not.toHaveProperty('password_hash');
 
-    expect((await api.auth.status.get()).data).toEqual({ has_users: true });
+    expect((await api.auth.status.get()).data).toEqual({ mode: 'password', has_users: true });
 
     const profile = await api.auth.profile.get({ $headers: bearer(first.token) });
     expect(profile.error).toBeNull();
