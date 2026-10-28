@@ -153,6 +153,8 @@ class ReplicaProvisionerTests(unittest.TestCase):
                     "-e",
                     "CANYONOS_AGENT_HOST=canyonos-alpha-0",
                     "-e",
+                    "CANYONOS_REPLICA_ID=Alpha-0",
+                    "-e",
                     "CANYONOS_REDIS_HOST=canyonos-redis-localhost",
                     "-e",
                     "CANYONOS_REDIS_PORT=6379",
@@ -319,6 +321,8 @@ class ReplicaProvisionerTests(unittest.TestCase):
                     "-e",
                     "CANYONOS_AGENT_HOST=canyonos-workflow-0",
                     "-e",
+                    "CANYONOS_REPLICA_ID=Workflow-0",
+                    "-e",
                     "CANYONOS_REDIS_HOST=canyonos-redis-localhost",
                     "-e",
                     "CANYONOS_REDIS_PORT=6379",
@@ -353,15 +357,16 @@ class ReplicaProvisionerTests(unittest.TestCase):
             ),
         )
 
-    def test_replica_id_is_published_under_the_controller_address_key(self):
+    def test_the_replica_id_goes_to_docker_run_not_to_redis(self):
+        # The replica reads CANYONOS_REPLICA_ID (see the docker run tests above); a
+        # second copy in Redis would be a second source of truth.
         controller = _fake_controller()
         manager = ReplicaProvisioner(controller)
 
         _ensure(manager, [{"name": "Alpha", "provider": "local"}])
 
-        self.assertEqual(
-            controller.redis.get("controller:canyonos-alpha-0:50051:replica_id"),
-            "Alpha-0",
+        self.assertIsNone(
+            controller.redis.get("controller:canyonos-alpha-0:50051:replica_id")
         )
 
     def test_one_failed_replica_still_registers_and_routes_the_others(self):

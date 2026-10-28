@@ -182,10 +182,9 @@ class LocalController(object):
                 self.server.stop(0)
                 raise
 
-        # Written by the replica provisioner; stamps completed requests with the replica that ran them.
-        self.replica_id = self.redis.get(
-            f"controller:{self.agent_host}:{self.public_port}:replica_id"
-        )
+        # Stamps completed requests and logs with the replica that ran them; whatever
+        # launches the replica names it.
+        self.replica_id = os.environ.get("CANYONOS_REPLICA_ID")
 
         # global_controller.yaml's `logs:` flag, on by default -- set `logs: false` to opt out. Only
         # gates the rich `logs` detail below -- never the cheap `error`/`failed` fields, always written.

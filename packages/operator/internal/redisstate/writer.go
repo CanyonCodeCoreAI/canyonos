@@ -19,9 +19,9 @@ type Agent struct {
 	Stateful bool
 }
 
-// TrackedKey is the operator's own note of the replica addresses whose replica-ID and
-// status keys may still be in Redis: those keys outlive a replica's record while
-// its pod shuts down (it still reports its status), and go once the pod does.
+// TrackedKey is the operator's own note of the replica addresses whose status keys
+// may still be in Redis: a status key outlives a replica's record while its pod
+// shuts down (it still reports its status), and goes once the pod does.
 func TrackedKey(agentName string) string {
 	return "operator:" + agentName + ":addresses"
 }
@@ -30,8 +30,8 @@ func TrackedKey(agentName string) string {
 // are ready and not terminating: each is written (or refreshed), every other record
 // of the agent is removed, and `desired` is mirrored for the global controller to
 // scale from. `present` are the addresses of every pod of the agent that still
-// exists, in any state; the replica-ID and status keys of any other are deleted, as
-// the provisioner deletes them with a replica.
+// exists, in any state; the status keys of any other are deleted, as the
+// provisioner deletes them with a replica.
 func SyncReplicas(
 	ctx context.Context, rdb redis.Cmdable, agentName string, replicas []Replica, present []string, desired int32,
 ) error {
@@ -59,7 +59,6 @@ func SyncReplicas(
 		pipe.HSet(ctx, ReplicaKey(agentName, replica.Index), replica.Record())
 		pipe.SAdd(ctx, ReplicaSetKey(agentName), id)
 		pipe.SAdd(ctx, TrackedKey(agentName), replica.Address())
-		pipe.Set(ctx, ReplicaIDKey(replica.Address()), id, 0)
 	}
 	forgetGone(ctx, pipe, agentName, tracked, present)
 	pipe.Set(ctx, DesiredReplicasKey(agentName), desired, 0)
@@ -68,8 +67,8 @@ func SyncReplicas(
 }
 
 // RemoveAgent deletes what the operator wrote for an agent being removed: its
-// replica records, replica set and desired count at once, and the replica-ID and
-// status keys of each pod that is no longer `present`. Called again once its pods
+// replica records, replica set and desired count at once, and the status keys of
+// each pod that is no longer `present`. Called again once its pods
 // are gone, it leaves nothing. Routing drops the agent on the next PublishRouting
 // without it.
 func RemoveAgent(ctx context.Context, rdb redis.Cmdable, agentName string, present []string) error {
@@ -91,12 +90,12 @@ func RemoveAgent(ctx context.Context, rdb redis.Cmdable, agentName string, prese
 	return err
 }
 
-// forgetGone deletes the replica-ID and status keys of tracked addresses whose pod
-// no longer exists.
+// forgetGone deletes the status keys of tracked addresses whose pod no longer
+// exists.
 func forgetGone(ctx context.Context, pipe redis.Pipeliner, agentName string, tracked, present []string) {
 	for _, address := range tracked {
 		if !slices.Contains(present, address) {
-			pipe.Del(ctx, ReplicaIDKey(address), StatusKey(address))
+			pipe.Del(ctx, StatusKey(address))
 			pipe.SRem(ctx, TrackedKey(agentName), address)
 		}
 	}

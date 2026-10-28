@@ -127,16 +127,6 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(record["container_name"], "portfolio-agent-2")
 
-    def test_a_replica_finds_its_id_where_the_provisioner_writes_it(self):
-        replica_id = kubernetes_contract.contract()["replica_id"]
-        self.assertEqual(
-            replica_id,
-            {
-                "key": "controller:helloagent-1.helloagent.acme.svc:50051:replica_id",
-                "value": "HelloAgent-1",
-            },
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

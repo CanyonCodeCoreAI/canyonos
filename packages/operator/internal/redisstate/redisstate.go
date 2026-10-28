@@ -69,11 +69,6 @@ func DesiredReplicasKey(agentName string) string {
 	return "agent:" + agentName + ":desired_replicas"
 }
 
-// ReplicaIDKey is where a replica finds its ID, by its address.
-func ReplicaIDKey(address string) string {
-	return "controller:" + address + ":replica_id"
-}
-
 // StatusKey is where a replica reports its status, by its address.
 func StatusKey(address string) string {
 	return "controller:" + address + ":status"

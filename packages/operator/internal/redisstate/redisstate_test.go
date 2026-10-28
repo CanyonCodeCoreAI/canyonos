@@ -29,13 +29,9 @@ type contract struct {
 		RedisPort int    `json:"redis_port"`
 		CreatedAt string `json:"created_at"`
 	} `json:"example"`
-	Records     map[string]map[string]string `json:"records"`
-	ReplicaSets map[string][]string          `json:"replica_sets"`
-	ReplicaID   struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
-	} `json:"replica_id"`
-	DesiredReplicasKey string `json:"desired_replicas_key"`
+	Records            map[string]map[string]string `json:"records"`
+	ReplicaSets        map[string][]string          `json:"replica_sets"`
+	DesiredReplicasKey string                       `json:"desired_replicas_key"`
 	Routing            struct {
 		AgentsKey    string            `json:"agents_key"`
 		AddressesKey string            `json:"addresses_key"`
@@ -100,7 +96,7 @@ func TestRecordsAreWhatPythonReads(t *testing.T) {
 	}
 }
 
-func TestReplicaSetsAndReplicaIDKey(t *testing.T) {
+func TestReplicaSets(t *testing.T) {
 	c := load(t)
 	for _, agent := range []string{helloAgent, workflowAgent} {
 		members := c.ReplicaSets[ReplicaSetKey(agent)]
@@ -112,11 +108,6 @@ func TestReplicaSetsAndReplicaIDKey(t *testing.T) {
 				t.Errorf("%s member %d: contract %s, operator %s", agent, i, member, ReplicaID(agent, i))
 			}
 		}
-	}
-	address := c.Records[ReplicaKey(helloAgent, 1)]["address"]
-	if ReplicaIDKey(address) != c.ReplicaID.Key || ReplicaID(helloAgent, 1) != c.ReplicaID.Value {
-		t.Errorf("replica ID: contract %s = %s, operator %s = %s",
-			c.ReplicaID.Key, c.ReplicaID.Value, ReplicaIDKey(address), ReplicaID(helloAgent, 1))
 	}
 }
 

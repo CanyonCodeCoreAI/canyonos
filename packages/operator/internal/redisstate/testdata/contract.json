@@ -66,10 +66,6 @@
       "replica_index": "0"
     }
   },
-  "replica_id": {
-    "key": "controller:helloagent-1.helloagent.acme.svc:50051:replica_id",
-    "value": "HelloAgent-1"
-  },
   "replica_port": 50051,
   "replica_sets": {
     "agent:HelloAgent:instances": [

@@ -78,8 +78,8 @@ func TestWritingTheContractsReplicasGivesExactlyItsRedisState(t *testing.T) {
 	if got := rdb.HGetAll(ctx, StatefulKey).Val(); !maps.Equal(got, c.Routing.Stateful) {
 		t.Errorf("stateful: got %v, want %v", got, c.Routing.Stateful)
 	}
-	if got := rdb.Get(ctx, c.ReplicaID.Key).Val(); got != c.ReplicaID.Value {
-		t.Errorf("replica ID: got %q, want %q", got, c.ReplicaID.Value)
+	if keys := rdb.Keys(ctx, "controller:*:replica_id").Val(); len(keys) != 0 {
+		t.Errorf("a replica reads its ID from CANYONOS_REPLICA_ID, not Redis: %v", keys)
 	}
 	if got := rdb.Get(ctx, c.DesiredReplicasKey).Val(); got != "1" {
 		t.Errorf("desired: got %q", got)
@@ -104,16 +104,16 @@ func TestAStoppingReplicaLeavesAtOnceAndItsKeysWhenItsPodGoes(t *testing.T) {
 	if rdb.Exists(ctx, ReplicaKey(helloAgent, 1)).Val() != 0 {
 		t.Error("a stopping replica's record must go at once")
 	}
-	if rdb.Exists(ctx, StatusKey(gone.Address()), ReplicaIDKey(gone.Address())).Val() != 2 {
-		t.Error("its status and replica ID stay while its pod shuts down")
+	if rdb.Exists(ctx, StatusKey(gone.Address())).Val() != 1 {
+		t.Error("its status stays while its pod shuts down")
 	}
 
 	// Its pod is gone.
 	if err := SyncReplicas(ctx, rdb, helloAgent, both[:1], addressesOf(both[:1]), 1); err != nil {
 		t.Fatal(err)
 	}
-	if rdb.Exists(ctx, StatusKey(gone.Address()), ReplicaIDKey(gone.Address())).Val() != 0 {
-		t.Error("its status and replica ID go with its pod")
+	if rdb.Exists(ctx, StatusKey(gone.Address())).Val() != 0 {
+		t.Error("its status goes with its pod")
 	}
 	if rdb.SIsMember(ctx, TrackedKey(helloAgent), gone.Address()).Val() {
 		t.Error("and the operator stops tracking it")

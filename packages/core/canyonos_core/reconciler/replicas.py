@@ -187,6 +187,8 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
             "-e",
             f"CANYONOS_AGENT_HOST={agent_host}",
             "-e",
+            f"CANYONOS_REPLICA_ID={replica_id}",
+            "-e",
             f"CANYONOS_REDIS_HOST={redis_host}",
             "-e",
             f"CANYONOS_REDIS_PORT={redis_port}",
@@ -241,8 +243,6 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
             f"Failed to launch {container}: no free port found after "
             f"{MAX_PORT_ATTEMPTS} attempts"
         )
-
-    machine_redis.set(f"controller:{address}:replica_id", replica_id)
 
     replica = {
         "agent_name": agent_name,

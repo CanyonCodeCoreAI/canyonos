@@ -17,7 +17,11 @@ they meet only here and in the database file.
 import os
 import sqlite3
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "otel_queue.db")
+# CANYONOS_DATA_DIR: a writable folder for the queue; unset, it stays beside this module.
+DB_PATH = os.path.join(
+    os.environ.get("CANYONOS_DATA_DIR") or os.path.dirname(os.path.abspath(__file__)),
+    "otel_queue.db",
+)
 
 # Table schema (spans/traces -- the `traces_waiting` table)
 _CREATE_TRACES_WAITING = """

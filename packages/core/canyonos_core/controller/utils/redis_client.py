@@ -3,16 +3,38 @@
 
 """Redis client used across the runtime: wraps redis-py and returns decoded strings."""
 
+import os
 import socket
 
 import redis
+
+_ENABLED = {"1", "true", "yes", "on"}
+
+
+def connection_options(environ=None):
+    """Password, username and TLS for a Redis that requires them (such as one the
+    Kubernetes operator runs, or a managed one), from the CANYONOS_REDIS_* variables.
+    None set means a plain connection, as Docker and EC2 use; timeouts and retries stay
+    redis-py's defaults. The LLM gateway (llm_gateway/hooks.py) uses the same rules.
+    """
+    env = os.environ if environ is None else environ
+    options = {}
+    if env.get("CANYONOS_REDIS_PASSWORD"):
+        options["password"] = env["CANYONOS_REDIS_PASSWORD"]
+    if env.get("CANYONOS_REDIS_USERNAME"):
+        options["username"] = env["CANYONOS_REDIS_USERNAME"]
+    if env.get("CANYONOS_REDIS_TLS", "").strip().lower() in _ENABLED:
+        options["ssl"] = True
+        if env.get("CANYONOS_REDIS_CA_FILE"):
+            options["ssl_ca_certs"] = env["CANYONOS_REDIS_CA_FILE"]
+    return options
 
 
 class RedisClient(object):
     """Redis utility for connecting to localhost with support for strings, hashes, and sets."""
 
     def __init__(self, host="localhost", port=6379, db=0):
-        self.client = redis.Redis(host=host, port=port, db=db)
+        self.client = redis.Redis(host=host, port=port, db=db, **connection_options())
         # IPv4 only: Docker Desktop's host.docker.internal also resolves to an unreachable IPv6 address.
         if host == "host.docker.internal":
             self.client.connection_pool.connection_kwargs["socket_type"] = (

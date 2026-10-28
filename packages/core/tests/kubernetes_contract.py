@@ -136,13 +136,6 @@ def contract():
             for r in kubernetes_records
         },
         "replica_sets": {key: sorted(members) for key, members in redis.sets.items()},
-        # Where a replica finds its ID, as the provisioner writes it.
-        "replica_id": {
-            "key": f"controller:{replicas[0]['address']}:replica_id",
-            "value": replica_id(
-                replicas[0]["agent_name"], int(replicas[0]["replica_index"])
-            ),
-        },
         "desired_replicas_key": state.desired_key("HelloAgent"),
         "routing": {
             "agents_key": routing.AGENTS_SET_KEY,

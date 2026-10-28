@@ -20,6 +20,11 @@ from typing import Any, Dict, Optional
 
 import redis
 
+try:
+    from canyonos_core.controller.utils.redis_client import connection_options
+except ImportError:
+    from redis_client import connection_options
+
 log = logging.getLogger("llm_gateway")
 
 FUTURE_ID_HEADER = "x-canyonos-future-id"
@@ -96,6 +101,7 @@ class Hooks:
                     host=config.redis_host,
                     port=config.redis_port,
                     decode_responses=True,
+                    **connection_options(),
                 )
                 log.info(
                     "Redis telemetry enabled: %s:%s",
