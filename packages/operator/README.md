@@ -26,7 +26,7 @@ downloaded into `bin/` on first use.
 
 ```sh
 make generate manifests   # deep-copy code, CRDs and RBAC after changing the types
-make test                 # unit tests
+make test                 # unit and envtest suites
 make lint
 ```
 
