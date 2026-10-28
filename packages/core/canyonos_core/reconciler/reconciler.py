@@ -16,7 +16,6 @@ from functools import partial
 
 from canyonos_core.controller.controller_context import (
     ControllerContext,
-    _redis_connect_host,
     replica_id_from_record,
     list_replicas,
 )
@@ -302,16 +301,14 @@ class Reconciler(object):
         return False
 
     def _port_is_open(self, replica):
-        """Whether something is listening on the replica's port."""
-        host = replica.get("private_host")
-        port = replica.get("host_port")
+        """Whether something is listening at the replica's address, the one the Global
+        Controller calls: by name on canyonos-local, or at another machine's IP."""
+        host, _, port = replica.get("address", "").rpartition(":")
         if not host or not port:
             return False
         try:
-            # A containerized reconciler reaches host-published ports via host.docker.internal.
             with socket.create_connection(
-                (_redis_connect_host(host), int(port)),
-                timeout=TCP_PROBE_TIMEOUT_SECONDS,
+                (host, int(port)), timeout=TCP_PROBE_TIMEOUT_SECONDS
             ):
                 return True
         except (OSError, ValueError):

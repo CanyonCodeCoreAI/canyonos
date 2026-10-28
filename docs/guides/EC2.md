@@ -58,10 +58,11 @@ The machine running `canyonos deploy` needs Docker, AWS credentials with
 `ec2:DescribeInstanceTypes`, `ec2:CreateTags` and `ec2:ImportKeyPair`, and a route to the machines'
 private IPs, which in practice means running inside the same VPC as
 `subnet_id`. The machines' security group has to allow 22, 6379 and 50051–50150
-from itself: replicas sharing a machine publish on 50051, 50052 and up. The endpoint and dashboard run on the deploying machine, so it has
+from itself: replicas sharing a machine publish on 50051, 50052 and up, on the
+machine's private IP only. The endpoint and dashboard run on the deploying machine, so it has
 to allow their ports (8080 and 8081 by default) from whoever calls the
-endpoint, and the gRPC port the endpoint publishes from the machines' security
-group: agents send results back there, and without it every request stays
+endpoint, and the gRPC port the endpoint publishes on its private IP from the
+machines' security group: agents send results back there, and without it every request stays
 pending. The EC2 provider
 README in `packages/core` has the exact IAM policy JSON.
 

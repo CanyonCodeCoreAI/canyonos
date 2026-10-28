@@ -30,7 +30,7 @@ flowchart LR
 | Container | `canyonos-<project>-endpoint-0`, one replica, 2 CPUs, always on the Local provider |
 | Image | the Global Controller's image, started as `python -m canyonos_core.endpoint` |
 | HTTP | gunicorn on `8080` inside the container, 2 workers × 16 threads, published on `endpoint.api_port` (default `8080`) |
-| gRPC | a Local Controller that only routes, on `50051` inside the container, published on a host port the provider claims like an agent replica's |
+| gRPC | a Local Controller that only routes, on `50051` inside the container, published on a host port the provider claims only when the deployment's provider isn't `local` and `CANYONOS_PRIVATE_IP` is set, for agents on other machines to call back |
 | Scaling | never: autoscaling only acts on entries of type `agent` |
 
 ## Manifest block

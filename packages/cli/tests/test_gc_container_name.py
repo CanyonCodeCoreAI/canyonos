@@ -125,3 +125,22 @@ def test_a_port_collision_retry_still_gets_the_name(docker, message):
         "canyonos-portfolio-global-controller"
     ] * 2
     assert docker.removals == [["docker", "rm", "-f", LEFTOVER_ID]]
+
+
+def _bind_failure(port):
+    return completed(
+        ["docker", "run"],
+        returncode=125,
+        stderr=f"Bind for 127.0.0.1:{port} failed: port is already allocated",
+    )
+
+
+def test_a_taken_port_moves_to_the_next(docker):
+    docker.runs = [
+        _bind_failure(9000),
+        completed(["docker", "run"], stdout=f"{CONTAINER_ID}\n"),
+    ]
+
+    _container_id, port, _socket = init_cmd._run_container(port=9000)
+
+    assert port == 9001

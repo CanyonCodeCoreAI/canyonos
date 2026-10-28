@@ -30,6 +30,7 @@ from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.endpoint import ENDPOINT_PORT
+from canyonos_core.reconciler import providers
 from canyonos_core.reconciler.providers.shared_utils.docker_host import (
     container_log_tail,
     container_running,
@@ -96,11 +97,24 @@ def _refuse_other_projects_container(controller, container, host, user):
         )
 
 
+def publishes_port(controller, machine, agent_spec):
+    """Whether a replica's container port is published on its machine. Only callers on
+    other machines need it: a replica on another machine, and the endpoint its agents
+    there call back. A database is published on its `db_port`. Any other replica on this
+    machine is reached by name on canyonos-local, so it publishes nothing."""
+    return (
+        not _is_local_host(machine["private_host"])
+        or agent_spec.get("type") == "database"
+        or _callback_host(controller, agent_spec) is not None
+    )
+
+
 def launch(controller, machine, agent_spec, replica_index, host_port, replica_id):
     """Start a replica's container on its machine, publishing it on `host_port` or the
-    next free port (replacing a leftover one with the same name), and return the
-    replica's record. The image must already be on the machine. Starts another machine's
-    Redis first if it isn't running. Used by the provisioner for every launch."""
+    next free port when `publishes_port` says so (replacing a leftover one with the same
+    name), and return the replica's record. The image must already be on the machine.
+    Starts another machine's Redis first if it isn't running. Used by the provisioner for
+    every launch."""
     agent_name = agent_spec["name"]
     agent_type = agent_spec.get("type", "agent")
     image = image_name(agent_name)
@@ -139,7 +153,11 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
     # Started with its machine; this restarts one that died since.
     start_redis(controller, host, user)
 
-    callback_host = _callback_host(agent_spec)
+    callback_host = _callback_host(controller, agent_spec)
+    publish = publishes_port(controller, machine, agent_spec)
+    # Bound to the private IP other machines call, not to every interface the machine
+    # has. A local database's db_port is the user's own and stays on every interface.
+    bind_ip = callback_host or (None if is_local else host)
     for attempt in range(MAX_PORT_ATTEMPTS):
         # Other machines can't resolve container names, so they reach a replica on its
         # published port: a remote one at its host, the endpoint at the private IP.
@@ -163,8 +181,7 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
             # (e.g. an EC2 test box) does not unless told to.
             "--add-host",
             "host.docker.internal:host-gateway",
-            "-p",
-            f"{host_port}:{container_port}",
+            *(_publish_args(bind_ip, host_port, container_port) if publish else []),
             "-e",
             f"CANYONOS_AGENT_PORT={agent_port}",
             "-e",
@@ -235,7 +252,9 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
         "public_host": machine["public_host"],
         "host_port": str(host_port),
         "container_port": str(container_port),
-        "published_address": f"{host}:{host_port}",
+        # An unpublished replica's only address is the one on canyonos-local, as a
+        # pod's is on Kubernetes.
+        "published_address": f"{host}:{host_port}" if publish else address,
         "address": address,
         "redis_host": redis_host,
         "redis_port": str(redis_port),
@@ -307,11 +326,23 @@ def _wait_until_reachable(address, timeout):
     raise TimeoutError(f"Replica address never became reachable at {address}.")
 
 
-def _callback_host(agent_spec):
+def _publish_args(bind_ip, host_port, container_port):
+    """Return the `docker run -p` args, on `bind_ip` alone when one is given."""
+    published = f"{host_port}:{container_port}"
+    return ["-p", f"{bind_ip}:{published}" if bind_ip else published]
+
+
+def _callback_host(controller, agent_spec):
     """Return the address agents on other machines call the endpoint's controller
-    back on, this machine's private IP, or None for any other agent or when the
-    CLI found no private IP."""
+    back on, this machine's private IP, or None for any other agent, when the
+    deployment's provider runs every agent on this machine, or when the CLI found no
+    private IP. The endpoint's own spec always names the local provider, so the
+    deployment's is read from the config."""
     if agent_spec.get("type") != "endpoint":
+        return None
+    provider = controller.config.get("provider", providers.DEFAULT)
+    # A provider without machine types has one machine: this one.
+    if not providers.SCHEMAS[providers.canonical_name(provider)].MACHINE_TYPES:
         return None
     return os.environ.get("CANYONOS_PRIVATE_IP") or None
 

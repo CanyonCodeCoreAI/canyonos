@@ -17,14 +17,14 @@ CLI host:         ──▶          8000
 │ canyonos-<project>-redis-<host> ◀─ RedisClient ─┘  redis_port (6379)        │
 │        ▲                                                                     │
 │        ├── agent replica: LocalController + agent code                      │
-│        │      gRPC [::]:50051; host publication <host>:<host_port>           │
+│        │      gRPC [::]:50051; published only on another machine             │
 │        │      address ──▶ <container_name>:50051 (local)                     │
 │        │      LLM gateway ──▶ 127.0.0.1:8081                                   │
 │        │                                                                     │
 │        ├── canyonos-<project>-endpoint-0 (GC's machine): routing-only        │
 │        │      LocalController + gunicorn; host <api_port> ──▶ container 8080 │
 │        │      address ──▶ <container_name>:50051, or                         │
-│        │        <CANYONOS_PRIVATE_IP>:<host_port> when that is set           │
+│        │        <CANYONOS_PRIVATE_IP>:<host_port> for agents elsewhere       │
 │        │                                                                     │
 │        └── canyonos-<project>-metrics-<host>                                 │
 └──────────────────────────────────────────────────────────────────────────────┘

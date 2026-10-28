@@ -14,11 +14,11 @@
 
 - **Security group** (everything is inbound, same permissions needed for outbound unless you allow all outbound traffic)
   - The endpoint and dashboard run on the host, not on a launched machine. Their ports are by default 8080 and 8081, and are referred as such below
-  - On the machines' security group, ports 50051–50150, 6379, and 22 need to be accessible by the security group itself; replicas sharing a machine publish on 50051, 50052 and up. The host must run inside the same VPC, since it reaches every machine over its private IP.
+  - On the machines' security group, ports 50051–50150, 6379, and 22 need to be accessible by the security group itself; replicas sharing a machine publish on 50051, 50052 and up, on the machine's private IP only. The host must run inside the same VPC, since it reaches every machine over its private IP.
     - 50051–50150 and 6379 must be accessible over custom TCP.
     - 22 must be accessible over ssh.
   - On the host, ports 8080 and 8081 need to be accessible by whoever queries the endpoint (0.0.0.0 for example)
-  - On the host, the port the endpoint publishes for its gRPC controller needs to be accessible by the machines' security group over custom TCP. Agents send results back there; without it every request stays "pending".
+  - On the host, the port the endpoint publishes for its gRPC controller (on the host's private IP only) needs to be accessible by the machines' security group over custom TCP. Agents send results back there; without it every request stays "pending".
 
 ## Config (`ec2:` block in `global_controller.yaml`)
 

@@ -52,12 +52,18 @@ machine's hourly cost times its share of the machine's vCPUs.
 Removing a replica drains it and removes only its container. A machine goes when it dies,
 when the config drops it, or at stop.
 
-`published_address` is the replica's published `host:port`. `address` is the `host:port`
-other agents and the controllers reach it on: for an agent or the endpoint, the address the
-container is given as `CANYONOS_AGENT_HOST` and `CANYONOS_AGENT_PORT`; for a
-database, the port the database listens on. The routing table lists it,
-and the replica's status, metrics and agent id keys in Redis are named after it. A record
-counts as finished once it has `address`.
+`published_address` is the replica's published `host:port`. Only a replica that callers on
+other machines reach is published: one on another machine, the endpoint when the
+deployment's provider isn't `local` (its agents call it back at `CANYONOS_PRIVATE_IP`), and
+a database on its `db_port`. Any other replica on the
+Global Controller's machine publishes nothing, so its `host_port` is its container port
+and its `published_address` is its `address`, as a pod's is on Kubernetes.
+
+`address` is the `host:port` other agents and the controllers reach it on: for an agent or
+the endpoint, the address the container is given as `CANYONOS_AGENT_HOST` and
+`CANYONOS_AGENT_PORT`; for a database, the port the database listens on. The routing table
+lists it, and the replica's status, metrics and agent id keys in Redis are named after it. A
+record counts as finished once it has `address`.
 
 `providers.bind` sets each module's `_controller`. A provider reads the deploy config from
 `_controller.config` and runs commands on a host with `_controller._run_cmd(cmd, host, user)`.

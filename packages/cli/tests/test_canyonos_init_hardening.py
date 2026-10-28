@@ -72,7 +72,7 @@ def test_state_save_failure_removes_the_new_container(monkeypatch):
     monkeypatch.setattr(
         init_cmd,
         "_run_container",
-        lambda image=None: ("abcdef123456", 8000, None),
+        lambda **_k: ("abcdef123456", 8000, None),
     )
     monkeypatch.setattr(
         init_cmd, "_save_state", lambda *_a: (_ for _ in ()).throw(OSError("disk full"))

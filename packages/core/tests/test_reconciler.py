@@ -96,9 +96,13 @@ class StartupReadinessTests(unittest.TestCase):
             sum(" is ready." in message for message in logs.output),
             2,
         )
+        # Keyed by address: both records share localhost and port 50051.
         self.assertEqual(
             controller._last_status,
-            {("localhost", "8000"): "healthy", ("localhost", "8001"): "healthy"},
+            {
+                "canyonos-alpha-0:50051": "healthy",
+                "canyonos-alpha-1:50051": "healthy",
+            },
         )
 
     def test_wait_for_healthy_fails_when_no_replica_was_ever_recorded(self):
@@ -580,39 +584,40 @@ class ReplicaDrainTests(unittest.TestCase):
 
 
 class ConnectionProbeTests(unittest.TestCase):
-    def _probed_address(self, replica, env):
+    def _probed_address(self, replica):
         reconciler = _bare_reconciler(_fake_context(), _FakeProvisioner())
-        with (
-            patch.dict(os.environ, env, clear=False),
-            patch(
-                "canyonos_core.reconciler.reconciler.socket.create_connection"
-            ) as connect,
-        ):
-            if "CANYONOS_REDIS_HOST" not in env:
-                os.environ.pop("CANYONOS_REDIS_HOST", None)
+        with patch(
+            "canyonos_core.reconciler.reconciler.socket.create_connection"
+        ) as connect:
             self.assertTrue(reconciler._port_is_open(replica))
         return connect.call_args.args[0]
 
-    def test_a_containerized_reconciler_probes_local_ports_via_the_host_gateway(self):
-        address = self._probed_address(
-            _replica("Alpha", 0), {"CANYONOS_REDIS_HOST": "host.docker.internal"}
-        )
-
-        self.assertEqual(address, ("host.docker.internal", 8000))
-
-    def test_a_reconciler_on_the_host_probes_localhost(self):
+    def test_a_local_replica_is_probed_by_name_on_canyonos_local(self):
         self.assertEqual(
-            self._probed_address(_replica("Alpha", 0), {}), ("localhost", 8000)
+            self._probed_address(_replica("Alpha", 0)), ("canyonos-alpha-0", 50051)
         )
 
-    def test_a_remote_host_is_probed_directly(self):
-        replica = {**_replica("Alpha", 0), "private_host": "10.0.0.5"}
+    def test_a_replica_on_another_machine_is_probed_at_its_published_port(self):
+        replica = {
+            **_replica("Alpha", 0),
+            "private_host": "10.0.0.5",
+            "host_port": "50052",
+            "published_address": "10.0.0.5:50052",
+            "address": "10.0.0.5:50052",
+        }
 
-        address = self._probed_address(
-            replica, {"CANYONOS_REDIS_HOST": "host.docker.internal"}
-        )
+        self.assertEqual(self._probed_address(replica), ("10.0.0.5", 50052))
 
-        self.assertEqual(address, ("10.0.0.5", 8000))
+    def test_a_record_without_an_address_is_not_probed(self):
+        reconciler = _bare_reconciler(_fake_context(), _FakeProvisioner())
+        replica = {**_replica("Alpha", 0)}
+        del replica["address"]
+
+        with patch(
+            "canyonos_core.reconciler.reconciler.socket.create_connection"
+        ) as connect:
+            self.assertFalse(reconciler._port_is_open(replica))
+        connect.assert_not_called()
 
 
 class ReportFreshnessTests(unittest.TestCase):

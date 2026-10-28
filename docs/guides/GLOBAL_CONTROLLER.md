@@ -122,6 +122,27 @@ These go at the top level of the file, next to `agents`:
   Most projects leave this alone.
 - `project_id`: filled in by the first deploy. Leave it as it is.
 
+### Ports a deploy opens
+
+A deploy opens these ports on the machine that runs `canyonos deploy`, and no others:
+
+| What | Setting | Default | Open on |
+|---|---|---|---|
+| Endpoint | `endpoint.api_port` | `8080` | every interface |
+| Redis | `redis.port` | `6379` | every interface |
+| Global Controller | none | the last deploy's port or `8000`, else the next free one | `127.0.0.1` |
+| Each database | its `db_port` | `5432` | every interface |
+| Dashboard, shared by every project | `dashboard_port` | `8081` | every interface |
+
+The dashboard's API also listens on `3000`, and its own database on `127.0.0.1:5432`.
+Agents open no port: the Global Controller reaches them over a private Docker
+network. Two projects on one machine need their own `api_port` and `redis.port`. A
+taken `api_port`, `redis.port` or `db_port` stops the deploy with a message that
+names it; the Global Controller and the dashboard move to the next free port instead,
+and `canyonos deploy` names the Global Controller's. With
+`provider: EC2`, each machine also opens `50051` and up for its agents, on its
+private IP only; see [EC2 deployment](EC2.md).
+
 ## Using environment variables
 
 Any text value can come from an environment variable, written as `${NAME}`:

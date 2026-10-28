@@ -141,9 +141,10 @@ class _FakeRedis:
         )
 
 
-def _replica(agent_name, replica_index, created_at=None, host_port=None):
-    """An agent_instance:* record as the Provisioner writes it."""
-    host_port = str(host_port or 8000 + replica_index)
+def _replica(agent_name, replica_index, created_at=None):
+    """An agent_instance:* record as the Provisioner writes it for a local agent, which
+    publishes no port."""
+    address = f"canyonos-{agent_name.lower()}-{replica_index}:50051"
     return {
         "agent_name": agent_name,
         "provider": "local",
@@ -152,9 +153,9 @@ def _replica(agent_name, replica_index, created_at=None, host_port=None):
         "replica_index": str(replica_index),
         "private_host": "localhost",
         "public_host": "localhost",
-        "host_port": host_port,
-        "published_address": f"localhost:{host_port}",
-        "address": f"canyonos-{agent_name.lower()}-{replica_index}:50051",
+        "host_port": "50051",
+        "published_address": address,
+        "address": address,
         "created_at": str(created_at if created_at is not None else time.time()),
     }
 

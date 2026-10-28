@@ -145,7 +145,7 @@ class GlobalController(ControllerContext):
         self.running = False
         self._stopping = False
         self._metrics_collectors = {}  # host -> collector container name (one per host)
-        self._last_status = {}  # (host, port) -> last known status
+        self._last_status = {}  # address -> last known status
         self._lc_stubs = {}  # address -> gRPC stub
         # Clean up anything a previous run left behind
         self.orchestrator.remove_stale_containers()
@@ -785,18 +785,16 @@ class GlobalController(ControllerContext):
             healthy = {}
             for replica in replicas:
                 name = replica["agent_name"]
-                host = replica["private_host"]
-                port = replica["host_port"]
                 machine_redis = self.orchestrator.machine_redis_for_replica(replica)
+                # Unique per replica; local ones all share localhost and port 50051.
                 address = replica["address"]
                 status = machine_redis.get(f"controller:{address}:status")
                 if status == "healthy":
                     healthy[name] = healthy.get(name, 0) + 1
-                    replica_key = (name, host, port)
-                    if replica_key not in ready:
-                        logger.info("Controller %s (%s:%s) is ready.", name, host, port)
-                        self._last_status[(host, port)] = "healthy"
-                        ready.add(replica_key)
+                    if address not in ready:
+                        logger.info("Controller %s (%s) is ready.", name, address)
+                        self._last_status[address] = "healthy"
+                        ready.add(address)
                 else:
                     pending.append((replica, status))
 
@@ -827,10 +825,9 @@ class GlobalController(ControllerContext):
         waited = int(time.time() - started)
         for replica, status in pending:
             logger.warning(
-                "Controller %s (%s:%s) is %s after %ds.",
+                "Controller %s (%s) is %s after %ds.",
                 replica["agent_name"],
-                replica["private_host"],
-                replica["host_port"],
+                replica["address"],
                 status or "not ready",
                 waited,
             )
@@ -1084,25 +1081,22 @@ class GlobalController(ControllerContext):
 
         try:
             status = machine_redis.get(status_key) or "unknown"
-            prev = self._last_status.get((host, port))
+            prev = self._last_status.get(address)
 
             if status != prev:
                 if status == "healthy":
-                    logger.info(
-                        "Controller %s (%s:%s) is now healthy.", name, host, port
-                    )
+                    logger.info("Controller %s (%s) is now healthy.", name, address)
                     self._on_controller_healthy(name, host, port)
                 else:
                     logger.warning(
-                        "Controller %s (%s:%s) status changed: %s -> %s",
+                        "Controller %s (%s) status changed: %s -> %s",
                         name,
-                        host,
-                        port,
+                        address,
                         prev or "(none)",
                         status,
                     )
                     self._on_controller_unhealthy(name, host, port)
-                self._last_status[(host, port)] = status
+                self._last_status[address] = status
             else:
                 # No change — healthy stays quiet, unhealthy stays quiet too
                 if status == "healthy":

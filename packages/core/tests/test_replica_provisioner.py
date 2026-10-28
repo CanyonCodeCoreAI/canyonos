@@ -98,7 +98,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
         run_argv = controller._run_cmd.call_args_list[1].args[0]
         self.assertIn("CANYONOS_REDIS_PORT=9002", run_argv)
 
-    def test_local_replicas_keep_default_host_and_increment_host_ports(self):
+    def test_local_replicas_publish_no_port_and_are_reached_by_name(self):
         controller = _fake_controller()
         manager = ReplicaProvisioner(controller)
 
@@ -115,7 +115,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
                 "public_host": "localhost",
                 "host_port": "50051",
                 "container_port": "50051",
-                "published_address": "localhost:50051",
+                "published_address": "canyonos-alpha-0:50051",
                 "address": "canyonos-alpha-0:50051",
                 "redis_host": "canyonos-redis-localhost",
                 "redis_port": "6379",
@@ -123,8 +123,10 @@ class ReplicaProvisionerTests(unittest.TestCase):
             },
         )
 
+        # Nothing is published, so a second local replica has no port to move off.
         self.assertEqual(beta["private_host"], "localhost")
-        self.assertEqual(beta["host_port"], "50052")
+        self.assertEqual(beta["host_port"], "50051")
+        self.assertEqual(beta["address"], "canyonos-beta-0:50051")
         self.assertNotIn(
             "-it",
             controller._run_cmd.call_args_list[1].args[0],
@@ -146,8 +148,6 @@ class ReplicaProvisionerTests(unittest.TestCase):
                     "canyonos-alpha-0",
                     "--add-host",
                     "host.docker.internal:host-gateway",
-                    "-p",
-                    "50051:50051",
                     "-e",
                     "CANYONOS_AGENT_PORT=50051",
                     "-e",
@@ -314,8 +314,6 @@ class ReplicaProvisionerTests(unittest.TestCase):
                     "canyonos-workflow-0",
                     "--add-host",
                     "host.docker.internal:host-gateway",
-                    "-p",
-                    "50051:50051",
                     "-e",
                     "CANYONOS_AGENT_PORT=50051",
                     "-e",
@@ -400,6 +398,26 @@ class ReplicaProvisionerTests(unittest.TestCase):
         )
         publish.assert_called_once()
         self.assertIn("Failed to provision Beta-0", "\n".join(logs.output))
+
+    def test_a_failed_local_launch_claims_no_port_but_can_still_be_removed(self):
+        controller = _fake_controller()
+        manager = ReplicaProvisioner(controller)
+
+        with (
+            patch.object(replicas, "launch", side_effect=RuntimeError("boom")),
+            patch.object(manager, "_claim_host_port") as claim,
+            self.assertLogs("canyonos_core.reconciler.replica_provisioner", "WARNING"),
+            self.assertRaisesRegex(RuntimeError, "boom"),
+        ):
+            _ensure(manager, [{"name": "Alpha", "provider": "local"}])
+
+        claim.assert_not_called()
+        # Saved before the launch, private_host lets remove_unfinished find the container.
+        self.assertEqual(
+            controller._run_cmd.call_args.args,
+            (["docker", "rm", "-f", "canyonos-alpha-0"], "localhost", None),
+        )
+        self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-0"), {})
 
     def test_missing_container_behind_stale_record_is_reprovisioned(self):
         controller = _fake_controller()

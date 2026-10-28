@@ -321,8 +321,10 @@ def _create_workspace_volume():
     )
 
 
-def _run_container(image=GC_IMAGE, max_attempts=50):
-    port = GC_CONTAINER_PORT
+def _run_container(image=GC_IMAGE, port=GC_CONTAINER_PORT, max_attempts=50):
+    """Start this project's Global Controller container, published on 127.0.0.1 at
+    `port`, or at the next free port after it."""
+    start_port = port
     # The real socket behind whatever's active right now, not the
     # /var/run/docker.sock alias -- some other app can hold that alias and
     # point it at a different engine than the one every other `docker`
@@ -431,7 +433,7 @@ def _run_container(image=GC_IMAGE, max_attempts=50):
             f"{result.stderr.strip()}"
         )
     raise RuntimeError(
-        f"no free port found after {max_attempts} attempts starting at {GC_CONTAINER_PORT}"
+        f"no free port found after {max_attempts} attempts starting at {start_port}"
     )
 
 
@@ -514,20 +516,35 @@ def quit_existing():
         )
 
 
+def _saved_port():
+    """The port the last deploy's Global Controller used, or None without a readable
+    state file."""
+    if not os.path.isfile(project.state_path()):
+        return None
+    try:
+        return load_state()["port"]
+    except (OSError, RuntimeError):
+        return None
+
+
 def run_init(banner=True, image=GC_IMAGE):
     """Replace any existing Global Controller with a fresh container from `image` and
-    save its ID and port for later commands; run at the start of `canyonos deploy`."""
+    save its ID and port for later commands; run at the start of `canyonos deploy`.
+    The container is published on the last deploy's port or 8000, or the next free
+    port after it."""
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
     # Before quit_existing(), which shells out to docker itself.
     _ensure_docker_running()
+    # Read before quit_existing() removes the state, so a redeploy keeps its port.
+    preferred = _saved_port() or GC_CONTAINER_PORT
     quit_existing()
 
     with ui.status("Pulling Global Controller image..."):
         _pull_image(image)
     with ui.status("Starting Global Controller container..."):
-        container_id, port, docker_socket = _run_container(image=image)
+        container_id, port, docker_socket = _run_container(image=image, port=preferred)
     try:
         _save_state(container_id, port, docker_socket)
     except OSError as e:
@@ -546,3 +563,5 @@ def run_init(banner=True, image=GC_IMAGE):
             f"Removed container {container_id[:12]}.{detail}"
         ) from None
     ui.ok(f"Global Controller running in container {container_id[:12]} on port {port}")
+    if port != preferred:
+        ui.warn(f"Port {preferred} is taken, so the Global Controller is on {port}.")

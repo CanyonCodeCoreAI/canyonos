@@ -204,9 +204,13 @@ class ReplicaProvisioner(object):
         agent_name = new_replica["agent_spec"]["name"]
         replica_index = new_replica["replica_index"]
         key = _replica_key(agent_name, replica_index)
-        host_port = self._claim_host_port(machine["private_host"], key)
+        if replicas.publishes_port(self.controller, machine, new_replica["agent_spec"]):
+            host_port = self._claim_host_port(machine["private_host"], key)
+        else:
+            host_port = CONTAINER_PORT
         # Saved before the container exists, so a failed launch can still remove it.
         saved = {
+            "private_host": machine["private_host"],
             "container_name": container_name(agent_name, replica_index),
             "user": machine.get("user"),
         }
