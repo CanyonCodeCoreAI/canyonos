@@ -8,6 +8,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 
@@ -45,7 +46,8 @@ func init() {
 
 func main() {
 	var metricsAddr, metricsCertPath, metricsCertName, metricsCertKey string
-	var probeAddr, controllerImage, redisImage, watchNamespaces string
+	var probeAddr, controllerImage, redisImage, watchNamespaces, builderAddress string
+	registryAliases := aliasFlag{}
 	var enableLeaderElection, secureMetrics, enableHTTP2 bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -64,6 +66,10 @@ func main() {
 		"The canyonos-core image matching this operator's release, pinned (required).")
 	flag.StringVar(&redisImage, "redis-image", builders.RedisImage,
 		"Image for internal Redis, e.g. from a registry mirror.")
+	flag.StringVar(&builderAddress, "builder-address", "",
+		"The cluster's BuildKit for in-cluster builds (tcp://buildkitd.canyonos-build.svc:1234); empty for none.")
+	flag.Var(registryAliases, "registry-alias",
+		"pull=push: a registry the builder reaches by another name than nodes pull it by (repeatable).")
 	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
 		"Comma-separated namespaces to run projects in, for an install granted only those; empty for all.")
 	// Production logging by default; --zap-devel switches to development logs.
@@ -155,6 +161,16 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "canyonagent")
 		os.Exit(1)
 	}
+	if err := (&controller.CanyonBuildReconciler{
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		ControllerImage: controllerImage,
+		BuilderAddress:  builderAddress,
+		RegistryAliases: registryAliases,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "canyonbuild")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")
@@ -194,4 +210,18 @@ func namespaceConfigs(list string) map[string]cache.Config {
 		}
 	}
 	return namespaces
+}
+
+// aliasFlag collects repeated --registry-alias pull=push flags.
+type aliasFlag map[string]string
+
+func (a aliasFlag) String() string { return fmt.Sprint(map[string]string(a)) }
+
+func (a aliasFlag) Set(value string) error {
+	pull, push, ok := strings.Cut(value, "=")
+	if !ok || pull == "" || push == "" {
+		return fmt.Errorf("want pull=push, got %q", value)
+	}
+	a[pull] = push
+	return nil
 }

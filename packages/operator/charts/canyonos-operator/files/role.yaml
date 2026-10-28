@@ -9,7 +9,10 @@ rules:
   resources:
   - configmaps
   verbs:
+  - create
   - get
+  - patch
+  - update
 - apiGroups:
   - ""
   resources:
@@ -70,10 +73,22 @@ rules:
   - list
   - watch
 - apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - canyonos.canyoncode.ai
   resources:
   - canyonagents
   verbs:
+  - create
   - delete
   - get
   - list
@@ -98,6 +113,7 @@ rules:
   - canyonos.canyoncode.ai
   resources:
   - canyonagents/status
+  - canyonbuilds/status
   - canyonprojects/status
   verbs:
   - get
@@ -106,8 +122,19 @@ rules:
 - apiGroups:
   - canyonos.canyoncode.ai
   resources:
+  - canyonbuilds
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - canyonos.canyoncode.ai
+  resources:
   - canyonprojects
   verbs:
+  - create
   - get
   - list
   - patch

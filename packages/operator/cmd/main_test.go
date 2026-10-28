@@ -20,3 +20,16 @@ func TestWatchNamespacesLimitTheCacheOrLeaveItClusterWide(t *testing.T) {
 		t.Errorf("got %v", got)
 	}
 }
+
+func TestRegistryAliasesAreRepeatablePullEqualsPush(t *testing.T) {
+	aliases := aliasFlag{}
+	if err := aliases.Set("localhost:5001=kind-registry:5000"); err != nil {
+		t.Fatal(err)
+	}
+	if aliases["localhost:5001"] != "kind-registry:5000" {
+		t.Errorf("got %v", aliases)
+	}
+	if aliases.Set("no-equals") == nil {
+		t.Error("an alias without = must be refused")
+	}
+}

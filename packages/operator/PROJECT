@@ -27,4 +27,13 @@ resources:
   kind: CanyonAgent
   path: github.com/CanyonCodeCoreAI/canyonos-internal/packages/operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: canyoncode.ai
+  group: canyonos
+  kind: CanyonBuild
+  path: github.com/CanyonCodeCoreAI/canyonos-internal/packages/operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

@@ -1,0 +1,147 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: canyonbuilds.canyonos.canyoncode.ai
+spec:
+  group: canyonos.canyoncode.ai
+  names:
+    kind: CanyonBuild
+    listKind: CanyonBuildList
+    plural: canyonbuilds
+    shortNames:
+    - cbuild
+    singular: canyonbuild
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.project
+      name: Project
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CanyonBuild is one in-cluster build of a CanyonOS project's images.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the build
+            properties:
+              config:
+                description: config is the path of global_controller.yaml in the upload.
+                minLength: 1
+                type: string
+              envSecretRef:
+                description: |-
+                  envSecretRef names the Secret with the project's .env, so ${VAR} in its config
+                  resolve during the build. Never baked into an image.
+                type: string
+              image:
+                description: |-
+                  image is the canyonos-core image that builds; the operator's matching one by
+                  default. The project then runs it too.
+                type: string
+              imagePullSecrets:
+                description: imagePullSecrets to pull the core image with.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              platform:
+                description: |-
+                  platform the images are built for; empty builds for the architecture of the node
+                  the build runs on, which on a cluster of one architecture is every node's.
+                enum:
+                - linux/amd64
+                - linux/arm64
+                type: string
+              project:
+                description: 'project is the project''s name: its CanyonProject''s,
+                  and its images'' prefix.'
+                minLength: 1
+                type: string
+              registry:
+                description: registry the images are pushed to, as the cluster's nodes
+                  pull from it.
+                minLength: 1
+                type: string
+              registrySecretRef:
+                description: |-
+                  registrySecretRef names a docker-registry Secret to push with, for a registry
+                  that needs signing in.
+                type: string
+              tag:
+                description: tag of the pushed images; pods run them by digest.
+                minLength: 1
+                type: string
+            required:
+            - config
+            - project
+            - registry
+            - tag
+            type: object
+          status:
+            description: status is how far it got
+            properties:
+              images:
+                additionalProperties:
+                  type: string
+                description: images are the pushed images by agent, pinned by digest.
+                type: object
+              message:
+                description: message says why the build failed, or what it is waiting
+                  for.
+                type: string
+              phase:
+                description: 'phase: Pending, Receiving (upload the project now),
+                  Building, Succeeded or Failed.'
+                type: string
+              podName:
+                description: podName is the build's pod, which takes the upload on
+                  its port 8090.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
