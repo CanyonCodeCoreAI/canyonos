@@ -11,7 +11,7 @@
 
 ## Run agents fast
 
-CanyonOS is a control plane that takes your agentic workflow and deploys it, providing observability and managing distributed deployment.  Maintained by [Canyon Code](https://canyoncode.ai/).
+CanyonOS is a platform that takes your agentic workflow and deploys it, providing observability and managing distributed deployment.  Maintained by [Canyon Code](https://canyoncode.ai/).
 
 ## Why CanyonOS
 
