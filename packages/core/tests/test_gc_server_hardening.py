@@ -25,8 +25,8 @@ def test_clean_has_a_bounded_wait(monkeypatch):
 
 
 def test_concurrent_deploy_requests_start_only_one_process(monkeypatch, tmp_path):
-    config = tmp_path / "global_controller.yaml"
-    config.write_text("agents: []\n")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "global_controller.yaml").write_text("agents: []\n")
     calls = []
 
     def popen(*args, **kwargs):
@@ -40,9 +40,7 @@ def test_concurrent_deploy_requests_start_only_one_process(monkeypatch, tmp_path
 
     def request_deploy():
         with server.app.test_client() as client:
-            return client.post(
-                "/deploy", json={"config_path": "global_controller.yaml"}
-            ).status_code
+            return client.post("/deploy", json={}).status_code
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         statuses = sorted(executor.map(lambda _index: request_deploy(), range(2)))
@@ -52,17 +50,15 @@ def test_concurrent_deploy_requests_start_only_one_process(monkeypatch, tmp_path
 
 
 def test_deploy_rejects_a_non_string_project_name(monkeypatch, tmp_path):
-    config = tmp_path / "global_controller.yaml"
-    config.write_text("agents: []\n")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "global_controller.yaml").write_text("agents: []\n")
     calls = []
 
     monkeypatch.setattr(server, "WORKSPACE_DIR", str(tmp_path))
     monkeypatch.setattr(server, "_gc_process", None)
     monkeypatch.setattr(server.subprocess, "Popen", lambda *a, **k: calls.append(k))
 
-    response = server.app.test_client().post(
-        "/deploy", json={"config_path": "global_controller.yaml", "project_name": None}
-    )
+    response = server.app.test_client().post("/deploy", json={"project_name": None})
 
     assert response.status_code == 400
     assert "project_name" in response.get_json()["error"]

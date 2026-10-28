@@ -12,11 +12,10 @@ behavior; do not invent limits that refuse real calls.
 
 ## 1. Locate the source and config
 
-- Find the active `global_controller.yaml`. Write `llms.yaml` and `scaling.yaml`
-  beside it: `.canyon/config/` for a ported project, or `config/` for the source
-  layout. Respect an explicitly chosen destination.
-- Trace each manifest entry's entrypoint. For a `.canyon` project,
-  inspect `.canyon/app`, since that is the deployed source.
+- Work in the project root: `.canyon` when the project folder has one, otherwise
+  the project folder itself. Find `config/global_controller.yaml` there and write `llms.yaml`
+  and `scaling.yaml` beside it. Respect an explicitly chosen destination.
+- Trace each manifest entry's entrypoint, relative to the root.
 - Read existing `llms.yaml` and `scaling.yaml` first. Keep their entries, names
   and other fields; change only what the source contradicts or the developer asked.
 
@@ -83,7 +82,7 @@ Follow [Autoscaling](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
 - Parse both files. Check every rule in steps 3 and 4, and that every agent
   named in either file is an entry in `global_controller.yaml`; a misspelled name
   is refused in `llms.yaml` and ignored in `scaling.yaml`.
-- Run `canyonos validate` from the application root and resolve findings until
+- Run `canyonos validate` from the project folder and resolve findings until
   exit 0, or report the blocker.
 - Report per agent: its state and whether it scales, the models it calls and
   caps, its policy, and which values are defaults. List call paths whose model

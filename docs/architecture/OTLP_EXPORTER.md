@@ -181,7 +181,7 @@ otel.destinations
       │
       ├─ absent ──▶ _otel_destinations = None ──▶ no SET; existing Redis key remains
       ├─ GlobalController._otel_destinations
-      │      └─ ControllerContext._expand_env_value
+      │      └─ config_env.expand_env_value
       │
       └─ GlobalController._write_otel_destinations
              └─ SET otel:destinations = JSON list ───────────────┐

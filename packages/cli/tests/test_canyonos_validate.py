@@ -43,12 +43,12 @@ def in_process(monkeypatch):
     def install(findings):
         seen = {}
 
-        def validate_canyon(artifact_root, config_path=None):
-            seen.update(artifact_root=artifact_root, config_path=config_path)
+        def validate_root(root):
+            seen.update(root=root)
             return [_Finding(f) for f in findings]
 
         monkeypatch.setattr(
-            validate_cmd, "_import_validate_canyon", lambda: validate_canyon
+            validate_cmd, "_import_validate_root", lambda: validate_root
         )
         return seen
 
@@ -74,7 +74,7 @@ def in_a_project(monkeypatch, tmp_path):
 
 @pytest.fixture
 def no_core(monkeypatch):
-    monkeypatch.setattr(validate_cmd, "_import_validate_canyon", lambda: None)
+    monkeypatch.setattr(validate_cmd, "_import_validate_root", lambda: None)
 
 
 # ------------------------------------------------------------------ #
@@ -89,13 +89,13 @@ def test_a_clean_canyon_passes(in_process, capsys):
     assert "clean" in flat(capsys)
 
 
-def test_the_artifact_and_config_reach_the_validator(in_process):
+def test_the_artifact_reaches_the_validator(in_process):
     seen = in_process([])
     os.makedirs("port/.canyon")
 
-    validate_cmd.run_validate("port/.canyon", config="config/other.yaml")
+    validate_cmd.run_validate("port/.canyon")
 
-    assert seen == {"artifact_root": "port/.canyon", "config_path": "config/other.yaml"}
+    assert seen == {"root": "port/.canyon"}
 
 
 def test_an_error_is_rendered_as_a_block_and_fails(in_process, capsys):
@@ -138,26 +138,6 @@ def test_a_missing_canyon_is_not_mounted_into_docker(docker, capsys):
     assert validate_cmd.run_validate("missing/.canyon") == validate_cmd.UNCHECKED
     assert "argv" not in calls
     assert not os.path.exists("missing")
-
-
-def test_a_config_outside_the_artifact_is_refused(in_process, capsys):
-    in_process([])
-
-    assert (
-        validate_cmd.run_validate(".canyon", config="../config/other.yaml")
-        == validate_cmd.UNCHECKED
-    )
-    assert "outside .canyon" in flat(capsys)
-
-
-def test_a_config_written_as_a_path_into_the_artifact_is_accepted(in_process, tmp_path):
-    seen = in_process([])
-    root = tmp_path / ".canyon"
-
-    validate_cmd.run_validate(str(root), config=str(root / "config" / "other.yaml"))
-
-    # As the core image names it, whatever this machine's separator.
-    assert seen["config_path"] == "config/other.yaml"
 
 
 # ------------------------------------------------------------------ #
@@ -231,15 +211,6 @@ def test_the_image_entrypoint_is_replaced_by_the_validator(docker, tmp_path):
     assert argv[argv.index("--entrypoint") + 1] == "python"
     assert argv.index("--entrypoint") < image
     assert argv[image + 1 : image + 3] == ["-m", "canyonos_core.validate"]
-
-
-def test_a_config_is_passed_through_to_the_container(docker, tmp_path):
-    calls = docker(json.dumps({"errors": 0, "findings": []}))
-    root = tmp_path / ".canyon"
-
-    validate_cmd.run_validate(str(root), config="config/other.yaml")
-
-    assert calls["argv"][-3:] == ["--config", "config/other.yaml", "--json"]
 
 
 def test_findings_from_the_container_are_rendered(docker, capsys):
@@ -333,7 +304,7 @@ def test_json_mode_reports_a_failure_as_json(docker, capsys, tmp_path):
     payload = json.loads(capsys.readouterr().out)
 
     # The keys a successful run prints, so `errors` is null rather than absent.
-    assert payload["artifact_root"] == str(root)
+    assert payload["root"] == str(root)
     assert payload["errors"] is None
     assert payload["findings"] == []
     assert "Cannot connect to the Docker daemon" in payload["error"]
@@ -347,10 +318,7 @@ def test_json_mode_reports_a_failure_as_json(docker, capsys, tmp_path):
 def test_the_command_is_on_the_help_screen():
     from utils.help_screen import DESCRIPTIONS
 
-    assert (
-        DESCRIPTIONS["validate"]
-        == "Check a converted .canyon against the CanyonOS contract"
-    )
+    assert DESCRIPTIONS["validate"] == "Check the project against the CanyonOS contract"
 
 
 def _entry_point():
@@ -370,9 +338,7 @@ def test_the_cli_dispatches_to_run_validate(monkeypatch):
     monkeypatch.setattr(
         cli,
         "run_validate",
-        lambda root, config, as_json: (
-            seen.update(root=root, config=config, as_json=as_json) or 0
-        ),
+        lambda root, as_json: seen.update(root=root, as_json=as_json) or 0,
     )
     monkeypatch.setattr(sys, "argv", ["canyonos", "validate", "port/.canyon", "--json"])
 
@@ -380,14 +346,4 @@ def test_the_cli_dispatches_to_run_validate(monkeypatch):
         cli.main()
 
     assert exit_info.value.code == 0
-    assert seen == {"root": "port/.canyon", "config": None, "as_json": True}
-
-
-def test_a_config_on_another_drive_is_outside_the_artifact(monkeypatch):
-    def another_drive(*_args):
-        raise ValueError("path is on mount 'D:', start on mount 'C:'")
-
-    monkeypatch.setattr(validate_cmd.os.path, "relpath", another_drive)
-
-    with pytest.raises(RuntimeError, match="is outside"):
-        validate_cmd._relative_config(".canyon", "D:\\other\\global_controller.yaml")
+    assert seen == {"root": "port/.canyon", "as_json": True}

@@ -22,7 +22,7 @@ CORE_COMMANDS = (
 )
 
 UTIL_COMMANDS = (
-    ("clean", "Delete .canyon, project skill, serve's .env keys, the agents' images"),
+    ("clean", "Delete .canyon, the project skill and the agents' images"),
     ("contact", "See or change whether the CLI shares usage with Canyon Code"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
     ("doctor", "Check Docker and Compose are available"),
@@ -34,7 +34,7 @@ UTIL_COMMANDS = (
     ("stop", "Stop the running deploy, keeping the container and files"),
     ("test", "Deploy locally and run one prompt end to end"),
     ("upgrade", "Upgrade the canyonos CLI to the latest release"),
-    ("validate", "Check a converted .canyon against the CanyonOS contract"),
+    ("validate", "Check the project against the CanyonOS contract"),
 )
 
 DESCRIPTIONS = dict(CORE_COMMANDS + UTIL_COMMANDS)

@@ -285,9 +285,11 @@ def test_contact_reports_a_save_failure_as_a_command_error(monkeypatch):
 
 
 @pytest.fixture
-def deployable(monkeypatch):
+def deployable(monkeypatch, tmp_path):
     """A deploy whose every step succeeds and whose workflow comes up."""
-    monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda p: p)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "global_controller.yaml").touch()
     monkeypatch.setattr(deploy_cmd, "run_init", lambda **_k: None)
     monkeypatch.setattr(deploy_cmd, "save_project_id", lambda _path: None)
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
@@ -307,7 +309,7 @@ def deployable(monkeypatch):
 def test_an_interactive_deploy_that_comes_up_asks(monkeypatch, deployable, interactive):
     asked = answer_with(monkeypatch, False)
 
-    deploy_cmd.run_deploy("config.yaml", serve=False)
+    deploy_cmd.run_deploy(serve=False)
 
     assert len(asked) == 1
 
@@ -316,7 +318,7 @@ def test_a_non_interactive_deploy_never_asks(monkeypatch, deployable):
     monkeypatch.setattr(consent.sys.stdin, "isatty", lambda: False)
     asked = answer_with(monkeypatch, True)
 
-    deploy_cmd.run_deploy("config.yaml", serve=False)
+    deploy_cmd.run_deploy(serve=False)
 
     assert asked == []
     assert not settings.usage_dir().exists()
@@ -330,7 +332,7 @@ def test_a_deploy_interrupted_before_it_came_up_does_not_ask(
     )
     asked = answer_with(monkeypatch, True)
 
-    deploy_cmd.run_deploy("config.yaml", serve=False)
+    deploy_cmd.run_deploy(serve=False)
 
     assert asked == []
 
@@ -338,7 +340,7 @@ def test_a_deploy_interrupted_before_it_came_up_does_not_ask(
 def test_a_quiet_deploy_does_not_ask(monkeypatch, deployable, interactive):
     asked = answer_with(monkeypatch, True)
 
-    deploy_cmd.run_deploy("config.yaml", quiet=True)
+    deploy_cmd.run_deploy(quiet=True)
 
     assert asked == []
 

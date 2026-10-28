@@ -16,10 +16,10 @@ import yaml
 from flask import Flask, jsonify, request
 from werkzeug.serving import run_simple
 
-from canyonos_core.cli import _artifact_prefix
 from canyonos_core.controller.controller_context import _redis_connect_host
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.endpoint import read_endpoint_record
+from canyonos_core.schema import CONFIG_PATH
 
 app = Flask("canyonos-server")
 
@@ -46,16 +46,11 @@ def deploy():
     global _gc_process, _config_path
 
     data = request.get_json(force=True, silent=True) or {}
-    # Resolved with canyonos' own artifact-layout rule rather than a second copy
-    # of it, so a `.canyon` project works when the client sends no config_path.
-    config_path = data.get("config_path") or os.path.join(
-        _artifact_prefix(WORKSPACE_DIR), "config", "global_controller.yaml"
-    )
     # realpath, not normpath: /workspace holds a copy of the user's project, which may symlink out.
     workspace_root = os.path.realpath(WORKSPACE_DIR)
-    full_path = os.path.realpath(os.path.join(workspace_root, config_path))
+    full_path = os.path.realpath(os.path.join(workspace_root, CONFIG_PATH))
     if not full_path.startswith(workspace_root + os.sep):
-        return jsonify({"error": "config_path must stay inside the workspace"}), 400
+        return jsonify({"error": "the config must stay inside the workspace"}), 400
 
     if not os.path.isfile(full_path):
         return jsonify({"error": f"config file not found: {full_path}"}), 400
@@ -72,7 +67,7 @@ def deploy():
             return jsonify({"error": "already running"}), 409
         _config_path = full_path
         _gc_process = subprocess.Popen(
-            [sys.executable, "-m", "canyonos_core.cli", "deploy", "-c", config_path],
+            [sys.executable, "-m", "canyonos_core.cli", "deploy"],
             cwd=WORKSPACE_DIR,
             env={**os.environ, "CANYONOS_PROJECT_NAME": project_name},
         )

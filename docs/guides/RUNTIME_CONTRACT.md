@@ -6,16 +6,16 @@ rules apply under every provider.
 
 ## Discovery
 
-`canyonos deploy` runs from the application root and reads `.canyon` below it.
+`canyonos deploy` reads everything from the [project root](BUILD_ARTIFACT.md).
 
 | Input | Where |
 |---|---|
-| manifest | `.canyon/config/global_controller.yaml`, or the file given with `-c` |
+| manifest | `config/global_controller.yaml` |
 | agent functions | `functions` on an agent entry |
-| entrypoint | `entrypoint` on an agent entry, relative to `.canyon/app` |
+| entrypoint | `entrypoint` on an agent entry, relative to the project root |
 | endpoint | `endpoint:` in the manifest, naming the agent method served over HTTP |
 | policy | `policy.yaml` next to the manifest |
-| generated files | `stubs/`, `grpc_stubs/`, `docker_container/` under `.canyon` |
+| generated files | `stubs/`, `grpc_stubs/`, `docker_container/` in the project root |
 
 Two names have to agree for every agent:
 
@@ -230,7 +230,7 @@ A scale-down that drains the asking replica fails the request once the drain's
 
 ## Build context
 
-Each build context starts as a copy of `.canyon/app` with relative paths kept,
+Each build context starts as a copy of the project root with relative paths kept,
 minus what the sweep excludes, and then gets the platform's runtime modules,
 the generated gRPC modules, `canyonos_core/llm_gateway`, every stub, and the
 agent's own entrypoint written on top. [Images and
@@ -252,10 +252,11 @@ base package only warn.
 
 ## Credentials
 
-`env_file` in the manifest is resolved against the directory `canyonos
-deploy` runs from and passed to every container as `--env-file`. A missing or
-unreadable file fails the deploy first. An empty file is skipped. Hidden
-files never reach an image, so `.env` at the root of the copy stays out.
+`.env` in the project folder, when there is one, is passed to each agent
+replica as `--env-file`; the endpoint does not get it. [Project
+layout](BUILD_ARTIFACT.md#what-env-is-for) says where it lives and what else
+reads it. An unreadable file fails the deploy first. Hidden files never reach
+an image, so `.env` itself stays out of the copy.
 
 The runtime also sets `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`,
 `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`, `CANYONOS_POLL_INTERVAL`,
@@ -263,8 +264,6 @@ The runtime also sets `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`,
 over the file. A Redis client in your code that defaults to `localhost`
 connects to the container's own loopback, not to the platform's Redis; build
 it from `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT` instead.
-
-In a managed deployment the platform's secrets file replaces `env_file`.
 
 ## Policy
 
@@ -293,10 +292,10 @@ next `canyonos deploy` removes stale Redis and metrics containers and
 recreates orphaned agent containers, but an endpoint `api_port`, a database
 `db_port` or a Redis port still in use is a hard error.
 
-`canyonos clean` deletes the entire `.canyon` directory in the current
-directory, including `app/` and `config/`, strips the keys `canyonos serve`
-wrote to `.env` (your own lines, `CANYONOS_*` ones included, stay), removes the skill `canyonos convert`
+`canyonos clean` deletes the `.canyon` directory in the current directory,
+if there is one, removes the skill `canyonos convert`
 installed in this project (a global install is kept), and removes the local
 Docker image (`canyonos-<project>-<agent>`) of each agent in this project's
-`global_controller.yaml`. Other projects' images stay. It does not touch containers; use
+`global_controller.yaml`. Other projects' images stay. It never touches `.env`
+and does not touch containers; use
 `canyonos stop` or `canyonos quit` for those.

@@ -21,6 +21,7 @@ import tempfile
 import urllib.request
 
 from canyonos import env, ui
+from canyonos.constants import CANYON_DIR
 from canyonos.os_support import is_terminal
 from canyonos.validate import UNCHECKED, run_validate
 from utils.tui import select_menu
@@ -56,10 +57,8 @@ DEFAULT_SCOPE = "local"
 CONVERT_PROMPT = (
     f"Use the CanyonOS {SKILL_NAME} skill to convert the codebase in this directory to a "
     "canyonos-compatible format. Put every conversion result in a new .canyon folder and "
-    "leave the application's own source untouched. Three files outside .canyon are yours to "
-    "update, because the conversion needs them and the skill's own preparation step already "
-    "writes one of them: .gitignore, .env and .env.example. The skill states how each is "
-    "written; follow it rather than deciding for yourself."
+    "leave the application's own source untouched. The only file outside .canyon that is "
+    "yours to update is .gitignore, which the skill's own preparation step writes."
 )
 
 UNATTENDED_NOTE = (
@@ -71,8 +70,6 @@ UNATTENDED_NOTE = (
     "required decision has no safe documented default, report it as a blocker and stop "
     "without a question."
 )
-
-CANYON_DIR = ".canyon"
 
 # The leaf name of every install path must match the skill's own `name:`
 # frontmatter or the agent won't resolve it.

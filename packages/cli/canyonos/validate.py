@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos validate`: check a ported `.canyon` against the CanyonOS contract.
+Logic for `canyonos validate`: check the project root against the CanyonOS contract.
 
 The checks themselves live in `canyonos_core.validate`, beside the schema, the
 platform pins and the Dockerfile templates they are about -- this command only
@@ -11,10 +11,10 @@ runs them and renders what comes back. Two ways in, in this order:
 - imported here, when `canyonos_core` is installed alongside the CLI (a dev
   checkout, or the CLI running inside the Global Controller image)
 - otherwise the same module inside the core image, over a read-only bind mount
-  of the `.canyon` itself
+  of the root itself
 
 Exit 0 when nothing is found, 1 when something is, and 2 when the check could
-not run at all -- so a caller can tell a broken `.canyon` from one nobody looked at.
+not run at all -- so a caller can tell a broken project from one nobody looked at.
 """
 
 import json
@@ -25,11 +25,10 @@ import textwrap
 import uuid
 
 from canyonos import env, ui
+from canyonos.constants import existing_config_path, project_root
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
-from canyonos.constants import container_path
 from canyonos.init import docker_is_local, docker_running
 
-DEFAULT_ARTIFACT_ROOT = ".canyon"
 # Distinct from 1 (findings) the way grep and diff use it: trouble, not a result.
 UNCHECKED = 2
 CORE_MODULE = "canyonos_core.validate"
@@ -46,67 +45,43 @@ FINDING_FIELDS = {
 }
 
 
-def _relative_config(artifact_root, config):
-    """`config` as a path inside the artifact, whichever way it was written.
-
-    The image sees the `.canyon` and nothing above it, so a manifest outside it
-    could not be read there and must not be read here either.
-    """
-    if config is None:
-        return None
-    root = os.path.abspath(artifact_root)
-    try:
-        relative = os.path.relpath(os.path.abspath(os.path.join(root, config)), root)
-    except ValueError:
-        # Windows: another drive has no relative path at all.
-        relative = os.pardir
-    if relative == os.pardir or relative.startswith(os.pardir + os.sep):
-        raise RuntimeError(
-            f"--config {config} is outside {artifact_root}; the manifest has to "
-            "live in the .canyon that is being checked."
-        )
-    return container_path(relative)
-
-
-def _import_validate_canyon():
+def _import_validate_root():
     """Core's validator, or None when core is not installed beside this CLI.
 
     The released CLI is a single binary with none of core in it, so this is
     expected to miss and fall through to the image.
     """
     try:
-        from canyonos_core.validate import validate_canyon
+        from canyonos_core.validate import validate_root
     except ImportError:
         return None
-    return validate_canyon
+    return validate_root
 
 
-def _in_process(artifact_root, config):
+def _in_process(root):
     """Findings from the imported validator, or None when it is not there."""
-    validate_canyon = _import_validate_canyon()
-    if validate_canyon is None:
+    validate_root = _import_validate_root()
+    if validate_root is None:
         return None
-    return [
-        dict(finding._asdict()) for finding in validate_canyon(artifact_root, config)
-    ]
+    return [dict(finding._asdict()) for finding in validate_root(root)]
 
 
-def _docker_argv(artifact_root, config, name):
-    """The `docker run` that validates `artifact_root` inside the core image.
+def _docker_argv(root, name):
+    """The `docker run` that validates `root` inside the core image.
 
-    The `.canyon` is the mount, so the container sees no more of the host than the
+    The root is the mount, so the container sees no more of the host than the
     artifact being checked, and every path in the findings is already relative
     to it. The image's own entrypoint starts the server, so it is replaced. The
     name is what finds the container again if the run has to be abandoned.
     """
-    argv = [
+    return [
         "docker",
         "run",
         "--rm",
         "--name",
         name,
         "-v",
-        f"{os.path.abspath(artifact_root)}:{WORKSPACE}:ro",
+        f"{os.path.abspath(root)}:{WORKSPACE}:ro",
         "-w",
         WORKSPACE,
         "--entrypoint",
@@ -115,10 +90,8 @@ def _docker_argv(artifact_root, config, name):
         "-m",
         CORE_MODULE,
         ".",
+        "--json",
     ]
-    if config:
-        argv += ["--config", config]
-    return argv + ["--json"]
 
 
 def _is_finding(finding):
@@ -138,7 +111,7 @@ def _findings_from(stdout):
     return findings
 
 
-def _in_image(artifact_root, config):
+def _in_image(root):
     """Findings from the validator run inside the core image."""
     if not shutil.which("docker"):
         raise RuntimeError(
@@ -150,7 +123,7 @@ def _in_image(artifact_root, config):
     if not docker_is_local():
         raise RuntimeError(
             "Docker is running on another machine (DOCKER_HOST or the active context "
-            "is tcp:// or ssh://), so the .canyon cannot be bind-mounted into the "
+            "is tcp:// or ssh://), so the project cannot be bind-mounted into the "
             "core image."
         )
 
@@ -158,7 +131,7 @@ def _in_image(artifact_root, config):
     try:
         # Bounded by the pull timeout: `docker run` pulls a missing image first.
         result = subprocess.run(
-            _docker_argv(artifact_root, config, name),
+            _docker_argv(root, name),
             capture_output=True,
             encoding="utf-8",
             errors="replace",
@@ -196,7 +169,7 @@ def _say_wrapped(text, indent):
         ui.say(indent + line)
 
 
-def _print_findings(findings, artifact_root):
+def _print_findings(findings, root):
     for finding in findings:
         where = finding["path"]
         if where and finding["line"]:
@@ -209,24 +182,26 @@ def _print_findings(findings, artifact_root):
     if findings:
         ui.fail(f"{len(findings)} error(s).")
     else:
-        ui.ok(f"{artifact_root}: clean.")
+        ui.ok(f"{root}: clean.")
 
 
-def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False):
-    """Report every contract the `.canyon` breaks. Returns the exit status."""
+def run_validate(root=None, as_json=False):
+    """Report every contract the given folder, or the project root, breaks. Returns
+    the exit status: 2 when there is no project here to check."""
     ui.set_quiet(as_json)
+    checks_project = root is None
+    if checks_project:
+        root = project_root()
     try:
         try:
-            if not os.path.isdir(artifact_root):
+            if checks_project:
+                existing_config_path()
+            if not os.path.isdir(root):
                 # Checked before either path: `docker run -v` would create it.
-                raise RuntimeError(
-                    f"{artifact_root} is not a directory. Run `canyonos convert` to "
-                    "create the .canyon, or pass the path of the one to check."
-                )
-            config = _relative_config(artifact_root, config)
-            findings = _in_process(artifact_root, config)
+                raise RuntimeError(f"{root} is not a directory.")
+            findings = _in_process(root)
             if findings is None:
-                findings = _in_image(artifact_root, config)
+                findings = _in_image(root)
         except RuntimeError as e:
             # Nothing was checked, so the reason goes where the findings would
             # have, rather than an empty run that reads as a pass.
@@ -236,7 +211,7 @@ def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False
                 print(
                     json.dumps(
                         {
-                            "artifact_root": os.path.abspath(artifact_root),
+                            "root": os.path.abspath(root),
                             "errors": None,
                             "error": str(e),
                             "findings": [],
@@ -252,7 +227,7 @@ def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False
             print(
                 json.dumps(
                     {
-                        "artifact_root": os.path.abspath(artifact_root),
+                        "root": os.path.abspath(root),
                         "errors": len(findings),
                         "findings": findings,
                     },
@@ -260,7 +235,7 @@ def run_validate(artifact_root=DEFAULT_ARTIFACT_ROOT, config=None, as_json=False
                 )
             )
         else:
-            _print_findings(findings, artifact_root)
+            _print_findings(findings, root)
         return 1 if findings else 0
     finally:
         ui.set_quiet(False)

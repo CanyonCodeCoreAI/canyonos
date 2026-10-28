@@ -90,13 +90,12 @@ class ReconcilerContextParityTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         os.makedirs(os.path.join(self.tmp, "config"))
-        self.env_file = os.path.join(self.tmp, "secrets.env")
+        self.env_file = os.path.join(self.tmp, ".env")
         with open(self.env_file, "w") as f:
             f.write("API_KEY=abc\n")
         self.config_path = os.path.join(self.tmp, "config", "global_controller.yaml")
         with open(self.config_path, "w") as f:
             f.write(
-                f"env_file: {self.env_file}\n"
                 "agents:\n  - name: Alpha\n    host: localhost\n    replicas: 1\n"
                 "endpoint: {agent: Alpha, method: main}\n"
                 "project_id: fixed\n"
@@ -124,25 +123,17 @@ class ReconcilerContextParityTests(unittest.TestCase):
 
     def test_refresh_config_picks_up_a_changed_config_and_keeps_the_old_on_error(self):
         context = self._context()
-        other = os.path.join(self.tmp, "other.env")
-        with open(other, "w") as f:
-            f.write("API_KEY=xyz\n")
         with open(self.config_path, "w") as f:
             f.write(
-                f"env_file: {other}\nagents: []\nec2:\n  region: us-west-2\n"
+                "agents: []\nec2:\n  region: us-west-2\n"
                 "endpoint:\n  agent: Alpha\n  method: main\nproject_id: fixed\n"
             )
         context.refresh_config()
-        self.assertEqual(context.env_file_path, other)
         self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
 
         with open(self.config_path, "w") as f:
-            f.write(
-                "env_file: /does/not/exist.env\nagents: []\nendpoint: {agent: Alpha, method: main}\n"
-                "project_id: fixed\n"
-            )
+            f.write("- not a mapping\n")
         context.refresh_config()
-        self.assertEqual(context.env_file_path, other)
         self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
 
 

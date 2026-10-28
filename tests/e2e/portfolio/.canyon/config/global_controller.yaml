@@ -114,8 +114,6 @@ redis:
   port: 6379
   db: 0
 
-env_file: .env
-
 otel:
   destinations:
     - name: local

@@ -301,6 +301,10 @@ def _format_source(source):
 # Directories canyonos build itself generates inside a project -- never swept.
 _GENERATED_DIRS = {"docker_container", "stubs", "grpc_stubs"}
 
+# The project's config/ is read by the Global Controller from /workspace; agents get
+# what they need from it through Redis, so no agent image carries it.
+_ROOT_SKIPPED_DIRS = _GENERATED_DIRS | {"config"}
+
 # A macOS virtualenv or cache is dead weight in a linux image, at best.
 _SKIPPED_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
 
@@ -339,6 +343,9 @@ _UNREMARKABLE_HIDDEN = {
     ".idea",
     ".vscode",
     ".DS_Store",
+    ".env",
+    ".env.example",
+    ".porting-state.json",
 }
 
 
@@ -388,8 +395,9 @@ def _sweep_project_files(project_dir, exclude_dir=None):
     someone can flip.
 
     Every exclusion is reported except the ones that could never have held
-    shippable content -- __pycache__, bytecode, and the build's own output. A
-    file that silently fails to arrive is the bug this sweep exists to fix, so
+    shippable content -- __pycache__, bytecode, the build's own output, and the
+    project's config/ folder, which the Global Controller reads and agents never
+    open. A file that silently fails to arrive is the bug this sweep exists to fix, so
     dropping one quietly just moves it somewhere harder to find.
 
     `exclude_dir` is the build context being assembled, which sits under the
@@ -424,7 +432,7 @@ def _sweep_project_files(project_dir, exclude_dir=None):
             elif name in _SKIPPED_DIRS or name.endswith(".egg-info"):
                 if name != "__pycache__":
                     host_local.append(rel_dir)
-            elif not (at_root and name in _GENERATED_DIRS):
+            elif not (at_root and name in _ROOT_SKIPPED_DIRS):
                 kept_dirs.append(name)
         dirs[:] = kept_dirs
 

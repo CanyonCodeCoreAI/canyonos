@@ -69,7 +69,7 @@ step "Staging the pool app in $PROJECT_DIR"
 cp -R "$FIXTURE_DIR" "$PROJECT_DIR"
 rm "$PROJECT_DIR/pool.py"
 # The controller reads the ec2: block's ${EC2_*} values, and keys when given, from the
-# app's env_file; without keys it uses this machine's role.
+# app's .env; without keys it uses this machine's role.
 printf 'EC2_REGION=%s\nEC2_SUBNET_ID=%s\nEC2_SECURITY_GROUP_ID=%s\nEC2_POOL_SMALL_TYPE=t3.small\n' \
   "$EC2_REGION" "$EC2_SUBNET_ID" "$EC2_SECURITY_GROUP_ID" >"$PROJECT_DIR/.env"
 chmod 600 "$PROJECT_DIR/.env"
@@ -85,11 +85,9 @@ docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$
 # each type to how many machines of it to start.
 while IFS='|' read -r case expected; do
   step "canyonos validate: $case"
-  # validate checks a .car: the project's code in app/ and its manifest in config/.
-  copy="$(mktemp -d)/.car"
-  mkdir "$copy"
-  cp -R "$PROJECT_DIR" "$copy/app"
-  cp -R "$PROJECT_DIR/config" "$copy/config"
+  # validate checks a project root: its code and its manifest in config/.
+  copy="$(mktemp -d)/project"
+  cp -R "$PROJECT_DIR" "$copy"
   uv run --project "$REPO_ROOT" python - "$copy/config/global_controller.yaml" "$case" <<'PY'
 import sys, yaml
 path, case = sys.argv[1:]

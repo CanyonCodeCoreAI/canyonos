@@ -4,8 +4,8 @@
 """Break a copied port's manifest so `canyonos validate` has to reject it.
 
 Each mode rewrites the first agent's first function in one way its stub
-cannot be generated from, or names an agent in a way the manifest forbids, and
-prints the text the finding has to contain.
+cannot be generated from, names an agent in a way the manifest forbids, or sets a
+retired key, and prints the text the finding has to contain.
 
 Usage: break_manifest.py <.canyon> <mode>
 """
@@ -53,9 +53,23 @@ def endpoint_name(manifest, agent, function):
     return "'endpoint' is reserved for the HTTP endpoint container"
 
 
+def env_file(manifest, agent, function):
+    manifest["env_file"] = ".env"
+    return "env_file: is no longer used"
+
+
 MODES = {
     f.__name__: f
-    for f in (rename, builtin, dunder, duplicate, returns, deep, endpoint_name)
+    for f in (
+        rename,
+        builtin,
+        dunder,
+        duplicate,
+        returns,
+        deep,
+        endpoint_name,
+        env_file,
+    )
 }
 
 canyon, mode = sys.argv[1:]

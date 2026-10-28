@@ -19,12 +19,12 @@ import sys
 import threading
 from functools import partial
 
-from canyonos_core.controller.utils.config_env import load_config
+from canyonos_core.controller.utils.config_env import load_config, resolve_env_file
 from canyonos_core.controller.utils.docker_utils import docker_available
 from canyonos_core.controller.utils.container_names import image_name
-from canyonos_core.controller.utils.env_file import resolve_env_file
 from canyonos_core.reconciler import providers
 from canyonos_core.schema import (
+    CONFIG_PATH,
     check_project,
     render_violation,
 )
@@ -33,8 +33,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("canyonos_core")
 
 BUILD_FAILED = "Could not build the agent images; the build output above says why."
-ARTIFACT_DIR_NAME = ".canyon"
-SOURCE_DIR_NAME = "app"
 
 
 # ------------------------------------------------------------------ #
@@ -45,29 +43,6 @@ SOURCE_DIR_NAME = "app"
 def _get_package_dir():
     """Return the absolute path to the canyonos package directory."""
     return os.path.dirname(os.path.abspath(__file__))
-
-
-def _artifact_prefix(root):
-    return (
-        ARTIFACT_DIR_NAME
-        if os.path.isdir(os.path.join(root, ARTIFACT_DIR_NAME))
-        else ""
-    )
-
-
-def _project_layout():
-    """(artifact_root, source_root) for the project in cwd.
-
-    The .canyon layout keeps the app's own code under `.canyon/app` and everything
-    generated beside it; a plain checkout keeps both at the project root.
-    """
-    project_dir = os.path.abspath(os.getcwd())
-    prefix = _artifact_prefix(project_dir)
-    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
-    return (
-        artifact_root,
-        os.path.join(artifact_root, SOURCE_DIR_NAME) if prefix else project_dir,
-    )
 
 
 def _reject(violations, summary):
@@ -82,9 +57,9 @@ def _reject(violations, summary):
     sys.exit(1)
 
 
-def _validate_or_exit(config_path, source_dir=None):
+def _validate_or_exit(config_path, root=None):
     """Reject the config before anything is generated; return the parsed manifest."""
-    manifest, violations = check_project(config_path, source_dir)
+    manifest, violations = check_project(config_path, root)
     if violations:
         _reject(
             violations,
@@ -158,12 +133,12 @@ def _run_build(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
 
-    artifact_root, source_root = _project_layout()
+    project_dir = os.getcwd()
 
     # Nothing below runs against a config the schema rejects. Validate before loading so
-    # non-YAML files render as violations too, and pass source_root so an agent with
+    # non-YAML files render as violations too, and pass project_dir so an agent with
     # missing code fails here instead of being skipped from a "successful" deploy.
-    manifest = _validate_or_exit(config_path, source_root)
+    manifest = _validate_or_exit(config_path, project_dir)
 
     config = load_config(config_path)
     agent_specs = config.get("agents", [])
@@ -196,7 +171,7 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     #  Step 1: Generate Python stubs from the agents' functions       #
     # -------------------------------------------------------------- #
-    stubs_dir = os.path.join(artifact_root, "stubs")
+    stubs_dir = os.path.join(project_dir, "stubs")
     os.makedirs(stubs_dir, exist_ok=True)
 
     from canyonos_core.stub_generator import (
@@ -227,7 +202,7 @@ def _run_build(config_path):
     # -------------------------------------------------------------- #
     #  Step 2: Compile gRPC protobuf stubs                            #
     # -------------------------------------------------------------- #
-    grpc_stubs_dir = os.path.join(artifact_root, "grpc_stubs")
+    grpc_stubs_dir = os.path.join(project_dir, "grpc_stubs")
     os.makedirs(grpc_stubs_dir, exist_ok=True)
 
     proto_dir = os.path.join(package_dir, "controller", "proto")
@@ -277,8 +252,8 @@ def _run_build(config_path):
         # Every key read below is one the schema requires and has checked,
         # down to the file being on disk -- an agent that cannot be built
         # fails the deploy rather than dropping quietly out of it.
-        agent_file = os.path.join(source_root, agent_spec["entrypoint"])
-        docker_context = os.path.join(artifact_root, "docker_container", agent_name)
+        agent_file = os.path.join(project_dir, agent_spec["entrypoint"])
+        docker_context = os.path.join(project_dir, "docker_container", agent_name)
         logger.info("Generating Docker context for '%s'", agent_name)
         generate_docker(
             agent_name,
@@ -286,7 +261,7 @@ def _run_build(config_path):
             output_dir=docker_context,
             grpc_stubs_dir=grpc_stubs_dir,
             stub_files=stub_paths,
-            project_dir=source_root,
+            project_dir=project_dir,
             requirements=_normalize_requirements(agent_spec),
             stub_entrypoints=stub_entrypoints,
         )
@@ -302,7 +277,7 @@ def _run_build(config_path):
     return partial(
         _build_images,
         config_path,
-        artifact_root,
+        project_dir,
         bake_targets,
         platform,
         database_pulls,
@@ -310,7 +285,7 @@ def _run_build(config_path):
 
 
 def _build_images(
-    config_path, artifact_root, bake_targets, platform, database_pulls, processes
+    config_path, project_dir, bake_targets, platform, database_pulls, processes
 ):
     """Build every agent image `_run_build` generated a Docker context for, adding each
     build process to `processes`, then wait for its database image pulls and tag them;
@@ -325,7 +300,7 @@ def _build_images(
     if not bake_targets:
         logger.info("No Docker images to build.")
     elif docker_available() and docker_available(("docker", "buildx", "version")):
-        docker_container_dir = os.path.join(artifact_root, "docker_container")
+        docker_container_dir = os.path.join(project_dir, "docker_container")
         os.makedirs(docker_container_dir, exist_ok=True)
         bake_file_path = os.path.join(docker_container_dir, "docker-bake.json")
         _write_bake_file(bake_targets, bake_file_path, platform)
@@ -380,7 +355,7 @@ def _cmd_deploy(args):
     import signal
     import atexit
 
-    config_path = args.config
+    config_path = CONFIG_PATH
     if not os.path.isfile(config_path):
         logger.error("Config file not found: %s", config_path)
         sys.exit(1)
@@ -396,20 +371,17 @@ def _cmd_deploy(args):
         sys.exit(1)
 
     config = load_config(config_path)
-    project_dir = os.path.abspath(os.getcwd())
-    prefix = _artifact_prefix(project_dir)
-    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
+    project_dir = os.getcwd()
 
     # Fail here rather than after a fleet of containers is already up without
-    # the API keys they need. base_dir matches GlobalController, which resolves
-    # env_file against its cwd -- any other base rejects a file it would find.
+    # the API keys they need.
     try:
-        resolve_env_file(config, base_dir=project_dir)
+        resolve_env_file(config_path)
     except ValueError as e:
         logger.error("%s", e)
         sys.exit(1)
 
-    _ensure_grpc_stubs_importable(artifact_root)
+    _ensure_grpc_stubs_importable(project_dir)
 
     providers.get(config.get("provider", providers.DEFAULT)).preflight()
 
@@ -502,14 +474,12 @@ def _cmd_clean(args):
     """
     Remove generated stubs, gRPC files, and Docker build contexts.
     """
-    project_dir = os.path.abspath(os.getcwd())
-    prefix = _artifact_prefix(project_dir)
-    artifact_root = os.path.join(project_dir, prefix) if prefix else project_dir
+    project_dir = os.getcwd()
 
     paths_to_clean = [
-        os.path.join(artifact_root, "stubs"),
-        os.path.join(artifact_root, "grpc_stubs"),
-        os.path.join(artifact_root, "docker_container"),
+        os.path.join(project_dir, "stubs"),
+        os.path.join(project_dir, "grpc_stubs"),
+        os.path.join(project_dir, "docker_container"),
     ]
 
     for path in paths_to_clean:
@@ -533,9 +503,6 @@ def _cmd_clean(args):
 def main():
     """Run the core command given on the command line. The container's server uses it to
     build and deploy the project when the CLI asks."""
-    default_config_path = os.path.join(
-        _artifact_prefix(os.getcwd()), "config", "global_controller.yaml"
-    )
     parser = argparse.ArgumentParser(
         prog="canyonos_core",
         description="CanyonOS — Distributed Agent Orchestration Framework",
@@ -547,12 +514,6 @@ def main():
         "deploy",
         help="Build stubs/images, then launch agents via the Global Controller",
     )
-    deploy.add_argument(
-        "-c",
-        "--config",
-        default=default_config_path,
-        help=f"Path to global controller config (default: {default_config_path})",
-    )
     deploy.set_defaults(func=_cmd_deploy)
 
     # canyonos_core run-gc: the Global Controller alone, as a Kubernetes pod
@@ -563,8 +524,8 @@ def main():
     run_gc.add_argument(
         "-c",
         "--config",
-        default=default_config_path,
-        help=f"Path to global controller config (default: {default_config_path})",
+        default=CONFIG_PATH,
+        help=f"Path to global controller config (default: {CONFIG_PATH})",
     )
     run_gc.set_defaults(func=_cmd_run_gc)
 

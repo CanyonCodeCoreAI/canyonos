@@ -69,8 +69,6 @@ redis:
   port: 6390
   db: 0
 
-env_file: .env
-
 ec2:
   region: ${EC2_REGION}
   machine_type:

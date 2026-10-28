@@ -1,18 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Logic for canyonos clean: remove generated artifacts, skills, managed .env keys and
-the project's agent images."""
+"""Logic for canyonos clean: remove generated artifacts, skills and the project's
+agent images."""
 
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 import yaml
 
-from canyonos import convert, dashboard_stack, project, ui
-from canyonos.constants import default_config_path
+from canyonos import convert, project, ui
+from canyonos.constants import CANYON_DIR, default_config_path
 
 
 def _project_images():
@@ -111,33 +110,21 @@ def _remove_canyon_skills():
         ui.ok(f"Removed {skill_dir}.")
 
 
-def _remove_canyon_env_vars():
-    """Strips the keys older versions of `canyonos serve` wrote into the project's `.env`."""
-    try:
-        removed = dashboard_stack.remove_project_env_keys(Path.cwd() / ".env")
-    except (OSError, UnicodeDecodeError) as error:
-        ui.warn(f"Could not clean .env: {error}")
-        return
-    if removed:
-        ui.ok(f"Removed {removed} CanyonOS-managed variable(s) from .env.")
-
-
 def run_clean():
     """Remove the current project's `.canyon` folder (and the project id, when
-    `global_controller.yaml` lives there), CanyonOS skill, the `.env` keys
-    `canyonos serve` wrote, and the Docker images built for its agents."""
+    `global_controller.yaml` lives there), CanyonOS skill, and the Docker images built
+    for its agents."""
     # A built project keeps its agent list inside .canyon, which goes first.
     images = _project_images()
-    canyon_dir = os.path.join(os.getcwd(), ".canyon")
+    canyon_dir = os.path.join(os.getcwd(), CANYON_DIR)
 
     if os.path.isdir(canyon_dir):
         with ui.status(f"Cleaning {canyon_dir}..."):
             shutil.rmtree(canyon_dir)
-        ui.ok("Removed .canyon.")
+        ui.ok(f"Removed {CANYON_DIR}.")
     else:
-        ui.say("No .canyon folder to remove.")
+        ui.say(f"No {CANYON_DIR} folder to remove.")
 
     _remove_canyon_skills()
-    _remove_canyon_env_vars()
     _remove_canyon_images(images)
     ui.ok("Clean complete.")

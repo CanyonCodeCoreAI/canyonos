@@ -23,7 +23,7 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 
 - Docker is running, and `canyonos doctor` passes.
 - This example is already in CanyonOS format, so skip `canyonos convert`. It needs no `.env`.
-- Work on a copy. Deploying writes into the project folder: it fills default resources into `config/global_controller.yaml`, and the dashboard adds a `.env` with `CANYONOS_*` lines.
+- Work on a copy. Deploying writes into the project folder: it fills default resources and a `project_id` into `config/global_controller.yaml`.
 
 ```bash
 cd helloworld

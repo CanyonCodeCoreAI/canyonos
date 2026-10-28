@@ -1,7 +1,7 @@
 # Images and dependencies
 
 How the built image resolves imports, what gets installed, and what the copy
-of `.canyon/app` leaves out.
+of the project root leaves out.
 
 ## What `/app` can import
 
@@ -16,8 +16,8 @@ Python resolves names rooted at `/app`:
   without `__init__.py`
 
 `/app/source/pkg` is not `import pkg`. There is exactly one import root, and
-it is the top of `.canyon/app`. If the application imports `tools` from a `src/`
-directory, `.canyon/app` has to be a copy of `src/`, not of the repository, and
+it is the project root. If the application imports `tools` from a `src/`
+directory, the root has to be a copy of `src/`, not of the repository, and
 `entrypoint` is then relative to that. If the source
 imports both `tools` and `src.tools`, no single root serves both.
 
@@ -35,7 +35,7 @@ the version caps and the floors the build enforces.
 
 ## What the sweep copies
 
-The build context starts as a copy of everything under `.canyon/app` at its
+The build context starts as a copy of everything under the project root at its
 relative path, Python or not: prompt templates, JSON schemas, PDFs,
 certificates, framework yaml files. Because the container starts at `/app`,
 a path derived from the original repository root or from the process working
@@ -82,9 +82,9 @@ fail later, when the first agent or task is used, not at import.
 
 ## What `canyonos validate` checks
 
-`canyonos validate` reads `.canyon` and never builds an image, installs a
+`canyonos validate` never builds an image, installs a
 package or serves a request. It checks the schema of the manifest and
-that every entrypoint exists inside `app/` (`CANYON-SCHEMA`), that the entrypoint has
+that every entrypoint exists (`CANYON-SCHEMA`), that the entrypoint has
 a module-level class named after the entry with a no-argument constructor and
 synchronous methods matching its `functions` (`CANYON-ADAPTER-CLASS`,
 `CANYON-ADAPTER-INIT`, `CANYON-ADAPTER-SIGNATURE`, `CANYON-ADAPTER-ASYNC`), that a

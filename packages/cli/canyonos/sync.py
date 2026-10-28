@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos sync`: mirror the current project directory into the Global
-Controller container's /workspace volume via `docker cp`.
+Logic for `canyonos sync`: mirror the project root, plus the `.env` in the folder
+`canyonos` runs in, into the Global Controller container's /workspace volume via
+`docker cp`.
 
 Files live inside the container's named volume (see `init.py`), not on a live
 bind mount, so host-side edits don't reach a running build. A manifest records
@@ -17,9 +18,9 @@ import os
 import tempfile
 
 from canyonos import project, ui
+from canyonos.constants import container_path, project_env_path, project_root
 from canyonos.docker_cmd import DOCKER_RUN_TIMEOUT, run_docker
 from canyonos.gc import require_state
-from canyonos.constants import container_path
 from canyonos.init import GC_WORKSPACE_PATH
 
 
@@ -72,8 +73,12 @@ finally:
 """
 
 
-def _project_entries(project_root):
-    """Return the relative paths and types managed by a project sync."""
+ENV_NAME = ".env"
+
+
+def _project_entries(project_root, env_path):
+    """Return the relative paths and types a sync copies into `/workspace`: everything
+    under the project root, and `.env` when `env_path` is a file."""
     entries = {}
     for directory, dirnames, filenames in os.walk(project_root, followlinks=False):
         for name in dirnames + filenames:
@@ -84,6 +89,8 @@ def _project_entries(project_root):
                 if os.path.isdir(path) and not os.path.islink(path)
                 else "entry"
             )
+    if os.path.isfile(env_path):
+        entries[ENV_NAME] = "entry"
     return entries
 
 
@@ -233,35 +240,57 @@ def _save_sync_state(container_id, entries):
         raise
 
 
+def _copy(source, container_id, destination, action, follow_link=False):
+    """Copy `source` on this machine to `destination` in the container, the file a
+    symbolic link `source` points at when `follow_link`; raise with docker's own
+    message when it fails."""
+    flags = ["-L"] if follow_link else []
+    result = run_docker(
+        ["docker", "cp", *flags, source, f"{container_id}:{destination}"],
+        timeout=DOCKER_RUN_TIMEOUT,
+        action=action,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Sync failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
 def run_sync():
-    """Mirror the current directory into the container. Returns True on success."""
+    """Copy the project root, and the `.env` in the folder `canyonos` runs in, into
+    the Global Controller container. Returns True on success."""
     state = require_state()
     if state is None:
         return False
 
     container_id = state["container_id"]
-    # Trailing "/." copies the *contents* of the current directory into
-    # /workspace, rather than nesting it under /workspace/<dirname>.
-    src = os.path.join(os.getcwd(), ".")
-    label = f"Syncing {os.getcwd()} -> {container_id[:12]}:{GC_WORKSPACE_PATH}"
+    root = os.path.abspath(project_root())
+    # Trailing "/." copies the *contents* of root into /workspace, rather than
+    # nesting it under /workspace/<dirname>.
+    src = os.path.join(root, ".")
+    label = f"Syncing {root} -> {container_id[:12]}:{GC_WORKSPACE_PATH}"
+
+    env_path = os.path.abspath(project_env_path())
+    copies_env = os.path.dirname(env_path) != root and os.path.isfile(env_path)
 
     with ui.status(f"{label}..."):
         # Captured so docker's own progress output doesn't clobber the spinner.
         try:
-            entries = _project_entries(os.getcwd())
+            entries = _project_entries(root, env_path)
             stale_entries = _stale_entries(_previous_entries(container_id), entries)
             _remove_stale_entries(container_id, stale_entries)
-            result = run_docker(
-                ["docker", "cp", src, f"{container_id}:{GC_WORKSPACE_PATH}"],
-                timeout=DOCKER_RUN_TIMEOUT,
-                action="Syncing project files",
-            )
+            _copy(src, container_id, GC_WORKSPACE_PATH, "Syncing project files")
+            if copies_env:
+                _copy(
+                    env_path,
+                    container_id,
+                    f"{GC_WORKSPACE_PATH}/{ENV_NAME}",
+                    "Syncing the project's .env",
+                    follow_link=True,
+                )
         except (OSError, RuntimeError) as e:
             ui.fail(str(e))
             return False
-    if result.returncode != 0:
-        ui.fail(f"Sync failed: {result.stderr.strip() or result.stdout.strip()}")
-        return False
 
     try:
         _save_sync_state(container_id, entries)

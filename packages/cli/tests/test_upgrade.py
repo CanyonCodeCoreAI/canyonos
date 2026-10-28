@@ -337,7 +337,14 @@ def test_the_installed_cli_keeps_validate_json_on_stdout(tmp_path, policy, expec
     )
 
     result = subprocess.run(
-        [sys.executable, "-c", "import cli; cli.main()", "validate", "--json"],
+        [
+            sys.executable,
+            "-c",
+            "import cli; cli.main()",
+            "validate",
+            "missing",
+            "--json",
+        ],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -346,7 +353,7 @@ def test_the_installed_cli_keeps_validate_json_on_stdout(tmp_path, policy, expec
     )
 
     assert result.returncode == 2
-    assert json.loads(result.stdout)["error"].startswith(".canyon is not a directory")
+    assert json.loads(result.stdout)["error"].startswith("missing is not a directory")
     if expected is None:
         assert result.stderr == ""
     else:

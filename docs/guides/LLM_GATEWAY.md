@@ -133,7 +133,7 @@ OpenAI-format and Anthropic calls carry your code's own key: the gateway passes
 reads it from.
 
 For Bedrock the gateway uses the usual AWS credentials from the container
-environment. The `env_file` in the manifest is how those reach the container.
+environment. The project's `.env` is how those reach the container.
 
 For Bedrock, botocore signs requests even when the endpoint is overridden, so
 a caller may need placeholder AWS credentials. The gateway re-issues the call
@@ -143,7 +143,7 @@ upstream with its own identity.
 
 A client that ignores the proxy variables, such as an `aiohttp.ClientSession` without
 `trust_env=True`, goes straight to the provider. Grep for `aiohttp` in the source to
-find those. Inside the `.canyon/app` copy, the fix for aiohttp
+find those. In the code under the project root, the fix for aiohttp
 is to let it read them:
 
 ```python

@@ -56,7 +56,6 @@ def project(monkeypatch, tmp_path):
     root = tmp_path / "portfolio"
     canyon = root / ".canyon"
     (canyon / "config").mkdir(parents=True)
-    (canyon / "app").mkdir()
     (canyon / "config" / "global_controller.yaml").write_text(CONFIG)
     monkeypatch.chdir(root)
     return root

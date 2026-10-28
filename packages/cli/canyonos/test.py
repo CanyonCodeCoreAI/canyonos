@@ -26,11 +26,10 @@ from rich.text import Text
 
 from canyonos import ui
 from canyonos.constants import (
-    default_config_path,
     endpoint_answers,
     endpoint_api_port,
+    existing_config_path,
     round_trip_yaml,
-    workspace_relative,
     write_config,
 )
 from canyonos.deploy import (
@@ -228,13 +227,13 @@ class _Run:
         return round(time.monotonic() - self.started, 3)
 
 
-def _deploy_locally(run, config_path, api_port):
+def _deploy_locally(run, api_port):
     """Deploy the project locally for `canyonos test` and wait until the
     workflow answers."""
     run.begin("deploy", 1, "Deploy locally")
 
     # quiet: readiness is checked below.
-    state = run_deploy(config_path, serve=False, quiet=True, banner=False)
+    state = run_deploy(serve=False, quiet=True, banner=False)
     run.deploy_started = True
 
     _wait_for_endpoint(state, api_port)
@@ -330,7 +329,7 @@ def _existing_deploy():
 def _run_test(run, timeout=REQUEST_TIMEOUT):
     """Query the workflow, standing up our own local deploy first unless one is
     already up. The config is restored whatever happens."""
-    config_path = workspace_relative(default_config_path())
+    config_path = existing_config_path()
 
     existing = _existing_deploy()
     if existing is not None:
@@ -356,7 +355,7 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
     save_project_id(config_path)
     original_config = _force_local_providers(config_path)
     try:
-        state = _deploy_locally(run, config_path, api_port)
+        state = _deploy_locally(run, api_port)
         _verify_runtime(run, config_path)
         _query(run, deployed_endpoint(state["port"]), timeout)
     finally:

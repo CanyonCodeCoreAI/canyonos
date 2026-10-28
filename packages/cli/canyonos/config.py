@@ -7,12 +7,10 @@ Logic for `canyonos config`: view or change project/deploy configuration.
 View merely prints out the config, while change opens up a separate temp screen for easy changes.
 """
 
-import os
-
 import yaml
 from rich.table import Table
 
-from canyonos.constants import default_config_path, round_trip_yaml, write_config
+from canyonos.constants import existing_config_path, round_trip_yaml, write_config
 from canyonos.theme import GREEN, WHITE
 from canyonos import ui
 from utils.tui import DELETE_ACTION, QUIT_ACTION, select_menu
@@ -117,18 +115,18 @@ def _kv_table(title, data):
     return table
 
 
-def _require_config(config_path):
-    """Find the config file `canyonos config` opens: the given path, or the project's
-    default. If it doesn't exist, show an error in the terminal and return None."""
-    config_path = config_path or default_config_path()
-    if not os.path.isfile(config_path):
-        ui.fail(f"Config file not found: {config_path}")
+def _require_config():
+    """Find the project's `global_controller.yaml`, which `canyonos config` opens. If it
+    doesn't exist, show an error in the terminal and return None."""
+    try:
+        return existing_config_path()
+    except RuntimeError as e:
+        ui.fail(str(e))
         return None
-    return config_path
 
 
-def _run_view_config(config_path=None):
-    config_path = _require_config(config_path)
+def _run_view_config():
+    config_path = _require_config()
     if config_path is None:
         return
 
@@ -326,8 +324,8 @@ def _navigate(screen, node, breadcrumb):
             # backed out of the child: stay on this menu
 
 
-def _run_change_config(config_path=None):
-    config_path = _require_config(config_path)
+def _run_change_config():
+    config_path = _require_config()
     if config_path is None:
         return
 

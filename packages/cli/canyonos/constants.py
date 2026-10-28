@@ -27,14 +27,37 @@ _EC2_PRIVATE_IP_URL = "http://169.254.169.254/latest/meta-data/local-ipv4"
 _metadata_cache = {}
 
 
+CANYON_DIR = ".canyon"
+
+
+def project_root():
+    """Find the folder every project file is read from: `.canyon` when it exists in
+    the current directory, else the current directory itself."""
+    return CANYON_DIR if os.path.isdir(CANYON_DIR) else "."
+
+
 def default_config_path():
-    """Global controller config for the current directory, preferring the .canyon artifact layout."""
-    canyon = os.path.join(".canyon", "config", "global_controller.yaml")
-    return (
-        canyon
-        if os.path.isfile(canyon)
-        else os.path.join("config", "global_controller.yaml")
-    )
+    """Build the path of the Global Controller's `global_controller.yaml` inside the
+    project root, whether or not the file is there."""
+    return os.path.join(project_root(), "config", "global_controller.yaml")
+
+
+def project_env_path():
+    """Name the `.env` in the folder `canyonos` runs in; deploy passes its values to
+    the agent replicas."""
+    return ".env"
+
+
+def existing_config_path():
+    """`default_config_path()`, used by deploy and test; raises when the file is not
+    there."""
+    config_path = default_config_path()
+    if not os.path.isfile(config_path):
+        raise RuntimeError(
+            f"No {config_path} here. Run `canyonos convert` first, or rerun from your "
+            "project folder."
+        )
+    return config_path
 
 
 def load_yaml(config_path, load):
@@ -164,33 +187,6 @@ def port_in_use(port):
 def dashboard_port(config_path):
     """Host port the local dashboard prefers to start on, falling back to the default."""
     return read_config(config_path).get("dashboard_port", DEFAULT_DASHBOARD_PORT)
-
-
-def workspace_relative(config_path):
-    """`config_path` relative to the cwd; raises when it falls outside it or is missing.
-
-    The container only ever receives a copy of the current directory, and it
-    resolves what it's given against /workspace -- so an absolute path silently
-    discards that prefix and a `../` one escapes it. Both then 404 naming a
-    path that exists on the host, which reads as a bug in the wrong place.
-    """
-    # realpath on both sides: a symlinked project dir (or macOS's /tmp ->
-    # /private/tmp) otherwise makes an in-project absolute path look external.
-    try:
-        relative = os.path.relpath(
-            os.path.realpath(config_path), os.path.realpath(os.getcwd())
-        )
-    except ValueError:
-        # Windows: another drive has no relative path at all.
-        relative = ".."
-    if relative == ".." or relative.startswith(f"..{os.sep}"):
-        raise RuntimeError("The config file must be inside this project folder")
-    if not os.path.isfile(relative):
-        raise RuntimeError(
-            f"No {relative} here. Run `canyonos convert` first, or rerun from your "
-            "project folder."
-        )
-    return container_path(relative)
 
 
 def container_path(relative):

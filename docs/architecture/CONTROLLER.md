@@ -37,7 +37,7 @@ POST /deploy
      │
      ▼
 canyonos_core.server.deploy
-     └─▶ python -m canyonos_core.cli deploy -c <config_path>
+     └─▶ python -m canyonos_core.cli deploy
               │
               ├─ _run_build ──▶ stubs, protos, Docker contexts; database pulls start
               ├─ _ensure_grpc_stubs_importable

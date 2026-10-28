@@ -11,11 +11,10 @@ Preserve prompt content and application behavior; do not invent or improve promp
 
 ## 1. Locate the source and config
 
-- Find the active `global_controller.yaml`. Write `prompts.yaml` beside it:
-  `.canyon/config/prompts.yaml` for a ported project, or `config/prompts.yaml` for
-  the source layout. Respect an explicitly chosen destination.
-- Trace the manifest's agent entrypoints to their LLM calls. For a
-  `.canyon` project, inspect `.canyon/app`, since that is the deployed source.
+- Work in the project root: `.canyon` when the project folder has one, otherwise
+  the project folder itself. Find `config/global_controller.yaml` there and write
+  `prompts.yaml` beside it. Respect an explicitly chosen destination.
+- Trace the manifest's agent entrypoints, relative to the root, to their LLM calls.
 - Search for message roles, prompt constants, template constructors, formatting
   functions, and referenced prompt files. Follow imports and builders to the text
   actually sent to the model; a variable named `prompt` alone is not evidence.

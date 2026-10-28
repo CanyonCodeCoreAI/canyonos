@@ -135,7 +135,9 @@ machine_type, count = sys.argv[1], int(sys.argv[2])
 for pid in filter(str.isdigit, os.listdir("/proc")):
     args = open(f"/proc/{pid}/cmdline").read().split("\\0")
     if args[1:4] == ["-m", "canyonos_core.cli", "deploy"]:
-        path = os.path.join(os.readlink(f"/proc/{pid}/cwd"), args[args.index("-c") + 1])
+        path = os.path.join(
+            os.readlink(f"/proc/{pid}/cwd"), "config", "global_controller.yaml"
+        )
         config = yaml.safe_load(open(path))
         config["ec2"]["machine_type"][machine_type] = count
         yaml.safe_dump(config, open(path, "w"), sort_keys=False)

@@ -51,20 +51,28 @@ def expand_env_value(value):
     return value
 
 
-def _project_root_for_config(config_path):
-    """The project root a config file belongs to -- where its `.env` lives."""
-    project_root = os.path.abspath(os.path.join(os.path.dirname(config_path), ".."))
-    # Under the .canyon layout, config lives at <project>/.canyon/config, so the
-    # naive parent-of-parent lands on .canyon itself -- go up one more level
-    # to reach the actual project root where .env lives.
-    if os.path.basename(project_root) == ".canyon":
-        project_root = os.path.dirname(project_root)
-    return project_root
+def resolve_env_file(config_path):
+    """
+    Return the absolute path of the project's `.env`, the one in the folder above
+    `config_path`'s, or None when there is none.
+
+    Raises:
+        ValueError: the file exists but is unreadable. Deploy should fail here
+            rather than start a fleet of agents with no API keys.
+    """
+    path = os.path.abspath(os.path.join(os.path.dirname(config_path), "..", ".env"))
+    if not os.path.isfile(path):
+        return None
+    if not os.access(path, os.R_OK):
+        raise ValueError(f".env is not readable: {path}")
+    return path
 
 
 def load_root_dotenv(config_path):
-    """Import the project `.env` that sits next to a config file's project root."""
-    load_dotenv(os.path.join(_project_root_for_config(config_path), ".env"))
+    """Import the project's `.env`, if there is one."""
+    env_path = resolve_env_file(config_path)
+    if env_path:
+        load_dotenv(env_path)
 
 
 def load_config(config_path):

@@ -125,28 +125,6 @@ def test_symlinked_skill_is_unlinked_and_its_target_kept(monkeypatch, tmp_path):
     assert (target / "SKILL.md").exists()
 
 
-def test_unreadable_env_warns_and_images_are_still_cleaned(monkeypatch, tmp_path):
-    calls = []
-    warnings = []
-
-    def fake_run(argv, **_):
-        calls.append(argv)
-        return completed(argv)
-
-    def unreadable(env_path):
-        raise PermissionError(f"Permission denied: '{env_path}'")
-
-    in_project(monkeypatch, tmp_path, "portfolio")
-    monkeypatch.setattr(clean.subprocess, "run", fake_run)
-    monkeypatch.setattr(clean.ui, "warn", warnings.append)
-    monkeypatch.setattr(clean.dashboard_stack, "remove_project_env_keys", unreadable)
-
-    clean.run_clean()
-
-    assert any(".env" in warning for warning in warnings)
-    assert calls[0][:2] == ["docker", "images"]
-
-
 def test_image_removal_failure_warns_without_forcing(monkeypatch, tmp_path):
     calls = []
     warnings = []

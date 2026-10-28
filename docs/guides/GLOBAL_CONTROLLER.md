@@ -8,8 +8,8 @@ describes.
 
 ## Where it lives
 
-`canyonos convert` can write the file for you at `.canyon/config/global_controller.yaml`. A
-project that doesn't use `canyonos convert` keeps it at `config/global_controller.yaml`.
+It lives at `config/global_controller.yaml` in the [project root](BUILD_ARTIFACT.md).
+`canyonos convert` can write it for you.
 
 You can change it in two ways:
 
@@ -51,8 +51,6 @@ endpoint:
   api_port: 8080
   agent: Workflow
   method: main
-
-env_file: .env
 ```
 
 Reading it top to bottom:
@@ -64,8 +62,6 @@ Reading it top to bottom:
   answer it. Its `functions` list `main`, the method the endpoint serves.
 - `endpoint` is the web address CanyonOS serves for you, on port `8080`. A request to
   `POST /main` runs the `main` method of the `Workflow` class.
-- `env_file` points at a `.env` file. Every piece of your app gets its variables, so
-  that's where API keys go.
 
 ## The `agents` list
 
@@ -96,7 +92,7 @@ class in its `entrypoint` file.
 ### Other settings
 
 - `env`: environment variables for this entry only, on top of the ones from
-  `env_file`.
+  `.env`.
 - `stateful`: set to `true` if a copy keeps information in memory between calls in the
   same request. CanyonOS then sends every call in that request to the same copy.
 - For a database, `db_port` is the port it listens on (default `5432`), and
@@ -109,8 +105,6 @@ These go at the top level of the file, next to `agents`:
 - `provider`: where every entry runs. `local` (the default) is this machine. `EC2`
   runs them on Amazon EC2 machines from the `ec2` section below, each replica on the least
   loaded machine by its `resources`.
-- `env_file`: a `.env` file whose variables every entry gets. Put API keys here, not
-  in the YAML.
 - `endpoint` (required): the web address requests arrive at. `api_port` is its port
   (default `8080`), and `agent` and `method` name the agent method served at
   `POST /<method>`. The method must be listed in that agent's `functions`.
@@ -176,7 +170,7 @@ Agent entries add:
 
 | Key | Default | Notes |
 |---|---|---|
-| `entrypoint` | required | `.py` path relative to the project root, or to `.canyon/app` in a ported artifact; no `..`, not absolute. Holds the class named `name`. |
+| `entrypoint` | required | `.py` path relative to the project root; no `..`, not absolute. Holds the class named `name`. |
 | `requirements` | `[]` | One PEP 508 requirement per item. See [Per-image requirements](#per-image-requirements). |
 | `functions` | `[]` | The methods other agents can call; an agent without any cannot be called. See [Agent functions](#agent-functions). |
 
@@ -207,7 +201,6 @@ instead of an in-process store, and the agent no longer needs
 | `cleanup_interval` | `10` | Seconds between cleanup passes. |
 | `project_id` | generated | Written back into the file on first deploy. Leave it out on a new project. |
 | `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379` / `0` | The controller's own Redis. |
-| `env_file` | none | Secrets file passed to every container. Resolved against the directory `canyonos deploy` runs from, the one holding `.canyon`. A missing or unreadable file fails the deploy before anything starts. |
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
 | `provider` | `local` | `local` or `EC2`, in any casing. Where every entry runs. |
@@ -220,9 +213,6 @@ instead of an in-process store, and the agent no longer needs
 
 `database` used to be a top-level key. It is retired: the schema rejects it
 with "is no longer used; telemetry is configured under otel:". Remove it.
-
-In a managed deployment `env_file` is ignored with a warning and secrets come
-from the platform's own file instead.
 
 #### `otel.destinations`
 
@@ -292,8 +282,6 @@ redis:
   host: localhost
   port: 6379
   db: 0
-
-env_file: .env
 
 otel:
   destinations:

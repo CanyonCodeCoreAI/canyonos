@@ -8,7 +8,6 @@ view (one is up). Each check just reports pass/fail plus a suggested fix --
 nothing here attempts to auto-fix anything.
 """
 
-import os
 import shutil
 import subprocess
 
@@ -16,6 +15,7 @@ from canyonos import ui
 from canyonos.constants import (
     default_config_path,
     endpoint_answers,
+    existing_config_path,
     local_redis_port,
     port_in_use,
 )
@@ -104,9 +104,10 @@ def _agents_check():
     table `canyonos test` shows). True if there's nothing to check or every
     agent is ready.
     """
-    config_path = default_config_path()
-    if not os.path.isfile(config_path):
-        ui.hint(f"No config at {config_path} -- skipping workflow agent checks")
+    try:
+        config_path = existing_config_path()
+    except RuntimeError as e:
+        ui.hint(f"{e} Skipping the workflow agent checks.")
         return True
 
     rows = agent_rows(config_path)

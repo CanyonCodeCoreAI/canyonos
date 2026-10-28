@@ -31,6 +31,7 @@ from canyonos_core.schema.manifest import (
 )
 
 __all__ = [
+    "CONFIG_PATH",
     "CodeAgent",
     "BUILTIN_TYPE_NAMES",
     "DatabaseAgent",
@@ -49,6 +50,9 @@ __all__ = [
     "validate_project",
 ]
 
+# The manifest, relative to the project root.
+CONFIG_PATH = os.path.join("config", "global_controller.yaml")
+
 
 def _as_typed(path):
     """A path as the reader would write it: relative to where the build runs.
@@ -64,35 +68,32 @@ def _as_typed(path):
     return path if relative.startswith(os.pardir) else relative
 
 
-def _missing_sources(manifest, manifest_path, source_dir):
+def _missing_sources(manifest, manifest_path, root):
     """Violations for the code a manifest points at but the project does not hold.
 
     The build used to log a line and carry on, leaving a deploy that exited 0
     with the agent quietly absent from it.
     """
-    if not os.path.isdir(source_dir):
+    if not os.path.isdir(root):
         return [
             SchemaViolation(
                 manifest_path,
                 0,
                 "agents",
-                f"the project source directory {_as_typed(source_dir)} does not "
+                f"the project folder {_as_typed(root)} does not "
                 "exist, so no agent's code can be found",
             )
         ]
 
     violations = []
-    real_source_dir = os.path.realpath(source_dir)
+    real_root = os.path.realpath(root)
     for index, agent_spec in enumerate(manifest.agents):
         if agent_spec.type != "agent":
             continue
-        source = os.path.join(source_dir, agent_spec.entrypoint)
+        source = os.path.join(root, agent_spec.entrypoint)
         if not os.path.isfile(source):
             problem = f"{_as_typed(source)} does not exist"
-        elif (
-            os.path.commonpath([real_source_dir, os.path.realpath(source)])
-            != real_source_dir
-        ):
+        elif os.path.commonpath([real_root, os.path.realpath(source)]) != real_root:
             problem = f"{_as_typed(source)} resolves outside the project"
         else:
             continue
@@ -102,13 +103,13 @@ def _missing_sources(manifest, manifest_path, source_dir):
     return violations
 
 
-def check_project(manifest_path, source_dir=None):
+def check_project(manifest_path, root=None):
     """`(manifest, violations)` for a project's manifest.
 
     Never raises: the caller decides how to report. The manifest is None when
     it did not parse.
 
-    `source_dir` is the project root the manifest's paths are relative to.
+    `root` is the project root the manifest's paths are relative to.
     Given one, the entrypoint each agent declares must
     exist under it; left out, nothing on disk is checked.
     """
@@ -122,11 +123,11 @@ def check_project(manifest_path, source_dir=None):
     if manifest is None:
         return None, tuple(violations)
 
-    if source_dir is not None:
-        violations.extend(_missing_sources(manifest, manifest_path, source_dir))
+    if root is not None:
+        violations.extend(_missing_sources(manifest, manifest_path, root))
     return manifest, tuple(violations)
 
 
-def validate_project(manifest_path, source_dir=None):
+def validate_project(manifest_path, root=None):
     """Every violation in a project's manifest."""
-    return check_project(manifest_path, source_dir)[1]
+    return check_project(manifest_path, root)[1]

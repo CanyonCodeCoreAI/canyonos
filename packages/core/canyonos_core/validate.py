@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Contracts a `.canyon` has to keep that the schema alone cannot see.
+"""Contracts a project has to keep that the schema alone cannot see.
 
 `validate_project` reads the manifest. What it cannot read is the Python
 beside it: a class the controller loads by name, or a method the executor calls
@@ -10,9 +10,10 @@ container, or on its first request, so they are checked here against the same
 parsed model the deploy uses -- never against a second copy of the pins, the
 image Python or the runtime's module names.
 
-    python -m canyonos_core.validate <artifact_root> [--config PATH] [--json]
+    python -m canyonos_core.validate <root> [--json]
 
-Exit 1 if any error was found, 0 otherwise.
+Exit 0 when the project is clean, 1 when anything was found, and 2 when it could
+not be checked because `config/global_controller.yaml` is missing.
 """
 
 import argparse
@@ -22,13 +23,14 @@ import os
 import sys
 from typing import NamedTuple
 
-from canyonos_core.schema import CodeAgent, check_project
+from canyonos_core.schema import CONFIG_PATH, CodeAgent, check_project
 from canyonos_core.stub_generator import AGENT_FLAT_MODULES
 
-# canyonos_core/cli.py SOURCE_DIR_NAME -- the copy of the application source
-# that becomes /app inside every container.
-SOURCE_DIR_NAME = "app"
-DEFAULT_CONFIG_PATH = os.path.join("config", "global_controller.yaml")
+UNCHECKED = 2
+
+
+class ManifestNotFound(RuntimeError):
+    """Raised by `validate_root` when the project has no manifest to check."""
 
 
 class Finding(NamedTuple):
@@ -132,15 +134,15 @@ class _Class(NamedTuple):
 _UNREADABLE = "unreadable"
 
 
-def _inside(source_dir, path):
-    """Whether `path` resolves to a file under `source_dir`, symlinks followed."""
-    real_source_dir = os.path.realpath(source_dir)
+def _inside(root, path):
+    """Whether `path` resolves to a file under `root`, symlinks followed."""
+    real_root = os.path.realpath(root)
     try:
-        common = os.path.commonpath([real_source_dir, os.path.realpath(path)])
+        common = os.path.commonpath([real_root, os.path.realpath(path)])
     except ValueError:
         # A different drive on Windows.
         return False
-    return common == real_source_dir
+    return common == real_root
 
 
 def _binds(node, name):
@@ -159,24 +161,24 @@ def _binds(node, name):
     return False
 
 
-def _imported_file(source_dir, path, node):
+def _imported_file(root, path, node):
     """The source file an `ImportFrom` reads, or None outside the project."""
     if node.level:
-        package = os.path.dirname(os.path.relpath(path, source_dir))
+        package = os.path.dirname(os.path.relpath(path, root))
         for _ in range(node.level - 1):
             package = os.path.dirname(package)
         parts = package.split(os.sep) if package else []
     else:
         parts = []
     parts += node.module.split(".") if node.module else []
-    base = os.path.join(source_dir, *parts)
+    base = os.path.join(root, *parts)
     for candidate in (base + ".py", os.path.join(base, "__init__.py")):
-        if os.path.isfile(candidate) and _inside(source_dir, candidate):
+        if os.path.isfile(candidate) and _inside(root, candidate):
             return candidate
     return None
 
 
-def _resolve_class(source_dir, path, tree, name, seen=frozenset()):
+def _resolve_class(root, path, tree, name, seen=frozenset()):
     """What `name` is at module level: a `_Class`, None, or `_UNREADABLE`.
 
     Follows what the controller's getattr(module, name) would reach without
@@ -196,7 +198,7 @@ def _resolve_class(source_dir, path, tree, name, seen=frozenset()):
             if any(isinstance(t, ast.Name) and t.id == name for t in targets):
                 value = node.value
                 binding = (
-                    _resolve_class(source_dir, path, tree, value.id, seen)
+                    _resolve_class(root, path, tree, value.id, seen)
                     if isinstance(value, ast.Name)
                     else _UNREADABLE
                 )
@@ -211,19 +213,19 @@ def _resolve_class(source_dir, path, tree, name, seen=frozenset()):
             )
             if alias is not None:
                 binding = _UNREADABLE
-                imported = _imported_file(source_dir, path, node)
+                imported = _imported_file(root, path, node)
                 if alias.name != "*" and imported is not None:
                     imported_tree, _ = _parse(imported)
                     if imported_tree is not None:
                         binding = _resolve_class(
-                            source_dir, imported, imported_tree, alias.name, seen
+                            root, imported, imported_tree, alias.name, seen
                         )
         elif _binds(node, name):
             binding = _UNREADABLE
     return binding
 
 
-def _methods(source_dir, cls, seen=frozenset()):
+def _methods(root, cls, seen=frozenset()):
     """`({name: (node, path) or None}, complete)` for a class and its bases.
 
     None is an attribute bound some other way than `def`, which only running
@@ -244,7 +246,7 @@ def _methods(source_dir, cls, seen=frozenset()):
         if isinstance(base, ast.Name) and base.id == "object":
             continue
         resolved = (
-            _resolve_class(source_dir, cls.path, cls.tree, base.id)
+            _resolve_class(root, cls.path, cls.tree, base.id)
             if isinstance(base, ast.Name)
             else _UNREADABLE
         )
@@ -253,14 +255,14 @@ def _methods(source_dir, cls, seen=frozenset()):
         ):
             complete = False
             continue
-        inherited, base_complete = _methods(source_dir, resolved, seen)
+        inherited, base_complete = _methods(root, resolved, seen)
         complete = complete and base_complete
         for name, found in inherited.items():
             methods.setdefault(name, found)
     return methods, complete
 
 
-def _check_adapter(report, source_dir, entrypoint_path, agent_spec):
+def _check_adapter(report, root, entrypoint_path, agent_spec):
     """The class the controller loads, and the methods it calls on it."""
     tree, error = _parse(entrypoint_path)
     if tree is None:
@@ -274,7 +276,7 @@ def _check_adapter(report, source_dir, entrypoint_path, agent_spec):
         )
         return
 
-    cls = _resolve_class(source_dir, entrypoint_path, tree, agent_spec.name)
+    cls = _resolve_class(root, entrypoint_path, tree, agent_spec.name)
     if cls is _UNREADABLE:
         return
     if cls is None:
@@ -290,7 +292,7 @@ def _check_adapter(report, source_dir, entrypoint_path, agent_spec):
         )
         return
 
-    methods, complete = _methods(source_dir, cls)
+    methods, complete = _methods(root, cls)
     _check_constructor(report, agent_spec.name, methods)
     for function in agent_spec.functions:
         _check_method(report, cls.path, agent_spec.name, function, methods, complete)
@@ -400,12 +402,12 @@ def _check_method(report, class_path, class_name, function, methods, complete):
         )
 
 
-def _check_flat_collisions(report, source_dir):
+def _check_flat_collisions(report, root):
     """A project module at the source root the runtime's own copy lands on."""
-    for entry in sorted(os.listdir(source_dir)):
+    for entry in sorted(os.listdir(root)):
         if entry not in AGENT_FLAT_MODULES:
             continue
-        path = os.path.join(source_dir, entry)
+        path = os.path.join(root, entry)
         if not os.path.isfile(path):
             continue
         report.add(
@@ -419,7 +421,7 @@ def _check_flat_collisions(report, source_dir):
         )
 
 
-def _check_package_reexport(report, source_dir, agent_spec):
+def _check_package_reexport(report, root, agent_spec):
     """The entrypoint's package must not import from the entrypoint itself.
 
     Python runs a package's `__init__.py` before any of its submodules, and in
@@ -429,7 +431,7 @@ def _check_package_reexport(report, source_dir, agent_spec):
     package, _, module = _module_path(agent_spec.entrypoint).rpartition(".")
     if not package:
         return
-    init_path = os.path.join(source_dir, *package.split("."), "__init__.py")
+    init_path = os.path.join(root, *package.split("."), "__init__.py")
     if not os.path.isfile(init_path):
         return
 
@@ -470,10 +472,10 @@ def _check_package_reexport(report, source_dir, agent_spec):
 
 
 class _Report:
-    """The findings so far, with every path written relative to the artifact."""
+    """The findings so far, with every path written relative to the project root."""
 
-    def __init__(self, artifact_root):
-        self.artifact_root = artifact_root
+    def __init__(self, root):
+        self.root = root
         self.findings = []
 
     def add(self, code, path, line, summary, mechanism):
@@ -485,28 +487,29 @@ class _Report:
         if not path:
             return ""
         try:
-            return os.path.relpath(path, self.artifact_root)
+            return os.path.relpath(path, self.root)
         except ValueError:
             # A different drive on Windows: the absolute path is all there is.
             return path
 
 
-def validate_canyon(artifact_root, config_path=None):
-    """Every violation in a prepared `.canyon`, schema first, contracts after.
+def validate_root(root):
+    """Every violation in the project at `root`, schema first, contracts after.
 
-    Never raises: the caller decides how to report. Schema violations come back
+    Raise `ManifestNotFound` when `root` holds no manifest; otherwise never raise,
+    and leave the caller to decide how to report. Schema violations come back
     as `CANYON-SCHEMA` findings, and when the manifest itself does not parse they
     are all there is -- the rest of the checks have no model to run over.
     """
-    artifact_root = os.path.abspath(artifact_root)
-    if config_path is None:
-        config_path = os.path.join(artifact_root, DEFAULT_CONFIG_PATH)
-    elif not os.path.isabs(config_path):
-        config_path = os.path.join(artifact_root, config_path)
-    source_dir = os.path.join(artifact_root, SOURCE_DIR_NAME)
+    root = os.path.abspath(root)
+    config_path = os.path.join(root, CONFIG_PATH)
+    if not os.path.isfile(config_path):
+        raise ManifestNotFound(
+            f"{CONFIG_PATH} not found in {root}, so nothing was checked."
+        )
 
-    report = _Report(artifact_root)
-    manifest, violations = check_project(config_path, source_dir)
+    report = _Report(root)
+    manifest, violations = check_project(config_path, root)
     for violation in violations:
         report.add(
             "CANYON-SCHEMA",
@@ -519,21 +522,19 @@ def validate_canyon(artifact_root, config_path=None):
             "single stub, and rejects the project rather than building it.",
         )
 
-    if manifest is None or not os.path.isdir(source_dir):
+    if manifest is None:
         return _sorted(report.findings)
 
     for agent_spec in manifest.agents:
         if not isinstance(agent_spec, CodeAgent):
             continue
-        entrypoint_path = os.path.join(source_dir, agent_spec.entrypoint)
-        if not os.path.isfile(entrypoint_path) or not _inside(
-            source_dir, entrypoint_path
-        ):
+        entrypoint_path = os.path.join(root, agent_spec.entrypoint)
+        if not os.path.isfile(entrypoint_path) or not _inside(root, entrypoint_path):
             continue  # reported by check_project
-        _check_adapter(report, source_dir, entrypoint_path, agent_spec)
-        _check_package_reexport(report, source_dir, agent_spec)
+        _check_adapter(report, root, entrypoint_path, agent_spec)
+        _check_package_reexport(report, root, agent_spec)
 
-    _check_flat_collisions(report, source_dir)
+    _check_flat_collisions(report, root)
     return _sorted(report.findings)
 
 
@@ -549,10 +550,10 @@ def _sorted(findings):
 # ------------------------------------------------------------------ #
 
 
-def payload(artifact_root, findings):
+def payload(root, findings):
     """The JSON object `--json` prints, and the CLI renders from."""
     return {
-        "artifact_root": artifact_root,
+        "root": root,
         "errors": len(findings),
         "findings": [finding._asdict() for finding in findings],
     }
@@ -574,26 +575,34 @@ def _print_text(findings):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="python -m canyonos_core.validate",
-        description="Check a prepared .canyon against the CanyonOS contract.",
+        description="Check a project against the CanyonOS contract.",
     )
     parser.add_argument(
-        "artifact_root",
+        "root",
         nargs="?",
         default=".",
-        help="the .canyon directory holding config/ and app/ (default: the cwd)",
-    )
-    parser.add_argument(
-        "-c",
-        "--config",
-        default=None,
-        help=f"config path relative to artifact_root (default: {DEFAULT_CONFIG_PATH})",
+        help="the project directory holding config/ (default: the cwd)",
     )
     parser.add_argument("--json", action="store_true", help="emit findings as JSON")
     args = parser.parse_args(argv)
 
-    findings = validate_canyon(args.artifact_root, args.config)
+    try:
+        findings = validate_root(args.root)
+    except ManifestNotFound as error:
+        print(str(error), file=sys.stderr)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "root": os.path.abspath(args.root),
+                        "errors": None,
+                        "error": str(error),
+                    }
+                )
+            )
+        return UNCHECKED
     if args.json:
-        print(json.dumps(payload(os.path.abspath(args.artifact_root), findings)))
+        print(json.dumps(payload(os.path.abspath(args.root), findings)))
     else:
         _print_text(findings)
     return 1 if findings else 0

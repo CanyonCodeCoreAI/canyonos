@@ -199,9 +199,9 @@ Global Controller poll ──▶ otel_writer.send_telemetry ──▶ scan futur
 
 ```
 config/llms.yaml ──▶ Global Controller publish ──▶ machine Redis  llms:config
-  model_id, max_tokens,                                  │
-  agents: {name: cap}                                    │ every 5s
-                                                         ▼
+  model_id, max_tokens,                                         │
+  agents: {name: cap}                                           │ every 5s
+                                                                ▼
                                     routing._refresh ──▶ index_llms
                                                            └─ capped entry: max_tokens must be a number
 
@@ -217,7 +217,7 @@ llm_gateway/llm_prices.json ──▶ pricing.token_prices / compute_token_cost
 
 ```
  config/prompts.yaml ── GC start or reload ──▶ GC Redis  prompts:yaml
-                       └─ live versions, only if prompts:config is empty ─▶ prompts:config
+                              └─ live versions, only if prompts:config is empty ─▶ prompts:config
                                                      │ API start: store prompts not in Postgres
                                                      ▼
  Dashboard  Save / Set live ──────────────▶ Postgres  system_prompts

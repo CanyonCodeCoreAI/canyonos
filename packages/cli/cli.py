@@ -38,7 +38,7 @@ from canyonos.usage.delivery import (
     start_delivery,
 )
 from canyonos.usage.outbox import recording_usage
-from canyonos.validate import DEFAULT_ARTIFACT_ROOT, run_validate
+from canyonos.validate import run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
 
 
@@ -97,20 +97,11 @@ def _run_command():
 
     add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
 
-    # Deploy has three args: -v, -c, --serve
     deploy = add(
         "deploy",
         lambda args: sys.exit(
-            0
-            if run_deploy(args.config, serve=args.serve, verbose=args.verbose)
-            is not None
-            else 1
+            0 if run_deploy(serve=args.serve, verbose=args.verbose) is not None else 1
         ),
-    )
-    deploy.add_argument(
-        "-c",
-        "--config",
-        help="Path to global controller config (default: resolved by canyonos inside the container)",
     )
     deploy.add_argument(
         "--serve",
@@ -205,23 +196,14 @@ def _run_command():
         ),
     )
 
-    # Validate has args: artifact_root, -c/--config, --json.
     validate = add(
         "validate",
-        lambda args: sys.exit(
-            run_validate(args.artifact_root, config=args.config, as_json=args.json)
-        ),
+        lambda args: sys.exit(run_validate(args.root, as_json=args.json)),
     )
     validate.add_argument(
-        "artifact_root",
+        "root",
         nargs="?",
-        default=DEFAULT_ARTIFACT_ROOT,
-        help=f"The .canyon directory to check (default: {DEFAULT_ARTIFACT_ROOT})",
-    )
-    validate.add_argument(
-        "-c",
-        "--config",
-        help="Path to the manifest, relative to the .canyon (default: config/global_controller.yaml)",
+        help="The folder to check (default: the project root)",
     )
     validate.add_argument(
         "--json",

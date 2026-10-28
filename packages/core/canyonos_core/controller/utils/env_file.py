@@ -2,13 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Pass user secrets (API keys and friends) into agent containers.
+Hand the project's `.env` to agent containers.
 
-Two scopes, never mixed: `env_file` in the config (self-hosted), and
-`DEFAULT_SECRETS_FILE` (managed -- the project's `.env` was never uploaded
-there). Below `resolve_env_file` both are just a path: containers on this
-machine read it directly, remote ones get a short-lived 0600 copy, and either
-way it reaches Docker as `--env-file`.
+Containers on this machine read it directly, remote ones get a short-lived 0600
+copy, and either way it reaches Docker as `--env-file`.
 """
 
 import logging
@@ -16,81 +13,6 @@ import os
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
-
-# Where a managed deployment leaves the user's secrets. /var/run is tmpfs, so
-# the file dies with the host instead of persisting on disk.
-DEFAULT_SECRETS_FILE = "/var/run/canyonos/secrets.env"
-
-
-def _platform_secrets_file():
-    """
-    The path a managed deployment leaves the user's secrets at.
-
-    `CANYONOS_SECRETS_FILE` overrides it for tests and for deployments that
-    cannot write under /var/run. Nothing sets it in normal operation.
-    """
-    return os.environ.get("CANYONOS_SECRETS_FILE", DEFAULT_SECRETS_FILE)
-
-
-def resolve_env_file(config, base_dir=None):
-    """
-    Return the absolute path of the env file to hand containers, or None.
-
-    A file at `_platform_secrets_file()` wins over `env_file`. A convention
-    beating an explicit setting only makes sense because the two describe
-    different machines: `env_file: .env` describes the user's own, and
-    carrying that config to a managed deployment does not make the `.env`
-    exist there. So it warns rather than raising.
-
-    The platform must create that file unconditionally, empty when no secrets
-    are configured -- its presence means "managed", not "has secrets".
-
-    Raises:
-        ValueError: the file is configured but unusable. Deploy should fail
-            here rather than start a fleet of agents with no API keys.
-    """
-    platform_path = _platform_secrets_file()
-    if os.path.isfile(platform_path):
-        if not os.access(platform_path, os.R_OK):
-            raise ValueError(f"platform secrets file is not readable: {platform_path}")
-        if config.get("env_file"):
-            logger.warning(
-                "env_file %r is ignored in a managed deployment: secrets come "
-                "from the platform. Configure them on the platform instead.",
-                config["env_file"],
-            )
-        return platform_path
-
-    return _resolve_project_env_file(config, base_dir)
-
-
-def _resolve_project_env_file(config, base_dir):
-    """
-    Resolve the `env_file` a self-hosted deployment points at, or None.
-
-    Relative paths resolve against `base_dir` (default: the current working
-    directory).
-    """
-    raw = config.get("env_file")
-    if not raw:
-        return None
-
-    path = os.path.expanduser(str(raw))
-    if not os.path.isabs(path):
-        path = os.path.join(base_dir or os.getcwd(), path)
-    path = os.path.abspath(path)
-    shown = os.path.relpath(path, base_dir or os.getcwd())
-
-    if not os.path.exists(path):
-        raise ValueError(
-            f"`env_file: {raw}` points to {shown}, which doesn't exist. "
-            "Create it or remove `env_file` from global_controller.yaml."
-        )
-    if not os.path.isfile(path):
-        raise ValueError(f"`env_file: {raw}` points to {shown}, which is not a file.")
-    if not os.access(path, os.R_OK):
-        raise ValueError(f"env_file is not readable: {path}")
-    return path
 
 
 @contextmanager
@@ -104,11 +26,10 @@ def env_file_args(controller, host, user, is_local):
     itself. Keep that body tight around `docker run` so the copy is never
     on the host longer than it has to be.
 
-    Yields an empty list when no env file is configured, and when the one
-    configured is empty.
+    Yields an empty list when there is no env file.
     """
     env_file_path = getattr(controller, "env_file_path", None)
-    if not env_file_path or _has_no_variables(env_file_path):
+    if not env_file_path:
         yield []
         return
 
@@ -121,18 +42,6 @@ def env_file_args(controller, host, user, is_local):
         yield ["--env-file", remote_path]
     finally:
         _remove_remote_copy(controller, remote_path, host, user)
-
-
-def _has_no_variables(path):
-    """
-    An empty platform file is routine, so skip it and spare a remote host a
-    copy pushed and deleted per container. A file that vanished since
-    resolution is not "empty" -- let it through so Docker reports it.
-    """
-    try:
-        return os.path.getsize(path) == 0
-    except OSError:
-        return False
 
 
 def _remove_remote_copy(controller, remote_path, host, user):

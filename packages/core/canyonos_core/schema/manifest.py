@@ -81,7 +81,6 @@ _MANIFEST_KEYS = frozenset(
         "cleanup_interval",
         "project_id",
         "redis",
-        "env_file",
         "logs",
         "otel",
         "ssh_private_key_path",
@@ -96,6 +95,8 @@ _REDIS_KEYS = frozenset({"host", "port", "db"})
 # that tells a user carrying one what to do instead.
 _RETIRED_KEYS = {
     "database": "is no longer used; telemetry is configured under otel: -- remove it",
+    "env_file": "is no longer used; the `.env` in the project folder reaches the "
+    "agent replicas by itself -- remove it",
 }
 _OTEL_KEYS = frozenset({"destinations"})
 _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
@@ -198,7 +199,6 @@ class Manifest:
     cleanup_interval: float = 10
     project_id: str | None = None
     redis: RedisSpec = field(default_factory=RedisSpec)
-    env_file: str | None = None
     # Streams failure and log detail into each future; read as `config.get("logs", True)`, hence the default.
     logs: bool = True
     otel: OtelSpec | None = None
@@ -650,7 +650,6 @@ def load_manifest(path):
         cleanup_interval=_number(collector, document, "cleanup_interval", "", 10, 0),
         project_id=_string(collector, document, "project_id", ""),
         redis=_redis(collector, document),
-        env_file=_string(collector, document, "env_file", ""),
         logs=_boolean(collector, document, "logs", "", True),
         otel=_otel(collector, document),
         endpoint=_endpoint(collector, document, agent_specs),

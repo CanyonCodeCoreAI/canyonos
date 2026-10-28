@@ -26,8 +26,6 @@ endpoint:
   agent: Workflow
   method: main
 
-# env_file: .env
-
 # Sends traces, metrics and logs to the local dashboard.
 otel:
   destinations:

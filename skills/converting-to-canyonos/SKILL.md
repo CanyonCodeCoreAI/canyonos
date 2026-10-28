@@ -6,18 +6,19 @@ description: Port a Python agent project to CanyonOS by preparing and validating
 
 ## Scope
 
-- Edit only `.canyon`, `.gitignore` through `prepare.py`, and application-root
-  `.env` / `.env.example`. Other changes require specific approval.
+- Edit only `.canyon`, and `.gitignore` through `prepare.py`. Other changes
+  require specific approval.
 - Preserve application behavior, providers, dependency constraints and layout.
   Import existing logic; do not duplicate it or repair unrelated source defects.
-- Read credential names from source or `.env.example`, never `.env`. Add missing
-  names to `.env.example`; append only commented key reminders to `.env`.
+- `.env` stays in the project folder, and `canyonos deploy` passes it to the
+  agent replicas. Never read it or copy it; `prepare.py` leaves it out of
+  `.canyon`. Add any credential names the code needs to `.canyon/.env.example`.
 - In unattended builds, use and report defaults. Stop with a blocker when a
   required choice has no safe default or needs approval.
 
 ## 1. Prepare
 
-Choose the import root using [The `.canyon` artifact](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/BUILD_ARTIFACT.md)
+Choose the import root using [Project layout](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/BUILD_ARTIFACT.md)
 and [Images and dependencies](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/IMAGES_AND_DEPENDENCIES.md), then run:
 
 ```bash
@@ -27,7 +28,12 @@ python3 <skill_dir>/prepare.py <import-root> .canyon
 Use `--refresh` for an existing copy. Use `--force` only when discarding all
 port edits is authorized.
 
-Trace the serving path in `.canyon/app`: inputs/outputs, imports, assets,
+`prepare.py` refuses an import root whose top level has a `config/`, `stubs/`,
+`grpc_stubs/` or `docker_container/` folder, since CanyonOS writes those. Renaming
+source is outside this skill's scope: report it as a blocker unless the developer
+approves the rename.
+
+Trace the serving path in `.canyon`: inputs/outputs, imports, assets,
 dependencies, state and async boundaries. Report required capabilities that
 cannot run; missing credential values alone do not block preparation.
 
@@ -67,8 +73,7 @@ external stores and concurrency controls; follow the
 - Check each image's dependency set with `uv pip compile`, using the target
   Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.
-- Use `env_file: .env` unless another location was chosen. For local dashboard
-  tracing, use the [OTel configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#oteldestinations)
+- For local dashboard tracing, use the [OTel configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#oteldestinations)
   unless disabled or another destination was chosen.
 - For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
 - For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)

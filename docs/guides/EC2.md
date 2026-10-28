@@ -87,9 +87,10 @@ same gateway and proxy variables are injected. See [LLM gateway](LLM_GATEWAY.md)
 
 ## The env file on a remote host
 
-The file `env_file` points at is copied over SSH into a private temporary
-directory on the EC2 host, passed to `docker run --env-file`, and deleted as
-soon as the container has started. An empty file is skipped. Explicit `-e`
+For each agent replica, the project's `.env` (see [Project
+layout](BUILD_ARTIFACT.md#what-env-is-for)) is copied over SSH into a private
+temporary directory on the EC2 host, passed to `docker run --env-file`, and
+deleted as soon as the container has started. Explicit `-e`
 values set by the runtime still win over the file, as they do locally.
 
 ## Stopping and leftovers

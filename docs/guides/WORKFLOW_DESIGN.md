@@ -31,6 +31,8 @@ manage.
 
 Only `global_controller.yaml` is needed to deploy, and it has to list at least one agent and the `endpoint` block that serves one of its methods. The starter's `config/global_controller.yaml` is a working example; [global_controller.yaml](GLOBAL_CONTROLLER.md) explains every key.
 
+The project root reserves four top-level names: `config` holds the manifest, and the build generates `stubs`, `grpc_stubs` and `docker_container` in the Global Controller's copy of the root. Do not use the last three for your own folders, and `canyonos convert` refuses a source folder that has any of the four at its top level; see [Project layout](BUILD_ARTIFACT.md).
+
 ## Converting a existing workflow
 
 When converting an existing workflow, we have a skill file that any agent can download, `converting-to-canyonos` that gives an agent the tools and context needed to initally break up your project according to our 2 pillars.

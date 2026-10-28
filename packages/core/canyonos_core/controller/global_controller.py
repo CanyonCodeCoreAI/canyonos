@@ -41,7 +41,10 @@ from canyonos_core.controller.utils.container_names import (
 from canyonos_core.llm_gateway import llms, pricing
 from canyonos_core.reconciler import state
 from canyonos_core.controller.utils.config_specs import write_config_specs
-from canyonos_core.controller.utils.env_file import resolve_env_file
+from canyonos_core.controller.utils.config_env import (
+    expand_env_value,
+    resolve_env_file,
+)
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
 from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
@@ -53,11 +56,7 @@ from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 from canyonos_core.schema import SchemaError, check_project, load_manifest
 from canyonos_core.schema.yaml_lines import parse_failure
 
-# Add generated grpc_stubs from the local project to the path. Projects using
-# the .canyon artifact layout keep grpc_stubs under .canyon/; older/plain layouts
-# keep it at the project root.
-_artifact_prefix = ".canyon" if os.path.isdir(".canyon") else ""
-sys.path.insert(0, os.path.abspath(os.path.join(_artifact_prefix, "grpc_stubs")))
+sys.path.insert(0, os.path.abspath("grpc_stubs"))
 import local_controller_pb2
 import local_controller_pb2_grpc
 import grpc
@@ -272,7 +271,7 @@ class GlobalController(ControllerContext):
         nothing is left: the exporter then flushes instead of exporting."""
         if "destinations" not in otel_cfg:
             return None
-        destinations = ControllerContext._expand_env_value(otel_cfg["destinations"])
+        destinations = expand_env_value(otel_cfg["destinations"])
         if os.environ.get(TARGET_ENV) != "kubernetes":
             return destinations
         kept = []
@@ -307,7 +306,7 @@ class GlobalController(ControllerContext):
         # Parse every file before writing anything, so a broken one leaves Redis untouched.
         config_files = self._read_config_folder()
         self.config = self._load_config(self.config_path)
-        self.env_file_path = resolve_env_file(self.config)
+        self.env_file_path = resolve_env_file(self.config_path)
         previous = set(self.agent_specs_by_name)
         self._set_agent_specs(self.config.get("agents", []))
         self.poll_interval = self.config.get("poll_interval", 5)

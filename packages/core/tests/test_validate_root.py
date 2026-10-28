@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`validate_canyon` over a prepared `.canyon`, one fixture per contract it checks."""
+"""`validate_root` over a project root, one fixture per contract it checks."""
 
 import io
 import json
@@ -23,7 +23,7 @@ from canyonos_core.stub_generator import (
     IMAGE_PYTHON_VERSION,
     generate_docker,
 )
-from canyonos_core.validate import main, validate_canyon
+from canyonos_core.validate import main, validate_root
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -47,18 +47,18 @@ class EchoAgent:
 
 BASE = {
     "config/global_controller.yaml": CONFIG,
-    "app/agents/echo_agent.py": AGENT,
+    "agents/echo_agent.py": AGENT,
 }
 
 
-class ValidateCarTests(unittest.TestCase):
+class ValidateRootTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
 
-    def canyon(self, files=None):
-        """A minimal clean `.canyon`, with any of its files replaced or added."""
-        root = Path(self.tmpdir) / ".canyon"
+    def project(self, files=None):
+        """A minimal clean project, with any of its files replaced or added."""
+        root = Path(self.tmpdir) / "project"
         for relative, text in {**BASE, **(files or {})}.items():
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,55 +69,49 @@ class ValidateCarTests(unittest.TestCase):
         return str(root)
 
     def codes(self, files=None):
-        return [finding.code for finding in validate_canyon(self.canyon(files))]
+        return [finding.code for finding in validate_root(self.project(files))]
 
     # -------------------------------------------------------------- #
     #  Nothing to report                                              #
     # -------------------------------------------------------------- #
 
     def test_a_minimal_port_is_clean(self):
-        self.assertEqual(validate_canyon(self.canyon()), [])
+        self.assertEqual(validate_root(self.project()), [])
 
     def test_every_example_is_clean(self):
         """The shipped examples are what a port is meant to look like."""
         for example in sorted((REPO_ROOT / "examples").iterdir()):
             if not example.is_dir():
                 continue
-            root = Path(self.tmpdir) / example.name / ".canyon"
-            (root / "config").mkdir(parents=True)
-            shutil.copytree(example / "config", root / "config", dirs_exist_ok=True)
-            shutil.copytree(example / "agents", root / "app" / "agents")
-            manifest = root / "config" / "global_controller.yaml"
+            manifest = example / "config" / "global_controller.yaml"
 
             with (
                 self.subTest(example=example.name),
                 patch.dict(os.environ, example_environment(manifest)),
             ):
-                self.assertEqual(validate_canyon(str(root)), [])
+                self.assertEqual(validate_root(str(example)), [])
 
     def test_the_committed_e2e_port_is_clean(self):
         root = REPO_ROOT / "tests" / "e2e" / "portfolio" / ".canyon"
 
-        self.assertEqual(validate_canyon(str(root)), [])
+        self.assertEqual(validate_root(str(root)), [])
 
     # -------------------------------------------------------------- #
     #  The adapter the controller loads                               #
     # -------------------------------------------------------------- #
 
     def test_a_class_not_named_after_the_agent_is_reported(self):
-        findings = validate_canyon(
-            self.canyon({"app/agents/echo_agent.py": "class Echo:\n    pass\n"})
+        findings = validate_root(
+            self.project({"agents/echo_agent.py": "class Echo:\n    pass\n"})
         )
 
         self.assertEqual([f.code for f in findings], ["CANYON-ADAPTER-CLASS"])
         self.assertIn("no class named `EchoAgent`", findings[0].summary)
-        self.assertEqual(
-            findings[0].path, os.path.join("app", "agents", "echo_agent.py")
-        )
+        self.assertEqual(findings[0].path, os.path.join("agents", "echo_agent.py"))
 
     def test_an_entrypoint_that_does_not_parse_is_reported(self):
-        findings = validate_canyon(
-            self.canyon({"app/agents/echo_agent.py": "class EchoAgent(\n"})
+        findings = validate_root(
+            self.project({"agents/echo_agent.py": "class EchoAgent(\n"})
         )
 
         self.assertEqual([f.code for f in findings], ["CANYON-ADAPTER-CLASS"])
@@ -127,7 +121,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": b"# -*- coding: latin-1 -*-\n"
+                    "agents/echo_agent.py": b"# -*- coding: latin-1 -*-\n"
                     b"# caf\xe9\n"
                     b"class EchoAgent:\n"
                     b"    def echo(self, text):\n"
@@ -138,10 +132,10 @@ class ValidateCarTests(unittest.TestCase):
         )
 
     def test_a_source_the_import_cannot_decode_is_reported(self):
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
-                    "app/agents/echo_agent.py": b"NAME = 'caf\xe9'\n\n\n"
+                    "agents/echo_agent.py": b"NAME = 'caf\xe9'\n\n\n"
                     b"class EchoAgent:\n"
                     b"    def echo(self, text):\n"
                     b"        return text\n"
@@ -154,20 +148,18 @@ class ValidateCarTests(unittest.TestCase):
 
     def test_a_null_byte_in_the_source_is_reported(self):
         """Python 3.10 raises ValueError for it rather than SyntaxError."""
-        findings = validate_canyon(
-            self.canyon(
-                {"app/agents/echo_agent.py": b"class EchoAgent:\n    x = 1\x00\n"}
-            )
+        findings = validate_root(
+            self.project({"agents/echo_agent.py": b"class EchoAgent:\n    x = 1\x00\n"})
         )
 
         self.assertEqual([f.code for f in findings], ["CANYON-ADAPTER-CLASS"])
         self.assertIn("does not parse", findings[0].summary)
 
     def test_a_constructor_that_needs_arguments_is_reported(self):
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def __init__(self, api_key):\n"
                     "        self.api_key = api_key\n\n"
                     "    def echo(self, text):\n"
@@ -183,7 +175,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def __init__(self, api_key=None):\n"
                     "        self.api_key = api_key\n\n"
                     "    def echo(self, text):\n"
@@ -194,18 +186,18 @@ class ValidateCarTests(unittest.TestCase):
         )
 
     def test_a_declared_method_that_does_not_exist_is_reported(self):
-        findings = validate_canyon(
-            self.canyon({"app/agents/echo_agent.py": "class EchoAgent:\n    pass\n"})
+        findings = validate_root(
+            self.project({"agents/echo_agent.py": "class EchoAgent:\n    pass\n"})
         )
 
         self.assertEqual([f.code for f in findings], ["CANYON-ADAPTER-SIGNATURE"])
         self.assertIn("has no method `echo`", findings[0].summary)
 
     def test_a_declared_argument_the_method_cannot_take_is_reported(self):
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def echo(self, message):\n"
                     "        return message\n"
                 }
@@ -225,7 +217,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def echo(self, text, times=1):\n"
                     "        return text * times\n"
                 }
@@ -238,7 +230,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class _Base:\n"
+                    "agents/echo_agent.py": "class _Base:\n"
                     "    def echo(self, text):\n"
                     "        return text\n\n\n"
                     "class EchoAgent(_Base):\n"
@@ -249,10 +241,10 @@ class ValidateCarTests(unittest.TestCase):
         )
 
     def test_an_inherited_method_is_still_checked(self):
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
-                    "app/agents/echo_agent.py": "class _Base:\n"
+                    "agents/echo_agent.py": "class _Base:\n"
                     "    async def echo(self, text):\n"
                     "        return text\n\n\n"
                     "class EchoAgent(_Base):\n"
@@ -268,10 +260,10 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "from agents.base import Base\n\n\n"
+                    "agents/echo_agent.py": "from agents.base import Base\n\n\n"
                     "class EchoAgent(Base):\n"
                     "    pass\n",
-                    "app/agents/base.py": "class Base:\n"
+                    "agents/base.py": "class Base:\n"
                     "    def echo(self, text):\n"
                     "        return text\n",
                 }
@@ -284,7 +276,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "from somelib import Base\n\n\n"
+                    "agents/echo_agent.py": "from somelib import Base\n\n\n"
                     "class EchoAgent(Base):\n"
                     "    pass\n"
                 }
@@ -296,7 +288,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "def _echo(self, text):\n"
+                    "agents/echo_agent.py": "def _echo(self, text):\n"
                     "    return text\n\n\n"
                     "class EchoAgent:\n"
                     "    echo = _echo\n"
@@ -309,7 +301,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def __getattr__(self, name):\n"
                     "        return lambda text: text\n"
                 }
@@ -318,7 +310,7 @@ class ValidateCarTests(unittest.TestCase):
         )
 
     def assertPositionalOnly(self, source, names):
-        findings = validate_canyon(self.canyon({"app/agents/echo_agent.py": source}))
+        findings = validate_root(self.project({"agents/echo_agent.py": source}))
 
         self.assertEqual([f.code for f in findings], ["CANYON-ADAPTER-SIGNATURE"])
         self.assertIn(f"takes {names} positional-only", findings[0].summary)
@@ -358,7 +350,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def echo(self, /, text):\n"
                     "        return text\n"
                 }
@@ -372,7 +364,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def echo(self, times=1, /, text=''):\n"
                     "        return text * times\n"
                 }
@@ -384,7 +376,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    def echo(self, **kwargs):\n"
                     "        return kwargs['text']\n"
                 }
@@ -393,11 +385,11 @@ class ValidateCarTests(unittest.TestCase):
         )
 
     def test_an_adapter_imported_into_the_entrypoint_is_found_and_checked(self):
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
-                    "app/agents/echo_agent.py": "from agents._impl import EchoAgent\n",
-                    "app/agents/_impl.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "from agents._impl import EchoAgent\n",
+                    "agents/_impl.py": "class EchoAgent:\n"
                     "    async def echo(self, text):\n"
                     "        return text\n",
                 }
@@ -405,14 +397,14 @@ class ValidateCarTests(unittest.TestCase):
         )
 
         self.assertEqual([f.code for f in findings], ["CANYON-ADAPTER-ASYNC"])
-        self.assertEqual(findings[0].path, os.path.join("app", "agents", "_impl.py"))
+        self.assertEqual(findings[0].path, os.path.join("agents", "_impl.py"))
 
     def test_an_adapter_imported_relatively_is_found(self):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "from ._impl import EchoAgent\n",
-                    "app/agents/_impl.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "from ._impl import EchoAgent\n",
+                    "agents/_impl.py": "class EchoAgent:\n"
                     "    def echo(self, text):\n"
                     "        return text\n",
                 }
@@ -424,7 +416,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "class _Echo:\n"
+                    "agents/echo_agent.py": "class _Echo:\n"
                     "    def echo(self, text):\n"
                     "        return text\n\n\n"
                     "EchoAgent = _Echo\n"
@@ -438,7 +430,7 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/echo_agent.py": "def build():\n"
+                    "agents/echo_agent.py": "def build():\n"
                     "    class Echo:\n"
                     "        def echo(self, text):\n"
                     "            return text\n"
@@ -450,10 +442,10 @@ class ValidateCarTests(unittest.TestCase):
         )
 
     def test_an_async_method_is_reported(self):
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
-                    "app/agents/echo_agent.py": "class EchoAgent:\n"
+                    "agents/echo_agent.py": "class EchoAgent:\n"
                     "    async def echo(self, text):\n"
                     "        return text\n"
                 }
@@ -468,32 +460,30 @@ class ValidateCarTests(unittest.TestCase):
     # -------------------------------------------------------------- #
 
     def test_a_module_named_after_the_runtime_is_reported(self):
-        findings = validate_canyon(
-            self.canyon({"app/future.py": "class Future:\n    pass\n"})
+        findings = validate_root(
+            self.project({"future.py": "class Future:\n    pass\n"})
         )
 
         self.assertEqual([f.code for f in findings], ["CANYON-FLAT-COLLISION"])
-        self.assertEqual(findings[0].path, os.path.join("app", "future.py"))
+        self.assertEqual(findings[0].path, "future.py")
 
     def test_a_runtime_name_below_the_source_root_is_fine(self):
-        self.assertEqual(self.codes({"app/util/future.py": "x = 1\n"}), [])
+        self.assertEqual(self.codes({"util/future.py": "x = 1\n"}), [])
 
     def test_a_package_that_reexports_the_entrypoint_is_reported(self):
-        findings = validate_canyon(
-            self.canyon(
-                {"app/agents/__init__.py": "from .echo_agent import EchoAgent\n"}
-            )
+        findings = validate_root(
+            self.project({"agents/__init__.py": "from .echo_agent import EchoAgent\n"})
         )
 
         self.assertEqual([f.code for f in findings], ["CANYON-PACKAGE-REEXPORT"])
-        self.assertEqual(findings[0].path, os.path.join("app", "agents", "__init__.py"))
+        self.assertEqual(findings[0].path, os.path.join("agents", "__init__.py"))
 
     def test_a_dot_slash_entrypoint_is_checked_for_a_reexport_too(self):
         """`./agents/x.py` puts its stub over the same file `agents/x.py` does."""
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
-                    "app/agents/__init__.py": "from agents.echo_agent import EchoAgent\n",
+                    "agents/__init__.py": "from agents.echo_agent import EchoAgent\n",
                     "config/global_controller.yaml": CONFIG.replace(
                         "entrypoint: agents/", "entrypoint: ./agents/"
                     ),
@@ -508,8 +498,8 @@ class ValidateCarTests(unittest.TestCase):
         self.assertEqual(
             self.codes(
                 {
-                    "app/agents/__init__.py": "from .helpers import helper\n",
-                    "app/agents/helpers.py": "def helper():\n    return 1\n",
+                    "agents/__init__.py": "from .helpers import helper\n",
+                    "agents/helpers.py": "def helper():\n    return 1\n",
                 }
             ),
             [],
@@ -520,16 +510,16 @@ class ValidateCarTests(unittest.TestCase):
     # -------------------------------------------------------------- #
 
     def test_a_missing_entrypoint_is_reported(self):
-        root = self.canyon()
-        os.remove(os.path.join(root, "app", "agents", "echo_agent.py"))
+        root = self.project()
+        os.remove(os.path.join(root, "agents", "echo_agent.py"))
 
-        findings = validate_canyon(root)
+        findings = validate_root(root)
 
         self.assertEqual([f.code for f in findings], ["CANYON-SCHEMA"])
         self.assertTrue(findings[0].summary.startswith("agents[0].entrypoint: "))
         self.assertTrue(
             findings[0].summary.endswith(
-                f"{os.path.join('app', 'agents', 'echo_agent.py')} does not exist"
+                f"{os.path.join('agents', 'echo_agent.py')} does not exist"
             )
         )
         self.assertEqual(
@@ -539,34 +529,25 @@ class ValidateCarTests(unittest.TestCase):
 
     def test_an_entrypoint_that_resolves_outside_the_source_is_reported(self):
         """The deploy rejects it; validate must not pass what the deploy refuses."""
-        root = self.canyon()
-        entrypoint = os.path.join(root, "app", "agents", "echo_agent.py")
+        root = self.project()
+        entrypoint = os.path.join(root, "agents", "echo_agent.py")
         outside = os.path.join(self.tmpdir, "echo_agent.py")
         shutil.move(entrypoint, outside)
         os.symlink(outside, entrypoint)
 
-        findings = validate_canyon(root)
+        findings = validate_root(root)
 
         self.assertEqual([f.code for f in findings], ["CANYON-SCHEMA"])
         self.assertIn("agents[0].entrypoint:", findings[0].summary)
         self.assertIn("resolves outside", findings[0].summary)
-
-    def test_a_missing_source_root_is_reported_once(self):
-        root = self.canyon()
-        shutil.rmtree(os.path.join(root, "app"))
-
-        findings = validate_canyon(root)
-
-        self.assertEqual([f.code for f in findings], ["CANYON-SCHEMA"])
-        self.assertIn("the project source directory", findings[0].summary)
 
     # -------------------------------------------------------------- #
     #  The schema, reported as findings of its own                    #
     # -------------------------------------------------------------- #
 
     def test_a_schema_violation_surfaces_with_its_file_and_line(self):
-        findings = validate_canyon(
-            self.canyon(
+        findings = validate_root(
+            self.project(
                 {
                     "config/global_controller.yaml": CONFIG.replace(
                         "type: str", "type: List[str]"
@@ -584,8 +565,8 @@ class ValidateCarTests(unittest.TestCase):
 
     def test_a_manifest_that_does_not_check_out_stops_at_the_schema(self):
         """With no model to check, the contracts below it have nothing to run over."""
-        findings = validate_canyon(
-            self.canyon({"config/global_controller.yaml": "agents: not-a-list\n"})
+        findings = validate_root(
+            self.project({"config/global_controller.yaml": "agents: not-a-list\n"})
         )
 
         self.assertEqual({f.code for f in findings}, {"CANYON-SCHEMA"})
@@ -595,9 +576,9 @@ class ValidateCarTests(unittest.TestCase):
     # -------------------------------------------------------------- #
 
     def test_the_json_entry_prints_findings_and_exits_one(self):
-        root = self.canyon(
+        root = self.project(
             {
-                "app/agents/echo_agent.py": "class EchoAgent:\n"
+                "agents/echo_agent.py": "class EchoAgent:\n"
                 "    async def echo(self, text):\n"
                 "        return text\n"
             }
@@ -608,7 +589,7 @@ class ValidateCarTests(unittest.TestCase):
 
         payload = json.loads(output.getvalue())
         self.assertEqual(status, 1)
-        self.assertEqual(payload["artifact_root"], root)
+        self.assertEqual(payload["root"], root)
         self.assertEqual(payload["errors"], 1)
         self.assertEqual(
             sorted(payload["findings"][0]),
@@ -616,20 +597,10 @@ class ValidateCarTests(unittest.TestCase):
         )
         self.assertEqual(payload["findings"][0]["code"], "CANYON-ADAPTER-ASYNC")
 
-    def test_the_json_entry_exits_zero_on_a_clean_canyon(self):
+    def test_the_json_entry_exits_zero_on_a_clean_project(self):
         output = io.StringIO()
         with redirect_stdout(output):
-            status = main([self.canyon(), "--json"])
-
-        self.assertEqual(status, 0)
-        self.assertEqual(json.loads(output.getvalue())["findings"], [])
-
-    def test_the_config_flag_is_read_relative_to_the_artifact(self):
-        root = self.canyon({"config/other.yaml": CONFIG})
-        os.remove(os.path.join(root, "config", "global_controller.yaml"))
-        output = io.StringIO()
-        with redirect_stdout(output):
-            status = main([root, "--config", "config/other.yaml", "--json"])
+            status = main([self.project(), "--json"])
 
         self.assertEqual(status, 0)
         self.assertEqual(json.loads(output.getvalue())["findings"], [])

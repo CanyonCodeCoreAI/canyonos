@@ -116,11 +116,9 @@ Keep installs CPU-only when the app only calls a remote model; large CUDA, GPU, 
 
 CanyonOS doesn't create or configure outside services such as Pinecone, Shopify, Google Calendar, Serper, or Tavily.
 
-Set `env_file` in `global_controller.yaml` to the file with the app's runtime configuration, relative to the repository root (`.env` by default):
+Put the app's runtime configuration in `.env` in the project folder. CanyonOS passes it to the agent replicas, not to the endpoint; see [Project layout](BUILD_ARTIFACT.md#what-env-is-for).
 
-```yaml
-env_file: .env
-```
+The source folder cannot have `config`, `stubs`, `grpc_stubs` or `docker_container` at its top level: those names are reserved at the project root, and `canyonos convert` refuses the folder. Rename them first.
 
 Don't commit real credentials. For each outside service, document its environment variables, provide the credentials in the deployment environment, and return a clear error when they're missing.
 

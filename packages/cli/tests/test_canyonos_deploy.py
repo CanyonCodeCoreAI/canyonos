@@ -6,14 +6,15 @@ import pytest
 from canyonos import deploy as deploy_cmd
 from canyonos.gc import GCError
 
-CONFIG_PATH = "config/global_controller.yaml"
 STATE = {"container_id": "abc", "port": 8000}
 
 
 @pytest.fixture
-def deployable(monkeypatch):
+def deployable(monkeypatch, tmp_path):
     """Every step run_deploy drives succeeds unless overridden."""
-    monkeypatch.setattr(deploy_cmd, "workspace_relative", lambda p: p)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "global_controller.yaml").touch()
     monkeypatch.setattr(deploy_cmd, "save_project_id", lambda _path: None)
     monkeypatch.setattr(deploy_cmd, "run_init", lambda banner=True: None)
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
@@ -26,22 +27,13 @@ def deployable(monkeypatch):
     monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: None)
 
 
-def test_a_config_path_outside_the_project_raises(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-
-    with pytest.raises(
-        RuntimeError, match="The config file must be inside this project folder"
-    ):
-        deploy_cmd.run_deploy("../global_controller.yaml", quiet=True)
-
-
 def test_a_sync_failure_raises(monkeypatch, deployable):
     cleaned = []
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: False)
     monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(RuntimeError, match="Could not sync the project"):
-        deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
+        deploy_cmd.run_deploy(quiet=True)
 
     assert cleaned == [True]
 
@@ -56,7 +48,7 @@ def test_ctrl_c_during_setup_cleans_up_the_partial_deploy(monkeypatch, deployabl
     monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(KeyboardInterrupt):
-        deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
+        deploy_cmd.run_deploy(quiet=True)
 
     assert cleaned == [True]
 
@@ -71,7 +63,7 @@ def test_an_occupied_api_port_raises_before_post_deploy(monkeypatch, deployable)
     with pytest.raises(
         RuntimeError, match="Port 8080 is already in use.*`endpoint.api_port`"
     ):
-        deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
+        deploy_cmd.run_deploy(quiet=True)
 
     assert calls == []
 
@@ -86,7 +78,7 @@ def test_a_log_monitor_failure_cleans_up_the_partial_deploy(monkeypatch, deploya
     monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(RuntimeError, match="logs broke"):
-        deploy_cmd.run_deploy(CONFIG_PATH, serve=False)
+        deploy_cmd.run_deploy(serve=False)
 
     assert cleaned == [True]
 
@@ -98,7 +90,7 @@ def test_a_post_deploy_failure_is_reraised_as_a_runtime_error(monkeypatch, deplo
     monkeypatch.setattr(deploy_cmd, "post_deploy", boom)
 
     with pytest.raises(RuntimeError, match="Deploy failed: conflict"):
-        deploy_cmd.run_deploy(CONFIG_PATH, quiet=True)
+        deploy_cmd.run_deploy(quiet=True)
 
 
 def test_a_failure_after_the_workflow_is_up_leaves_the_deploy_alone(
@@ -116,7 +108,7 @@ def test_a_failure_after_the_workflow_is_up_leaves_the_deploy_alone(
     monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(RuntimeError, match="could not resolve endpoints"):
-        deploy_cmd.run_deploy(CONFIG_PATH, serve=False)
+        deploy_cmd.run_deploy(serve=False)
 
     assert cleaned == []
 
@@ -127,7 +119,7 @@ def test_quiet_returns_state_without_streaming(monkeypatch, deployable):
 
     monkeypatch.setattr(deploy_cmd, "_stream_logs_and_autoserve", unexpected)
 
-    assert deploy_cmd.run_deploy(CONFIG_PATH, quiet=True) == STATE
+    assert deploy_cmd.run_deploy(quiet=True) == STATE
 
 
 def test_non_quiet_still_streams_and_returns_state(monkeypatch, deployable):
@@ -138,7 +130,7 @@ def test_non_quiet_still_streams_and_returns_state(monkeypatch, deployable):
         lambda state, serve, verbose, on_ready: calls.append((state, serve, verbose)),
     )
 
-    assert deploy_cmd.run_deploy(CONFIG_PATH, serve=False, verbose=True) == STATE
+    assert deploy_cmd.run_deploy(serve=False, verbose=True) == STATE
     assert calls == [(STATE, False, True)]
 
 
@@ -148,7 +140,7 @@ def test_banner_is_forwarded_to_run_init(monkeypatch, deployable):
         deploy_cmd, "run_init", lambda banner=True: seen.update(banner=banner)
     )
 
-    deploy_cmd.run_deploy(CONFIG_PATH, quiet=True, banner=False)
+    deploy_cmd.run_deploy(quiet=True, banner=False)
 
     assert seen == {"banner": False}
 
@@ -159,7 +151,7 @@ def test_a_cancelled_resource_picker_stops_before_run_init(monkeypatch, deployab
         deploy_cmd, "run_init", lambda **_k: pytest.fail("run_init should not run")
     )
 
-    assert deploy_cmd.run_deploy(CONFIG_PATH, serve=False) is None
+    assert deploy_cmd.run_deploy(serve=False) is None
 
 
 def test_quiet_skips_the_resource_picker(monkeypatch, deployable):
@@ -169,7 +161,7 @@ def test_quiet_skips_the_resource_picker(monkeypatch, deployable):
         lambda _path: pytest.fail("picker should not run under quiet"),
     )
 
-    assert deploy_cmd.run_deploy(CONFIG_PATH, quiet=True) == STATE
+    assert deploy_cmd.run_deploy(quiet=True) == STATE
 
 
 def test_the_deploy_panel_shows_how_to_answer_a_question():

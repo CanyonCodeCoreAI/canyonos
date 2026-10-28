@@ -5,10 +5,10 @@
 
 """Create a CanyonOS Core artifact tree from a chosen Python import root.
 
-The script owns the mechanical part of step 1: it creates ``.canyon/config`` and
-copies the selected import root to ``.canyon/app`` with development artifacts and
-credential files excluded. Choosing the correct import root still requires
-reading the application's imports.
+The script owns the mechanical part of step 1: it copies the selected import
+root into ``.canyon`` with development artifacts excluded and creates
+``.canyon/config``. Choosing the correct import root still requires reading the
+application's imports.
 """
 
 import argparse
@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 from pathlib import Path, PurePosixPath
 
@@ -42,9 +43,11 @@ EXCLUDED_DIRECTORIES = frozenset(
     }
 )
 EXCLUDED_FILE_SUFFIXES = (".pyc", ".pyo")
-ENV_TEMPLATES = frozenset({".env.example", ".env.sample", ".env.template"})
 STATE_FILENAME = ".porting-state.json"
 GITIGNORE_NAME = ".gitignore"
+ENV_NAME = ".env"
+KEPT_ON_FORCE = ("config",)
+RESERVED_NAMES = ("config", "docker_container", "grpc_stubs", "stubs")
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
@@ -76,9 +79,11 @@ def _ignore_factory(artifact_root: Path):
                 ignored.add(name)
             elif path.is_dir() and name in EXCLUDED_DIRECTORIES:
                 ignored.add(name)
-            elif name.startswith(".env") and name not in ENV_TEMPLATES:
-                ignored.add(name)
             elif name.endswith(EXCLUDED_FILE_SUFFIXES):
+                ignored.add(name)
+            elif not path.is_dir() and (
+                name == ENV_NAME or name.startswith(f"{ENV_NAME}.")
+            ):
                 ignored.add(name)
         return ignored
 
@@ -101,14 +106,13 @@ def _ensure_gitignore(artifact_root: Path) -> "Path | None":
     Returns the file written, or None when the artifact is already ignored or
     nothing above it is a git work tree.
     """
-    project_root = artifact_root.parent
+    checkout = artifact_root.parent
     if not any(
-        (directory / ".git").exists()
-        for directory in (project_root, *project_root.parents)
+        (directory / ".git").exists() for directory in (checkout, *checkout.parents)
     ):
         return None
 
-    path = project_root / GITIGNORE_NAME
+    path = checkout / GITIGNORE_NAME
     existing = path.read_text(encoding="utf-8") if path.is_file() else ""
     for line in existing.splitlines():
         entry = line.strip()
@@ -144,7 +148,7 @@ def _load_state(config_dir: Path) -> dict[str, str]:
     if not state_path.is_file():
         raise ValueError(
             f"{state_path} is missing; this artifact predates refresh tracking. "
-            "Use --force only if discarding all edits in .canyon/app is intentional"
+            "Use --force only if discarding all edits in .canyon is intentional"
         )
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -187,13 +191,12 @@ def _write_state(path: Path, source_hashes: dict[str, str]) -> None:
     )
 
 
-def _refresh_app(
-    app_dir: Path,
+def _refresh(
+    artifact_root: Path,
     source_copy: Path,
-    staged_app: Path,
     previous_source: dict[str, str],
 ) -> None:
-    current = _file_hashes(app_dir)
+    current = _file_hashes(artifact_root)
     incoming = _file_hashes(source_copy)
     conflicts = []
 
@@ -202,10 +205,10 @@ def _refresh_app(
         new = incoming.get(relative)
         edited = current.get(relative)
         source_changed = new != old
-        app_changed = edited != old
+        port_changed = edited != old
         if old is None and new is not None and edited not in (None, new):
             conflicts.append(relative)
-        elif old is not None and source_changed and app_changed and edited != new:
+        elif old is not None and source_changed and port_changed and edited != new:
             conflicts.append(relative)
 
     # File/directory replacements need the same three-way protection. A new
@@ -232,23 +235,21 @@ def _refresh_app(
             "" if len(conflicts) <= 20 else f"\n  ... and {len(conflicts) - 20} more"
         )
         raise ValueError(
-            "refresh found files changed in both the source and .canyon/app:\n  "
-            f"{shown}{suffix}\nResolve them in .canyon/app, then update the source "
+            "refresh found files changed in both the source and .canyon:\n  "
+            f"{shown}{suffix}\nResolve them in .canyon, then update the source "
             "or use --force only to discard all port edits"
         )
-
-    shutil.copytree(app_dir, staged_app, copy_function=shutil.copy2, symlinks=True)
 
     # Apply safe source deletions first so file-to-directory changes have room.
     for relative, old in previous_source.items():
         if relative in incoming or current.get(relative) != old:
             continue
-        target = staged_app / relative
+        target = artifact_root / relative
         if target.is_file():
             target.unlink()
 
     for directory in sorted(
-        (path for path in staged_app.rglob("*") if path.is_dir()),
+        (path for path in artifact_root.rglob("*") if path.is_dir()),
         key=lambda path: len(path.parts),
         reverse=True,
     ):
@@ -264,7 +265,7 @@ def _refresh_app(
             continue
         if old is not None and edited != old:
             continue
-        target = staged_app / relative
+        target = artifact_root / relative
         if target.is_dir():
             shutil.rmtree(target)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -279,24 +280,33 @@ def prepare(
 ) -> "Path | None":
     import_root = import_root.expanduser().resolve()
     artifact_root = artifact_root.expanduser().resolve()
-    app_dir = artifact_root / "app"
     config_dir = artifact_root / "config"
 
     if not import_root.is_dir():
         raise ValueError(f"import root is not a directory: {import_root}")
+    for name in RESERVED_NAMES:
+        if (import_root / name).is_dir():
+            raise ValueError(
+                f"{name}/ at the top of the import root is reserved by CanyonOS (it "
+                "writes config/, stubs/, grpc_stubs/ and docker_container/ there). Pick "
+                "an import root without it, or rename it in the source with the "
+                "developer's approval."
+            )
     if import_root == artifact_root:
         raise ValueError("artifact root cannot also be the import root")
     if _is_relative_to(import_root, artifact_root):
         raise ValueError("import root cannot be inside the artifact root")
-    if app_dir.exists() and not app_dir.is_dir():
-        raise ValueError(f"app path exists but is not a directory: {app_dir}")
+    if artifact_root.exists() and not artifact_root.is_dir():
+        raise ValueError(
+            f"artifact path exists but is not a directory: {artifact_root}"
+        )
     if force and refresh:
         raise ValueError("--force and --refresh are mutually exclusive")
-    if refresh and not app_dir.is_dir():
-        raise ValueError(f"cannot refresh because {app_dir} does not exist")
-    if app_dir.exists() and not force and not refresh:
+    if refresh and not artifact_root.is_dir():
+        raise ValueError(f"cannot refresh because {artifact_root} does not exist")
+    if artifact_root.exists() and not force and not refresh:
         raise FileExistsError(
-            f"{app_dir} already exists; use --refresh to preserve port edits, or "
+            f"{artifact_root} already exists; use --refresh to preserve port edits, or "
             "--force to discard and replace the entire source copy"
         )
     if config_dir.exists() and not config_dir.is_dir():
@@ -304,59 +314,55 @@ def prepare(
 
     _reject_symlinks(import_root)
     if refresh:
-        _reject_symlinks(app_dir)
+        _reject_symlinks(artifact_root)
 
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    config_dir.mkdir(exist_ok=True)
+    artifact_root.parent.mkdir(parents=True, exist_ok=True)
     transaction_id = uuid.uuid4().hex
-    source_copy = artifact_root / f".source-{transaction_id}.tmp"
-    temporary_app = artifact_root / f".app-{transaction_id}.tmp"
-    previous_app = artifact_root / f".app-{uuid.uuid4().hex}.previous"
-    temporary_state = config_dir / f".{STATE_FILENAME}-{transaction_id}.tmp"
-    state_path = config_dir / STATE_FILENAME
+    staged = artifact_root.with_name(f".{artifact_root.name}-{transaction_id}.tmp")
+    previous = artifact_root.with_name(
+        f".{artifact_root.name}-{transaction_id}.previous"
+    )
 
-    installed_new_app = False
     try:
-        _copy_source(import_root, source_copy, artifact_root)
-        source_hashes = _file_hashes(source_copy)
-        if refresh:
-            previous_source = _load_state(config_dir)
-            _refresh_app(app_dir, source_copy, temporary_app, previous_source)
-            shutil.rmtree(source_copy)
-        else:
-            source_copy.rename(temporary_app)
-        _write_state(temporary_state, source_hashes)
-        if app_dir.exists():
-            app_dir.rename(previous_app)
-        temporary_app.rename(app_dir)
-        installed_new_app = True
-        os.replace(temporary_state, state_path)
+        with tempfile.TemporaryDirectory() as scratch:
+            source_copy = Path(scratch) / "source"
+            _copy_source(import_root, source_copy, artifact_root)
+            source_hashes = _file_hashes(source_copy)
+            if refresh:
+                shutil.copytree(artifact_root, staged, symlinks=True)
+                _refresh(staged, source_copy, _load_state(config_dir))
+            else:
+                shutil.copytree(source_copy, staged, symlinks=True)
+                for name in KEPT_ON_FORCE:
+                    kept = artifact_root / name
+                    if kept.is_dir():
+                        shutil.copytree(kept, staged / name, symlinks=True)
+                    elif kept.is_file():
+                        shutil.copy2(kept, staged / name)
+        (staged / "config").mkdir(exist_ok=True)
+        _write_state(staged / "config" / STATE_FILENAME, source_hashes)
+        if artifact_root.exists():
+            artifact_root.rename(previous)
+        staged.rename(artifact_root)
     except Exception:
-        if source_copy.exists():
-            shutil.rmtree(source_copy)
-        if temporary_app.exists():
-            shutil.rmtree(temporary_app)
-        if temporary_state.exists():
-            temporary_state.unlink()
-        if installed_new_app and app_dir.exists():
-            shutil.rmtree(app_dir)
-        if previous_app.exists():
-            previous_app.rename(app_dir)
+        if staged.exists():
+            shutil.rmtree(staged)
+        if previous.exists() and not artifact_root.exists():
+            previous.rename(artifact_root)
         raise
 
-    if previous_app.exists():
-        shutil.rmtree(previous_app)
-
+    if previous.exists():
+        shutil.rmtree(previous)
     return _ensure_gitignore(artifact_root)
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Create .canyon/config and copy an import root into .canyon/app."
+        description="Copy an import root into .canyon and create .canyon/config."
     )
     parser.add_argument(
         "import_root",
-        help="directory whose contents should become the contents of .canyon/app",
+        help="directory whose contents should be copied into .canyon",
     )
     parser.add_argument(
         "artifact_root",
@@ -367,7 +373,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--force",
         action="store_true",
-        help="discard edits and replace an existing app/ copy; leave config/ unchanged",
+        help="discard edits and replace the source copy; leave config/ unchanged",
     )
     parser.add_argument(
         "--refresh",
@@ -393,7 +399,7 @@ def main(argv=None) -> int:
     artifact_root = Path(args.artifact_root)
     print(f"Created {artifact_root / 'config'}")
     action = "Refreshed" if args.refresh else "Copied"
-    print(f"{action} {Path(args.import_root)} to {artifact_root / 'app'}")
+    print(f"{action} {Path(args.import_root)} to {artifact_root}")
     if gitignore is not None:
         print(f"Added {artifact_root.name}/ to {os.path.relpath(gitignore)}")
     return 0

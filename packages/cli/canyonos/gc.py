@@ -76,14 +76,9 @@ def require_state():
         return None
 
 
-def post_deploy(port, config_path=None):
-    """Start a deploy inside the container. Raises GCError on failure.
-
-    Omitting config_path lets canyonos resolve it against the synced workspace.
-    """
+def post_deploy(port):
+    """Start a deploy inside the container. Raises GCError on failure."""
     payload = {"project_name": project.folder_name()}
-    if config_path:
-        payload["config_path"] = config_path
     body = json.dumps(payload).encode()
     return _request(
         f"http://127.0.0.1:{port}/deploy", "Deploy", data=body, method="POST"

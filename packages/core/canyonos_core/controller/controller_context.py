@@ -24,7 +24,7 @@ import subprocess
 
 from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.config_specs import read_config_specs
-from canyonos_core.controller.utils.env_file import resolve_env_file
+from canyonos_core.controller.utils.config_env import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT, ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
@@ -87,7 +87,7 @@ class ControllerContext(object):
         self.config = self._load_config(config_path)
         # Validate before launching anything: an agent that boots without its
         # API keys fails deep inside a container, where it is expensive to debug.
-        self.env_file_path = resolve_env_file(self.config)
+        self.env_file_path = resolve_env_file(self.config_path)
 
         redis_cfg = self.config.get("redis", {})
         self.redis = RedisClient(
@@ -137,12 +137,6 @@ class ControllerContext(object):
         )
         return config
 
-    # Kept as aliases for callers that use these helpers directly. The parser
-    # itself lives in config_env so the controller, reconciler and schema use
-    # the same dotenv and expansion rules.
-    _load_dotenv = staticmethod(config_env.load_dotenv)
-    _expand_env_value = staticmethod(config_env.expand_env_value)
-
     def _set_agent_specs(self, agent_specs):
         """Set the agent spec list and its by-name index together so they can't drift."""
         self.agent_specs = agent_specs
@@ -169,7 +163,7 @@ class ControllerContext(object):
         is unusable."""
         try:
             config = self._load_config(self.config_path)
-            self.env_file_path = resolve_env_file(config)
+            self.env_file_path = resolve_env_file(self.config_path)
         except Exception as e:
             logger.warning(
                 "Keeping the current config; reloading %s failed: %s",

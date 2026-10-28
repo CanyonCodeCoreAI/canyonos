@@ -16,7 +16,7 @@
 ## Contract reference
 
 These pages describe the contract CanyonOS Core enforces when it builds and
-runs a `.canyon` artifact: the directory shape, the manifest keys,
+runs a project: the directory shape, the manifest keys,
 how containers load and execute your code, what goes into each image, how
 model calls are proxied, what EC2 needs, and how to read a failure.
 
@@ -30,7 +30,7 @@ against this contract but is not part of it.
 
 ### Pages
 
-- [The `.canyon` artifact](BUILD_ARTIFACT.md): what lives under `.canyon`, what
+- [Project layout](BUILD_ARTIFACT.md): which folder is the project root, what
   becomes `/app` in the containers, and the names the platform uses.
 - [`global_controller.yaml`](GLOBAL_CONTROLLER.md): how to write the deploy file,
   and every key in it, with defaults.

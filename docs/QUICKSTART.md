@@ -2,7 +2,7 @@
 
 Install CanyonOS: `uv tool install canyonos`
 
-> **Converting an existing workflow?** Run `canyonos convert` in its folder first. It opens your coding agent with the CanyonOS skill, which writes a CanyonOS version of your project into `.car/` (2-10 minutes). Your code is untouched; outside `.car` it only installs the skill and updates `.env`, `.env.example` and `.gitignore`. Our [examples](../examples/) are already in [CanyonOS format](guides/WORKFLOW_DESIGN.md).
+> **Converting an existing workflow?** Run `canyonos convert` in its folder first. It opens your coding agent with the CanyonOS skill, which writes a CanyonOS version of your project into `.canyon/` (2-10 minutes). Your code is untouched; outside `.canyon` it only installs the skill and updates `.gitignore`. Our [examples](../examples/) are already in [CanyonOS format](guides/WORKFLOW_DESIGN.md).
 
 For all steps below, run commands from your project folder:
 ```bash
@@ -11,7 +11,7 @@ cd my-project
 
 ### 1. Add your credentials
 
-Agents read API keys and other secrets from environment variables. Put them in the `.env` file in your project folder. If you ran `canyonos convert`, it already added the names your project needs there, commented out (and listed them in `.env.example`); uncomment each one and fill in its value before testing:
+Agents read API keys and other secrets from environment variables. Put them in the `.env` file in your project folder, also after `canyonos convert`. Convert lists the names your project needs in `.canyon/.env.example`; fill in each one in `.env` before testing:
 
 ```bash
 # .env
@@ -20,7 +20,7 @@ OPENAI_API_KEY=sk-...
 
 Using one of our examples? Copy its `.env.example` to `.env` and fill in the values there instead.
 
-`env_file: .env` in your `global_controller.yaml` passes these to every agent container. Without them, the test fails at the first agent that needs one.
+CanyonOS passes `.env` to every agent replica except the endpoint. Without them, the test fails at the first agent that needs one.
 
 > **Tip:** Never write secrets in your code or YAML, and keep `.env` out of git. Read them in your agent code with `os.environ["OPENAI_API_KEY"]`, and in config files with `${OPENAI_API_KEY}`.
 
@@ -32,7 +32,7 @@ Verify the workflow works by deploying everything locally and sending a test que
 canyonos test "your query"
 ```
 
-With no query, `hello` is sent. If you ran `canyonos convert`, it saved a sample query from your project: `canyonos test "$(cat .car/config/test_query.txt)"`.
+With no query, `hello` is sent. If you ran `canyonos convert`, it saved a sample query from your project: `canyonos test "$(cat .canyon/config/test_query.txt)"`.
 
 - Every agent runs locally during the test, whatever the `provider`.
 - If the test fails, see [Troubleshooting](guides/TROUBLESHOOTING.md#canyonos-test-fails).
@@ -129,11 +129,11 @@ canyonos stop   # stop this project's containers; keeps CanyonOS's own container
 canyonos quit   # full teardown — also removes CanyonOS's container, its copy of your project, and the dashboard if no other project is running
 ```
 
-`quit` leaves your project folder (including `.canyon/` and `.env`) and the built images in place. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images, the installed skill and the `CANYONOS_*` `.env` keys older versions of `canyonos serve` wrote. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
+`quit` leaves your project folder (including `.canyon/` and `.env`) and the built images in place. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
 
 ### Clean generated files
 
-Removes the `.canyon` folder, the CanyonOS skill `canyonos convert` installed in this project, the `.env` keys `canyonos serve` wrote (your own lines stay), and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay.
+Removes the `.canyon` folder, the CanyonOS skill `canyonos convert` installed in this project, and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay, and `.env` is never touched.
 
 ```bash
 canyonos clean

@@ -34,12 +34,11 @@ from rich.text import Text
 from canyonos import project, ui
 from canyonos.constants import (
     dashboard_port,
-    default_config_path,
     endpoint_api_port,
+    existing_config_path,
     load_yaml,
     port_in_use,
     round_trip_yaml,
-    workspace_relative,
     write_config,
 )
 from canyonos.dashboard_stack import (
@@ -320,7 +319,6 @@ def save_project_id(config_path):
 
 
 def run_deploy(
-    config_path=None,
     serve=True,
     verbose=False,
     quiet=False,
@@ -330,13 +328,10 @@ def run_deploy(
     after the deploy is triggered -- for a caller (`canyonos test`) that wants
     its own readiness check instead of this command's own output.
     """
-    config_file = workspace_relative(config_path or default_config_path())
-    # Left as None when unset: canyonos resolves the artifact layout itself.
-    if config_path is not None:
-        config_path = config_file
+    config_path = existing_config_path()
 
     # `canyonos test` (quiet) deploys the config as-is, without the picker.
-    if not quiet and not configure_resources(config_file):
+    if not quiet and not configure_resources(config_path):
         ui.say("Deploy cancelled.")
         return None
 
@@ -345,14 +340,14 @@ def run_deploy(
         # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
         threading.Thread(
             target=run_dashboard,
-            args=(None, dashboard_port(default_config_path())),
+            args=(None, dashboard_port(config_path)),
             daemon=True,
         ).start()
 
     # Non-empty once the workflow has reported ready; see the handler below.
     ready = []
     try:
-        save_project_id(config_file)
+        save_project_id(config_path)
 
         # Copy the current project into the container before building/deploying.
         if not run_sync():
@@ -360,19 +355,18 @@ def run_deploy(
 
         state = load_state()
 
-        # Read for display only -- canyonos resolves the path it actually deploys.
-        api_port = endpoint_api_port(config_file)
+        api_port = endpoint_api_port(config_path)
 
         # Checked here, after run_init() has already torn down any previous deploy,
         # so a still-live prior run doesn't read as an unrelated conflict.
         if api_port is not None and port_in_use(api_port):
             raise RuntimeError(
                 f"Port {api_port} is already in use, and the endpoint needs it. Free it "
-                f"or change `endpoint.api_port` in {config_file}."
+                f"or change `endpoint.api_port` in {config_path}."
             )
 
         try:
-            post_deploy(state["port"], config_path)
+            post_deploy(state["port"])
         except GCError as e:
             raise RuntimeError(str(e)) from None
 

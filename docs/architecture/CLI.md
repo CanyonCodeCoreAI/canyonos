@@ -122,7 +122,7 @@ the project-key design in CAN-521.
 
 INPUT: canyonos test "Test Query"
 
-1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [default_config_path()]
+1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [project_root()]
 2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
 3. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
@@ -185,7 +185,7 @@ And to observe without changing anything:
 ## canyonos test:
 ### INPUT: canyonos test "Test Query"
 #### Steps:
-1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [default_config_path()]
+1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [project_root()]
 2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
 3. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:

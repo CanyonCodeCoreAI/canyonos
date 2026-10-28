@@ -288,8 +288,6 @@ def test_only_the_contract_fields_reach_the_table(cli, usage_stack):
     result = cli.run(
         "validate",
         str(secret_dir),
-        "--config",
-        "prompt-do-not-send.yaml",
         extra_env={"ACME_API_KEY": "sk-env-do-not-send"},
     )
     assert result.returncode != 0
@@ -300,7 +298,6 @@ def test_only_the_contract_fields_reach_the_table(cli, usage_stack):
     for private in (
         "acme-secret-project",
         "sk-live-path-token",
-        "prompt-do-not-send",
         "sk-env-do-not-send",
         str(cli.home),
         os.environ.get("USER") or "no-user",

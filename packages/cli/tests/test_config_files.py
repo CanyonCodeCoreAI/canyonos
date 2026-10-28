@@ -8,7 +8,7 @@ import codecs
 
 import pytest
 
-from canyonos import constants, test as test_cmd
+from canyonos import test as test_cmd
 from canyonos.constants import round_trip_yaml, write_config
 
 CONFIG = "# Gestión de agentes\nagents:\n  - name: Alpha\n    replicas: 1\n"
@@ -47,13 +47,3 @@ def test_canyonos_test_puts_the_config_back_byte_for_byte(tmp_path):
     with open(path, "wb") as f:
         f.write(saved)
     assert path.read_bytes() == original
-
-
-def test_a_config_on_another_drive_is_outside_the_project(monkeypatch):
-    def another_drive(*_args):
-        raise ValueError("path is on mount 'D:', start on mount 'C:'")
-
-    monkeypatch.setattr(constants.os.path, "relpath", another_drive)
-
-    with pytest.raises(RuntimeError, match="inside this project folder"):
-        constants.workspace_relative("D:\\other\\global_controller.yaml")

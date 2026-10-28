@@ -175,40 +175,6 @@ class CliDeployTests(unittest.TestCase):
         self.assertIn("Broken 0/1", "\n".join(logs.output))
         controller.run.assert_not_called()
 
-    @patch("atexit.register")
-    @patch("signal.signal")
-    @patch("canyonos_core.cli._run_build")
-    @patch("canyonos_core.cli._ensure_grpc_stubs_importable")
-    def test_deploy_uses_canyon_when_present(
-        self, ensure_grpc, _run_build, _signal_patch, _atexit_patch
-    ):
-        controller = MagicMock()
-        controller_module = self._fake_controller_module(controller)
-        args = SimpleNamespace(config=".canyon/config/global_controller.yaml")
-
-        with (
-            tempfile.TemporaryDirectory() as tmpdir,
-            patch("canyonos_core.cli.os.path.isfile", return_value=True),
-            patch("canyonos_core.cli.load_config", return_value={"agents": []}),
-            patch("canyonos_core.cli.resolve_env_file", return_value=None),
-            patch("canyonos_core.cli._validate_or_exit"),
-            patch.dict(
-                sys.modules,
-                {"canyonos_core.controller.global_controller": controller_module},
-            ),
-        ):
-            Path(tmpdir, ".canyon").mkdir()
-            cwd = os.getcwd()
-            os.chdir(tmpdir)
-            try:
-                cli._cmd_deploy(args)
-            finally:
-                os.chdir(cwd)
-
-        ensure_grpc.assert_called_once_with(
-            os.path.join(os.path.realpath(tmpdir), ".canyon")
-        )
-
     def test_deploy_rejects_a_bad_config_before_it_builds(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
@@ -255,12 +221,7 @@ class CliBuildTests(unittest.TestCase):
 
         Returns (docker_calls, generate_docker_mock).
         """
-        artifact_root = (
-            project_dir / ".canyon"
-            if (project_dir / ".canyon").is_dir()
-            else project_dir
-        )
-        config_path = artifact_root / "config" / "global_controller.yaml"
+        config_path = project_dir / "config" / "global_controller.yaml"
         docker_calls = []
 
         def fake_run(cmd, **kwargs):
@@ -457,27 +418,6 @@ class CliBuildTests(unittest.TestCase):
             os.path.realpath(project_dir / "docker_container" / "SecondAgent"),
         )
         self.assertEqual(targets["secondagent"]["tags"], ["canyonos-secondagent"])
-
-    def test_build_uses_canyon_when_present(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            project_dir = Path(tmpdir)
-            artifact_root = project_dir / ".canyon"
-            source_root = artifact_root / "app"
-            source_root.mkdir(parents=True)
-            self._write_two_agent_config(source_root)
-            source_root.joinpath("config").rename(artifact_root / "config")
-
-            _, generate_docker = self._run_build(project_dir, buildx_available=True)
-
-        for call in generate_docker.call_args_list:
-            self.assertEqual(
-                os.path.realpath(call.kwargs["project_dir"]),
-                os.path.realpath(source_root),
-            )
-        self.assertEqual(
-            os.path.realpath(generate_docker.call_args_list[0].kwargs["output_dir"]),
-            os.path.realpath(artifact_root / "docker_container" / "ExampleAgent"),
-        )
 
     def test_build_fails_when_stub_cannot_be_generated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -784,67 +724,6 @@ class BuildStopsBeforeGeneratingAnythingTests(unittest.TestCase):
         self.assertIn("agents[0].entrypoint", self.log.output[0])
         self.assertIn("example_agent.py does not exist", self.log.output[0])
         self.assertNotIn("\n", self.log.output[0])
-
-    def test_a_missing_source_root_stops_the_build_once(self):
-        # Under the .canyon layout the app's code lives in .canyon/app; without it
-        # the build found nothing to do and said "No Docker images to build."
-        with tempfile.TemporaryDirectory() as tmpdir:
-            project_dir = Path(tmpdir)
-            artifact_root = project_dir / ".canyon"
-            (artifact_root / "config").mkdir(parents=True)
-            config_path = artifact_root / "config" / "global_controller.yaml"
-            config_path.write_text(
-                yaml.safe_dump(
-                    {
-                        "agents": [
-                            {
-                                "name": "ExampleAgent",
-                                "entrypoint": "agents/example_agent.py",
-                                "functions": [{"name": "work"}],
-                            }
-                        ],
-                        "endpoint": ENDPOINT,
-                    }
-                )
-            )
-
-            with (
-                patch("canyonos_core.stub_generator.generate_stub") as generate_stub,
-                patch("canyonos_core.cli.subprocess.run") as subprocess_run,
-            ):
-                cwd = os.getcwd()
-                os.chdir(project_dir)
-                try:
-                    with self.assertLogs("canyonos_core", level="ERROR") as log:
-                        with self.assertRaises(SystemExit) as raised:
-                            cli._run_build(str(config_path))
-                finally:
-                    os.chdir(cwd)
-
-        self.assertEqual(raised.exception.code, 1)
-        generate_stub.assert_not_called()
-        subprocess_run.assert_not_called()
-        # One violation naming the directory, not one per service.
-        self.assertEqual(len(log.output), 2)
-        self.assertIn("agents: the project source directory", log.output[0])
-        self.assertIn(os.path.join(".canyon", "app"), log.output[0])
-
-
-class CliCleanTests(unittest.TestCase):
-    def test_clean_uses_canyon_when_present(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            project_dir = Path(tmpdir)
-            (project_dir / ".canyon" / "stubs").mkdir(parents=True)
-            (project_dir / "stubs").mkdir()
-            cwd = os.getcwd()
-            os.chdir(project_dir)
-            try:
-                cli._cmd_clean(SimpleNamespace())
-            finally:
-                os.chdir(cwd)
-
-            self.assertFalse((project_dir / ".canyon" / "stubs").exists())
-            self.assertTrue((project_dir / "stubs").exists())
 
 
 if __name__ == "__main__":

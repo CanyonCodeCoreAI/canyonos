@@ -245,7 +245,7 @@ class ProjectSweepTests(unittest.TestCase):
             swept, output = self._swept_with_output(project)
 
         self.assertEqual(swept, {"agent.py"})
-        self.assertIn(".env", output)
+        self.assertNotIn(".env", output)
         self.assertIn(".streamlit", output)
 
     def test_an_oversized_context_is_reported(self):

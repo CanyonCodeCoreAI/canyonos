@@ -215,7 +215,7 @@ def launch(controller, machine, agent_spec, replica_index, host_port, replica_id
             continue
         if "contains whitespaces" in result.stderr:
             raise RuntimeError(
-                f"{result.stderr.strip()} Docker reads env_file lines only as "
+                f"{result.stderr.strip()} Docker reads .env lines only as "
                 "KEY=value, with no `export` and no spaces around `=`."
             )
         raise RuntimeError(f"Failed to launch {container}: {result.stderr}")
@@ -320,7 +320,7 @@ def _image_args(controller, agent_spec, image, host, user):
 
     The endpoint runs the controller image as `python -m canyonos_core.endpoint`,
     publishing its HTTP port on `api_port` and serving one agent method. Any other
-    agent runs its own image with the user's `env_file`; explicit -e flags before
+    agent runs its own image with the project's `.env`; explicit -e flags before
     it still win, so a stray CANYONOS_* line in someone's .env cannot break agent
     wiring.
     """

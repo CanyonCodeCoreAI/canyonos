@@ -89,9 +89,9 @@ fi
 cd "$PROJECT_DIR"
 
 # The image just built has to stop a manifest whose functions do not match the
-# agent's class or cannot become a stub, or whose agent takes the endpoint's
-# name, before anything is deployed.
-for mode in rename builtin dunder duplicate returns deep endpoint_name; do
+# agent's class or cannot become a stub, whose agent takes the endpoint's name,
+# or that still sets env_file, before anything is deployed.
+for mode in rename builtin dunder duplicate returns deep endpoint_name env_file; do
   step "canyonos validate rejects a broken manifest ($mode)"
   broken_canyon="$(mktemp -d)/.canyon"
   cp -R "$PROJECT_DIR/.canyon" "$broken_canyon"

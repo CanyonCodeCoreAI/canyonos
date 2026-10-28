@@ -31,19 +31,6 @@ API_IMAGE = env.api_image
 WEB_IMAGE = env.web_image
 LOCK_WAIT_MESSAGE = "waiting for another canyonos command to finish with the dashboard"
 
-# What older versions of `canyonos serve` wrote into each project's .env, before
-# the dashboard's settings moved to one .env per machine; every other line is the user's.
-LEGACY_PROJECT_ENV_KEYS = frozenset(
-    {
-        "CANYONOS_JWT_SECRET",
-        "CANYONOS_REDIS_HOST",
-        "CANYONOS_REDIS_PORT",
-        "CANYONOS_API_IMAGE",
-        "CANYONOS_WEB_IMAGE",
-        "CANYONOS_WEB_PORT",
-    }
-)
-
 
 @dataclass(frozen=True)
 class ServeResult:
@@ -224,22 +211,6 @@ def _env_line(key: str, value: str) -> str:
     if " " in value or "#" in value:
         return f'{key}="{value}"\n'
     return f"{key}={value}\n"
-
-
-def remove_project_env_keys(env_path: Path) -> int:
-    """Drop the LEGACY_PROJECT_ENV_KEYS lines from the user's .env and return how many went."""
-    try:
-        lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except FileNotFoundError:
-        return 0
-
-    kept = [
-        line for line in lines if line.partition("=")[0] not in LEGACY_PROJECT_ENV_KEYS
-    ]
-    removed = len(lines) - len(kept)
-    if removed:
-        write_private_file(env_path, "".join(kept))
-    return removed
 
 
 def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:

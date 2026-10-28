@@ -12,7 +12,7 @@ canyonos doctor   # check Docker and Compose are available
 ## Use
 
 Converting an existing workflow? Run `canyonos convert` in its folder first; your coding
-agent writes a CanyonOS version of it into a `.car/` folder.
+agent writes a CanyonOS version of it into a `.canyon/` folder.
 
 ```bash
 cd your-project
