@@ -32,6 +32,10 @@ UTIL_COMMANDS = (
     ("serve", "Start local CanyonOS dashboard"),
     ("status", "Check whether a deploy is running and where it answers"),
     ("stop", "Stop the running deploy, keeping the container and files"),
+    (
+        "sync",
+        "Apply config changes to the running deploy; code changes need a redeploy",
+    ),
     ("test", "Deploy locally and run one prompt end to end"),
     ("upgrade", "Upgrade the canyonos CLI to the latest release"),
     ("validate", "Check the project against the CanyonOS contract"),

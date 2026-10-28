@@ -44,7 +44,7 @@ from canyonos.deploy import (
     run_deploy,
     save_project_id,
 )
-from canyonos.gc import _error_detail, deploy_status, deployed_endpoint
+from canyonos.gc import _error_detail, deployed_endpoint, existing_deploy
 from canyonos.init import docker_env, load_state, quit_existing
 from canyonos.os_support import is_terminal
 from canyonos.theme import GREEN, WHITE
@@ -323,23 +323,12 @@ def _query(run, endpoint, timeout, number=3, total=3):
     run.done(f"answered in {run.elapsed()}s")
 
 
-def _existing_deploy():
-    """The running deploy's state if one is already up, else None."""
-    try:
-        state = load_state()
-    except FileNotFoundError:
-        return None
-    if (deploy_status(state["port"]) or {}).get("running", False):
-        return state
-    return None
-
-
 def _run_test(run, timeout=REQUEST_TIMEOUT):
     """Query the workflow, standing up our own local deploy first unless one is
     already up. The config is restored whatever happens."""
     config_path = existing_config_path()
 
-    existing = _existing_deploy()
+    existing = existing_deploy()
     if existing is not None:
         # A deploy is already up: query it exactly as it stands (its own
         # providers, no local flip) instead of tearing it down to stand up our

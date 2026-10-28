@@ -13,6 +13,7 @@ from rich.table import Table
 from canyonos.constants import existing_config_path, round_trip_yaml, write_config
 from canyonos.theme import GREEN, WHITE
 from canyonos import ui
+from canyonos.sync import run_sync_and_reload
 from utils.tui import DELETE_ACTION, QUIT_ACTION, select_menu
 
 BACK = "__back__"
@@ -342,6 +343,7 @@ def _run_change_config():
 
     if saves:
         ui.ok(f"Saved {saves} change(s) to {config_path}")
+        run_sync_and_reload()
     else:
         ui.say("No changes made.")
 

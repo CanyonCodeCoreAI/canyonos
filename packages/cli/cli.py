@@ -31,6 +31,7 @@ from canyonos.quit import run_quit
 from canyonos.serve import run_serve
 from canyonos.status import run_status
 from canyonos.stop import run_stop
+from canyonos.sync import run_sync_and_reload
 from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
 from canyonos.upgrade import notify_if_outdated, run_upgrade
 from canyonos.usage.delivery import (
@@ -123,6 +124,7 @@ def _run_command():
     )
     add("clean", lambda args: sys.exit(0 if run_clean() else 1))
     add("stop", lambda args: sys.exit(0 if run_stop() else 1))
+    add("sync", lambda args: sys.exit(0 if run_sync_and_reload() else 1))
 
     logs = add(
         "logs",

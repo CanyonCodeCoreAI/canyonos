@@ -129,7 +129,7 @@ def deployable(monkeypatch, project):
     monkeypatch.setattr(
         test_cmd, "load_state", lambda: {"container_id": "abc", "port": 8000}
     )
-    monkeypatch.setattr(test_cmd, "deploy_status", lambda *_a: None)
+    monkeypatch.setattr(test_cmd, "existing_deploy", lambda: None)
     monkeypatch.setattr(test_cmd, "_wait_for_endpoint", lambda *a: None)
     monkeypatch.setattr(test_cmd, "verify_runtime", lambda *a: {"agents": []})
     monkeypatch.setattr(test_cmd, "deployed_endpoint", lambda _port: ENDPOINT)
@@ -232,7 +232,9 @@ def test_queries_the_existing_deploy_instead_of_standing_up_its_own(
         "url": "http://127.0.0.1:9090/run",
     }
     sent = []
-    monkeypatch.setattr(test_cmd, "deploy_status", lambda *_a: {"running": True})
+    monkeypatch.setattr(
+        test_cmd, "existing_deploy", lambda: {"container_id": "abc", "port": 8000}
+    )
     monkeypatch.setattr(test_cmd, "deployed_endpoint", lambda _port: deployed)
     monkeypatch.setattr(test_cmd, "_send_query", lambda *a: sent.append(a) or "req-1")
 

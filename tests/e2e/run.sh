@@ -240,6 +240,13 @@ agent="$(docker ps --filter name=-priceagent- --format '{{.Names}}' | head -n 1)
 docker cp "$E2E_DIR/gateway_check.py" "$agent:/tmp/gateway_check.py"
 docker exec "$agent" python /tmp/gateway_check.py | tee "$ARTIFACTS_DIR/gateway-check.log"
 
+# A config change has to reach the running deploy through `canyonos sync`, with no redeploy.
+step "canyonos sync scales IntentAgent to 2"
+perl -0pi -e 's|(name: IntentAgent\n.*\n    replicas: )1|${1}2|' "$PROJECT_DIR/.canyon/config/global_controller.yaml"
+canyonos sync
+for _ in $(seq 30); do [ "$(intent_replicas)" = "2 2 None" ] && break; sleep 2; done
+[ "$(intent_replicas)" = "2 2 None" ] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
+
 step "canyonos stop, then canyonos status exits 1"
 canyonos stop
 # Nothing is left to stop, which is still a success.

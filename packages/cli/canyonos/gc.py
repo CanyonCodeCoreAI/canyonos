@@ -79,6 +79,17 @@ def require_state():
         return None
 
 
+def existing_deploy():
+    """The running deploy's state if one is already up, else None."""
+    try:
+        state = load_state()
+    except FileNotFoundError:
+        return None
+    if (deploy_status(state["port"]) or {}).get("running", False):
+        return state
+    return None
+
+
 def post_deploy(port):
     """Start a deploy inside the container. Raises GCError on failure."""
     payload = {"project_name": project.folder_name()}
