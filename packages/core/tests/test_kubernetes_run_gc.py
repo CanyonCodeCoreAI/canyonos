@@ -8,7 +8,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
-from canyonos_core.controller import run_gc
+from canyonos_core.kubernetes import run_gc
 from canyonos_core.controller.orchestrator import TARGET_ENV
 
 
@@ -98,7 +98,7 @@ class WatchConfigTests(unittest.TestCase):
 
     def test_a_broken_edit_is_logged_and_the_watcher_keeps_going(self):
         self.controller.reload_config.side_effect = [ValueError("bad yaml"), None]
-        with self.assertLogs("canyonos_core.controller.run_gc", "ERROR"):
+        with self.assertLogs("canyonos_core.kubernetes.run_gc", "ERROR"):
             with open(self.path, "w") as f:
                 f.write("agents: [\n")
             self.assertTrue(

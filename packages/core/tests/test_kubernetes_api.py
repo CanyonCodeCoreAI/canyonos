@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
-from canyonos_core.controller import kubernetes_api
-from canyonos_core.controller.kubernetes_api import (
+from canyonos_core.kubernetes import api as kubernetes_api
+from canyonos_core.kubernetes.api import (
     KubernetesApi,
     KubernetesError,
     resource_name,

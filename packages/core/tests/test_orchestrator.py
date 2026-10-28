@@ -9,13 +9,13 @@ import unittest
 from unittest.mock import MagicMock, call, patch
 
 from canyonos_core.controller.global_controller import GlobalController
-from canyonos_core.controller.kubernetes_api import KubernetesError
 from canyonos_core.controller.orchestrator import (
     TARGET_ENV,
-    KubernetesOrchestrator,
     CanyonOrchestrator,
     orchestrator_for,
 )
+from canyonos_core.kubernetes.api import KubernetesError
+from canyonos_core.kubernetes.orchestrator import KubernetesOrchestrator
 
 
 def _controller():
@@ -37,7 +37,7 @@ class OrchestratorForTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {TARGET_ENV: "kubernetes"}),
             patch(
-                "canyonos_core.controller.orchestrator.KubernetesApi.from_environment"
+                "canyonos_core.kubernetes.orchestrator.KubernetesApi.from_environment"
             ),
         ):
             self.assertIsInstance(
@@ -100,7 +100,7 @@ class OperatorManagedMachineMetricsTests(unittest.TestCase):
         self.api = MagicMock()
         self.manager = KubernetesOrchestrator(self.gc, api=self.api)
 
-    @patch("canyonos_core.controller.orchestrator.otel_writer.metric_write_rows")
+    @patch("canyonos_core.kubernetes.orchestrator.otel_writer.metric_write_rows")
     def test_pod_usage_is_recorded(self, write_rows):
         self.api.project_pods.return_value = [
             {
@@ -118,11 +118,11 @@ class OperatorManagedMachineMetricsTests(unittest.TestCase):
         (rows,), _ = write_rows.call_args
         self.assertEqual([(r["host"], r["project_id"]) for r in rows], [("a-0", "p1")])
 
-    @patch("canyonos_core.controller.orchestrator.otel_writer.metric_write_rows")
+    @patch("canyonos_core.kubernetes.orchestrator.otel_writer.metric_write_rows")
     def test_no_metrics_api_warns_once_until_it_answers_again(self, write_rows):
         self.api.pod_metrics.side_effect = KubernetesError("404 metrics.k8s.io")
         with self.assertLogs(
-            "canyonos_core.controller.orchestrator", "WARNING"
+            "canyonos_core.kubernetes.orchestrator", "WARNING"
         ) as logs:
             self.manager.poll_machine_metrics()
             self.manager.poll_machine_metrics()

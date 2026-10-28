@@ -73,21 +73,31 @@ def _normalize_requirements(agent_spec):
     return list(agent_spec.get("requirements") or [])
 
 
-def _write_bake_file(bake_targets, bake_file_path, platform):
+def _write_bake_file(bake_targets, bake_file_path, platform, push_to=None):
     """Write a docker-buildx-bake JSON file describing all build targets.
 
     Context paths are written absolute: `docker buildx bake` resolves relative
     `context` values against the invocation cwd (not the bake file's own
     directory), so an absolute path sidesteps that ambiguity entirely.
+
+    `push_to` is (registry, tag) for a remote builder: each image is pushed straight
+    to the registry from there, as there is no Docker daemon here to load it into.
     """
+
+    def tags(target):
+        if push_to is None:
+            return [target["image_name"]]
+        registry, tag = push_to
+        return [f"{registry.rstrip('/')}/{target['image_name']}:{tag}"]
+
     bake_config = {
         "target": {
             target["name"]: {
                 "context": os.path.abspath(target["context"]),
                 "dockerfile": "Dockerfile",
-                "tags": [target["image_name"]],
+                "tags": tags(target),
                 "platforms": [platform],
-                "output": ["type=docker"],
+                "output": ["type=docker" if push_to is None else "type=registry"],
                 # type=docker could be changed to tarring it up, which would be
                 # faster but skipped because that change would alter canyonos deploy
             }
@@ -119,15 +129,11 @@ def _ensure_grpc_stubs_importable(project_dir):
 # ------------------------------------------------------------------ #
 
 
-def _run_build(config_path):
-    """
-    Generate stubs, compile gRPC protos and generate Docker contexts, and start
-    pulling database images. Returns a function that, given a list to add its build
-    processes to, builds the agent images and waits for those pulls, so
-    `canyonos deploy` can start the Global Controller while the images build.
+def _checked_config(config_path):
+    """The parsed manifest and the loaded config, once the schema accepts the config and
+    every agent's requirements are ones CanyonOS supports; exits otherwise.
 
-    Must be run from the project root (where config/ lives). Invoked as the
-    first phase of `canyonos deploy`.
+    Must be run from the project root (where config/ lives).
     """
     if not os.path.isfile(config_path):
         logger.error("Config file not found: %s", config_path)
@@ -141,8 +147,6 @@ def _run_build(config_path):
     manifest = _validate_or_exit(config_path, project_dir)
 
     config = load_config(config_path)
-    agent_specs = config.get("agents", [])
-    package_dir = _get_package_dir()
 
     from canyonos_core.stub_generator import (
         too_new_requirements,
@@ -150,7 +154,7 @@ def _run_build(config_path):
     )
 
     too_old = []
-    for agent_spec in agent_specs:
+    for agent_spec in config.get("agents", []):
         requirements = _normalize_requirements(agent_spec)
         too_old += [
             f"{agent_spec['name']} currently requires {asked}, but CanyonOS only supports {supported}"
@@ -167,6 +171,15 @@ def _run_build(config_path):
         logger.error("%s", message)
     if too_old:
         sys.exit(1)
+    return manifest, config
+
+
+def _generate_build_contexts(manifest, config):
+    """Generate stubs, compile gRPC protos and generate a Docker context for every agent
+    with code; return their bake targets. Database agents get none: they run a
+    published image as it is."""
+    project_dir = os.getcwd()
+    package_dir = _get_package_dir()
 
     # -------------------------------------------------------------- #
     #  Step 1: Generate Python stubs from the agents' functions       #
@@ -174,11 +187,7 @@ def _run_build(config_path):
     stubs_dir = os.path.join(project_dir, "stubs")
     os.makedirs(stubs_dir, exist_ok=True)
 
-    from canyonos_core.stub_generator import (
-        generate_stub,
-        generate_docker,
-        target_docker_platform,
-    )
+    from canyonos_core.stub_generator import generate_stub, generate_docker
 
     code_agent_specs = [
         agent_spec for agent_spec in manifest.agents if agent_spec.type == "agent"
@@ -224,31 +233,13 @@ def _run_build(config_path):
         )
 
     # -------------------------------------------------------------- #
-    #  Step 4: Generate Docker contexts                               #
+    #  Step 3: Generate Docker contexts                               #
     # -------------------------------------------------------------- #
-    platform = target_docker_platform(config.get("provider", providers.DEFAULT))
     bake_targets = []
-    # Pulled while the agent images build, by processes so a stop never waits on one.
-    database_pulls = []
-    for agent_spec in agent_specs:
-        agent_name = agent_spec["name"]
-        agent_type = agent_spec.get("type", "agent")
-
-        if agent_type == "database":
-            # No build: pull the declared image and tag it like any other
-            # agent image so the rest of the deploy pipeline treats it the
-            # same way (EC2 image transfer, etc.) without further changes.
-            image = agent_spec["image"]
-            target_image = image_name(agent_name)
-            logger.info("Pulling database image '%s' as '%s'", image, target_image)
-            pull = subprocess.Popen(
-                ["docker", "pull", "--platform", platform, image],
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            database_pulls.append((pull, image, target_image, agent_name))
+    for agent_spec in config.get("agents", []):
+        if agent_spec.get("type", "agent") == "database":
             continue
-
+        agent_name = agent_spec["name"]
         # Every key read below is one the schema requires and has checked,
         # down to the file being on disk -- an agent that cannot be built
         # fails the deploy rather than dropping quietly out of it.
@@ -269,15 +260,53 @@ def _run_build(config_path):
         bake_targets.append(
             {
                 "name": agent_name.lower(),
+                "service": agent_name,
                 "context": docker_context,
                 "image_name": image_name(agent_name),
             }
         )
+    return bake_targets
 
+
+def _run_build(config_path):
+    """
+    Generate stubs, compile gRPC protos and generate Docker contexts, and start
+    pulling database images. Returns a function that, given a list to add its build
+    processes to, builds the agent images and waits for those pulls, so
+    `canyonos deploy` can start the Global Controller while the images build.
+
+    Must be run from the project root (where config/ lives). Invoked as the
+    first phase of `canyonos deploy`.
+    """
+    manifest, config = _checked_config(config_path)
+
+    from canyonos_core.stub_generator import target_docker_platform
+
+    platform = target_docker_platform(config.get("provider", providers.DEFAULT))
+    # Pulled while the agent images build, by processes so a stop never waits on one.
+    database_pulls = []
+    for agent_spec in config.get("agents", []):
+        if agent_spec.get("type", "agent") != "database":
+            continue
+        # No build: pull the declared image and tag it like any other
+        # agent image so the rest of the deploy pipeline treats it the
+        # same way (EC2 image transfer, etc.) without further changes.
+        agent_name = agent_spec["name"]
+        image = agent_spec["image"]
+        target_image = image_name(agent_name)
+        logger.info("Pulling database image '%s' as '%s'", image, target_image)
+        pull = subprocess.Popen(
+            ["docker", "pull", "--platform", platform, image],
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        database_pulls.append((pull, image, target_image, agent_name))
+
+    bake_targets = _generate_build_contexts(manifest, config)
     return partial(
         _build_images,
         config_path,
-        project_dir,
+        os.getcwd(),
         bake_targets,
         platform,
         database_pulls,
@@ -340,6 +369,7 @@ def _build_images(
             )
         subprocess.run(["docker", "tag", image, target_image], check=True)
     logger.info("Build complete.")
+    return bake_targets
 
 
 # ------------------------------------------------------------------ #
@@ -461,16 +491,6 @@ def _cmd_deploy(args):
     controller.run()
 
 
-def _cmd_run_gc(args):
-    """Run the Global Controller on its own, as a Kubernetes pod (controller/run_gc.py)."""
-    from canyonos_core.controller import run_gc
-
-    if not os.path.isfile(args.config):
-        logger.error("Config file not found: %s", args.config)
-        sys.exit(1)
-    run_gc.run(args.config)
-
-
 # ------------------------------------------------------------------ #
 #  canyonos clean                                                        #
 # ------------------------------------------------------------------ #
@@ -522,18 +542,10 @@ def main():
     )
     deploy.set_defaults(func=_cmd_deploy)
 
-    # canyonos_core run-gc: the Global Controller alone, as a Kubernetes pod
-    run_gc = subparsers.add_parser(
-        "run-gc",
-        help="Run only the Global Controller, on Kubernetes (no build, no containers)",
-    )
-    run_gc.add_argument(
-        "-c",
-        "--config",
-        default=CONFIG_PATH,
-        help=f"Path to global controller config (default: {CONFIG_PATH})",
-    )
-    run_gc.set_defaults(func=_cmd_run_gc)
+    # The Kubernetes-only subcommands: build, apply-project, receive, run-gc
+    from canyonos_core.kubernetes import commands as kubernetes_commands
+
+    kubernetes_commands.add_parsers(subparsers)
 
     # canyonos clean
     clean = subparsers.add_parser(

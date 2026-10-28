@@ -12,6 +12,7 @@ definitions.
 
 import ast
 import os
+import platform
 import shutil
 import subprocess
 from packaging.requirements import InvalidRequirement, Requirement
@@ -558,6 +559,14 @@ def target_docker_platform(provider):
         or providers.get(provider).machine_platform()
         or _docker_daemon_platform()
     )
+
+
+def this_machine_platform():
+    """This machine's Linux platform, e.g. `linux/arm64`. In a cluster build pod, the
+    architecture of the cluster's nodes: what a project naming no platform runs on."""
+    machine = platform.machine().lower()
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
+    return f"linux/{arch}"
 
 
 def _docker_daemon_platform():

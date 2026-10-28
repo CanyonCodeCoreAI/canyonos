@@ -30,7 +30,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
         with (
             patch.object(GlobalController, "_load_config", return_value=config),
             patch(
-                "canyonos_core.controller.global_controller.resolve_env_file",
+                "canyonos_core.controller.controller_context.resolve_env_file",
                 return_value=None,
             ),
             patch(

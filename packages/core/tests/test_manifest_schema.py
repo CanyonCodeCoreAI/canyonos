@@ -1104,5 +1104,169 @@ class RenderingTests(_ManifestCase):
         )
 
 
+_K8S = {"namespace": "acme", "registry": "registry.example.com/acme"}
+
+
+class KubernetesBlockTests(_ManifestCase):
+    """The optional `kubernetes:` section, read by `canyonos deploy --target kubernetes`."""
+
+    def test_without_it_there_is_no_kubernetes_spec(self):
+        self.assertIsNone(self.load({"agents": [_agent()]}).kubernetes)
+
+    def test_namespace_and_registry_are_enough(self):
+        spec = self.load({"agents": [_agent()], "kubernetes": _K8S}).kubernetes
+
+        self.assertEqual(
+            (spec.namespace, spec.registry), ("acme", "registry.example.com/acme")
+        )
+        self.assertIsNone(spec.platform)
+        self.assertEqual(spec.redis.storage, "1Gi")
+        self.assertIsNone(spec.redis.host)
+        self.assertIsNone(spec.endpoint.host)
+
+    def test_both_are_required(self):
+        self.assertEqual(
+            self.fields(
+                {"agents": [_agent()], "kubernetes": {"platform": "linux/arm64"}}
+            ),
+            ["kubernetes.namespace", "kubernetes.registry"],
+        )
+
+    def test_the_namespace_must_be_a_kubernetes_name(self):
+        violation = self.one(
+            {"agents": [_agent()], "kubernetes": {**_K8S, "namespace": "Acme_Prod"}}
+        )
+        self.assertEqual(violation.field, "kubernetes.namespace")
+
+    def test_an_unknown_key_is_rejected(self):
+        violation = self.one(
+            {"agents": [_agent()], "kubernetes": {**_K8S, "cluster": "prod"}}
+        )
+        self.assertEqual(violation.field, "kubernetes.cluster")
+
+    def test_an_external_redis_takes_no_storage(self):
+        spec = self.load(
+            {
+                "agents": [_agent()],
+                "kubernetes": {
+                    **_K8S,
+                    "redis": {
+                        "host": "r.example.com",
+                        "tls": True,
+                        "password_secret": "r",
+                    },
+                },
+            }
+        ).kubernetes
+        self.assertEqual(
+            (spec.redis.host, spec.redis.tls, spec.redis.password_secret),
+            ("r.example.com", True, "r"),
+        )
+
+        violation = self.one(
+            {
+                "agents": [_agent()],
+                "kubernetes": {**_K8S, "redis": {"host": "r", "storage": "5Gi"}},
+            }
+        )
+        self.assertEqual(violation.field, "kubernetes.redis.storage")
+        violation = self.one(
+            {"agents": [_agent()], "kubernetes": {**_K8S, "redis": {"tls": True}}}
+        )
+        self.assertEqual(violation.field, "kubernetes.redis.tls")
+
+    def test_the_endpoint_takes_an_ingress_host_or_a_url(self):
+        spec = self.load(
+            {
+                "agents": [_agent()],
+                "kubernetes": {
+                    **_K8S,
+                    "endpoint": {
+                        "host": "acme.example.com",
+                        "ingress_class": "alb",
+                        "tls_secret": "t",
+                    },
+                },
+            }
+        ).kubernetes
+        self.assertEqual(spec.endpoint.host, "acme.example.com")
+
+        self.assertEqual(
+            self.fields(
+                {
+                    "agents": [_agent()],
+                    "kubernetes": {
+                        **_K8S,
+                        "endpoint": {"tls_secret": "t", "url": "acme.example.com"},
+                    },
+                }
+            ),
+            ["kubernetes.endpoint.tls_secret", "kubernetes.endpoint.url"],
+        )
+
+    def test_services_must_keep_distinct_kubernetes_names(self):
+        violation = self.one(
+            {
+                "agents": [
+                    _agent(name="Hello_Agent"),
+                    _agent(name="Hello__Agent", entrypoint="agents/other.py"),
+                ],
+                "kubernetes": _K8S,
+            }
+        )
+        self.assertEqual(violation.field, "agents[1].name")
+        self.assertIn("'hello-agent', the same as 'Hello_Agent'", violation.message)
+
+    def test_no_service_may_take_the_projects_own_names(self):
+        violation = self.one(
+            {"agents": [_agent(name="Canyonos_Gc")], "kubernetes": _K8S}
+        )
+        self.assertEqual(violation.field, "agents[0].name")
+        self.assertIn("which the project itself uses", violation.message)
+
+    def test_a_database_gets_its_user_ids_and_disk(self):
+        db = {
+            "name": "StateDB",
+            "type": "database",
+            "image": "postgres:16-alpine",
+            "volume_path": "/data",
+        }
+        spec = self.load(
+            {
+                "agents": [_agent(), db],
+                "kubernetes": {
+                    **_K8S,
+                    "databases": {
+                        "StateDB": {"run_as_user": 70, "fs_group": 70, "storage": "5Gi"}
+                    },
+                },
+            }
+        ).kubernetes
+        self.assertEqual(spec.databases["StateDB"].run_as_user, 70)
+        self.assertEqual(spec.databases["StateDB"].storage, "5Gi")
+
+    def test_database_settings_must_name_a_database_agent(self):
+        violation = self.one(
+            {
+                "agents": [_agent()],
+                "kubernetes": {
+                    **_K8S,
+                    "databases": {"ExampleAgent": {"run_as_user": 70}},
+                },
+            }
+        )
+        self.assertEqual(violation.field, "kubernetes.databases.ExampleAgent")
+
+    def test_names_are_not_checked_without_the_section(self):
+        self.load(
+            {
+                "agents": [
+                    _agent(name="Hello_Agent"),
+                    _agent(name="Hello__Agent", entrypoint="agents/other.py"),
+                ]
+            }
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

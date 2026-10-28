@@ -141,6 +141,40 @@ class KubernetesApi:
             content_type="application/merge-patch+json",
         )
 
+    def _object_path(self, obj):
+        """The API path of a namespaced object of this project."""
+        kind, name = obj["kind"], obj["metadata"]["name"]
+        if kind == "ConfigMap":
+            return f"/api/v1/namespaces/{self.namespace}/configmaps/{name}"
+        plural = {"CanyonProject": "canyonprojects", "CanyonAgent": "canyonagents"}[
+            kind
+        ]
+        return f"/apis/{API_GROUP}/{API_VERSION}/namespaces/{self.namespace}/{plural}/{name}"
+
+    def apply(self, obj, field_manager):
+        """Server-side apply one object, owning only the fields it sets."""
+        return self.request(
+            "PATCH",
+            f"{self._object_path(obj)}?fieldManager={field_manager}&force=true",
+            obj,
+            content_type="application/apply-patch+yaml",
+        )
+
+    def canyon_agents(self, project):
+        """The project's CanyonAgents."""
+        return self.request(
+            "GET",
+            f"/apis/{API_GROUP}/{API_VERSION}/namespaces/{self.namespace}/canyonagents"
+            f"?labelSelector={API_GROUP}%2Fproject%3D{project}",
+        ).get("items", [])
+
+    def delete_canyon_agent(self, name):
+        """Delete a CanyonAgent; the operator unroutes and drains it first."""
+        return self.request(
+            "DELETE",
+            f"/apis/{API_GROUP}/{API_VERSION}/namespaces/{self.namespace}/canyonagents/{name}",
+        )
+
     def project_pods(self):
         """The pods the operator runs for this namespace's project."""
         return self.request(

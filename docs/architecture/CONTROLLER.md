@@ -80,7 +80,8 @@ the orchestrator's job. It goes through one object, `gc.orchestrator`
 - `CanyonOrchestrator` (unset: Docker and EC2): CanyonOS runs the replicas itself.
 - `KubernetesOrchestrator` (`kubernetes`, set by the operator on the Global
   Controller's pod): the operator turns each CanyonAgent into a StatefulSet and
-  Kubernetes keeps its pods running.
+  Kubernetes keeps its pods running. It lives with the rest of core's Kubernetes
+  code, in `kubernetes/orchestrator.py`.
 
 | `gc.orchestrator` | `CanyonOrchestrator` | `KubernetesOrchestrator` |
 | --- | --- | --- |
@@ -104,7 +105,7 @@ format; the reconciler writes them on Docker and EC2, the operator on Kubernetes
 Settings that only differ by environment are not orchestrator methods: whatever
 launches the Global Controller sets an environment variable, and the code that needs
 it reads it (`CANYONOS_PUBLIC_IP` and `CANYONOS_ENDPOINT_URL` in `endpoint_record`,
-`CANYONOS_TARGET` in `_otel_destinations`).
+`CANYONOS_TARGET` in `_otel_destinations` and `_env_file`).
 
 ## Local Controller startup
 

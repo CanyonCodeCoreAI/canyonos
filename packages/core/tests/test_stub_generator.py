@@ -738,6 +738,16 @@ class TargetDockerPlatformTests(unittest.TestCase):
                 os.environ["CANYONOS_DOCKER_PLATFORM"] = explicit
             return stub_generator.target_docker_platform(provider), run
 
+    def test_a_cluster_build_targets_its_own_nodes_architecture(self):
+        for machine, expected in (
+            ("x86_64", "linux/amd64"),
+            ("AMD64", "linux/amd64"),
+            ("aarch64", "linux/arm64"),
+            ("arm64", "linux/arm64"),
+        ):
+            with unittest.mock.patch("platform.machine", return_value=machine):
+                self.assertEqual(stub_generator.this_machine_platform(), expected)
+
     def test_an_explicit_platform_wins_over_the_daemons(self):
         platform, run = self._platform("local", explicit="linux/amd64")
         self.assertEqual(platform, "linux/amd64")

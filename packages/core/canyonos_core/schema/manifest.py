@@ -42,6 +42,7 @@ from canyonos_core.schema._checks import (
     _unknown_key_message,
 )
 from canyonos_core.schema.errors import SchemaError, SchemaViolation
+from canyonos_core.schema.kubernetes_block import KubernetesSpec, parse_kubernetes
 from canyonos_core.schema.functions import STUB_GLOBAL_NAMES, _functions, _identifier
 from canyonos_core.schema.otel_destinations import (
     DESTINATION_KEYS,
@@ -87,6 +88,7 @@ _MANIFEST_KEYS = frozenset(
         *(schema.SECTION for schema in providers.SCHEMAS.values() if schema.SECTION),
         "endpoint",
         "dashboard_port",
+        "kubernetes",
     }
 )
 _ENDPOINT_KEYS = frozenset({"api_port", "agent", "method"})
@@ -204,6 +206,8 @@ class Manifest:
     otel: OtelSpec | None = None
     endpoint: EndpointSpec | None = None
     dashboard_port: int = 8081
+    # Read only by `canyonos deploy --target kubernetes`.
+    kubernetes: KubernetesSpec | None = None
     path: str = ""
 
 
@@ -654,6 +658,7 @@ def load_manifest(path):
         otel=_otel(collector, document),
         endpoint=_endpoint(collector, document, agent_specs),
         dashboard_port=_port(collector, document, "dashboard_port", "", 8081),
+        kubernetes=parse_kubernetes(collector, document),
         path=path,
     )
     _check_provider_sections(collector, document, provider)
