@@ -70,6 +70,8 @@ redeploys. `_apply_config` then publishes the config to Redis:
 | Desired replicas | `agent:{name}:desired_replicas` | `_apply_configured_replicas` |
 | Policy rules, sorted most specific first | `policy:rules`, on every host | `_write_policies` |
 | OTel destinations | `otel:destinations` | `_write_otel_destinations` |
+| Governance rules, seeded per agent from `governance.yaml`; the dashboard's edits win | `governance:config` | `_seed_governance` |
+| Each governed agent's USD spend since its `spend.since` | `governance:spend` | the dashboard API, every minute |
 
 The YAML always wins: every load overwrites replica counts changed at runtime. The
 Reconciler converges running replicas onto the new desired counts; see

@@ -55,6 +55,19 @@ could cost:
 A call is refused when that cost is over the cap, even if the real answer would have
 been shorter.
 
+## Switching model on spend
+
+When an agent's spend passes a `switch_model` rule in the dashboard's governance
+settings, the gateway sends each of that agent's calls to the rule's model instead,
+within a few seconds. It rewrites the model the call names and nothing else, so the
+new model must be served by the same provider: the call still goes to the same host
+with the same keys. On Bedrock, `converse` and `converse-stream` work with any model,
+while `invoke` and `invoke-with-response-stream` only switch within a model family,
+because each family has its own request body. The switched call is then checked
+against `llms.yaml` like any other, so the new model must be allowed for the agent.
+A `deny` rule is not applied here: the Local Controller refuses those calls before
+they run.
+
 ## How changes reach the gateway
 
 When the Global Controller starts or reloads, it publishes `llms.yaml` to each

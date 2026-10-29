@@ -62,6 +62,10 @@ const canyonos = {
   projectsFile: env.CANYONOS_PROJECTS_FILE ?? null,
 };
 
+const governance = {
+  publishIntervalMs: parseInteger(env.GOVERNANCE_PUBLISH_INTERVAL_MS, 60_000),
+};
+
 const LOCAL_DATABASE_URL = 'postgres://canyonos:canyonos@localhost:5432/canyonos';
 
 export function resolveDatabaseUrl(value: string | undefined, environment: AppEnvironment): string {
@@ -77,6 +81,7 @@ export function resolveDatabaseUrl(value: string | undefined, environment: AppEn
 export const config = {
   environment,
   canyonos,
+  governance,
   isDevelopment: environment === 'development',
   isProduction: environment === 'production',
   isDemo: environment === 'demo',

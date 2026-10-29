@@ -31,6 +31,7 @@ class ExecuteDedupTests(unittest.TestCase):
             redis=redis if redis is not None else _FakeRedis(),
             request_queue=__import__("queue").Queue(),
             refusing=False,
+            admit=None,
         )
         servicer._already_accepted = lambda payload: (
             LocalControllerServicer._already_accepted(servicer, payload)

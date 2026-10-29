@@ -198,12 +198,13 @@ calling agent   ──▶ generated agent stub ──▶ Future.__init__
                                                        │ LocalController.Execute
                                                        ▼
                                       LocalControllerServicer.Execute
+        first hop (no route_to): admit ──▶ governance.refuse_call (LC's rules snapshot)
+                                 └─ refused: future failed, {"refused": ...} reply, not queued
                                                        └─ request_queue.put
                                                                │
                                                                ▼
                                       LocalController.run ──▶ _process_request
                                                                │
-                      policy:rules ──▶ _check_policy            │
    routing_table:* ──▶ _load_routing ──▶ _resolve_address (memory, skips replicas marked down)
                                                                │
                          ┌─────────────────────────────────────┴──────────────┐
@@ -292,6 +293,7 @@ LocalController / LocalControllerServicer
              request:completed, request:<request_id>:waiting
   reads  ◀── controller:<host>:<port>:replica_id, controller:<host>:<port>:draining,
              routing_table:addresses, routing_table:stateful, policy:rules,
+             governance:config, governance:spend, routing_table:replicas,
              request:<request_id>:context, request:<request_id>:futures,
              request:<request_id>:future,
              future:<future_id>, future:<future_id>:consumers,

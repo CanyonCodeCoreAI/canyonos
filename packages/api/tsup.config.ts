@@ -16,6 +16,7 @@ export default defineConfig((options) => ({
     monitoring: 'src/sdk/monitoring.ts',
     prompts: 'src/sdk/prompts.ts',
     scaling: 'src/sdk/scaling.ts',
+    governance: 'src/sdk/governance.ts',
   },
   format: ['esm'],
   dts: true,

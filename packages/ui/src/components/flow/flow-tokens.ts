@@ -32,7 +32,7 @@ export const edgeColorToken: Readonly<Record<EdgeType, string>> = {
 
 export const edgeDashArray: Readonly<Record<EdgeType, string | undefined>> = {
   route: undefined,
-  call: '4 4',
+  call: '3 5',
   loop: '6 4',
   return: '6 4',
 };

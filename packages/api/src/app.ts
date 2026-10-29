@@ -12,6 +12,7 @@ import { authRoutes } from '@api/modules/auth/auth.routes';
 import { bootstrap_canyonos } from '@api/modules/canyonos/canyonos.bootstrap';
 import { canyonosRoutes } from '@api/modules/canyonos/canyonos.routes';
 import { start_registered_projects_sync } from '@api/modules/canyonos/canyonos.sync';
+import { start_governance_publisher } from '@api/modules/governance/governance.publisher';
 import { projectsRoutes } from '@api/modules/projects/projects.routes';
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
@@ -116,6 +117,7 @@ export const setupApi = async () => {
 export const startApi = async ({ host, port }: { host: string; port: number }) => {
   httpLogger.info('Starting API', { env: config.environment });
   await setupApi();
+  start_governance_publisher();
   return forgeApi.listen({ hostname: host, port }, ({ port }) => {
     httpLogger.info('API listening', { host, port, env: config.environment });
   });

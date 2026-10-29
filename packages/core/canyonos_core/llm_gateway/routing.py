@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -14,15 +15,25 @@ from typing import Optional
 from canyonos_core.llm_gateway import llms, pricing, prompts
 from canyonos_core.llm_gateway.providers.base import GatewayResponse
 
+try:
+    from canyonos_core.controller import governance
+except ImportError:
+    import canyonos_governance as governance
+
+log = logging.getLogger("llm_gateway")
+
 AGENT_NAME = os.environ.get("CANYONOS_AGENT_NAME")
 REFRESH_SECONDS = 5
 # Rough bytes-per-token ratio, so input tokens are estimated without asking the provider.
 BYTES_PER_TOKEN = 4
 
+# None until the first successful load, so no model is switched before the rules are known.
+rules: Optional[governance.Rules] = None
+
 
 def start_refresh(redis) -> None:
-    """Load LLM prices once, and llms.yaml and prompts.yaml now and then in the background,
-    from Redis."""
+    """Load LLM prices once, and llms.yaml, prompts.yaml and the governance rules now and
+    then in the background, from Redis."""
 
     def loop():
         while True:
@@ -35,9 +46,16 @@ def start_refresh(redis) -> None:
 
 
 def refresh(redis) -> None:
-    """Reload llms.yaml and prompts.yaml from Redis."""
+    """Reload llms.yaml, prompts.yaml and the governance rules from Redis."""
+    global rules
     llms.refresh_llms(redis)
     prompts.refresh_prompts(redis)
+    try:
+        rules = governance.load(redis, poll_interval=REFRESH_SECONDS, previous=rules)
+    except Exception as e:
+        log.warning(
+            "Failed to refresh the governance rules; keeping the last ones: %s", e
+        )
 
 
 def route(model_id: str, body: bytes, prefix: Optional[str] = None) -> Optional[str]:

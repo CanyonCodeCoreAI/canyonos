@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import { resolveAuth as resolve_auth } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
+import { governanceRoutes } from '../governance/governance.routes';
 import { metricsRoutes } from '../metrics/metrics.routes';
 import { monitoringRoutes } from '../monitoring/monitoring.routes';
 import { promptsRoutes } from '../prompts/prompts.routes';
@@ -47,4 +48,5 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
   .use(metricsRoutes)
   .use(monitoringRoutes)
   .use(promptsRoutes)
-  .use(scalingRoutes);
+  .use(scalingRoutes)
+  .use(governanceRoutes);

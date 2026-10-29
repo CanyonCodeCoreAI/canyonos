@@ -52,7 +52,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 |---|---|
 | `unexpected keyword argument` in the agent | The argument name in `functions` differs from the method's parameter name |
 | `missing ... required positional argument` | `functions` does not declare a parameter the method requires, or the caller did not send it |
-| `Policy denied the call to` | The first matching policy rule, or no rule at all, excludes that agent |
+| `PolicyDenied: Policy denied the call to` | The first matching policy rule, or no rule at all, excludes that agent |
 | `.value()` returns text that looks like a dict | Expected. Results travel as strings; `json.loads` it |
 | `is not JSON serializable` | The agent returned framework objects. Convert to plain types first |
 | The response holds `<...Future object at 0x...>` | `main` formatted a `Future` (`str`, f-string, `json.dumps`) before resolving it. Call `.value()` first |

@@ -98,13 +98,16 @@ export async function with_redis<T>(
   return with_redis_at(redis_port ?? config.canyonos.redisPort, operation);
 }
 
+export async function project_running(redis: RedisClient, project_id: string): Promise<boolean> {
+  return (await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_id')) === project_id;
+}
+
 /** Throws not found unless the running controller belongs to project_id. */
 export async function assert_project_running(
   redis: RedisClient,
   project_id: string
 ): Promise<void> {
-  const controller_project_id = await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_id');
-  if (controller_project_id !== project_id) {
+  if (!(await project_running(redis, project_id))) {
     throw notFound(
       'canyonos.project_not_running',
       "This project isn't running. Deploy it again with `canyonos deploy` from its folder."

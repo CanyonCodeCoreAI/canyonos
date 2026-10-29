@@ -3,3 +3,10 @@
 
 export { FlowCanvas } from './flow-canvas';
 export type { FlowCanvasProps } from './flow-canvas';
+export type {
+  FlowEdgeSpec,
+  FlowNodeData,
+  FlowNodeFooterRow,
+  FlowNodeSpec,
+  FlowNodeTone,
+} from './types';

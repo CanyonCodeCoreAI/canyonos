@@ -24,7 +24,7 @@ import redis
 from canyonos_core.llm_gateway.hooks import PROXY_PORT
 
 try:
-    from canyonos_core.controller import gateway_headers
+    from canyonos_core.controller import gateway_headers, governance
     from canyonos_core.controller.health import start_health_server, stop_health_server
     from canyonos_core.controller.local_controller_frontend import start_server
     from canyonos_core.controller.utils.gpu_metrics import read_gpu_percent
@@ -39,6 +39,7 @@ try:
         append_log_entry,
     )
 except ImportError:
+    import canyonos_governance as governance
     import gateway_headers
     from canyonos_health import start_health_server, stop_health_server
     from gpu_metrics import read_gpu_percent
@@ -103,7 +104,6 @@ CANYONOS_FILES = {
 
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
-POLICY_RULES_KEY = "policy:rules"
 EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5
 # A replica only queues a request forwarded to it, so one slower than this to
 # accept it is stuck.
@@ -154,18 +154,41 @@ class LocalController(object):
 
         self._my_address = f"{self.agent_host}:{self.public_port}"
 
+        # Connect to Redis. Readiness is published only after a configured
+        # agent has loaded successfully.
+        redis_host = os.environ.get("CANYONOS_REDIS_HOST", "localhost")
+        redis_port = int(os.environ.get("CANYONOS_REDIS_PORT", 6379))
+        self.redis = RedisClient(host=redis_host, port=redis_port)
+        self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
+        # Before the server serves, so no call arrives ahead of its admission check.
+        try:
+            self._rules = governance.load(self.redis.client, self._metrics_interval)
+        except Exception as e:
+            logger.warning(
+                "Could not load the governance rules, admitting every call: %s", e
+            )
+            self._rules = governance.Rules([], {}, {}, frozenset())
+
+        # The server admits calls from here on, so what failing a refused one touches
+        # (its failure entry, the fan-out to its consumers) exists before it starts;
+        # the replica id is read further down.
+        self.replica_id = None
+        # self._forwarded is how a replica remembers which replica is running each call it handed off, so it can fail those calls if that replica disappears.
+        self._forwarded = {}
+        # Cache for gRPC stubs to remote controllers
+        self._remote_channels = {}  # address -> grpc.Channel
+        self._remote_stubs = {}  # address -> LocalControllerStub
+        # Result callbacks on executor and gRPC threads create stubs too, not just
+        # the loop that forwards requests.
+        self._remote_stubs_lock = threading.Lock()
         self.server, self.servicer = start_server(port, my_address=self._my_address)
         self.request_queue = self.servicer.request_queue
         # Let the gRPC servicer fan a result out to this machine's consumers as
         # soon as it arrives via WriteResult (see _fan_out_to_consumers).
         self.servicer.on_result = self._fan_out_to_consumers
         self.servicer.on_request_done = self._fail_waiting_questions
+        self.servicer.admit = self._admit
 
-        # Connect to Redis. Readiness is published only after a configured
-        # agent has loaded successfully.
-        redis_host = os.environ.get("CANYONOS_REDIS_HOST", "localhost")
-        redis_port = int(os.environ.get("CANYONOS_REDIS_PORT", 6379))
-        self.redis = RedisClient(host=redis_host, port=redis_port)
         self._load_routing()
         self._status_key = f"controller:{self.agent_host}:{self.public_port}:status"
 
@@ -218,7 +241,6 @@ class LocalController(object):
         # by the queue itself (unfinished_tasks) until run() has processed it.
         self._unsent = 0
         self._unsent_lock = threading.Lock()
-        self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
         # One transaction, so a reader never sees "initializing" without a heartbeat to judge it by.
         # Cumulative request counters are always increasing, never reset. It is the consumers job to get the delta between polls to get the specific metrics.
         now = str(time.time())
@@ -246,16 +268,6 @@ class LocalController(object):
         # refused connection. Off unless CANYONOS_HEALTH_PORT is set.
         self._health_server = start_health_server(self._health_checks())
 
-        # Cache for gRPC stubs to remote controllers
-        self._remote_channels = {}  # address -> grpc.Channel
-        self._remote_stubs = {}  # address -> LocalControllerStub
-        # Result callbacks on executor and gRPC threads create stubs too, not just
-        # the loop that forwards requests.
-        self._remote_stubs_lock = threading.Lock()
-
-        # Policy rules cache (loaded lazily from Redis)
-        self._policy_rules = None
-
         # Thread pool for executing agent methods concurrently.
         # This prevents deadlocks when an agent method creates nested Futures
         # that need to be routed through the same controller's request queue.
@@ -265,8 +277,6 @@ class LocalController(object):
         self._executor_futures_lock = threading.Lock()
         # address -> time.monotonic() until which new picks skip it
         self._down_until = {}
-        # self._forwarded is how a replica remembers which replica is running each call it handed off, so it can fail those calls if that replica disappears.
-        self._forwarded = {}
 
         # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
         self._metrics_thread.start()
@@ -506,6 +516,8 @@ class LocalController(object):
     def _metrics_loop(self):
         """Background thread: periodically publish replica metrics and refresh status."""
         while not self._metrics_stop_event.is_set():
+            # First and on its own, so a failure later in the tick never leaves stale rules.
+            self._refresh_rules()
             try:
                 self._watch_llm_gateway()
                 # Read before collecting, so a heartbeat saying draining comes after refusals began.
@@ -528,7 +540,6 @@ class LocalController(object):
                 with self._status_lock:
                     if self._status == "healthy":
                         self.redis.set(self._status_key, "healthy")
-                self._load_policy_rules(reload=True)
                 self._load_routing()
                 self._fail_calls_to_gone_replicas()
             except Exception as e:
@@ -589,50 +600,55 @@ class LocalController(object):
     #  Policy evaluation                                                   #
     # ------------------------------------------------------------------ #
 
-    def _load_policy_rules(self, reload=False):
-        """Load policy rules from Redis (cached after first load unless reload is set)."""
-        if self._policy_rules is not None and not reload:
-            return self._policy_rules
+    def _refresh_rules(self):
+        """Replace the governance snapshot, keeping the previous one when Redis can't
+        give a readable one."""
+        try:
+            self._rules = governance.load(
+                self.redis.client, self._metrics_interval, previous=self._rules
+            )
+        except Exception as e:
+            logger.warning("Keeping the previous governance rules: %s", e)
 
-        rules_json = self.redis.get(POLICY_RULES_KEY)
-        if rules_json:
-            self._policy_rules = json.loads(rules_json)
-        else:
-            self._policy_rules = []
-        return self._policy_rules
-
-    def _check_policy(self, agent_name, context):
-        """
-        Check if the given agent is accessible for the given request context.
-
-        Iterates through rules (sorted most-specific first) and returns True
-        if a matching rule grants access to the agent.
-        """
-        # Any agent may ask the human a question through the endpoint.
-        if agent_name == ENDPOINT_AGENT_NAME:
-            return True
-        rules = self._load_policy_rules()
-        if not rules:
-            # No policy rules -> allow everything
-            return True
-
-        for rule in rules:
-            match = rule.get("match", {})
-            access = rule.get("access", [])
-
-            # Check if all match keys are satisfied by the request context
-            if all(context.get(k) == v for k, v in match.items()):
-                if access == "all":
-                    return True
-                return agent_name in access
-
-        # No rule matched at all
-        logger.warning(
-            "No policy rule matched for context=%s, denying access to %s",
-            context,
-            agent_name,
+    def _request_context(self, data):
+        """The request's `_context`: carried in the baggage once forwarded, else as the
+        endpoint stored it."""
+        context = data.get("baggage", {}).get("context")
+        if context is not None:
+            return context
+        request_id = data.get("request_id")
+        context_json = (
+            self.redis.get(f"request:{request_id}:context") if request_id else None
         )
-        return False
+        return json.loads(context_json) if context_json else {}
+
+    def _admit(self, data):
+        """Refuse a call before it is queued when governance says so, failing its
+        future; None lets it through."""
+        agent_name, function = data.get("service"), data.get("function")
+        future_id = data.get("future_id")
+        if not agent_name or not function or not future_id:
+            # Left to _process_request, which reports it as MalformedRequest.
+            return None
+        refusal = governance.refuse_call(
+            self._rules, agent_name, function, self._request_context(data)
+        )
+        if refusal is None:
+            return None
+        # The name leads the text, so a caller that only passes the error on, up to
+        # the request's /status, still says which rule refused it.
+        refusal = governance.Refusal(
+            refusal.error_name, f"{refusal.error_name}: {refusal.message}"
+        )
+        logger.warning(refusal.message)
+        self._mark_future_failed(
+            future_id,
+            refusal.message,
+            data.get("origin"),
+            error_name=refusal.error_name,
+            before_start=True,
+        )
+        return refusal
 
     # ------------------------------------------------------------------ #
     #  Address resolution (affinity / load balancing)                       #
@@ -737,9 +753,17 @@ class LocalController(object):
             self.stop()
 
     def _mark_future_failed(
-        self, future_id, error, origin=None, error_name=None, log_entry=True
+        self,
+        future_id,
+        error,
+        origin=None,
+        error_name=None,
+        log_entry=True,
+        before_start=False,
     ):
-        """Persist a terminal failure locally and, when needed, notify the origin."""
+        """Persist a terminal failure locally and, when needed, notify the origin.
+        `before_start` marks a call failed before it ran, which nothing else will
+        stamp `finished_at` on."""
         if not future_id:
             return
 
@@ -751,10 +775,13 @@ class LocalController(object):
                 error, AgentCallError
             ):
                 message = f"{record.get('service')}.{record.get('method')} failed: {type(error).__name__}: {message}"
-            self.redis.hset_multiple(
-                f"future:{future_id}",
-                {"error": message, "failed": 1},
-            )
+            failure = {"error": message, "failed": 1}
+            if error_name:
+                failure["error_name"] = error_name
+            # Only before the call ran: telemetry treats finished_at as the last write.
+            if before_start:
+                failure["finished_at"] = time.time()
+            self.redis.hset_multiple(f"future:{future_id}", failure)
             # A root call, one with no parent, rejected before it started still
             # needs its request cleaned up.
             if record.get("request_id") and not record.get("parent"):
@@ -820,17 +847,10 @@ class LocalController(object):
         canyonos_context.set_current_future_id(future_id or "")
 
         # 1. Unpack context from baggage (or fall back to local Redis)
-        context = baggage.get("context")
-        if context is None:
-            context = {}
-            if request_id:
-                context_json = self.redis.get(f"request:{request_id}:context")
-                if context_json:
-                    context = json.loads(context_json)
-        else:
-            if request_id:
-                # Cache received context locally for downstream stubs
-                self.redis.set(f"request:{request_id}:context", json.dumps(context))
+        context = self._request_context(data)
+        if request_id and baggage.get("context") is not None:
+            # Cache received context locally for downstream stubs
+            self.redis.set(f"request:{request_id}:context", json.dumps(context))
 
         # 2. Unpack affinities from baggage into local Redis Hash
         affinities = baggage.get("affinities", {})
@@ -844,18 +864,7 @@ class LocalController(object):
                 "Malformed request: missing service, function, or future_id",
                 origin,
                 error_name="MalformedRequest",
-            )
-            return
-
-        # Check policy before routing
-        if not self._check_policy(agent_name, context):
-            err_msg = f"Policy denied the call to {agent_name}.{function}: no rule in policy.yaml allows it for this request."
-            logger.warning(err_msg)
-            self._mark_future_failed(
-                future_id,
-                err_msg,
-                origin,
-                error_name="PolicyDenied",
+                before_start=True,
             )
             return
 
@@ -876,6 +885,7 @@ class LocalController(object):
                     "restarting or being removed.",
                     origin,
                     error_name="NoRunningReplica",
+                    before_start=True,
                 )
                 return
 
@@ -891,6 +901,7 @@ class LocalController(object):
                         f"Argument '{key}' of {agent_name}.{function} comes from a different request.",
                         origin,
                         error_name="InvalidArgument",
+                        before_start=True,
                     )
                     return
 

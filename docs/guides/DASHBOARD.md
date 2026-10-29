@@ -35,5 +35,6 @@ Your deploy appears under **Projects**, named after your project folder. Open it
 - **Metrics**: CPU and resource usage for each machine and each agent.
 - **Prompts**: your [prompts](PROMPTS.md). Edits apply to the running project until it reloads.
 - **Scaling**: each agent's [scaling policy](SCALING.md) (thresholds and min/max replicas). Changes apply to the running deploy right away.
+- **Governance**: each agent with the agents it calls, whether it is up, and its spend against its caps. Open one to set the agents it [requires](RUNTIME_CONTRACT.md), its spend rules (refuse calls or switch model above a threshold), or to stop and start it. Rules apply on the controller's next poll.
 
 Pages show the last 7 days by default; use the time window control to change it.

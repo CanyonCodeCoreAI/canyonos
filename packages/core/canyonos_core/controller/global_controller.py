@@ -24,7 +24,7 @@ from canyonos_core.controller.controller_context import (
     _redis_connect_host,
     list_replicas,
 )
-from canyonos_core.controller import scaling
+from canyonos_core.controller import governance, scaling
 from canyonos_core.controller.orchestrator import TARGET_ENV, orchestrator_for
 from canyonos_core.endpoint import ADDRESS_KEY, endpoint_record
 from canyonos_core.scaling import contract
@@ -377,12 +377,13 @@ class GlobalController(ControllerContext):
 
     def _read_config_folder(self):
         """Parse every YAML file in the config folder and the policy rules; returns
-        (rules, payloads by Redis key, prompts.yaml's live versions or None). A file
-        that is not UTF-8, not valid YAML, or not the expected shape raises a
-        RuntimeError that names it."""
+        (rules, payloads by Redis key, prompts.yaml's live versions or None,
+        governance.yaml's rules or None). A file that is not UTF-8, not valid YAML, or
+        not the expected shape raises a RuntimeError that names it."""
         config_dir = os.path.dirname(os.path.abspath(self.config_path))
         payloads = {}
         live_prompts = None
+        governance_seed = None
         for filename in sorted(os.listdir(config_dir)):
             name, extension = os.path.splitext(filename)
             if extension in (".yaml", ".yml"):
@@ -404,6 +405,13 @@ class GlobalController(ControllerContext):
                         ) from exc
                 if name == "prompts":
                     live_prompts = _live_prompts(json.loads(payloads[key]), path)
+                if name == "governance":
+                    # Seeds governance:config per agent; the generic SET would overwrite dashboard edits.
+                    document = expand_env_value(json.loads(payloads.pop(key)))
+                    try:
+                        governance_seed = {"agents": governance.parse(document)}
+                    except ValueError as exc:
+                        raise RuntimeError(str(exc)) from exc
                 if name == "llms":
                     # The gateway would refuse every LLM call over this; fail the deploy instead.
                     try:
@@ -411,9 +419,9 @@ class GlobalController(ControllerContext):
                     except ValueError as exc:
                         raise RuntimeError(str(exc)) from exc
         # After the loop, which reports a syntax error in policy.yaml with its line.
-        return self._load_policy_rules(), payloads, live_prompts
+        return self._load_policy_rules(), payloads, live_prompts, governance_seed
 
-    def _write_policies(self, rules, payloads, live_prompts):
+    def _write_policies(self, rules, payloads, live_prompts, governance_seed):
         """Publish policy rules, LiteLLM's prices, and each config file under its key, to every host Redis."""
         targets = list(self.machine_redis.values()) or [self.redis]
         rules_json = json.dumps(rules)
@@ -435,6 +443,8 @@ class GlobalController(ControllerContext):
             self.redis.set(
                 "prompts:config", json.dumps({"prompts": live_prompts}), nx=True
             )
+        if governance_seed is not None:
+            self._seed_governance(governance_seed)
 
         logger.info(
             "Policy rules and %d config file(s) written to %d Redis instance(s): %d rule(s)",
@@ -443,12 +453,32 @@ class GlobalController(ControllerContext):
             len(rules),
         )
 
+    def _seed_governance(self, governance_seed):
+        """Add governance.yaml's rules for every agent governance:config lacks; the
+        dashboard's rules for the others stay."""
+        stored = self.redis.get(governance.CONFIG_KEY)
+        try:
+            existing = json.loads(stored or "null")
+            governance.parse(existing or {})
+        except ValueError:
+            # Every Local Controller would ignore an unreadable key; reseeding recovers it.
+            logger.warning(
+                "governance:config is unreadable; reseeding it from governance.yaml."
+            )
+            existing = None
+        self.redis.set(
+            governance.CONFIG_KEY,
+            json.dumps(governance.seed(existing, governance_seed, time.time())),
+        )
+
     # Only relevant for demo purposes
     def _write_identity(self):
         """Publish the current project identity to every machine's Redis."""
         payload = {
             "project_id": str(self.config.get("project_id")),
             "project_name": os.environ.get("CANYONOS_PROJECT_NAME", ""),
+            # The dashboard API judges heartbeats with the same window as core.
+            "poll_interval": str(self.poll_interval),
         }
         targets = list(self.machine_redis.values()) or [self.redis]
         for redis_client in targets:

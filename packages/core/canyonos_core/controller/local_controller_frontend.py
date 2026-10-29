@@ -61,6 +61,9 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
         self.on_result = None
         # Set by LocalController: called with the request id when a root call's result arrives.
         self.on_request_done = None
+        # Set by LocalController: governance's verdict on a call's first hop, a
+        # Refusal that fails its future or None. Signature: admit(payload_dict).
+        self.admit = None
         # Set by LocalController while a stateless replica drains: forwarded work is refused.
         self.refusing = False
         # Requests with calls bound here by affinity, until the GC reports them done.
@@ -69,14 +72,35 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
     def Execute(self, request, context):
         """Accept an Execute request and push it into the queue."""
         logger.info(f"Received request: {request.response}")
+        try:
+            payload = json.loads(request.response)
+        except ValueError:
+            payload = None
+        forwarded = isinstance(payload, dict) and "route_to" in payload
         # Only forwarded work is turned away; this replica's own calls still run.
-        if self.refusing and "route_to" in json.loads(request.response):
+        if self.refusing and forwarded:
             # Never queued, so the sender's retry picks another replica.
             context.abort(grpc.StatusCode.UNAVAILABLE, "Replica is draining")
         if self._already_accepted(request.response):
             logger.info("Execute: duplicate delivery of a queued request, skipping.")
-        else:
-            self.request_queue.put(request.response)
+            return local_controller_pb2.JsonResponse(
+                response="Request queued successfully"
+            )
+        # Later hops trust the first, which already admitted the call.
+        if isinstance(payload, dict) and not forwarded and self.admit:
+            refusal = self.admit(payload)
+            if refusal:
+                return local_controller_pb2.JsonResponse(
+                    response=json.dumps(
+                        {
+                            "refused": {
+                                "error_name": refusal.error_name,
+                                "error": refusal.message,
+                            }
+                        }
+                    )
+                )
+        self.request_queue.put(request.response)
         return local_controller_pb2.JsonResponse(response="Request queued successfully")
 
     def _already_accepted(self, payload):

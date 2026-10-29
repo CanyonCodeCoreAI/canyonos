@@ -24,6 +24,7 @@ def _bare_controller(config, machine_redis=None):
     controller.config = config
     controller.redis = _FakeRedis()
     controller.machine_redis = machine_redis if machine_redis is not None else {}
+    controller.poll_interval = 5
     controller._set_agent_specs(config.get("agents", []))
     return controller
 
@@ -56,7 +57,11 @@ class WriteIdentityTests(unittest.TestCase):
 
         self.assertEqual(
             controller.redis.hgetall(GlobalController.IDENTITY_KEY),
-            {"project_id": "11111111-1111-1111-1111-111111111111", "project_name": ""},
+            {
+                "project_id": "11111111-1111-1111-1111-111111111111",
+                "project_name": "",
+                "poll_interval": "5",
+            },
         )
 
     def test_publishes_to_every_machine_not_just_self_redis(self):
@@ -93,7 +98,11 @@ class WriteIdentityTests(unittest.TestCase):
 
         self.assertEqual(
             machine.hgetall(GlobalController.IDENTITY_KEY),
-            {"project_id": "22222222-2222-2222-2222-222222222222", "project_name": ""},
+            {
+                "project_id": "22222222-2222-2222-2222-222222222222",
+                "project_name": "",
+                "poll_interval": "5",
+            },
         )
 
 

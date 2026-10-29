@@ -156,8 +156,11 @@ function parse_names(raw: string | null): string[] {
   return result.data;
 }
 
+/** A scaling agent plus the replica count its spec configures. */
+export type AgentReading = ScalingAgent & { readonly replicas_configured: number };
+
 // A spec or sample the controller wrote badly hides that agent's figures, never the whole list.
-async function read_agent(redis: RedisClient, name: string): Promise<ScalingAgent | null> {
+async function read_agent(redis: RedisClient, name: string): Promise<AgentReading | null> {
   const [spec_raw, desired_raw, [sample_raw]] = await Promise.all([
     redis.get(`agent:${name}:spec`),
     redis.get(`agent:${name}:desired_replicas`),
@@ -174,6 +177,7 @@ async function read_agent(redis: RedisClient, name: string): Promise<ScalingAgen
   const desired = desired_raw === null ? Number.NaN : Number(desired_raw);
   return {
     name,
+    replicas_configured: configured,
     replicas_expected: Number.isInteger(desired) && desired >= 0 ? desired : configured,
     replicas_running: sample.success ? sample.data.replicas_running : 0,
     load: sample.success
@@ -186,12 +190,18 @@ async function read_agent(redis: RedisClient, name: string): Promise<ScalingAgen
   };
 }
 
+/** The active agents (databases excluded) with what each one is running right now. */
+export async function read_agents(redis: RedisClient): Promise<AgentReading[]> {
+  const names = parse_names(await redis.get(ACTIVE_AGENTS_KEY));
+  const agents = await Promise.all(names.map((name) => read_agent(redis, name)));
+  return agents.filter((agent) => agent !== null);
+}
+
 /** The agents the policy applies to, with what each one is running right now. */
 export async function list_scaling_agents(project_id: string): Promise<ScalingAgentsResponse> {
   return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
-    const names = parse_names(await redis.get(ACTIVE_AGENTS_KEY));
-    const agents = await Promise.all(names.map((name) => read_agent(redis, name)));
-    return { agents: agents.filter((agent) => agent !== null) };
+    const agents = await read_agents(redis);
+    return { agents: agents.map(({ replicas_configured: _, ...agent }) => agent) };
   });
 }

@@ -50,10 +50,11 @@ app.py  create_app()
      │         ├── "anthropic" ──▶ providers/anthropic.py  (HttpProvider)
      │         └── "bedrock"   ──▶ providers/bedrock.py    (only if boto3 installed)
      ├──▶ hooks.py  Hooks(cfg)  ──▶ redis.Redis
-     ├──▶ routing.py  start_refresh(redis)  ──▶ llms:config every 5s
+     ├──▶ routing.py  start_refresh(redis)  ──▶ llms:config, governance rules every 5s
      │
      ├── GET  /healthz
      └── ANY  /<provider>/<path>  ──▶ core.py  proxy_request(hooks, ...)
+                                        ├──▶ _switch_model            (governance.model_for)
                                         ├──▶ hooks.on_request
                                         ├──▶ routing.route            (allow-list, cost cap)
                                         ├──▶ provider.forward
@@ -88,6 +89,7 @@ app.dispatch ── unknown provider ──▶ 404
      ▼
 core.proxy_request
      │
+     ├─▶ _switch_model: the model governance switched this agent to, if any
      ├─▶ Ctx { provider, method, subpath, body, headers, t0, model }
      ├─▶ hooks.on_request(ctx) ──▶ log
      │
@@ -212,6 +214,18 @@ llm_gateway/llm_prices.json ──▶ pricing.token_prices / compute_token_cost
    ├─▶ add_prices (GC's copy)         otel_writer               (dashboard cost, GC copy)
    └─▶ machine Redis llm_prices:models ──▶ gateway startup: load_published_prices
 ```
+
+`routing.refresh` also loads the governance rules (`controller/governance.py`, imported
+flat as `canyonos_governance` inside images) into `routing.rules`, keeping the last snapshot when a load fails.
+At the top of `proxy_request`, before the system prompt, `Ctx` and `route()`,
+`governance.model_for(rules, AGENT_NAME)` names the model this agent's highest tripped
+spend rule switches to, and `_switch_model` writes it into the call: the
+`model/<id>/<op>` subpath on Bedrock, the body's `model` field elsewhere. So `route()`
+checks the switched model against `llms.yaml` and telemetry records it. The upstream
+host never changes, so the switch stays within one provider; Bedrock `converse*` takes
+any model, `invoke*` only one of the same family, whose body format it shares. The
+gateway evaluates the rules itself rather than trusting an `x-canyonos-*` header, which
+the agent's own process sets. `deny` rules are the Local Controller's, at dispatch.
 
 ## Prompts
 

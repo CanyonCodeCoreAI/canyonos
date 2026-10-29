@@ -25,6 +25,11 @@ import canyonos_core.controller.canyonos_context as canyonos_context
 from fakes import _FakeRedis, _RpcError
 
 
+_QUEUED = future_module.local_controller_pb2.JsonResponse(
+    response="Request queued successfully"
+)
+
+
 class _Unavailable(grpc.RpcError, grpc.Call):
     def code(self):
         return grpc.StatusCode.UNAVAILABLE
@@ -58,6 +63,7 @@ class FutureParentIdTests(unittest.TestCase):
         self._orig_stub = future_module.Future._stub
         future_module.Future.redis = self.fake_redis
         future_module.Future._stub = MagicMock()
+        future_module.Future._stub.Execute.return_value = _QUEUED
         canyonos_context.set_current_future_id("")
 
     def tearDown(self):
@@ -124,7 +130,10 @@ class FutureParentIdTests(unittest.TestCase):
             self.fail(f"Future.__init__ raised unexpectedly: {e}")
 
     def test_unavailable_submission_is_retried(self):
-        future_module.Future._stub.Execute.side_effect = [_Unavailable(), "queued"]
+        future_module.Future._stub.Execute.side_effect = [
+            _Unavailable(),
+            _QUEUED,
+        ]
 
         with patch("canyonos_core.controller.utils.grpc_options.time.sleep") as sleep:
             future = future_module.Future(
@@ -133,7 +142,7 @@ class FutureParentIdTests(unittest.TestCase):
 
         self.assertEqual(future_module.Future._stub.Execute.call_count, 2)
         sleep.assert_called_once_with(0.5)
-        self.assertEqual(future.response, "queued")
+        self.assertEqual(future.response, _QUEUED)
         self.assertNotIn("failed", self.fake_redis.hashes[f"future:{future.id}"])
 
 
@@ -142,6 +151,7 @@ class FutureForkTests(unittest.TestCase):
         original_stub = future_module.Future._stub
         original_redis = future_module.Future.redis
         future_module.Future._stub = MagicMock()
+        future_module.Future._stub.Execute.return_value = _QUEUED
         try:
             # The child only checks one attribute and exits, so forking with threads running is safe.
             with warnings.catch_warnings():

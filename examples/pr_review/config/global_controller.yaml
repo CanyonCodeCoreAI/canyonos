@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Global Controller Configuration — pull request review pipeline
+# Lists all agents that CanyonOS manages, and the one the endpoint serves.
+
+# Where every replica runs: `local` (this machine) or `EC2` (machines from `ec2:`).
+provider: local
+
+agents:
+  - name: TestRunnerAgent
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/test_runner_agent.py
+    functions:
+      - name: run
+        arguments:
+          - name: pr
+            type: dict
+        returns:
+          type: dict
+
+  - name: ReviewAgent
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/review_agent.py
+    requirements:
+      - boto3>=1.43.91,<2.0
+    functions:
+      - name: review
+        arguments:
+          - name: pr
+            type: dict
+          - name: tests
+            type: str
+        returns:
+          type: str
+
+  - name: MergeAgent
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/merge_agent.py
+    functions:
+      - name: merge
+        arguments:
+          - name: pr
+            type: dict
+          - name: review
+            type: str
+        returns:
+          type: dict
+
+  # The agent the endpoint serves over HTTP; it calls the agents above.
+  - name: Workflow
+    replicas: 1
+    resources:
+      cpu: 1
+      memory: 256
+    entrypoint: agents/workflow.py
+    functions:
+      - name: review
+        arguments:
+          - name: pr
+            type: dict
+        returns:
+          type: dict
+
+endpoint:
+  api_port: 8083
+  agent: Workflow
+  method: review
+
+dashboard_port: 8081 # Local dashboard's preferred port, defaults to 8081 if not filled
+
+otel:
+  destinations:
+    - name: local
+      protocol: http
+      endpoint: http://host.docker.internal:3000
+      headers: {}
+
+# Polling interval in seconds
+poll_interval: 4
+
+redis:
+  host: localhost
+  port: 6382
+  db: 0

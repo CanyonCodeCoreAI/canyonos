@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Policy-Based Routing Rules — pull request review pipeline
+# Each rule defines a match condition (key-value pairs checked against the
+# request context) and an access list of allowed agents.
+# Rules are evaluated most-specific-first (most matching keys wins).
+# An empty match ({}) acts as a default fallback.
+
+rules:
+  # Admins can reach every agent directly.
+  - match:
+      origin: admin
+    access: all
+
+  # Default fallback: the workflow and the agents it calls.
+  - match: {}
+    access:
+      - Workflow
+      - TestRunnerAgent
+      - ReviewAgent
+      - MergeAgent

@@ -79,6 +79,11 @@ else is a `400`. A finished request's keys expire after cleanup, but its result 
 for a day, then read from the dashboard's database. `GET /status` answers `404` only when
 neither has it.
 
+When governance refuses the root call (a required agent is down, a spend rule denies it,
+or the policy does), the call is never queued and `POST` answers
+`403` with `{"request_id", "error", "error_name"}` instead of `202`; `GET /status` for
+that `request_id` reports the same error.
+
 ## Answering a question
 
 An agent's `ask_human` call is routed to the endpoint's Local Controller, which keeps it

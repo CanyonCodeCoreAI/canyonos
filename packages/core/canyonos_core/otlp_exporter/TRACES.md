@@ -36,7 +36,7 @@ parent_span_id = parent_id
 | `errors`, `failed` | Error count / failure flag. |
 | `server_cost`, `token_cost`, `total_cost` | Cost figures: `server_cost` is the replica's hourly rate (saved in Redis by its provider at launch) times the span's duration, `token_cost` comes from `pricing.py`; only meaningful once finished. |
 | `cached_tokens`, `cache_hit_ratio` | Prompt-cache usage. |
-| `error_name`, `error_message` | Exception type/message (type is currently always NULL — CanyonOS records only a message). |
+| `error_name`, `error_message` | Exception type/message. The type is the name CanyonOS gives a failure it detects itself, such as `PolicyDenied`, `DependencyDown`, `SpendLimit` or `NoRunningReplica`; NULL for an exception raised in agent code. |
 | `name` | Stable logical `service.method` (the span name). |
 | `input`, `output` | Request args / result as JSON text. |
 | `sent` | Send-tracking, default `0`; set `1` only after delivery to every destination. |

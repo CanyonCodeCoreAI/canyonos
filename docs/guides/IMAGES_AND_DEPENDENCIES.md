@@ -63,10 +63,10 @@ dotted path or symlink, or copy the target in.
 After the sweep the build writes on top of it, and later writes win:
 
 - the platform's runtime modules at the context root (`future.py`,
-  `canyonos_context.py`, `canyonos_health.py`, `gateway_headers.py`,
-  `local_controller.py`, `local_controller_frontend.py`, `redis_client.py`,
-  `grpc_options.py`, `log_entry.py`, `gpu_metrics.py`, `log_handler.py`,
-  `human_input.py`)
+  `canyonos_context.py`, `canyonos_governance.py`, `canyonos_health.py`,
+  `gateway_headers.py`, `local_controller.py`, `local_controller_frontend.py`,
+  `redis_client.py`, `grpc_options.py`, `log_entry.py`, `gpu_metrics.py`,
+  `log_handler.py`, `human_input.py`)
 - the generated `*_pb2.py` and `*_pb2_grpc.py` modules
 - `canyonos_core/`, holding only the LLM gateway and an `__init__.py` that sets
   `__version__`

@@ -197,6 +197,8 @@ class Future(object):
             self.redis.sadd(f"request:{self.request_id}:futures", self.id)
         # If a future is calculated, this flag will be true
         self.calculated = False
+        # Why the local controller refused the call instead of queueing it, if it did.
+        self.refusal = None
         # Submit the request to the local controller
         self._submit_request()
 
@@ -255,6 +257,13 @@ class Future(object):
                     self.id,
                     record_error,
                 )
+            return
+        try:
+            reply = json.loads(self.response.response)
+        except ValueError:
+            return
+        if isinstance(reply, dict):
+            self.refusal = reply.get("refused")
 
     def _key(self):
         """Redis key for this future's hash."""

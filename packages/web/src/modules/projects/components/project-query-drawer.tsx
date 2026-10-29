@@ -459,6 +459,7 @@ function TraceTimelineRow({
         >
           {block.prompt_version}
         </span>
+        <BlockFailure block={block} />
       </span>
       <div className="relative h-full min-h-[2.125rem]">
         <div
@@ -487,5 +488,18 @@ function TraceTimelineRow({
         {formatBlockCostCents(block.total_cost)}
       </span>
     </div>
+  );
+}
+
+function BlockFailure({ block }: { readonly block: RequestTraceBlock }) {
+  if (!block.failed) return null;
+  return (
+    <span
+      className="text-destructive truncate text-[0.625rem]"
+      title={block.error_message ?? undefined}
+      data-testid="trace-block-failure"
+    >
+      {block.error_name ?? 'Failed'}
+    </span>
   );
 }

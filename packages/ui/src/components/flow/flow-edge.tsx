@@ -94,6 +94,7 @@ export function FlowEdge({
           stroke: color,
           strokeWidth: edgeStrokeWidth[edge_type],
           strokeDasharray: edgeDashArray[edge_type],
+          strokeLinecap: 'round',
         }}
       />
       {data?.label ? (

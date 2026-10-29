@@ -47,6 +47,8 @@ export const RequestTraceBlockSchema = z.object({
   total_cost: z.string(),
   errors: z.number().int().nonnegative(),
   failed: z.boolean(),
+  error_name: z.string().nullable(),
+  error_message: z.string().nullable(),
 });
 
 // The listing's rollup for one trace, plus what only the detail view needs: the project's medians

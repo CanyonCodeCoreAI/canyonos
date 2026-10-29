@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Model access — pull request review pipeline
+# Keyed by a label for each model. An agent missing from a model's agents list is
+# refused; a model not listed here is open to every agent.
+#
+# ReviewAgent calls BEDROCK_MODEL_ID, which defaults to llama3-70b, and
+# governance.yaml switches it to BEDROCK_SWITCH_MODEL_ID, which defaults to the
+# cheaper llama3-8b, once its spend passes the threshold. Neither model is capped.
+
+llama3-70b:
+  model_id: meta.llama3-70b-instruct-v1:0
+  agents:
+    ReviewAgent:
+
+llama3-8b:
+  model_id: meta.llama3-8b-instruct-v1:0
+  agents:
+    ReviewAgent:

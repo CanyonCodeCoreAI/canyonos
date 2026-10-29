@@ -41,6 +41,9 @@ def _bind_failure_marker(controller):
     controller._mark_future_failed = lambda *a, **k: (
         LocalController._mark_future_failed(controller, *a, **k)
     )
+    controller._request_context = lambda data: LocalController._request_context(
+        controller, data
+    )
     controller._unsent = 0
     controller._unsent_lock = threading.Lock()
     controller._forwarded = {}
@@ -255,36 +258,6 @@ class ErrorPropagationTests(unittest.TestCase):
         self.assertEqual(logs[0]["Attributes"]["exception.type"], "MalformedRequest")
         self.assertEqual(logs[0]["Attributes"]["agent.name"], "Endpoint")
 
-    def test_policy_denied_request_is_marked_failed_with_category(self):
-        redis = _FakeRedis()
-        controller = _bind_failure_marker(
-            SimpleNamespace(
-                redis=redis,
-                replica_id=None,
-                agent_name=None,
-                _my_address="localhost:50051",
-            )
-        )
-        controller._load_policy_rules = lambda: [
-            {"match": {"role": "admin"}, "access": ["SomeAgent"]}
-        ]
-        controller._check_policy = lambda service, context: (
-            LocalController._check_policy(controller, service, context)
-        )
-
-        LocalController._process_request(
-            controller,
-            {"service": "SomeAgent", "function": "do", "future_id": "future-2"},
-        )
-
-        self.assertEqual(
-            redis.hget("future:future-2", "error"),
-            "Policy denied the call to SomeAgent.do: no rule in policy.yaml allows it for this request.",
-        )
-        logs = json.loads(redis.hget("future:future-2", "logs"))
-        self.assertEqual(logs[0]["Attributes"]["exception.type"], "PolicyDenied")
-        self.assertIn("Policy denied", logs[0]["Body"])
-
     def test_no_endpoint_found_is_marked_failed_with_category(self):
         redis = _FakeRedis()
         controller = _bind_failure_marker(
@@ -294,10 +267,6 @@ class ErrorPropagationTests(unittest.TestCase):
                 agent_name=None,
                 _my_address="localhost:50051",
             )
-        )
-        controller._load_policy_rules = lambda: []
-        controller._check_policy = lambda service, context: (
-            LocalController._check_policy(controller, service, context)
         )
         controller._resolve_address = lambda service, request_id: None
 

@@ -215,7 +215,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             _metrics_interval=5,
             _status="healthy" if ready else "initializing",
             _status_lock=threading.Lock(),
-            _load_policy_rules=lambda reload=False: None,
+            _refresh_rules=lambda: None,
         )
         controller._metrics_stop_event = stop_event
         controller._watch_llm_gateway = lambda: None
@@ -387,7 +387,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                     _metrics_key="controller:localhost:50051:metrics",
                     _stateful=stateful,
                     servicer=SimpleNamespace(open_requests=set()),
-                    _check_policy=lambda service, context: True,
+                    _request_context=lambda data: {},
                     _executor=executor,
                     _executor_futures={},
                     _executor_futures_lock=threading.Lock(),
@@ -427,22 +427,6 @@ class LocalControllerMetricsTests(unittest.TestCase):
             redis.hgetall("controller:localhost:50051:metrics")["observed_at"], "100.0"
         )
         self.assertEqual(redis.get("controller:localhost:50051:status"), "initializing")
-
-    def test_reload_replaces_cached_policy_rules(self):
-        redis = _FakeRedis()
-        redis.set("policy:rules", json.dumps([{"match": {}, "access": "all"}]))
-        controller = SimpleNamespace(redis=redis, _policy_rules=None)
-
-        LocalController._load_policy_rules(controller)
-        redis.set("policy:rules", json.dumps([{"match": {}, "access": ["A"]}]))
-
-        self.assertEqual(
-            LocalController._load_policy_rules(controller)[0]["access"], "all"
-        )
-        self.assertEqual(
-            LocalController._load_policy_rules(controller, reload=True)[0]["access"],
-            ["A"],
-        )
 
     def test_metrics_loop_does_not_overwrite_failed(self):
         redis = _FakeRedis()

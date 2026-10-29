@@ -137,6 +137,21 @@ def create_app(agent, method, arguments, redis_client):
         canyonos_context.set_request_id(request_id)
         future = Future(parent=None, agent_name=agent, method=method, args=kwargs)
         redis_client.set(f"request:{request_id}:future", future.id)
+        if future.refusal:
+            logger.info(
+                "Refused request %s for %s.%s: %s",
+                request_id,
+                agent,
+                method,
+                future.refusal["error"],
+            )
+            return jsonify(
+                {
+                    "request_id": request_id,
+                    "error": future.refusal["error"],
+                    "error_name": future.refusal["error_name"],
+                }
+            ), 403
 
         logger.info(
             "Queued request %s for %s.%s with arguments %s",

@@ -975,6 +975,53 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     expect(res.data?.blocks[0]?.failed).toBe(true);
   });
 
+  test('a refused step carries its error name and message; a successful one carries null', async () => {
+    const token = await authenticate('req-trace-refused@canyonos.test');
+    const project_id = await create_project(token);
+    const message = 'MergeAgent requires TestRunnerAgent, which has no healthy replica right now.';
+    const start = ago(5 * MINUTE_MS);
+    await write_project_span(project_id, {
+      span_id: 'refused-1',
+      trace_id: 'refused',
+      name: 'MergeAgent.merge',
+      start_time_unix_nano: start,
+      end_time_unix_nano: plus(start, 10),
+      failed: true,
+      status_message: message,
+      events: [
+        {
+          time_unix_nano: String(plus(start, 10)),
+          name: 'exception',
+          attributes: { 'exception.message': message, 'exception.type': 'DependencyDown' },
+        },
+      ],
+    });
+    await write_project_span(project_id, {
+      span_id: 'refused-2',
+      trace_id: 'refused',
+      name: 'Planner.plan',
+      start_time_unix_nano: plus(start, 100),
+      end_time_unix_nano: plus(start, 200),
+    });
+
+    const res = await api.projects[project_id]!.requests['refused']!.get({
+      $query: range(MONTH_MINUTES),
+      $headers: bearer(token),
+    });
+    expect(res.error).toBeNull();
+
+    expect(res.data!.blocks[0]).toMatchObject({
+      failed: true,
+      error_name: 'DependencyDown',
+      error_message: message,
+    });
+    expect(res.data!.blocks[1]).toMatchObject({
+      failed: false,
+      error_name: null,
+      error_message: null,
+    });
+  });
+
   test('a payload that is not JSON is preserved as the text it was', async () => {
     const token = await authenticate('req-trace-text@canyonos.test');
     const project_id = await create_project(token);

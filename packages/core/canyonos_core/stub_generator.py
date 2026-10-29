@@ -64,6 +64,7 @@ _AGENT_FLAT_SOURCES = {
     "canyonos_context.py": ("controller", "canyonos_context.py"),
     "gateway_headers.py": ("controller", "gateway_headers.py"),
     # canyonos_ prefix: flat names are reserved against the app's own files.
+    "canyonos_governance.py": ("controller", "governance.py"),
     "canyonos_health.py": ("controller", "health.py"),
     "local_controller.py": ("controller", "local_controller.py"),
     "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),

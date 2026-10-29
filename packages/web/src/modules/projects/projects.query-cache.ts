@@ -13,6 +13,7 @@ export const projectQueryKeys = {
   prompt: (project_id: string, name: string) => ['projects', project_id, 'prompts', name] as const,
   scaling: (project_id: string) => ['projects', project_id, 'scaling'] as const,
   scalingAgents: (project_id: string) => ['projects', project_id, 'scaling', 'agents'] as const,
+  governance: (project_id: string) => ['projects', project_id, 'governance'] as const,
 };
 
 export async function retryProjectDetailLoader(

@@ -40,7 +40,6 @@ def _endpoint_controller(redis):
         agent_name=None,
         _my_address="endpoint-0:50051",
         _executor=Mock(),
-        _check_policy=lambda agent_name, context: True,
         _resolve_address=lambda agent_name, request_id: "endpoint-0:50051",
         _get_remote_stub=Mock(),
         _forwarded={},
@@ -50,6 +49,7 @@ def _endpoint_controller(redis):
         "_mark_future_failed",
         "_fail_waiting_questions",
         "_fan_out_to_consumers",
+        "_request_context",
     ):
         setattr(controller, name, getattr(LocalController, name).__get__(controller))
     return controller
@@ -257,17 +257,6 @@ class AskHumanTests(unittest.TestCase):
             ),
         )
         self.assertEqual(redis.lrange("request:r1:waiting"), [])
-
-    def test_policy_never_blocks_the_endpoint(self):
-        controller = SimpleNamespace(
-            _load_policy_rules=lambda: [
-                {"match": {"role": "admin"}, "access": ["SomeAgent"]}
-            ]
-        )
-
-        self.assertTrue(
-            LocalController._check_policy(controller, "endpoint", {"role": "admin"})
-        )
 
 
 class FinishedRequestTests(unittest.TestCase):

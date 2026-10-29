@@ -18,13 +18,23 @@ import { config } from '@core/env';
 
 type AttributeValue = number | string | boolean | Record<string, unknown>;
 
+/** An event as `otel_spans.events` stores it: attributes flattened to dotted keys. */
+export interface SpanEventFixture {
+  readonly time_unix_nano: string;
+  readonly name: string;
+  readonly attributes: Record<string, AttributeValue>;
+}
+
 export interface SpanFixture {
   readonly span_id: string;
   readonly trace_id?: string;
+  readonly parent_span_id?: string;
   readonly name?: string;
   readonly start_time_unix_nano?: bigint;
   readonly end_time_unix_nano?: bigint;
   readonly failed?: boolean;
+  readonly status_message?: string;
+  readonly events?: readonly SpanEventFixture[];
   readonly model?: string;
   readonly prompt_name?: string;
   readonly prompt_version?: string;
@@ -60,11 +70,14 @@ async function insert_span(span: SpanFixture, attributes: Record<string, unknown
   await db.insert(otelSpans).values({
     span_id: span.span_id,
     trace_id: span.trace_id ?? `trace-${span.span_id}`,
+    parent_span_id: span.parent_span_id ?? null,
     name: span.name ?? span.span_id,
     status_code: span.failed === true ? STATUS_CODE.ERROR : STATUS_CODE.UNSET,
+    status_message: span.status_message ?? null,
     start_time_unix_nano: start,
     end_time_unix_nano: span.end_time_unix_nano ?? start + 1_000_000n,
     attributes: { ...attributes, ...Object.fromEntries(attribute_entries(span)) },
+    events: span.events ?? [],
     input: span.input ?? null,
     output: span.output ?? null,
   });

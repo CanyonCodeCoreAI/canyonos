@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq } from 'drizzle-orm';
+import { eq, isNotNull } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { projects } from '@api/db/schema';
@@ -14,6 +14,16 @@ export interface ProjectRegistration {
 }
 
 export const canyonos_repo = {
+  async list_registrations(): Promise<{ project_id: string; redis_port: number }[]> {
+    const rows = await db
+      .select({ project_id: projects.id, redis_port: projects.redis_port })
+      .from(projects)
+      .where(isNotNull(projects.redis_port));
+    return rows.flatMap(({ project_id, redis_port }) =>
+      redis_port === null ? [] : [{ project_id, redis_port }]
+    );
+  },
+
   async find_redis_port(project_id: string): Promise<number | null> {
     const [row] = await db
       .select({ redis_port: projects.redis_port })

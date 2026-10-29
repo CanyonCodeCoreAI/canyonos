@@ -273,11 +273,29 @@ sorts rules by how many keys `match` has, most specific first, and takes the
 first rule whose keys all equal the request's `_context`. `access: all`
 allows everything; otherwise the agent has to be listed. Calls to
 `endpoint`, which `ask_human` makes, are always allowed. No matching rule
-denies. A denied call fails after the request was accepted, with
-`Policy denied the call to <Agent>.<method>`.
+denies. A denied call never runs: it fails with
+`PolicyDenied: Policy denied the call to <Agent>.<method>`.
 
 The file is not schema-checked. An empty file, or `rules:` that is not a list
 of mappings, fails the deploy with an error naming the file.
+
+`config/governance.yaml` adds two per-agent rules, which the dashboard edits
+afterwards. `requires: [OtherAgent]` refuses calls to the agent while
+`OtherAgent` has no healthy replica, with `error_name` `DependencyDown`.
+`spend.rules` lists `{above_usd, action}` thresholds on the agent's spend since
+`spend.since` (the deploy, when the file leaves it out); the highest threshold
+passed wins. `action: {kind: deny}` refuses calls with `SpendLimit`;
+`{kind: switch_model, model: <id>}` sends the agent's LLM calls to that model.
+A policy refusal has `error_name` `PolicyDenied`.
+
+Every refusal is decided once, by the controller on the machine that makes the
+call, from rules it re-reads each poll. A refused call is never queued and its
+error text starts with its `error_name`; the agent that made it gets that error
+from `.value()`. A refused root call is answered `403` with
+`{"request_id", "error", "error_name"}` instead of `202`, and its `/status`
+reports the same error. The governance file seeds only agents the
+stored rules lack, so dashboard edits survive a redeploy; an invalid file fails
+the deploy.
 
 ## Stopping and cleaning
 

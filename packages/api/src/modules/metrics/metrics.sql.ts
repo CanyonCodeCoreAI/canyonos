@@ -22,6 +22,10 @@ export const spanFailed = (alias: string): string =>
 
 export const spanProjectId = (alias: string): string => attrText(alias, PROJECT_ID_ATTRIBUTE);
 
+// The receiver stores event attributes flat, so `exception.type` is one quoted key, not a path.
+export const spanErrorType = (alias: string): string =>
+  `(jsonb_path_query_first(${alias}.events, '$[*] ? (@.name == "exception").attributes."exception.type"') #>> '{}')`;
+
 export const spanStart = (alias: string): string =>
   `to_timestamp(${alias}.start_time_unix_nano / 1e9)`;
 

@@ -15,6 +15,7 @@ import {
   spanCost,
   spanDurationMs,
   spanErrorCount,
+  spanErrorType,
   spanFailed,
   spanInput,
   spanInputTokens,
@@ -240,6 +241,8 @@ export const requests_repo = {
           coalesce(${sql.raw(spanCost('s'))}, 0)::numeric(20, 10)::text as total_cost,
           coalesce(${sql.raw(spanErrorCount('s'))}, 0)::float8 as errors,
           ${sql.raw(spanFailed('s'))} as failed,
+          ${sql.raw(spanErrorType('s'))} as error_name,
+          s.status_message as error_message,
           ${sql.raw(spanInput('s'))} as input,
           ${sql.raw(spanOutput('s'))} as output,
           s.start_time_unix_nano,
@@ -280,7 +283,9 @@ export const requests_repo = {
             'output_token_count', b.output_token_count,
             'total_cost', b.total_cost,
             'errors', b.errors,
-            'failed', b.failed
+            'failed', b.failed,
+            'error_name', b.error_name,
+            'error_message', b.error_message
           ) order by b.start_time_unix_nano, b.future_id)
           from block_rows b
         ), '[]'::json) as blocks

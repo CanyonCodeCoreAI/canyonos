@@ -30,6 +30,7 @@ class EndpointHumanReplyTests(unittest.TestCase):
         ).test_client()
         patcher = patch("canyonos_core.endpoint.app.Future")
         self.future = patcher.start()
+        self.future.return_value.refusal = None
         self.addCleanup(patcher.stop)
         self.write = self.future._get_stub.return_value.WriteResult
 

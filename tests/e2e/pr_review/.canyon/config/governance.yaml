@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Governance rules — pull request review pipeline
+# Seeds the rules at deploy; the dashboard's edits win over this file afterwards.
+# MergeAgent is refused while TestRunnerAgent has no running replica, and
+# ReviewAgent's LLM calls move to BEDROCK_SWITCH_MODEL_ID, a cheaper model, once
+# it has spent more than $5 since the deploy.
+
+agents:
+  MergeAgent:
+    requires: [TestRunnerAgent]
+  ReviewAgent:
+    spend:
+      rules:
+        - above_usd: 5
+          action: { kind: switch_model, model: "${BEDROCK_SWITCH_MODEL_ID}" }

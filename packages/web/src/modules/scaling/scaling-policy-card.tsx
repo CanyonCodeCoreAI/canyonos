@@ -68,6 +68,30 @@ const NEW_POLICY: ScalingPolicy = {
   ...POLICY_KINDS.throughput.defaults,
 };
 
+/** What one policy means for the project, said wherever the policy is edited. */
+export const SCALING_SCOPE =
+  'One policy for the whole project. Each agent is measured on its own load and adds or removes its own replicas. The endpoint container is never scaled.';
+
+/** The stored policy in one line for a toolbar: "throughput · up > 10 · down < 1 · 1–5 replicas". */
+export function policySummary(policy: ScalingStatus): string {
+  switch (policy.status) {
+    case 'none':
+      return 'No scaling policy';
+    case 'invalid':
+      return 'Policy invalid';
+    case 'applied': {
+      const { metric, scale_up_above, scale_down_below, min_replicas, max_replicas } =
+        policy.policy;
+      return [
+        POLICY_KINDS[kindOf(metric)].noun,
+        `up > ${scale_up_above}`,
+        `down < ${scale_down_below}`,
+        `${min_replicas}–${max_replicas} replicas`,
+      ].join(' · ');
+    }
+  }
+}
+
 /**
  * The project's one policy. The server says whether one is stored and whether the controller
  * accepts it; the card opens into an editor that mounts fresh each time, and the screen keys the

@@ -61,6 +61,7 @@ exclude = [
 allowed-unresolved-imports = [
     # These names are the deliberate flat-module fallbacks used in container images.
     "gateway_headers",
+    "canyonos_governance",
     "gpu_metrics",
     "metric_convert",
     "otel_reader",

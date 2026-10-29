@@ -48,6 +48,10 @@
     "./scaling": {
       "types": "./dist/scaling.d.ts",
       "import": "./dist/scaling.js"
+    },
+    "./governance": {
+      "types": "./dist/governance.d.ts",
+      "import": "./dist/governance.js"
     }
   },
   "scripts": {

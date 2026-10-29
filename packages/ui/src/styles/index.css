@@ -75,9 +75,13 @@
     --flow-agent: #4a86c5;
     --flow-tool: #c79a3e;
     --flow-edge-route: #a9a99d;
-    --flow-edge-call: #cdcdc3;
+    --flow-edge-call: #b3b3a8;
     --flow-edge-loop: #c08a2e;
     --flow-edge-return: #2f9e5e;
+    --flow-canvas: #f5f5f1;
+    --flow-grid: color-mix(in srgb, #8a8a80 45%, transparent);
+    --flow-node-edge: color-mix(in srgb, #1c1c17 11%, transparent);
+    --flow-node-edge-hover: color-mix(in srgb, #1c1c17 20%, transparent);
 
     --sidebar: #f7f7f7;
     --sidebar-foreground: #44443b;
@@ -146,9 +150,13 @@
     --flow-agent: #62a9cf;
     --flow-tool: #d9af52;
     --flow-edge-route: #8a8a80;
-    --flow-edge-call: #6a6a60;
+    --flow-edge-call: #5c5c55;
     --flow-edge-loop: #d19a3e;
     --flow-edge-return: #34b06a;
+    --flow-canvas: #0c0c0c;
+    --flow-grid: color-mix(in srgb, #a0a0a0 30%, transparent);
+    --flow-node-edge: color-mix(in srgb, #ffffff 9%, transparent);
+    --flow-node-edge-hover: color-mix(in srgb, #ffffff 17%, transparent);
 
     --sidebar: #171717;
     --sidebar-foreground: #e0e0e0;
@@ -236,6 +244,8 @@
   --color-flow-edge-call: var(--flow-edge-call);
   --color-flow-edge-loop: var(--flow-edge-loop);
   --color-flow-edge-return: var(--flow-edge-return);
+  --color-flow-canvas: var(--flow-canvas);
+  --color-flow-grid: var(--flow-grid);
 
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -418,17 +428,57 @@
   }
 }
 
+/* A flow card draws its edge as a hairline shadow instead of a border, so the edge, the hover
+   lift and the selection ring share one property and one transition, and a tone recolours the
+   edge by setting `--flow-node-edge`. */
+.flow-node-card {
+  --flow-node-accent: var(--flow-agent);
+  box-shadow:
+    0 0 0 1px var(--flow-node-edge),
+    var(--elevation-xs);
+}
+.flow-node-card[data-kind='workflow'] {
+  --flow-node-accent: var(--flow-workflow);
+}
+.flow-node-card[data-kind='tool'] {
+  --flow-node-accent: var(--flow-tool);
+}
+@media (hover: hover) and (pointer: fine) {
+  .react-flow__node:hover .flow-node-card:not([data-selected='true']) {
+    box-shadow:
+      0 0 0 1px var(--flow-node-edge-hover),
+      var(--elevation-md);
+  }
+}
+.flow-node-card[data-selected='true'] {
+  box-shadow:
+    0 0 0 1px var(--flow-node-accent),
+    0 0 0 0.25rem color-mix(in srgb, var(--flow-node-accent) 16%, transparent),
+    var(--elevation-md);
+}
+.react-flow__node:focus {
+  outline: none;
+}
+.react-flow__node:focus-visible .flow-node-card {
+  box-shadow:
+    0 0 0 1px var(--flow-node-accent),
+    0 0 0 0.1875rem var(--background),
+    0 0 0 0.3125rem var(--ring);
+}
+
 /* React Flow ships its own control chrome; re-skin it as a translucent, token-driven panel so the
    zoom controls read as part of the app in both light and dark. Scoped under `.react-flow` to
    outrank the vendored `.react-flow__controls*` rules. */
 .react-flow .react-flow__controls {
   gap: 0.125rem;
   padding: 0.1875rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background-color: color-mix(in srgb, var(--card) 72%, transparent);
+  border: none;
+  border-radius: calc(var(--radius-sm) + 0.1875rem);
+  background-color: color-mix(in srgb, var(--card) 78%, transparent);
   backdrop-filter: blur(8px) saturate(150%);
-  box-shadow: var(--elevation-sm);
+  box-shadow:
+    0 0 0 1px var(--flow-node-edge),
+    var(--elevation-sm);
 }
 
 .react-flow .react-flow__controls-button {
@@ -437,12 +487,25 @@
   border: none;
   border-radius: var(--radius-sm);
   background-color: transparent;
-  color: var(--foreground);
-  transition: background-color 0.15s ease;
+  color: var(--muted-foreground);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s var(--ease-snappy);
 }
 
 .react-flow .react-flow__controls-button:hover {
   background-color: var(--muted);
+  color: var(--foreground);
+}
+
+.react-flow .react-flow__controls-button:active {
+  transform: scale(0.96);
+}
+
+.react-flow .react-flow__controls-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
 
 .react-flow .react-flow__controls-button svg {

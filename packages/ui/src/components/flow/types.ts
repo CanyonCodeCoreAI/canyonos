@@ -5,6 +5,8 @@ export type FlowAnchor = 'top' | 'bottom' | 'left' | 'right';
 export type FlowNodeKind = 'workflow' | 'agent' | 'tool';
 
 export type FlowNodeChip = { kind: 'components' | 'tools' | 'routes'; label: string };
+export type FlowNodeTone = 'ok' | 'warning' | 'down';
+export type FlowNodeFooterRow = { icon: 'requires' | 'spend'; label: string };
 
 export type FlowNodeData = {
   kind: FlowNodeKind;
@@ -12,6 +14,8 @@ export type FlowNodeData = {
   role: string;
   tag: string | null;
   chips: readonly FlowNodeChip[];
+  footer: readonly FlowNodeFooterRow[];
+  tone?: FlowNodeTone;
 };
 
 export interface FlowNodeSpec {

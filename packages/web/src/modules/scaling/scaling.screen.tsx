@@ -18,7 +18,7 @@ import { TooltipProvider } from '@repo/ui/shadcn/tooltip';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { DASHBOARD_POLL_INTERVAL_MS } from '@/modules/projects/projects.query-cache';
-import { ScalingPolicyCard } from '@/modules/scaling/scaling-policy-card';
+import { SCALING_SCOPE, ScalingPolicyCard } from '@/modules/scaling/scaling-policy-card';
 import {
   scalingAgentsQueryOptions,
   scalingErrorMessage,
@@ -49,8 +49,7 @@ export function ScalingScreen({ project_id }: { readonly project_id: string }) {
           Scaling
         </h1>
         <p className="text-muted-foreground max-w-prose text-sm" data-testid="scaling-scope">
-          One policy for the whole project. Each agent is measured on its own load and adds or
-          removes its own replicas. The endpoint container is never scaled.
+          {SCALING_SCOPE}
         </p>
       </header>
       <ScalingBody project_id={project_id} query={query} />

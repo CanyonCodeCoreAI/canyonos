@@ -488,6 +488,8 @@ const REQUEST_TRACE: RequestTrace = {
       total_cost: '0.000110',
       errors: 0,
       failed: false,
+      error_name: null,
+      error_message: null,
     },
     {
       future_id: 'trace-classify',
@@ -503,6 +505,8 @@ const REQUEST_TRACE: RequestTrace = {
       total_cost: '0.000980',
       errors: 0,
       failed: false,
+      error_name: null,
+      error_message: null,
     },
     {
       future_id: 'trace-retrieve',
@@ -518,6 +522,8 @@ const REQUEST_TRACE: RequestTrace = {
       total_cost: '0.002300',
       errors: 0,
       failed: false,
+      error_name: null,
+      error_message: null,
     },
     {
       future_id: 'trace-extract',
@@ -533,6 +539,8 @@ const REQUEST_TRACE: RequestTrace = {
       total_cost: '0.998000',
       errors: 0,
       failed: false,
+      error_name: null,
+      error_message: null,
     },
     {
       future_id: 'trace-validate',
@@ -548,6 +556,8 @@ const REQUEST_TRACE: RequestTrace = {
       total_cost: '0.003400',
       errors: 0,
       failed: false,
+      error_name: null,
+      error_message: null,
     },
     {
       future_id: 'trace-review',
@@ -563,6 +573,8 @@ const REQUEST_TRACE: RequestTrace = {
       total_cost: '1.026000',
       errors: 4,
       failed: false,
+      error_name: null,
+      error_message: null,
     },
     {
       future_id: 'trace-emit',
@@ -578,6 +590,8 @@ const REQUEST_TRACE: RequestTrace = {
       total_cost: '0.000110',
       errors: 0,
       failed: false,
+      error_name: null,
+      error_message: null,
     },
   ],
 };
@@ -2412,6 +2426,27 @@ test.describe('query trace drawer', () => {
     await expect(page.getByTestId(`${TRACE_DRAWER}-timeline`)).toHaveCount(0);
     // The query's own totals are known even when its blocks are not.
     await expect(ribbonCell(page, 'cost')).toContainText('$2.046');
+  });
+
+  test('a refused step names its error, with the message on hover', async ({ page }) => {
+    await authenticate(page);
+    const message = 'Dependency inventory is down; refusing to start fulfill';
+    await mockProjectCost(page, {
+      trace: {
+        ...REQUEST_TRACE,
+        blocks: REQUEST_TRACE.blocks.map((block) =>
+          block.future_id === 'trace-retrieve'
+            ? { ...block, failed: true, error_name: 'DependencyDown', error_message: message }
+            : block
+        ),
+      },
+    });
+    await openTrace(page);
+
+    const failure = page.getByTestId('trace-block-failure');
+    await expect(failure).toHaveCount(1);
+    await expect(failure).toHaveText('DependencyDown');
+    await expect(failure).toHaveAttribute('title', message);
   });
 
   test('a prose answer reads as prose, and a blank payload as missing', async ({ page }) => {
