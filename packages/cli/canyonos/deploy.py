@@ -20,6 +20,7 @@ to it on demand.
 """
 
 import json
+import os
 import queue
 import re
 import shlex
@@ -30,6 +31,7 @@ import time
 import uuid
 from collections import deque
 
+from dotenv import dotenv_values
 from rich.panel import Panel
 from rich.text import Text
 
@@ -40,6 +42,8 @@ from canyonos.constants import (
     endpoint_api_port,
     existing_config_path,
     load_yaml,
+    project_env_path,
+    project_root,
     round_trip_yaml,
     write_config,
 )
@@ -51,7 +55,13 @@ from canyonos.dashboard_stack import (
 )
 from canyonos.gc import GCError, deploy_status, deployed_endpoint, post_deploy
 from canyonos.theme import GREEN, WHITE
-from canyonos.init import docker_env, load_state, remember_api_port, run_init
+from canyonos.init import (
+    _ensure_docker_running,
+    docker_env,
+    load_state,
+    remember_api_port,
+    run_init,
+)
 from canyonos.os_support import is_terminal
 from canyonos.resources import configure_resources
 from canyonos.serve import (
@@ -62,6 +72,7 @@ from canyonos.serve import (
 from canyonos.stop import stop_project
 from canyonos.sync import project_fingerprints, run_sync, save_deployed_fingerprints
 from canyonos.usage.consent import offer_after_first_deploy
+from canyonos.validate import _print_findings, collect_findings
 
 # Test seams: a failed-build test monkeypatches both down so it doesn't have to
 # wait out the real poll/grace windows.
@@ -325,6 +336,33 @@ def save_project_id(config_path):
     write_config(config_path, data, yaml_rt)
 
 
+def _warn_unset_example_keys():
+    """Warn about keys `.env.example` lists that `.env` leaves out or empty, since
+    `.env` is the only file the agents get their keys from."""
+    values = dotenv_values(project_env_path())
+    example = dotenv_values(os.path.join(project_root(), ".env.example"))
+    unset = [key for key in example if not values.get(key)]
+    if unset:
+        ui.warn(
+            f"Missing or empty in .env: {', '.join(unset)}. "
+            "Agents that need them will fail."
+        )
+
+
+def _stop_on_project_errors():
+    """Run `canyonos validate`'s checks on the project and raise if it breaks any, or
+    if they can't run, so nothing is built."""
+    root = project_root()
+    with ui.status("Checking the project..."):
+        findings = collect_findings(root)
+    if findings:
+        _print_findings(findings, root)
+        raise RuntimeError(
+            "Deploy stopped: fix the project errors `canyonos validate` reports, "
+            "then rerun."
+        )
+
+
 def run_deploy(
     serve=True,
     verbose=False,
@@ -336,6 +374,10 @@ def run_deploy(
     its own readiness check instead of this command's own output.
     """
     config_path = existing_config_path()
+    _warn_unset_example_keys()
+    # Before the project check, which runs in the core image when core isn't installed.
+    _ensure_docker_running()
+    _stop_on_project_errors()
 
     # `canyonos test` (quiet) deploys the config as-is, without the picker.
     if not quiet and not configure_resources(config_path):

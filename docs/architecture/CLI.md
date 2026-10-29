@@ -92,7 +92,10 @@ INPUT: canyonos deploy [optional: --serve true|false, -v/--verbose]
 ```
  canyonos deploy
    │
-   ├─ 1. start fresh   → ensure Docker up, tear down any old controller,
+   ├─ 0. check         → warn on .env.example keys unset in .env,
+   │                      ensure Docker up, stop on `canyonos validate` findings
+   │
+   ├─ 1. start fresh   → tear down any old controller,
    │                      pull + run the GC container
    │
    ├─ 2. ship code     → docker cp your project into /workspace

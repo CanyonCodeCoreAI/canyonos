@@ -53,7 +53,7 @@ OPENAI_API_KEY=sk-...
 
 Using one of our examples? Copy its `.env.example` to `.env` and fill in the values there instead.
 
-CanyonOS passes `.env` to every agent replica except the endpoint. Without them, the test fails at the first agent that needs one.
+CanyonOS passes `.env` to every agent replica except the endpoint. Without them, the test fails at the first agent that needs one. `canyonos deploy` warns about any key in `.env.example` that is missing or empty in `.env`.
 
 > **Tip:** Never write secrets in your code or YAML, and keep `.env` out of git. Read them in your agent code with `os.environ["OPENAI_API_KEY"]`, and in config files with `${OPENAI_API_KEY}`.
 

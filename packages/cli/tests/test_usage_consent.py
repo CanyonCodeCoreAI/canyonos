@@ -290,6 +290,8 @@ def deployable(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "global_controller.yaml").touch()
+    monkeypatch.setattr(deploy_cmd, "_ensure_docker_running", lambda: None)
+    monkeypatch.setattr(deploy_cmd, "collect_findings", lambda _root: [])
     monkeypatch.setattr(deploy_cmd, "run_init", lambda **_k: None)
     monkeypatch.setattr(deploy_cmd, "save_project_id", lambda _path: None)
     monkeypatch.setattr(deploy_cmd, "save_deployed_fingerprints", lambda _f: None)

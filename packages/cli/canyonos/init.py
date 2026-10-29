@@ -581,8 +581,6 @@ def run_init(banner=True, image=GC_IMAGE):
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
-    # Before stop_existing(), which shells out to docker itself.
-    _ensure_docker_running()
     # Read before stop_existing() removes the state, so a redeploy keeps its ports.
     saved = _saved_state()
     preferred = saved.get("port") or GC_CONTAINER_PORT

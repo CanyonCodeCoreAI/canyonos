@@ -159,6 +159,13 @@ def _in_image(root):
     return findings
 
 
+def collect_findings(root):
+    """Return every contract the folder `root` breaks, checked here when core is
+    installed, else inside the core image. Raises RuntimeError when it can't be checked."""
+    findings = _in_process(root)
+    return _in_image(root) if findings is None else findings
+
+
 # ------------------------------------------------------------------ #
 #  Output                                                             #
 # ------------------------------------------------------------------ #
@@ -199,9 +206,7 @@ def run_validate(root=None, as_json=False):
             if not os.path.isdir(root):
                 # Checked before either path: `docker run -v` would create it.
                 raise RuntimeError(f"{root} is not a directory.")
-            findings = _in_process(root)
-            if findings is None:
-                findings = _in_image(root)
+            findings = collect_findings(root)
         except RuntimeError as e:
             # Nothing was checked, so the reason goes where the findings would
             # have, rather than an empty run that reads as a pass.

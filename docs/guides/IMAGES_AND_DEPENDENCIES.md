@@ -92,7 +92,8 @@ synchronous methods matching its `functions` (`CANYON-ADAPTER-CLASS`,
 package `__init__.py` does not re-export from a stubbed entrypoint
 (`CANYON-PACKAGE-REEXPORT`), and the root-name collision above
 (`CANYON-FLAT-COLLISION`). Exit code 0 means nothing found, 1 means findings,
-2 means the check could not run.
+2 means the check could not run. `canyonos deploy` runs the same checks first,
+and stops before building anything if they find a problem or cannot run.
 
 Packaging errors, a wrong PyPI name, a missing distribution: those surface in
 the image build inside `canyonos deploy`, not here.

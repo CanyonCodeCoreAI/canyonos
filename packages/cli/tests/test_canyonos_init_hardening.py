@@ -66,7 +66,6 @@ def test_failed_state_write_preserves_the_previous_state(monkeypatch, tmp_path):
 
 def test_state_save_failure_removes_the_new_container(monkeypatch):
     calls = []
-    monkeypatch.setattr(init_cmd, "_ensure_docker_running", lambda: None)
     monkeypatch.setattr(init_cmd, "stop_existing", lambda: None)
     monkeypatch.setattr(init_cmd, "_pull_image", lambda _image: None)
     monkeypatch.setattr(init_cmd, "existing_config_path", lambda: "gc.yaml")
