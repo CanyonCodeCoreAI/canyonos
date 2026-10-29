@@ -6,6 +6,9 @@ project's Redis, global controller, endpoint and agents in the project's namespa
 The cluster builds the agents' images itself and pushes them to your registry; the
 CLI only hands it the project. Nothing else on the cluster changes.
 
+To run it all on a laptop, on a local kind cluster, see
+[Kubernetes on kind](../contributing/DEVELOPMENT.md#kubernetes-on-kind).
+
 ## Install the operator
 
 A cluster admin installs it once, with Helm:

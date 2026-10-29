@@ -300,25 +300,35 @@ def wait_for_build(
         sleep(2)
 
 
-def upload_project(namespace, pod, archive, attempts=10, sleep=time.sleep):
-    """Send the project to the build pod through a port-forward (no exec rights
-    needed); the pod starts building once it is in."""
+def _port_forward(namespace, pod):
+    """A port-forward to the build pod's upload port, and the local URL it serves."""
     forward = subprocess.Popen(
         ["kubectl", "port-forward", "-n", namespace, f"pod/{pod}", f":{UPLOAD_PORT}"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
+    line = forward.stdout.readline()
+    match = re.search(r"127\.0\.0\.1:(\d+)", line)
+    if not match:
+        forward.terminate()
+        raise RuntimeError(f"Could not reach the build pod {pod}: {line.strip()}")
+    return forward, f"http://127.0.0.1:{match.group(1)}/"
+
+
+def upload_project(namespace, pod, archive, attempts=10, sleep=time.sleep):
+    """Send the project to the build pod through a port-forward (no exec rights
+    needed); the pod starts building once it is in."""
+    forward, url = _port_forward(namespace, pod)
     try:
-        line = forward.stdout.readline()
-        match = re.search(r"127\.0\.0\.1:(\d+)", line)
-        if not match:
-            raise RuntimeError(f"Could not reach the build pod {pod}: {line.strip()}")
-        url = f"http://127.0.0.1:{match.group(1)}/"
         # Straight to the port-forward: never through a proxy from HTTP_PROXY or the
         # Windows or macOS system settings.
         direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for attempt in range(attempts):
+            # kubectl ends a port-forward that loses its connection to the pod (a busy
+            # laptop, a blip of the API server); retrying it would only be refused.
+            if forward.poll() is not None:
+                forward, url = _port_forward(namespace, pod)
             try:
                 request = urllib.request.Request(url, data=archive, method="PUT")
                 with direct.open(request, timeout=300):

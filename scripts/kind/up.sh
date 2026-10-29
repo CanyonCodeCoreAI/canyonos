@@ -2,22 +2,30 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Create the local CanyonOS Kubernetes cluster: kind (1 control plane + 1 worker),
-# Calico for NetworkPolicy, metrics-server, Pod Security `restricted` enforced in every
-# namespace, and a registry on localhost:5001 that the nodes pull from the same way
-# EKS nodes pull from ECR or OpenShift nodes from the internal registry.
+# Make the local CanyonOS Kubernetes cluster, ready to deploy to: kind (1 control plane
+# and, by default, 1 worker), Calico for NetworkPolicy, metrics-server, Pod Security
+# `restricted` enforced in every namespace, a registry on localhost:5001 that the nodes
+# pull from the same way EKS nodes pull from ECR or OpenShift nodes from the internal
+# registry, and then CanyonOS itself (scripts/kind/operator.sh): the operator, the
+# in-cluster image builder and the dashboard, from the images `bun run canyonos:dev`
+# builds from this checkout.
 #
-# Usage: scripts/kind/up.sh [--verify]
-#   --verify  push a test image, run it as a restricted pod, check that a pod which
-#             breaks the restricted profile is rejected and that a deny-all
-#             NetworkPolicy is enforced.
+# Usage: scripts/kind/up.sh [--no-operator] [--verify]
+#   (nothing)      CanyonOS built from this checkout (its images built first if missing).
+#   --no-operator  Only the cluster and its registry.
+#   --verify       Push a test image, run it as a restricted pod, check that a pod
+#                  which breaks the restricted profile is rejected and that a
+#                  deny-all NetworkPolicy is enforced.
 # Environment:
+#   CANYONOS_KIND_WORKERS  Worker nodes (default 1), set when the cluster is made. More
+#                    nodes add no CPU or memory (they share Docker's); they let a project
+#                    spread its pods over nodes, as on a real cluster.
 #   KIND_NODE_IMAGE  Kubernetes version to run (a kindest/node image), to test against
 #                    the version a target cluster runs.
 #   CANYONOS_KIND_CLUSTER  The cluster's name (default canyonos).
 #   CANYONOS_KIND_CONFIG  Where the API server's Pod Security file is kept for the
 #                    cluster's lifetime (default ~/.canyonos/kind).
-# Safe to re-run: existing pieces are kept.
+# Safe to re-run: existing pieces are kept, and CanyonOS is upgraded in place.
 set -euo pipefail
 # Git Bash on Windows rewrites /etc/... arguments into Windows paths.
 export MSYS_NO_PATHCONV=1
@@ -35,15 +43,50 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && { pwd -W 2>/dev/null || pwd; })"
 # The API server reads its Pod Security file on every start, so it lives outside the
 # repository: a branch without scripts/kind must not stop the cluster from starting.
 CONFIG_DIR="${CANYONOS_KIND_CONFIG:-${HOME}/.canyonos/kind}"
+WORKERS="${CANYONOS_KIND_WORKERS:-1}"
 
 log() { printf '\n== %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing '$1' on PATH: $2" >&2; exit 1; }; }
 native() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
+usage() { sed -n '/^# Usage:/,/^# Safe to re-run/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+verify=""
+operator="checkout"  # checkout or none
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --verify) verify=1 ;;
+    --no-operator) operator="none" ;;
+    *) usage ;;
+  esac
+  shift
+done
+case "${WORKERS}" in ''|*[!0-9]*|0) echo "CANYONOS_KIND_WORKERS must be 1 or more" >&2; exit 2 ;; esac
 
 need docker "install Docker Desktop or Docker Engine"
 need kind "https://kind.sigs.k8s.io/docs/user/quick-start/#installation"
 need kubectl "https://kubernetes.io/docs/tasks/tools/"
 docker info >/dev/null 2>&1 || { echo "Docker is not running." >&2; exit 1; }
+if [ "${operator}" = "checkout" ]; then
+  # CanyonOS is installed from the images `bun run canyonos:dev` builds: build them now
+  # when this checkout has none yet.
+  for name in core api web; do
+    if ! docker image inspect "canyonos-${name}:dev" >/dev/null 2>&1; then
+      need bun "https://bun.sh: it builds CanyonOS's images (bun run canyonos:dev)"
+      log "CanyonOS's images from this checkout (bun run canyonos:dev --images-only)"
+      (cd "$(dirname "${BASH_SOURCE[0]}")/../.." && bun run canyonos:dev --images-only)
+      break
+    fi
+  done
+fi
+
+# Every node, pod and image build shares what Docker has, whatever the node count.
+read -r cpus memory <<< "$(docker info --format '{{.NCPU}} {{.MemTotal}}')"
+memory_mib=$((memory / 1024 / 1024))
+echo "Docker has ${cpus} CPUs and $((memory_mib / 1024)) GiB of memory"
+if [ "${cpus}" -lt 4 ] || [ "${memory_mib}" -lt 7500 ]; then
+  echo "Warning: CanyonOS with its builder and dashboard wants at least 4 CPUs and 8 GB." >&2
+  echo "Give Docker more (Docker Desktop: Settings > Resources), or deploys may wait for room." >&2
+fi
 
 log "Registry ${REGISTRY_NAME} on localhost:${REGISTRY_PORT}"
 if [ "$(docker inspect -f '{{.State.Running}}' "${REGISTRY_NAME}" 2>/dev/null || true)" != "true" ]; then
@@ -54,13 +97,19 @@ fi
 
 log "Cluster ${CLUSTER_NAME} (${NODE_IMAGE%@*})"
 if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
-  echo "already exists"
+  have="$(kind get nodes --name "${CLUSTER_NAME}" | grep -c worker || true)"
+  echo "already exists, with ${have} worker(s)"
+  if [ "${have}" != "${WORKERS}" ]; then
+    echo "CANYONOS_KIND_WORKERS=${WORKERS} applies to a new cluster: scripts/kind/down.sh, then this again"
+  fi
 else
   mkdir -p "${CONFIG_DIR}"
   cp "${HERE}/pod-security.yaml" "${CONFIG_DIR}/pod-security.yaml"
   config="$(mktemp)"
   trap 'rm -f "${config}"' EXIT
   sed "s#__CONFIG__#$(native "${CONFIG_DIR}")#" "${HERE}/cluster.yaml" > "${config}"
+  # cluster.yaml has the first worker.
+  for _ in $(seq 2 "${WORKERS}"); do echo "  - role: worker" >> "${config}"; done
   kind create cluster --name "${CLUSTER_NAME}" --image "${NODE_IMAGE}" \
     --config "$(native "${config}")" --wait 0s
 fi
@@ -125,7 +174,7 @@ spec:
 EOF
 }
 
-if [ "${1:-}" = "--verify" ]; then
+if [ -n "${verify}" ]; then
   log "Verify: image push and pull through localhost:${REGISTRY_PORT}"
   docker pull -q busybox:1.37 >/dev/null
   docker tag busybox:1.37 "${SMOKE_IMAGE}"
@@ -180,6 +229,24 @@ EOF
   echo "verify: OK"
 fi
 
+if [ "${operator}" = "checkout" ]; then
+  CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "$(dirname "${BASH_SOURCE[0]}")/operator.sh"
+fi
+
 log "Ready"
 kubectl get nodes -o wide
 echo "Registry: localhost:${REGISTRY_PORT}  ·  context: kind-${CLUSTER_NAME}"
+if [ "${operator}" != "none" ]; then
+  cat <<EOF
+
+Deploy a project to it, in the dev shell (bun run canyonos:dev), from the project's folder:
+  1. Add to config/global_controller.yaml:
+       kubernetes:
+         namespace: <a namespace for it, e.g. its name>
+         registry: localhost:${REGISTRY_PORT}
+  2. canyonos deploy --target kubernetes
+  3. canyonos serve --target kubernetes     # the dashboard, on http://127.0.0.1:8081
+After changing CanyonOS, bun run canyonos:dev updates this cluster too.
+Done with it: canyonos clean --target kubernetes, and scripts/kind/down.sh for the cluster.
+EOF
+fi

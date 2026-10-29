@@ -380,6 +380,7 @@ def test_the_upload_goes_straight_to_the_port_forward_past_any_proxy(monkeypatch
     monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
     forward = SimpleNamespace(
         stdout=io.StringIO(f"Forwarding from 127.0.0.1:{server.server_port} -> 8090\n"),
+        poll=lambda: None,
         terminate=lambda: None,
     )
     with patch("canyonos.kubernetes_target.subprocess.Popen", return_value=forward):
@@ -387,6 +388,50 @@ def test_the_upload_goes_straight_to_the_port_forward_past_any_proxy(monkeypatch
     server.server_close()
 
     assert received == [b"archive"]
+
+
+def test_a_port_forward_that_dropped_is_started_again():
+    import socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            received.append(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    # A port nothing listens on: where the first forward was, once kubectl ended it.
+    with socket.socket() as closed:
+        closed.bind(("127.0.0.1", 0))
+        gone = closed.getsockname()[1]
+    dropped = SimpleNamespace(
+        stdout=io.StringIO(f"Forwarding from 127.0.0.1:{gone} -> 8090\n"),
+        poll=lambda: 1,
+        terminate=lambda: None,
+    )
+    fresh = SimpleNamespace(
+        stdout=io.StringIO(f"Forwarding from 127.0.0.1:{server.server_port} -> 8090\n"),
+        poll=lambda: None,
+        terminate=lambda: None,
+    )
+    with patch(
+        "canyonos.kubernetes_target.subprocess.Popen", side_effect=[dropped, fresh]
+    ) as popen:
+        kubernetes_target.upload_project(
+            "acme", "build-pod", b"archive", sleep=lambda _: None
+        )
+    server.server_close()
+
+    assert received == [b"archive"]
+    assert popen.call_count == 2
 
 
 def test_clean_never_deletes_the_namespace():
@@ -513,6 +558,7 @@ def test_a_refused_upload_fails_at_once():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     forward = SimpleNamespace(
         stdout=io.StringIO(f"Forwarding from 127.0.0.1:{server.server_port} -> 8090\n"),
+        poll=lambda: None,
         terminate=lambda: None,
     )
     try:

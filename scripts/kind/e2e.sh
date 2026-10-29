@@ -3,18 +3,20 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # End-to-end test of CanyonOS on Kubernetes, on the kind cluster scripts/kind/up.sh
-# makes. From this checkout it builds the operator, canyonos-core, api and web images,
-# installs the operator's chart with the in-cluster builder and the dashboard, then,
-# as a user who may only edit one namespace, deploys examples/helloworld with the real
-# `canyonos deploy --target kubernetes` and checks that:
+# makes. It builds CanyonOS's images from this checkout as `bun run canyonos:dev` does,
+# installs them with scripts/kind/operator.sh (the operator, then the chart with the
+# in-cluster builder and the dashboard), then, as a user who may only edit one
+# namespace, deploys examples/helloworld with the real `canyonos deploy --target
+# kubernetes` and checks that:
 #   - requests through the endpoint complete;
 #   - the dashboard lists the project, reads its Redis and receives its telemetry;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` and `canyonos clean` remove the project and leave the namespace.
 #
 # Usage: scripts/kind/e2e.sh   (CANYONOS_KIND_CLUSTER names another cluster than canyonos)
-# Needs docker and kind on this machine; everything else runs in a container on the
-# kind network, so it runs the same on Linux, macOS, Windows (Git Bash) and in CI.
+# Needs docker, kind, kubectl and bun on this machine; everything else runs in a
+# container on the kind network, so it runs the same on Linux, macOS, Windows (Git Bash)
+# and in CI.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
 
@@ -22,7 +24,6 @@ CLUSTER_NAME="${CANYONOS_KIND_CLUSTER:-canyonos}"
 REGISTRY="localhost:5001"
 NS="canyonos-e2e"
 KUBECTL_VERSION="v1.36.0"
-HELM_VERSION="v3.17.3"
 
 log() { printf '\n== %s\n' "$*"; }
 
@@ -48,30 +49,11 @@ inside() {
   arch="$(dpkg --print-architecture)"
   curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl"
   chmod +x /usr/local/bin/kubectl
-  curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${arch}.tar.gz" | tar -xz -C /usr/local/bin --strip-components=1 "linux-${arch}/helm"
   # The checkout as it is, uncommitted changes included, without build outputs.
   git config --global --add safe.directory '*'
   mkdir -p /w
   git -C /src ls-files -co --exclude-standard -z | tar -C /src --null -T - -cf - | tar -C /w -xf -
   (cd /w && uv sync --locked -q)
-
-  log "Operator chart, with the in-cluster builder and the dashboard (images ${TAG})"
-  # Helm never upgrades crds/: on a cluster an earlier run used, apply them first,
-  # taking them over from Helm, which installed them.
-  as_admin kubectl apply --server-side --force-conflicts -f /w/packages/operator/charts/canyonos-operator/crds/ >/dev/null \
-    || fail "CRDs"
-  as_admin helm upgrade --install canyonos /w/packages/operator/charts/canyonos-operator \
-    --namespace canyonos-system --create-namespace \
-    --set image.repository="${REGISTRY}/canyonos-operator" --set image.tag="${TAG}" \
-    --set controllerImage="${REGISTRY}/canyonos-core:${TAG}" \
-    --set builder.enabled=true \
-    --set "builder.insecureRegistries={kind-registry:5000}" \
-    --set "builder.registryAliases.localhost:5001=kind-registry:5000" \
-    --set dashboard.enabled=true \
-    --set dashboard.apiImage="${REGISTRY}/canyonos-api:${TAG}" \
-    --set dashboard.webImage="${REGISTRY}/canyonos-web:${TAG}" \
-    --wait --timeout 10m >/dev/null || fail "chart install"
-  echo "installed"
 
   log "A namespace and a user who may only edit it"
   # A failed run's project can take the operator's five-minute teardown give-up to go.
@@ -210,34 +192,17 @@ fi
 # On this machine: the images, then the test in a container on the kind network.
 # ------------------------------------------------------------------------------------
 command -v kind >/dev/null || { echo "Missing 'kind' on PATH (scripts/kind/up.sh needs it too)" >&2; exit 1; }
+command -v bun >/dev/null || { echo "Missing 'bun' on PATH: it builds the images (bun run canyonos:dev)" >&2; exit 1; }
 kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}" || { echo "No kind cluster ${CLUSTER_NAME}: run scripts/kind/up.sh" >&2; exit 1; }
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && { pwd -W 2>/dev/null || pwd; })"
-# A new tag every run: a node never runs an image it cached from an earlier one.
-TAG="e2e-$(date +%Y%m%d%H%M%S)"
 
-build() {  # name, Dockerfile, context, extra docker build arguments
-  log "Image ${REGISTRY}/canyonos-$1:${TAG}"
-  # Quiet unless it fails; then the end of the build's own output says why.
-  local out
-  out="$(mktemp)"
-  if ! docker build --progress=plain -f "${REPO}/$2" -t "${REGISTRY}/canyonos-$1:${TAG}" "${@:4}" "${REPO}/$3" > "${out}" 2>&1; then
-    tail -60 "${out}" >&2
-    rm -f "${out}"
-    df -h / >&2 || true
-    exit 1
-  fi
-  rm -f "${out}"
-  docker push -q "${REGISTRY}/canyonos-$1:${TAG}" >/dev/null
-}
-build operator packages/operator/Dockerfile packages/operator
-build core packages/core/Dockerfile packages/core
-build api packages/api/Dockerfile .
-build web packages/web/Dockerfile . --target canyonos --build-arg VITE_API_URL=/api
+log "CanyonOS's images from this checkout (bun run canyonos:dev --images-only)"
+(cd "${REPO}" && bun run canyonos:dev --images-only)
+CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "$(dirname "${BASH_SOURCE[0]}")/operator.sh"
 
 kube="$(mktemp -d)"
 trap 'rm -rf "${kube}"' EXIT
 kind get kubeconfig --internal --name "${CLUSTER_NAME}" > "${kube}/admin"
 docker run --rm --network kind \
   -v "${REPO}:/src:ro" -v "$(cd "${kube}" && { pwd -W 2>/dev/null || pwd; }):/kube:ro" \
-  -e TAG="${TAG}" \
   python:3.12-slim bash /src/scripts/kind/e2e.sh --inside

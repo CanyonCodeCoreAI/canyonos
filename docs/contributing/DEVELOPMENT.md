@@ -166,26 +166,79 @@ send their traces to the host API, and the Vite dashboard shows them.
 
 ## Kubernetes on kind
 
-`scripts/kind/up.sh` makes a local cluster that behaves like the ones customers run:
-kind with one control plane and one worker, Calico (so NetworkPolicy is enforced),
-metrics-server, Pod Security `restricted` in every namespace (as OpenShift does), and a
-registry on `localhost:5001` that the nodes pull from. It needs `docker`, `kind` and
-`kubectl`; `--verify` checks each of those pieces. The API server's Pod Security file
-is kept in `~/.canyonos/kind`, so a branch switch never stops the cluster from
-starting. `scripts/kind/down.sh` deletes it (`--all` the registry too).
+The same development setup runs CanyonOS on a local Kubernetes cluster that behaves
+like the ones customers run. On top of [Set up your environment](#set-up-your-environment)
+it needs [`kind`](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) and
+[`kubectl`](https://kubernetes.io/docs/tasks/tools/) (macOS: `brew install kind kubectl`;
+Windows: `winget install Kubernetes.kind Kubernetes.kubectl`, and run the scripts in Git
+Bash), and Docker with at least 4 CPUs and 8 GB (Docker Desktop: Settings > Resources).
+Helm runs in a container.
 
 ```bash
-scripts/kind/up.sh --verify
+scripts/kind/up.sh       # once: CanyonOS's images if missing, the cluster, its registry, CanyonOS on it
+bun run canyonos:dev     # as every day: rebuilds the images, updates CanyonOS on the cluster, opens the dev shell
+```
+
+In the dev shell, deploy a project as on Docker, with `--target kubernetes`. Add to its
+`config/global_controller.yaml`:
+
+```yaml
+kubernetes:
+  namespace: my-project        # created if missing
+  registry: localhost:5001
+```
+
+```bash
+canyonos deploy --target kubernetes       # builds its images in the cluster, waits until ready
+canyonos status --target kubernetes       # its agents and replicas
+canyonos logs --target kubernetes         # the global controller's logs (or: an agent, a replica)
+canyonos serve --target kubernetes        # the dashboard, on http://127.0.0.1:8081
+canyonos clean --target kubernetes        # when done; scripts/kind/down.sh removes the cluster
+```
+
+The deploy prints how to call the endpoint, through a `kubectl port-forward`. `canyonos
+test` and `sync`, and `stop --all` or `clean --all`, are Docker's only: send a request
+through the port-forward, and deploy again after a change. See
+[Kubernetes deployment](../guides/KUBERNETES.md) for the `kubernetes:` section's other
+settings.
+
+`up.sh` makes, in order:
+
+1. a registry on `localhost:5001` that the nodes pull from;
+2. a kind cluster with one control plane and one worker (`CANYONOS_KIND_WORKERS=3` for
+   more, when it is made: nodes share Docker's CPU and memory, so more of them only
+   let a project spread its pods), Calico so NetworkPolicy is enforced, metrics-server,
+   and Pod Security `restricted` in every namespace, as OpenShift does;
+3. CanyonOS (`scripts/kind/operator.sh`): the `canyonos-core:dev`, `canyonos-api:dev`
+   and `canyonos-web:dev` images `bun run canyonos:dev` built, and the operator's image
+   built there, pushed to that registry, then the chart with the in-cluster builder and
+   the dashboard. The cluster runs the same core image `CANYONOS_CORE_IMAGE=local`
+   deploys.
+
+After changing CanyonOS, `bun run canyonos:dev` as usual: while the cluster exists it
+runs `scripts/kind/operator.sh` too, so what changed rolls out there and the rest
+restarts nothing (run `operator.sh` alone to update the cluster without the shell).
+Projects deployed to the cluster pick up a new core image on their next deploy. It is
+all safe to re-run. `up.sh --no-operator` stops after the cluster, and `--verify` checks the
+cluster's pieces. The API server's Pod Security file is kept in `~/.canyonos/kind`, so
+a branch switch never stops the cluster from starting. `scripts/kind/down.sh` deletes
+the cluster (`--all` the registry too).
+
+When a deploy waits with "no node to run on", Docker has too little CPU or memory for
+it. `kubectl get pods -n my-project` shows the project's pods, and
+`kubectl -n canyonos-system logs deploy/canyonos-controller-manager` the operator's log.
+
+```bash
 scripts/kind/e2e.sh
 ```
 
 `e2e.sh` is the whole path, and what CI runs (`Kubernetes E2E`) for changes to the
 operator, the chart, or the Kubernetes parts of core, the CLI and the API. It builds
-the operator, core, api and web images from the checkout under a new tag, installs the
-chart with the in-cluster builder and the dashboard, and deploys `examples/helloworld`
-with the real CLI as a user who may only edit one namespace. It then checks requests,
-the dashboard, a Redis password rotation, `stop` and `clean`. Everything but the image
-builds runs in a container on the kind network, so it runs the same on any OS.
+the images with `bun run canyonos:dev --images-only`, installs them (`operator.sh`), and
+deploys `examples/helloworld` with the real CLI as a user who may only edit one
+namespace. It then checks requests, the dashboard, a Redis password rotation, `stop`
+and `clean`. Everything but the image builds runs in a container on the kind network,
+so it runs the same on any OS.
 
 For the operator alone, `make manifests generate fmt vet test lint` in
 `packages/operator` (in the `golang:1.27.0` container) runs its unit and envtest suites.

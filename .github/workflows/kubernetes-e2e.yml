@@ -5,7 +5,7 @@
 # then scripts/kind/e2e.sh (the chart with the builder and the dashboard, a deploy
 # with the real CLI by a user who may only edit one namespace, requests, the
 # dashboard, a Redis password rotation, stop and clean). Run for changes that can
-# break that path; it takes about fifteen minutes.
+# break that path; it takes about twenty-five minutes on a GitHub runner.
 
 name: Kubernetes E2E
 
@@ -64,7 +64,13 @@ jobs:
           df -h /
 
       - name: Cluster
-        run: scripts/kind/up.sh --verify
+        # e2e.sh installs CanyonOS itself, under its own image tag.
+        run: scripts/kind/up.sh --verify --no-operator
+
+      # e2e.sh builds the images with `bun run canyonos:dev --images-only`, as a laptop does.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
 
       - name: End to end
         run: scripts/kind/e2e.sh
