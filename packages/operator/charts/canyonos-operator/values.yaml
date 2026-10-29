@@ -36,6 +36,28 @@ podAnnotations: {}
 metrics:
   enabled: true
 
+# The cluster's CanyonOS dashboard, one for every project, in its own namespace. The
+# operator lists the projects for it, and its API alone may reach each project's Redis.
+# Opened with a port-forward; nothing is exposed outside the cluster.
+dashboard:
+  enabled: false
+  namespace: canyonos-dashboard
+  createNamespace: true
+  # The canyonos-api and canyonos-web images of this release (required when enabled).
+  apiImage: ""
+  webImage: ""
+  dbImage: postgres:16-alpine
+  pullPolicy: IfNotPresent
+  storage: 1Gi
+  storageClassName: ""
+  # A Secret of your own with db-password and jwt-secret (at least 32 characters);
+  # empty: the chart makes one on install. Set it when the chart is rendered without the
+  # cluster (helm template, Argo CD), which cannot keep a generated password.
+  existingSecret: ""
+  # Run its images as their own users (postgres 70, bun and caddy 1000). Turn off on
+  # OpenShift, which assigns each namespace its own range of user IDs.
+  fixedUsers: true
+
 # The in-cluster image builder (BuildKit, rootless) that `canyonos deploy --target
 # kubernetes` builds every project's images with. Its namespace gets the one Pod Security
 # exception CanyonOS asks for (privileged: seccomp and AppArmor unconfined for BuildKit's

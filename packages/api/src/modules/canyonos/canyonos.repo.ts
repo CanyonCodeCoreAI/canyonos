@@ -37,4 +37,17 @@ export const canyonos_repo = {
     if (!row) throw internalError('canyonos.registration_failed', 'Project was not registered');
     return row;
   },
+
+  /** A project the operator lists (Kubernetes): its name follows the list. How to sign in
+   * to its Redis stays in the operator's list, never in the database. */
+  async save_listed_project({
+    project_id,
+    name,
+    redis_port,
+  }: Pick<ProjectRegistration, 'project_id' | 'name' | 'redis_port'>): Promise<void> {
+    await db
+      .insert(projects)
+      .values({ id: project_id, name, redis_port })
+      .onConflictDoUpdate({ target: projects.id, set: { name, redis_port } });
+  },
 };

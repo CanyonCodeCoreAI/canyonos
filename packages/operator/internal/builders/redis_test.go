@@ -117,7 +117,7 @@ func TestTheAnnotationTellsNothingAboutThePassword(t *testing.T) {
 }
 
 func TestOnlyTheProjectAndTheOperatorReachRedis(t *testing.T) {
-	peers := RedisNetworkPolicy(project(), "canyonos-system").Spec.Ingress[0].From
+	peers := RedisNetworkPolicy(project(), "canyonos-system", "").Spec.Ingress[0].From
 
 	if len(peers) != 2 {
 		t.Fatalf("want 2 peers, got %d", len(peers))
@@ -139,6 +139,19 @@ func TestARedisLoginMarksThePodTemplate(t *testing.T) {
 	StampRedisLogin(template, "abc")
 	if template.Annotations[RedisLoginAnnotation] != "abc" {
 		t.Errorf("annotations %v", template.Annotations)
+	}
+}
+
+func TestOnlyTheDashboardsAPIJoinsThem(t *testing.T) {
+	peers := RedisNetworkPolicy(project(), "canyonos-system", "canyonos-dashboard").Spec.Ingress[0].From
+
+	if len(peers) != 3 {
+		t.Fatalf("want 3 peers, got %d", len(peers))
+	}
+	dashboard := peers[2]
+	if dashboard.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "canyonos-dashboard" ||
+		dashboard.PodSelector == nil || dashboard.PodSelector.MatchLabels[LabelName] != DashboardAPIName {
+		t.Errorf("the dashboard peer must be its API pod alone, not its whole namespace: %+v", dashboard)
 	}
 }
 

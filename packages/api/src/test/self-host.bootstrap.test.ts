@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
@@ -10,6 +14,7 @@ import {
   bootstrap_canyonos,
   save_controller_project,
 } from '@api/modules/canyonos/canyonos.bootstrap';
+import { sync_registered_projects } from '@api/modules/canyonos/canyonos.sync';
 import { config } from '@core/env';
 
 import { api, setupE2ETests } from './e2e.setup';
@@ -106,6 +111,34 @@ describe('canyonos bootstrap', () => {
 
     expect(await count_projects()).toBe(before);
     expect(await count_users()).toBe(0);
+  });
+
+  test('every project the operator lists is stored once, by its name', async () => {
+    const project_id = '77777777-7777-4777-8777-777777777777';
+    const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+    const path = join(dir, 'projects.json');
+    const entry = {
+      project_id,
+      name: 'helloworld',
+      redis: { host: 'canyonos-redis.hello.svc', port: 6379, password: 'x' },
+    };
+    writeFileSync(path, JSON.stringify({ projects: [entry] }));
+    try {
+      await sync_registered_projects(path);
+      const before = await count_projects();
+      await sync_registered_projects(path);
+
+      expect((await read_project(project_id))?.name).toBe('helloworld');
+      expect(await count_projects()).toBe(before);
+
+      // Renamed on the cluster: the dashboard follows the operator's list.
+      writeFileSync(path, JSON.stringify({ projects: [{ ...entry, name: 'hello-renamed' }] }));
+      await sync_registered_projects(path);
+      expect((await read_project(project_id))?.name).toBe('hello-renamed');
+      expect(await count_projects()).toBe(before);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -58,6 +58,8 @@ if (authMode === 'password') assertJwtSecret(env.JWT_SECRET, environment);
 const canyonos = {
   redisHost: env.CANYONOS_REDIS_HOST ?? 'host.docker.internal',
   redisPort: parseInteger(env.CANYONOS_REDIS_PORT, 6379),
+  // Kubernetes: the projects (and their Redis) the operator lists for this dashboard.
+  projectsFile: env.CANYONOS_PROJECTS_FILE ?? null,
 };
 
 const LOCAL_DATABASE_URL = 'postgres://canyonos:canyonos@localhost:5432/canyonos';

@@ -48,6 +48,9 @@ spec:
             {{- with .Values.redisImage }}
             - --redis-image={{ . }}
             {{- end }}
+            {{- if .Values.dashboard.enabled }}
+            - --dashboard-namespace={{ .Values.dashboard.namespace }}
+            {{- end }}
             {{- if .Values.builder.enabled }}
             - --builder-address=tcp://buildkitd.{{ .Values.builder.namespace }}.svc:1234
             {{- range $pull, $push := .Values.builder.registryAliases }}

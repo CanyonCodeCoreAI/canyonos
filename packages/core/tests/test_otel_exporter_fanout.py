@@ -199,6 +199,29 @@ class OTelExporterFanoutTests(unittest.TestCase):
         """The exporter refuses an empty list; None makes it flush instead."""
         self.assertIsNone(self._destinations_on("kubernetes", [DOCKER_DESKTOP]))
 
+    def test_the_cluster_dashboard_the_operator_names_gets_telemetry_too(self):
+        from canyonos_core.controller.global_controller import GlobalController
+
+        dashboard = "http://canyonos-dashboard-api.canyonos-dashboard.svc:3000"
+        environment = {
+            "CANYONOS_TARGET": "kubernetes",
+            "CANYONOS_DASHBOARD_OTLP_ENDPOINT": dashboard,
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            configured = GlobalController._otel_destinations(
+                {"destinations": [DOCKER_DESKTOP, IN_CLUSTER]}
+            )
+            unconfigured = GlobalController._otel_destinations({})
+
+        self.assertEqual(
+            [(d["name"], d["endpoint"]) for d in configured],
+            [
+                (IN_CLUSTER["name"], IN_CLUSTER["endpoint"]),
+                ("canyonos-dashboard", dashboard),
+            ],
+        )
+        self.assertEqual([d["endpoint"] for d in unconfigured], [dashboard])
+
     def _insert_pending_row(self):
         conn = sqlite3.connect(self.db_path)
         try:

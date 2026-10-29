@@ -61,12 +61,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # Both install modes must render: cluster-wide (with the builder) and limited
-      # to some namespaces.
+      # Both install modes must render: cluster-wide (with the builder and the
+      # dashboard) and limited to some namespaces.
       - name: Lint and render the chart
         run: |
           helm lint canyonos-operator --set controllerImage=canyonos-core@sha256:0
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
-            --set builder.enabled=true > /dev/null
+            --set builder.enabled=true --set dashboard.enabled=true \
+            --set dashboard.apiImage=canyonos-api@sha256:0 --set dashboard.webImage=canyonos-web@sha256:0 \
+            > /dev/null
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
             --set "watchNamespaces={team-a,team-b}" > /dev/null

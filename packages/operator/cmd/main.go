@@ -46,7 +46,7 @@ func init() {
 
 func main() {
 	var metricsAddr, metricsCertPath, metricsCertName, metricsCertKey string
-	var probeAddr, controllerImage, redisImage, watchNamespaces, builderAddress string
+	var probeAddr, controllerImage, redisImage, watchNamespaces, builderAddress, dashboardNamespace string
 	registryAliases := aliasFlag{}
 	var enableLeaderElection, secureMetrics, enableHTTP2 bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -70,6 +70,9 @@ func main() {
 		"The cluster's BuildKit for in-cluster builds (tcp://buildkitd.canyonos-build.svc:1234); empty for none.")
 	flag.Var(registryAliases, "registry-alias",
 		"pull=push: a registry the builder reaches by another name than nodes pull it by (repeatable).")
+	flag.StringVar(&dashboardNamespace, "dashboard-namespace", "",
+		"Namespace of the cluster's CanyonOS dashboard, which lists every project and takes its telemetry; "+
+			"empty for none.")
 	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
 		"Comma-separated namespaces to run projects in, for an install granted only those; empty for all.")
 	// Production logging by default; --zap-devel switches to development logs.
@@ -137,17 +140,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// One client per project's Redis, shared by both controllers.
+	// One client per project's Redis, shared by the controllers.
 	projectRedis := &controller.ProjectRedis{Reader: mgr.GetAPIReader()}
 	if err := (&controller.CanyonProjectReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		APIReader:         mgr.GetAPIReader(),
-		OperatorNamespace: operatorNamespace(),
-		RedisImage:        redisImage,
-		ControllerImage:   controllerImage,
-		RedisFor:          projectRedis.For,
-		RedisLogin:        projectRedis.Login,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		APIReader:          mgr.GetAPIReader(),
+		OperatorNamespace:  operatorNamespace(),
+		DashboardNamespace: dashboardNamespace,
+		RedisImage:         redisImage,
+		ControllerImage:    controllerImage,
+		RedisFor:           projectRedis.For,
+		RedisLogin:         projectRedis.Login,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "canyonproject")
 		os.Exit(1)
@@ -170,6 +174,17 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "canyonbuild")
 		os.Exit(1)
+	}
+	if dashboardNamespace != "" {
+		if err := (&controller.DashboardRegistryReconciler{
+			Client:    mgr.GetClient(),
+			APIReader: mgr.GetAPIReader(),
+			Redis:     projectRedis,
+			Namespace: dashboardNamespace,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "dashboardregistry")
+			os.Exit(1)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

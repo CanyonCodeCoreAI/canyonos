@@ -57,7 +57,10 @@ type CanyonProjectReconciler struct {
 	// caches them, which would mean listing and watching every Secret it can see.
 	APIReader         client.Reader
 	OperatorNamespace string
-	RedisImage        string
+	// DashboardNamespace is the cluster dashboard's, empty for none: its API may read
+	// each project's Redis, and each global controller sends it telemetry.
+	DashboardNamespace string
+	RedisImage         string
 	// ControllerImage is the canyonos-core image matching this operator's release.
 	ControllerImage string
 	// RedisFor opens a project's Redis, where the endpoint's replica is written.
@@ -215,7 +218,8 @@ func (r *CanyonProjectReconciler) reconcileGC(
 		return partState{}, err
 	}
 
-	want := builders.GCDeployment(project, r.controllerImage(project), builders.EndpointURL(project))
+	want := builders.GCDeployment(project, r.controllerImage(project), builders.EndpointURL(project),
+		r.DashboardNamespace)
 	builders.StampRedisLogin(&want.Spec.Template, login)
 	deployment := &appsv1.Deployment{ObjectMeta: objectMeta(want.ObjectMeta)}
 	if err := r.ensure(ctx, project, deployment, func() {
@@ -416,7 +420,7 @@ func (r *CanyonProjectReconciler) reconcileRedis(
 		return false, err
 	}
 
-	wantPolicy := builders.RedisNetworkPolicy(project, r.OperatorNamespace)
+	wantPolicy := builders.RedisNetworkPolicy(project, r.OperatorNamespace, r.DashboardNamespace)
 	policy := &networkingv1.NetworkPolicy{ObjectMeta: objectMeta(wantPolicy.ObjectMeta)}
 	if err := r.ensure(ctx, project, policy, func() {
 		policy.Labels = wantPolicy.Labels

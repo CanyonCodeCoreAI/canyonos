@@ -72,7 +72,8 @@ func GCSelector(p *canyonosv1alpha1.CanyonProject) map[string]string {
 
 // GCDeployment runs `run-gc` from the canyonos-core image. Recreate: two global
 // controllers at once would scale, clean up and export telemetry twice.
-func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL string) *appsv1.Deployment {
+// dashboardNamespace is the cluster dashboard's, empty for none.
+func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL, dashboardNamespace string) *appsv1.Deployment {
 	labels := ProjectLabels(p, GCName)
 	probe := func(path string, period, failures int32) *corev1.Probe {
 		return &corev1.Probe{
@@ -96,7 +97,7 @@ func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL string) 
 			Name:    "global-controller",
 			Image:   image,
 			Command: []string{pythonCommand, "-m", "canyonos_core.cli", "run-gc", "-c", gcConfigPath + "/global_controller.yaml"},
-			Env:     gcEnv(p, endpointURL),
+			Env:     gcEnv(p, endpointURL, dashboardNamespace),
 			EnvFrom: appEnv(p),
 			Ports:   []corev1.ContainerPort{{Name: portHealth, ContainerPort: HealthPort}},
 			VolumeMounts: []corev1.VolumeMount{
@@ -146,13 +147,14 @@ func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL string) 
 }
 
 // gcEnv is the global controller's side of the contract with the operator: where it
-// runs, its project, its Redis and its writable data folder.
-func gcEnv(p *canyonosv1alpha1.CanyonProject, endpointURL string) []corev1.EnvVar {
+// runs, its project, its Redis, its writable data folder, and the cluster dashboard
+// to send telemetry to when there is one.
+func gcEnv(p *canyonosv1alpha1.CanyonProject, endpointURL, dashboardNamespace string) []corev1.EnvVar {
 	name := p.Spec.DisplayName
 	if name == "" {
 		name = p.Name
 	}
-	return append([]corev1.EnvVar{
+	env := []corev1.EnvVar{
 		{Name: "CANYONOS_TARGET", Value: "kubernetes"},
 		{Name: "CANYONOS_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
@@ -163,7 +165,13 @@ func gcEnv(p *canyonosv1alpha1.CanyonProject, endpointURL string) []corev1.EnvVa
 		// The name the dashboard shows for the project.
 		{Name: "CANYONOS_PROJECT_NAME", Value: name},
 		{Name: envHome, Value: tmpDir},
-	}, RedisEnv(p)...)
+	}
+	if dashboardNamespace != "" {
+		env = append(env, corev1.EnvVar{
+			Name: "CANYONOS_DASHBOARD_OTLP_ENDPOINT", Value: DashboardOTLPEndpoint(dashboardNamespace),
+		})
+	}
+	return append(env, RedisEnv(p)...)
 }
 
 // RedisEnv tells a CanyonOS process which Redis to use and how to log in to it

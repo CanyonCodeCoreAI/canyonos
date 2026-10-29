@@ -11,6 +11,7 @@ import { seedDevData } from '@api/db/seed';
 import { authRoutes } from '@api/modules/auth/auth.routes';
 import { bootstrap_canyonos } from '@api/modules/canyonos/canyonos.bootstrap';
 import { canyonosRoutes } from '@api/modules/canyonos/canyonos.routes';
+import { start_registered_projects_sync } from '@api/modules/canyonos/canyonos.sync';
 import { projectsRoutes } from '@api/modules/projects/projects.routes';
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
@@ -106,7 +107,9 @@ export type ForgeApi = typeof forgeApi;
 export const setupApi = async () => {
   await runMigrations();
   await seedDevData();
-  await bootstrap_canyonos();
+  // Kubernetes: the operator lists the projects; there is no one controller to register.
+  if (config.canyonos.projectsFile) await start_registered_projects_sync();
+  else await bootstrap_canyonos();
   httpLogger.info('Setup complete', { env: config.environment });
 };
 

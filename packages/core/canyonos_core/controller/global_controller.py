@@ -263,28 +263,38 @@ class GlobalController(ControllerContext):
 
     @staticmethod
     def _otel_destinations(otel_cfg):
-        """Resolve otel.destinations (${ENV_VAR} refs expanded), or None if absent.
+        """Resolve otel.destinations (${ENV_VAR} refs expanded), plus the dashboard
+        CANYONOS_DASHBOARD_OTLP_ENDPOINT names, or None when there are none.
 
         On Kubernetes, destinations on host.docker.internal (Docker Desktop's way back
-        to the laptop, which no cluster has) are skipped, and None is returned when
-        nothing is left: the exporter then flushes instead of exporting."""
-        if "destinations" not in otel_cfg:
-            return None
-        destinations = expand_env_value(otel_cfg["destinations"])
-        if os.environ.get(TARGET_ENV) != "kubernetes":
-            return destinations
-        kept = []
-        for destination in destinations or []:
-            if DOCKER_HOST in str(destination.get("endpoint", "")):
-                logger.info(
-                    "Skipping OTel destination %s on Kubernetes: %s is unreachable "
-                    "in a cluster.",
-                    destination.get("name"),
-                    DOCKER_HOST,
-                )
-            else:
-                kept.append(destination)
-        return kept or None
+        to the laptop, which no cluster has) are skipped. None makes the exporter
+        flush instead of exporting."""
+        destinations = expand_env_value(otel_cfg.get("destinations") or [])
+        if os.environ.get(TARGET_ENV) == "kubernetes":
+            kept = []
+            for destination in destinations:
+                if DOCKER_HOST in str(destination.get("endpoint", "")):
+                    logger.info(
+                        "Skipping OTel destination %s on Kubernetes: %s is unreachable "
+                        "in a cluster.",
+                        destination.get("name"),
+                        DOCKER_HOST,
+                    )
+                else:
+                    kept.append(destination)
+            destinations = kept
+        dashboard = os.environ.get("CANYONOS_DASHBOARD_OTLP_ENDPOINT")
+        if dashboard:
+            destinations = [
+                *destinations,
+                {
+                    "name": "canyonos-dashboard",
+                    "protocol": "http",
+                    "endpoint": dashboard,
+                    "headers": {},
+                },
+            ]
+        return destinations or None
 
     def _write_otel_destinations(self, destinations):
         try:

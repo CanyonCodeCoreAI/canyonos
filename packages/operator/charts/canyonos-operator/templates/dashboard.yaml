@@ -1,0 +1,341 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The cluster's CanyonOS dashboard, one for every project: Postgres, the API and the web
+# front end, as `canyonos serve` runs them on Docker. Nothing is exposed outside the
+# cluster: it is opened with a port-forward, so only who may port-forward into its
+# namespace reaches it, and the first account made there becomes its admin.
+{{- if .Values.dashboard.enabled }}
+{{- $ns := .Values.dashboard.namespace }}
+{{- $secret := .Values.dashboard.existingSecret | default "canyonos-dashboard" }}
+{{- $apiImage := required "dashboard.apiImage is required: the canyonos-api image of this release" .Values.dashboard.apiImage }}
+{{- $webImage := required "dashboard.webImage is required: the canyonos-web image of this release" .Values.dashboard.webImage }}
+{{- if .Values.dashboard.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+---
+{{- end }}
+{{- if not .Values.dashboard.existingSecret }}
+{{- /* Generated on install, then kept: upgrades read it back (lookup) and an uninstall
+leaves it, as it leaves Postgres's data. Tools that render without the cluster (helm
+template, Argo CD) cannot read it back and would make a new password Postgres refuses:
+they set dashboard.existingSecret instead. */}}
+{{- $existing := lookup "v1" "Secret" $ns $secret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secret }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+data:
+  {{- if $existing }}
+  db-password: {{ index $existing.data "db-password" }}
+  jwt-secret: {{ index $existing.data "jwt-secret" }}
+  {{- else }}
+  db-password: {{ randAlphaNum 32 | b64enc }}
+  jwt-secret: {{ randAlphaNum 48 | b64enc }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: canyonos-dashboard-db
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: canyonos-dashboard-db}
+  ports: [{name: postgres, port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: canyonos-dashboard-db
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  serviceName: canyonos-dashboard-db
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: canyonos-dashboard-db}
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: canyonos-dashboard-db, app.kubernetes.io/part-of: canyonos}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        {{- if .Values.dashboard.fixedUsers }}
+        runAsUser: 70     # postgres in the alpine image
+        runAsGroup: 70
+        fsGroup: 70
+        {{- end }}
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: {{ .Values.dashboard.dbImage }}
+          env:
+            - {name: POSTGRES_USER, value: canyonos}
+            - {name: POSTGRES_DB, value: canyonos}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: db-password}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, canyonos, -d, canyonos]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: [pg_isready, -U, canyonos, -d, canyonos]}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: run, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.dashboard.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources: {requests: {storage: {{ .Values.dashboard.storage }}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: canyonos-dashboard-api
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: canyonos-dashboard-api}
+  ports: [{name: http, port: 3000, targetPort: 3000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canyonos-dashboard-api
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  # One: it migrates its database on start, with no lock between replicas.
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: canyonos-dashboard-api}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: canyonos-dashboard-api, app.kubernetes.io/part-of: canyonos}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        {{- if .Values.dashboard.fixedUsers }}
+        runAsUser: 1000   # bun in the image
+        runAsGroup: 1000
+        {{- end }}
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ $apiImage }}
+          imagePullPolicy: {{ .Values.dashboard.pullPolicy }}
+          # As `canyonos serve` runs it on Docker, plus the projects the operator lists.
+          env:
+            - name: DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: db-password}}
+            - {name: DATABASE_URL, value: "postgresql://canyonos:$(DB_PASSWORD)@canyonos-dashboard-db:5432/canyonos"}
+            - name: JWT_SECRET
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: jwt-secret}}
+            # Sign-in always: every project's global controller may reach this API (for
+            # telemetry), and with AUTH_MODE=none any pod labelled as one could read and
+            # change every project.
+            - {name: AUTH_MODE, value: password}
+            - {name: LOG_LEVEL, value: info}
+            - {name: CANYONOS_PROJECTS_FILE, value: /etc/canyonos/projects/projects.json}
+          ports: [{name: http, containerPort: 3000}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: 3000}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: 3000}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: projects, mountPath: /etc/canyonos/projects, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        # Written by the operator once the first project's Redis is ready.
+        - name: projects
+          secret: {secretName: canyonos-dashboard-projects, optional: true}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: canyonos-dashboard-web
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: canyonos-dashboard-web}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canyonos-dashboard-web
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: canyonos-dashboard-web}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: canyonos-dashboard-web, app.kubernetes.io/part-of: canyonos}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        {{- if .Values.dashboard.fixedUsers }}
+        runAsUser: 1000
+        runAsGroup: 1000
+        {{- end }}
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: web
+          image: {{ $webImage }}
+          imagePullPolicy: {{ .Values.dashboard.pullPolicy }}
+          env:
+            - {name: CANYONOS_API_UPSTREAM, value: "canyonos-dashboard-api:3000"}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            # The caddy binary carries this file capability and will not start without
+            # it; the restricted profile allows exactly this one.
+            capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+---
+# Postgres takes connections from the API only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: canyonos-dashboard-db
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: canyonos-dashboard-db}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: canyonos-dashboard-api}
+      ports: [{port: 5432}]
+---
+# The API takes requests from the web front end, and telemetry from each project's
+# global controller, in any namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: canyonos-dashboard-api
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: canyonos-dashboard-api}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: canyonos-dashboard-web}
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: canyonos-gc}
+            matchExpressions: [{key: canyonos.canyoncode.ai/project, operator: Exists}]
+      ports: [{port: 3000}]
+---
+# The operator keeps the list of projects in one Secret here, and may change no other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canyonos-dashboard-registry
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [canyonos-dashboard-projects]
+    verbs: [get, update]
+  # Create cannot be limited by name; the operator creates only that one.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canyonos-dashboard-registry
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: canyonos-dashboard-registry
+subjects:
+  - kind: ServiceAccount
+    name: canyonos-controller-manager
+    namespace: {{ .Release.Namespace }}
+{{- end }}

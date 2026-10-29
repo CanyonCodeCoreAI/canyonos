@@ -47,7 +47,7 @@ func TestTheGCRoleGrantsOnlyScalingAndReadingPods(t *testing.T) {
 }
 
 func TestTheGCRunsRunGCWithTheOperatorContract(t *testing.T) {
-	deployment := GCDeployment(project(), testImage, "http://canyonos-endpoint.acme.svc:8080")
+	deployment := GCDeployment(project(), testImage, "http://canyonos-endpoint.acme.svc:8080", "")
 	container := deployment.Spec.Template.Spec.Containers[0]
 
 	if !slices.Contains(container.Command, "run-gc") || container.Image != testImage {
@@ -76,14 +76,14 @@ func TestTheGCRunsRunGCWithTheOperatorContract(t *testing.T) {
 }
 
 func TestOnlyOneGCRunsAtATime(t *testing.T) {
-	deployment := GCDeployment(project(), testImage, "")
+	deployment := GCDeployment(project(), testImage, "", "")
 	if *deployment.Spec.Replicas != 1 || deployment.Spec.Strategy.Type != "Recreate" {
 		t.Errorf("replicas %d strategy %s", *deployment.Spec.Replicas, deployment.Spec.Strategy.Type)
 	}
 }
 
 func TestTheGCIsRestrictedNonRootWithAReadOnlyImage(t *testing.T) {
-	pod := GCDeployment(project(), testImage, "").Spec.Template.Spec
+	pod := GCDeployment(project(), testImage, "", "").Spec.Template.Spec
 	if *pod.SecurityContext.RunAsUser != GCUID || *pod.SecurityContext.RunAsGroup != 0 {
 		t.Error("the GC runs as UID 1001, group 0")
 	}
@@ -103,7 +103,7 @@ func TestTheGCIsRestrictedNonRootWithAReadOnlyImage(t *testing.T) {
 }
 
 func TestTheGCPodCanReachRedis(t *testing.T) {
-	labels := GCDeployment(project(), testImage, "").Spec.Template.Labels
+	labels := GCDeployment(project(), testImage, "", "").Spec.Template.Labels
 	if labels[LabelProject] != testProject {
 		t.Error("the GC pod needs the project label, or Redis's NetworkPolicy blocks it")
 	}
@@ -148,14 +148,26 @@ func TestTheAppSecretIsOptional(t *testing.T) {
 
 func TestTheGCKnowsItsProjectsName(t *testing.T) {
 	p := project()
-	env := envOf(GCDeployment(p, testImage, "").Spec.Template.Spec.Containers[0])
+	env := envOf(GCDeployment(p, testImage, "", "").Spec.Template.Spec.Containers[0])
 	if env["CANYONOS_PROJECT_NAME"].Value != testProject {
 		t.Errorf("project name %q, want the CanyonProject's name", env["CANYONOS_PROJECT_NAME"].Value)
 	}
 
 	p.Spec.DisplayName = "Trading Agents"
-	env = envOf(GCDeployment(p, testImage, "").Spec.Template.Spec.Containers[0])
+	env = envOf(GCDeployment(p, testImage, "", "").Spec.Template.Spec.Containers[0])
 	if env["CANYONOS_PROJECT_NAME"].Value != "Trading Agents" {
 		t.Errorf("project name %q", env["CANYONOS_PROJECT_NAME"].Value)
+	}
+}
+
+func TestTheGCSendsTelemetryToTheDashboardOnlyWhenThereIsOne(t *testing.T) {
+	env := envOf(GCDeployment(project(), testImage, "", "").Spec.Template.Spec.Containers[0])
+	if _, ok := env["CANYONOS_DASHBOARD_OTLP_ENDPOINT"]; ok {
+		t.Error("no dashboard, no telemetry destination")
+	}
+
+	env = envOf(GCDeployment(project(), testImage, "", "canyonos-dashboard").Spec.Template.Spec.Containers[0])
+	if got := env["CANYONOS_DASHBOARD_OTLP_ENDPOINT"].Value; got != "http://canyonos-dashboard-api.canyonos-dashboard.svc:3000" {
+		t.Errorf("dashboard endpoint %q", got)
 	}
 }

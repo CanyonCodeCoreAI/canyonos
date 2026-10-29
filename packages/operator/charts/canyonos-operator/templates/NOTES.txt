@@ -2,3 +2,7 @@ The CanyonOS operator is installed in {{ .Release.Namespace }}{{ if .Values.watc
 
 Deploy a project with the CanyonOS CLI:  canyonos deploy --target kubernetes
 Check it:                                kubectl get canyonprojects,canyonagents -A
+{{- if .Values.dashboard.enabled }}
+Open the dashboard:                      kubectl -n {{ .Values.dashboard.namespace }} port-forward svc/canyonos-dashboard-web 8080:8080
+                                         then http://localhost:8080 (the first account made becomes its admin)
+{{- end }}

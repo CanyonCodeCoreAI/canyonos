@@ -216,11 +216,17 @@ func RedisService(p *canyonosv1alpha1.CanyonProject) *corev1.Service {
 	}
 }
 
-// RedisNetworkPolicy admits only the project's own pods and the operator to its Redis.
-func RedisNetworkPolicy(p *canyonosv1alpha1.CanyonProject, operatorNamespace string) *networkingv1.NetworkPolicy {
+// RedisNetworkPolicy admits only the project's own pods, the operator, and the
+// cluster dashboard's API (when there is one) to its Redis.
+func RedisNetworkPolicy(
+	p *canyonosv1alpha1.CanyonProject, operatorNamespace, dashboardNamespace string,
+) *networkingv1.NetworkPolicy {
 	peers := []networkingv1.NetworkPolicyPeer{
 		{PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{LabelProject: p.Name}}},
 		namespacePeer(operatorNamespace),
+	}
+	if dashboardNamespace != "" {
+		peers = append(peers, dashboardAPIPeer(dashboardNamespace))
 	}
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
