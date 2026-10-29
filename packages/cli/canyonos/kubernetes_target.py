@@ -54,8 +54,11 @@ UPLOAD_EXCLUDES = (".git", ".venv", "node_modules", "__pycache__")
 # Where a build pod takes the upload (builders.UploadPort in the operator).
 UPLOAD_PORT = 8090
 OPERATOR_HINT = (
-    "Install the CanyonOS operator once per cluster (helm install canyonos-operator "
-    "packages/operator/charts/canyonos-operator); see docs/guides/KUBERNETES.md"
+    "Install the CanyonOS operator once per cluster: helm install canyonos "
+    "oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator "
+    f"--version {env.VERSION} --namespace canyonos-system --create-namespace "
+    "--set builder.enabled=true; see docs/guides/KUBERNETES.md. On a laptop, "
+    "canyonos cluster up makes a local cluster with it installed."
 )
 # Reasons the operator gives for a CanyonAgent that will never start as configured.
 FATAL_REASONS = ("NameMismatch", "Unsupported", "ProjectNotFound")
@@ -349,6 +352,26 @@ def upload_project(namespace, pod, archive, attempts=10, sleep=time.sleep):
         forward.terminate()
 
 
+def check_operator_version(namespace, name, status):
+    """Stop a deploy, before anything is uploaded, when the cluster's CanyonOS is another
+    release than this CLI. On Docker the CLI runs the images of its own version; on
+    Kubernetes the operator, installed apart, picks the core image every build and
+    project runs, so the two must be the same release. A CLI from a checkout
+    (development), and an operator that reports no version, are not checked."""
+    operator = status.get("operatorVersion")
+    if env.is_development or not operator or operator == env.VERSION:
+        return
+    kubectl(
+        ["delete", "canyonbuild", name, "-n", namespace, "--wait=false"], check=False
+    )
+    raise RuntimeError(
+        f"This cluster runs CanyonOS {operator} and this CLI is {env.VERSION}: they must "
+        f"be the same release. Upgrade the cluster's operator to {env.VERSION} (see "
+        "docs/guides/KUBERNETES.md, Upgrading the operator), or deploy with the "
+        f"CanyonOS {operator} CLI."
+    )
+
+
 def build_in_cluster(config_path, namespace, project, k8s, env_secret):
     """Build the project's images in the cluster and apply it there: create a
     CanyonBuild, upload the project to its pod, wait until it succeeds. Returns
@@ -371,6 +394,7 @@ def build_in_cluster(config_path, namespace, project, k8s, env_secret):
         status = wait_for_build(
             namespace, name, ("Receiving",), BUILD_START_TIMEOUT_SECONDS
         )
+    check_operator_version(namespace, name, status)
     with ui.status("Uploading the project to the build..."):
         upload_project(namespace, status["podName"], source_tarball())
     with ui.status("Building images in the cluster..."):

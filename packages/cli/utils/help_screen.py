@@ -23,6 +23,7 @@ CORE_COMMANDS = (
 
 UTIL_COMMANDS = (
     ("clean", "Stop the deploy, then delete .canyon, the skill and the agents' images"),
+    ("cluster", "Make or delete a local Kubernetes cluster with CanyonOS (kind)"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
     ("doctor", "Check Docker and Compose are available"),
     ("logs", "Follow the running deploy's logs"),

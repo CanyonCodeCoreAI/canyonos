@@ -10,8 +10,9 @@
 # in-cluster image builder and the dashboard, from the images `bun run canyonos:dev`
 # builds from this checkout.
 #
-# Usage: scripts/kind/up.sh [--no-operator] [--verify]
+# Usage: scripts/kind/up.sh [--version X.Y.Z] [--no-operator] [--verify]
 #   (nothing)      CanyonOS built from this checkout (its images built first if missing).
+#   --version      CanyonOS as published in that release instead.
 #   --no-operator  Only the cluster and its registry.
 #   --verify       Push a test image, run it as a restricted pod, check that a pod
 #                  which breaks the restricted profile is rejected and that a
@@ -49,13 +50,18 @@ log() { printf '\n== %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing '$1' on PATH: $2" >&2; exit 1; }; }
 native() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
 usage() { sed -n '/^# Usage:/,/^# Safe to re-run/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+release_version() {
+  local re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?(\+[0-9A-Za-z.]+)?$'
+  [[ "${1:-}" =~ $re ]] || { echo "--version takes a published release, such as 0.1.739 or 1.0.0-rc1" >&2; exit 2; }
+}
 
 verify=""
-operator="checkout"  # checkout or none
+operator="checkout"  # checkout, none, or a published release's version
 while [ $# -gt 0 ]; do
   case "$1" in
     --verify) verify=1 ;;
     --no-operator) operator="none" ;;
+    --version) release_version "${2:-}"; operator="$2"; shift ;;
     *) usage ;;
   esac
   shift
@@ -229,8 +235,11 @@ EOF
   echo "verify: OK"
 fi
 
+install="$(dirname "${BASH_SOURCE[0]}")/operator.sh"
 if [ "${operator}" = "checkout" ]; then
-  CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "$(dirname "${BASH_SOURCE[0]}")/operator.sh"
+  CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "${install}"
+elif [ "${operator}" != "none" ]; then
+  CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "${install}" --version "${operator}"
 fi
 
 log "Ready"

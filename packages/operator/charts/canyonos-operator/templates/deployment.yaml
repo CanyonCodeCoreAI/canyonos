@@ -1,8 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
-{{- if not .Values.controllerImage }}
-{{- fail "controllerImage is required: the canyonos-core image of this release, pinned" }}
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -44,7 +41,8 @@ spec:
             - --leader-elect
             - --health-probe-bind-address=:8081
             - --metrics-bind-address={{ if .Values.metrics.enabled }}:8443{{ else }}0{{ end }}
-            - --controller-image={{ .Values.controllerImage }}
+            - --controller-image={{ .Values.controllerImage | default (include "canyonos.releaseImage" (list . "core")) }}
+            - --canyonos-version={{ .Chart.AppVersion }}
             {{- with .Values.redisImage }}
             - --redis-image={{ . }}
             {{- end }}

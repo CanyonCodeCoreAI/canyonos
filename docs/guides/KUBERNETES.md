@@ -6,25 +6,32 @@ project's Redis, global controller, endpoint and agents in the project's namespa
 The cluster builds the agents' images itself and pushes them to your registry; the
 CLI only hands it the project. Nothing else on the cluster changes.
 
-To run it all on a laptop, on a local kind cluster, see
+To try it on a laptop, `canyonos cluster up` makes a local cluster with CanyonOS on it;
+see [Try it on a laptop](#try-it-on-a-laptop). To develop CanyonOS itself on one, see
 [Kubernetes on kind](../contributing/DEVELOPMENT.md#kubernetes-on-kind).
 
 ## Install the operator
 
-A cluster admin installs it once, with Helm:
+A cluster admin installs it once, with Helm, from the chart each release publishes
+(`<version>` is the CLI's, as `canyonos --version` prints it):
 
 ```bash
-helm install canyonos packages/operator/charts/canyonos-operator \
-  --namespace canyonos-system --create-namespace \
-  --set controllerImage=ghcr.io/canyoncodecoreai/canyonos-core:<version> \
+helm install canyonos oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator \
+  --version <version> --namespace canyonos-system --create-namespace \
   --set builder.enabled=true
 ```
 
+Every CanyonOS image it runs is that release's, from `ghcr.io/canyoncodecoreai`. The CLI
+must be the same release, as on Docker, where the CLI runs the images of its own
+version: a deploy with another CLI version stops before it uploads anything, and says
+whether to upgrade the operator or use the matching CLI.
+
 | Value | Default | What it does |
 |---|---|---|
-| `controllerImage` | none, required | The canyonos-core image of this release: every project's global controller and endpoint, and the in-cluster build, run it. Point it at a registry mirror if you use one. |
+| `imageRegistry` | `ghcr.io/canyoncodecoreai` | Where CanyonOS's own images come from: each one below left empty is `<imageRegistry>/canyonos-<name>:<version>`. Point it at a registry mirror that holds them under the same names. |
+| `controllerImage` | this release's `canyonos-core` | The image every project's global controller and endpoint, and the in-cluster build, run. |
 | `watchNamespaces` | `[]` | Empty: projects may run in any namespace, with cluster-wide permissions. A list: only those namespaces, with the operator's permissions granted in them alone. |
-| `image.repository`, `image.digest` | the released operator | Point at a registry mirror; prefer a digest. |
+| `image.repository`, `image.digest` | this release's operator | The operator's own image; prefer a digest. |
 | `redisImage` | the operator's default | The image of each project's Redis, for a mirror. |
 | `userRoles.enabled` | `true` | Whoever may administer, edit or view a namespace may do the same with its CanyonProjects, CanyonAgents and CanyonBuilds: a namespace's edit role is all `canyonos deploy` needs. |
 | `metrics.enabled` | `true` | The operator's Prometheus metrics on :8443 (HTTPS; callers need the `canyonos-metrics-reader` role). |
@@ -36,6 +43,35 @@ helm install canyonos packages/operator/charts/canyonos-operator \
 The operator never reads Secrets other than the Redis passwords it needs (by name,
 never listed), never changes an object it did not create, and runs every pod under
 the restricted Pod Security profile.
+
+## Try it on a laptop
+
+`canyonos cluster up` makes a local Kubernetes cluster to deploy to, with nothing but
+the CLI, Docker (4 CPUs and 8 GB or more),
+[`kind`](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) and
+[`kubectl`](https://kubernetes.io/docs/tasks/tools/) (macOS: `brew install kind kubectl`;
+Windows: `winget install Kubernetes.kind Kubernetes.kubectl`):
+
+```bash
+canyonos cluster up            # about 10 minutes the first time
+```
+
+It starts a registry on `localhost:5001`, makes a kind cluster named `canyonos` (one
+control plane and one worker; `--workers 3` for more), with Calico so NetworkPolicy is
+enforced, metrics-server and Pod Security `restricted` in every namespace, and installs
+CanyonOS of the CLI's own release on it, with the builder and the dashboard. `kubectl`
+then points at the cluster. Run it again after upgrading the CLI to bring the cluster
+to the same release. Then, in your project's folder, add to
+`config/global_controller.yaml`:
+
+```yaml
+kubernetes:
+  namespace: my-project
+  registry: localhost:5001
+```
+
+and deploy as in [Deploy and run](#deploy-and-run). `canyonos cluster down` deletes the
+cluster (`--all` also the registry and the images in it).
 
 ## Configuration
 
@@ -127,21 +163,23 @@ that changes them, apply the new CRDs yourself, or new fields are dropped
 (`--force-conflicts` takes them over from Helm, which installed them):
 
 ```bash
-kubectl apply --server-side --force-conflicts -f packages/operator/charts/canyonos-operator/crds/
-helm upgrade canyonos packages/operator/charts/canyonos-operator --namespace canyonos-system --reuse-values
+helm show crds oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator --version <version> \
+  | kubectl apply --server-side --force-conflicts -f -
+helm upgrade canyonos oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator \
+  --version <version> --namespace canyonos-system --reuse-values
 ```
+
+`--reuse-values` keeps every value set at install. An image left to the chart follows
+the new release by itself; one set by hand (`image.digest`, `controllerImage`, the
+dashboard's) stays as it was, so pass its new value with `--set`, or the operator
+upgrades while the images it runs do not.
 
 Never delete a CRD: deleting it deletes every project of its kind in the cluster.
 
 ## Dashboard
 
-One dashboard serves every project on the cluster. Install it with the operator:
-
-```bash
---set dashboard.enabled=true \
---set dashboard.apiImage=ghcr.io/canyoncodecoreai/canyonos-api:<version> \
---set dashboard.webImage=ghcr.io/canyoncodecoreai/canyonos-web:<version>
-```
+One dashboard serves every project on the cluster. Install it with the operator, by
+adding `--set dashboard.enabled=true`.
 
 It runs in `canyonos-dashboard`: the API, the web front end and Postgres on a 1Gi
 disk, all under the restricted Pod Security profile. Open it with:
@@ -163,7 +201,7 @@ its telemetry to the dashboard.
 
 | Value | Default |
 |---|---|
-| `dashboard.apiImage`, `webImage` | none, required: the images of this release |
+| `dashboard.apiImage`, `webImage` | this release's `canyonos-api` and `canyonos-web` |
 | `dashboard.dbImage` | `postgres:16-alpine` |
 | `dashboard.storage`, `storageClassName` | `1Gi`, the cluster's default |
 | `dashboard.existingSecret` | none: the chart makes the database password and JWT secret on install and keeps them. Give your own Secret (`db-password`, `jwt-secret` of 32 characters or more) when the chart is rendered without the cluster (`helm template`, Argo CD), which cannot keep a generated password. |

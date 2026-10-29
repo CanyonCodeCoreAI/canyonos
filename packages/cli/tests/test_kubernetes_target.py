@@ -218,6 +218,42 @@ def test_a_dotenv_saved_with_a_byte_order_mark_keeps_its_first_key(tmp_path):
     }
 
 
+def test_a_cluster_on_another_release_stops_the_deploy_before_the_upload(monkeypatch):
+    monkeypatch.setattr(kubernetes_target.env, "is_development", False)
+    monkeypatch.setattr(kubernetes_target.env, "VERSION", "0.1.740")
+    with patch("canyonos.kubernetes_target.kubectl") as kubectl:
+        with pytest.raises(RuntimeError) as raised:
+            kubernetes_target.check_operator_version(
+                "acme", "demo-t1", {"phase": "Receiving", "operatorVersion": "0.1.739"}
+            )
+    message = str(raised.value)
+    assert "CanyonOS 0.1.739" in message and "CLI is 0.1.740" in message
+    assert "Upgrading the operator" in message
+    # The build waits for an upload that will not come: it goes with the deploy.
+    assert kubectl.call_args.args[0][:3] == ["delete", "canyonbuild", "demo-t1"]
+
+
+@pytest.mark.parametrize(
+    ("development", "operator"),
+    [
+        (False, "0.1.740"),  # the same release
+        (False, None),  # an operator that reports no version
+        (True, "0.1.739"),  # a CLI from a checkout
+    ],
+)
+def test_the_release_check_lets_these_deploys_through(
+    monkeypatch, development, operator
+):
+    monkeypatch.setattr(kubernetes_target.env, "is_development", development)
+    monkeypatch.setattr(kubernetes_target.env, "VERSION", "0.1.740")
+    status = {"phase": "Receiving"}
+    if operator:
+        status["operatorVersion"] = operator
+    with patch("canyonos.kubernetes_target.kubectl") as kubectl:
+        kubernetes_target.check_operator_version("acme", "demo-t1", status)
+    kubectl.assert_not_called()
+
+
 def test_a_failed_build_says_why_and_where_its_log_is():
     with patch(
         "canyonos.kubernetes_target.kubectl_json",

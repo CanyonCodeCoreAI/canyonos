@@ -4,12 +4,12 @@
 # The cluster's CanyonOS dashboard, one for every project: Postgres, the API and the web
 # front end, as `canyonos serve` runs them on Docker. Nothing is exposed outside the
 # cluster: it is opened with a port-forward, so only who may port-forward into its
-# namespace reaches it, and the first account made there becomes its admin.
+# namespace reaches it, and the first account made there is its only one.
 {{- if .Values.dashboard.enabled }}
 {{- $ns := .Values.dashboard.namespace }}
 {{- $secret := .Values.dashboard.existingSecret | default "canyonos-dashboard" }}
-{{- $apiImage := required "dashboard.apiImage is required: the canyonos-api image of this release" .Values.dashboard.apiImage }}
-{{- $webImage := required "dashboard.webImage is required: the canyonos-web image of this release" .Values.dashboard.webImage }}
+{{- $apiImage := .Values.dashboard.apiImage | default (include "canyonos.releaseImage" (list . "api")) }}
+{{- $webImage := .Values.dashboard.webImage | default (include "canyonos.releaseImage" (list . "web")) }}
 {{- if .Values.dashboard.createNamespace }}
 apiVersion: v1
 kind: Namespace

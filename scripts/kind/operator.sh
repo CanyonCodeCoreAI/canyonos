@@ -8,8 +8,10 @@
 # chart is installed with the in-cluster image builder and the dashboard. An image that
 # changed rolls out, one that did not restarts nothing. scripts/kind/up.sh runs it
 # first, and `bun run canyonos:dev` again after each rebuild while the cluster exists.
+# With --version, a published release instead, as a customer installs it: its chart
+# and images, from ghcr.
 #
-# Usage: scripts/kind/operator.sh
+# Usage: scripts/kind/operator.sh [--version X.Y.Z]
 # Environment:
 #   CANYONOS_KIND_CLUSTER  The cluster's name (default canyonos).
 # Needs docker, kind and kubectl; helm runs in a container.
@@ -22,23 +24,36 @@ REGISTRY="localhost:5001"
 NAMESPACE="canyonos-system"
 # helm 3.17.3, pinned by digest, as the Operator workflow renders the chart with.
 HELM_IMAGE="alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895"
+RELEASED_CHART="oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator"
 # A native path: on Git Bash `pwd -W` gives C:/..., which Docker and kubectl can open.
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && { pwd -W 2>/dev/null || pwd; })"
 
 log() { printf '\n== %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing '$1' on PATH: $2" >&2; exit 1; }; }
 
-[ $# -eq 0 ] || { echo "Usage: scripts/kind/operator.sh" >&2; exit 2; }
+release_version() {
+  local re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?(\+[0-9A-Za-z.]+)?$'
+  [[ "${1:-}" =~ $re ]] || { echo "--version takes a published release, such as 0.1.739 or 1.0.0-rc1" >&2; exit 2; }
+}
+
+version=""
+case "${1:-}" in
+  "") ;;
+  --version) release_version "${2:-}"; version="$2" ;;
+  *) echo "Usage: scripts/kind/operator.sh [--version X.Y.Z]" >&2; exit 2 ;;
+esac
 
 need docker "install Docker Desktop or Docker Engine"
 need kind "https://kind.sigs.k8s.io/docs/user/quick-start/#installation"
 need kubectl "https://kubernetes.io/docs/tasks/tools/"
 kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}" \
   || { echo "No kind cluster ${CLUSTER_NAME}: run scripts/kind/up.sh first" >&2; exit 1; }
-for name in core api web; do
-  docker image inspect "canyonos-${name}:dev" >/dev/null 2>&1 \
-    || { echo "No canyonos-${name}:dev image: run \`bun run canyonos:dev\` first, which builds CanyonOS's images from this checkout" >&2; exit 1; }
-done
+if [ -z "${version}" ]; then
+  for name in core api web; do
+    docker image inspect "canyonos-${name}:dev" >/dev/null 2>&1 \
+      || { echo "No canyonos-${name}:dev image: run \`bun run canyonos:dev\` first, which builds CanyonOS's images from this checkout" >&2; exit 1; }
+  done
+fi
 cluster_kubectl() { kubectl --context "kind-${CLUSTER_NAME}" "$@"; }
 
 kube="$(mktemp -d)"
@@ -50,6 +65,28 @@ helm() {
     -v "${REPO}/packages/operator/charts:/charts:ro" \
     -e KUBECONFIG=/kube/config "${HELM_IMAGE}" "$@"
 }
+
+# The cluster's own registry: the builder pushes to it over plain HTTP, by the name it
+# has inside the kind network.
+kind_values=(
+  --set builder.enabled=true
+  --set "builder.insecureRegistries={kind-registry:5000}"
+  --set "builder.registryAliases.localhost:5001=kind-registry:5000"
+  --set dashboard.enabled=true
+)
+
+if [ -n "${version}" ]; then
+  log "CanyonOS ${version}, as published"
+  # Helm installs crds/ once and never upgrades them: apply the release's first. The
+  # chart's images default to the release's own.
+  helm show crds "${RELEASED_CHART}" --version "${version}" \
+    | cluster_kubectl apply --server-side --force-conflicts -f - >/dev/null
+  helm upgrade --install canyonos "${RELEASED_CHART}" --version "${version}" \
+    --namespace "${NAMESPACE}" --create-namespace "${kind_values[@]}" \
+    --wait --timeout 10m >/dev/null
+  echo "operator, builder and dashboard ${version} installed in ${NAMESPACE}"
+  exit 0
+fi
 
 log "Image canyonos-operator:dev"
 # Only Kubernetes runs the operator, so canyonos:dev leaves it out. Quiet unless the
@@ -86,14 +123,8 @@ log "CanyonOS from this checkout"
 # from Helm, which installed them.
 cluster_kubectl apply --server-side --force-conflicts \
   -f "${REPO}/packages/operator/charts/canyonos-operator/crds/" >/dev/null
-# The cluster's own registry: the builder pushes to it over plain HTTP, by the name it
-# has inside the kind network.
 helm upgrade --install canyonos /charts/canyonos-operator \
-  --namespace "${NAMESPACE}" --create-namespace \
-  --set builder.enabled=true \
-  --set "builder.insecureRegistries={kind-registry:5000}" \
-  --set "builder.registryAliases.localhost:5001=kind-registry:5000" \
-  --set dashboard.enabled=true \
+  --namespace "${NAMESPACE}" --create-namespace "${kind_values[@]}" \
   --set image.repository="${operator%:*}" --set image.tag="${operator##*:}" \
   --set controllerImage="${core}" \
   --set dashboard.apiImage="${api}" \

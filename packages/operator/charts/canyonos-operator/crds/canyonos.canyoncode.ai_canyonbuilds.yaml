@@ -129,6 +129,11 @@ spec:
                 description: message says why the build failed, or what it is waiting
                   for.
                 type: string
+              operatorVersion:
+                description: |-
+                  operatorVersion is the CanyonOS release of the operator that runs the build (and
+                  the project's pods), for the CLI to check it is the same as its own.
+                type: string
               phase:
                 description: 'phase: Pending, Receiving (upload the project now),
                   Building, Succeeded or Failed.'

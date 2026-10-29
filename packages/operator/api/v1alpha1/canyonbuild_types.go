@@ -78,6 +78,11 @@ type CanyonBuildStatus struct {
 	// message says why the build failed, or what it is waiting for.
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// operatorVersion is the CanyonOS release of the operator that runs the build (and
+	// the project's pods), for the CLI to check it is the same as its own.
+	// +optional
+	OperatorVersion string `json:"operatorVersion,omitempty"`
 }
 
 // +kubebuilder:object:root=true

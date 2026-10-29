@@ -219,10 +219,18 @@ After changing CanyonOS, `bun run canyonos:dev` as usual: while the cluster exis
 runs `scripts/kind/operator.sh` too, so what changed rolls out there and the rest
 restarts nothing (run `operator.sh` alone to update the cluster without the shell).
 Projects deployed to the cluster pick up a new core image on their next deploy. It is
-all safe to re-run. `up.sh --no-operator` stops after the cluster, and `--verify` checks the
-cluster's pieces. The API server's Pod Security file is kept in `~/.canyonos/kind`, so
+all safe to re-run. `up.sh --version 0.1.739` installs a published release instead (its
+chart and images from ghcr), as a customer would, with no `canyonos:dev` images needed.
+`--no-operator` stops after the cluster, and `--verify` checks the cluster's pieces. The
+API server's Pod Security file is kept in `~/.canyonos/kind`, so
 a branch switch never stops the cluster from starting. `scripts/kind/down.sh` deletes
 the cluster (`--all` the registry too).
+
+A released CLI does the same without a checkout: `canyonos cluster up` makes this
+cluster and installs the CLI's own release on it (see
+[Try it on a laptop](../guides/KUBERNETES.md#try-it-on-a-laptop)). It carries its own
+copy of `cluster.yaml`, `pod-security.yaml` and the versions pinned here, and
+`tests/test_kubernetes_local.py` fails when they drift apart: change both together.
 
 When a deploy waits with "no node to run on", Docker has too little CPU or memory for
 it. `kubectl get pods -n my-project` shows the project's pods, and

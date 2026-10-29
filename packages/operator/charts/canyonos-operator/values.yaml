@@ -1,16 +1,21 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
+# Where CanyonOS's own images come from: each image left empty below is
+# <imageRegistry>/canyonos-<name> at this chart's appVersion, the release it belongs to.
+# Point it at a registry mirror that holds them under the same names.
+imageRegistry: ghcr.io/canyoncodecoreai
+
 # The operator image. Set digest to pin it (preferred); otherwise tag is used.
 image:
-  repository: ghcr.io/canyoncodecoreai/canyonos-operator
+  repository: ""   # defaults to <imageRegistry>/canyonos-operator
   tag: ""          # defaults to the chart's appVersion
   digest: ""       # e.g. sha256:...; wins over tag
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# The canyonos-core image every project's global controller and endpoint run, pinned to
-# this release (required). A project may point at its own mirror (spec.controllerImage).
+# The canyonos-core image every project's global controller and endpoint run; empty:
+# this release's. A project may point at its own mirror (spec.controllerImage).
 controllerImage: ""
 
 # The image of each project's internal Redis, e.g. from a registry mirror; empty uses
@@ -43,7 +48,7 @@ dashboard:
   enabled: false
   namespace: canyonos-dashboard
   createNamespace: true
-  # The canyonos-api and canyonos-web images of this release (required when enabled).
+  # The canyonos-api and canyonos-web images; empty: this release's.
   apiImage: ""
   webImage: ""
   dbImage: postgres:16-alpine

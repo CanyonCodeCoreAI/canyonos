@@ -57,6 +57,12 @@ var _ = Describe("CanyonBuild controller", func() {
 		}
 	})
 
+	It("reports the operator's CanyonOS release on the build, for the CLI to check", func() {
+		reconciler.Version = "0.1.739"
+		build := reconcileBuild(newBuild())
+		Expect(build.Status.OperatorVersion).To(Equal("0.1.739"))
+	})
+
 	It("fails at once on a cluster with no builder", func() {
 		reconciler.BuilderAddress = ""
 		build := reconcileBuild(newBuild())

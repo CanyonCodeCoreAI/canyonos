@@ -43,6 +43,8 @@ type CanyonBuildReconciler struct {
 	// RegistryAliases maps a registry as nodes pull from it to how the builder
 	// reaches it (kind: localhost:5001 -> kind-registry:5000).
 	RegistryAliases map[string]string
+	// Version is the CanyonOS release of this operator, reported on every build.
+	Version string
 }
 
 // +kubebuilder:rbac:groups=canyonos.canyoncode.ai,resources=canyonbuilds,verbs=get;list;watch;update;patch
@@ -196,10 +198,11 @@ func (r *CanyonBuildReconciler) setStatus(
 	ctx context.Context, build *canyonosv1alpha1.CanyonBuild, phase, podName, message string,
 ) error {
 	if build.Status.Phase == phase && build.Status.PodName == podName && build.Status.Message == message &&
-		phase != BuildSucceeded {
+		build.Status.OperatorVersion == r.Version && phase != BuildSucceeded {
 		return nil
 	}
 	build.Status.Phase, build.Status.PodName, build.Status.Message = phase, podName, message
+	build.Status.OperatorVersion = r.Version
 	return client.IgnoreNotFound(r.Status().Update(ctx, build))
 }
 

@@ -47,6 +47,7 @@ func init() {
 func main() {
 	var metricsAddr, metricsCertPath, metricsCertName, metricsCertKey string
 	var probeAddr, controllerImage, redisImage, watchNamespaces, builderAddress, dashboardNamespace string
+	var canyonosVersion string
 	registryAliases := aliasFlag{}
 	var enableLeaderElection, secureMetrics, enableHTTP2 bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -64,6 +65,9 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false, "If set, HTTP/2 will be enabled for the metrics server")
 	flag.StringVar(&controllerImage, "controller-image", "",
 		"The canyonos-core image matching this operator's release, pinned (required).")
+	flag.StringVar(&canyonosVersion, "canyonos-version", "",
+		"The CanyonOS release this operator belongs to (the chart's appVersion), reported on "+
+			"each CanyonBuild so the CLI can check it matches its own.")
 	flag.StringVar(&redisImage, "redis-image", builders.RedisImage,
 		"Image for internal Redis, e.g. from a registry mirror.")
 	flag.StringVar(&builderAddress, "builder-address", "",
@@ -171,6 +175,7 @@ func main() {
 		ControllerImage: controllerImage,
 		BuilderAddress:  builderAddress,
 		RegistryAliases: registryAliases,
+		Version:         canyonosVersion,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "canyonbuild")
 		os.Exit(1)

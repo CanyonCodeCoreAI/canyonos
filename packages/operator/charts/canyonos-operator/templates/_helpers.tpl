@@ -17,10 +17,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 control-plane: controller-manager
 {{- end }}
 
+{{/* Where CanyonOS's own images come from; empty would render "/canyonos-core:x" unnoticed. */}}
+{{- define "canyonos.imageRegistry" -}}
+{{ required "imageRegistry is required: the registry CanyonOS's images come from, such as ghcr.io/canyoncodecoreai" .Values.imageRegistry | trimSuffix "/" }}
+{{- end }}
+
 {{- define "canyonos.image" -}}
+{{- $repository := .Values.image.repository | default (printf "%s/canyonos-operator" (include "canyonos.imageRegistry" .)) -}}
 {{- if .Values.image.digest -}}
-{{ .Values.image.repository }}@{{ .Values.image.digest }}
+{{ $repository }}@{{ .Values.image.digest }}
 {{- else -}}
-{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+{{ $repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
 {{- end -}}
+{{- end }}
+
+{{/* A CanyonOS image of this chart's release: (list . "core") is canyonos-core. */}}
+{{- define "canyonos.releaseImage" -}}
+{{- $root := index . 0 -}}
+{{ include "canyonos.imageRegistry" $root }}/canyonos-{{ index . 1 }}:{{ $root.Chart.AppVersion }}
 {{- end }}

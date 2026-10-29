@@ -24,7 +24,7 @@ from canyonos.convert import (
 )
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
-from canyonos import kubernetes_target
+from canyonos import kubernetes_local, kubernetes_target
 from canyonos.feedback import run_feedback
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
@@ -107,6 +107,33 @@ def _run_command():
     add("quickstart", lambda args: sys.exit(0 if run_quickstart() else 1))
     add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
     add("provision", lambda args: sys.exit(0 if run_provision() else 1))
+    cluster = add(
+        "cluster",
+        lambda args: sys.exit(
+            0
+            if (
+                kubernetes_local.run_cluster_up(args.workers)
+                if args.action == "up"
+                else kubernetes_local.run_cluster_down(args.all)
+            )
+            else 1
+        ),
+    )
+    cluster.add_argument(
+        "action",
+        choices=("up", "down"),
+        help="up: make the cluster (or bring it to this release); down: delete it",
+    )
+    cluster.add_argument(
+        "--workers",
+        type=int,
+        help="Worker nodes of a new cluster (default 1)",
+    )
+    cluster.add_argument(
+        "--all",
+        action="store_true",
+        help="down: also remove the local registry and the images in it",
+    )
 
     def add_target(command):
         command.add_argument(
