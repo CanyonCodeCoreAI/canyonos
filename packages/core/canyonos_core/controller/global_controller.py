@@ -20,13 +20,19 @@ from functools import cached_property
 
 import yaml
 from canyonos_core.controller.controller_context import (
+    DEFAULT_REDIS_PORT,
     ControllerContext,
     _redis_connect_host,
     list_replicas,
 )
 from canyonos_core.controller import governance, scaling
 from canyonos_core.controller.orchestrator import TARGET_ENV, orchestrator_for
-from canyonos_core.endpoint import ADDRESS_KEY, endpoint_record
+from canyonos_core.endpoint import (
+    ADDRESS_KEY,
+    ENDPOINT_PORT,
+    endpoint_record,
+    read_endpoint_record,
+)
 from canyonos_core.scaling import contract
 from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
 from canyonos_core.controller.utils.otel_writer import send_telemetry
@@ -137,7 +143,7 @@ class GlobalController(ControllerContext):
         # _launch_redis_containers -- the otel_exporter subprocess is handed these.
         self._redis_addr = (
             _redis_connect_host(redis_cfg.get("host", "localhost")),
-            redis_cfg.get("port", 6379),
+            redis_cfg.get("port", DEFAULT_REDIS_PORT),
         )
 
         self.cleanup_interval = self.config.get("cleanup_interval", 10)
@@ -341,7 +347,15 @@ class GlobalController(ControllerContext):
         # Overwrites any dashboard edits, except prompts: the dashboard API owns prompts:config.
         self._write_policies(*config_files)
         self._write_identity()
-        record = endpoint_record(manifest)
+        # Without `api_port`, a reload keeps the port the endpoint's container already got,
+        # and a deploy starts from the one it had last deploy, which the CLI passes in.
+        published = read_endpoint_record(self.redis)
+        record = endpoint_record(
+            manifest,
+            published["api_port"]
+            if published
+            else int(os.environ.get("CANYONOS_LAST_API_PORT") or ENDPOINT_PORT),
+        )
         self.redis.hset_multiple(
             ADDRESS_KEY, {**record, "arguments": json.dumps(record["arguments"])}
         )
@@ -530,7 +544,7 @@ class GlobalController(ControllerContext):
         """Launch this machine's Redis container, reusing one that's already healthy.
         A machine in the pool gets its Redis when the reconciler starts it."""
         host = "localhost"
-        redis_port = self.config.get("redis", {}).get("port", 6379)
+        redis_port = self.config.get("redis", {}).get("port", DEFAULT_REDIS_PORT)
         container_name = redis_container_name(host)
         connect_host = _redis_connect_host(host)
 
@@ -609,8 +623,9 @@ class GlobalController(ControllerContext):
                     # on the name instead of reporting the real problem.
                     self._run_cmd(["docker", "rm", "-f", "-v", container_name], host)
                     logger.critical(
-                        "Redis port %d on %s is already in use. Free it or change "
-                        "`redis.port` in global_controller.yaml.",
+                        "Redis port %d on %s is already in use. Free it, or change "
+                        "`redis.port` in global_controller.yaml or delete it so "
+                        "CanyonOS picks a free port.",
                         redis_port,
                         host,
                     )

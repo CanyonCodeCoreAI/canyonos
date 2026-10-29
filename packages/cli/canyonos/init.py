@@ -22,7 +22,16 @@ import urllib.request
 from pyfiglet import figlet_format
 
 from canyonos import env, project, ui
-from canyonos.constants import private_ip, public_ip
+from canyonos.constants import (
+    DEFAULT_REDIS_PORT,
+    default_config_path,
+    endpoint_api_port,
+    existing_config_path,
+    local_redis_port,
+    port_in_use,
+    private_ip,
+    public_ip,
+)
 from canyonos.docker_cmd import (
     DOCKER_PULL_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -30,7 +39,7 @@ from canyonos.docker_cmd import (
     cleanup_docker,
     run_docker,
 )
-from canyonos.port_utils import is_port_conflict
+from canyonos.port_utils import find_free_port, is_port_conflict
 
 
 # Production is `env.PROD_CORE_IMAGE`; a developer can point this at the image
@@ -321,9 +330,16 @@ def _create_workspace_volume():
     )
 
 
-def _run_container(image=GC_IMAGE, port=GC_CONTAINER_PORT, max_attempts=50):
+def _run_container(
+    image=GC_IMAGE,
+    port=GC_CONTAINER_PORT,
+    redis_port=DEFAULT_REDIS_PORT,
+    api_port=None,
+    max_attempts=50,
+):
     """Start this project's Global Controller container, published on 127.0.0.1 at
-    `port`, or at the next free port after it."""
+    `port`, or at the next free port after it, and tell it Redis's port and, for an
+    endpoint whose port isn't set, the port it had last deploy."""
     start_port = port
     # The real socket behind whatever's active right now, not the
     # /var/run/docker.sock alias -- some other app can hold that alias and
@@ -378,6 +394,9 @@ def _run_container(image=GC_IMAGE, port=GC_CONTAINER_PORT, max_attempts=50):
             "--add-host=host.docker.internal:host-gateway",
             "-e",
             "CANYONOS_REDIS_HOST=host.docker.internal",
+            "-e",
+            f"CANYONOS_REDIS_PORT={redis_port}",
+            *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),
             # So the GC's own docker-outside-of-docker calls resolve the
             # socket unambiguously too, instead of falling back to whatever
             # a bare `docker` invocation inside the container would default to.
@@ -437,7 +456,7 @@ def _run_container(image=GC_IMAGE, port=GC_CONTAINER_PORT, max_attempts=50):
     )
 
 
-def _save_state(container_id, port, docker_socket=None):
+def _save_state(container_id, port, docker_socket=None, redis_port=None, api_port=None):
     """Atomically write GC state so interruption cannot truncate the old record."""
     state_dir = project.state_dir()
     os.makedirs(state_dir, exist_ok=True)
@@ -457,6 +476,8 @@ def _save_state(container_id, port, docker_socket=None):
                     "container_id": container_id,
                     "port": port,
                     "docker_socket": docker_socket,
+                    "redis_port": redis_port,
+                    "api_port": api_port,
                 },
                 f,
             )
@@ -516,15 +537,40 @@ def stop_existing():
         )
 
 
-def _saved_port():
-    """The port the last deploy's Global Controller used, or None without a readable
-    state file."""
+def _saved_state():
+    """The last deploy's state, empty without a readable state file."""
     if not os.path.isfile(project.state_path()):
-        return None
+        return {}
     try:
-        return load_state()["port"]
+        return load_state()
     except (OSError, RuntimeError):
-        return None
+        return {}
+
+
+def remember_api_port(api_port):
+    """Record the port the endpoint got, so the next deploy starts from it. Without a
+    readable state file nothing is recorded, and the next deploy starts from 8080."""
+    try:
+        state = load_state()
+    except (OSError, RuntimeError):
+        return
+    _save_state(
+        state["container_id"],
+        state["port"],
+        state.get("docker_socket"),
+        state.get("redis_port"),
+        api_port,
+    )
+
+
+def redis_port_of(state):
+    """The Redis port a deploy recorded; for a state file from a CLI that recorded
+    none, the config's `redis.port`, else Redis's default."""
+    return (
+        state.get("redis_port")
+        or local_redis_port(default_config_path())
+        or DEFAULT_REDIS_PORT
+    )
 
 
 def run_init(banner=True, image=GC_IMAGE):
@@ -537,16 +583,39 @@ def run_init(banner=True, image=GC_IMAGE):
 
     # Before stop_existing(), which shells out to docker itself.
     _ensure_docker_running()
-    # Read before stop_existing() removes the state, so a redeploy keeps its port.
-    preferred = _saved_port() or GC_CONTAINER_PORT
+    # Read before stop_existing() removes the state, so a redeploy keeps its ports.
+    saved = _saved_state()
+    preferred = saved.get("port") or GC_CONTAINER_PORT
     stop_existing()
+
+    # After stop_existing(), so the last deploy's ports read as free.
+    config_path = existing_config_path()
+    # Without `api_port`, the reconciler picks the endpoint's port when Docker binds it.
+    api_port = endpoint_api_port(config_path)
+    if api_port is not None and port_in_use(api_port):
+        raise RuntimeError(
+            f"Port {api_port} is already in use, and the endpoint needs it. Free it, or "
+            f"change `endpoint.api_port` in {config_path} or delete it so CanyonOS picks "
+            "a free port."
+        )
+    # A taken `redis.port` is left to the Global Controller, which reuses this
+    # project's own Redis when a crashed deploy left it running there.
+    redis_port = local_redis_port(config_path)
+    if redis_port is None:
+        preferred_redis = saved.get("redis_port") or DEFAULT_REDIS_PORT
+        redis_port = find_free_port(preferred_redis)
+        if redis_port != preferred_redis:
+            ui.warn(f"Port {preferred_redis} is taken, so Redis is on {redis_port}.")
+    last_api_port = saved.get("api_port") if api_port is None else None
 
     with ui.status("Pulling Global Controller image..."):
         _pull_image(image)
     with ui.status("Starting Global Controller container..."):
-        container_id, port, docker_socket = _run_container(image=image, port=preferred)
+        container_id, port, docker_socket = _run_container(
+            image=image, port=preferred, redis_port=redis_port, api_port=last_api_port
+        )
     try:
-        _save_state(container_id, port, docker_socket)
+        _save_state(container_id, port, docker_socket, redis_port, last_api_port)
     except OSError as e:
         cleanup_failure = cleanup_docker(
             ["docker", "rm", "-f", container_id],

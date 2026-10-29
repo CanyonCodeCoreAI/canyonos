@@ -35,11 +35,11 @@ from rich.text import Text
 
 from canyonos import project, ui
 from canyonos.constants import (
+    DEFAULT_API_PORT,
     dashboard_port,
     endpoint_api_port,
     existing_config_path,
     load_yaml,
-    port_in_use,
     round_trip_yaml,
     write_config,
 )
@@ -51,10 +51,14 @@ from canyonos.dashboard_stack import (
 )
 from canyonos.gc import GCError, deploy_status, deployed_endpoint, post_deploy
 from canyonos.theme import GREEN, WHITE
-from canyonos.init import docker_env, load_state, run_init
+from canyonos.init import docker_env, load_state, remember_api_port, run_init
 from canyonos.os_support import is_terminal
 from canyonos.resources import configure_resources
-from canyonos.serve import _register_running_project, serve_dashboard
+from canyonos.serve import (
+    _register_running_project,
+    _warn_if_dashboard_port_ignored,
+    serve_dashboard,
+)
 from canyonos.stop import stop_project
 from canyonos.sync import project_fingerprints, run_sync, save_deployed_fingerprints
 from canyonos.usage.consent import offer_after_first_deploy
@@ -360,16 +364,6 @@ def run_deploy(
 
         state = load_state()
 
-        api_port = endpoint_api_port(config_path)
-
-        # Checked here, after run_init() has already torn down any previous deploy,
-        # so a still-live prior run doesn't read as an unrelated conflict.
-        if api_port is not None and port_in_use(api_port):
-            raise RuntimeError(
-                f"Port {api_port} is already in use, and the endpoint needs it. Free it "
-                f"or change `endpoint.api_port` in {config_path}."
-            )
-
         try:
             post_deploy(state["port"])
         except GCError as e:
@@ -469,6 +463,7 @@ def _start_dashboard(report_failure=True):
         with ui.status("Starting the dashboard..."), _dashboard_lock():
             port = _existing_dashboard_port()
         if port is not None:
+            _warn_if_dashboard_port_ignored()
             _register_running_project()
             return dashboard_url(port)
         result = serve_dashboard(report_failure=report_failure)
@@ -494,6 +489,14 @@ def _deploy_summary(state, serve, on_ready):
             "Could not read the running deploy's endpoint. Run `canyonos logs` to see why."
         )
         endpoint = None
+    if endpoint and endpoint_api_port(existing_config_path()) is None:
+        preferred = state.get("api_port") or DEFAULT_API_PORT
+        if endpoint["api_port"] != preferred:
+            ui.warn(
+                f"Port {preferred} is taken, so the endpoint is on "
+                f"{endpoint['api_port']}."
+            )
+        remember_api_port(endpoint["api_port"])
     summary = (dashboard, endpoint)
     _print_deploy_summary(*summary)
     ui.hint(

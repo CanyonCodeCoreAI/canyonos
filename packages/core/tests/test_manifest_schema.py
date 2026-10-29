@@ -473,7 +473,7 @@ class DefaultsTests(_ManifestCase):
         self.assertFalse(agent.stateful)
         self.assertEqual(agent.requirements, ())
 
-        self.assertEqual(manifest.endpoint.api_port, 8080)
+        self.assertIsNone(manifest.endpoint.api_port)
         self.assertEqual(manifest.dashboard_port, 8081)
 
         self.assertIsInstance(database, DatabaseAgent)

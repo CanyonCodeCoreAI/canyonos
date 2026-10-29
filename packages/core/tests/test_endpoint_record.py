@@ -25,7 +25,7 @@ MANIFEST = SimpleNamespace(
 
 def _record(**environment):
     with patch.dict(os.environ, environment, clear=True):
-        return endpoint_record(MANIFEST)
+        return endpoint_record(MANIFEST, 8080)
 
 
 class EndpointRecordTests(unittest.TestCase):

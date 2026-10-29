@@ -27,14 +27,15 @@ ENDPOINT_AGENT_NAME = "endpoint"
 ADDRESS_KEY = "endpoint:address"
 
 
-def endpoint_record(manifest):
+def endpoint_record(manifest, published_port):
     """Return where callers reach the endpoint of a validated manifest: its public host,
     port and URL, the agent and method it serves, and that method's argument names
     from its `functions:` entry. The Global Controller publishes it at ADDRESS_KEY.
 
     CANYONOS_ENDPOINT_URL, when set, is the endpoint's base URL (on Kubernetes the
     operator sets its Route, Ingress or in-cluster Service). Otherwise it is the
-    `api_port` published on CANYONOS_PUBLIC_IP, or on 127.0.0.1."""
+    `api_port` published on CANYONOS_PUBLIC_IP, or on 127.0.0.1; without one,
+    `published_port`, the port the endpoint's container got."""
     endpoint = manifest.endpoint
     agent_spec = next(
         agent_spec
@@ -50,7 +51,7 @@ def endpoint_record(manifest):
         base_url = base_url.rstrip("/")
     else:
         public_host = os.environ.get("CANYONOS_PUBLIC_IP") or "127.0.0.1"
-        api_port = endpoint.api_port
+        api_port = endpoint.api_port or published_port
         base_url = f"http://{public_host}:{api_port}"
     return {
         "public_host": public_host,
@@ -60,6 +61,19 @@ def endpoint_record(manifest):
         "arguments": [argument.name for argument in function.arguments],
         "url": f"{base_url}/{endpoint.method}",
     }
+
+
+def publish_endpoint_port(redis_client, api_port):
+    """Point the endpoint record at `api_port`, the port the endpoint's container got.
+    Used by the reconciler after it launches the endpoint."""
+    record = redis_client.hgetall(ADDRESS_KEY)
+    redis_client.hset_multiple(
+        ADDRESS_KEY,
+        {
+            "api_port": api_port,
+            "url": f"http://{record['public_host']}:{api_port}/{record['method']}",
+        },
+    )
 
 
 def read_endpoint_record(redis_client):

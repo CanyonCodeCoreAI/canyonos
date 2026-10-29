@@ -95,6 +95,18 @@ class IsPortFreeTests(unittest.TestCase):
             "probe called the port free, but a 0.0.0.0 publish would fail",
         )
 
+    def test_windows_probe_does_not_reuse_the_address(self):
+        """On Windows SO_REUSEADDR lets the bind succeed beside a live listener, such as
+        a port Docker publishes, so the probe would call a taken port free."""
+        probe = MagicMock()
+        with (
+            patch.object(port_utils.os, "name", "nt"),
+            patch.object(port_utils.socket, "socket", return_value=probe),
+        ):
+            port_utils.is_port_free(6379)
+
+        probe.__enter__.return_value.setsockopt.assert_not_called()
+
     def test_string_port_raises_typeerror(self):
         """YAML gives back `api_port: '8080'` as str; main's caller int()-ed it, the PR's does not."""
         with self.assertRaises(TypeError):

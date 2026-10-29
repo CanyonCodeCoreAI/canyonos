@@ -8,11 +8,11 @@ Automatically gets created when deploy runs unless --serve flag is set to false.
 """
 
 from canyonos import ui
-from canyonos.constants import dashboard_port, default_config_path, local_redis_port
+from canyonos.constants import dashboard_port, default_config_path
 from canyonos.gc import deploy_status
-from canyonos.init import load_state
+from canyonos.init import load_state, redis_port_of
 from .dashboard_registration import RegistrationError, register_project
-from .dashboard_stack import ServeResult, run_dashboard
+from .dashboard_stack import ServeResult, _existing_dashboard_port, run_dashboard
 
 
 def _register_running_project() -> None:
@@ -34,12 +34,24 @@ def _register_running_project() -> None:
         return
 
     try:
-        registered = register_project(local_redis_port(default_config_path()))
+        registered = register_project(redis_port_of(state))
     except RegistrationError as e:
         ui.warn(f"Dashboard could not register this project: {e}")
         ui.hint("Run `canyonos serve` again to retry.")
         return
     ui.ok(f"Registered {registered.get('name', 'this project')} with the dashboard")
+
+
+def _warn_if_dashboard_port_ignored() -> None:
+    """Warn when the dashboard already runs on another port than this project's
+    `dashboard_port`, which is then ignored."""
+    configured_port = dashboard_port(default_config_path())
+    running_port = _existing_dashboard_port()
+    if configured_port and running_port not in (None, configured_port):
+        ui.warn(
+            f"The dashboard is already running on {running_port}, so "
+            f"`dashboard_port: {configured_port}` is ignored."
+        )
 
 
 def serve_dashboard(report_failure: bool = True) -> ServeResult:
@@ -49,7 +61,8 @@ def serve_dashboard(report_failure: bool = True) -> ServeResult:
     only printed when something fails and the user needs to see how far it got.
     """
     trace = []
-    preferred_port = dashboard_port(default_config_path())
+    configured_port = dashboard_port(default_config_path())
+    _warn_if_dashboard_port_ignored()
 
     with ui.status("Starting the dashboard...") as spinner:
 
@@ -57,7 +70,7 @@ def serve_dashboard(report_failure: bool = True) -> ServeResult:
             trace.append((phase, message))
             spinner.update(message)
 
-        result = run_dashboard(report, preferred_port)
+        result = run_dashboard(report, configured_port)
 
     if result.ok:
         _register_running_project()

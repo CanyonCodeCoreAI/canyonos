@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
@@ -24,7 +24,12 @@ from typing import Callable, Iterator
 from canyonos import env
 from canyonos.constants import DEFAULT_DASHBOARD_PORT, public_ip
 from canyonos.os_support import file_lock, make_private_dir, write_private_file
-from canyonos.port_utils import find_free_port, is_port_conflict
+from canyonos.port_utils import (
+    DEFAULT_MAX_PORT_ATTEMPTS,
+    find_free_port,
+    is_port_conflict,
+    is_port_free,
+)
 
 COMPOSE_PROJECT = "canyonos-dashboard"
 API_IMAGE = env.api_image
@@ -155,8 +160,10 @@ def _existing_dashboard_port() -> int | None:
     return None
 
 
-def _validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
-    """Checks docker is usable and the state dir is writable, then returns a DashboardStack with the port the dashboard should run on."""
+def _validate(configured_port: int | None = None) -> DashboardStack:
+    """Checks docker is usable and the state dir is writable, then returns a DashboardStack on the
+    running dashboard's port, else on `configured_port` (failing when it is taken), else on the
+    first free port from the default."""
     if shutil.which("docker") is None:
         raise PhaseFailure("validate", "docker is not on PATH")
 
@@ -178,9 +185,16 @@ def _validate(preferred_port: int = DEFAULT_DASHBOARD_PORT) -> DashboardStack:
     except OSError:
         raise PhaseFailure("validate", "dashboard state directory is not writable")
 
+    web_port = _existing_dashboard_port()
+    if web_port is None and configured_port and not is_port_free(configured_port):
+        raise PhaseFailure(
+            "validate",
+            f"Port {configured_port} is taken. Change `dashboard_port`, or remove it "
+            "so CanyonOS picks a free port.",
+        )
     # Hop past a squatter (e.g. the endpoint's api_port) rather than block serve.
     try:
-        web_port = _existing_dashboard_port() or find_free_port(preferred_port)
+        web_port = web_port or find_free_port(configured_port or DEFAULT_DASHBOARD_PORT)
     except RuntimeError as e:
         raise PhaseFailure("validate", str(e)) from e
 
@@ -258,14 +272,21 @@ def _command_failure_message(
     return f"{message}: {_redact_logs(detail, managed_env['CANYONOS_JWT_SECRET'])}"
 
 
+def _clashed_port(result: subprocess.CompletedProcess[str]) -> int | None:
+    """Return the port `docker compose up` could not publish because another process
+    or container holds it, or None."""
+    port = re.search(r"(?:\d{1,3}(?:\.\d{1,3}){3}|::\]?):(\d+)", result.stderr or "")
+    return int(port.group(1)) if port and is_port_conflict(result.stderr) else None
+
+
 def _start_failure_message(
     result: subprocess.CompletedProcess[str], managed_env: dict[str, str]
 ) -> str:
     """Say why `docker compose up` failed, naming the port when another process or
     container already holds one the dashboard publishes."""
-    port = re.search(r"(?:\d{1,3}(?:\.\d{1,3}){3}|::\]?):(\d+)", result.stderr or "")
-    if port and is_port_conflict(result.stderr):
-        return f"port {port.group(1)} is already in use by another process or container"
+    port = _clashed_port(result)
+    if port:
+        return f"port {port} is already in use by another process or container"
     return _command_failure_message("docker compose up failed", result, managed_env)
 
 
@@ -299,23 +320,39 @@ def _project_has_running_containers(stack: DashboardStack, manifest: Path) -> bo
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def _start(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> None:
-    try:
-        result = _run(
-            [
-                *_compose_argv(stack, manifest),
-                "up",
-                "-d",
-                "--wait",
-                "--wait-timeout",
-                "180",
-            ],
-            env=_compose_env(managed_env),
-        )
-    except OSError:
-        raise PhaseFailure("start", "could not run docker compose up")
-    if result.returncode != 0:
-        raise PhaseFailure("start", _start_failure_message(result, managed_env))
+def _start(
+    stack: DashboardStack,
+    manifest: Path,
+    managed_env: dict[str, str],
+    movable: bool,
+) -> tuple[DashboardStack, dict[str, str]]:
+    """Run `docker compose up` and return the stack and env it started with. When
+    `movable` (no `dashboard_port`), a web port Docker refuses moves to the next one,
+    so only a port Docker holds is chosen."""
+    for _ in range(DEFAULT_MAX_PORT_ATTEMPTS):
+        try:
+            result = _run(
+                [
+                    *_compose_argv(stack, manifest),
+                    "up",
+                    "-d",
+                    "--wait",
+                    "--wait-timeout",
+                    "180",
+                ],
+                env=_compose_env(managed_env),
+            )
+        except OSError:
+            raise PhaseFailure("start", "could not run docker compose up")
+        if result.returncode == 0:
+            return stack, managed_env
+        if not (movable and _clashed_port(result) == stack.web_port):
+            raise PhaseFailure("start", _start_failure_message(result, managed_env))
+        stack = replace(stack, web_port=stack.web_port + 1)
+        managed_env, _ = _prepare(stack)
+    raise PhaseFailure(
+        "start", f"no free port found after {DEFAULT_MAX_PORT_ATTEMPTS} attempts"
+    )
 
 
 def _endpoint_healthy(url: str, timeout: float = 5) -> bool:
@@ -433,7 +470,7 @@ def teardown_dashboard() -> bool:
 
 def run_dashboard(
     phase_reporter: Callable[[str, str], None] | None = None,
-    preferred_port: int = DEFAULT_DASHBOARD_PORT,
+    configured_port: int | None = None,
 ) -> ServeResult:
     """Start the local dashboard for `canyonos serve` and `canyonos deploy`, reporting
     each step; on failure, save the logs and remove what this run started.
@@ -459,7 +496,7 @@ def run_dashboard(
                     lambda: report(ServeResult(True, "validate", LOCK_WAIT_MESSAGE))
                 )
             )
-            stack = _validate(preferred_port)
+            stack = _validate(configured_port)
             report(ServeResult(True, "validate", "dashboard prerequisites validated"))
 
             managed_env, prepare_message = _prepare(stack)
@@ -475,7 +512,9 @@ def run_dashboard(
 
             report(ServeResult(True, "pull", _pull(stack, manifest, managed_env)))
 
-            _start(stack, manifest, managed_env)
+            stack, managed_env = _start(
+                stack, manifest, managed_env, movable=not configured_port
+            )
             report(ServeResult(True, "start", "dashboard stack started"))
 
             url = _verify(stack.web_port)

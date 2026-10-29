@@ -20,9 +20,8 @@ agents:
         returns:
           type: dict
 
-# `POST /main` on this port runs `Workflow.main`.
+# `POST /main` runs `Workflow.main`, on port 8080 or the next free one.
 endpoint:
-  api_port: 8080
   agent: Workflow
   method: main
 

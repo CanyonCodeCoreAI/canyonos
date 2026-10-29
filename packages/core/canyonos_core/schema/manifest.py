@@ -21,7 +21,7 @@ from canyonos_core.controller.utils.config_env import (
     expand_env_value,
     load_root_dotenv,
 )
-from canyonos_core.endpoint import ENDPOINT_PORT, ENDPOINT_AGENT_NAME
+from canyonos_core.endpoint import ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
 from canyonos_core.schema._checks import (
     _counts,
@@ -154,7 +154,7 @@ class EndpointSpec:
 
     agent: str
     method: str
-    api_port: int = ENDPOINT_PORT
+    api_port: int | None = None
 
 
 @dataclass(frozen=True)
@@ -552,7 +552,7 @@ def _endpoint(collector, node, agent_specs):
     return EndpointSpec(
         agent=agent,
         method=method,
-        api_port=_port(collector, block, "api_port", "endpoint", ENDPOINT_PORT),
+        api_port=_port(collector, block, "api_port", "endpoint", None),
     )
 
 

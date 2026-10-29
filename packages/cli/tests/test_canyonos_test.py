@@ -460,7 +460,7 @@ def test_a_workflow_that_never_comes_up_reports_the_logged_root_cause(
     )
 
     with pytest.raises(RuntimeError) as err:
-        test_cmd._wait_for_endpoint({"port": 1, "container_id": "cid"}, 2)
+        test_cmd._wait_for_endpoint({"port": 1, "container_id": "cid"})
 
     assert str(err.value) == "Timed out after 0s waiting for the workflow to come up."
     assert err.value.root_cause == "Failed to launch Redis on 127.0.0.1: port taken"
@@ -491,7 +491,7 @@ def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(
     state = {"port": 1, "container_id": "cid", "docker_socket": "/tmp/docker.sock"}
 
     with pytest.raises(RuntimeError) as err:
-        test_cmd._wait_for_endpoint(state, 2)
+        test_cmd._wait_for_endpoint(state)
 
     assert str(err.value) == "The deploy stopped before the workflow came up."
     assert err.value.root_cause.endswith("Workflow 0/1")

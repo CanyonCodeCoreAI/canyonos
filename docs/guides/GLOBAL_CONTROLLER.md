@@ -48,7 +48,6 @@ agents:
             type: str
 
 endpoint:
-  api_port: 8080
   agent: Workflow
   method: main
 ```
@@ -106,9 +105,11 @@ These go at the top level of the file, next to `agents`:
   runs them on Amazon EC2 machines from the `ec2` section below, each replica on the least
   loaded machine by its `resources`.
 - `endpoint` (required): the web address requests arrive at. `api_port` is its port
-  (default `8080`), and `agent` and `method` name the agent method served at
-  `POST /<method>`. The method must be listed in that agent's `functions`.
-- `dashboard_port`: where the dashboard opens (default `8081`).
+  (default `8080`, else the next free one), and `agent` and `method` name the agent method served at
+  `POST /<method>`. The method must be listed in that agent's `functions`. Leave
+  `api_port`, `redis.port` and `dashboard_port` unset unless something needs a fixed
+  port: a port you set is never moved, so a taken one stops the deploy.
+- `dashboard_port`: where the dashboard opens (default `8081`, else the next free one).
 - `ec2`: the AWS details used when `provider` is `EC2`: `region`, `machine_type`
   (each machine type and how many to start, such as `{t3.micro: 2}`), `subnet_id`,
   and `security_group_ids` are required; `ami_id`, `ssh_user` and
@@ -118,7 +119,8 @@ These go at the top level of the file, next to `agents`:
   `http/protobuf`), and an `endpoint`.
 - `poll_interval`: how often, in seconds, the Global Controller checks that everything
   is running (default `5`).
-- `redis`: where CanyonOS keeps track of your running app (default `localhost:6379`).
+- `redis`: where CanyonOS keeps track of your running app (default `localhost:6379`,
+  else the next free port).
   Most projects leave this alone.
 - `project_id`: filled in by the first deploy. Leave it as it is.
 
@@ -128,18 +130,20 @@ A deploy opens these ports on the machine that runs `canyonos deploy`, and no ot
 
 | What | Setting | Default | Open on |
 |---|---|---|---|
-| Endpoint | `endpoint.api_port` | `8080` | every interface |
-| Redis | `redis.port` | `6379` | every interface |
+| Endpoint | `endpoint.api_port` | `8080`, else the next free one | every interface |
+| Redis | `redis.port` | `6379`, else the next free one | every interface |
 | Global Controller | none | the last deploy's port or `8000`, else the next free one | `127.0.0.1` |
 | Each database | its `db_port` | `5432` | every interface |
-| Dashboard, shared by every project | `dashboard_port` | `8081` | every interface |
+| Dashboard, shared by every project | `dashboard_port` | `8081`, else the next free one | every interface |
 
 The dashboard's API also listens on `3000`, and its own database on `127.0.0.1:5432`.
 Agents open no port: the Global Controller reaches them over a private Docker
-network. Two projects on one machine need their own `api_port` and `redis.port`. A
-taken `api_port`, `redis.port` or `db_port` stops the deploy with a message that
-names it; the Global Controller and the dashboard move to the next free port instead,
-and `canyonos deploy` names the Global Controller's. With
+network. A taken `db_port`, or a taken `api_port` or `redis.port` you set, stops the
+deploy with a message that names it. The Global Controller, and a dashboard, endpoint or
+Redis whose port isn't set, move to the next free port instead, and `canyonos deploy`
+says when the Global Controller, the endpoint or Redis moved. A taken `dashboard_port` you set
+stops only the dashboard. A dashboard already running is reused on its own port, and
+`canyonos deploy` warns when that isn't this project's `dashboard_port`. With
 `provider: EC2`, each machine also opens `50051` and up for its agents, on its
 private IP only; see [EC2 deployment](EC2.md).
 
@@ -221,15 +225,15 @@ instead of an in-process store, and the agent no longer needs
 | `poll_interval` | `5` | Seconds between Global Controller loop iterations. Also exported to containers as `CANYONOS_POLL_INTERVAL`. |
 | `cleanup_interval` | `10` | Seconds between cleanup passes. |
 | `project_id` | generated | Written back into the file on first deploy. Leave it out on a new project. |
-| `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379` / `0` | The controller's own Redis. |
+| `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379`, else the next free one / `0` | The controller's own Redis. |
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
 | `provider` | `local` | `local` or `EC2`, in any casing. Where every entry runs. |
 | `ec2` | none | Required when `provider: EC2`. See [EC2 deployment](EC2.md). |
-| `endpoint.api_port` | `8080` | Host port of the HTTP endpoint, published on the machine that runs `canyonos deploy`. |
+| `endpoint.api_port` | `8080`, else the next free one | Host port of the HTTP endpoint, published on the machine that runs `canyonos deploy`. |
 | `endpoint.agent` | required | The entry of type `agent` the endpoint serves. |
 | `endpoint.method` | required | One of that agent's `functions`, served at `POST /<method>`. |
-| `dashboard_port` | `8081` | Host port of the local dashboard. |
+| `dashboard_port` | `8081`, else the next free one | Host port of the local dashboard. |
 | `ssh_private_key_path` | `~/.ssh/canyonos_ec2` | The key every SSH connection to a remote host uses. |
 
 `database` used to be a top-level key. It is retired: the schema rejects it
@@ -293,7 +297,6 @@ agents:
             type: str
 
 endpoint:
-  api_port: 8080
   agent: Workflow
   method: main
 
@@ -301,7 +304,6 @@ poll_interval: 5
 
 redis:
   host: localhost
-  port: 6379
   db: 0
 
 otel:

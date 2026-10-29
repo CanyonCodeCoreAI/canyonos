@@ -34,11 +34,8 @@ agents:
           type: dict
 
 endpoint:
-  api_port: 8082 # Defaults to 8080 if not filled
   agent: Workflow
   method: main
-
-dashboard_port: 8081 # Local dashboard's preferred port, defaults to 8081 if not filled
 
 poll_interval: 5
 

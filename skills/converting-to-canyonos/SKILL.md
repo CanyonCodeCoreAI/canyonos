@@ -69,7 +69,8 @@ external stores and concurrency controls; follow the
   agent's `functions`, with the arguments the request body carries.
   Preserve existing choices; batch unresolved deployment questions and use
   schema defaults when unanswered or unattended. Leave `resources` at schema
-  defaults without asking.
+  defaults without asking, and leave `endpoint.api_port`, `redis.port` and
+  `dashboard_port` unset, so CanyonOS picks free ports, unless the source fixes one.
 - Check each image's dependency set with `uv pip compile`, using the target
   Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.

@@ -126,6 +126,13 @@ class PublishesPortTests(unittest.TestCase):
         controller = _controller()
         controller.config = {"provider": provider}
         controller.agent_specs_by_name = {"W": {"functions": [{"name": "main"}]}}
+        controller.redis = MagicMock()
+        controller.redis.hgetall.return_value = {
+            "api_port": "9090",
+            "arguments": "[]",
+            "public_host": "127.0.0.1",
+            "method": "main",
+        }
         spec = {**self.ENDPOINT, "api_port": 9090, "agent": "W", "method": "main"}
         with (
             patch.object(replicas, "CONTROLLER_IMAGE", "canyonos-core:dev"),

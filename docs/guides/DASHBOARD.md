@@ -11,6 +11,8 @@ canyonos serve
 ```
 
 To use a different port, set the top-level `dashboard_port` in `config/global_controller.yaml`.
+Without it, the dashboard takes `8081` or the next free port. A dashboard that is already
+running keeps its port, since every project shares it.
 
 ## Sign-in
 

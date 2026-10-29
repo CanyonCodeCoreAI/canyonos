@@ -13,10 +13,8 @@ import subprocess
 
 from canyonos import ui
 from canyonos.constants import (
-    default_config_path,
     endpoint_answers,
     existing_config_path,
-    local_redis_port,
     port_in_use,
 )
 from canyonos.dashboard_stack import (
@@ -26,7 +24,12 @@ from canyonos.dashboard_stack import (
     _existing_dashboard_port,
 )
 from canyonos.gc import deploy_status, deployed_endpoint
-from canyonos.init import docker_running, docker_start_command, load_state
+from canyonos.init import (
+    docker_running,
+    docker_start_command,
+    load_state,
+    redis_port_of,
+)
 from canyonos.verify import _runtime_table, agent_rows
 
 
@@ -87,10 +90,10 @@ def _gc_check(state, status):
     )
 
 
-def _redis_check():
+def _redis_check(state):
     """TCP reachability only -- not a real PING, but enough to say something's
     listening where the local provider and dashboard both expect Redis."""
-    redis_port = local_redis_port(default_config_path())
+    redis_port = redis_port_of(state)
     return _print_check(
         "Redis",
         port_in_use(redis_port),
@@ -183,7 +186,7 @@ def _print_post_deploy(state, status):
     """
     results = [
         _guard("Global Controller", lambda: _gc_check(state, status)),
-        _guard("Redis", _redis_check),
+        _guard("Redis", lambda: _redis_check(state)),
         _guard("Workflow agents", _agents_check),
         _guard("Endpoint", lambda: _endpoint_check(state)),
         _guard("Dashboard", _dashboard_checks),

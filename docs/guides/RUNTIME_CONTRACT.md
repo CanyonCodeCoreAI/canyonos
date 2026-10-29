@@ -153,7 +153,7 @@ endpoint:
 ```
 
 CanyonOS runs the endpoint itself, in its own container on the machine that
-runs `canyonos deploy`, and publishes it on `api_port` (default 8080).
+runs `canyonos deploy`, and publishes it on `api_port` (default 8080, else the next free port).
 [Endpoint](../architecture/ENDPOINT.md) shows how a request travels through it.
 The agents' stubs and `ask_human` are the target agent's only imports of the platform.
 `canyonos_core` inside the image holds the LLM gateway only, so importing
@@ -307,8 +307,8 @@ a failed deploy, tears the deployment down.
 `canyonos stop` asks the controller to remove every replica it
 recorded. A hard kill of the controller can leave containers behind; the
 next `canyonos deploy` removes stale Redis and metrics containers and
-recreates orphaned agent containers, but an endpoint `api_port`, a database
-`db_port` or a Redis port still in use is a hard error.
+recreates orphaned agent containers, but an endpoint `api_port` you set, a database
+`db_port` or a `redis.port` you set, still in use, is a hard error.
 
 `canyonos clean` stops the project if it is deployed, then deletes the
 `.canyon` directory in the current directory, if there is one, removes the skill `canyonos convert`

@@ -29,7 +29,11 @@ from canyonos_core.controller.utils.container_names import (
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
-from canyonos_core.endpoint import ENDPOINT_PORT
+from canyonos_core.endpoint import (
+    ENDPOINT_PORT,
+    publish_endpoint_port,
+    read_endpoint_record,
+)
 from canyonos_core.reconciler import providers
 from canyonos_core.reconciler.providers.shared_utils.docker_host import (
     container_log_tail,
@@ -153,6 +157,13 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
     # Started with its machine; this restarts one that died since.
     start_redis(controller, host, user)
 
+    # Where the endpoint was last published; one whose config sets no `api_port` moves
+    # past it when Docker finds it taken, so only a port Docker holds is ever chosen.
+    api_port = (
+        read_endpoint_record(controller.redis)["api_port"]
+        if agent_type == "endpoint"
+        else None
+    )
     callback_host = _callback_host(controller, agent_spec)
     publish = publishes_port(controller, machine, agent_spec)
     # Bound to the private IP other machines call, not to every interface the machine
@@ -213,7 +224,9 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             )
         )
 
-        with _image_args(controller, agent_spec, image, host, user) as image_args:
+        with _image_args(
+            controller, agent_spec, image, host, user, api_port
+        ) as image_args:
             cmd.extend(image_args)
             result = controller._run_cmd(cmd, host, user)
 
@@ -224,11 +237,14 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             # so the retry doesn't hit a name conflict instead of the port conflict.
             controller._run_cmd(["docker", "rm", "-f", "-v", container], host, user)
             clashed = _clashed_port(result.stderr)
+            if api_port and clashed == api_port and not agent_spec["api_port"]:
+                api_port += 1
+                continue
             if clashed not in (None, host_port):
                 raise RuntimeError(
-                    f"Port {clashed} is already in use on {host}. Free it or change "
-                    "the setting that publishes it in global_controller.yaml (the "
-                    "endpoint's `api_port`)."
+                    f"Port {clashed} is already in use on {host}. Free it, or change "
+                    "the endpoint's `api_port` in global_controller.yaml or delete it "
+                    "so CanyonOS picks a free port."
                 )
             host_port += 1
             continue
@@ -243,6 +259,9 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             f"Failed to launch {container}: no free port found after "
             f"{MAX_PORT_ATTEMPTS} attempts"
         )
+
+    if api_port:
+        publish_endpoint_port(controller.redis, api_port)
 
     replica = {
         "agent_name": agent_name,
@@ -348,7 +367,7 @@ def _callback_host(controller, agent_spec):
 
 
 @contextmanager
-def _image_args(controller, agent_spec, image, host, user):
+def _image_args(controller, agent_spec, image, host, user, api_port):
     """Yield the `docker run` args that end the command and pick what runs.
 
     The endpoint runs the controller image as `python -m canyonos_core.endpoint`,
@@ -372,7 +391,7 @@ def _image_args(controller, agent_spec, image, host, user):
         arguments = [argument["name"] for argument in function.get("arguments") or []]
         yield [
             "-p",
-            f"{agent_spec['api_port']}:{ENDPOINT_PORT}",
+            f"{api_port}:{ENDPOINT_PORT}",
             "-e",
             f"CANYONOS_ENDPOINT_AGENT={agent_spec['agent']}",
             "-e",

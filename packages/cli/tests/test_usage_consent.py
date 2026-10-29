@@ -296,8 +296,6 @@ def deployable(monkeypatch, tmp_path):
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
     monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)
     monkeypatch.setattr(deploy_cmd, "load_state", lambda: {"port": 8000})
-    monkeypatch.setattr(deploy_cmd, "endpoint_api_port", lambda _config: 8080)
-    monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *_a: None)
     monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: None)
     monkeypatch.setattr(

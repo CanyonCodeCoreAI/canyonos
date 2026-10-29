@@ -15,8 +15,8 @@ def init(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path / "portfolio")
     seen = {}
 
-    def run_container(image=None, port=None):
-        seen.update(port=port)
+    def run_container(image=None, port=None, **ports):
+        seen.update(port=port, **ports)
         return "abcdef123456", seen.get("lands_on", port), None
 
     def stop_existing():
@@ -29,6 +29,10 @@ def init(monkeypatch, tmp_path):
     monkeypatch.setattr(init_cmd, "stop_existing", stop_existing)
     monkeypatch.setattr(init_cmd, "_pull_image", lambda _image: None)
     monkeypatch.setattr(init_cmd, "_run_container", run_container)
+    monkeypatch.setattr(init_cmd, "existing_config_path", lambda: "gc.yaml")
+    monkeypatch.setattr(init_cmd, "endpoint_api_port", lambda _path: 8080)
+    monkeypatch.setattr(init_cmd, "port_in_use", lambda _port: False)
+    monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: 6379)
     return seen
 
 
@@ -61,3 +65,89 @@ def test_an_unmoved_port_says_nothing_about_it(init, capsys):
     init_cmd.run_init(banner=False)
 
     assert "is taken" not in capsys.readouterr().err
+
+
+def test_an_occupied_api_port_stops_before_the_container_starts(init, monkeypatch):
+    monkeypatch.setattr(init_cmd, "port_in_use", lambda _port: True)
+
+    with pytest.raises(
+        RuntimeError, match="Port 8080 is already in use.*`endpoint.api_port`"
+    ):
+        init_cmd.run_init(banner=False)
+
+    assert "port" not in init
+
+
+@pytest.fixture
+def unset_ports(init, monkeypatch):
+    """A config that sets neither `endpoint.api_port` nor `redis.port`, with every port
+    free unless `init["free_from"]` says where the next free one is."""
+    monkeypatch.setattr(init_cmd, "endpoint_api_port", lambda _path: None)
+    monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: None)
+    monkeypatch.setattr(
+        init_cmd, "find_free_port", lambda port: init.get("free_from", port)
+    )
+    return init
+
+
+def test_a_redeploy_starts_redis_and_the_endpoint_from_their_last_ports(unset_ports):
+    init_cmd._save_state("old", 8003, None, 6390, 8091)
+
+    init_cmd.run_init(banner=False)
+
+    assert (unset_ports["redis_port"], unset_ports["api_port"]) == (6390, 8091)
+
+
+def test_a_set_api_port_is_not_moved_from_a_last_one(init):
+    init_cmd._save_state("old", 8003, None, 6379, 8091)
+
+    init_cmd.run_init(banner=False)
+
+    assert init["api_port"] is None
+
+
+def test_a_moved_redis_port_names_the_port_it_wanted(unset_ports, capsys):
+    init_cmd._save_state("old", 8003, None, 6390)
+    unset_ports["free_from"] = 6391
+
+    init_cmd.run_init(banner=False)
+
+    output = " ".join(capsys.readouterr().err.split())
+    assert "Port 6390 is taken, so Redis is on 6391" in output
+
+
+def test_the_endpoints_port_is_recorded_beside_the_rest(init):
+    init_cmd._save_state("abc", 8000, "/sock", 6379)
+
+    init_cmd.remember_api_port(8085)
+
+    assert init_cmd.load_state() == {
+        "container_id": "abc",
+        "port": 8000,
+        "docker_socket": "/sock",
+        "redis_port": 6379,
+        "api_port": 8085,
+    }
+
+
+def test_without_a_state_file_no_endpoint_port_is_recorded(init):
+    init_cmd.remember_api_port(8085)
+
+    assert not os.path.exists(project.state_path())
+
+
+@pytest.mark.parametrize(
+    ("state", "configured", "expected"),
+    [
+        ({"redis_port": 6390}, 6380, 6390),
+        ({}, 6380, 6380),
+        ({}, None, 6379),
+    ],
+    ids=["recorded", "older-cli-config", "older-cli-default"],
+)
+def test_the_redis_port_falls_back_for_a_state_file_from_an_older_cli(
+    monkeypatch, state, configured, expected
+):
+    monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: configured)
+
+    assert init_cmd.redis_port_of(state) == expected

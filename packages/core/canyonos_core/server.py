@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request
 from werkzeug.serving import run_simple
 
 from canyonos_core.controller.controller_context import (
+    DEFAULT_REDIS_PORT,
     _redis_connect_host,
     list_replicas,
     run_on_machine,
@@ -150,7 +151,7 @@ def _deploy_config(config_path):
 def _deploy_redis(config):
     """Return a client for the Redis the running deploy's Global Controller publishes
     to: this machine's Redis, on its config's `redis.port`."""
-    port = (config.get("redis") or {}).get("port", 6379)
+    port = (config.get("redis") or {}).get("port", DEFAULT_REDIS_PORT)
     return RedisClient(host=_redis_connect_host("localhost"), port=port)
 
 

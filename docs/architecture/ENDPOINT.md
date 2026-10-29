@@ -29,7 +29,7 @@ flowchart LR
 |---|---|
 | Container | `canyonos-<project>-endpoint-<id>`, one replica, 2 CPUs, always on the Local provider |
 | Image | the Global Controller's image, started as `python -m canyonos_core.endpoint` |
-| HTTP | gunicorn on `8080` inside the container, 2 workers × 16 threads, published on `endpoint.api_port` (default `8080`) |
+| HTTP | gunicorn on `8080` inside the container, 2 workers × 16 threads, published on `endpoint.api_port` (default `8080`, else the next free port) |
 | gRPC | a Local Controller that only routes, on `50051` inside the container, published on a host port the provider claims only when the deployment's provider isn't `local` and `CANYONOS_PRIVATE_IP` is set, for agents on other machines to call back |
 | Scaling | never: autoscaling only acts on entries of type `agent` |
 
@@ -136,12 +136,13 @@ so a replica that dies mid-run loses the request.
 ## Where callers find it
 
 The Global Controller writes the Redis hash `endpoint:address` when it applies the
-config and deletes it when the deploy stops:
+config and deletes it when the deploy stops. Without `endpoint.api_port`, the reconciler
+rewrites `api_port` and `url` once the endpoint's container holds its port:
 
 | Field | Value |
 |---|---|
 | `public_host` | `CANYONOS_PUBLIC_IP`, or `127.0.0.1` |
-| `api_port` | `endpoint.api_port` |
+| `api_port` | `endpoint.api_port`, else the port the endpoint's container got |
 | `agent`, `method` | the served method |
 | `arguments` | JSON list of the method's argument names, from `functions` |
 | `url` | `http://<public_host>:<api_port>/<method>` |

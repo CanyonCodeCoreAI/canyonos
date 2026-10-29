@@ -132,13 +132,13 @@ def _ec2_metadata(url, timeout):
 
 
 def endpoint_api_port(config_path):
-    """Return the host port the endpoint answers on, or None when the config has no
-    `endpoint:` block or its `api_port` is not a port number, which the deploy's
-    schema check then reports. Raises when the config is not valid YAML."""
+    """Return the endpoint's `api_port` from the config, or None when the config sets
+    none, or sets something other than a port number, which the deploy's schema check
+    then reports. Raises when the config is not valid YAML."""
     endpoint = (load_yaml(config_path, yaml.safe_load) or {}).get("endpoint")
     if not isinstance(endpoint, dict):
         return None
-    port = endpoint.get("api_port", DEFAULT_API_PORT)
+    port = endpoint.get("api_port")
     return port if isinstance(port, int) and not isinstance(port, bool) else None
 
 
@@ -157,21 +157,12 @@ def endpoint_answers(api_port):
 
 
 def local_redis_port(config_path):
-    """Host port this machine's Redis is published on: `redis.port`, or the default."""
+    """Return this machine's Redis port from the config's `redis.port`, or None when it
+    sets none, or sets something other than a port number."""
     config = read_config(config_path)
-    if not isinstance(config, dict):
-        return DEFAULT_REDIS_PORT
-    redis = config.get("redis")
-    if not isinstance(redis, dict):
-        return DEFAULT_REDIS_PORT
-    return _port_or_default(redis.get("port", DEFAULT_REDIS_PORT))
-
-
-def _port_or_default(value):
-    """`value` when it is a usable TCP port, else the default the runtime falls back to."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        return DEFAULT_REDIS_PORT
-    return value if 1 <= value <= 65535 else DEFAULT_REDIS_PORT
+    redis = config.get("redis") if isinstance(config, dict) else None
+    port = redis.get("port") if isinstance(redis, dict) else None
+    return port if isinstance(port, int) and not isinstance(port, bool) else None
 
 
 def port_in_use(port):
@@ -185,8 +176,8 @@ def port_in_use(port):
 
 
 def dashboard_port(config_path):
-    """Host port the local dashboard prefers to start on, falling back to the default."""
-    return read_config(config_path).get("dashboard_port", DEFAULT_DASHBOARD_PORT)
+    """The `dashboard_port` the config sets, or None."""
+    return read_config(config_path).get("dashboard_port")
 
 
 def container_path(relative):

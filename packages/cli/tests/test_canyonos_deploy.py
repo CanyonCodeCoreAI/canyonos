@@ -21,8 +21,6 @@ def deployable(monkeypatch, tmp_path):
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
     monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)
     monkeypatch.setattr(deploy_cmd, "load_state", lambda: dict(STATE))
-    monkeypatch.setattr(deploy_cmd, "endpoint_api_port", lambda _config: 8080)
-    monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *_a: None)
     monkeypatch.setattr(deploy_cmd, "_start_dashboard", lambda **_k: None)
     monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: None)
@@ -52,21 +50,6 @@ def test_ctrl_c_during_setup_cleans_up_the_partial_deploy(monkeypatch, deployabl
         deploy_cmd.run_deploy(quiet=True)
 
     assert cleaned == [True]
-
-
-def test_an_occupied_api_port_raises_before_post_deploy(monkeypatch, deployable):
-    """Checked after run_init() (which already tore down any previous deploy), so a still-live
-    prior run doesn't read as an unrelated conflict -- only a genuinely occupied port does."""
-    calls = []
-    monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: True)
-    monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *a: calls.append(a))
-
-    with pytest.raises(
-        RuntimeError, match="Port 8080 is already in use.*`endpoint.api_port`"
-    ):
-        deploy_cmd.run_deploy(quiet=True)
-
-    assert calls == []
 
 
 def test_a_log_monitor_failure_cleans_up_the_partial_deploy(monkeypatch, deployable):
@@ -179,3 +162,33 @@ def test_the_deploy_panel_shows_how_to_answer_a_question():
         "respond to agent  curl -X POST http://127.0.0.1:8084/answer/<request_id> "
         '-H "Content-Type: application/json" -d \'{"input": "your answer"}\''
     ) in text
+
+
+@pytest.mark.parametrize(
+    ("configured", "remembered", "lands_on", "warning"),
+    [
+        (None, 8081, 8082, "Port 8081 is taken, so the endpoint is on 8082"),
+        (None, None, 8080, None),
+        (8090, None, 8090, None),
+    ],
+    ids=["moved-from-last", "first-deploy", "set-in-config"],
+)
+def test_the_summary_names_a_moved_endpoint_and_records_its_port(
+    monkeypatch, capsys, configured, remembered, lands_on, warning
+):
+    recorded = []
+    monkeypatch.setattr(
+        deploy_cmd, "deployed_endpoint", lambda _port: {"api_port": lands_on}
+    )
+    monkeypatch.setattr(deploy_cmd, "existing_config_path", lambda: "gc.yaml")
+    monkeypatch.setattr(deploy_cmd, "endpoint_api_port", lambda _path: configured)
+    monkeypatch.setattr(deploy_cmd, "remember_api_port", recorded.append)
+    monkeypatch.setattr(deploy_cmd, "_print_deploy_summary", lambda *_a: None)
+
+    deploy_cmd._deploy_summary(
+        {**STATE, "api_port": remembered}, serve=False, on_ready=lambda _ready: None
+    )
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert (warning in err) if warning else ("is taken" not in err)
+    assert recorded == ([] if configured else [lands_on])

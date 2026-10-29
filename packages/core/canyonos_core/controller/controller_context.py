@@ -26,7 +26,7 @@ from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.config_env import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient
-from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT, ENDPOINT_AGENT_NAME
+from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,11 @@ def run_on_machine(config, cmd, host, user=None):
         raise RuntimeError(f"Could not run command on {host}: {e}") from None
 
 
+# This machine's Redis port when the config sets no `redis.port`: the free port
+# `canyonos deploy` picked, or Redis's own default.
+DEFAULT_REDIS_PORT = int(os.environ.get("CANYONOS_REDIS_PORT") or 6379)
+
+
 def _redis_connect_host(host):
     """Host to open a Redis connection to from this process."""
     if _is_local_host(host):
@@ -124,7 +129,7 @@ class ControllerContext(object):
         redis_cfg = self.config.get("redis", {})
         self.redis = RedisClient(
             host=_redis_connect_host(redis_cfg.get("host", "localhost")),
-            port=redis_cfg.get("port", 6379),
+            port=redis_cfg.get("port", DEFAULT_REDIS_PORT),
             db=redis_cfg.get("db", 0),
         )
 
@@ -161,7 +166,7 @@ class ControllerContext(object):
                 "type": "endpoint",
                 "replicas": 1,
                 "resources": {"cpu": ENDPOINT_CPUS},
-                "api_port": endpoint.get("api_port", ENDPOINT_PORT),
+                "api_port": endpoint.get("api_port"),
                 "agent": endpoint["agent"],
                 "method": endpoint["method"],
                 "provider": providers.DEFAULT,
@@ -207,7 +212,7 @@ class ControllerContext(object):
 
     def attach_local_machine_redis(self):
         """Point self.redis at this machine's Redis without launching anything."""
-        port = self.config.get("redis", {}).get("port", 6379)
+        port = self.config.get("redis", {}).get("port", DEFAULT_REDIS_PORT)
         self.redis_ports["localhost"] = port
         client = RedisClient(host=_redis_connect_host("localhost"), port=port)
         self.machine_redis["localhost"] = client

@@ -28,7 +28,6 @@ from rich.text import Text
 from canyonos import ui
 from canyonos.constants import (
     endpoint_answers,
-    endpoint_api_port,
     existing_config_path,
     round_trip_yaml,
     write_config,
@@ -109,7 +108,7 @@ class _DeployFailed(RuntimeError):
         self.root_cause = root_cause
 
 
-def _wait_for_endpoint(state, api_port):
+def _wait_for_endpoint(state):
     """Follow the Global Controller's log until it says the deploy is up, which it
     only says after the agents are, for as long as `canyonos deploy` would; then
     check the endpoint answers.
@@ -125,6 +124,7 @@ def _wait_for_endpoint(state, api_port):
             for line in drain(queued_lines(process.stdout), state, deadline=deadline):
                 tracker.parse_line(line)
                 if UP_MARKER in line and not tracker.in_container_log:
+                    api_port = deployed_endpoint(state["port"])["api_port"]
                     if endpoint_answers(api_port):
                         return
                     raise _DeployFailed(
@@ -233,7 +233,7 @@ class _Run:
         return round(time.monotonic() - self.started, 3)
 
 
-def _deploy_locally(run, api_port):
+def _deploy_locally(run):
     """Deploy the project locally for `canyonos test` and wait until the
     workflow answers."""
     run.begin("deploy", 1, "Deploy locally")
@@ -242,7 +242,7 @@ def _deploy_locally(run, api_port):
     state = run_deploy(serve=False, quiet=True, banner=False)
     run.deploy_started = True
 
-    _wait_for_endpoint(state, api_port)
+    _wait_for_endpoint(state)
     run.done(f"Global Controller on port {state['port']}")
     return state
 
@@ -358,18 +358,11 @@ def _run_test(run, timeout=REQUEST_TIMEOUT):
         _query(run, endpoint, timeout, number=1, total=1)
         return
 
-    api_port = endpoint_api_port(config_path)
-    if api_port is None:
-        raise RuntimeError(
-            f"No `endpoint:` block with a port number in {config_path}; "
-            "nothing to test."
-        )
-
     # Minted here, before the snapshot, so restoring the file keeps the id.
     save_project_id(config_path)
     original_config = _force_local_providers(config_path)
     try:
-        state = _deploy_locally(run, api_port)
+        state = _deploy_locally(run)
         _verify_runtime(run, config_path)
         _query(run, deployed_endpoint(state["port"]), timeout)
     finally:
