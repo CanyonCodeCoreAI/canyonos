@@ -362,7 +362,7 @@ def run_cluster_up(workers=None):
     with ui.status(
         f"Installing CanyonOS {version} (the operator, builder and dashboard)..."
     ):
-        _install_canyonos(name, version)
+        _install_canyonos(name, env.PROD_CHART_VERSION)
     ui.ok(f"Cluster {name} is ready, with CanyonOS {version}; kubectl now points at it")
     ui.say(
         "Deploy a project to it: add to its config/global_controller.yaml\n"

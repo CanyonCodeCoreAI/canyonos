@@ -56,7 +56,7 @@ UPLOAD_PORT = 8090
 OPERATOR_HINT = (
     "Install the CanyonOS operator once per cluster: helm install canyonos "
     "oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator "
-    f"--version {env.VERSION} --namespace canyonos-system --create-namespace "
+    f"--version {env.PROD_CHART_VERSION} --namespace canyonos-system --create-namespace "
     "--set builder.enabled=true; see docs/guides/KUBERNETES.md. On a laptop, "
     "canyonos cluster up makes a local cluster with it installed."
 )

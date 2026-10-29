@@ -69,6 +69,7 @@ def tools(monkeypatch, tmp_path):
 
     monkeypatch.setattr(kubernetes_local.env, "is_development", False)
     monkeypatch.setattr(kubernetes_local.env, "VERSION", "0.1.740")
+    monkeypatch.setattr(kubernetes_local.env, "PROD_CHART_VERSION", "0.1.740")
     monkeypatch.setattr(kubernetes_local, "config_dir", lambda: tmp_path / "kind")
     monkeypatch.delenv(kubernetes_local.CLUSTER_ENV, raising=False)
     return make
