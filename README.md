@@ -47,10 +47,17 @@ uv tool install canyonos
 
 On Windows, install with `uv tool install canyonos` or `pip install canyonos`: the install script and the standalone binary are for Linux and macOS.
 
-Run canyonos doctor to verify all prerequisites are set up before your first deploy:
+To check the prerequisites on their own at any time:
 
 ```bash
 canyonos doctor
+```
+
+Run the guided first run, which checks your machine, sets up a starter project,
+deploys it and sends the first request:
+
+```bash
+canyonos quickstart
 ```
 
 ## Uninstall

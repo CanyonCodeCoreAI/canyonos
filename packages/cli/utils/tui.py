@@ -68,7 +68,12 @@ def select_menu(
                 else:
                     lines.append(f"  {line}")
         lines.extend(f"  {line}" for line in footer or ())
-        hint = "↑/↓ move · 1-9 jump · enter select"
+        # Range read off the menu itself: the handler below only accepts digits
+        # up to `n`, and single digits at that, so a fixed "1-9" promises keys
+        # that do nothing on a shorter menu. Dropped entirely on a one-item
+        # menu, where there is nowhere to jump to.
+        jump = f" · 1-{min(n, 9)} jump" if n > 1 else ""
+        hint = f"↑/↓ move{jump} · enter select"
         if deletable:
             hint += " · d delete"
         if quittable:

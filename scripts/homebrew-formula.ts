@@ -58,6 +58,13 @@ ${stanza(hashes, 'canyonos-linux-x86_64')}
     bin.install Dir["canyonos-*"].first => "canyonos"
   end
 
+  def caveats
+    <<~EOS
+      Next: canyonos quickstart
+            Walks you from here to your first request.
+    EOS
+  end
+
   test do
     system "#{bin}/canyonos", "--version"
   end

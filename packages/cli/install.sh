@@ -76,3 +76,9 @@ case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
     *) echo "Add $INSTALL_DIR to your PATH to use 'canyonos' directly." ;;
 esac
+
+# Installing is only the first of two commands, and nothing else tells anyone
+# what the second one is.
+echo
+echo "Next: canyonos quickstart"
+echo "      Walks you from here to your first trace in the dashboard."

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 from rich.console import Console
+from rich.prompt import Prompt
 from rich.text import Text
 
 from canyonos.os_support import is_terminal
@@ -44,6 +45,15 @@ def _emit(message, style, symbol=None, target=console):
 def say(message):
     """Show a plain message in the terminal."""
     _emit(message, WHITE)
+
+
+def heading(message):
+    """Show a section heading in the terminal, in bold.
+
+    The weight is what makes a section findable when scrolling back through
+    the screen or more that a deploy or a checklist prints under it.
+    """
+    _emit(message, f"bold {GREEN}")
 
 
 def ok(message):
@@ -99,6 +109,43 @@ def panel(renderable):
     Piped, it is only as wide as its longest line, so no line wraps."""
     width = None if is_terminal(sys.stdout) else console.measure(renderable).maximum
     console.print(renderable, width=width)
+
+
+def ask(question, default="", suffix=": "):
+    """Read one line of typed text from the terminal.
+
+    Returns `default` without asking when there is no terminal to read from, so
+    a piped run falls through instead of blocking forever on stdin, and so does
+    an end of input -- Ctrl-D is an answer, not a crash.
+
+    The default is never shown. Rich would print it in brackets after the
+    question, which for the empty default here is a bare `()` -- a thing on
+    screen that means nothing to the person reading it.
+    """
+    if not sys.stdin.isatty():
+        return default
+    prompt = Prompt(
+        Text(str(question), style=GREEN), console=console, show_default=False
+    )
+    prompt.prompt_suffix = suffix
+    try:
+        return prompt(default=default).strip()
+    except EOFError:
+        return default
+
+
+def secret(question):
+    """Ask for a value that must not be echoed, such as an API key.
+
+    Returns "" without asking when there is no terminal to read from. Callers
+    reject an empty value anyway, so a piped run fails saying which key it
+    needed rather than hanging on stdin.
+    """
+    if not sys.stdin.isatty():
+        return ""
+    return Prompt.ask(
+        Text(str(question), style=WHITE), console=console, password=True
+    ).strip()
 
 
 @contextmanager

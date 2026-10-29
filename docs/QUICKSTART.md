@@ -4,7 +4,40 @@ Install CanyonOS: `uv tool install canyonos`
 
 > **Converting an existing workflow?** Run `canyonos convert` in its folder first. It opens your coding agent with the CanyonOS skill, which writes a CanyonOS version of your project into `.canyon/` (2-10 minutes). Your code is untouched; outside `.canyon` it only installs the skill and updates `.gitignore`. Our [examples](../examples/) are already in [CanyonOS format](guides/WORKFLOW_DESIGN.md).
 
-For all steps below, run commands from your project folder:
+## Guided first run
+
+Don't have a project yet, or want to see the whole lifecycle once before doing it
+yourself? Run this from anywhere:
+
+```bash
+canyonos quickstart
+```
+
+It picks a sample workflow, sets it up, asks for the one API key it needs, deploys
+it, and waits for your first request to come back.
+
+It shows you each command and waits for you to type it before running it. Eight
+stages:
+
+| #   | Stage                | Command            | What it does                                                              |
+| --- | -------------------- | ------------------ | ------------------------------------------------------------------------- |
+| 1   | System Prerequisites | `canyonos doctor`  | Checks Docker, git and everything else a deploy needs                     |
+| 2   | Workflow Selection   | —                  | Pick a sample workflow from a menu                                        |
+| 3   | Workflow Setup       | —                  | Downloads that workflow                                                   |
+| 4   | Workflow Convert     | `canyonos convert` | [Optional] Converts a project into CanyonOS format                        |
+| 5   | Environment Config   | —                  | Asks for the API keys the workflow needs and writes them to its `.env`    |
+| 6   | Deployment           | `canyonos deploy`  | Builds an image per agent, then starts the workflow                       |
+| 7   | Deployment Health    | `canyonos doctor`  | Checks the running deploy: controller, Redis, agents, endpoint, dashboard |
+| 8   | First Request        | `curl -X POST …`   | Sends your first request                                                  |
+
+- You need Docker running, git, and an API key.
+- Ctrl-C stops the run. Anything already deployed keeps running.
+- At the end it offers `canyonos clean` to remove deployment.
+
+## Your own project
+
+Run every command from your project folder:
+
 ```bash
 cd my-project
 ```
@@ -64,6 +97,7 @@ canyonos deploy
 Once you deploy, a screen will appear showing each agent's CPU, memory, GPU, and replicas. You can change any of them to give any agent more resources or replicas to use for requests, then select **DEPLOY**. Your changes are saved to the config.
 
 Example success message:
+
 ```
 Deploy is live
 
@@ -73,6 +107,7 @@ message           curl -X POST http://127.0.0.1:8080/main -H "Content-Type: appl
 respond to agent  curl -X POST http://127.0.0.1:8080/answer/<request_id> -H "Content-Type: application/json" -d '{"input": "your answer"}'
 check result      curl http://127.0.0.1:8080/status/<request_id>
 ```
+
 - If you forget the endpoint, run `canyonos status` to see it.
 - Every `canyonos deploy` automatically tears down any previous deploy on this machine, from any project, so you can also just redeploy directly.
 - If the deploy fails before it comes up, it is torn down automatically (unlike `canyonos test`, which leaves the containers up).
@@ -92,6 +127,7 @@ curl -X POST http://localhost:8080/main \
     "query": "Analyze 40% Apple, 35% Microsoft and 25% Nvidia over the last 6 months"
   }'
 ```
+
 A successful request returns a `request_id`. The workflow runs asynchronously, and the request's status is updated with the answer when it finishes.
 To get the result, run:
 

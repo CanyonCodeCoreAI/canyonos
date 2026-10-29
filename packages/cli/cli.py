@@ -29,6 +29,7 @@ from canyonos.feedback import run_feedback
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
 from canyonos.os_support import prepare_console
+from canyonos.quickstart import run_quickstart
 from canyonos.serve import run_serve
 from canyonos.status import run_status
 from canyonos.stop import run_stop
@@ -102,6 +103,7 @@ def _run_command():
         command.set_defaults(func=run)
         return command
 
+    add("quickstart", lambda args: sys.exit(0 if run_quickstart() else 1))
     add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
 
     def add_target(command):
