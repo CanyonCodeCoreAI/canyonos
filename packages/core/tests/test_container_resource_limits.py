@@ -160,7 +160,7 @@ class EC2ProviderLimitTests(unittest.TestCase):
         _, agent_cmd = self._bootstrap(
             {
                 "name": "Tagged",
-                "provider": "EC2",
+                "provider": "ec2-pool",
                 "resources": {"cpu": 2, "memory": 2048},
             }
         )
@@ -169,7 +169,7 @@ class EC2ProviderLimitTests(unittest.TestCase):
 
     def test_the_ec2_agent_gets_its_gpu_flag_too(self):
         _, agent_cmd = self._bootstrap(
-            {"name": "Vllm", "provider": "EC2", "resources": {"gpu": 1}}
+            {"name": "Vllm", "provider": "ec2-pool", "resources": {"gpu": 1}}
         )
 
         self.assertEqual(
@@ -179,13 +179,15 @@ class EC2ProviderLimitTests(unittest.TestCase):
 
     def test_the_ec2_database_container_is_left_unbounded_when_unconfigured(self):
         _, db_cmd = self._bootstrap(
-            {"name": "Pg", "provider": "EC2", "type": "database"}
+            {"name": "Pg", "provider": "ec2-pool", "type": "database"}
         )
 
         self.assertEqual(_limits_of(db_cmd), {})
 
     def test_the_ec2_agent_and_redis_containers_default_when_unconfigured(self):
-        redis_cmd, agent_cmd = self._bootstrap({"name": "Tagged", "provider": "EC2"})
+        redis_cmd, agent_cmd = self._bootstrap(
+            {"name": "Tagged", "provider": "ec2-pool"}
+        )
 
         self.assertEqual(_limits_of(agent_cmd), {"--cpus": "1", "--memory": "512m"})
         self.assertEqual(_limits_of(redis_cmd), {"--cpus": "1", "--memory": "512m"})

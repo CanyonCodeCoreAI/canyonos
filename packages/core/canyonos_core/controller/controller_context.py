@@ -145,8 +145,9 @@ class ControllerContext(object):
         """Load the YAML config, importing root .env values and expanding ${VAR} refs,
         and add the `endpoint:` block as one more replica spec after the agents.
         Also gives each agent spec the deployment's `provider`, in the spelling replica
-        records use (`ec2` becomes `EC2`); the endpoint stays on this machine. A config
-        without `project_id` is refused: `canyonos deploy` writes one before syncing."""
+        records use (`EC2-Pool` becomes `ec2-pool`); the endpoint stays on this machine.
+        A config without `project_id` is refused: `canyonos deploy` writes one before
+        syncing."""
         config = config_env.load_config(config_path)
         if not isinstance(config, dict):
             raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")

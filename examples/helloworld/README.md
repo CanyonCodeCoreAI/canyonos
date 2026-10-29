@@ -23,6 +23,7 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 
 - Docker is running, and `canyonos doctor` passes.
 - This example is already in CanyonOS format, so skip `canyonos convert`. It needs no `.env`.
+- It runs on this machine (`provider: local`). To run it on EC2, use [helloworld-ec2-assign](../helloworld-ec2-assign/README.md).
 - Work on a copy. Deploying writes into the project folder: it fills default resources and a `project_id` into `config/global_controller.yaml`.
 
 ```bash

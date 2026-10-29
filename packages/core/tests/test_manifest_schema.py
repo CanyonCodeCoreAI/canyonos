@@ -359,17 +359,33 @@ class ProviderTests(_ManifestCase):
                 manifest = self.load({"provider": provider, "agents": [_agent()]})
                 self.assertEqual(manifest.provider, normalized)
 
-        for provider in ("Ec2", "ec2"):
+        for provider in ("Ec2-Pool", "ec2-pool"):
             with self.subTest(provider=provider):
                 manifest = self.load(
-                    {"provider": provider, "agents": [_agent()], "ec2": _EC2_BLOCK}
+                    {"provider": provider, "agents": [_agent()], "ec2-pool": _EC2_BLOCK}
                 )
-                self.assertEqual(manifest.provider, "EC2")
+                self.assertEqual(manifest.provider, "ec2-pool")
 
-    def test_a_lowercase_ec2_still_needs_the_ec2_block(self):
-        violation = self.one({"provider": "ec2", "agents": [_agent()]})
+    def test_a_lowercase_ec2_pool_still_needs_the_ec2_pool_block(self):
+        violation = self.one({"provider": "ec2-pool", "agents": [_agent()]})
+
+        self.assertEqual(violation.field, "ec2-pool")
+
+    def test_the_old_ec2_provider_name_says_what_it_was_renamed_to(self):
+        for provider in ("EC2", "ec2"):
+            with self.subTest(provider=provider):
+                violation = self.one({"provider": provider, "agents": [_agent()]})
+                self.assertEqual(violation.field, "provider")
+                self.assertEqual(
+                    violation.message,
+                    "was renamed to ec2-pool -- use provider: ec2-pool",
+                )
+
+    def test_the_old_ec2_section_says_what_it_was_renamed_to(self):
+        violation = self.one({"agents": [_agent()], "ec2": _EC2_BLOCK})
 
         self.assertEqual(violation.field, "ec2")
+        self.assertEqual(violation.message, "was renamed to ec2-pool: -- rename it")
 
     def test_a_misspelled_provider_is_rejected(self):
         for provider in ("locale", "EC2 ", "aws"):
@@ -378,42 +394,103 @@ class ProviderTests(_ManifestCase):
                 self.assertEqual(violation.field, "provider")
                 self.assertEqual(
                     violation.message,
-                    f"expected one of ['local', 'EC2'], got the string {provider!r}",
+                    f"expected one of ['local', 'ec2-pool', 'ec2-assign'], got the string {provider!r}",
                 )
 
-    def test_ec2_needs_the_ec2_block(self):
-        violation = self.one({"provider": "EC2", "agents": [_agent()]})
+    def test_ec2_needs_the_ec2_block_for_its_machine_types(self):
+        violation = self.one({"provider": "ec2-pool", "agents": [_agent()]})
 
-        self.assertEqual(violation.field, "ec2")
+        self.assertEqual(violation.field, "ec2-pool")
         self.assertEqual(
             violation.message,
-            "is required because provider is 'EC2'; it must set "
-            "region, machine_type, subnet_id, security_group_ids",
+            "is required because provider is 'ec2-pool'; it must set machine_type",
         )
         self.assertEqual(violation.line, 0)
 
-    def test_the_ec2_block_must_be_complete(self):
-        block = dict(_EC2_BLOCK)
-        del block["subnet_id"]
-
-        self.assertEqual(
-            self.fields({"provider": "EC2", "agents": [_agent()], "ec2": block}),
-            ["ec2.subnet_id"],
-        )
-
-    def test_an_empty_security_group_list_is_rejected(self):
-        # It used to pass the required check, after which the block was
-        # dropped without a violation: an EC2 agent with Manifest.ec2 None.
-        violation = self.one(
+    def test_the_ec2_block_can_leave_out_the_network(self):
+        # The deploying machine's own region, subnet and security groups fill it in.
+        manifest = self.load(
             {
-                "provider": "EC2",
+                "provider": "ec2-pool",
                 "agents": [_agent()],
-                "ec2": {**_EC2_BLOCK, "security_group_ids": []},
+                "ec2-pool": {"machine_type": {"t3.micro": 1}},
             }
         )
 
-        self.assertEqual(violation.field, "ec2.security_group_ids")
-        self.assertEqual(violation.message, "is required and must not be empty")
+        self.assertEqual(manifest.provider, "ec2-pool")
+
+    def _ec2_auto(self, block):
+        return {
+            "provider": "ec2-assign",
+            "agents": [_agent(), _agent(name="Beta")],
+            "endpoint": {"agent": "ExampleAgent", "method": "work"},
+            **({"ec2-assign": block} if block is not None else {}),
+        }
+
+    def test_ec2_auto_maps_every_agent_to_a_machine_type(self):
+        manifest = self.load(
+            self._ec2_auto(
+                {"machine_type": {"ExampleAgent": "t3.micro", "Beta": "t3.large"}}
+            )
+        )
+
+        self.assertEqual(manifest.provider, "ec2-assign")
+
+    def test_ec2_auto_needs_its_block(self):
+        violation = self.one(self._ec2_auto(None))
+
+        self.assertEqual(violation.field, "ec2-assign")
+        self.assertEqual(
+            violation.message,
+            "is required because provider is 'ec2-assign'; it must set machine_type",
+        )
+
+    def test_ec2_auto_needs_a_machine_type_for_every_agent(self):
+        violation = self.one(
+            self._ec2_auto({"machine_type": {"ExampleAgent": "t3.micro"}})
+        )
+
+        self.assertEqual(violation.field, "ec2-assign.machine_type")
+        self.assertEqual(
+            violation.message, "must give every agent a value; missing ['Beta']"
+        )
+
+    def test_ec2_auto_rejects_a_machine_type_for_no_agent(self):
+        violation = self.one(
+            self._ec2_auto(
+                {
+                    "machine_type": {
+                        "ExampleAgent": "t3.micro",
+                        "Beta": "t3.micro",
+                        "Gamma": "t3.micro",
+                    }
+                }
+            )
+        )
+
+        self.assertEqual(violation.field, "ec2-assign.machine_type.Gamma")
+
+    def test_agents_take_no_machine_type(self):
+        violation = self.one({"agents": [_agent(machine_type="t3.micro")]})
+
+        self.assertEqual(violation.field, "agents[0].machine_type")
+
+    def test_the_ec2_block_may_set_only_some_keys(self):
+        block = dict(_EC2_BLOCK)
+        del block["subnet_id"]
+
+        self.load({"provider": "ec2-pool", "agents": [_agent()], "ec2-pool": block})
+
+    def test_ec2_security_groups_must_be_a_list(self):
+        violation = self.one(
+            {
+                "provider": "ec2-pool",
+                "agents": [_agent()],
+                "ec2-pool": {**_EC2_BLOCK, "security_group_ids": "sg-1"},
+            }
+        )
+
+        self.assertEqual(violation.field, "ec2-pool.security_group_ids")
 
     def test_an_empty_requirements_list_is_still_fine(self):
         manifest = self.load({"agents": [_agent(requirements=[])]})
@@ -423,9 +500,9 @@ class ProviderTests(_ManifestCase):
     def test_the_ec2_block_accepts_an_iam_profile(self):
         self.load(
             {
-                "provider": "EC2",
+                "provider": "ec2-pool",
                 "agents": [_agent()],
-                "ec2": {**_EC2_BLOCK, "iam_profile_name": "my-profile"},
+                "ec2-pool": {**_EC2_BLOCK, "iam_profile_name": "my-profile"},
             }
         )
 
@@ -731,9 +808,9 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_string_field_takes_the_variable_s_text(self):
         config = {
-            "provider": "EC2",
+            "provider": "ec2-pool",
             "agents": [_agent()],
-            "ec2": {**_EC2_BLOCK, "region": "${CANYONOS_TEST_REGION}"},
+            "ec2-pool": {**_EC2_BLOCK, "region": "${CANYONOS_TEST_REGION}"},
         }
 
         with patch.dict(os.environ, {"CANYONOS_TEST_REGION": "eu-west-2"}):
@@ -741,9 +818,9 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_string_list_takes_the_variable_s_text(self):
         config = {
-            "provider": "EC2",
+            "provider": "ec2-pool",
             "agents": [_agent()],
-            "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
+            "ec2-pool": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
         }
 
         with patch.dict(os.environ, {"CANYONOS_TEST_SG": "sg-abc"}):
@@ -762,15 +839,15 @@ class EnvExpansionTests(_ManifestCase):
 
     def test_a_ref_that_resolves_to_nothing_in_a_list_names_the_variable(self):
         config = {
-            "provider": "EC2",
+            "provider": "ec2-pool",
             "agents": [_agent()],
-            "ec2": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
+            "ec2-pool": {**_EC2_BLOCK, "security_group_ids": ["${CANYONOS_TEST_SG}"]},
         }
 
         with patch.dict(os.environ, {"CANYONOS_TEST_SG": "  "}):
             violation = self.one(config)
 
-        self.assertEqual(violation.field, "ec2.security_group_ids")
+        self.assertEqual(violation.field, "ec2-pool.security_group_ids")
         self.assertIn("'${CANYONOS_TEST_SG}'", violation.message)
 
     def test_an_unset_ref_in_an_optional_field_is_left_literal_as_the_controller_leaves_it(
@@ -782,30 +859,6 @@ class EnvExpansionTests(_ManifestCase):
         with patch.dict(os.environ, environ, clear=True):
             self.load(config)
 
-    def test_an_unset_ref_in_a_required_field_counts_as_missing(self):
-        for key, value in (
-            ("region", "${CANYONOS_TEST_REGION}"),
-            ("security_group_ids", ["${CANYONOS_TEST_REGION}"]),
-        ):
-            with self.subTest(key=key):
-                config = {
-                    "provider": "EC2",
-                    "agents": [_agent()],
-                    "ec2": {**_EC2_BLOCK, key: value},
-                }
-                environ = {
-                    k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_REGION"
-                }
-                with patch.dict(os.environ, environ, clear=True):
-                    violation = self.one(config)
-
-                self.assertEqual(violation.field, f"ec2.{key}")
-                self.assertEqual(
-                    violation.message,
-                    "'${CANYONOS_TEST_REGION}' names an environment variable that "
-                    "is not set",
-                )
-
     def test_the_ec2_block_is_only_checked_when_an_agent_uses_ec2(self):
         environ = {k: v for k, v in os.environ.items() if k != "CANYONOS_TEST_REGION"}
         for block in (
@@ -814,12 +867,14 @@ class EnvExpansionTests(_ManifestCase):
         ):
             with self.subTest(block=block):
                 with patch.dict(os.environ, environ, clear=True):
-                    self.load({"agents": [_agent()], "ec2": block})
+                    self.load({"agents": [_agent()], "ec2-pool": block})
 
     def test_an_unknown_ec2_key_is_still_rejected_in_a_local_project(self):
-        violation = self.one({"agents": [_agent()], "ec2": {"regoin": "us-east-1"}})
+        violation = self.one(
+            {"agents": [_agent()], "ec2-pool": {"regoin": "us-east-1"}}
+        )
 
-        self.assertEqual(violation.field, "ec2.regoin")
+        self.assertEqual(violation.field, "ec2-pool.regoin")
 
     def test_an_unset_ref_in_a_numeric_field_is_reported_the_same_way(self):
         config = {"agents": [_agent(replicas="${CANYONOS_TEST_REPLICAS}")]}
@@ -863,18 +918,18 @@ class EveryProblemInAnEntryTests(_ManifestCase):
             ["agents[0].entrypoint", "agents[0].name", "agents[0].replicas"],
         )
 
-    def test_a_missing_required_ec2_key_does_not_hide_the_optional_ones(self):
+    def test_a_left_out_ec2_key_does_not_hide_a_wrong_one(self):
         block = {**_EC2_BLOCK, "public_ip_timeout": "soon"}
         del block["region"]
         fields = self.fields(
             {
-                "provider": "EC2",
+                "provider": "ec2-pool",
                 "agents": [_agent()],
-                "ec2": block,
+                "ec2-pool": block,
             }
         )
 
-        self.assertEqual(sorted(fields), ["ec2.public_ip_timeout", "ec2.region"])
+        self.assertEqual(fields, ["ec2-pool.public_ip_timeout"])
 
 
 class ListItemLineTests(unittest.TestCase):

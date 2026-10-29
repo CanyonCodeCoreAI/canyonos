@@ -19,12 +19,12 @@ CONFIG = """\
 agents:
   - name: EchoAgent
     entrypoint: echo_agent.py
-    provider: EC2
+    provider: ec2-pool
     replicas: 2
 
   - name: Workflow
     entrypoint: echo_workflow.py
-    provider: EC2
+    provider: ec2-pool
     replicas: 1
 
 endpoint:

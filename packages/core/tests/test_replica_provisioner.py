@@ -12,7 +12,7 @@ from unittest.mock import ANY, MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from canyonos_core.reconciler import replicas
+from canyonos_core.reconciler import replicas, state
 from canyonos_core.controller.controller_context import (
     list_replicas,
 )
@@ -483,8 +483,12 @@ class ReplicaProvisionerTests(unittest.TestCase):
             return reachable(cmd, host, user)
 
         controller._run_cmd.side_effect = run_cmd
-        controller.config["ec2"] = {"machine_type": {"t3.small": 1}}
-        stale = {**_replica("Alpha", 0), "provider": "EC2", "private_host": "10.0.0.9"}
+        controller.config["ec2-pool"] = {"machine_type": {"t3.small": 1}}
+        stale = {
+            **_replica("Alpha", 0),
+            "provider": "ec2-pool",
+            "private_host": "10.0.0.9",
+        }
         controller.redis.hset_multiple("agent_instance:Alpha-0", stale)
 
         with (
@@ -496,7 +500,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
             _ensure(
                 ReplicaProvisioner(controller),
                 [
-                    {"name": "Alpha", "provider": "EC2"},
+                    {"name": "Alpha", "provider": "ec2-pool"},
                     {"name": "Beta", "provider": "local"},
                 ],
             )
@@ -526,12 +530,12 @@ class ReplicaProvisionerTests(unittest.TestCase):
 
     def test_another_machine_gets_its_redis_before_the_container(self):
         controller = _fake_controller()
-        controller.config["ec2"] = {
+        controller.config["ec2-pool"] = {
             "region": "us-east-1",
             "machine_type": {"t3.small": 1},
         }
         manager = ReplicaProvisioner(controller)
-        spec = {"name": "Remote", "provider": "EC2"}
+        spec = {"name": "Remote", "provider": "ec2-pool"}
         provider = _fake_provider(
             hourly_cost=MagicMock(return_value=0.0208),
             machine_capacity=MagicMock(return_value={"cpu": 2, "memory": 2048}),
@@ -551,7 +555,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
         ):
             created = _ensure(manager, [spec])[0]
 
-        # Only what describes the machine, not the rest of the ec2: block.
+        # Only what describes the machine, not the rest of the ec2-pool: block.
         provider.hourly_cost.assert_called_once_with({"machine_type": "t3.small"})
         provider.start_machine.assert_called_once_with(
             {"machine_type": "t3.small"}, ANY
@@ -570,7 +574,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
             created,
             {
                 "agent_name": "Remote",
-                "provider": "EC2",
+                "provider": "ec2-pool",
                 "replica_id": "Remote-00000000",
                 "private_host": "10.0.0.30",
                 "public_host": "54.10.20.30",
@@ -600,7 +604,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
                 )
             },
             {
-                "provider": "EC2",
+                "provider": "ec2-pool",
                 "machine_type": "t3.small",
                 "machine_id": "i-test1",
                 "private_host": "10.0.0.30",
@@ -615,7 +619,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
 
     def test_removing_a_replica_leaves_its_machine_running(self):
         controller = _fake_controller()
-        controller.config["ec2"] = {"machine_type": {"t3.small": 1}}
+        controller.config["ec2-pool"] = {"machine_type": {"t3.small": 1}}
         provider = _fake_provider(
             start_machine=MagicMock(return_value={"machine_id": "i-1"}),
             wait_for_machine=MagicMock(
@@ -627,7 +631,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
             patch("canyonos_core.reconciler.providers.get", return_value=provider),
             patch("canyonos_core.reconciler.replica_provisioner.transfer_image"),
         ):
-            _ensure(manager, [{"name": "Remote", "provider": "EC2"}])
+            _ensure(manager, [{"name": "Remote", "provider": "ec2-pool"}])
             controller._run_cmd.reset_mock()
 
             self.assertTrue(manager.remove_replica("Remote-00000000", drain=False))
@@ -638,6 +642,122 @@ class ReplicaProvisionerTests(unittest.TestCase):
         )
         provider.terminate_machine.assert_not_called()
         self.assertEqual(len(controller.redis.scan_keys("machine_record:*")), 1)
+
+
+class MachinePerReplicaTests(unittest.TestCase):
+    """ec2-assign: each replica gets a machine of its own, of its agent's machine type."""
+
+    SPECS = [
+        {"name": "Alpha", "provider": "ec2-assign", "replicas": 2},
+        {"name": "Beta", "provider": "ec2-assign", "replicas": 1},
+    ]
+
+    def setUp(self):
+        self.controller = _fake_controller()
+        self.controller.config["ec2-assign"] = {
+            "machine_type": {"Alpha": "t3.small", "Beta": "t3.large"}
+        }
+        self.manager = ReplicaProvisioner(self.controller)
+        hosts = iter(f"10.0.0.{n}" for n in range(1, 10))
+        self.provider = _fake_provider(
+            machine_capacity=MagicMock(return_value={"cpu": 2, "memory": 2048}),
+            start_machine=MagicMock(
+                side_effect=lambda spec, launch_id: {"machine_id": launch_id}
+            ),
+            wait_for_machine=MagicMock(
+                side_effect=lambda machine: {
+                    "private_host": next(hosts),
+                    "public_host": "54.1.2.3",
+                }
+            ),
+        )
+        for target in (
+            patch("canyonos_core.reconciler.providers.get", return_value=self.provider),
+            patch("canyonos_core.reconciler.replica_provisioner.transfer_image"),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def _machine_of(self, replica_id):
+        launch_id = self.controller.redis.hget(
+            f"agent_instance:{replica_id}", "machine"
+        )
+        return self.controller.redis.hgetall(f"machine_record:{launch_id}")
+
+    def _replica_ids(self, agent_name):
+        """The agent's replicas: their IDs are random, so read them back."""
+        return sorted(self.controller.redis.smembers(f"agent:{agent_name}:instances"))
+
+    def test_each_replica_gets_its_own_machine_of_its_agents_type(self):
+        _ensure(self.manager, self.SPECS)
+
+        specs = [call.args[0] for call in self.provider.start_machine.call_args_list]
+        self.assertCountEqual(
+            specs,
+            [
+                {"machine_type": "t3.small", "agent_name": "Alpha"},
+                {"machine_type": "t3.small", "agent_name": "Alpha"},
+                {"machine_type": "t3.large", "agent_name": "Beta"},
+            ],
+        )
+        replica_ids = self._replica_ids("Alpha") + self._replica_ids("Beta")
+        self.assertEqual(len(replica_ids), 3)
+        machines = {
+            replica_id: self._machine_of(replica_id) for replica_id in replica_ids
+        }
+        self.assertEqual(len({m["launch_id"] for m in machines.values()}), 3)
+        for replica_id, machine in machines.items():
+            self.assertEqual(machine["agent_name"], replica_id.split("-")[0])
+
+    def test_a_replica_whose_machine_fails_to_start_waits_for_its_own(self):
+        one = [{"name": "Alpha", "provider": "ec2-assign", "replicas": 1}]
+        two = [{**one[0], "replicas": 2}]
+        _ensure(self.manager, one)
+        (alpha,) = self._replica_ids("Alpha")
+        first = self._machine_of(alpha)["launch_id"]
+        started = self.provider.wait_for_machine.side_effect
+        self.provider.wait_for_machine.side_effect = RuntimeError("no capacity")
+
+        with self.assertLogs(
+            "canyonos_core.reconciler.replica_provisioner", "WARNING"
+        ) as logs:
+            _ensure(self.manager, two)
+
+        self.assertIn("No machine for Alpha-", "\n".join(logs.output))
+        self.assertEqual(self._replica_ids("Alpha"), [alpha])
+        self.assertEqual(self._machine_of(alpha)["launch_id"], first)
+        self.assertEqual(
+            self.controller.redis.hgetall(state.MACHINE_ERRORS_KEY),
+            {"t3.small": "no capacity"},
+        )
+
+        # The reconciler replaces the machine that never came up.
+        self.provider.wait_for_machine.side_effect = started
+        self.provider.machine_alive = MagicMock(return_value=True)
+        machines = MachineProvisioner(self.controller)
+        machines.terminate(machines.find_dead())
+        _ensure(self.manager, two)
+
+        (added,) = set(self._replica_ids("Alpha")) - {alpha}
+        second = self._machine_of(added)
+        self.assertNotEqual(second["launch_id"], first)
+        self.assertEqual(second["agent_name"], "Alpha")
+        self.assertEqual(self.controller.redis.hgetall(state.MACHINE_ERRORS_KEY), {})
+
+    def test_scaling_down_frees_the_machine_left_empty(self):
+        _ensure(self.manager, self.SPECS)
+        machines = MachineProvisioner(self.controller)
+        staying, leaving = self._replica_ids("Alpha")
+        kept = self._machine_of(staying)["launch_id"]
+        emptied = self._machine_of(leaving)["launch_id"]
+        self.manager.remove_replica(leaving, drain=False)
+        # The oldest, so only being empty makes it the one to go.
+        self.controller.redis.hset(f"machine_record:{emptied}", "launched_at", "0")
+
+        scaled = [{**self.SPECS[0], "replicas": 1}, self.SPECS[1]]
+
+        self.assertEqual(machines.find_surplus(scaled), [emptied])
+        self.assertNotIn(kept, machines.find_surplus(scaled))
 
 
 class DrainTests(unittest.TestCase):
@@ -720,7 +840,7 @@ class TerminateMachinesTests(unittest.TestCase):
         for launch_id in ("l-1", "l-2"):
             self.redis.hset_multiple(
                 f"machine_record:{launch_id}",
-                {"provider": "EC2", "launch_id": launch_id},
+                {"provider": "ec2-pool", "launch_id": launch_id},
             )
 
     def _terminate(self, provider):
@@ -802,7 +922,7 @@ class PortClaimTests(unittest.TestCase):
 
     def test_a_machine_that_fails_to_start_keeps_its_record_until_stop(self):
         controller = _fake_controller()
-        controller.config["ec2"] = {"machine_type": {"t3.small": 1}}
+        controller.config["ec2-pool"] = {"machine_type": {"t3.small": 1}}
         provider = _fake_provider(
             start_machine=MagicMock(return_value={"machine_id": "i-1"}),
             wait_for_machine=MagicMock(side_effect=RuntimeError("boom")),
@@ -815,9 +935,9 @@ class PortClaimTests(unittest.TestCase):
                 "canyonos_core.reconciler.machine_provisioner", "WARNING"
             ) as logs,
         ):
-            _ensure(manager, [{"name": "Alpha", "provider": "EC2"}])
+            _ensure(manager, [{"name": "Alpha", "provider": "ec2-pool"}])
             # It still counts, so the next pass does not start another.
-            _ensure(manager, [{"name": "Alpha", "provider": "EC2"}])
+            _ensure(manager, [{"name": "Alpha", "provider": "ec2-pool"}])
 
         self.assertIn("Failed to start machine", "\n".join(logs.output))
         provider.start_machine.assert_called_once()

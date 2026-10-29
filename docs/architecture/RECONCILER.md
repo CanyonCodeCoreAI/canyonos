@@ -224,7 +224,7 @@ unconditional sweep would remove.
 `ControllerContext._load_config` resolves the config for **both** processes: load
 `<project>/.env`, `yaml.safe_load`, expand `${VAR}`. Both must load through it or they
 disagree about the same file — and since provisioning moved here, the unexpanded copy is
-the one reaching the providers, where an `ec2:` block declared with `${EC2_AMI_ID}`
+the one reaching the providers, where an `ec2-pool:` block declared with `${EC2_AMI_ID}`
 would hit the AWS API verbatim. An unset ref expands to itself, so a missing variable is a
 visibly wrong value, not a silent default.
 

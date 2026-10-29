@@ -8,7 +8,7 @@
 # portfolio-level risk, then generates an LLM briefing. Resource classes below
 # reflect each stage's real cost so the scheduler has placement decisions to make.
 
-# Where every replica runs: `local` (this machine) or `EC2` (machines from `ec2:`).
+# Where every replica runs: `local` (this machine) or `ec2-pool` (machines from `ec2-pool:`).
 provider: local
 
 agents:
@@ -159,8 +159,8 @@ redis:
   host: localhost
   db: 0
 
-# Machines for `provider: EC2`.
-ec2:
+# Machines for `provider: ec2-pool`.
+ec2-pool:
   region: ${EC2_REGION}
   machine_type:          # how many machines of each type the deploy starts
     t3.micro: 3

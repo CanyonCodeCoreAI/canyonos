@@ -94,25 +94,25 @@ import sys, yaml
 path, case = sys.argv[1:]
 config = yaml.safe_load(open(path))
 # Literal values, since the image validate runs in has no EC2_* variables.
-config["ec2"].update(region="us-east-1", subnet_id="subnet-0", security_group_ids=["sg-0"])
+config["ec2-pool"].update(region="us-east-1", subnet_id="subnet-0", security_group_ids=["sg-0"])
 if case == "an agent sets provider":
-    config["agents"][0]["provider"] = "EC2"
+    config["agents"][0]["provider"] = "ec2-pool"
 elif case == "an agent sets machine_type":
     config["agents"][0]["machine_type"] = "t3.micro"
 elif case == "an unknown provider":
     config["provider"] = "aws"
-elif case == "EC2 without an ec2 block":
-    del config["ec2"]
+elif case == "ec2-pool without an ec2-pool block":
+    del config["ec2-pool"]
 elif case == "machine_type as one type":
-    config["ec2"]["machine_type"] = "t3.micro"
+    config["ec2-pool"]["machine_type"] = "t3.micro"
 elif case == "machine_type with a count of 0":
-    config["ec2"]["machine_type"] = {"t3.micro": 0}
+    config["ec2-pool"]["machine_type"] = {"t3.micro": 0}
 elif case == "provider in lowercase":
-    config["provider"] = "ec2"
+    config["provider"] = "ec2-pool"
 elif case == "provider left out":
     del config["provider"]
-elif case == "an ec2 block without machine_type":
-    del config["ec2"]["machine_type"]
+elif case == "an ec2-pool block without machine_type":
+    del config["ec2-pool"]["machine_type"]
 yaml.safe_dump(config, open(path, "w"), sort_keys=False)
 PY
   out="$ARTIFACTS_DIR/validate-${case// /-}.json"
@@ -125,11 +125,11 @@ PY
 done <<'CASES'
 an agent sets provider|unknown key 'provider'
 an agent sets machine_type|unknown key 'machine_type'
-an unknown provider|expected one of ['local', 'EC2']
-EC2 without an ec2 block|is required because provider is 'EC2'
+an unknown provider|expected one of ['local', 'ec2-pool', 'ec2-assign']
+ec2-pool without an ec2-pool block|is required because provider is 'ec2-pool'
 machine_type as one type|expected a mapping of names to counts
 machine_type with a count of 0|expected an integer >= 1
-an ec2 block without machine_type|ec2.machine_type
+an ec2-pool block without machine_type|ec2-pool.machine_type
 provider in lowercase|
 provider left out|
 CASES

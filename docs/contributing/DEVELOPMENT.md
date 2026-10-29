@@ -21,7 +21,7 @@ bun install   # once
 bun run canyonos:dev
 ```
 
-That builds the Core, API and web images from this checkout, creates `packages/cli/.env` from `packages/cli/.env.example` if it is missing, runs `uv sync`, and opens a shell with the workspace `.venv` active. In that shell `canyonos` is the CLI from this checkout and uses those local images: `canyonos -v` prints `canyonos development` instead of a version number. Type `exit` to leave it. 
+That builds the Core, API and web images from this checkout, creates `packages/cli/.env` from `packages/cli/.env.example` if it is missing, runs `uv sync`, and opens a shell with the workspace `.venv` active. In that shell `canyonos` is the CLI from this checkout and uses those local images: `canyonos -v` prints `canyonos development` instead of a version number. Type `exit` to leave it.
 
 Rerun `bun run canyonos:dev` it after changing any code in core or the dashboard (api, ui, web)
 
@@ -42,11 +42,11 @@ A variable already set in your shell wins over the file, so `export CANYONOS_COR
 
 Every artifact variable takes the same three forms:
 
-| Value | Meaning |
-|---|---|
-| unset or `prod` | the production artifact, i.e. exactly what a released CLI uses |
-| `local` | the artifact from this checkout |
-| anything else | taken literally: an image tag, a directory, or a git ref for the skill |
+| Value           | Meaning                                                                |
+| --------------- | ---------------------------------------------------------------------- |
+| unset or `prod` | the production artifact, i.e. exactly what a released CLI uses         |
+| `local`         | the artifact from this checkout                                        |
+| anything else   | taken literally: an image tag, a directory, or a git ref for the skill |
 
 Artifacts are independent, so "core from my checkout, skill from `main`" and the
 reverse are both fine. Outside `production` overrides are allowed; in
@@ -77,6 +77,31 @@ CLI does: every release publishes the core, api, and web images under the CLI's
 own version, and `canyonos/env.py` derives their references from it. A checkout
 whose version was bumped but not released yet points at images that do not
 exist, so use `local` while developing.
+
+## Run a checkout on an EC2 machine
+
+From the dev shell, `canyonos provision` → **Provision AWS** asks whether the machine runs
+**this checkout** or the official release. Choosing the checkout:
+
+1. Builds the Global Controller image here for `linux/amd64`, tagged
+   `canyonos-core:dev-amd64` so your own `canyonos-core:dev` is kept. This
+   happens before anything is created in AWS. On an Arm Mac Docker emulates x86,
+   so it takes a while.
+2. Launches the machine with uv and rsync instead of the released CLI.
+3. Once it has booted, copies the checkout to `~/canyonos` with rsync (no
+   `.git`, `.venv`, `node_modules` or build output), streams the image over SSH
+   with `docker save | docker load`, and tags it `canyonos-core:dev` there.
+4. Installs the CLI from the copy with `uv tool install --editable`, with a
+   `packages/cli/.env` that sets `CANYONOS_ENV=development` and
+   `CANYONOS_CORE_IMAGE=local`. The dashboard images and the skill are the ones
+   this version pins, so they must be released.
+
+Provisioning needs `docker`, `rsync` and `ssh` here, Docker running, and the private
+key of the key pair you choose: a new one, `~/.ssh/<name>.pem`, or a path it
+asks for. On the machine, `canyonos -v` prints `canyonos development`.
+
+To pick up later changes, rerun `canyonos provision` for a new machine, or repeat
+steps 1 and 3 by hand.
 
 ## Hot-reload dashboard
 
@@ -125,19 +150,19 @@ send their traces to the host API, and the Vite dashboard shows them.
 ### A few quirks
 
 - The API registers the project it finds on the default Redis during startup.
-After a new deploy, restart `bun run dashboard:dev`, or register the project
-while it runs with `curl -X POST http://localhost:3000/canyonos/projects
+  After a new deploy, restart `bun run dashboard:dev`, or register the project
+  while it runs with `curl -X POST http://localhost:3000/canyonos/projects
 -H 'Content-Type: application/json' -d '{"redis_port":6379}'`.
 - API and web edits reload while the command is running. Core edits need
-`bun run canyonos:dev` again and a workflow redeploy.
+  `bun run canyonos:dev` again and a workflow redeploy.
 - The default ports are API `3000`, web `5173`, Postgres `5432`, endpoint
-`8080`, and workflow Redis `6379`. Stop or reconfigure
-anything already using one of them. The workflow ports are the `endpoint.api_port`
-and `redis.port` defaults of its config; if it declares another `redis.port`,
-register it with that port. `CANYONOS_REDIS_PORT` is only the default Redis:
-the one read at startup and for projects that never registered.
+  `8080`, and workflow Redis `6379`. Stop or reconfigure
+  anything already using one of them. The workflow ports are the `endpoint.api_port`
+  and `redis.port` defaults of its config; if it declares another `redis.port`,
+  register it with that port. `CANYONOS_REDIS_PORT` is only the default Redis:
+  the one read at startup and for projects that never registered.
 - This is the fast host-dashboard loop. Use `canyonos deploy` with the image
-dashboard when testing container parity.
+  dashboard when testing container parity.
 
 ## Kubernetes on kind
 
@@ -185,11 +210,11 @@ cp packages/api/.env.test.example packages/api/.env.test
 cp packages/web/.env.example packages/web/.env
 ```
 
-| Suite | Command | Needs |
-|---|---|---|
-| API | `bun run api:test:e2e` | Postgres (`bun run docker:up`); resets the `canyonos_test` database |
-| Dashboard | `bun run ui:test:e2e` | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite itself, or reuses ones already running |
-| Workflow | `tests/run_tests.sh` | Run inside the `bun run canyonos:dev` shell; deploys `examples/helloworld` to port `8082`, then runs the integration and load tests |
+| Suite     | Command                | Needs                                                                                                                               |
+| --------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| API       | `bun run api:test:e2e` | Postgres (`bun run docker:up`); resets the `canyonos_test` database                                                                 |
+| Dashboard | `bun run ui:test:e2e`  | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite itself, or reuses ones already running             |
+| Workflow  | `tests/run_tests.sh`   | Run inside the `bun run canyonos:dev` shell; deploys `examples/helloworld` to port `8082`, then runs the integration and load tests |
 | Kubernetes | `scripts/kind/e2e.sh` | The kind cluster from `scripts/kind/up.sh`; see [Kubernetes on kind](#kubernetes-on-kind) |
 
 `tests/README.md` covers running the workflow tests against a stack that is

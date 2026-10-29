@@ -8,3 +8,5 @@ SECTION_KEYS = {}
 RETIRED_KEYS = {}
 MACHINE_TYPES = None
 MACHINE_KEYS = ()
+# Every replica shares this one machine.
+MACHINE_PER_REPLICA = None

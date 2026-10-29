@@ -63,7 +63,7 @@ class ContainerReuseScanTests(unittest.TestCase):
         replica = {
             "container_name": "canyonos-agent-0",
             "private_host": "10.0.0.5",
-            "provider": "EC2",
+            "provider": "ec2-pool",
         }
 
         with self.assertLogs(

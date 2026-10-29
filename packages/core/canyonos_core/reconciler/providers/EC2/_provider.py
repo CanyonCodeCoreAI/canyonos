@@ -4,7 +4,8 @@
 """
 EC2 provider for CanyonOS.
 
-This module is the EC2-specific backend for `provider: EC2` agents.
+This module is the EC2-specific backend for `provider: ec2-pool` and
+`provider: ec2-assign` agents.
 It does three things:
 1. create an EC2 machine
 2. wait until that machine can run containers
@@ -22,6 +23,7 @@ import stat
 import subprocess
 import threading
 import time
+import urllib.request
 from typing import Any
 
 from canyonos_core.controller.controller_context import DEFAULT_SSH_KEY_PATH
@@ -36,7 +38,19 @@ DEFAULT_AMI_ID = "ami-0101d5f2a2a9cd55c"
 MACHINE_PLATFORM = "linux/amd64"
 # AWS can take minutes to list a machine it just launched.
 LAUNCH_LISTING_GRACE_SECONDS = 300
+METADATA_URL = "http://169.254.169.254/latest"
+METADATA_TIMEOUT_SECONDS = 2
+# How long an unreachable metadata service is taken as the answer before asking again.
+METADATA_RETRY_SECONDS = 60
+# Tags each agent machine with the EC2 id of the machine that deployed it, so tearing
+# down that machine (`canyonos provision`) finds its agent machines too.
+DEPLOYED_FROM_TAG = "canyonos-deployed-from"
+# Section keys that default to the deploying machine's own network.
+NETWORK_KEYS = ("region", "subnet_id", "security_group_ids")
 _controller: Any = None
+_own_machine = None
+_own_machine_failed_at = None
+_own_machine_lock = threading.Lock()
 _default_key_lock = threading.Lock()
 _key_pair_lock = threading.Lock()
 _imported_key_pairs = set()
@@ -127,15 +141,79 @@ def _machine_type_capacity(region, machine_type):
     }
 
 
-def _ec2_config():
-    """Return the config's `ec2:` section, or raise an error naming the config file if
-    it has none."""
-    cfg = _controller.config.get("ec2")
-    if not cfg:
-        raise RuntimeError(
-            f"{_controller.config_path} has no ec2: section, which starting or "
-            "terminating an EC2 machine needs"
+def _read_metadata(path, token):
+    request = urllib.request.Request(
+        f"{METADATA_URL}/meta-data/{path}",
+        headers={"X-aws-ec2-metadata-token": token},
+    )
+    with urllib.request.urlopen(request, timeout=METADATA_TIMEOUT_SECONDS) as response:
+        return response.read().decode().strip()
+
+
+def _deploying_machine():
+    """Return the EC2 id (`machine_id`), region, subnet and security groups of the EC2
+    machine this runs on, read from the EC2 metadata service (IMDSv2) and kept, or None
+    when this is not an EC2 machine or the metadata can't be reached from the Global
+    Controller container. A failure is the answer for `METADATA_RETRY_SECONDS`, so
+    launches off EC2 don't each wait for it."""
+    global _own_machine, _own_machine_failed_at
+    with _own_machine_lock:
+        recently_failed = (
+            _own_machine_failed_at is not None
+            and time.monotonic() - _own_machine_failed_at < METADATA_RETRY_SECONDS
         )
+        if _own_machine is None and not recently_failed:
+            try:
+                token_request = urllib.request.Request(
+                    f"{METADATA_URL}/api/token",
+                    method="PUT",
+                    headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+                )
+                with urllib.request.urlopen(
+                    token_request, timeout=METADATA_TIMEOUT_SECONDS
+                ) as response:
+                    token = response.read().decode()
+                mac = _read_metadata("mac", token)
+                interface = f"network/interfaces/macs/{mac}"
+                _own_machine = {
+                    "machine_id": _read_metadata("instance-id", token),
+                    "region": _read_metadata("placement/region", token),
+                    "subnet_id": _read_metadata(f"{interface}/subnet-id", token),
+                    "security_group_ids": _read_metadata(
+                        f"{interface}/security-group-ids", token
+                    ).split(),
+                }
+            except OSError as e:
+                _own_machine_failed_at = time.monotonic()
+                logger.info("EC2 metadata is unavailable: %s", e)
+        return _own_machine
+
+
+def _section_name():
+    """The config section this deployment's EC2 settings are in: `ec2-assign:` for
+    ec2-assign, else `ec2-pool:`."""
+    provider = str(_controller.config.get("provider", ""))
+    return "ec2-assign" if provider.casefold() == "ec2-assign" else "ec2-pool"
+
+
+def _ec2_config():
+    """Return the config's `ec2-pool:` or `ec2-assign:` section, with `region`, `subnet_id` and
+    `security_group_ids` it leaves out taken from the deploying machine's own. Raises
+    an error naming the config file if any of them is still unknown."""
+    section = _section_name()
+    cfg = dict(_controller.config.get(section) or {})
+    missing = [key for key in NETWORK_KEYS if not cfg.get(key)]
+    if missing:
+        own_machine = _deploying_machine()
+        if own_machine is None:
+            raise RuntimeError(
+                f"{_controller.config_path} does not set {section}: "
+                f"{', '.join(missing)}, "
+                "and this machine's own can't be read from EC2 metadata. Set them, "
+                "or deploy from an EC2 machine such as one made by `canyonos provision`."
+            )
+        for key in missing:
+            cfg[key] = own_machine[key]
     return cfg
 
 
@@ -222,6 +300,11 @@ def start_machine(machine_spec, launch_id):
             },
         ],
     }
+    own_machine = _deploying_machine()
+    if own_machine:
+        request["TagSpecifications"][0]["Tags"].append(
+            {"Key": DEPLOYED_FROM_TAG, "Value": own_machine["machine_id"]}
+        )
     if cfg.get("iam_profile_name"):
         request["IamInstanceProfile"] = {"Name": cfg["iam_profile_name"]}
 
@@ -278,7 +361,7 @@ def wait_for_machine(machine):
         raise RuntimeError(f"EC2 machine {machine_id} never got a public IP address.")
     # The control plane reaches the machine over the private IP; the public IP is only recorded.
     private_host = described["PrivateIpAddress"]
-    user = _controller.config.get("ec2", {}).get("ssh_user", DEFAULT_SSH_USER)
+    user = _controller.config.get(_section_name(), {}).get("ssh_user", DEFAULT_SSH_USER)
     for _ in range(20):
         result = _controller._run_cmd(["true"], private_host, user=user)
         if result.returncode == 0:

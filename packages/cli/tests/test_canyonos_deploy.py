@@ -167,6 +167,31 @@ def test_the_deploy_panel_shows_how_to_answer_a_question():
 
 
 @pytest.mark.parametrize(
+    "provider, core_image, warned",
+    [
+        ("ec2-assign", "canyonos-core:dev", True),
+        ("ec2-pool", "canyonos-core:dev", True),
+        ("local", "canyonos-core:dev", False),
+        ("ec2-assign", deploy_cmd.env.PROD_CORE_IMAGE, False),
+    ],
+)
+def test_a_dev_core_image_warns_that_agent_machines_run_the_released_collector(
+    monkeypatch, tmp_path, provider, core_image, warned
+):
+    config = tmp_path / "global_controller.yaml"
+    config.write_text(f"provider: {provider}\n")
+    monkeypatch.setattr(deploy_cmd.env, "core_image", core_image)
+    warnings = []
+    monkeypatch.setattr(deploy_cmd.ui, "warn", warnings.append)
+
+    deploy_cmd._warn_about_the_collector_image(str(config))
+
+    assert bool(warnings) == warned
+    if warned:
+        assert deploy_cmd.env.PROD_CORE_IMAGE in warnings[0]
+
+
+@pytest.mark.parametrize(
     ("configured", "remembered", "lands_on", "warning"),
     [
         (None, 8081, 8082, "Port 8081 is taken, so the endpoint is on 8082"),

@@ -156,7 +156,7 @@ Run `canyonos deploy` again to apply your changes.
 
 Every setting is described in [global_controller.yaml](guides/GLOBAL_CONTROLLER.md).
 
-For `provider: EC2` specifically (AMI/IAM/security group requirements, the `ec2:` config block), see [EC2 deployment](guides/EC2.md).
+For `provider: ec2-pool` specifically (`canyonos provision`, AMI/IAM/security group requirements, the `ec2-pool:` config block), see [EC2 deployment](guides/EC2.md).
 
 ### 6. Stop
 

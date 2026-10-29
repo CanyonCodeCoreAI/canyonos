@@ -22,6 +22,7 @@ import yaml
 from canyonos_core.controller.controller_context import (
     DEFAULT_REDIS_PORT,
     ControllerContext,
+    _is_local_host,
     _redis_connect_host,
     list_replicas,
 )
@@ -45,6 +46,10 @@ from canyonos_core.controller.utils.container_names import (
 )
 from canyonos_core.llm_gateway import llms, pricing
 from canyonos_core.reconciler import state
+from canyonos_core.reconciler.replicas import (
+    machine_metrics_key,
+    start_metrics_collector,
+)
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.config_env import (
     expand_env_value,
@@ -666,8 +671,9 @@ class GlobalController(ControllerContext):
         )
 
     def _launch_metrics_collectors(self):
-        """Start this machine's metrics collector as a sibling container, launched the
-        same way as Redis and the agents.
+        """Start this machine's metrics collector as a sibling container, from this
+        Global Controller's own image. The reconciler starts each other machine's, with
+        its Redis (see MachineProvisioner._start_machine).
 
         Best-effort and idempotent, mirroring _launch_redis_containers: a collector
         already running is reused; a launch failure is logged, not fatal.
@@ -680,76 +686,20 @@ class GlobalController(ControllerContext):
             return
 
         host = "localhost"
-        # --gpus fails `docker run` on a machine without the nvidia container runtime.
         wants_gpu = any(
             agent_spec.get("resources", {}).get("gpu")
             for agent_spec in self.agent_specs
         )
-        container_name = metrics_container_name(host)
-        try:
-            inspect = self._run_cmd(
-                ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
-                host,
-            )
-            if inspect.returncode == 0 and inspect.stdout.strip() == "true":
-                logger.info("Metrics collector already running on %s; reusing.", host)
-                self._metrics_collectors[host] = container_name
-                return
-            # Clear any stale (stopped) container of the same name before recreating.
-            self._run_cmd(["docker", "rm", "-f", container_name], host)
-
-            cmd = [
-                "docker",
-                "run",
-                "-d",
-                *project_label_args(),
-                "--name",
-                container_name,
-                "--restart",
-                "unless-stopped",
-                "--pid=host",
-                "--network=host",
-                "-v",
-                "/:/host:ro",
-            ]
-            if wants_gpu:
-                cmd += ["--gpus", "all"]
-            cmd += [
-                # With --network=host the collector reaches the host's published Redis
-                # port on loopback.
-                "-e",
-                "CANYONOS_REDIS_HOST=localhost",
-                "-e",
-                f"CANYONOS_REDIS_PORT={self.config.get('redis', {}).get('port', 6379)}",
-                "-e",
-                f"CANYONOS_METRICS_KEY=machine:{host}:metrics",
-                "-e",
-                f"CANYONOS_POLL_INTERVAL={self.config.get('poll_interval', 5)}",
-                # The controller image's entrypoint launches the GC; override it to run
-                # the collector instead.
-                "--entrypoint",
-                "python",
-                CONTROLLER_IMAGE,
-                "-m",
-                "canyonos_core.machine_metrics_poller",
-            ]
-            result = self._run_cmd(cmd, host)
-            if result.returncode == 0:
-                self._metrics_collectors[host] = container_name
-                logger.info(
-                    "Started machine metrics collector %s on %s (key=machine:%s:metrics).",
-                    container_name,
-                    host,
-                    host,
-                )
-            else:
-                logger.warning(
-                    "Failed to start metrics collector on %s: %s",
-                    host,
-                    (result.stderr or "").strip(),
-                )
-        except Exception as e:
-            logger.warning("Failed to start metrics collector on %s: %s", host, e)
+        container_name = start_metrics_collector(
+            self,
+            host,
+            None,
+            CONTROLLER_IMAGE,
+            self.config.get("redis", {}).get("port", 6379),
+            wants_gpu,
+        )
+        if container_name:
+            self._metrics_collectors[host] = container_name
 
     def _stop_metrics_collectors(self):
         """Stop and remove the machine metrics collector container."""
@@ -1045,26 +995,50 @@ class GlobalController(ControllerContext):
             list(executor.map(send, hosts))
 
     def _poll_machine_metrics(self):
-        """Read this machine's metrics hash (written by its collector, see
-        _launch_metrics_collectors) and persist it as one time-series row in
-        metrics_waiting. Best-effort: a hash not written yet or an unreachable Redis is
-        skipped, never fatal.
+        """Read each machine's metrics hash from its own Redis (written by its
+        collector, see start_metrics_collector): this machine's, and every
+        other machine the reconciler started, whether or not replicas run on it.
+        Persist each as one time-series row in metrics_waiting. Best-effort: a hash not
+        written yet or an unreachable Redis is skipped, never fatal.
         """
+        hosts = ["localhost"]
         try:
-            metrics = self.redis.hgetall("machine:localhost:metrics")
-            if metrics:
-                otel_writer.metric_write_rows(
-                    [
-                        {
-                            "kind": "machine",
-                            "host": "localhost",
-                            "project_id": self.config.get("project_id"),
-                            "metrics": metrics,
-                        }
-                    ]
-                )
+            for key in self.redis.scan_keys("machine_record:*"):
+                host = self.redis.hget(key, "private_host")
+                if host and not _is_local_host(host) and host not in hosts:
+                    hosts.append(host)
         except Exception as e:
-            logger.warning("Failed to record machine metrics (non-fatal): %s", e)
+            logger.warning("Failed to list machines for metrics (non-fatal): %s", e)
+        rows = []
+        for host in hosts:
+            try:
+                machine_redis = (
+                    self.redis
+                    if host == "localhost"
+                    else self.machine_redis_for_replica(
+                        {"private_host": host, "redis_port": self.redis_ports.get(host)}
+                    )
+                )
+                metrics = machine_redis.hgetall(machine_metrics_key(host))
+            except Exception as e:
+                logger.warning(
+                    "Failed to read machine metrics from %s (non-fatal): %s", host, e
+                )
+                continue
+            if metrics:
+                rows.append(
+                    {
+                        "kind": "machine",
+                        "host": host,
+                        "project_id": self.config.get("project_id"),
+                        "metrics": metrics,
+                    }
+                )
+        if rows:
+            try:
+                otel_writer.metric_write_rows(rows)
+            except Exception as e:
+                logger.warning("Failed to record machine metrics (non-fatal): %s", e)
 
     def _poll_one_replica(self, replica):
         """Poll and persist one replica's runtime/metrics/health data and return its scaling sample; never raises."""

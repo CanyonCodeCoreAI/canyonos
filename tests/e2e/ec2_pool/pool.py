@@ -58,7 +58,7 @@ def machines():
         controller_redis.hgetall(key)
         for key in controller_redis.scan_iter("machine_record:*")
     )
-    return {m["launch_id"]: m for m in found if m["provider"] == "EC2"}
+    return {m["launch_id"]: m for m in found if m["provider"] == "ec2-pool"}
 
 
 def wait(condition, timeout, message):
@@ -148,7 +148,7 @@ for pid in filter(str.isdigit, os.listdir("/proc")):
             os.readlink(f"/proc/{pid}/cwd"), "config", "global_controller.yaml"
         )
         config = yaml.safe_load(open(path))
-        config["ec2"]["machine_type"][machine_type] = count
+        config["ec2-pool"]["machine_type"][machine_type] = count
         yaml.safe_dump(config, open(path, "w"), sort_keys=False)
         os.kill(int(pid), signal.SIGHUP)
 """

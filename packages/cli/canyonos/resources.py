@@ -35,6 +35,13 @@ FIELD_HELP = (
     "gpu: max GPUs each replica can use",
     "replicas: how many copies of the agent to run",
 )
+# ec2-assign gives each replica an EC2 machine of its own, of the type its section maps
+# the agent to; ec2-pool starts the machines its section lists, which every replica
+# shares. Both are shown before deploying, but set in the config, not here.
+EC2_ASSIGN = "ec2-assign"
+EC2_POOL = "ec2-pool"
+MACHINE_HELP = "machine: the EC2 machine type each replica gets one of"
+POOL_COLUMNS = ("machine", "count")
 
 MENU = [
     (
@@ -104,24 +111,64 @@ def _name(agent_spec, index):
     return str(agent_spec.get("name", f"[{index}]"))
 
 
-def _cells(agent_specs):
-    """Per agent, the name and each field padded to its column's width, plus those widths."""
+def _section_machine_types(data, provider):
+    """The `machine_type` mapping of the section named `provider`, {} if it has none,
+    or None when the config's provider is another."""
+    if str(data.get("provider", "")).casefold() != provider:
+        return None
+    section = data.get(provider)
+    by_key = section.get("machine_type") if isinstance(section, dict) else None
+    return by_key if isinstance(by_key, dict) else {}
+
+
+def _machine_types(data):
+    """Agent names to the machine type each of their replicas is deployed to, or None
+    when the config's provider is not ec2-assign."""
+    return _section_machine_types(data, EC2_ASSIGN)
+
+
+def _pool(data):
+    """Machine types to how many of each the pool starts, or None when the config's
+    provider is not ec2-pool."""
+    return _section_machine_types(data, EC2_POOL)
+
+
+def _cells(agent_specs, machine_types=None):
+    """Per agent, the name, each field and, given `machine_types`, its machine type,
+    plus the column names."""
+    columns = COLUMNS if machine_types is None else (*COLUMNS, "machine")
     rows = [
-        [_name(agent_spec, i)] + [str(_get(agent_spec, field)) for field in FIELDS]
+        [_name(agent_spec, i)]
+        + [str(_get(agent_spec, field)) for field in FIELDS]
+        + (
+            []
+            if machine_types is None
+            else [str(machine_types.get(agent_spec.get("name"), "?"))]
+        )
         for i, agent_spec in enumerate(agent_specs)
     ]
-    widths = [max(len(cell) for cell in column) for column in zip(COLUMNS, *rows)]
-    return [[c.ljust(w) for c, w in zip(row, widths)] for row in rows], widths
+    return rows, columns
 
 
-def _table(agent_specs):
-    """The agents as a boxed table: the top border with the column names in it, one
-    line per agent, and the bottom border."""
-    rows, widths = _cells(agent_specs)
-    names = (f" {name} ".ljust(w + 2, "─") for name, w in zip(COLUMNS, widths))
+def _box(rows, columns):
+    """Rows of cells as a boxed table: the top border with the column names in it, one
+    line per row, and the bottom border."""
+    widths = [max(len(cell) for cell in column) for column in zip(columns, *rows)]
+    rows = [[c.ljust(w) for c, w in zip(row, widths)] for row in rows]
+    names = (f" {name} ".ljust(w + 2, "─") for name, w in zip(columns, widths))
     top = "╭" + "┬".join(names) + "╮"
     bottom = "╰" + "┴".join("─" * (w + 2) for w in widths) + "╯"
     return top, ["│ " + " │ ".join(row) + " │" for row in rows], bottom
+
+
+def _table(agent_specs, machine_types=None):
+    """The agents as a boxed table, one line per agent."""
+    return _box(*_cells(agent_specs, machine_types))
+
+
+def _pool_table(pool):
+    """The pool's machines as a boxed table, one line per machine type."""
+    return _box([[str(t), str(count)] for t, count in pool.items()], POOL_COLUMNS)
 
 
 def _render(title, status):
@@ -162,11 +209,11 @@ def _edit_agent(agent_spec, status):
             break
 
 
-def _configure(agent_specs, status):
+def _configure(agent_specs, status, machine_types=None):
     """Agent menu: pick an agent to edit, until Esc. Returns the status line to show next."""
     while True:
         _render("deploy › configure", status)
-        top, rows, bottom = _table(agent_specs)
+        top, rows, bottom = _table(agent_specs, machine_types)
         choice = select_menu(
             list(enumerate(rows)),
             title="Which agent do you want to configure?",
@@ -178,13 +225,21 @@ def _configure(agent_specs, status):
         status = _edit_agent(agent_specs[choice], status)
 
 
-def _pick(agent_specs):
+def _pick(agent_specs, machine_types=None, pool=None):
     """Deploy menu. Returns True to deploy, False if the user cancelled."""
     status = ""
     ui.console.set_alt_screen(True)
     try:
         while True:
             _render("", status)
+            if pool is not None:
+                ui.console.print(
+                    Text("The EC2 machines every replica shares", style="bold")
+                )
+                ui.console.print()
+                top, rows, bottom = _pool_table(pool)
+                for line in (top, *rows, bottom, ""):
+                    ui.console.print(Text(f"  {line}"))
             ui.console.print(
                 Text(
                     "Your workflow's agents and the max resources each replica can use",
@@ -192,10 +247,13 @@ def _pick(agent_specs):
                 )
             )
             ui.console.print()
-            top, rows, bottom = _table(agent_specs)
+            top, rows, bottom = _table(agent_specs, machine_types)
             for line in (top, *rows, bottom, ""):
                 ui.console.print(Text(f"  {line}"))
-            for line in FIELD_HELP:
+            help_lines = (
+                FIELD_HELP if machine_types is None else (*FIELD_HELP, MACHINE_HELP)
+            )
+            for line in help_lines:
                 ui.console.print(Text(f"  {line}", style="dim"))
             ui.console.print()
             choice = select_menu(MENU, title="What do you want to do?")
@@ -203,7 +261,7 @@ def _pick(agent_specs):
                 return False
             if choice == DEPLOY:
                 return True
-            status = _configure(agent_specs, status)
+            status = _configure(agent_specs, status, machine_types)
     finally:
         ui.console.set_alt_screen(False)
 
@@ -224,7 +282,9 @@ def configure_resources(config_path):
     for agent_spec in agent_specs:
         _fill_defaults(agent_spec)
 
-    if is_terminal(sys.stdin) and not _pick(agent_specs):
+    if is_terminal(sys.stdin) and not _pick(
+        agent_specs, _machine_types(data), _pool(data)
+    ):
         return False
 
     write_config(config_path, data, yaml_rt)

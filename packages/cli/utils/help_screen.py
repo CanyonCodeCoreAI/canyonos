@@ -28,6 +28,7 @@ UTIL_COMMANDS = (
     ("logs", "Follow the running deploy's logs"),
     ("new-app", "Create a starter CanyonOS project with one agent"),
     ("quickstart", "Guided first run, from a starter project to your first trace"),
+    ("provision", "Provision or tear down a cloud machine (e.g. AWS) to deploy from"),
     ("serve", "Start local CanyonOS dashboard"),
     ("status", "Check whether a deploy is running and where it answers"),
     ("stop", "Stop the deploy and remove its containers, keeping its images"),

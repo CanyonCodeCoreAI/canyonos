@@ -35,7 +35,7 @@ from dotenv import dotenv_values
 from rich.panel import Panel
 from rich.text import Text
 
-from canyonos import project, ui
+from canyonos import env, project, ui
 from canyonos.constants import (
     DEFAULT_API_PORT,
     dashboard_port,
@@ -44,6 +44,7 @@ from canyonos.constants import (
     load_yaml,
     project_env_path,
     project_root,
+    read_config,
     round_trip_yaml,
     write_config,
 )
@@ -336,6 +337,27 @@ def save_project_id(config_path):
     write_config(config_path, data, yaml_rt)
 
 
+# Providers whose agents run on machines other than this one.
+_REMOTE_PROVIDERS = ("ec2-pool", "ec2-assign")
+
+
+def _warn_about_the_collector_image(config_file):
+    """Machines other than this one run their metrics collector from the official
+    release image; say so when this deploy runs another core image, such as a dev
+    build, whose collector may differ."""
+    if env.core_image == env.PROD_CORE_IMAGE:
+        return
+    config = read_config(config_file)
+    provider = config.get("provider") if isinstance(config, dict) else None
+    if str(provider or "").casefold() in _REMOTE_PROVIDERS:
+        ui.warn(
+            f"Agent machines run the machine metrics collector from "
+            f"{env.PROD_CORE_IMAGE}, not {env.core_image}: changes to it here don't "
+            f"reach them, and if {env.VERSION} isn't published they report no "
+            "machine metrics."
+        )
+
+
 def _warn_unset_example_keys():
     """Warn about keys `.env.example` lists that `.env` leaves out or empty, since
     `.env` is the only file the agents get their keys from."""
@@ -383,6 +405,8 @@ def run_deploy(
     if not quiet and not configure_resources(config_path):
         ui.say("Deploy cancelled.")
         return None
+    if not quiet:
+        _warn_about_the_collector_image(config_path)
 
     # Before run_init, which names the containers after the id.
     save_project_id(config_path)

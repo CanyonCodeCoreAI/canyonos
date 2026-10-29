@@ -97,19 +97,21 @@ class ReplicaProvisioner(object):
                 self._delete_replica_record(replica_id, replica)
             wanted += [agent_spec] * (int(agent_spec.get("replicas", 1)) - counted)
 
-        # How much of each machine its replicas already take, from their records.
+        # How much of each machine its replicas already take, and how many they are,
+        # from their records.
         used = {}
         for key in self.redis.scan_keys("agent_instance:*"):
             record = self.redis.hgetall(key)
             if record.get("machine"):
-                cpu, memory = used.get(record["machine"], (0.0, 0))
+                cpu, memory, count = used.get(record["machine"], (0.0, 0, 0))
                 used[record["machine"]] = (
                     cpu + float(record["cpu"]),
                     memory + int(record["memory"]),
+                    count + 1,
                 )
         for machine in machines:
-            cpu, memory = used.get(machine["launch_id"], (0.0, 0))
-            machine["used"] = {"cpu": cpu, "memory": memory}
+            cpu, memory, count = used.get(machine["launch_id"], (0.0, 0, 0))
+            machine["used"] = {"cpu": cpu, "memory": memory, "replicas": count}
             machine["replicas"] = []
 
         for agent_spec in wanted:

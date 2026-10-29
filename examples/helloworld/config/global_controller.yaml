@@ -4,7 +4,8 @@
 # Global Controller Configuration
 # Lists all agents that CanyonOS manages.
 
-# Where every replica runs: `local` (this machine) or `EC2` (machines from `ec2:`).
+# Where every replica runs: `local` (this machine), `ec2-pool` or `ec2-assign`.
+# examples/helloworld-ec2-assign is this example set up for `ec2-assign`.
 provider: local
 
 agents:

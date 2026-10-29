@@ -23,7 +23,7 @@ from fakes import _FakeRedis
 
 _CONFIG = """\
 poll_interval: 5
-ec2:
+ec2-pool:
   region: ${TEST_EC2_REGION}
   ami_id: ${TEST_EC2_AMI_ID}
   security_group_ids:
@@ -60,9 +60,9 @@ class ConfigExpansionParityTests(unittest.TestCase):
             config = ControllerContext._load_config(self.config_path)
             self.assertEqual(config, GlobalController._load_config(self.config_path))
 
-        self.assertEqual(config["ec2"]["ami_id"], "ami-0abc123")
-        self.assertEqual(config["ec2"]["region"], "us-east-2")
-        self.assertEqual(config["ec2"]["security_group_ids"], ["sg-0def456"])
+        self.assertEqual(config["ec2-pool"]["ami_id"], "ami-0abc123")
+        self.assertEqual(config["ec2-pool"]["region"], "us-east-2")
+        self.assertEqual(config["ec2-pool"]["security_group_ids"], ["sg-0def456"])
         self.assertEqual(config["agents"][0]["machine_type"], "t3.small")
 
     def test_an_unset_ref_is_left_alone_rather_than_emptied(self):
@@ -71,7 +71,7 @@ class ConfigExpansionParityTests(unittest.TestCase):
             del os.environ["TEST_EC2_AMI_ID"]
             config = ControllerContext._load_config(self.config_path)
 
-        self.assertEqual(config["ec2"]["ami_id"], "${TEST_EC2_AMI_ID}")
+        self.assertEqual(config["ec2-pool"]["ami_id"], "${TEST_EC2_AMI_ID}")
 
     def test_expanded_agents_are_published_without_reparsing_the_manifest(self):
         with patch.dict(os.environ, self.env):
@@ -125,16 +125,16 @@ class ReconcilerContextParityTests(unittest.TestCase):
         context = self._context()
         with open(self.config_path, "w") as f:
             f.write(
-                "agents: []\nec2:\n  region: us-west-2\n"
+                "agents: []\nec2-pool:\n  region: us-west-2\n"
                 "endpoint:\n  agent: Alpha\n  method: main\nproject_id: fixed\n"
             )
         context.refresh_config()
-        self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
+        self.assertEqual(context.config["ec2-pool"], {"region": "us-west-2"})
 
         with open(self.config_path, "w") as f:
             f.write("- not a mapping\n")
         context.refresh_config()
-        self.assertEqual(context.config["ec2"], {"region": "us-west-2"})
+        self.assertEqual(context.config["ec2-pool"], {"region": "us-west-2"})
 
 
 class PushFileTests(unittest.TestCase):

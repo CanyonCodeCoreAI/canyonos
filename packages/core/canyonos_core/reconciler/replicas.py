@@ -22,6 +22,7 @@ from canyonos_core.controller.utils.container_names import (
     container_name,
     data_volume_name,
     image_name,
+    metrics_container_name,
     project_group,
     project_label_args,
     redis_container_name,
@@ -332,6 +333,79 @@ def start_redis(controller, host, user):
     _wait_for_redis(machine_redis, host, redis_port)
 
 
+def machine_metrics_key(host):
+    """The Redis hash a machine's metrics collector writes to, in that machine's Redis."""
+    return f"machine:{host}:metrics"
+
+
+def start_metrics_collector(controller, host, user, image, redis_port, wants_gpu):
+    """Start a machine's metrics collector from `image`, reusing one already running,
+    and return its container name, or None if it could not start. Best-effort: a
+    failure is logged, never raised, since a machine without one still runs replicas."""
+    name = metrics_container_name(host)
+    try:
+        if container_running(controller, name, host, user):
+            logger.info("Metrics collector already running on %s; reusing.", host)
+            return name
+        # Clear any stale (stopped) container of the same name before recreating.
+        controller._run_cmd(["docker", "rm", "-f", name], host, user)
+        cmd = [
+            "docker",
+            "run",
+            "-d",
+            *project_label_args(),
+            "--name",
+            name,
+            "--restart",
+            "unless-stopped",
+            "--pid=host",
+            "--network=host",
+            "-v",
+            "/:/host:ro",
+        ]
+        # --gpus fails `docker run` on a machine without the nvidia container runtime.
+        if wants_gpu:
+            cmd += ["--gpus", "all"]
+        cmd += [
+            # With --network=host the collector reaches the machine's published Redis
+            # port on loopback.
+            "-e",
+            "CANYONOS_REDIS_HOST=localhost",
+            "-e",
+            f"CANYONOS_REDIS_PORT={redis_port}",
+            "-e",
+            f"CANYONOS_METRICS_KEY={machine_metrics_key(host)}",
+            "-e",
+            f"CANYONOS_POLL_INTERVAL={controller.config.get('poll_interval', 5)}",
+            # The controller image's entrypoint launches the GC; override it to run
+            # the collector instead.
+            "--entrypoint",
+            "python",
+            image,
+            "-m",
+            "canyonos_core.machine_metrics_poller",
+        ]
+        result = controller._run_cmd(cmd, host, user)
+        if result.returncode != 0:
+            logger.warning(
+                "Failed to start metrics collector on %s: %s",
+                host,
+                (result.stderr or result.stdout or "").strip(),
+            )
+            return None
+        logger.info(
+            "Started machine metrics collector %s on %s from %s (key=%s).",
+            name,
+            host,
+            image,
+            machine_metrics_key(host),
+        )
+        return name
+    except Exception as e:
+        logger.warning("Failed to start metrics collector on %s: %s", host, e)
+        return None
+
+
 def _wait_until_reachable(address, timeout):
     """Wait until the launched container accepts TCP connections."""
     host, port = address.split(":")
@@ -360,8 +434,10 @@ def _callback_host(controller, agent_spec):
     if agent_spec.get("type") != "endpoint":
         return None
     provider = controller.config.get("provider", providers.DEFAULT)
-    # A provider without machine types has one machine: this one.
-    if not providers.SCHEMAS[providers.canonical_name(provider)].MACHINE_TYPES:
+    # A provider that declares no machines, as a pool or one per replica, has one
+    # machine: this one.
+    schema = providers.schema(provider)
+    if not (schema.MACHINE_TYPES or schema.MACHINE_PER_REPLICA):
         return None
     return os.environ.get("CANYONOS_PRIVATE_IP") or None
 

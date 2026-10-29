@@ -767,7 +767,7 @@ class TargetDockerPlatformTests(unittest.TestCase):
         run.assert_called_once()
 
     def test_ec2_builds_for_its_machines_platform(self):
-        platform, run = self._platform("EC2")
+        platform, run = self._platform("ec2-pool")
         self.assertEqual(platform, "linux/amd64")
         run.assert_not_called()
 

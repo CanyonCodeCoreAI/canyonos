@@ -383,7 +383,7 @@ def _bind_fake_ec2(testcase):
     controller = SimpleNamespace(
         config={
             "redis": {"host": "redis.internal", "port": 6379},
-            "ec2": {
+            "ec2-pool": {
                 "ami_id": "ami-123456",
                 "subnet_id": "subnet-123456",
                 "security_group_ids": ["sg-123456"],
@@ -399,7 +399,7 @@ def _bind_fake_ec2(testcase):
         _ssh_args=lambda host, user=None: ["ssh", f"{user}@{host}"],
     )
     providers.bind(controller)
-    providers.get("EC2")._imported_key_pairs.clear()
+    providers.get("ec2-pool")._imported_key_pairs.clear()
     client_patch = patch("boto3.client", side_effect=fake_client.client)
     client_patch.start()
     testcase.addCleanup(client_patch.stop)

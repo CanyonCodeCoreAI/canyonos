@@ -99,6 +99,10 @@ _REDIS_KEYS = frozenset({"host", "port", "db"})
 # that tells a user carrying one what to do instead.
 _RETIRED_KEYS = {
     "database": "is no longer used; telemetry is configured under otel: -- remove it",
+    **{
+        old: f"was renamed to {new}: -- rename it"
+        for old, new in providers.RENAMED_SECTIONS.items()
+    },
     "env_file": "is no longer used; the `.env` in the project folder reaches the "
     "agent replicas by itself -- remove it",
 }
@@ -322,6 +326,22 @@ def _provider(collector, node, prefix):
     if "provider" not in node:
         return providers.DEFAULT
     value = _resolve(node["provider"])
+    renamed = next(
+        (
+            new
+            for old, new in providers.RENAMED.items()
+            if isinstance(value, str) and old.casefold() == value.casefold()
+        ),
+        None,
+    )
+    if renamed is not None:
+        collector.add(
+            node,
+            "provider",
+            _field(prefix, "provider"),
+            f"was renamed to {renamed} -- use provider: {renamed}",
+        )
+        return providers.DEFAULT
     try:
         return providers.canonical_name(value)
     except ValueError:
@@ -556,9 +576,12 @@ def _endpoint(collector, node, agent_specs):
     )
 
 
-def _check_declared(collector, node, prefix, keys, missing="is required but missing"):
+def _check_declared(
+    collector, node, prefix, keys, missing="is required but missing", agent_names=()
+):
     """Add a violation for each key in `keys` that is required but missing (reported with
-    the `missing` message) or has a value of the wrong type."""
+    the `missing` message) or has a value of the wrong type. An `"agents"` key maps each
+    of `agent_names` to a string, and takes no other names."""
     for key, (kind, required) in keys.items():
         if required and node.get(key) is None:
             collector.add(node, key, _field(prefix, key), missing)
@@ -570,14 +593,39 @@ def _check_declared(collector, node, prefix, keys, missing="is required but miss
             _string_list(collector, node, key, prefix, required)
         elif kind is dict:
             _counts(collector, node, key, prefix)
+        elif kind == "agents":
+            _by_agent(collector, node, key, prefix, agent_names)
         else:
             _string(collector, node, key, prefix, required=required)
 
 
-def _check_provider_sections(collector, node, provider):
+def _by_agent(collector, node, key, prefix, agent_names):
+    """Check a mapping that gives every agent a string, such as ec2-assign's machine type
+    for each: each agent must be listed, and only agents."""
+    field = _field(prefix, key)
+    value = _string_mapping(collector, node, key, prefix)
+    if not isinstance(node.get(key), dict):
+        return
+    for name in value:
+        if name not in agent_names:
+            collector.add(
+                node[key],
+                name,
+                _field(field, name),
+                f"is not an agent; expected one of {list(agent_names)}",
+            )
+    missing = [name for name in agent_names if name not in value]
+    if missing:
+        collector.add(
+            node, key, field, f"must give every agent a value; missing {missing}"
+        )
+
+
+def _check_provider_sections(collector, node, provider, agent_specs):
     """Check each provider's top-level section of `global_controller.yaml`, such as
-    `ec2:`. Unknown and retired keys are always reported. The section is required, and
-    its values checked, only for the deployment's `provider`."""
+    `ec2-pool:`. Unknown and retired keys are always reported. The section's values are
+    checked only for the deployment's `provider`, and the section itself is required
+    then only if it has required keys."""
     for name, schema in providers.SCHEMAS.items():
         if not schema.SECTION:
             continue
@@ -594,10 +642,10 @@ def _check_provider_sections(collector, node, provider):
         if provider != name:
             # Skip the values of a provider not in use; their ${VAR}s may be unset.
             continue
+        required = [key for key, (_, needed) in schema.SECTION_KEYS.items() if needed]
         if block is None:
-            required = [
-                key for key, (_, needed) in schema.SECTION_KEYS.items() if needed
-            ]
+            if not required:
+                continue
             # No section to point at, so the violation names the file only.
             collector.violations.append(
                 SchemaViolation(
@@ -609,7 +657,13 @@ def _check_provider_sections(collector, node, provider):
                 )
             )
             continue
-        _check_declared(collector, block, schema.SECTION, schema.SECTION_KEYS)
+        _check_declared(
+            collector,
+            block,
+            schema.SECTION,
+            schema.SECTION_KEYS,
+            agent_names=[agent_spec.name for agent_spec in agent_specs],
+        )
 
 
 def load_manifest(path):
@@ -663,7 +717,7 @@ def load_manifest(path):
         kubernetes=parse_kubernetes(collector, document),
         path=path,
     )
-    _check_provider_sections(collector, document, provider)
+    _check_provider_sections(collector, document, provider, agent_specs)
     if _unset_reference(_string(collector, document, "ssh_private_key_path", "")):
         collector.add(
             document,

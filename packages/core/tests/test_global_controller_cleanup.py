@@ -440,7 +440,7 @@ class StaleContainerNameTests(unittest.TestCase):
     def test_cleanup_removes_only_redis_and_metrics_containers(self):
         agents = [
             {"name": "IntentAgent", "provider": "local", "replicas": 2},
-            {"name": "Remote", "provider": "EC2", "replicas": 1},
+            {"name": "Remote", "provider": "ec2-pool", "replicas": 1},
         ]
         controller = self._controller(agents)
 

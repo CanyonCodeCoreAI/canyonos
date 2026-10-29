@@ -23,6 +23,10 @@ CONTAINER_PORT = 50051
 # collectors run it too. No default: guessing one means silently running a stale
 # image that need not hold the code this GC was built from.
 CONTROLLER_IMAGE = os.environ.get("CANYONOS_CONTROLLER_IMAGE")
+# Set by the CLI to the official release image of its version. Machines other than this
+# one run their metrics collector from it: CONTROLLER_IMAGE may be a dev image built
+# here, which they have no registry to pull from.
+COLLECTOR_IMAGE = os.environ.get("CANYONOS_COLLECTOR_IMAGE")
 
 DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
 PROJECT_LABEL = "com.docker.compose.project"

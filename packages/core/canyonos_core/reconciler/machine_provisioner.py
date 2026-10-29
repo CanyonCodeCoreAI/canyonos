@@ -3,8 +3,8 @@
 
 """Start, list, check and terminate the deployment's pool of machines. The steps here
 are common to every provider; the commands specific to one provider live in providers/.
-Touches only machine records, providers and each machine's Redis; the replicas on the
-machines are the replica provisioner's."""
+Touches only machine records, providers and each machine's Redis and metrics collector;
+the replicas on the machines are the replica provisioner's."""
 
 import logging
 import threading
@@ -12,6 +12,8 @@ import time
 import uuid
 from functools import partial
 
+from canyonos_core.controller.controller_context import _is_local_host
+from canyonos_core.controller.utils.container_names import COLLECTOR_IMAGE
 from canyonos_core.reconciler import providers, replicas, state
 from canyonos_core.reconciler.parallel import run_in_parallel
 
@@ -19,6 +21,16 @@ logger = logging.getLogger(__name__)
 
 # How long replicas wait for a starting machine; a start usually takes 1 to 2 minutes.
 START_WAIT_SECONDS = 180
+
+
+def _machine_type(provider_name, machine):
+    """The machine type of a machine spec or record, under the key its provider's section
+    gives it, whether a pool's or a machine per replica's. A provider without machine
+    types uses its own name."""
+    schema = providers.schema(provider_name)
+    return machine.get(
+        schema.MACHINE_TYPES or schema.MACHINE_PER_REPLICA, provider_name
+    )
 
 
 class MachineProvisioner(object):
@@ -37,7 +49,9 @@ class MachineProvisioner(object):
     def _declared(self, agent_specs):
         """For each machine spec the config declares for the providers the agent specs use:
         its provider name, provider, how many machines of it to run, and the records of
-        the machines already started for it."""
+        the machines already started for it. A provider with a machine per replica
+        declares, for each of its agents, one machine per replica, of the type its
+        section maps the agent to, kept for one of that agent's replicas by `agent_name`."""
         records = [
             self.redis.hgetall(key) for key in self.redis.scan_keys("machine_record:*")
         ]
@@ -49,15 +63,30 @@ class MachineProvisioner(object):
             shared = {
                 key: section[key] for key in schema.MACHINE_KEYS if key in section
             }
-            # A provider without machine types has one machine: this one.
-            kinds = (
-                [
+            if schema.MACHINE_PER_REPLICA:
+                by_agent = section[schema.MACHINE_PER_REPLICA]
+                kinds = [
+                    (
+                        {
+                            **shared,
+                            schema.MACHINE_PER_REPLICA: str(
+                                by_agent[agent_spec["name"]]
+                            ),
+                            "agent_name": agent_spec["name"],
+                        },
+                        int(agent_spec.get("replicas", 1)),
+                    )
+                    for agent_spec in agent_specs
+                    if agent_spec["provider"] == provider_name
+                ]
+            elif schema.MACHINE_TYPES:
+                kinds = [
                     ({**shared, schema.MACHINE_TYPES: machine_type}, count)
                     for machine_type, count in section[schema.MACHINE_TYPES].items()
                 ]
-                if schema.MACHINE_TYPES
-                else [(shared, 1)]
-            )
+            else:
+                # A provider without machine types has one machine: this one.
+                kinds = [(shared, 1)]
             for machine_spec, count in kinds:
                 started = [
                     record
@@ -91,10 +120,7 @@ class MachineProvisioner(object):
                     **machine_spec,
                     **{k: str(v) for k, v in (capacity or {}).items()},
                 }
-                # A provider without machine types uses its own name.
-                machine_type = machine_spec.get(
-                    providers.SCHEMAS[provider_name].MACHINE_TYPES, provider_name
-                )
+                machine_type = _machine_type(provider_name, machine_spec)
                 missing += [(provider, machine_spec, fields, machine_type)] * (
                     count - len(started)
                 )
@@ -115,10 +141,10 @@ class MachineProvisioner(object):
             ).start()
 
     def _start_machine(self, provider, machine_spec, launch_id, machine_type):
-        """Start one machine, wait for it and start its Redis, saving what the provider
-        returns to its record. Runs in its own thread. A failed start saves its error by
-        machine type until every machine of that type is up; find_dead replaces a record
-        left without private_host."""
+        """Start one machine, wait for it and start its Redis and metrics collector,
+        saving what the provider returns to its record. Runs in its own thread. A failed
+        start saves its error by machine type until every machine of that type is up;
+        find_dead replaces a record left without private_host."""
         key = f"machine_record:{launch_id}"
         try:
             machine = provider.start_machine(machine_spec, launch_id)
@@ -130,6 +156,7 @@ class MachineProvisioner(object):
             replicas.start_redis(
                 self.controller, machine["private_host"], machine.get("user")
             )
+            self._start_metrics_collector(machine_spec, machine)
             self.redis.hset_multiple(
                 key, {field: str(value) for field, value in machine.items() if value}
             )
@@ -142,11 +169,7 @@ class MachineProvisioner(object):
             if all(
                 record.get("private_host")
                 for record in records
-                if record.get(
-                    providers.SCHEMAS[record["provider"]].MACHINE_TYPES,
-                    record["provider"],
-                )
-                == machine_type
+                if _machine_type(record["provider"], record) == machine_type
             ):
                 self.redis.hdel(state.MACHINE_ERRORS_KEY, machine_type)
         except Exception as e:
@@ -188,16 +211,51 @@ class MachineProvisioner(object):
             )
         return machines
 
+    def _start_metrics_collector(self, machine_spec, machine):
+        """Start the machine's metrics collector from the official release image, as
+        this machine's own runs from an image the machine may have no way to pull. This
+        machine's collector is the Global Controller's."""
+        host = machine["private_host"]
+        if _is_local_host(host):
+            return
+        if not COLLECTOR_IMAGE:
+            logger.warning(
+                "CANYONOS_COLLECTOR_IMAGE is unset, so machine %s gets no metrics "
+                "collector; its machine metrics will be missing.",
+                host,
+            )
+            return
+        # Only a machine started for a GPU agent; a pool machine may have no GPU runtime.
+        agent_name = machine_spec.get("agent_name")
+        wants_gpu = any(
+            agent_spec.get("resources", {}).get("gpu")
+            for agent_spec in self.controller.agent_specs
+            if agent_spec.get("name") == agent_name
+        )
+        replicas.start_metrics_collector(
+            self.controller,
+            host,
+            machine.get("user"),
+            COLLECTOR_IMAGE,
+            self.controller.redis_ports.get(host, 6379),
+            wants_gpu,
+        )
+
     def find_surplus(self, agent_specs):
         """The launch ids of the machines the config no longer wants: of a type, market or
         provider it does not declare, or past their type's count. Machines that never came
-        up go first, then the newest. Empty until every machine kept is up, so the replicas
-        moved off them always have somewhere to go."""
+        up go first, then those without replicas, then the newest. Empty until every
+        machine kept is up, so the replicas moved off them always have somewhere to go."""
+        occupied = {
+            self.redis.hget(key, "machine")
+            for key in self.redis.scan_keys("agent_instance:*")
+        }
         kept = set()
         for *_, count, started in self._declared(agent_specs):
             started.sort(
                 key=lambda record: (
                     not record.get("private_host"),
+                    record["launch_id"] not in occupied,
                     float(record["launched_at"]),
                 )
             )

@@ -3,6 +3,8 @@
 This process is responsible for gathering machine-level information about the device it is running on.
 This process will write the data to the machine:{host}:metrics field in the Redis container on the machine, which will get polled by the Global Controller and pushed into the `metrics` table of the OTLP Exporter process.
 
+Every machine runs one. The Global Controller starts this machine's from its own image (`CANYONOS_CONTROLLER_IMAGE`); the reconciler starts each other machine's, right after its Redis, from the official release image (`CANYONOS_COLLECTOR_IMAGE`), since a dev image built here is in no registry those machines can pull from.
+
 Below is the data that this process collects:
 
 | Field | Metric | Unit |

@@ -101,19 +101,25 @@ class in its `entrypoint` file.
 
 These go at the top level of the file, next to `agents`:
 
-- `provider`: where every entry runs. `local` (the default) is this machine. `EC2`
-  runs them on Amazon EC2 machines from the `ec2` section below, each replica on the least
-  loaded machine by its `resources`.
+- `provider`: where every entry runs. `local` (the default) is this machine. `ec2-pool`
+  runs them on a pool of Amazon EC2 machines from the `ec2-pool` section below, each replica
+  on the least loaded machine by its `resources`. `ec2-assign` gives each replica an EC2
+  machine of its own, of the type the `ec2-assign` section gives its agent.
 - `endpoint` (required): the web address requests arrive at. `api_port` is its port
   (default `8080`, else the next free one), and `agent` and `method` name the agent method served at
   `POST /<method>`. The method must be listed in that agent's `functions`. Leave
   `api_port`, `redis.port` and `dashboard_port` unset unless something needs a fixed
   port: a port you set is never moved, so a taken one stops the deploy.
 - `dashboard_port`: where the dashboard opens (default `8081`, else the next free one).
-- `ec2`: the AWS details used when `provider` is `EC2`: `region`, `machine_type`
-  (each machine type and how many to start, such as `{t3.micro: 2}`), `subnet_id`,
-  and `security_group_ids` are required; `ami_id`, `ssh_user` and
-  `market_type` have defaults. See [EC2 deployment](EC2.md).
+- `ec2-pool`: the AWS details used when `provider` is `ec2-pool`. `machine_type` (each machine
+  type and how many to start, such as `{t3.micro: 2}`) is required. `region`,
+  `subnet_id` and `security_group_ids` are required too, unless you deploy from an EC2
+  machine such as one made by `canyonos provision`: then they default to that machine's
+  own. `ami_id`, `ssh_user` and `market_type` have defaults. See
+  [EC2 deployment](EC2.md).
+- `ec2-assign`: the same as `ec2-pool`, used when `provider` is `ec2-assign`, except that
+  `machine_type` gives every agent its machine type, such as
+  `{HelloAgent: t3.micro, Workflow: t3.micro}`.
 - `otel`: where to send your app's traces, metrics, and logs, if you use an
   observability tool. Each destination has a `name`, a `protocol` (`grpc`, `http`, or
   `http/protobuf`), and an `endpoint`.
@@ -152,7 +158,7 @@ private IP only; see [EC2 deployment](EC2.md).
 Any text value can come from an environment variable, written as `${NAME}`:
 
 ```yaml
-ec2:
+ec2-pool:
   region: ${EC2_REGION}
 ```
 
@@ -228,8 +234,9 @@ instead of an in-process store, and the agent no longer needs
 | `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379`, else the next free one / `0` | The controller's own Redis. |
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
-| `provider` | `local` | `local` or `EC2`, in any casing. Where every entry runs. |
-| `ec2` | none | Required when `provider: EC2`. See [EC2 deployment](EC2.md). |
+| `provider` | `local` | `local`, `ec2-pool` or `ec2-assign`, in any casing. Where every entry runs. |
+| `ec2-pool` | none | Required when `provider: ec2-pool`, for `machine_type`. See [EC2 deployment](EC2.md). |
+| `ec2-assign` | none | Required when `provider: ec2-assign`, for `machine_type`. See [EC2 deployment](EC2.md). |
 | `endpoint.api_port` | `8080`, else the next free one | Host port of the HTTP endpoint, published on the machine that runs `canyonos deploy`. |
 | `endpoint.agent` | required | The entry of type `agent` the endpoint serves. |
 | `endpoint.method` | required | One of that agent's `functions`, served at `POST /<method>`. |

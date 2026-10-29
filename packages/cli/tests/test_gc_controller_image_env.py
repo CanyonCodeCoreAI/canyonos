@@ -73,6 +73,15 @@ def test_it_matches_the_image_the_gc_itself_runs(docker):
     assert env_flags(argv)["CANYONOS_CONTROLLER_IMAGE"] == argv[-1]
 
 
+def test_other_machines_collectors_get_the_official_release_image(docker):
+    init_cmd._run_container(image="canyonos-core:dev")
+
+    assert (
+        env_flags(docker.run_argv)["CANYONOS_COLLECTOR_IMAGE"]
+        == init_cmd.env.PROD_CORE_IMAGE
+    )
+
+
 def test_the_docker_platform_is_passed_through_from_the_host(docker):
     init_cmd._run_container()
 

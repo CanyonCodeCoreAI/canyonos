@@ -406,6 +406,10 @@ def _run_container(
             # its own image; it cannot read that from inside, so pass it in.
             "-e",
             f"CANYONOS_CONTROLLER_IMAGE={image}",
+            # Machines other than this one run their collector from the official
+            # release image instead, since a dev image here is in no registry.
+            "-e",
+            f"CANYONOS_COLLECTOR_IMAGE={env.PROD_CORE_IMAGE}",
             # A bare name copies the host's value when set, so agent images match its CPU.
             "-e",
             "CANYONOS_DOCKER_PLATFORM",

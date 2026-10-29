@@ -11,7 +11,9 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 |---|---|
 | ``No <root>/config/global_controller.yaml here. Run `canyonos convert` first, or rerun from your project folder.`` | The project root has no manifest, or the command ran from the wrong directory. See [Project layout](BUILD_ARTIFACT.md) |
 | `duplicate agent name ... (names are lowercased into one image tag)` | Two entries differ only in case |
-| `is required because provider is 'EC2'` | `provider: EC2` with no `ec2:` block |
+| `is required because provider is 'ec2-pool'` | `provider: ec2-pool` with no `ec2-pool:` block |
+| `is required because provider is 'ec2-assign'` | `provider: ec2-assign` with no `ec2-assign:` block |
+| `must give every agent a value` | `ec2-assign.machine_type` leaves out an agent |
 | `expected an integer >= 1` on `replicas` | `replicas` is a string or zero |
 | `is not a single PEP 508 requirement` | A `requirements` item has several packages or a stray flag |
 | `is not built from builtin types` on an argument or `returns` `type` | A typing name like `List[str]`; use `list[str]` |

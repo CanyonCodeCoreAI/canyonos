@@ -47,12 +47,12 @@ allows `${VAR}` only in string fields.
 The allowed keys are declared once, at the top of `manifest.py`: top-level keys in
 `_MANIFEST_KEYS` and entry keys per type in `_AGENT_KEYS_BY_TYPE`. Anything else is
 rejected. A key that no longer does anything goes in `_RETIRED_KEYS` with the message
-to show. A provider's own section is declared in its `_schema.py`
+to show. A provider's own section is declared in its schema module
 instead; see `packages/core/canyonos_core/reconciler/providers/README.md`.
 
 Cross-field rules live in `_agent`, `_agents`, `_check_provider_sections` and `_endpoint`:
 
-- `provider: EC2` needs the `ec2` section, with `machine_type` mapping each type to a count.
+- `provider: ec2-pool` needs the `ec2-pool` section, with `machine_type` mapping each type to a count.
 - The `endpoint` names an entry of type `agent` and one of its `functions`.
 - A database always has one replica.
 - Two entry names that differ only in case collide, since image and container names

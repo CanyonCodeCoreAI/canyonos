@@ -81,7 +81,7 @@ class CliDeployTests(unittest.TestCase):
         controller_module = self._fake_controller_module(controller)
         args = SimpleNamespace(config="config/global_controller.yaml")
         config = {
-            "provider": "EC2",
+            "provider": "ec2-pool",
             "agents": [{"name": "Ec2Agent"}, {"name": "Ec2Worker"}],
         }
 

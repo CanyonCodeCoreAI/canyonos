@@ -1,17 +1,21 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""What `global_controller.yaml` may set for EC2: the `ec2:` section."""
+"""What `global_controller.yaml` may set for ec2-pool: the `ec2-pool:` section.
 
-SECTION = "ec2"
+Only `machine_type` is required: `region`, `subnet_id` and `security_group_ids` default
+to the deploying machine's own when it is an EC2 machine, such as one made by
+`canyonos provision`."""
+
+SECTION = "ec2-pool"
 SECTION_KEYS = {
-    "region": (str, True),
+    "region": (str, False),
     "machine_type": (dict, True),
     "market_type": (str, False),
     "ami_id": (str, False),
-    "subnet_id": (str, True),
+    "subnet_id": (str, False),
     "ssh_user": (str, False),
-    "security_group_ids": (list, True),
+    "security_group_ids": (list, False),
     "iam_profile_name": (str, False),
     "public_ip_timeout": (int, False),
     "controller_health_timeout": (int, False),
@@ -24,3 +28,5 @@ RETIRED_KEYS = {
 MACHINE_TYPES = "machine_type"
 # Section keys every machine shares, added to each type's `machine_spec`.
 MACHINE_KEYS = ("market_type",)
+# The machines are the pool above, not one per replica.
+MACHINE_PER_REPLICA = None

@@ -1,4 +1,4 @@
-# Where every replica runs: `local` (this machine) or `EC2` (machines from `ec2:`).
+# Where every replica runs: `local` (this machine), `ec2-pool` (machines from `ec2-pool:`) or `ec2-assign`.
 provider: local
 
 agents:

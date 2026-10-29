@@ -1,7 +1,7 @@
 # Cloud Provider Logic
 
 Backend implementations for where CanyonOS runs an agent's container. The top-level
-`provider:` in `global_controller.yaml` picks one for the whole deployment: `local` or `EC2`.
+`provider:` in `global_controller.yaml` picks one for the whole deployment: `local`, `ec2-pool` or `ec2-assign`.
 
 The providers differ in where each agent container runs: local runs on the deployment host, while EC2 launches a separate EC2 machine.
 
@@ -10,7 +10,8 @@ The providers differ in where each agent container runs: local runs on the deplo
 | Provider | Folder | Compute |
 | --- | --- | --- |
 | `local` (default) | `Local/` | Docker container on the same machine, the root README has the whole flow. |
-| `EC2` | `EC2/` | A pool of EC2 machines that every replica shares. |
+| `ec2-pool` | `EC2/` (`_schema_pool.py`) | A pool of EC2 machines that every replica shares, listed in `ec2-pool:`. |
+| `ec2-assign` | `EC2/` (`_schema_assign.py`) | An EC2 machine per replica, of the type `ec2-assign:` gives its agent. Runs on the same `_provider.py` as `ec2-pool`. |
 
 ## Interface
 
@@ -22,7 +23,9 @@ Callers use `providers/__init__.py`:
 | `providers.bind(controller)` | Nothing; gives every provider this process's controller. `ControllerContext` calls it when built |
 | `providers.canonical_name(name)` | The name as records store it; raises `ValueError` for an unknown provider |
 | `providers.NAMES` | Every provider name |
-| `providers.SCHEMAS` | Each provider's `_schema` module, by name |
+| `providers.SCHEMAS` | Each provider's schema module, by name |
+| `providers.schema(name)` | A provider's schema module for a name as `get` takes it, such as one a machine record stores |
+| `providers.RENAMED`, `providers.RENAMED_SECTIONS` | Old provider and section names, each with its new one, for the config check to name |
 
 Every provider module implements:
 
@@ -68,7 +71,8 @@ record counts as finished once it has `address`.
 `providers.bind` sets each module's `_controller`. A provider reads the deploy config from
 `_controller.config` and runs commands on a host with `_controller._run_cmd(cmd, host, user)`.
 
-Every provider also has a `_schema.py`, which the manifest schema checks
+Every provider also has a schema module (`_schema.py`; ec2-pool's is `_schema_pool.py`
+and ec2-assign's `_schema_assign.py`, as they share the `EC2/` package), which the manifest schema checks
 `global_controller.yaml` against. It must not import `_provider.py`, since the CLI reads it:
 
 | Name | Holds |
@@ -78,14 +82,15 @@ Every provider also has a `_schema.py`, which the manifest schema checks
 | `RETIRED_KEYS` | Keys the section no longer takes, each with the message saying what to do instead |
 | `MACHINE_TYPES` | The section key mapping each machine type to how many to start, or `None` for this machine only |
 | `MACHINE_KEYS` | The section's keys every machine shares, added to each type's `machine_spec` |
+| `MACHINE_PER_REPLICA` | The section key mapping each agent to its machine type, for a machine per replica, or `None`. Each such machine's `machine_spec` also has `agent_name`, and it takes one replica of that agent: a replica whose machine fails to start waits for the replacement |
 
 Each key maps to `(type, required)`, where type is `str`, `list` (of strings), `int` (at
-least 1), `"port"` (1 to 65535) or `dict` (names to counts of at least 1). The schema only checks keys; defaults live in `_provider.py`,
+least 1), `"port"` (1 to 65535), `dict` (names to counts of at least 1) or `"agents"` (every agent's name to a string, and no other names). The schema only checks keys; defaults live in `_provider.py`,
 which reads the raw config.
 
 To add a provider: create a folder with a `_provider.py` implementing the functions above
-and a `_schema.py`, add its package path to `_PACKAGES` in `providers/__init__.py`, and
-add a row to the Providers table.
+and a `_schema.py`, add its package path and schema module to `_PACKAGES` in
+`providers/__init__.py`, and add a row to the Providers table.
 
 ## Keep provider code here
 

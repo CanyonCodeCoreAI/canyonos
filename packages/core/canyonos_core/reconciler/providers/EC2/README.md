@@ -20,14 +20,14 @@
   - On the host, ports 8080 and 8081 need to be accessible by whoever queries the endpoint (0.0.0.0 for example)
   - On the host, the port the endpoint publishes for its gRPC controller (on the host's private IP only) needs to be accessible by the machines' security group over custom TCP. Agents send results back there; without it every request stays "pending".
 
-## Config (`ec2:` block in `global_controller.yaml`)
+## Config (`ec2-pool:` block in `global_controller.yaml`)
 
-You need to add this block to global_controller.yaml, to give canyonos the necessary credentials to launch agents on EC2.
+`machine_type`, the pool of machines to start, is always required. When you deploy from an EC2 machine, such as one made by `canyonos provision`, any of `region`, `subnet_id` and `security_group_ids` you leave out is read from that machine's EC2 metadata (IMDSv2). Set them when deploying from elsewhere, or to launch agents somewhere else.
 
 ```yaml
-provider: EC2
+provider: ec2-pool
 
-ec2:
+ec2-pool:
   region: us-east-1
   machine_type:
     t3.micro: 2
@@ -36,7 +36,7 @@ ec2:
     - sg-0123456789abcdef0
 ```
 
-The deploy starts every machine listed, and every agent runs on them, each replica on the least loaded machine.
+The deploy starts every machine listed, and every agent runs on them, each replica on the least loaded machine. When deployed from an EC2 machine, each one is tagged `canyonos-deployed-from=<that machine's id>`, so tearing it down with `canyonos provision` finds them.
 
 ## IAM permissions
 
@@ -50,9 +50,9 @@ The host machine needs these IAM Permissions to be able to launch external EC2 m
   - CreateTags
   - ImportKeyPair
 - IAM:
-  - PassRole (only needed if you set `ec2.iam_profile_name in global_controller.yaml`)
+  - PassRole (only needed if you set `ec2-pool.iam_profile_name in global_controller.yaml`)
 
-You can paste the exact JSON below in the "create manual policy" field in IAM when generating permissions for a role. Drop the `iam:PassRole` statement if you're not setting `ec2.iam_profile_name`.
+You can paste the exact JSON below in the "create manual policy" field in IAM when generating permissions for a role. Drop the `iam:PassRole` statement if you're not setting `ec2-pool.iam_profile_name`.
 `iam:PassRole` gives all created machines a IAM role and its permissions, enabling stuff like Bedrock.
 
 ```json
@@ -76,13 +76,13 @@ You can paste the exact JSON below in the "create manual policy" field in IAM wh
 ```
 
 
-## [OPTIONAL] Extra Configurations in the ec2 block in `global_controller.yaml`
+## [OPTIONAL] Extra Configurations in the ec2-pool block in `global_controller.yaml`
 
 The ec2 config block given above has the bare minimum needed to get the machines up and running, to add separate settings, you can add these following fields in the block.
 
 ```yaml
-ec2:
-  # Required Commands
+ec2-pool:
+  # Default to the deploying machine's own when it is an EC2 machine
   region: us-east-1
   machine_type:
     t3.micro: 2
@@ -96,7 +96,7 @@ ec2:
   ami_id: ami-0123456789abcdef0 # Look at `Creating your own AMI` below
   ssh_user: ubuntu # Look at `Creating your own AMI` below
 
-ssh_private_key_path: ~/.ssh/your-own-key # Top level, not under ec2. Look at `Private Key` below
+ssh_private_key_path: ~/.ssh/your-own-key # Top level, not under ec2-pool. Look at `Private Key` below
 ```
 For the iam_profile_name, you will also need to add a new policy to your IAM role in the host machine, the iam:PassRole policy. JSON below.
 

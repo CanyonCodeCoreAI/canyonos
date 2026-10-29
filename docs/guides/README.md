@@ -43,6 +43,6 @@ against this contract but is not part of it.
 - [LLM gateway](LLM_GATEWAY.md): how OpenAI, Anthropic and Bedrock calls are
   routed through the in-container gateway.
 - [EC2 deployment](EC2.md): configuration, networking and cleanup for
-  `provider: EC2`.
+  `provider: ec2-pool`.
 - [Troubleshooting](TROUBLESHOOTING.md): symptoms and their likely causes,
   by deployment phase.

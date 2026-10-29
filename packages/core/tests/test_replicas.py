@@ -36,7 +36,12 @@ def _launch(controller, spec, machine):
 
 class LaunchTests(unittest.TestCase):
     def test_a_database_on_its_own_machine_is_routed_on_its_published_db_port(self):
-        spec = {"name": "Pg", "provider": "EC2", "type": "database", "db_port": 5433}
+        spec = {
+            "name": "Pg",
+            "provider": "ec2-pool",
+            "type": "database",
+            "db_port": 5433,
+        }
 
         replica = _launch(_controller(), spec, MACHINE)
 
@@ -47,7 +52,7 @@ class LaunchTests(unittest.TestCase):
         machine = {**MACHINE, "container_timeout": 180}
 
         with patch.object(replicas, "_wait_until_reachable") as check:
-            _launch(_controller(), {"name": "A", "provider": "EC2"}, machine)
+            _launch(_controller(), {"name": "A", "provider": "ec2-pool"}, machine)
 
         check.assert_called_once_with("10.0.0.30:50051", 180)
 
@@ -61,7 +66,7 @@ class LaunchTests(unittest.TestCase):
             patch.object(replicas, "dump_container_log") as dump,
             self.assertRaises(TimeoutError),
         ):
-            _launch(controller, {"name": "A", "provider": "EC2"}, machine)
+            _launch(controller, {"name": "A", "provider": "ec2-pool"}, machine)
 
         replica, status, read_log = dump.call_args.args
         self.assertEqual(status, "unreachable")
@@ -99,14 +104,16 @@ class PublishesPortTests(unittest.TestCase):
         self.assertFalse(self._publishes(LOCAL, {"name": "A"}))
 
     def test_an_agent_on_another_machine_is_published(self):
-        self.assertTrue(self._publishes(MACHINE, {"name": "A"}, provider="EC2"))
+        self.assertTrue(self._publishes(MACHINE, {"name": "A"}, provider="ec2-pool"))
 
     def test_a_local_database_is_published_on_its_db_port(self):
         self.assertTrue(self._publishes(LOCAL, {"name": "Pg", "type": "database"}))
 
     def test_the_endpoint_is_published_for_agents_on_other_machines(self):
         # The manifest spells it in any casing.
-        self.assertTrue(self._publishes(LOCAL, self.ENDPOINT, provider="ec2"))
+        self.assertTrue(self._publishes(LOCAL, self.ENDPOINT, provider="EC2-Pool"))
+        # ec2-assign declares its machines one per replica, not as a pool.
+        self.assertTrue(self._publishes(LOCAL, self.ENDPOINT, provider="ec2-assign"))
 
     def test_the_endpoint_publishes_nothing_when_every_agent_is_local(self):
         """A private IP is found on almost every laptop, but no agent calls back there."""
@@ -114,7 +121,7 @@ class PublishesPortTests(unittest.TestCase):
 
     def test_the_endpoint_publishes_nothing_without_a_private_ip(self):
         self.assertFalse(
-            self._publishes(LOCAL, self.ENDPOINT, provider="EC2", private_ip=None)
+            self._publishes(LOCAL, self.ENDPOINT, provider="ec2-pool", private_ip=None)
         )
 
     def test_without_a_provider_every_agent_is_local(self):
@@ -150,7 +157,7 @@ class PublishesPortTests(unittest.TestCase):
         self.assertEqual(replica["address"], "canyonos-endpoint-0:50051")
 
     def test_an_ec2_deployments_endpoint_is_called_back_at_the_private_ip(self):
-        replica, published = self._launch_endpoint("EC2")
+        replica, published = self._launch_endpoint("ec2-pool")
 
         # Only the gRPC port is bound to the private IP; api_port is for every caller.
         self.assertEqual(published, ["10.0.0.1:50051:50051", "9090:8080"])
@@ -169,7 +176,7 @@ class PublishesPortTests(unittest.TestCase):
     def test_a_published_replica_is_bound_to_its_private_ip(self):
         controller = _controller()
 
-        replica = _launch(controller, {"name": "A", "provider": "EC2"}, MACHINE)
+        replica = _launch(controller, {"name": "A", "provider": "ec2-pool"}, MACHINE)
 
         run = controller._run_cmd.call_args_list[-1].args[0]
         self.assertEqual(run[run.index("-p") + 1], "10.0.0.30:50051:50051")
