@@ -90,8 +90,9 @@ cd "$PROJECT_DIR"
 
 # The image just built has to stop a manifest whose functions do not match the
 # agent's class or cannot become a stub, whose agent takes the endpoint's name,
-# or that still sets env_file, before anything is deployed.
-for mode in rename builtin dunder duplicate returns deep endpoint_name env_file; do
+# that still sets env_file, or whose SSH key path names an unset variable, before
+# anything is deployed.
+for mode in rename builtin dunder duplicate returns deep endpoint_name env_file ssh_key_env; do
   step "canyonos validate rejects a broken manifest ($mode)"
   broken_canyon="$(mktemp -d)/.canyon"
   cp -R "$PROJECT_DIR/.canyon" "$broken_canyon"
@@ -254,6 +255,24 @@ docker exec "$agent" python /tmp/gateway_check.py | tee "$ARTIFACTS_DIR/gateway-
 step "canyonos sync scales IntentAgent to 2"
 perl -0pi -e 's|(name: IntentAgent\n.*\n    replicas: )1|${1}2|' "$PROJECT_DIR/.canyon/config/global_controller.yaml"
 canyonos sync
+for _ in $(seq 30); do [ "$(intent_replicas)" = "2 2 None" ] && break; sleep 2; done
+[ "$(intent_replicas)" = "2 2 None" ] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
+
+# An unfinished launch on a machine that cannot be reached holds its replica's place,
+# and `canyonos status` says why, until its removal works and a new replica replaces it.
+step "canyonos status shows a launch that could not be removed"
+REDIS_PORT="$(uv run --project "$REPO_ROOT" python -c 'from canyonos.constants import default_config_path, local_redis_port; print(local_redis_port(default_config_path()))')"
+REDIS_CLI=(docker exec "$(docker ps --filter name=-redis-localhost --format '{{.Names}}' | head -n 1)" redis-cli -p "$REDIS_PORT")
+replica="$("${REDIS_CLI[@]}" SRANDMEMBER agent:IntentAgent:instances)"
+host="$("${REDIS_CLI[@]}" HGET "agent_instance:$replica" private_host)"
+"${REDIS_CLI[@]}" HSET "agent_instance:$replica" private_host 256.1.1.1 >/dev/null
+"${REDIS_CLI[@]}" HDEL "agent_instance:$replica" address >/dev/null
+expected="2 1 the unfinished launch $replica could not be removed"
+for _ in $(seq 30); do [[ "$(intent_replicas)" == "$expected"* ]] && break; sleep 2; done
+[[ "$(intent_replicas)" == "$expected"* ]] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
+canyonos status >"$ARTIFACTS_DIR/stuck-status.log" 2>&1
+grep -q "IntentAgent could not start a replica: the unfinished launch" "$ARTIFACTS_DIR/stuck-status.log" || { cat "$ARTIFACTS_DIR/stuck-status.log"; exit 1; }
+"${REDIS_CLI[@]}" HSET "agent_instance:$replica" private_host "$host" >/dev/null
 for _ in $(seq 30); do [ "$(intent_replicas)" = "2 2 None" ] && break; sleep 2; done
 [ "$(intent_replicas)" = "2 2 None" ] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
 

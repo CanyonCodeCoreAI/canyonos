@@ -21,22 +21,21 @@ _controller = None
 
 def canonical_name(name):
     """Return the standard spelling of a provider name given in any casing (`ec2` gives
-    `EC2`), or None if no provider has that name."""
+    `EC2`). Raises ValueError, naming the known providers, if no provider has that name."""
     if isinstance(name, str):
         for canonical in NAMES:
             if canonical.casefold() == name.casefold():
                 return canonical
-    return None
+    raise ValueError(f"Unknown provider {name!r}; use one of: {', '.join(NAMES)}.")
 
 
 def get(name):
     """Return the provider module for a name in any casing, with this process's controller
     set on it. Each provider is imported only when first asked for, so an unused one's
     dependencies (boto3 for EC2) never load. Raises ValueError for an unknown name."""
-    canonical = canonical_name(name)
-    if canonical is None:
-        raise ValueError(f"Unknown provider {name!r}; use one of: {', '.join(NAMES)}.")
-    provider: Any = importlib.import_module(f"{_PACKAGES[canonical]}._provider")
+    provider: Any = importlib.import_module(
+        f"{_PACKAGES[canonical_name(name)]}._provider"
+    )
     provider._controller = _controller
     return provider
 

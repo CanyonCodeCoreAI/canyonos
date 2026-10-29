@@ -365,23 +365,34 @@ class ReplicaProvisioner(object):
     def remove_unfinished(self):
         """Remove every launch that never finished: its container, if it started one, then
         its record; its machine is kept until stop. A record whose removal fails is kept for
-        the next call. Call only while nothing is launching, since a launch in progress
-        looks the same."""
+        the next call, and the failure is saved as its agent's launch error. Call only while
+        nothing is launching, since a launch in progress looks the same."""
         for key in self.redis.scan_keys("agent_instance:*"):
             record = self.redis.hgetall(key)
             if not record or record.get("address"):
                 continue
-            logger.info(
-                "Removing %s: its launch never finished, or a version without "
-                "address saved it",
-                key,
-            )
             try:
                 replicas.remove_container(self.controller, record)
             except Exception as e:
-                logger.warning("Could not remove the unfinished launch %s: %s", key, e)
+                replica_id = key.removeprefix("agent_instance:")
+                agent_name = replica_id.rsplit("-", 1)[0]
+                error = (
+                    f"the unfinished launch {replica_id} could not be removed, so no "
+                    f"replica replaces it until it is: {e}"
+                )
+                # Retried every pass, so log only a new error.
+                if self.redis.hget(state.LAUNCH_ERRORS_KEY, agent_name) != error:
+                    logger.warning(
+                        "Could not remove the unfinished launch %s: %s", key, e
+                    )
+                    self.redis.hset(state.LAUNCH_ERRORS_KEY, agent_name, error)
                 continue
             self.redis.delete(key)
+            logger.info(
+                "Removed %s: its launch never finished, or a version without "
+                "address saved it",
+                key,
+            )
 
     def forget_replicas_on(self, launch_ids):
         """Drop the records of every replica on these dead machines and republish routing

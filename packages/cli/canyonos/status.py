@@ -22,8 +22,9 @@ from canyonos.gc import (
 
 def run_status(as_json=False):
     """Run `canyonos status`: show in the terminal whether a deploy is running, where to
-    reach it, and how to query it; with `as_json`, print that, the agents and machine
-    errors as one JSON object instead. Returns True when a deploy is running."""
+    reach it, how to query it, and each agent's last launch error; with `as_json`, print
+    that, the agents and machine errors as one JSON object instead. Returns True when a
+    deploy is running."""
     ui.set_quiet(as_json)
     try:
         report = _report_status(as_json)
@@ -64,11 +65,16 @@ def _report_status(with_agents):
         ui.warn(
             "Could not read the running deploy's endpoint. Run `canyonos logs` to see why."
         )
-    if with_agents:
-        try:
-            report.update(runtime_status(state["port"]))
-        except GCError as e:
-            report["errors"].append(str(e))
+    try:
+        runtime = runtime_status(state["port"])
+    except GCError as e:
+        report["errors"].append(str(e))
+    else:
+        for name, agent in runtime["agents"].items():
+            if agent["launch_error"]:
+                ui.warn(f"{name} could not start a replica: {agent['launch_error']}")
+        if with_agents:
+            report.update(runtime)
 
     dashboard_port = _existing_dashboard_port()
     report["dashboard_url"] = dashboard_url(dashboard_port) if dashboard_port else None

@@ -20,7 +20,7 @@ Callers use `providers/__init__.py`:
 | --- | --- |
 | `providers.get(name)` | The provider module for a name in any casing |
 | `providers.bind(controller)` | Nothing; gives every provider this process's controller. `ControllerContext` calls it when built |
-| `providers.canonical_name(name)` | The name as records store it, or `None` for an unknown provider |
+| `providers.canonical_name(name)` | The name as records store it; raises `ValueError` for an unknown provider |
 | `providers.NAMES` | Every provider name |
 | `providers.SCHEMAS` | Each provider's `_schema` module, by name |
 

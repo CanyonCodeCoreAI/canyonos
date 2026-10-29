@@ -4,8 +4,9 @@
 """Break a copied port's manifest so `canyonos validate` has to reject it.
 
 Each mode rewrites the first agent's first function in one way its stub
-cannot be generated from, names an agent in a way the manifest forbids, or sets a
-retired key, and prints the text the finding has to contain.
+cannot be generated from, names an agent in a way the manifest forbids, sets a
+retired key, or points ssh_private_key_path at an unset variable, and prints the text
+the finding has to contain.
 
 Usage: break_manifest.py <.canyon> <mode>
 """
@@ -58,6 +59,13 @@ def env_file(manifest, agent, function):
     return "env_file: is no longer used"
 
 
+def ssh_key_env(manifest, agent, function):
+    manifest["ssh_private_key_path"] = "${CANYONOS_E2E_UNSET_SSH_KEY}"
+    return (
+        "'${CANYONOS_E2E_UNSET_SSH_KEY}' names an environment variable that is not set"
+    )
+
+
 MODES = {
     f.__name__: f
     for f in (
@@ -69,6 +77,7 @@ MODES = {
         deep,
         endpoint_name,
         env_file,
+        ssh_key_env,
     )
 }
 

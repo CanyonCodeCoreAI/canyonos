@@ -40,6 +40,8 @@ from canyonos_core.schema._checks import (
     _string_list,
     _string_mapping,
     _unknown_key_message,
+    _unset_message,
+    _unset_reference,
 )
 from canyonos_core.schema.errors import SchemaError, SchemaViolation
 from canyonos_core.schema.kubernetes_block import KubernetesSpec, parse_kubernetes
@@ -320,8 +322,9 @@ def _provider(collector, node, prefix):
     if "provider" not in node:
         return providers.DEFAULT
     value = _resolve(node["provider"])
-    canonical = providers.canonical_name(value)
-    if canonical is None:
+    try:
+        return providers.canonical_name(value)
+    except ValueError:
         collector.add(
             node,
             "provider",
@@ -329,7 +332,6 @@ def _provider(collector, node, prefix):
             f"expected one of {list(providers.NAMES)}, got {_describe(value)}",
         )
         return providers.DEFAULT
-    return canonical
 
 
 def _agent(collector, entries, index):
@@ -662,7 +664,13 @@ def load_manifest(path):
         path=path,
     )
     _check_provider_sections(collector, document, provider)
-    _string(collector, document, "ssh_private_key_path", "")
+    if _unset_reference(_string(collector, document, "ssh_private_key_path", "")):
+        collector.add(
+            document,
+            "ssh_private_key_path",
+            "ssh_private_key_path",
+            _unset_message(document["ssh_private_key_path"]),
+        )
     if collector.violations:
         raise SchemaError(collector.violations)
     return manifest
