@@ -497,7 +497,7 @@ describe('release-notes pipeline', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.audit.failure).toBe('nightly is not a release tag like v0.1.732.');
+    expect(result.audit.failure).toBe('nightly is not a release tag like v0.1.732 or v1.0.0rc1.');
   });
 
   test('fails when no pull request changed a package', async () => {

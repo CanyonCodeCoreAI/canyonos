@@ -108,7 +108,7 @@ export const releasablePackages: ReleasablePackage[] = [
   },
 ];
 
-export const releaseTagPattern = /^v\d+\.\d+\.\d+$/;
+export const releaseTagPattern = /^v\d+\.\d+\.\d+(?:rc\d+)?$/;
 
 const identifierPattern = /\bCAN-(\d+)\b/gi;
 
@@ -279,7 +279,7 @@ export async function runReleaseNotesPipeline(
 
   try {
     if (!releaseTagPattern.test(options.targetTag)) {
-      throw new Error(`${options.targetTag} is not a release tag like v0.1.732.`);
+      throw new Error(`${options.targetTag} is not a release tag like v0.1.732 or v1.0.0rc1.`);
     }
     const previousTag =
       options.previousTag ??

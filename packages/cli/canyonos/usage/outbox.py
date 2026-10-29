@@ -41,7 +41,8 @@ REPORTED_COMMANDS = frozenset(
 )
 MAX_PENDING_EVENTS = 1000
 MAX_CLI_VERSION_LENGTH = 64
-SEMVER_LIKE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$")
+# A release candidate is spelled the way PyPI normalizes it, 1.0.0rc1.
+SEMVER_LIKE = re.compile(r"^\d+\.\d+\.\d+(?:rc\d+)?(?:[-+][0-9A-Za-z.+-]+)?$")
 
 
 def is_reportable_version(version: str) -> bool:

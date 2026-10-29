@@ -32,7 +32,8 @@ export const MAX_REQUEST_BODY_BYTES = 16 * 1024;
 const MAX_CLI_VERSION_LENGTH = 64;
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const SEMVER_LIKE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
+// A release candidate is spelled the way PyPI normalizes it, 1.0.0rc1.
+const SEMVER_LIKE = /^\d+\.\d+\.\d+(?:rc\d+)?(?:[-+][0-9A-Za-z.+-]+)?$/;
 
 export const UuidV4Schema = z.string().regex(UUID_V4, 'Expected a lowercase UUID v4');
 export const CliVersionSchema = z

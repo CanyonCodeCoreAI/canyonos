@@ -3,7 +3,8 @@
 
 import { join } from 'node:path';
 
-export type Manifest = { path: string; pattern: RegExp };
+// `semver` marks a file that only takes SemVer, where 1.0.0rc1 is spelled 1.0.0-rc1.
+export type Manifest = { path: string; pattern: RegExp; semver?: boolean };
 
 // Every file that states the shared version. `uv lock` derives the lockfile entries
 // from the pyproject files, so `set` never writes those; `check` still reads them.
@@ -17,6 +18,7 @@ export const manifests: Manifest[] = [
   {
     path: 'packages/operator/charts/canyonos-operator/Chart.yaml (version)',
     pattern: /^(version: )([^\s"]+)()$/m,
+    semver: true,
   },
   {
     path: 'packages/operator/charts/canyonos-operator/Chart.yaml (appVersion)',
@@ -32,7 +34,9 @@ export const lockfileEntries: Manifest[] = [
   },
 ];
 
-const releaseVersionPattern = /^\d+\.\d+\.\d+$/;
+// A final release such as 0.1.732, or a release candidate such as 1.0.0rc1, spelled the
+// way PEP 440 normalizes it so PyPI, uv.lock and the image tags all agree.
+const releaseVersionPattern = /^\d+\.\d+\.\d+(?:rc\d+)?$/;
 
 export function isReleaseVersion(version: string): boolean {
   return releaseVersionPattern.test(version);
@@ -41,12 +45,13 @@ export function isReleaseVersion(version: string): boolean {
 export function readVersion(manifest: Manifest, content: string): string {
   const version = content.match(manifest.pattern)?.[2];
   if (!version) throw new Error(`${manifest.path} has no version line.`);
-  return version;
+  return manifest.semver ? version.replace(/-(rc\d+)$/, '$1') : version;
 }
 
 export function writeVersion(manifest: Manifest, content: string, version: string): string {
   readVersion(manifest, content);
-  return content.replace(manifest.pattern, `$1${version}$3`);
+  const spelled = manifest.semver ? version.replace(/(rc\d+)$/, '-$1') : version;
+  return content.replace(manifest.pattern, `$1${spelled}$3`);
 }
 
 export function findProblems(
@@ -55,7 +60,10 @@ export function findProblems(
 ): string[] {
   const malformed = found
     .filter((entry) => !isReleaseVersion(entry.version))
-    .map((entry) => `${entry.path} is ${entry.version}, not a release version like 0.1.732.`);
+    .map(
+      (entry) =>
+        `${entry.path} is ${entry.version}, not a release version like 0.1.732 or 1.0.0rc1.`
+    );
   const reference = expected ?? found[0]?.version;
   if (!reference) return malformed;
   const mismatched = found
@@ -89,7 +97,7 @@ async function check(root: string, expected?: string): Promise<void> {
 
 async function set(root: string, version: string): Promise<void> {
   if (!isReleaseVersion(version)) {
-    throw new Error(`${version} is not a release version like 0.1.732.`);
+    throw new Error(`${version} is not a release version like 0.1.732 or 1.0.0rc1.`);
   }
   for (const manifest of manifests) {
     const file = Bun.file(join(root, fileOf(manifest)));

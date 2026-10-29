@@ -106,9 +106,9 @@ describe('checking versions', () => {
   test('rejects a shared version that is not a release version', () => {
     const prerelease = found.map((entry) => ({ ...entry, version: '0.1.732-rc.1' }));
     expect(findProblems(prerelease)).toEqual([
-      'packages/cli/pyproject.toml is 0.1.732-rc.1, not a release version like 0.1.732.',
-      'packages/core/pyproject.toml is 0.1.732-rc.1, not a release version like 0.1.732.',
-      'uv.lock (canyonos-core) is 0.1.732-rc.1, not a release version like 0.1.732.',
+      'packages/cli/pyproject.toml is 0.1.732-rc.1, not a release version like 0.1.732 or 1.0.0rc1.',
+      'packages/core/pyproject.toml is 0.1.732-rc.1, not a release version like 0.1.732 or 1.0.0rc1.',
+      'uv.lock (canyonos-core) is 0.1.732-rc.1, not a release version like 0.1.732 or 1.0.0rc1.',
     ]);
   });
 
