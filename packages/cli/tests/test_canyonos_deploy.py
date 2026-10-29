@@ -25,13 +25,13 @@ def deployable(monkeypatch, tmp_path):
     monkeypatch.setattr(deploy_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *_a: None)
     monkeypatch.setattr(deploy_cmd, "_start_dashboard", lambda **_k: None)
-    monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: None)
+    monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: None)
 
 
 def test_a_sync_failure_raises(monkeypatch, deployable):
     cleaned = []
     monkeypatch.setattr(deploy_cmd, "run_sync", lambda: False)
-    monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
+    monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(RuntimeError, match="Could not sync the project"):
         deploy_cmd.run_deploy(quiet=True)
@@ -46,7 +46,7 @@ def test_ctrl_c_during_setup_cleans_up_the_partial_deploy(monkeypatch, deployabl
         "run_sync",
         lambda: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
-    monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
+    monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(KeyboardInterrupt):
         deploy_cmd.run_deploy(quiet=True)
@@ -76,7 +76,7 @@ def test_a_log_monitor_failure_cleans_up_the_partial_deploy(monkeypatch, deploya
         "_stream_logs_and_autoserve",
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("logs broke")),
     )
-    monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
+    monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(RuntimeError, match="logs broke"):
         deploy_cmd.run_deploy(serve=False)
@@ -106,7 +106,7 @@ def test_a_failure_after_the_workflow_is_up_leaves_the_deploy_alone(
         raise RuntimeError("could not resolve endpoints")
 
     monkeypatch.setattr(deploy_cmd, "_stream_logs_and_autoserve", ready_then_fail)
-    monkeypatch.setattr(deploy_cmd, "quit_project", lambda _state: cleaned.append(True))
+    monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: cleaned.append(True))
 
     with pytest.raises(RuntimeError, match="could not resolve endpoints"):
         deploy_cmd.run_deploy(serve=False)

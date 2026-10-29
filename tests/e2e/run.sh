@@ -59,8 +59,8 @@ collect_logs() {
 finish() {
   local status=$?
   collect_logs
-  (cd "$PROJECT_DIR" && canyonos quit) || true
-  [ -d "$STARTER_DIR" ] && (cd "$STARTER_DIR" && canyonos quit) || true
+  (cd "$PROJECT_DIR" && canyonos stop) || true
+  [ -d "$STARTER_DIR" ] && (cd "$STARTER_DIR" && canyonos stop) || true
   if [ "$status" -eq 0 ]; then
     step "PASS: $FIXTURE"
   else
@@ -119,7 +119,7 @@ perl -0pi -e 's|(    entrypoint: agents/my_agent.py\n)|$1    resources: {cpu: 99
 out="$ARTIFACTS_DIR/new-app-unlaunchable.json"
 (cd "$LAUNCH_DIR" && canyonos test --json >"$out") && { cat "$out"; exit 1; }
 grep -q '"root_cause": "MyAgent could not start: ' "$out" || { cat "$out"; exit 1; }
-(cd "$LAUNCH_DIR" && canyonos quit)
+(cd "$LAUNCH_DIR" && canyonos stop)
 
 # A database runs a stock image that never reports its own health, so the deploy must not wait on it.
 step "canyonos test deploys a project with a database agent"
@@ -129,7 +129,7 @@ perl -0pi -e 's|(\n# `POST /main`)|\n  - name: StateDB\n    type: database\n    
 out="$ARTIFACTS_DIR/new-app-database.json"
 (cd "$DATABASE_DIR" && canyonos test --json >"$out") || { cat "$out"; exit 1; }
 grep -q '"MyAgent got: hello"' "$out" || { cat "$out"; exit 1; }
-(cd "$DATABASE_DIR" && canyonos quit)
+(cd "$DATABASE_DIR" && canyonos stop)
 
 # A config file that is not valid YAML has to fail the deploy with one line naming it.
 step "canyonos test names a config file that is not valid YAML"
@@ -137,12 +137,12 @@ printf 'models:\n  bad: [\n' >>"$STARTER_DIR/config/llms.yaml"
 out="$ARTIFACTS_DIR/new-app-broken-llms.json"
 (cd "$STARTER_DIR" && canyonos test --json >"$out") && { cat "$out"; exit 1; }
 grep -q '"root_cause": "config/llms.yaml:[0-9]*: is not valid YAML' "$out" || { cat "$out"; exit 1; }
-(cd "$STARTER_DIR" && canyonos quit)
+(cd "$STARTER_DIR" && canyonos stop)
 
 # `canyonos test` queries a deploy that is already up instead of standing up its
 # own, so start from nothing to make it deploy this fixture.
-step "canyonos quit (any previous deploy)"
-canyonos quit || true
+step "canyonos stop (any previous deploy)"
+canyonos stop || true
 
 step "canyonos test"
 canyonos test "$QUERY" --json --timeout "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/test.json" ||

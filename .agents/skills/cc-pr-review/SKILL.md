@@ -46,13 +46,13 @@ filled in: the brief is that session's only context.
    that no CI step deploys), or all of this step when they are stale or
    absent. Build `canyonos-core:<tag>` from the merged branch; run
    `canyonos validate`, `deploy --serve false`, `status`, `doctor`, `test`,
-   `quit` with `CANYONOS_ENV=development CANYONOS_CORE_IMAGE=<tag>` on a copy
+   `stop` with `CANYONOS_ENV=development CANYONOS_CORE_IMAGE=<tag>` on a copy
    of `examples/helloworld` (no LLM) and, when the path matters, `portfolio`
    (Bedrock keys, or read the CI "E2E" run). `validate` runs inside the core
    image: a stale image gives false findings. `bun run api:test:e2e` when
    `packages/api` changes. One deploy per machine: take
    `bash .agents/skills/cc-pr-review/scripts/deploy-lock.sh acquire <tag>`
-   before `deploy`, `release` after `quit`, and wait when it is held.
+   before `deploy`, `release` after `stop`, and wait when it is held.
    Containers named `canyonos-<other project>-*` belong to someone else.
    Deploy copies of the examples from a scratch folder, with `api_port`,
    `dashboard_port` and `redis_port` that `docker ps --format '{{.Ports}}'`

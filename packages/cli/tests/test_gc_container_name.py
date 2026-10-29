@@ -98,7 +98,7 @@ def test_a_running_container_holding_the_name_is_refused_not_removed(docker):
     docker.named_id = LEFTOVER_ID
     docker.named_running = True
 
-    with pytest.raises(RuntimeError, match="`canyonos quit` from the `portfolio`"):
+    with pytest.raises(RuntimeError, match="`canyonos stop` from the `portfolio`"):
         init_cmd._run_container()
 
     assert docker.removals == []

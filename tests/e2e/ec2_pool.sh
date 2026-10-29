@@ -9,7 +9,7 @@
 # call lost with its machine failing fast, the dead machine replaced and its replicas
 # relaunched, a busy replica scaled away draining while its replacement starts, a reload
 # that drops a machine, scale-ups, a full pool shared instead of refused, and
-# `canyonos quit` terminating every machine.
+# `canyonos stop` terminating every machine.
 #
 # Needs AWS access allowed to run EC2, either this machine's own role or
 # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, and EC2_REGION, EC2_SUBNET_ID and
@@ -53,7 +53,7 @@ finish() {
   for name in $(docker ps -a --filter name=canyonos --format '{{.Names}}'); do
     docker logs "$name" >"$ARTIFACTS_DIR/$name.log" 2>&1 || true
   done
-  (cd "$PROJECT_DIR" && canyonos quit) || true
+  (cd "$PROJECT_DIR" && canyonos stop) || true
   if [ "$status" -eq 0 ]; then
     step "PASS: ec2_pool"
   else
@@ -135,7 +135,7 @@ provider left out|
 CASES
 
 cd "$PROJECT_DIR"
-canyonos quit || true
+canyonos stop || true
 
 step "canyonos deploy starts every machine of the pool"
 canyonos deploy --serve false </dev/null
@@ -169,11 +169,11 @@ pool scale-up Small 2 300
 step "A full pool is shared instead of refusing replicas"
 pool oversubscribe SlowAgent 6 600
 
-step "canyonos quit terminates every machine, even with one just gone"
+step "canyonos stop terminates every machine, even with one just gone"
 pool kill Big >/dev/null
-canyonos quit
+canyonos stop
 sleep 30
-# A pass between the kill and the quit may have started a replacement.
+# A pass between the kill and the stop may have started a replacement.
 pool instances "$START" any shutting-down terminated
 left="$(docker ps -aq --filter name=canyonos)"
 [ -z "$left" ] || { docker ps -a --filter name=canyonos; exit 1; }

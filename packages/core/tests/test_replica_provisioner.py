@@ -428,7 +428,11 @@ class ReplicaProvisionerTests(unittest.TestCase):
         # Saved before the launch, private_host lets remove_unfinished find the container.
         self.assertEqual(
             controller._run_cmd.call_args.args,
-            (["docker", "rm", "-f", "canyonos-alpha-00000000"], "localhost", None),
+            (
+                ["docker", "rm", "-f", "-v", "canyonos-alpha-00000000"],
+                "localhost",
+                None,
+            ),
         )
         self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-00000000"), {})
 
@@ -512,7 +516,11 @@ class ReplicaProvisionerTests(unittest.TestCase):
 
         self.assertEqual(
             controller._run_cmd.call_args.args,
-            (["docker", "rm", "-f", "canyonos-alpha-00000000"], "localhost", None),
+            (
+                ["docker", "rm", "-f", "-v", "canyonos-alpha-00000000"],
+                "localhost",
+                None,
+            ),
         )
         self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-00000000"), {})
 
@@ -626,7 +634,7 @@ class ReplicaProvisionerTests(unittest.TestCase):
 
         self.assertEqual(
             controller._run_cmd.call_args.args[0],
-            ["docker", "rm", "-f", "canyonos-remote-00000000"],
+            ["docker", "rm", "-f", "-v", "canyonos-remote-00000000"],
         )
         provider.terminate_machine.assert_not_called()
         self.assertEqual(len(controller.redis.scan_keys("machine_record:*")), 1)
@@ -672,7 +680,7 @@ class DrainTests(unittest.TestCase):
         self.assertEqual(self.redis.hgetall(self.key), {})
         self.assertEqual(
             self.controller._run_cmd.call_args.args[0],
-            ["docker", "rm", "-f", "canyonos-alpha-1"],
+            ["docker", "rm", "-f", "-v", "canyonos-alpha-1"],
         )
 
     def test_drain_timeout_removes_a_replica_that_never_becomes_idle(self):
@@ -789,7 +797,7 @@ class PortClaimTests(unittest.TestCase):
         self.assertEqual(controller.redis.hgetall("agent_instance:Alpha-3"), {})
         self.assertEqual(
             controller._run_cmd.call_args.args[0],
-            ["docker", "rm", "-f", "canyonos-alpha-3"],
+            ["docker", "rm", "-f", "-v", "canyonos-alpha-3"],
         )
 
     def test_a_machine_that_fails_to_start_keeps_its_record_until_stop(self):

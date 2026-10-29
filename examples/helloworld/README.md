@@ -132,11 +132,11 @@ curl -X POST http://127.0.0.1:8082/main \
 ## 6. Stop
 
 ```bash
-canyonos stop   # stop the agents, and the dashboard if no other project is running
-canyonos quit   # remove everything CanyonOS started
+canyonos stop    # remove the deploy, and stop the dashboard if no other project is running
+canyonos clean   # also remove .canyon and the agents' images
 ```
 
 ## If something goes wrong
 
-- `Port 8082 is already in use`: another deploy or app holds it. Run `canyonos quit`, or change `api_port` under `endpoint` in `config/global_controller.yaml`.
+- `Port 8082 is already in use`: another deploy or app holds it. Run `canyonos stop`, or change `api_port` under `endpoint` in `config/global_controller.yaml`.
 - More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

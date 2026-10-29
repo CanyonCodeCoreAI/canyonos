@@ -3,46 +3,137 @@
 
 import subprocess
 
-from canyonos import dashboard_stack, project, stop as stop_cmd
+from pathlib import Path
 
-STOP_WARNING = (
-    "Deploy stopped, but the dashboard did not. Run `canyonos quit` to remove it."
-)
+from canyonos import dashboard_stack, docker_cmd, project, stop as stop_cmd
+from canyonos.gc import GCError
+
+STATE = {"container_id": "abcdef123456", "port": 8000}
 
 
-def _running_deploy(monkeypatch, reported):
-    monkeypatch.setattr(
-        stop_cmd,
-        "require_state",
-        lambda: {"container_id": "abcdef123456", "port": 8000},
+def _state(monkeypatch, tmp_path):
+    (tmp_path / "portfolio").mkdir()
+    monkeypatch.chdir(tmp_path / "portfolio")
+    state_path = Path(project.state_path())
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        '{"container_id": "abcdef123456", "port": 8000}', encoding="utf-8"
     )
-    monkeypatch.setattr(stop_cmd, "deploy_status", lambda _port: {"running": True})
-    monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: None)
+    monkeypatch.setattr(stop_cmd, "require_state", lambda: dict(STATE))
+    monkeypatch.setattr(
+        stop_cmd, "_container_state", lambda _container_id, _env: (True, True)
+    )
+    monkeypatch.setattr(stop_cmd, "stop_dashboard", lambda: True)
     monkeypatch.setattr(
         project, "other_global_controllers_running", lambda _id, _env=None: False
     )
-    monkeypatch.setattr(stop_cmd.ui, "ok", lambda _message: reported.append("ok"))
+    return state_path
+
+
+def test_controller_cleanup_failure_preserves_state(monkeypatch, tmp_path):
+    state_path = _state(monkeypatch, tmp_path)
+    docker_calls = []
     monkeypatch.setattr(
-        stop_cmd.ui, "warn", lambda message: reported.append(str(message))
+        stop_cmd,
+        "post_clean",
+        lambda _port: (_ for _ in ()).throw(GCError("controller stuck", code=500)),
     )
 
+    def docker(argv, **_kwargs):
+        docker_calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
-def test_dashboard_stop_failure_is_not_reported_as_success(monkeypatch):
-    reported = []
-    _running_deploy(monkeypatch, reported)
-    monkeypatch.setattr(stop_cmd, "stop_dashboard", lambda: False)
+    monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
+
+    failures = stop_cmd.stop_project(dict(STATE))
+
+    assert any("controller stuck" in failure for failure in failures)
+    assert state_path.exists()
+    # A controller that won't clean doesn't stop the rest of the teardown.
+    assert ["docker", "rm", "abcdef123456"] in docker_calls
+
+
+def test_docker_cleanup_failure_preserves_state(monkeypatch, tmp_path):
+    state_path = _state(monkeypatch, tmp_path)
+    monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: None)
+
+    def docker(argv, **_kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            1 if argv[:2] == ["docker", "rm"] else 0,
+            "",
+            "daemon error" if argv[:2] == ["docker", "rm"] else "",
+        )
+
+    monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
+
+    failures = stop_cmd.stop_project(dict(STATE))
+
+    assert any("daemon error" in failure for failure in failures)
+    assert state_path.exists()
+
+
+def test_successful_cleanup_removes_state(monkeypatch, tmp_path):
+    state_path = _state(monkeypatch, tmp_path)
+    monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: None)
+    monkeypatch.setattr(
+        docker_cmd.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
 
     stop_cmd.run_stop()
 
-    assert reported == [STOP_WARNING]
+    assert not state_path.exists()
 
 
-def test_stop_outside_the_project_warns_while_dashboard_containers_run(
-    monkeypatch, tmp_path
+def test_stopped_controller_is_removed_without_calling_clean(monkeypatch, tmp_path):
+    state_path = _state(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        stop_cmd, "_container_state", lambda _container_id, _env: (True, False)
+    )
+    clean_calls = []
+    docker_calls = []
+    monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: clean_calls.append(True))
+
+    def docker(argv, **_kwargs):
+        docker_calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
+
+    stop_cmd.run_stop()
+
+    assert clean_calls == []
+    assert ["docker", "stop", "abcdef123456"] not in docker_calls
+    assert ["docker", "rm", "abcdef123456"] in docker_calls
+    assert not state_path.exists()
+
+
+def test_a_dashboard_stop_failure_is_reported_after_the_project_is_gone(
+    monkeypatch, tmp_path, capsys
 ):
-    reported = []
-    _running_deploy(monkeypatch, reported)
-    monkeypatch.chdir(tmp_path)
+    state_path = _state(monkeypatch, tmp_path)
+    monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: None)
+    monkeypatch.setattr(stop_cmd, "stop_dashboard", lambda: False)
+    monkeypatch.setattr(
+        docker_cmd.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+
+    stop_cmd.run_stop()
+
+    assert "Stopping the dashboard failed" in capsys.readouterr().err
+    assert not state_path.exists()
+
+
+def test_stop_outside_the_project_fails_while_dashboard_containers_still_run(
+    monkeypatch, tmp_path, capsys
+):
+    _state(monkeypatch, tmp_path)
+    monkeypatch.setattr(stop_cmd, "post_clean", lambda _port: None)
+    monkeypatch.setattr(stop_cmd, "stop_dashboard", dashboard_stack.stop_dashboard)
     docker_calls = []
 
     def docker(argv, **_kwargs):
@@ -50,9 +141,9 @@ def test_stop_outside_the_project_warns_while_dashboard_containers_run(
         leftover = "9f1c2d3e4b5a\n" if argv[-2:] == ["ps", "-q"] else ""
         return subprocess.CompletedProcess(argv, 0, leftover, "")
 
-    monkeypatch.setattr(dashboard_stack.subprocess, "run", docker)
+    monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
 
     stop_cmd.run_stop()
 
     assert ["docker", "compose", "-p", "canyonos-dashboard", "stop"] in docker_calls
-    assert reported == [STOP_WARNING]
+    assert "Stopping the dashboard failed" in capsys.readouterr().err

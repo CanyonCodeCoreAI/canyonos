@@ -135,7 +135,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             "treating it as orphaned and recreating.",
             container,
         )
-        controller._run_cmd(["docker", "rm", "-f", container], host, user)
+        controller._run_cmd(["docker", "rm", "-f", "-v", container], host, user)
 
     container_port = CONTAINER_PORT
     if agent_type == "database":
@@ -222,7 +222,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
         if is_port_conflict(result.stderr):
             # A failed port bind leaves a `Created` container under this name; remove it
             # so the retry doesn't hit a name conflict instead of the port conflict.
-            controller._run_cmd(["docker", "rm", "-f", container], host, user)
+            controller._run_cmd(["docker", "rm", "-f", "-v", container], host, user)
             clashed = _clashed_port(result.stderr)
             if clashed not in (None, host_port):
                 raise RuntimeError(
@@ -426,7 +426,11 @@ def remove_container(controller, record):
         return
 
     result = controller._run_cmd(
-        ["docker", "rm", "-f", container], record["private_host"], record.get("user")
+        # -v: a database image's VOLUME leaves an anonymous volume no later replica
+        # reuses.
+        ["docker", "rm", "-f", "-v", container],
+        record["private_host"],
+        record.get("user"),
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()

@@ -203,7 +203,7 @@ def raise_(error):
 def test_success_follows_the_exit_status_and_the_exit_is_unchanged(
     monkeypatch, reporting, command, expected_exit, succeeded
 ):
-    monkeypatch.setattr(cli, "run_clean", command)
+    monkeypatch.setattr(cli, "run_clean", lambda **_k: command())
 
     with pytest.raises(SystemExit) as exited:
         run_cli(monkeypatch, "clean")
@@ -222,7 +222,7 @@ def test_an_error_or_ctrl_c_is_a_failure(monkeypatch, reporting, error, ends_wit
     def command():
         raise error
 
-    monkeypatch.setattr(cli, "run_stop", command)
+    monkeypatch.setattr(cli, "run_stop", lambda **_k: command())
 
     with pytest.raises(ends_with):
         run_cli(monkeypatch, "stop")
@@ -232,10 +232,12 @@ def test_an_error_or_ctrl_c_is_a_failure(monkeypatch, reporting, error, ends_wit
 
 
 def test_a_runtime_error_still_shows_the_same_message(monkeypatch, reporting, capsys):
-    monkeypatch.setattr(cli, "run_quit", lambda: raise_(RuntimeError("no workflow")))
+    monkeypatch.setattr(
+        cli, "run_stop", lambda **_k: raise_(RuntimeError("no workflow"))
+    )
 
     with pytest.raises(SystemExit):
-        run_cli(monkeypatch, "quit")
+        run_cli(monkeypatch, "stop")
 
     assert "no workflow" in capsys.readouterr().err
 
@@ -245,7 +247,7 @@ def test_a_recording_failure_is_silent(monkeypatch, reporting, capsys):
         raise PermissionError("denied")
 
     monkeypatch.setattr(outbox, "write_private_json", unwritable)
-    monkeypatch.setattr(cli, "run_clean", lambda: True)
+    monkeypatch.setattr(cli, "run_clean", lambda **_k: True)
 
     with pytest.raises(SystemExit):
         run_cli(monkeypatch, "clean")
@@ -269,7 +271,7 @@ def test_an_unwritable_usage_folder_is_silent(monkeypatch, reporting, capsys):
     if os.geteuid() == 0:
         pytest.skip("root ignores directory permissions")
     settings.usage_dir().chmod(0o500)
-    monkeypatch.setattr(cli, "run_stop", lambda: True)
+    monkeypatch.setattr(cli, "run_stop", lambda **_k: True)
     try:
         with pytest.raises(SystemExit):
             run_cli(monkeypatch, "stop")

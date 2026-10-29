@@ -17,7 +17,7 @@ agent writes a CanyonOS version of it into a `.canyon/` folder.
 ```bash
 cd your-project
 canyonos deploy   # build and launch the workflow, then open the dashboard
-canyonos quit     # stop the deploy and remove its container and files
+canyonos stop     # stop the deploy and remove its containers and files
 ```
 
 Run `canyonos -h` for every command.

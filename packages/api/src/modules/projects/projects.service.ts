@@ -40,7 +40,7 @@ export async function delete_project(project_id: string): Promise<ProjectDeleted
   if (running) {
     throw conflict(
       'projects.running',
-      'This project is still running. Run `canyonos quit` in its folder, then delete it.'
+      'This project is still running. Run `canyonos stop` in its folder, then delete it.'
     );
   }
   await projects_repo.delete(project_id);

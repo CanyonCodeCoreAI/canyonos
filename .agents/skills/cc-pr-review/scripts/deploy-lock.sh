@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # One CanyonOS deploy per machine: review sessions take this lock before
-# `canyonos deploy` and release it after `canyonos quit`.
+# `canyonos deploy` and release it after `canyonos stop`.
 #
 # Usage: deploy-lock.sh acquire <tag>   # exits 1 and names the holder if taken
 #        deploy-lock.sh release         # removes the lock, whoever holds it

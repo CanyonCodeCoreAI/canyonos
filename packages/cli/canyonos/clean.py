@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Logic for canyonos clean: remove generated artifacts, skills and the project's
-agent images."""
+"""Logic for canyonos clean: stop the project if it is deployed, then remove its
+generated artifacts, skill and agent images; with --all, everything CanyonOS put on
+this machine."""
 
 import os
 import shutil
@@ -12,6 +13,7 @@ import yaml
 
 from canyonos import convert, project, ui
 from canyonos.constants import CANYON_DIR, default_config_path
+from canyonos.stop import confirm_clean_all, run_stop, stop_all
 
 
 def _project_images():
@@ -116,10 +118,19 @@ def _remove_canyon_skills():
     return removed_all
 
 
-def run_clean():
-    """Remove the current project's `.canyon` folder (and the project id, when
-    `global_controller.yaml` lives there), CanyonOS skill and its agents' Docker images.
-    Returns False if any could not be removed."""
+def run_clean(all_projects=False, yes=False):
+    """Stop the current project if it is deployed, then remove its `.canyon` folder (and
+    the project id, when `global_controller.yaml` lives there), CanyonOS skill and its
+    agents' Docker images; with `all_projects`, `stop_all(remove_everything=True)`,
+    asked first unless `yes`. Returns False if any could not be removed."""
+    if all_projects:
+        if not yes and not confirm_clean_all():
+            return False
+        return stop_all(remove_everything=True)
+    # Docker won't remove the image of a container that still runs.
+    if os.path.isfile(project.state_path()) and not run_stop():
+        ui.fail("The project could not be stopped, so nothing was cleaned.")
+        return False
     # A built project keeps its agent list inside .canyon, which goes first.
     images = _project_images()
     canyon_dir = os.path.join(os.getcwd(), CANYON_DIR)

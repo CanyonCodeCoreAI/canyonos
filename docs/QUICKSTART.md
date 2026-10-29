@@ -122,21 +122,22 @@ Every setting is described in [global_controller.yaml](guides/GLOBAL_CONTROLLER.
 
 For `provider: EC2` specifically (AMI/IAM/security group requirements, the `ec2:` config block), see [EC2 deployment](guides/EC2.md).
 
-### 6. Stop or quit
+### 6. Stop
 
 ```bash
-canyonos stop   # stop this project's containers; keeps CanyonOS's own container and files for the next deploy
-canyonos quit   # full teardown — also removes CanyonOS's container, its copy of your project, and the dashboard if no other project is running
+canyonos stop         # stop this project, and the dashboard if no other project is running
+canyonos stop --all   # stop every project on this machine
 ```
 
-`quit` leaves your project folder (including `.canyon/` and `.env`) and the built images in place. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
+`stop --all` also finds projects whose folder was deleted before `canyonos stop`, whose containers keep holding their ports. `stop` leaves your project folder (including `.canyon/` and `.env`) and the built images in place, so the next deploy is quick. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
 
 ### Clean generated files
 
-Removes the `.canyon` folder, the CanyonOS skill `canyonos convert` installed in this project, and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay, and `.env` is never touched.
+Stops the project if it is deployed, then removes the `.canyon` folder, the CanyonOS skill `canyonos convert` installed in this project, and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay, and `.env` is never touched.
 
 ```bash
 canyonos clean
+canyonos clean --all   # remove everything CanyonOS put on this machine
 ```
 
 ## Dashboard

@@ -17,9 +17,8 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `test` | Deploy locally and send one test prompt end to end, or send it to the deploy that's already running if your files haven't changed since it started |
 | `logs` | Re-attach to the deploy log stream |
 | `serve` | Start the local dashboard separately |
-| `stop` | Stop the running workflow, keep the container |
-| `quit` | Full teardown — remove the container and workspace |
-| `clean` | Remove the generated `.canyon` folder (and the project id, when `global_controller.yaml` lives there, so the next deploy is a new dashboard project), the project's CanyonOS skill, and the Docker images of the agents in this project's `global_controller.yaml` |
+| `stop` | Remove the deploy's containers and workspace, keeping its images; stop the dashboard, keeping its history, if no other project runs |
+| `clean` | Stop the project if it is deployed, then remove the generated `.canyon` folder (and the project id, when `global_controller.yaml` lives there, so the next deploy is a new dashboard project), the project's CanyonOS skill, and the Docker images of the agents in this project's `global_controller.yaml` |
 | `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 | `validate` | Check the project root against the CanyonOS contract |
 | `doctor` | Check that your environment is ready |
@@ -37,7 +36,7 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 ## Usage reporting
 
 Usage reporting is off until you say yes. The CLI asks once, in the terminal, after the first `canyonos deploy` that brings a workflow up; dismissing the question counts as no. 
-When it is on, each run of `new-app`, `convert`, `validate`, `deploy`, `test`, `serve`, `stop`, `clean` or `quit` records one event: the command name, whether it succeeded, when it ran, the CLI version and a random installation id. Arguments, paths, prompts, code, environment variables, credentials or any other information are never collected. All the process happens on the background, sending never slows your commands down or changes their output; an event is deleted only once the API has stored it. Run `canyonos contact` to see your choice, `canyonos contact --usage off` to turn it off, which also deletes the unsent events and forgets the installation id, or `canyonos contact --usage on` to turn it on again under a new id.
+When it is on, each run of `new-app`, `convert`, `validate`, `deploy`, `test`, `serve`, `stop` or `clean` records one event: the command name, whether it succeeded, when it ran, the CLI version and a random installation id. Arguments, paths, prompts, code, environment variables, credentials or any other information are never collected. All the process happens on the background, sending never slows your commands down or changes their output; an event is deleted only once the API has stored it. Run `canyonos contact` to see your choice, `canyonos contact --usage off` to turn it off, which also deletes the unsent events and forgets the installation id, or `canyonos contact --usage on` to turn it on again under a new id.
 
 Each event holds only these fields:
 

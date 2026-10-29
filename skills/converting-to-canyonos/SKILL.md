@@ -110,7 +110,7 @@ project folder, with no terminal attached:
   or of one replica such as `IntentAgent-1`; `--tail N` or `--tail all` for more.
 - Any change, config or code, takes effect only after another `canyonos deploy`.
 - `canyonos validate --json`: recheck `.canyon` after an edit.
-- `canyonos stop` stops the agents; `canyonos quit` removes everything.
+- `canyonos stop` removes the deploy; `canyonos clean` also removes `.canyon` and the images.
 
 Every command exits non-zero on failure.
 

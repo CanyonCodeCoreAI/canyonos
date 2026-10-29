@@ -53,9 +53,9 @@ from canyonos.gc import GCError, deploy_status, deployed_endpoint, post_deploy
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import docker_env, load_state, run_init
 from canyonos.os_support import is_terminal
-from canyonos.quit import quit_project
 from canyonos.resources import configure_resources
 from canyonos.serve import _register_running_project, serve_dashboard
+from canyonos.stop import stop_project
 from canyonos.sync import project_fingerprints, run_sync, save_deployed_fingerprints
 from canyonos.usage.consent import offer_after_first_deploy
 
@@ -390,7 +390,7 @@ def run_deploy(
         # Torn down only if it never came up; a failure after that is just a reporting problem.
         if not ready:
             try:
-                quit_project(load_state())
+                stop_project(load_state())
             except Exception as teardown_error:
                 # Otherwise an unexpected teardown failure would replace the
                 # real deploy error below instead of just supplementing it.
@@ -758,7 +758,7 @@ def _reveal_failure(lines, recent, state, tracker, trigger):
 def follow_gc_log(state):
     """Start `docker logs -f` on the Global Controller container and return the process."""
     return subprocess.Popen(
-        # By name, not the id in `state`: a concurrent redeploy/quit can replace
+        # By name, not the id in `state`: a concurrent redeploy/stop can replace
         # the container behind the same name/port before this line runs. The
         # explicit env pins it to the engine that container actually lives on.
         ["docker", "logs", "-f", project.gc_container_name()],

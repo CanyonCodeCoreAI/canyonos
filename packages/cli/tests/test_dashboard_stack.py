@@ -167,7 +167,9 @@ def test_start_failure_saves_log_and_cleans_up_only_new_stack(
         result.log_path
     ).read_text(encoding="utf-8")
     assert any("logs" in command for command in calls)
-    assert any(command[-1] == "down" for command in calls) is (not had_containers)
+    assert any(command[-2:] == ["down", "--volumes"] for command in calls) is (
+        not had_containers
+    )
 
 
 @pytest.mark.posix_only("Windows has no permission bits; the user folder's access list")
@@ -235,7 +237,7 @@ def test_verify_failure_saves_a_log(monkeypatch, project):
     assert Path(result.log_path).is_file()
     assert probes == [True]
     assert any("logs" in command for command in calls)
-    assert any(command[-1] == "down" for command in calls)
+    assert any(command[-2:] == ["down", "--volumes"] for command in calls)
 
 
 def test_success_pulls_starts_and_verifies(monkeypatch, project):
@@ -301,8 +303,12 @@ DASHBOARD_PROJECT = ["docker", "compose", "-p", "canyonos-dashboard"]
 STOP_AND_TEARDOWN = pytest.mark.parametrize(
     ("dashboard_command", "compose_command", "leftover_query"),
     [
-        (dashboard_stack.stop_dashboard, "stop", ["ps", "-q"]),
-        (dashboard_stack.teardown_dashboard, "down", ["ps", "-q", "--all"]),
+        (dashboard_stack.stop_dashboard, ["stop"], ["ps", "-q"]),
+        (
+            dashboard_stack.teardown_dashboard,
+            ["down", "--volumes"],
+            ["ps", "-q", "--all"],
+        ),
     ],
 )
 
@@ -317,7 +323,7 @@ def test_stop_and_teardown_reach_the_dashboard_outside_the_project(
     assert not (project / ".env").exists()
     assert dashboard_command() is True
     assert calls == [
-        [*DASHBOARD_PROJECT, compose_command],
+        [*DASHBOARD_PROJECT, *compose_command],
         [*DASHBOARD_PROJECT, *leftover_query],
     ]
 
@@ -342,7 +348,7 @@ def test_stop_and_teardown_fail_when_compose_fails(
     install_docker(
         monkeypatch,
         [],
-        lambda argv: completed(argv, returncode=int(compose_command in argv)),
+        lambda argv: completed(argv, returncode=int(compose_command[0] in argv)),
     )
 
     assert dashboard_command() is False

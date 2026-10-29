@@ -59,7 +59,7 @@ class RedisContainerRollbackTests(unittest.TestCase):
             calls,
         )
         self.assertIn(
-            ("localhost", ["docker", "rm", "canyonos-redis-localhost"]),
+            ("localhost", ["docker", "rm", "-v", "canyonos-redis-localhost"]),
             calls,
         )
 

@@ -23,7 +23,7 @@ def run_logs(follow=True, tail="200", agent=None):
     status = deploy_status(state["port"])
     if status is None:
         raise RuntimeError(
-            "Nothing is running for this project. Run `canyonos quit` to clean up."
+            "Nothing is running for this project. Run `canyonos stop` to clean up."
         )
 
     if not status.get("running"):

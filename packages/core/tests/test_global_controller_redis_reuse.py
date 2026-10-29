@@ -115,7 +115,7 @@ class RedisContainerReuseTests(unittest.TestCase):
             self._stop_calls(controller),
             [
                 (["docker", "stop", "canyonos-redis-localhost"], "localhost", None),
-                (["docker", "rm", "canyonos-redis-localhost"], "localhost", None),
+                (["docker", "rm", "-v", "canyonos-redis-localhost"], "localhost", None),
             ],
         )
 

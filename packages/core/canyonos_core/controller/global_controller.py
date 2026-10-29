@@ -251,7 +251,7 @@ class GlobalController(ControllerContext):
                 )
                 if inspect.returncode == 0 and inspect.stdout.strip() == "true":
                     continue  # already running -- reused, not stale
-                self._run_cmd(["docker", "rm", "-f", container_name], "localhost")
+                self._run_cmd(["docker", "rm", "-f", "-v", container_name], "localhost")
             except Exception:
                 pass  # Container didn't exist, that's fine
 
@@ -577,7 +577,7 @@ class GlobalController(ControllerContext):
                     # A publish failure leaves the fixed-name container in
                     # `Created` state -- remove it, or the next deploy fails
                     # on the name instead of reporting the real problem.
-                    self._run_cmd(["docker", "rm", "-f", container_name], host)
+                    self._run_cmd(["docker", "rm", "-f", "-v", container_name], host)
                     logger.critical(
                         "Redis port %d on %s is already in use. Free it or change "
                         "`redis.port` in global_controller.yaml.",
@@ -720,9 +720,13 @@ class GlobalController(ControllerContext):
         failures = []
         for host, container_name in list(self.redis_containers.items()):
             errors = []
-            for action in ("stop", "rm"):
+            # -v: the image's VOLUME /data leaves an anonymous volume no later
+            # Redis reuses.
+            for action, flags in (("stop", []), ("rm", ["-v"])):
                 try:
-                    result = self._run_cmd(["docker", action, container_name], host)
+                    result = self._run_cmd(
+                        ["docker", action, *flags, container_name], host
+                    )
                     if (
                         result.returncode != 0
                         and "no such container" not in (result.stderr or "").lower()

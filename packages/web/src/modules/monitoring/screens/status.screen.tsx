@@ -211,7 +211,7 @@ function DeleteProjectDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{name} is still running</AlertDialogTitle>
           <AlertDialogDescription>
-            Run <code>canyonos quit</code> in its folder, then delete it.
+            Run <code>canyonos stop</code> in its folder, then delete it.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

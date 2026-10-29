@@ -71,7 +71,7 @@ def project_label_args():
 
 def gc_role_label_args():
     """Return the `docker run` flags that mark a container as a Global Controller, so
-    `canyonos stop` and `canyonos quit` can tell whether another project is running."""
+    `canyonos stop` can tell whether another project still needs the dashboard."""
     return ["--label", f"{ROLE_LABEL}={GC_ROLE}"]
 
 
@@ -97,9 +97,14 @@ def replica_name_pattern(agent):
     return re.escape(f"canyonos-{project_name()}-{agent.lower()}-") + "[0-9a-f]{8}"
 
 
+def projects_dir():
+    """Return the folder under `~/.canyonos` that holds every project's records."""
+    return os.path.join(os.path.expanduser("~/.canyonos"), "projects")
+
+
 def state_dir():
     """Return the folder under `~/.canyonos` that holds this project's records."""
-    return os.path.join(os.path.expanduser("~/.canyonos"), "projects", project_name())
+    return os.path.join(projects_dir(), project_name())
 
 
 def state_path():

@@ -19,12 +19,12 @@ PROJECT_NAME="canyonos_test"
 # The helloworld example's Redis port, which the dashboard keeps for this project.
 REDIS_PORT=6380
 
-# Each copy below is its own CanyonOS project, so each one is quit from its folder.
+# Each copy below is its own CanyonOS project, so each one is stopped from its folder.
 function cleanup {
     echo ">> Cleaning up test environment..."
     for project in "$TEST_DIR/$PROJECT_NAME" "$TEST_DIR/context_propagation"; do
         if [ -d "$project" ]; then
-            (cd "$project" && canyonos quit) || true
+            (cd "$project" && canyonos stop) || true
         fi
     done
     rm -rf "$TEST_DIR"
@@ -57,9 +57,9 @@ python3 "$SCRIPT_DIR/test_performance.py" --concurrent 5 --total 20 || exit 1
 
 echo "-------------------------------------------"
 echo ">> Redeploying with the context propagation workflow..."
-# A separate project folder gets its own Global Controller, so quit this one
-# instead of stopping it: both publish the endpoint on the same port.
-canyonos quit
+# A separate project folder gets its own Global Controller, so stop this one
+# first: both publish the endpoint on the same port.
+canyonos stop
 cd "$TEST_DIR"
 cp -R "$SCRIPT_DIR/../examples/helloworld" context_propagation
 cp "$SCRIPT_DIR/context_propagation_workflow.py" context_propagation/agents/workflow.py

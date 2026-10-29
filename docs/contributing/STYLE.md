@@ -50,7 +50,7 @@ def _require_config(config_path):
     default. If it doesn't exist, show an error in the terminal and return None."""
 
 def run_stop():
-    """Run `canyonos stop`: shut down the running agents and the dashboard, but leave
-    CanyonOS's own container and files in place for the next deploy. `canyonos quit`
+    """Run `canyonos stop`: remove the deploy's containers, and stop the dashboard if no
+    other project runs, keeping the images for a quick redeploy. `canyonos clean`
     removes those too."""
 ```

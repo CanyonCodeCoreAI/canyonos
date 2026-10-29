@@ -53,6 +53,14 @@ Run canyonos doctor to verify all prerequisites are set up before your first dep
 canyonos doctor
 ```
 
+## Uninstall
+
+```bash
+canyonos clean --all          # everything CanyonOS put on this machine
+uv tool uninstall canyonos    # or whichever package manager you installed with
+rm ~/.local/bin/canyonos      # if you used the install script
+```
+
 ---
 
 ## Commands

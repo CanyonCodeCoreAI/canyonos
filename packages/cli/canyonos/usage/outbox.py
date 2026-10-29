@@ -34,9 +34,9 @@ REPORTED_COMMANDS = frozenset(
         "serve",
         "stop",
         "clean",
-        "quit",
-        # Events from before `build` was renamed `convert`.
+        # Events from before `build` was renamed `convert`, and `quit` folded into `stop`.
         "build",
+        "quit",
     }
 )
 MAX_PENDING_EVENTS = 1000

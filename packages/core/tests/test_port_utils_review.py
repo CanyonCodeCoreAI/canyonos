@@ -232,7 +232,9 @@ class RedisPortTests(unittest.TestCase):
             self.assertRaises(SystemExit),
         ):
             gc._launch_redis_containers()
-        self.assertIn(["docker", "rm", "-f", "canyonos-redis-localhost"], run_cmd.calls)
+        self.assertIn(
+            ["docker", "rm", "-f", "-v", "canyonos-redis-localhost"], run_cmd.calls
+        )
 
     def test_container_name_conflict_still_hard_exits(self):
         def run_cmd(cmd, host=None, user=None):

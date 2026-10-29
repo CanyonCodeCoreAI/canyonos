@@ -75,14 +75,43 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 If the test passes, everything is shut down. If it fails, the containers stay up so
 you can check `canyonos logs`, or one agent's logs with `docker logs canyonos-<project>-<agent>-<id>`
 (e.g. `canyonos-portfolio-3f9a1c2e-intentagent-1a2b3c4d`). `docker ps --filter label=com.docker.compose.project=canyonos-<project>`
-lists the project's containers. Run `canyonos quit` to remove them.
+lists the project's containers. Run `canyonos stop` to remove them.
 
 ## Stopping and cleaning
 
 | Symptom | Likely cause |
 |---|---|
 | Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
-| `canyonos clean` deleted `.canyon` | That is what it does: it removes the whole `.canyon` and the images of the agents in `global_controller.yaml` |
-| Containers remain after `canyonos clean` | `clean` never touches containers. Use `canyonos stop` or `canyonos quit` |
+| `canyonos clean` deleted `.canyon` | That is what it does: it stops the project, then removes the whole `.canyon` and the images of the agents in `global_controller.yaml` |
 | EC2 machines remain after `canyonos stop` | The stop waited 4 minutes and moved on. See [EC2 deployment](EC2.md) |
 | Images remain after `canyonos clean` | Docker was unreachable, the images live on a different Docker context than the one the deploy used, or the agent was removed from `global_controller.yaml` before `clean` ran |
+| Containers, volumes or images remain after uninstalling the CLI | `canyonos clean --all` was not run first. See below |
+
+### Cleaning up after the CLI is already uninstalled
+
+`canyonos clean --all` removes everything CanyonOS put on the machine; run it before
+uninstalling. Without the CLI, do the same by hand. `~/.canyonos/projects` has a folder
+for each project CanyonOS deployed, and each project's containers and volumes carry
+the label `com.docker.compose.project=canyonos-<project>`.
+
+First list what will be removed:
+
+```bash
+for p in $(ls ~/.canyonos/projects); do
+  docker ps -a --filter "label=com.docker.compose.project=canyonos-$p" --format '{{.Names}}'
+  docker volume ls --filter "label=com.docker.compose.project=canyonos-$p" --format '{{.Name}}'
+done
+```
+
+Then remove it, with the dashboard, the shared network and CanyonOS's records:
+
+```bash
+for p in $(ls ~/.canyonos/projects); do
+  docker ps -aq --filter "label=com.docker.compose.project=canyonos-$p" | xargs docker rm -f -v
+  docker volume ls -q --filter "label=com.docker.compose.project=canyonos-$p" | xargs docker volume rm
+done
+docker compose -p canyonos-dashboard down --volumes
+docker network rm canyonos-local
+rm -rf ~/.canyonos
+docker images 'canyonos-*'   # then `docker image rm` the ones CanyonOS built or pulled
+```

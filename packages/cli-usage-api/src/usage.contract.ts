@@ -22,9 +22,9 @@ export const REPORTED_COMMANDS = [
   'serve',
   'stop',
   'clean',
-  'quit',
-  // Events from before `build` was renamed `convert`.
+  // Events from before `build` was renamed `convert`, and `quit` folded into `stop`.
   'build',
+  'quit',
 ] as const;
 
 export const MAX_EVENTS_PER_BATCH = 25;

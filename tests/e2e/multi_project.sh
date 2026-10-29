@@ -6,9 +6,9 @@
 # Runs two projects side by side on one machine with the shared dashboard:
 # helloworld and the portfolio fixture are deployed at the same time, each on
 # its own ports, and the dashboard must list both and read each one's Redis.
-# Then one project is quit, the other keeps answering, `canyonos serve` from it
+# Then one project is stopped, the other keeps answering, `canyonos serve` from it
 # re-registers without recreating the api, a redeploy of it keeps the dashboard,
-# and the last quit takes the dashboard down.
+# and the last stop stops the dashboard, keeping its containers.
 #
 # Usage: tests/e2e/multi_project.sh
 #
@@ -58,9 +58,9 @@ collect_logs() {
 finish() {
   local status=$?
   collect_logs
-  (cd "$WORK_DIR/helloworld" && canyonos quit) || true
-  (cd "$WORK_DIR/portfolio" && canyonos quit) || true
-  (cd "$WORK_DIR/twin/helloworld" && canyonos quit) || true
+  (cd "$WORK_DIR/helloworld" && canyonos stop) || true
+  (cd "$WORK_DIR/portfolio" && canyonos stop) || true
+  (cd "$WORK_DIR/twin/helloworld" && canyonos stop) || true
   docker compose -p canyonos-dashboard down --remove-orphans >/dev/null 2>&1 || true
   if [ "$status" -eq 0 ]; then
     step "PASS: multi-project"
@@ -129,9 +129,9 @@ if [ "$CANYONOS_WEB_IMAGE" = local ]; then
     -t canyonos-web:dev "$REPO_ROOT"
 fi
 
-step "canyonos quit (any previous deploy of either project)"
-(cd "$WORK_DIR/helloworld" && canyonos quit) || true
-(cd "$WORK_DIR/portfolio" && canyonos quit) || true
+step "canyonos stop (any previous deploy of either project)"
+(cd "$WORK_DIR/helloworld" && canyonos stop) || true
+(cd "$WORK_DIR/portfolio" && canyonos stop) || true
 
 # With no TTY on stdin, deploy fills in default resources instead of opening the
 # resource picker. Both deploys run at once: the dashboard lock has to serialise
@@ -203,13 +203,13 @@ grep -q '"against_existing_deploy": false' "$ARTIFACTS_DIR/test-twin.json" ||
 python3 "$E2E_DIR/query.py" "$HELLO_API" main query hello 60 >"$ARTIFACTS_DIR/helloworld-result.json"
 grep -q "greeting" "$ARTIFACTS_DIR/helloworld-result.json" || fail "the first helloworld stopped answering"
 
-step "canyonos quit helloworld leaves portfolio and the dashboard"
-(cd "$WORK_DIR/helloworld" && canyonos quit)
-docker ps --format '{{.Names}}' | grep -q '^canyonos-helloworld-' && fail "helloworld containers survived quit"
-compgen -G "$HOME/.canyonos/projects/helloworld-*/deployed.json" >/dev/null && fail "quit left helloworld's deployed.json behind"
-[ "$(docker ps --format '{{.Names}}' | grep -c '^canyonos-dashboard-')" = 3 ] || fail "the dashboard did not survive helloworld's quit"
+step "canyonos stop helloworld leaves portfolio and the dashboard"
+(cd "$WORK_DIR/helloworld" && canyonos stop)
+docker ps --format '{{.Names}}' | grep -q '^canyonos-helloworld-' && fail "helloworld containers survived stop"
+compgen -G "$HOME/.canyonos/projects/helloworld-*/deployed.json" >/dev/null && fail "stop left helloworld's deployed.json behind"
+[ "$(docker ps --format '{{.Names}}' | grep -c '^canyonos-dashboard-')" = 3 ] || fail "the dashboard did not survive helloworld's stop"
 expect_routes portfolio "$PORTFOLIO_ID" 200
-[ "$(api GET "/projects/$HELLO_ID/prompts")" = 502 ] || fail "a quit project should read as unreachable"
+[ "$(api GET "/projects/$HELLO_ID/prompts")" = 502 ] || fail "a stopped project should read as unreachable"
 
 step "canyonos serve from portfolio re-registers without recreating the api"
 (cd "$WORK_DIR/portfolio" && canyonos serve) | tee "$ARTIFACTS_DIR/serve-portfolio.log"
@@ -227,7 +227,10 @@ step "The redeploy is the same dashboard project"
 [ "$(project_names)" = "helloworld portfolio" ] || fail "projects listed after the redeploy: $(project_names)"
 [ "$(project_id portfolio)" = "$PORTFOLIO_ID" ] || fail "portfolio changed id on redeploy: $(project_id portfolio) was $PORTFOLIO_ID"
 
-step "canyonos quit portfolio takes the dashboard down"
-(cd "$WORK_DIR/portfolio" && canyonos quit)
-leftovers="$(docker ps -a --format '{{.Names}}' | grep -E '^canyonos-(helloworld|portfolio|dashboard)-' || true)"
+step "canyonos stop portfolio stops the dashboard, keeping it"
+(cd "$WORK_DIR/portfolio" && canyonos stop)
+leftovers="$(docker ps -a --format '{{.Names}}' | grep -E '^canyonos-(helloworld|portfolio)-' || true)"
 [ -z "$leftovers" ] || fail "containers left behind: $leftovers"
+running="$(docker ps --format '{{.Names}}' | grep -E '^canyonos-dashboard-' || true)"
+[ -z "$running" ] || fail "the dashboard is still running: $running"
+[ "$(docker ps -a --format '{{.Names}}' | grep -c '^canyonos-dashboard-')" = 3 ] || fail "the stopped dashboard was removed"

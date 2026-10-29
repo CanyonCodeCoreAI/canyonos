@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
+import os
 import subprocess
 
 import pytest
@@ -146,3 +147,43 @@ def test_image_removal_failure_warns_without_forcing(monkeypatch, tmp_path):
     assert calls[1] == ["docker", "image", "rm", "image-in-use"]
     assert "-f" not in calls[1]
     assert "image is being used by running container" in warnings[-1]
+
+
+def _deployed(monkeypatch, tmp_path, stopped):
+    root = in_project(monkeypatch, tmp_path, "portfolio")
+    (root / ".canyon").mkdir()
+    state_path = clean.project.state_path()
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    with open(state_path, "w", encoding="utf-8") as f:
+        f.write("{}")
+    calls = []
+    monkeypatch.setattr(clean, "run_stop", lambda: calls.append(True) or stopped)
+    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
+    return root, calls
+
+
+def test_a_deployed_project_is_stopped_before_it_is_cleaned(monkeypatch, tmp_path):
+    root, calls = _deployed(monkeypatch, tmp_path, stopped=True)
+
+    assert clean.run_clean() is True
+
+    assert calls == [True]
+    assert not (root / ".canyon").exists()
+
+
+def test_a_project_that_wont_stop_is_not_cleaned(monkeypatch, tmp_path):
+    root, _calls = _deployed(monkeypatch, tmp_path, stopped=False)
+
+    assert clean.run_clean() is False
+
+    assert (root / ".canyon").exists()
+
+
+def test_a_project_never_deployed_is_cleaned_without_stopping(monkeypatch, tmp_path):
+    in_project(monkeypatch, tmp_path, "never-deployed")
+    monkeypatch.setattr(
+        clean, "run_stop", lambda: pytest.fail("nothing is deployed to stop")
+    )
+    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
+
+    assert clean.run_clean() is True

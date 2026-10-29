@@ -124,7 +124,7 @@ def test_an_image_that_was_never_built_fails(project, runtime):
 @pytest.fixture
 def deployable(monkeypatch, project):
     """A project where every step succeeds unless overridden."""
-    calls = {"run_deploy": 0, "quit": 0}
+    calls = {"run_deploy": 0, "stop": 0}
 
     monkeypatch.setattr(
         test_cmd, "load_state", lambda: {"container_id": "abc", "port": 8000}
@@ -143,17 +143,17 @@ def deployable(monkeypatch, project):
         calls["run_deploy"] += 1
         return {"container_id": "abc", "port": 8000}
 
-    def quit_existing():
-        calls["quit"] += 1
+    def stop_existing():
+        calls["stop"] += 1
 
     monkeypatch.setattr(test_cmd, "run_deploy", run_deploy)
-    monkeypatch.setattr(test_cmd, "quit_existing", quit_existing)
+    monkeypatch.setattr(test_cmd, "stop_existing", stop_existing)
     return calls
 
 
 def test_a_passing_run_tears_everything_down(deployable):
     assert test_cmd.run_test("hi") == 0
-    assert deployable["quit"] == 1
+    assert deployable["stop"] == 1
 
 
 def test_the_dashboard_is_not_started_under_test(monkeypatch, deployable):
@@ -194,7 +194,7 @@ def test_a_failed_deploy_keeps_the_container_and_reads_its_log(
     assert test_cmd.run_test("hi", as_json=True) == 1
     payload = json.loads(capsys.readouterr().out)
 
-    assert deployable["quit"] == 0
+    assert deployable["stop"] == 0
     assert payload["log_tail"] == "boom"
 
 
@@ -214,7 +214,7 @@ def test_a_failure_before_the_deploy_leaves_existing_state_alone(
     assert test_cmd.run_test("hi", as_json=True) == 1
     payload = json.loads(capsys.readouterr().out)
 
-    assert deployable["quit"] == 0
+    assert deployable["stop"] == 0
     assert payload["log_tail"] is None
 
 
@@ -243,7 +243,7 @@ def test_queries_the_existing_deploy_instead_of_standing_up_its_own(
     payload = json.loads(capsys.readouterr().out)
 
     assert deployable["run_deploy"] == 0
-    assert deployable["quit"] == 0
+    assert deployable["stop"] == 0
     assert payload["against_existing_deploy"] is True
     assert payload["result"] == {"r": 1}
     # The query is the only phase in this path.

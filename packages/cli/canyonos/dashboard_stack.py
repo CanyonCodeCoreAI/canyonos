@@ -389,12 +389,12 @@ def _capture_failure_logs(
 
 def _cleanup(stack: DashboardStack, manifest: Path) -> None:
     try:
-        _run([*_compose_argv(stack, manifest), "down"])
+        _run([*_compose_argv(stack, manifest), "down", "--volumes"])
     except OSError:
         return
 
 
-def _dashboard_compose_command(command: str, *leftover_flags: str) -> bool:
+def _dashboard_compose_command(command: list[str], *leftover_flags: str) -> bool:
     """Run `docker compose <command>` on the dashboard project, then confirm it worked.
 
     Compose finds the project's containers by their labels, so this needs
@@ -403,7 +403,7 @@ def _dashboard_compose_command(command: str, *leftover_flags: str) -> bool:
     already the desired end state.
     """
     try:
-        if _run([*_project_argv(), command]).returncode != 0:
+        if _run([*_project_argv(), *command]).returncode != 0:
             return False
         leftover = _run([*_project_argv(), "ps", "-q", *leftover_flags])
     except OSError:
@@ -411,7 +411,7 @@ def _dashboard_compose_command(command: str, *leftover_flags: str) -> bool:
     return leftover.returncode == 0 and not leftover.stdout.strip()
 
 
-def _locked_dashboard_compose_command(command: str, *leftover_flags: str) -> bool:
+def _locked_dashboard_compose_command(command: list[str], *leftover_flags: str) -> bool:
     """`_dashboard_compose_command` under the dashboard lock; False when the lock fails."""
     try:
         with _dashboard_lock():
@@ -422,12 +422,13 @@ def _locked_dashboard_compose_command(command: str, *leftover_flags: str) -> boo
 
 def stop_dashboard() -> bool:
     """`docker compose stop` -- halts web/api/db, keeping them for a later `canyonos serve`."""
-    return _locked_dashboard_compose_command("stop")
+    return _locked_dashboard_compose_command(["stop"])
 
 
 def teardown_dashboard() -> bool:
-    """`docker compose down` -- removes the dashboard's web/api/db containers entirely."""
-    return _locked_dashboard_compose_command("down", "--all")
+    """`docker compose down` -- removes the dashboard's web/api/db containers entirely,
+    with the anonymous volume each Postgres start leaves, which no later start reuses."""
+    return _locked_dashboard_compose_command(["down", "--volumes"], "--all")
 
 
 def run_dashboard(
@@ -437,7 +438,7 @@ def run_dashboard(
     """Start the local dashboard for `canyonos serve` and `canyonos deploy`, reporting
     each step; on failure, save the logs and remove what this run started.
 
-    The whole run holds the dashboard lock, so a concurrent serve, stop, or quit
+    The whole run holds the dashboard lock, so a concurrent serve, stop, or clean
     from another project folder waits for it rather than racing it.
     """
 

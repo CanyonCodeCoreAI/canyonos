@@ -274,7 +274,7 @@ def started(monkeypatch):
     ids=["no-command", "help", "version", "command", "status", "unknown", "bad-flag"],
 )
 def test_every_invocation_ends_by_starting_delivery(monkeypatch, started, argv):
-    monkeypatch.setattr(cli, "run_clean", lambda: None)
+    monkeypatch.setattr(cli, "run_clean", lambda **_k: None)
     monkeypatch.setattr(cli, "run_status", lambda as_json: None)
 
     try:
@@ -288,7 +288,7 @@ def test_every_invocation_ends_by_starting_delivery(monkeypatch, started, argv):
 def test_a_failing_command_still_starts_delivery_and_keeps_its_exit(
     monkeypatch, started
 ):
-    monkeypatch.setattr(cli, "run_stop", lambda: raise_(RuntimeError("down")))
+    monkeypatch.setattr(cli, "run_stop", lambda **_k: raise_(RuntimeError("down")))
 
     with pytest.raises(SystemExit) as exited:
         run_cli(monkeypatch, "stop")

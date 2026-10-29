@@ -19,14 +19,14 @@ def init(monkeypatch, tmp_path):
         seen.update(port=port)
         return "abcdef123456", seen.get("lands_on", port), None
 
-    def quit_existing():
-        # Like the real teardown, a successful quit removes the state file.
+    def stop_existing():
+        # Like the real teardown, a successful stop removes the state file.
         seen["state_at_quit"] = os.path.isfile(project.state_path())
         if seen["state_at_quit"]:
             os.remove(project.state_path())
 
     monkeypatch.setattr(init_cmd, "_ensure_docker_running", lambda: None)
-    monkeypatch.setattr(init_cmd, "quit_existing", quit_existing)
+    monkeypatch.setattr(init_cmd, "stop_existing", stop_existing)
     monkeypatch.setattr(init_cmd, "_pull_image", lambda _image: None)
     monkeypatch.setattr(init_cmd, "_run_container", run_container)
     return seen

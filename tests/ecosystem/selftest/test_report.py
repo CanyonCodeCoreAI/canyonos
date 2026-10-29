@@ -14,7 +14,7 @@ JUNIT = """<?xml version="1.0" encoding="utf-8"?>
 <testcase classname="ecosystem.cases.test_1_cli" name="test_validate" time="1.0"/>
 <testcase classname="ecosystem.cases.test_3_api" name="test_distribution[latency]" time="2.0">
 <failure message="AssertionError: timed out">Traceback...</failure></testcase>
-<testcase classname="ecosystem.cases.test_9_teardown" name="test_quit_cleans_up" time="1.0"/>
+<testcase classname="ecosystem.cases.test_9_teardown" name="test_stop_cleans_up" time="1.0"/>
 </testsuite></testsuites>
 """
 
@@ -107,7 +107,7 @@ def test_setup_trace_is_rendered_once_for_every_case_it_failed(tmp_path):
     assert text.count("### epsilon › ") == 2
     assert text.count("canyonos deploy -> 1") == 1
     assert "test_1_cli::test_validate" in text
-    assert "test_9_teardown::test_quit_cleans_up" in text
+    assert "test_9_teardown::test_stop_cleans_up" in text
     assert "### epsilon › test_3_api::test_distribution[latency]" in text
 
 

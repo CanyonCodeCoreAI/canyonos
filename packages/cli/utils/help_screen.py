@@ -22,15 +22,14 @@ CORE_COMMANDS = (
 )
 
 UTIL_COMMANDS = (
-    ("clean", "Delete .canyon, the project skill and the agents' images"),
+    ("clean", "Stop the deploy, then delete .canyon, the skill and the agents' images"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
     ("doctor", "Check Docker and Compose are available"),
     ("logs", "Follow the running deploy's logs"),
     ("new-app", "Create a starter CanyonOS project with one agent"),
-    ("quit", "Stop the deploy and remove the container and its files"),
     ("serve", "Start local CanyonOS dashboard"),
     ("status", "Check whether a deploy is running and where it answers"),
-    ("stop", "Stop the running deploy, keeping the container and files"),
+    ("stop", "Stop the deploy and remove its containers, keeping its images"),
     (
         "sync",
         "Apply config changes to the running deploy; code changes need a redeploy",

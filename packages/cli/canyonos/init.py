@@ -45,8 +45,8 @@ LOCAL_NETWORK = "canyonos-local"
 
 # The project's workspace volume (`project.workspace_volume()`) is mounted here.
 # Files are copied in via `canyonos sync` (docker cp), not mounted live, so
-# host-side edits don't reach a running build. `canyonos quit` removes the
-# volume, and since every deploy quits the project's previous controller first,
+# host-side edits don't reach a running build. `canyonos stop` removes the
+# volume, and since every deploy tears down the project's previous controller first,
 # each deploy starts from an empty workspace.
 GC_WORKSPACE_PATH = "/workspace"
 
@@ -297,7 +297,7 @@ def _free_container_name():
     if running:
         raise RuntimeError(
             f"The container name {project.gc_container_name()} is held by a running "
-            f"Global Controller ({container_id[:12]}). Run `canyonos quit` from the "
+            f"Global Controller ({container_id[:12]}). Run `canyonos stop` from the "
             f"`{project.folder_name()}` folder to tear it down first."
         )
     failure = cleanup_docker(
@@ -472,10 +472,10 @@ def _save_state(container_id, port, docker_socket=None):
         raise
 
 
-def load_state():
+def load_state(state_path=None):
     """Read this project's Global Controller container and port from its state file
-    under `~/.canyonos/projects`."""
-    state_path = project.state_path()
+    under `~/.canyonos/projects`, or from the state file at `state_path`."""
+    state_path = state_path or project.state_path()
     try:
         with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
@@ -501,16 +501,16 @@ def load_state():
     return state
 
 
-def quit_existing():
+def stop_existing():
     """Tear down a previously started Global Controller, if state records one.
 
     Without this each run starts another container on the next free port and
     orphans the last one, which then can't be reached through state.json.
     """
-    # Deferred: quit.py imports from this module, so a top-level import cycles.
-    from canyonos.quit import quit_project
+    # Deferred: stop.py imports from this module, so a top-level import cycles.
+    from canyonos.stop import stop_project
 
-    if os.path.isfile(project.state_path()) and quit_project(load_state()):
+    if os.path.isfile(project.state_path()) and stop_project(load_state()):
         ui.warn(
             "Starting a new Global Controller anyway; the leftovers above need cleaning up by hand."
         )
@@ -535,11 +535,11 @@ def run_init(banner=True, image=GC_IMAGE):
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
-    # Before quit_existing(), which shells out to docker itself.
+    # Before stop_existing(), which shells out to docker itself.
     _ensure_docker_running()
-    # Read before quit_existing() removes the state, so a redeploy keeps its port.
+    # Read before stop_existing() removes the state, so a redeploy keeps its port.
     preferred = _saved_port() or GC_CONTAINER_PORT
-    quit_existing()
+    stop_existing()
 
     with ui.status("Pulling Global Controller image..."):
         _pull_image(image)

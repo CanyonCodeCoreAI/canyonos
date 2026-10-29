@@ -45,7 +45,7 @@ from canyonos.deploy import (
     save_project_id,
 )
 from canyonos.gc import _error_detail, deployed_endpoint, existing_deploy
-from canyonos.init import docker_env, load_state, quit_existing
+from canyonos.init import docker_env, load_state, stop_existing
 from canyonos.os_support import is_terminal
 from canyonos.sync import deployed_fingerprints, project_fingerprints
 from canyonos.theme import GREEN, WHITE
@@ -485,7 +485,7 @@ def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
             except (OSError, subprocess.TimeoutExpired):
                 pass
         elif run.error is None and not run.against_existing:
-            quit_existing()
+            stop_existing()
         # else: either we queried a deploy that was already up (not ours to tear
         # down), or we failed before this run ever started its own deploy (e.g.
         # bad config) -- leave whatever was already there alone.

@@ -28,7 +28,6 @@ from canyonos.feedback import run_feedback
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
 from canyonos.os_support import prepare_console
-from canyonos.quit import run_quit
 from canyonos.serve import run_serve
 from canyonos.status import run_status
 from canyonos.stop import run_stop
@@ -123,8 +122,31 @@ def _run_command():
         action="store_true",
         help="Stream the container's full build and deploy logs instead of a progress summary",
     )
-    add("clean", lambda args: sys.exit(0 if run_clean() else 1))
-    add("stop", lambda args: sys.exit(0 if run_stop() else 1))
+    clean = add(
+        "clean",
+        lambda args: sys.exit(
+            0 if run_clean(all_projects=args.all, yes=args.yes) else 1
+        ),
+    )
+    clean.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove everything CanyonOS put on this machine before uninstalling the "
+        "CLI: every project, the dashboard and its data, CanyonOS's images and "
+        "~/.canyonos",
+    )
+    clean.add_argument(
+        "-y", "--yes", action="store_true", help="Don't ask before --all"
+    )
+    stop = add(
+        "stop", lambda args: sys.exit(0 if run_stop(all_projects=args.all) else 1)
+    )
+    stop.add_argument(
+        "--all",
+        action="store_true",
+        help="Stop every CanyonOS project on this machine, from any folder, "
+        "including projects whose folder is gone",
+    )
     add("sync", lambda args: sys.exit(0 if run_sync_and_reload() else 1))
 
     logs = add(
@@ -151,7 +173,6 @@ def _run_command():
         metavar="N",
         help="Show only the last N lines, or `all` (default: 200)",
     )
-    add("quit", lambda args: sys.exit(0 if run_quit() else 1))
     add("config", lambda args: sys.exit(0 if run_config() else 1))
     contact = add("contact", lambda args: run_contact(usage=args.usage))
     contact.add_argument(

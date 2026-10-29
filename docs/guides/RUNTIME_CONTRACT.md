@@ -292,10 +292,8 @@ next `canyonos deploy` removes stale Redis and metrics containers and
 recreates orphaned agent containers, but an endpoint `api_port`, a database
 `db_port` or a Redis port still in use is a hard error.
 
-`canyonos clean` deletes the `.canyon` directory in the current directory,
-if there is one, removes the skill `canyonos convert`
+`canyonos clean` stops the project if it is deployed, then deletes the
+`.canyon` directory in the current directory, if there is one, removes the skill `canyonos convert`
 installed in this project (a global install is kept), and removes the local
 Docker image (`canyonos-<project>-<agent>`) of each agent in this project's
-`global_controller.yaml`. Other projects' images stay. It never touches `.env`
-and does not touch containers; use
-`canyonos stop` or `canyonos quit` for those.
+`global_controller.yaml`. Other projects' images stay. It never touches `.env`.

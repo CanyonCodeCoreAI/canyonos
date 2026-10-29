@@ -365,7 +365,7 @@ def run_sync_and_reload():
         state = None
     status = deploy_status(state["port"]) if state else {}
     if status is None:
-        ui.fail("Nothing is running for this project. Run `canyonos quit` to clean up.")
+        ui.fail("Nothing is running for this project. Run `canyonos stop` to clean up.")
         return False
     if not status.get("running"):
         ui.say("No deploy running; changes apply on the next `canyonos deploy`.")

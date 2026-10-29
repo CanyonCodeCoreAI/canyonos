@@ -120,7 +120,7 @@ const notRunning: Handler = (route) =>
   );
 
 const STILL_RUNNING =
-  'This project is still running. Run `canyonos quit` in its folder, then delete it.';
+  'This project is still running. Run `canyonos stop` in its folder, then delete it.';
 
 /** Answers the project's DELETE and records each one; reads fall through to the page stubs. */
 async function stubDelete(page: Page, handler: Handler): Promise<string[]> {
@@ -225,7 +225,7 @@ test('no replicas up shows the empty containers state', async ({ page }) => {
   await expect(page.getByTestId('status-tile-agents-value')).toHaveText('0');
 });
 
-test('a running project cannot be deleted; the dialog says to quit it first', async ({ page }) => {
+test('a running project cannot be deleted; the dialog says to stop it first', async ({ page }) => {
   await openStatus(page);
   const deletes = await stubDelete(page, (route) => fulfillJson(route, { project_id: PROJECT.id }));
   await expect(page.getByTestId('status-badge')).toHaveText('Running');

@@ -49,7 +49,7 @@ terminal is the CLI *narrating* what the container is doing.
 
 Three things worth internalizing about this diagram:
 
-1. **The container talks to the host Docker daemon.** The GC mounts the host's `docker.sock`, so the Redis and agent containers it launches are **siblings on your machine**, not nested inside it. (This is why teardown has to be explicit — see `stop` vs `quit` below.)
+1. **The container talks to the host Docker daemon.** The GC mounts the host's `docker.sock`, so the Redis and agent containers it launches are **siblings on your machine**, not nested inside it. (This is why teardown has to be explicit — see `stop` and `clean` below.)
 2. **The dashboard is separate.** It's its own compose stack that just *renders* the OTLP traces your workflow emits — it isn't in the deploy critical path. A failure for this command doesn't stop the deployment nor the traces, just prevents automatic trace collection and visualization.
 
 State connecting the CLI to its container is a single file per project:
@@ -57,7 +57,7 @@ State connecting the CLI to its container is a single file per project:
 `<project>` is the normalised name of the folder `canyonos` runs from plus the
 first 8 characters of its `project_id`. Every command that needs the container
 reads it. Next to it, `deployed.json` holds fingerprints of the files the running
-deploy took in, which `canyonos test` checks; `canyonos quit` removes both.
+deploy took in, which `canyonos test` checks; `canyonos stop` removes both.
 
 ---
 
@@ -150,26 +150,30 @@ For changing anything in the config folder, `canyonos sync` is able to hot-reloa
 
 ---
 
-## Lifecycle: what stays and what goes (canyonos stop + quit)
+## Lifecycle: what stays and what goes (canyonos stop + clean)
 
-Because the deploy spawns real sibling containers, "make it stop" has two levels of "stop":
+Because the deploy spawns real sibling containers, Ctrl+C doesn't stop it; teardown is
+explicit, at two depths:
 
 ```
-                   deploy   sibling      GC         project files
-                   stops?   containers?  container? (volume)?
-  ───────────────  ───────  ───────────  ─────────  ─────────────
-  canyonos stop      ✅        ✅          keep         keep
-  canyonos quit      ✅        ✅          remove       remove
+                   containers,   agent      .canyon   dashboard
+                   GC, volume?   images?
+  ───────────────  ────────────  ─────────  ────────  ──────────────────
+  canyonos stop      remove        keep       keep      stopped, history kept
+  canyonos clean     remove        remove     remove    stopped, history kept
 ```
 
-- **`stop`** — pause the show, keep the stage set. Redeploy without re-pulling.
-- **`quit`** — full teardown. Removes the container *and* the `/workspace`
-  volume (your copied files). Every `deploy` quietly does this to the
-  project's previous controller, so each deploy starts clean.
+- **`stop`** — full teardown of the running deploy. Removes its containers *and*
+  the `/workspace` volume (your copied files), keeping images for a quick
+  redeploy. Every `deploy` quietly does this to the project's previous
+  controller, so each deploy starts clean.
+- **`clean`** — `stop`, then the project's build output: `.canyon`, the skill
+  `convert` installed, and the agent images.
 
-Both act only on the current project's containers. The dashboard is shared by
-every project on the machine, so `stop` and `quit` leave it running while
-another project's Global Controller is still up.
+Both act only on the current project. The dashboard is shared by every project on
+the machine, so it keeps running while another project's Global Controller is still
+up. With `--all`, `stop` tears down every project on the machine, and `clean`
+removes everything CanyonOS put there, the dashboard's data and `~/.canyonos` included.
 
 And to observe without changing anything:
 

@@ -309,8 +309,8 @@ def _endpoint(recorder: Recorder, workspace: Path) -> tuple[str, str, str]:
 def deployed(project, recorder, workspace, images, artifacts_dir) -> Deployed:
     """Deploy the staged project with `canyonos deploy`, sign in to the dashboard if
     it runs with accounts, and hand cases the endpoint and API; afterwards save the container logs under
-    the artifacts directory and remove the deploy with `canyonos quit`."""
-    canyonos(recorder, ["quit"], cwd=workspace, check=False)
+    the artifacts directory and remove the deploy with `canyonos stop`."""
+    canyonos(recorder, ["stop"], cwd=workspace, check=False)
     deploy = canyonos(recorder, ["deploy"], cwd=workspace, timeout=DEPLOY_TIMEOUT)
     assert f"Registered {project.name} with the dashboard" in deploy.output, (
         deploy.output[-3000:]
@@ -332,7 +332,7 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Deployed:
     try:
         collect_container_logs(recorder, artifacts_dir / "containers")
     finally:
-        canyonos(recorder, ["quit"], cwd=workspace, check=False)
+        canyonos(recorder, ["stop"], cwd=workspace, check=False)
 
 
 @pytest.fixture(scope="session")
