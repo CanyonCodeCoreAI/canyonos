@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Pod Security admission for the local kind cluster (scripts/kind/up.sh): every
+# namespace enforces the `restricted` profile unless it is labelled otherwise. This is
+# what OpenShift does by default (restricted-v2), so a pod spec that would be rejected
+# there is rejected on the laptop first. A namespace that needs more (the in-cluster
+# image builder) must be labelled for it, as an admin grants an SCC on OpenShift.
+apiVersion: apiserver.config.k8s.io/v1
+kind: AdmissionConfiguration
+plugins:
+  - name: PodSecurity
+    configuration:
+      apiVersion: pod-security.admission.config.k8s.io/v1
+      kind: PodSecurityConfiguration
+      defaults:
+        enforce: restricted
+        enforce-version: latest
+        audit: restricted
+        audit-version: latest
+        warn: restricted
+        warn-version: latest
+      exemptions:
+        usernames: []
+        runtimeClasses: []
+        # Cluster plumbing that needs host access: Calico and metrics-server run in
+        # kube-system, and kind's volume provisioner mounts host paths.
+        namespaces: [kube-system, local-path-storage]

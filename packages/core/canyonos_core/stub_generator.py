@@ -692,7 +692,9 @@ def _dockerfile_install_steps(overrides, requirements):
         if name not in asked_newer
     )
     # The gateway's packages go before the app's, so every agent image on a machine shares that layer.
-    return f"""ENV UV_COMPILE_BYTECODE=1
+    # The Python uv fetches for the gateway goes under /opt, not /root, so an agent run
+    # as another user (Kubernetes' restricted profile, OpenShift) can start it too.
+    return f"""ENV UV_COMPILE_BYTECODE=1 UV_PYTHON_INSTALL_DIR=/opt/canyonos-python
 RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv venv --python 3.12 /opt/canyonos-gateway \\
  && uv pip install --python /opt/canyonos-gateway/bin/python {" ".join(GATEWAY_REQUIREMENTS)}
 COPY requirements.txt .

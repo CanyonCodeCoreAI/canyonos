@@ -139,6 +139,32 @@ the one read at startup and for projects that never registered.
 - This is the fast host-dashboard loop. Use `canyonos deploy` with the image
 dashboard when testing container parity.
 
+## Kubernetes on kind
+
+`scripts/kind/up.sh` makes a local cluster that behaves like the ones customers run:
+kind with one control plane and one worker, Calico (so NetworkPolicy is enforced),
+metrics-server, Pod Security `restricted` in every namespace (as OpenShift does), and a
+registry on `localhost:5001` that the nodes pull from. It needs `docker`, `kind` and
+`kubectl`; `--verify` checks each of those pieces. The API server's Pod Security file
+is kept in `~/.canyonos/kind`, so a branch switch never stops the cluster from
+starting. `scripts/kind/down.sh` deletes it (`--all` the registry too).
+
+```bash
+scripts/kind/up.sh --verify
+scripts/kind/e2e.sh
+```
+
+`e2e.sh` is the whole path, and what CI runs (`Kubernetes E2E`) for changes to the
+operator, the chart, or the Kubernetes parts of core, the CLI and the API. It builds
+the operator, core, api and web images from the checkout under a new tag, installs the
+chart with the in-cluster builder and the dashboard, and deploys `examples/helloworld`
+with the real CLI as a user who may only edit one namespace. It then checks requests,
+the dashboard, a Redis password rotation, `stop` and `clean`. Everything but the image
+builds runs in a container on the kind network, so it runs the same on any OS.
+
+For the operator alone, `make manifests generate fmt vet test lint` in
+`packages/operator` (in the `golang:1.27.0` container) runs its unit and envtest suites.
+
 ## Tests
 
 Every suite runs from the workspace root through Turborepo:
@@ -164,6 +190,7 @@ cp packages/web/.env.example packages/web/.env
 | API | `bun run api:test:e2e` | Postgres (`bun run docker:up`); resets the `canyonos_test` database |
 | Dashboard | `bun run ui:test:e2e` | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite itself, or reuses ones already running |
 | Workflow | `tests/run_tests.sh` | Run inside the `bun run canyonos:dev` shell; deploys `examples/helloworld` to port `8082`, then runs the integration and load tests |
+| Kubernetes | `scripts/kind/e2e.sh` | The kind cluster from `scripts/kind/up.sh`; see [Kubernetes on kind](#kubernetes-on-kind) |
 
 `tests/README.md` covers running the workflow tests against a stack that is
 already deployed.

@@ -32,6 +32,9 @@
         "displayName": "Demo_Project",
         "endpoint": {
           "agent": "Workflow",
+          "arguments": [
+            "query"
+          ],
           "method": "main",
           "url": "https://agents.example.com"
         },
@@ -112,6 +115,9 @@
         "displayName": "Demo_Project",
         "endpoint": {
           "agent": "Workflow",
+          "arguments": [
+            "query"
+          ],
           "ingress": {
             "className": "nginx",
             "host": "agents.example.com",

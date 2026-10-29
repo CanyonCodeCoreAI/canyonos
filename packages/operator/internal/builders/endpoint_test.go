@@ -33,6 +33,7 @@ func TestTheEndpointRunsTheCoreImageAsDockerDoes(t *testing.T) {
 		"CANYONOS_AGENT_PORT":             "50051",
 		"CANYONOS_ENDPOINT_AGENT":         "Workflow",
 		"CANYONOS_ENDPOINT_METHOD":        "run",
+		"CANYONOS_ENDPOINT_ARGUMENTS":     "query,limit",
 		envHealthPort:                     "8099",
 		"CANYONOS_SHUTDOWN_GRACE_SECONDS": "120",
 		"CANYONOS_REDIS_HOST":             "canyonos-redis.acme.svc",
@@ -110,7 +111,9 @@ func TestTheEndpointServicesSelectOnlyItsPod(t *testing.T) {
 // endpointProject serves Workflow.run, as the helloworld example does.
 func endpointProject() *canyonosv1alpha1.CanyonProject {
 	p := project()
-	p.Spec.Endpoint = canyonosv1alpha1.EndpointSpec{Agent: "Workflow", Method: "run"}
+	p.Spec.Endpoint = canyonosv1alpha1.EndpointSpec{
+		Agent: "Workflow", Method: "run", Arguments: []string{"query", "limit"},
+	}
 	return p
 }
 

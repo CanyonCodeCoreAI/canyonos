@@ -8,6 +8,7 @@ package builders
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -223,6 +224,7 @@ func endpointEnv(p *canyonosv1alpha1.CanyonProject) []corev1.EnvVar {
 		{Name: "CANYONOS_AGENT_PORT", Value: strconv.Itoa(AgentPort)},
 		{Name: "CANYONOS_ENDPOINT_AGENT", Value: p.Spec.Endpoint.Agent},
 		{Name: "CANYONOS_ENDPOINT_METHOD", Value: p.Spec.Endpoint.Method},
+		{Name: "CANYONOS_ENDPOINT_ARGUMENTS", Value: strings.Join(p.Spec.Endpoint.Arguments, ",")},
 		pollIntervalEnv(p),
 		logsEnabledEnv(p),
 		{Name: envHealthPort, Value: strconv.Itoa(HealthPort)},

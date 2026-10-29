@@ -493,6 +493,14 @@ class PlatformPinTests(unittest.TestCase):
             dockerfile[app_install:],
         )
 
+    def test_the_gateways_python_is_installed_where_any_user_can_run_it(self):
+        # Under /root (uv's default) only root could: Kubernetes runs agents as another user.
+        dockerfile = self._dockerfile()
+        self.assertLess(
+            dockerfile.index("UV_PYTHON_INSTALL_DIR=/opt/canyonos-python"),
+            dockerfile.index("uv venv --python 3.12 /opt/canyonos-gateway"),
+        )
+
     def test_the_image_compiles_bytecode_for_every_install(self):
         dockerfile = self._dockerfile()
         self.assertLess(

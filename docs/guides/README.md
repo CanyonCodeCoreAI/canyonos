@@ -12,6 +12,8 @@
 - [Dashboard](DASHBOARD.md): opening the local dashboard, finding a run, and what
   each page shows.
 - [CLI reference](CLI.md): every `canyonos` command and what it does.
+- [Kubernetes deployment](KUBERNETES.md): the operator, the `kubernetes:` block, and
+  `canyonos deploy --target kubernetes`.
 
 ## Contract reference
 

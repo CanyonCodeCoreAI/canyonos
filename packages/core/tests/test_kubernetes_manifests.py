@@ -86,6 +86,19 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(objects[("CanyonAgent", "helloagent")]["spec"]["replicas"], 2)
         self.assertEqual(warnings, [])
 
+    def test_the_endpoint_gets_its_methods_argument_names(self):
+        project = rendered()[0][("CanyonProject", "demo-project")]["spec"]
+        self.assertEqual(
+            project["endpoint"],
+            {"agent": "Workflow", "method": "main", "arguments": ["query"]},
+        )
+
+    def test_an_endpoint_method_the_config_lacks_fails_the_render(self):
+        cfg = config()
+        cfg["endpoint"]["method"] = "missing"
+        with self.assertRaisesRegex(RuntimeError, "Workflow.missing"):
+            rendered(cfg)
+
     def test_the_ec2_section_is_ignored_with_a_warning(self):
         cfg = config()
         cfg["provider"] = "EC2"

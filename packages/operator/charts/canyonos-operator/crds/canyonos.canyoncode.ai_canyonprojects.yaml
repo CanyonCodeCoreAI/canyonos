@@ -84,6 +84,14 @@ spec:
                       project's config (for example Workflow).
                     minLength: 1
                     type: string
+                  arguments:
+                    description: |-
+                      arguments are the method's argument names, which the endpoint reads from a
+                      request's JSON body.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
                   ingress:
                     description: |-
                       ingress exposes the endpoint outside the cluster through an Ingress of the

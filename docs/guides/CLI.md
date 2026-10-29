@@ -26,6 +26,10 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `upgrade` | Upgrade the canyonos CLI to the latest release |
 | `-v`, `--version` | Print the installed version |
 
+`deploy`, `status`, `logs`, `serve`, `stop` and `clean` take `--target kubernetes` to work
+on the cluster `kubectl` points at instead of Docker on this machine; see
+[Kubernetes deployment](KUBERNETES.md).
+
 ## Contact
 
 | Command | What it does |

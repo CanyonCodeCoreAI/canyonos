@@ -17,3 +17,4 @@ Requests come in through the endpoint, a container of its own on the same machin
 - [Reconciler Loop](RECONCILER.md): (packages/core/canyonos_core/reconciler/)
 - [LLM Gateway](LLM_GATEWAY.md): (packages/core/canyonos_core/llm_gateway/)
 - [Machine Metrics Poller](MACHINE_METRICS_POLLER.md): (packages/core/canyonos_core/machine_metrics_poller/)
+- [Operator](OPERATOR.md): (packages/operator/), runs projects on Kubernetes

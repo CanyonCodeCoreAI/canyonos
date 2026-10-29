@@ -67,6 +67,12 @@ type EndpointSpec struct {
 	// +required
 	Method string `json:"method"`
 
+	// arguments are the method's argument names, which the endpoint reads from a
+	// request's JSON body.
+	// +listType=atomic
+	// +optional
+	Arguments []string `json:"arguments,omitempty"`
+
 	// resources of the endpoint's pod; by default it requests 250m CPU and 256Mi
 	// and may use up to 1Gi of memory.
 	// +optional

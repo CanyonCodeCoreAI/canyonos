@@ -129,7 +129,7 @@ python local_controller.py --port 50051  python -m canyonos_core.endpoint
                                 │              CANYONOS_REDIS_PORT)
                                 ├─ _start_llm_gateway ──▶ 127.0.0.1:8081 (agent only)
                                 │                         └─ canyonos_core.llm_gateway
-                                ├─ GET controller:<host>:<port>:replica_id
+                                ├─ CANYONOS_REPLICA_ID from the environment
                                 ├─ SET status = initializing
                                 ├─ _metrics_loop
                                 ├─ _load_agent
@@ -291,7 +291,7 @@ LocalController / LocalControllerServicer
              future:<future_id>:children, future:<future_id>:consumers,
              affinity:<request_id>, execute:<address>:<future_id>:accepted,
              request:completed, request:<request_id>:waiting
-  reads  ◀── controller:<host>:<port>:replica_id, controller:<host>:<port>:draining,
+  reads  ◀── controller:<host>:<port>:draining,
              routing_table:addresses, routing_table:stateful, policy:rules,
              governance:config, governance:spend, routing_table:replicas,
              request:<request_id>:context, request:<request_id>:futures,

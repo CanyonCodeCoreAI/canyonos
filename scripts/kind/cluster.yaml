@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Local Kubernetes cluster for CanyonOS development, created by scripts/kind/up.sh,
+# which replaces __CONFIG__ with the folder it copies pod-security.yaml to: outside the
+# repository, so the API server still finds it after a branch switch or a fresh clone.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: canyonos
+# The default CNI is off so Calico can be installed: kindnet ignores NetworkPolicy,
+# and CanyonOS relies on one to keep other pods away from the project Redis.
+networking:
+  disableDefaultCNI: true
+  podSubnet: 192.168.0.0/16
+# Lets each node read /etc/containerd/certs.d, where up.sh points localhost:5001
+# at the local registry container.
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
+nodes:
+  - role: control-plane
+    # Pod Security `restricted` for every namespace by default (pod-security.yaml).
+    extraMounts:
+      - hostPath: __CONFIG__
+        containerPath: /etc/kubernetes/canyonos
+        readOnly: true
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            - name: admission-control-config-file
+              value: /etc/kubernetes/canyonos/pod-security.yaml
+          extraVolumes:
+            - name: canyonos-admission
+              hostPath: /etc/kubernetes/canyonos
+              mountPath: /etc/kubernetes/canyonos
+              readOnly: true
+              pathType: Directory
+  - role: worker
