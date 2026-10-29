@@ -24,6 +24,7 @@ from canyonos.convert import (
 )
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
+from canyonos import kubernetes_target
 from canyonos.feedback import run_feedback
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
@@ -103,11 +104,33 @@ def _run_command():
 
     add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
 
-    deploy = add(
-        "deploy",
-        lambda args: sys.exit(
-            0 if run_deploy(serve=args.serve, verbose=args.verbose) is not None else 1
-        ),
+    def add_target(command):
+        command.add_argument(
+            "--target",
+            choices=("docker", "kubernetes"),
+            default="docker",
+            help="Where the project runs: Docker on this machine (default) or the "
+            "Kubernetes cluster kubectl points at",
+        )
+        return command
+
+    def on_kubernetes(args):
+        return args.target == "kubernetes"
+
+    deploy = add_target(
+        add(
+            "deploy",
+            lambda args: sys.exit(
+                0
+                if (
+                    kubernetes_target.run_kubernetes_deploy()
+                    if on_kubernetes(args)
+                    else run_deploy(serve=args.serve, verbose=args.verbose)
+                )
+                is not None
+                else 1
+            ),
+        )
     )
     deploy.add_argument(
         "--serve",
@@ -122,11 +145,32 @@ def _run_command():
         action="store_true",
         help="Stream the container's full build and deploy logs instead of a progress summary",
     )
-    clean = add(
-        "clean",
-        lambda args: sys.exit(
-            0 if run_clean(all_projects=args.all, yes=args.yes) else 1
-        ),
+
+    def this_machine_or_cluster(local, cluster):
+        """Run `local(args)`, or `cluster()` with --target kubernetes: the project in this
+        folder only, since --all means every project on this machine."""
+
+        def run(args):
+            if not on_kubernetes(args):
+                return local(args)
+            if args.all:
+                ui.fail(
+                    "--all covers the projects on this machine, not a cluster's; run "
+                    "the command with --target kubernetes from each project's folder"
+                )
+                return False
+            return cluster()
+
+        return lambda args: sys.exit(0 if run(args) else 1)
+
+    clean = add_target(
+        add(
+            "clean",
+            this_machine_or_cluster(
+                lambda args: run_clean(all_projects=args.all, yes=args.yes),
+                kubernetes_target.run_kubernetes_clean,
+            ),
+        )
     )
     clean.add_argument(
         "--all",
@@ -138,8 +182,14 @@ def _run_command():
     clean.add_argument(
         "-y", "--yes", action="store_true", help="Don't ask before --all"
     )
-    stop = add(
-        "stop", lambda args: sys.exit(0 if run_stop(all_projects=args.all) else 1)
+    stop = add_target(
+        add(
+            "stop",
+            this_machine_or_cluster(
+                lambda args: run_stop(all_projects=args.all),
+                kubernetes_target.run_kubernetes_stop,
+            ),
+        )
     )
     stop.add_argument(
         "--all",
@@ -149,11 +199,19 @@ def _run_command():
     )
     add("sync", lambda args: sys.exit(0 if run_sync_and_reload() else 1))
 
-    logs = add(
-        "logs",
-        lambda args: sys.exit(
-            0 if run_logs(follow=args.follow, tail=args.tail, agent=args.agent) else 1
-        ),
+    logs = add_target(
+        add(
+            "logs",
+            lambda args: sys.exit(
+                0
+                if (
+                    kubernetes_target.run_kubernetes_logs
+                    if on_kubernetes(args)
+                    else run_logs
+                )(follow=args.follow, tail=args.tail, agent=args.agent)
+                else 1
+            ),
+        )
     )
     logs.add_argument(
         "agent",
@@ -230,8 +288,30 @@ def _run_command():
         help="Install the CanyonOS skill and exit, without launching the coding agent",
     )
     add("doctor", lambda args: sys.exit(0 if run_doctor() else 1))
-    add("serve", lambda args: sys.exit(run_serve()))
-    status = add("status", lambda args: sys.exit(0 if run_status(args.json) else 1))
+    add_target(
+        add(
+            "serve",
+            lambda args: sys.exit(
+                kubernetes_target.run_kubernetes_serve()
+                if on_kubernetes(args)
+                else run_serve()
+            ),
+        )
+    )
+    status = add_target(
+        add(
+            "status",
+            lambda args: sys.exit(
+                0
+                if (
+                    kubernetes_target.run_kubernetes_status
+                    if on_kubernetes(args)
+                    else run_status
+                )(args.json)
+                else 1
+            ),
+        )
+    )
     status.add_argument(
         "--json",
         action="store_true",
