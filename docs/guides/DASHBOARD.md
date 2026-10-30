@@ -23,6 +23,16 @@ The dashboard API reads `AUTH_MODE`:
 
 The dashboard that `canyonos deploy` and `canyonos serve` start always runs with `none`; `canyonos` has no setting to change it.
 
+## Metric retention
+
+The API keeps raw five-second metric ticks for `METRICS_RAW_RETENTION_DAYS` (default 3) and five-minute rollups for `METRICS_ROLLUP_RETENTION_DAYS` (default 120). Ranges of 30 minutes or less read the raw ticks; longer ranges read the rollups. Set them in the shell before `canyonos deploy` or `canyonos serve`:
+
+```bash
+METRICS_RAW_RETENTION_DAYS=7 METRICS_ROLLUP_RETENTION_DAYS=365 canyonos serve
+```
+
+Both commands start the dashboard with `docker compose up`, which recreates the API container when a value differs from the one it runs with. A value set only in a later shell, without running either command, changes nothing.
+
 ## Finding your run
 
 Your deploy appears under **Projects**, named after your project folder. Open it and choose **Per-Query view** to see each request with its status, cost, and latency. The `request_id` you got from `curl` is that run's trace id, so you can match it there (hover a Query id to see it in full) or on the pages below.

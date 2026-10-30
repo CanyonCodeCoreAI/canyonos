@@ -356,7 +356,50 @@ export const otelMetrics = pgTable(
     value: doublePrecision('value').notNull(),
     data_point_attributes: jsonb('data_point_attributes').notNull().default({}),
   },
-  (table) => [index('idx_otel_metrics_name_time').on(table.metric_name, table.time_unix_nano)]
+  (table) => [
+    index('idx_otel_metrics_name_time').on(table.metric_name, table.time_unix_nano),
+    index('idx_otel_metrics_time').on(table.time_unix_nano),
+  ]
+);
+
+// One row per metric, series and five-minute UTC bucket, upserted on ingest in the same transaction
+// as the raw rows, so the bucket open right now is always complete and the two never diverge. A
+// series is its service and both attribute maps; `series_key` hashes them because a large attribute
+// map would overflow a btree entry, and jsonb text is key-sorted so the hash is stable.
+export const otelMetricRollups = pgTable(
+  'otel_metric_rollups',
+  {
+    id: bigint('id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+    metric_name: text('metric_name').notNull(),
+    metric_type: text('metric_type').$type<MetricType>().notNull(),
+    metric_unit: text('metric_unit'),
+    service_name: text('service_name'),
+    resource_attributes: jsonb('resource_attributes').notNull().default({}),
+    data_point_attributes: jsonb('data_point_attributes').notNull().default({}),
+    series_key: text('series_key').generatedAlwaysAs(
+      sql`md5(coalesce(service_name, '') || resource_attributes::text || data_point_attributes::text)`
+    ),
+    bucket_start_unix_nano: bigint('bucket_start_unix_nano', { mode: 'bigint' }).notNull(),
+    sum: doublePrecision('sum').notNull(),
+    count: integer('count').notNull(),
+    min: doublePrecision('min').notNull(),
+    max: doublePrecision('max').notNull(),
+    last_value: doublePrecision('last_value').notNull(),
+    last_time_unix_nano: bigint('last_time_unix_nano', { mode: 'bigint' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_otel_metric_rollups_series_bucket').on(
+      table.metric_name,
+      table.series_key,
+      table.bucket_start_unix_nano
+    ),
+    index('idx_otel_metric_rollups_bucket').on(table.bucket_start_unix_nano),
+    index('idx_otel_metric_rollups_project_name_bucket').on(
+      sql`(${table.resource_attributes} ->> 'canyonos.project.id')`,
+      table.metric_name,
+      table.bucket_start_unix_nano
+    ),
+  ]
 );
 
 // One row per OTLP log record. `trace_id`/`span_id` are the hex ids the producing future carried,

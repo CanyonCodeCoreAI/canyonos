@@ -66,6 +66,28 @@ const governance = {
   publishIntervalMs: parseInteger(env.GOVERNANCE_PUBLISH_INTERVAL_MS, 60_000),
 };
 
+/** A retention period in whole days; zero or less would delete every metric as it arrives. */
+function resolveRetentionDays(name: string, value: string | undefined, fallback: number): number {
+  if (value === undefined || value === '') return fallback;
+  if (!/^\d+$/.test(value) || Number(value) < 1) {
+    throw new Error(`${name} must be a whole number of days, at least 1, got ${value}`);
+  }
+  return Number(value);
+}
+
+const metrics = {
+  rawRetentionDays: resolveRetentionDays(
+    'METRICS_RAW_RETENTION_DAYS',
+    env.METRICS_RAW_RETENTION_DAYS,
+    3
+  ),
+  rollupRetentionDays: resolveRetentionDays(
+    'METRICS_ROLLUP_RETENTION_DAYS',
+    env.METRICS_ROLLUP_RETENTION_DAYS,
+    120
+  ),
+};
+
 const LOCAL_DATABASE_URL = 'postgres://canyonos:canyonos@localhost:5432/canyonos';
 
 export function resolveDatabaseUrl(value: string | undefined, environment: AppEnvironment): string {
@@ -82,6 +104,7 @@ export const config = {
   environment,
   canyonos,
   governance,
+  metrics,
   isDevelopment: environment === 'development',
   isProduction: environment === 'production',
   isDemo: environment === 'demo',

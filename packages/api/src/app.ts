@@ -15,6 +15,7 @@ import { start_registered_projects_sync } from '@api/modules/canyonos/canyonos.s
 import { start_governance_publisher } from '@api/modules/governance/governance.publisher';
 import { projectsRoutes } from '@api/modules/projects/projects.routes';
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
+import { start_metrics_retention } from '@api/modules/telemetry/telemetry.retention';
 import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
 import { config } from '@core/env';
 import { errorPlugin } from '@core/errors';
@@ -118,6 +119,7 @@ export const startApi = async ({ host, port }: { host: string; port: number }) =
   httpLogger.info('Starting API', { env: config.environment });
   await setupApi();
   start_governance_publisher();
+  start_metrics_retention();
   return forgeApi.listen({ hostname: host, port }, ({ port }) => {
     httpLogger.info('API listening', { host, port, env: config.environment });
   });

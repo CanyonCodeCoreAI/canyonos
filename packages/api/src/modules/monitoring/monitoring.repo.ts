@@ -7,7 +7,7 @@ import type { RedisClient } from 'bun';
 import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs, otelMetrics } from '@api/db/schema';
+import { otelLogs, otelMetricRollups, otelMetrics } from '@api/db/schema';
 import { timeGrid, withinRange } from '@core/time-range';
 import type { GridQuery, TimeRange } from '@core/time-range';
 
@@ -28,6 +28,7 @@ import {
   spanOutputTokens,
   spanStart,
 } from '../metrics/metrics.sql';
+import { bucket_start_of, ROLLUP_SECONDS } from '../telemetry/telemetry.rollup';
 import {
   AGENT_DRAINING_METRIC,
   AGENT_UP_METRIC,
@@ -104,11 +105,6 @@ const REPLICA_ID = `nullif(m.resource_attributes ->> 'service.instance.id', '')`
 const latest_of = (metric: string): SQL =>
   sql`max(l.value) filter (where l.metric_name = ${metric})`;
 
-const METRIC_NAME_LIST = sql`(${sql.join(
-  Object.values(MACHINE_UTILIZATION_METRICS).map((metric) => sql`${metric}`),
-  sql`, `
-)})`;
-
 const RESOURCE_ORDER_SQL = `case resource
   when 'cpu' then 1 when 'memory' then 2 when 'disk' then 3 when 'gpu' then 4 else 5 end`;
 
@@ -121,6 +117,56 @@ ${Object.entries(MACHINE_UTILIZATION_METRICS)
 
 const metricTime = (alias: string): string => `to_timestamp(${alias}.time_unix_nano / 1e9)`;
 
+const unix_nanos = (at: string): bigint => BigInt(Date.parse(at)) * 1_000_000n;
+
+type Grid = ReturnType<typeof timeGrid>;
+
+/**
+ * The project's readings of `metric_names` in the range as weighted samples
+ * (`key, resource, sum, count, max, last_value, last_time, bucket`), so one aggregate serves raw
+ * ticks and rollups alike. Every grid step of five minutes or more holds whole five-minute buckets,
+ * so those grids read the rollups, which outlive the raw ticks; finer grids need the raw ticks.
+ */
+const metric_samples = (
+  project_id: string,
+  query: GridQuery,
+  grid: Grid,
+  metric_names: readonly string[]
+): SQL => {
+  const identity = sql`
+    coalesce(nullif(m.resource_attributes ->> 'host.name', ''), m.service_name, ${UNKNOWN_HOST})
+      as key,
+    ${sql.raw(resource_case('m'))} as resource`;
+  // The key is inlined so the rollups' expression index matches even under a generic plan.
+  const scope = sql`m.metric_name in (${sql.join(
+    metric_names.map((metric) => sql`${metric}`),
+    sql`, `
+  )})
+    and (m.resource_attributes ->> '${sql.raw(RESOURCE_PROJECT_ATTRIBUTE)}') = ${project_id}`;
+  if (grid.bucket_seconds < ROLLUP_SECONDS) {
+    return sql`
+      select ${identity},
+        m.value as sum, 1 as count, m.value as max, m.value as last_value,
+        m.time_unix_nano as last_time,
+        ${grid.index(metricTime('m'))} as bucket
+      from ${otelMetrics} m
+      where ${scope}
+        and ${withinRange('m.time_unix_nano', query)}`;
+  }
+  // The bucket holding `from` counts whole: the first grid bucket already opens before `from`.
+  return sql`
+    select ${identity},
+      m.sum, m.count, m.max, m.last_value,
+      m.last_time_unix_nano as last_time,
+      ${grid.index('to_timestamp(m.bucket_start_unix_nano / 1e9)')} as bucket
+    from ${otelMetricRollups} m
+    where ${scope}
+      and m.bucket_start_unix_nano >= ${bucket_start_of(unix_nanos(query.from))}
+      and m.bucket_start_unix_nano < ${unix_nanos(query.to)}`;
+};
+
+const weighted_average = 'sum(sum) / sum(count)';
+
 // The stats read the same per-bucket value the chart draws, over the buckets that have one.
 const value_series = (value: string): string => `json_build_object(
   'values', json_agg(${value} order by sl.b),
@@ -130,7 +176,7 @@ const value_series = (value: string): string => `json_build_object(
   'samples', count(${value})::int
 )`;
 
-const series_sql = (project_id: string, query: GridQuery): SQL => {
+export const series_sql = (project_id: string, query: GridQuery): SQL => {
   const grid = timeGrid(query);
 
   return sql`
@@ -156,15 +202,10 @@ const series_sql = (project_id: string, query: GridQuery): SQL => {
       from traces t
       group by 1
     ),
+    metric_samples as (${metric_samples(project_id, query, grid, [SATURATION_METRIC])}),
     metrics_bucket as (
-      select
-        ${grid.index(metricTime('m'))} as bucket,
-        avg(m.value)::float8 as saturation
-      from ${otelMetrics} m
-      where m.metric_name = ${SATURATION_METRIC}
-        and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
-        and ${withinRange('m.time_unix_nano', query)}
-      group by 1
+      select bucket, (${sql.raw(weighted_average)})::float8 as saturation
+      from metric_samples group by bucket
     )
     select
       ${grid.bucket_seconds}::float8 as bucket_seconds,
@@ -208,14 +249,14 @@ const entity_rollup = (prefix: 'machine' | 'agent'): SQL =>
     select
       key,
       resource,
-      avg(value)::float8 as average,
-      max(value)::float8 as peak,
-      (array_agg(value order by at_nanos desc))[1]::float8 as latest,
-      count(*)::int as samples
+      (${weighted_average})::float8 as average,
+      max(max)::float8 as peak,
+      (array_agg(last_value order by last_time desc))[1]::float8 as latest,
+      sum(count)::int as samples
     from ${prefix}_samples group by key, resource
   ),
   ${prefix}_bucket as (
-    select key, resource, bucket, avg(value)::float8 as value
+    select key, resource, bucket, (${weighted_average})::float8 as value
     from ${prefix}_samples group by key, resource, bucket
   ),
   ${prefix}_series as (
@@ -242,6 +283,70 @@ const entity_rollup = (prefix: 'machine' | 'agent'): SQL =>
       max(average) filter (where resource = 'cpu') as cpu_average
     from ${prefix}_series group by key
   )`);
+
+export const resource_utilization_sql = (project_id: string, range: GridQuery): SQL => {
+  const grid = timeGrid(range);
+  return sql`
+    with scoped as (${projectRequestSpans(project_id, range)}),
+    slots as (${grid.slots}),
+    machine_samples as (${metric_samples(
+      project_id,
+      range,
+      grid,
+      Object.values(MACHINE_UTILIZATION_METRICS)
+    )}),
+    agent_samples as (
+      select
+        coalesce(nullif(${sql.raw(spanAgentName('s'))}, ''), ${UNKNOWN_AGENT}) as key,
+        'cpu' as resource,
+        c.cpu as sum, 1 as count, c.cpu as max, c.cpu as last_value,
+        s.start_time_unix_nano as last_time,
+        ${grid.index(requestStart('s'))} as bucket
+      from scoped s
+      cross join lateral (select ${sql.raw(spanCpuPercent('s'))} as cpu) c
+      where c.cpu is not null
+    ),
+    ${entity_rollup('machine')},
+    ${entity_rollup('agent')}
+    select
+      ${grid.bucket_seconds}::float8 as bucket_seconds,
+      (select json_agg(sl.bucket_start order by sl.b) from slots sl) as bucket_start_ats,
+      (select coalesce(
+          json_agg(json_build_object('key', m.key, 'series', m.series)
+            order by m.cpu_average desc nulls last, m.key), '[]'::json)
+        from machine_rows m) as machines,
+      (select coalesce(
+          json_agg(json_build_object('key', a.key, 'series', a.series)
+            order by a.cpu_average desc nulls last, a.key), '[]'::json)
+        from agent_rows a) as agents
+  `;
+};
+
+export const replicas_sql = (project_id: string): SQL => sql`
+  select l.agent, l.replica,
+    ${latest_of(QUEUE_LENGTH_METRIC)}::int as queue_length,
+    (${latest_of(REQUESTS_STARTED_METRIC)} - ${latest_of(REQUESTS_COMPLETED_METRIC)})::int
+      as active_requests,
+    coalesce(${latest_of(AGENT_DRAINING_METRIC)}, 0) = 1 as draining
+  from (
+    select distinct on (replica, m.metric_name)
+      m.service_name as agent,
+      ${sql.raw(REPLICA_ID)} as replica,
+      m.metric_name,
+      m.value
+    from ${otelMetrics} m
+    where m.metric_name in (${AGENT_UP_METRIC}, ${QUEUE_LENGTH_METRIC},
+        ${REQUESTS_STARTED_METRIC}, ${REQUESTS_COMPLETED_METRIC}, ${AGENT_DRAINING_METRIC})
+      and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
+      and ${sql.raw(REPLICA_ID)} is not null
+      and m.time_unix_nano >= (extract(epoch from now()) * 1e9)::bigint
+        - ${REPLICA_UP_SECONDS}::bigint * 1000000000
+    order by replica, m.metric_name, m.time_unix_nano desc
+  ) l
+  group by l.agent, l.replica
+  having ${latest_of(AGENT_UP_METRIC)} = 1
+  order by l.agent, l.replica
+`;
 
 export const monitoring_repo = {
   async series(project_id: string, query: GridQuery): Promise<SeriesRow> {
@@ -381,75 +486,12 @@ export const monitoring_repo = {
     project_id: string,
     range: GridQuery
   ): Promise<ResourceUtilizationRow> {
-    const grid = timeGrid(range);
-    const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, range)}),
-      slots as (${grid.slots}),
-      machine_samples as (
-        select
-          coalesce(nullif(m.resource_attributes ->> 'host.name', ''), m.service_name, ${UNKNOWN_HOST})
-            as key,
-          ${sql.raw(resource_case('m'))} as resource,
-          m.value,
-          m.time_unix_nano as at_nanos,
-          ${grid.index(metricTime('m'))} as bucket
-        from ${otelMetrics} m
-        where m.metric_name in ${METRIC_NAME_LIST}
-          and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
-          and ${withinRange('m.time_unix_nano', range)}
-      ),
-      agent_samples as (
-        select
-          coalesce(nullif(${sql.raw(spanAgentName('s'))}, ''), ${UNKNOWN_AGENT}) as key,
-          'cpu' as resource,
-          ${sql.raw(spanCpuPercent('s'))} as value,
-          s.start_time_unix_nano as at_nanos,
-          ${grid.index(requestStart('s'))} as bucket
-        from scoped s
-        where ${sql.raw(spanCpuPercent('s'))} is not null
-      ),
-      ${entity_rollup('machine')},
-      ${entity_rollup('agent')}
-      select
-        ${grid.bucket_seconds}::float8 as bucket_seconds,
-        (select json_agg(sl.bucket_start order by sl.b) from slots sl) as bucket_start_ats,
-        (select coalesce(
-            json_agg(json_build_object('key', m.key, 'series', m.series)
-              order by m.cpu_average desc nulls last, m.key), '[]'::json)
-          from machine_rows m) as machines,
-        (select coalesce(
-            json_agg(json_build_object('key', a.key, 'series', a.series)
-              order by a.cpu_average desc nulls last, a.key), '[]'::json)
-          from agent_rows a) as agents
-    `);
+    const rows = await db.execute(resource_utilization_sql(project_id, range));
     return (rows as unknown as [ResourceUtilizationRow])[0];
   },
 
   async replicas(project_id: string): Promise<MonitoringReplica[]> {
-    const rows = await db.execute(sql`
-      select l.agent, l.replica,
-        ${latest_of(QUEUE_LENGTH_METRIC)}::int as queue_length,
-        (${latest_of(REQUESTS_STARTED_METRIC)} - ${latest_of(REQUESTS_COMPLETED_METRIC)})::int
-          as active_requests,
-        coalesce(${latest_of(AGENT_DRAINING_METRIC)}, 0) = 1 as draining
-      from (
-        select distinct on (replica, m.metric_name)
-          m.service_name as agent,
-          ${sql.raw(REPLICA_ID)} as replica,
-          m.metric_name,
-          m.value
-        from ${otelMetrics} m
-        where m.metric_name in (${AGENT_UP_METRIC}, ${QUEUE_LENGTH_METRIC},
-            ${REQUESTS_STARTED_METRIC}, ${REQUESTS_COMPLETED_METRIC}, ${AGENT_DRAINING_METRIC})
-          and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
-          and ${sql.raw(REPLICA_ID)} is not null
-          and ${sql.raw(metricTime('m'))} >= now() - make_interval(secs => ${REPLICA_UP_SECONDS})
-        order by replica, m.metric_name, m.time_unix_nano desc
-      ) l
-      group by l.agent, l.replica
-      having ${latest_of(AGENT_UP_METRIC)} = 1
-      order by l.agent, l.replica
-    `);
+    const rows = await db.execute(replicas_sql(project_id));
     return rows as unknown as MonitoringReplica[];
   },
 

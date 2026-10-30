@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, test } from 'bun:test';
-import { eq, like } from 'drizzle-orm';
+import { eq, like, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelSpans } from '@api/db/schema';
+import { otelMetricRollups, otelSpans } from '@api/db/schema';
+import { seedMonitoringDemo } from '@api/db/seed-monitoring-demo';
 import { seedDevTelemetry } from '@api/db/seed-telemetry';
+import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
@@ -20,6 +22,19 @@ const range = () => {
     to: to.toISOString(),
   };
 };
+
+async function rollup_totals(project_id: string) {
+  const [totals] = await db
+    .select({
+      rows: sql<number>`count(*)::int`,
+      readings: sql<number>`coalesce(sum(${otelMetricRollups.count}), 0)::int`,
+    })
+    .from(otelMetricRollups)
+    .where(
+      sql`${otelMetricRollups.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+    );
+  return totals!;
+}
 
 describe('otel dev seed', () => {
   test('the seeded project reports its spans through the KPI endpoint', async () => {
@@ -257,4 +272,28 @@ describe('otel dev seed', () => {
     expect(seeded!.error_rate_pct).toBeGreaterThan(0);
     expect(seeded!.avg_latency_ms).toBeGreaterThan(0);
   });
+
+  // Two day-long demo seeds can outlast the default five-second timeout on a loaded machine.
+  test('the monitoring demo seed fills the rollups the dashboard reads, and a rerun replaces them', async () => {
+    const token = await authenticate('otel-seed-monitoring-demo@canyonos.test');
+    const { project_id } = await create_test_project(token, { name: 'Monitoring Demo' });
+    await seedMonitoringDemo(project_id);
+
+    const to = new Date();
+    const resources = await api.projects[project_id]!.monitoring.resources.get({
+      $headers: bearer(token),
+      $query: {
+        from: new Date(to.getTime() - 86_400_000).toISOString(),
+        to: to.toISOString(),
+      },
+    });
+    expect(resources.error).toBeNull();
+    expect(resources.data!.machines.length).toBeGreaterThan(0);
+
+    const first = await rollup_totals(project_id);
+    expect(first.rows).toBeGreaterThan(0);
+
+    await seedMonitoringDemo(project_id);
+    expect(await rollup_totals(project_id)).toEqual(first);
+  }, 30_000);
 });

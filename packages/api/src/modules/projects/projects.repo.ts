@@ -7,6 +7,7 @@ import { db } from '@api/db/client';
 import {
   files,
   otelLogs,
+  otelMetricRollups,
   otelMetrics,
   otelSpans,
   projects,
@@ -80,6 +81,11 @@ export const projects_repo = {
         .delete(otelMetrics)
         .where(
           sql`${otelMetrics.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+        );
+      await tx
+        .delete(otelMetricRollups)
+        .where(
+          sql`${otelMetricRollups.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
         );
       await tx.delete(projects).where(eq(projects.id, project_id));
     });

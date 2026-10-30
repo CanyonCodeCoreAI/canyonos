@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { otelLogs, otelMetrics, otelSpans } from '@api/db/schema';
@@ -11,6 +13,11 @@ import {
   RUNTIME_ATTRIBUTES,
   STATUS_CODE,
 } from '@api/modules/metrics/metrics.contract';
+import {
+  replicas_sql,
+  resource_utilization_sql,
+  series_sql,
+} from '@api/modules/monitoring/monitoring.repo';
 import {
   AGENT_DRAINING_METRIC,
   AGENT_UP_METRIC,
@@ -22,12 +29,18 @@ import {
   RESOURCE_PROJECT_ATTRIBUTE,
   SATURATION_METRIC,
 } from '@api/modules/monitoring/monitoring.signals';
+import { ROLLUP_SECONDS } from '@api/modules/telemetry/telemetry.rollup';
 import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitoring/monitoring.types';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
 import { reset_controller, seed_endpoint, seed_running_project } from './redis-test.utils';
-import { write_project_span } from './telemetry-test.utils';
+import {
+  encode_metrics_export,
+  metrics_export,
+  post_otlp,
+  write_project_span,
+} from './telemetry-test.utils';
 
 setupE2ETests();
 
@@ -46,6 +59,10 @@ const range_days = (days: number) => ({
 
 const ONE_DAY_RANGE = range_days(1);
 const SEVEN_DAY_RANGE = range_days(7);
+
+// An hour-aligned base for fixtures that need an absolute, bucket-aligned time: recent enough that
+// the retention prune the API runs at startup never reaches it.
+const ALIGNED_BASE_MS = Math.floor(BASE_MS / HOUR_MS) * HOUR_MS - 12 * HOUR_MS;
 
 const nanos_ago = (ms_ago: number): bigint => BigInt(BASE_MS - Math.round(ms_ago)) * NANOS_PER_MS;
 
@@ -89,6 +106,8 @@ async function write_span(project_id: string, span: SpanFixture): Promise<void> 
   });
 }
 
+const METRIC_SCOPE = 'canyonos.test.monitoring';
+
 interface MetricFixture {
   readonly metric_name: string;
   readonly ms_ago: number;
@@ -97,17 +116,43 @@ interface MetricFixture {
   readonly service_name?: string;
 }
 
-async function write_metric(project_id: string, metric: MetricFixture): Promise<void> {
-  await db.insert(otelMetrics).values({
-    service_name: metric.service_name ?? 'canyonos-node',
-    resource_attributes: {
-      [RESOURCE_PROJECT_ATTRIBUTE]: project_id,
-      ...(metric.host === undefined ? {} : { 'host.name': metric.host }),
+interface GaugeReading {
+  readonly project_id: string;
+  readonly metric_name: string;
+  readonly time_unix_nano: bigint;
+  readonly value: number;
+  readonly service_name: string;
+  readonly host?: string;
+}
+
+// Through the ingest endpoint, so a reading lands in the raw rows and the five-minute rollups alike.
+async function ingest_gauge(reading: GaugeReading): Promise<void> {
+  const gauge = {
+    name: reading.metric_name,
+    gauge: {
+      dataPoints: [{ timeUnixNano: String(reading.time_unix_nano), asDouble: reading.value }],
     },
+  };
+  const response = await post_otlp(
+    '/v1/metrics',
+    encode_metrics_export(
+      metrics_export(reading.service_name, METRIC_SCOPE, [gauge], {
+        [RESOURCE_PROJECT_ATTRIBUTE]: reading.project_id,
+        ...(reading.host === undefined ? {} : { 'host.name': reading.host }),
+      })
+    )
+  );
+  expect(response.status).toBe(200);
+}
+
+async function write_metric(project_id: string, metric: MetricFixture): Promise<void> {
+  await ingest_gauge({
+    project_id,
     metric_name: metric.metric_name,
-    metric_type: 'gauge',
     time_unix_nano: nanos_ago(metric.ms_ago),
     value: metric.value,
+    service_name: metric.service_name ?? 'canyonos-node',
+    host: metric.host,
   });
 }
 
@@ -169,6 +214,44 @@ async function create_project(
 ): Promise<{ project_id: string }> {
   return create_test_project(token, { name });
 }
+
+interface PlanNode {
+  readonly 'Relation Name'?: string;
+  readonly 'Index Name'?: string;
+  readonly 'Index Cond'?: string;
+  readonly Plans?: readonly PlanNode[];
+}
+
+const plan_nodes = (node: PlanNode): PlanNode[] => [
+  node,
+  ...(node.Plans ?? []).flatMap(plan_nodes),
+];
+
+// On a test-sized table the planner seq-scans whatever the predicate, so forbid it: a plan
+// that still seq-scans has no usable index for the statement.
+async function explain_without_seqscan(statement: SQL): Promise<PlanNode> {
+  const rows = await db.transaction(async (tx) => {
+    await tx.execute(sql`set local enable_seqscan = off`);
+    return tx.execute(sql`explain (format json) ${statement}`);
+  });
+  return (rows as unknown as { 'QUERY PLAN': [{ Plan: PlanNode }] }[])[0]!['QUERY PLAN'][0].Plan;
+}
+
+/**
+ * Each scan of `table` with the index it goes through and the condition that bounds it. A bitmap
+ * scan keeps both on its child index scans, so they are read from the scan's subtree; a scan that
+ * uses no index has neither.
+ */
+const table_scans = (plan: PlanNode, table: string) =>
+  plan_nodes(plan)
+    .filter((node) => node['Relation Name'] === table)
+    .map((scan) => {
+      const index_scans = plan_nodes(scan).filter((node) => node['Index Name'] !== undefined);
+      return {
+        index: index_scans.map((node) => node['Index Name']).join(' & ') || null,
+        cond: index_scans.map((node) => node['Index Cond'] ?? '').join(' AND ') || null,
+      };
+    });
 
 const SECONDS_PER_HOUR = 3600;
 
@@ -1418,6 +1501,238 @@ describe('GET /projects/:project_id/monitoring/replicas', () => {
   });
 });
 
+// Which index of a table wins depends on its statistics, which other tests' rows shift, so these
+// pin only that the scan goes through an index bounded by the time range.
+describe('monitoring metric reads use their indexes', () => {
+  test('replicas reads otel_metrics through its index', async () => {
+    const { project_id } = await create_project(token, 'Indexed Replicas');
+    await write_replica_samples(project_id, [
+      sample('Planner', 'planner-0', AGENT_UP_METRIC, 1, 1_000),
+    ]);
+
+    const plan = await explain_without_seqscan(replicas_sql(project_id));
+
+    expect(table_scans(plan, 'otel_metrics')).toEqual([
+      { index: expect.any(String), cond: expect.stringContaining('(time_unix_nano >=') },
+    ]);
+  });
+
+  test('series and resources read rollups through their index', async () => {
+    const { project_id } = await create_project(token, 'Indexed Rollups');
+
+    for (const statement of [
+      series_sql(project_id, ONE_DAY_RANGE),
+      resource_utilization_sql(project_id, ONE_DAY_RANGE),
+    ]) {
+      const plan = await explain_without_seqscan(statement);
+
+      expect(table_scans(plan, 'otel_metrics')).toEqual([]);
+      expect(table_scans(plan, 'otel_metric_rollups')).toEqual([
+        {
+          index: expect.any(String),
+          cond: expect.stringContaining('(bucket_start_unix_nano >='),
+        },
+      ]);
+    }
+  });
+
+  test('series and resources on a one-minute grid read raw ticks through their index', async () => {
+    const { project_id } = await create_project(token, 'Indexed Raw Reads');
+    const range = {
+      from: new Date(RANGE_END_MS - 15 * 60_000).toISOString(),
+      to: new Date(RANGE_END_MS).toISOString(),
+    };
+
+    for (const statement of [
+      series_sql(project_id, range),
+      resource_utilization_sql(project_id, range),
+    ]) {
+      const plan = await explain_without_seqscan(statement);
+
+      expect(table_scans(plan, 'otel_metric_rollups')).toEqual([]);
+      expect(table_scans(plan, 'otel_metrics')).toEqual([
+        { index: expect.any(String), cond: expect.stringContaining('(time_unix_nano >=') },
+      ]);
+    }
+  });
+});
+
+describe('metric reads after raw retention', () => {
+  const host = 'box-r';
+  const rollup_ms = ROLLUP_SECONDS * 1000;
+  const six_hours_ms = 6 * HOUR_MS;
+  // Two days back, past the one day of raw ticks kept here, in one bucket of the 7-day grid: two
+  // readings in one five-minute bucket and one in the next, so the rollup rows weigh differently
+  // and the peak is not the latest reading.
+  const bucket_ms = Math.floor((BASE_MS - 2 * DAY_MS) / six_hours_ms) * six_hours_ms + HOUR_MS;
+  const readings: readonly [ms_ago: number, value: number][] = [
+    [BASE_MS - (bucket_ms + 60_000), 60],
+    [BASE_MS - (bucket_ms + 120_000), 40],
+    [BASE_MS - (bucket_ms + rollup_ms + 60_000), 10],
+  ];
+  const first_ms_ago = readings[0]![0];
+  const weighted_average = (60 + 40 + 10) / 3;
+
+  let project_id: string;
+
+  beforeAll(async () => {
+    ({ project_id } = await create_project(token, 'Retained Monitoring'));
+    for (const [ms_ago, value] of readings)
+      await write_metric(project_id, { metric_name: SATURATION_METRIC, ms_ago, value, host });
+
+    // What the retention prune does, scoped to this project: the shared database has other tests' ticks.
+    const deleted = await db.execute(sql`
+      delete from ${otelMetrics}
+      where (resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
+        and time_unix_nano < ${nanos_ago(DAY_MS)}
+    `);
+    expect(deleted.count).toBe(readings.length);
+  });
+
+  test('series and resources on a 7-day range still show the readings', async () => {
+    const series = await api.projects[project_id]!.monitoring.series.get({
+      $headers: bearer(token),
+      $query: SEVEN_DAY_RANGE,
+    });
+    expect(series.error).toBeNull();
+    const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
+    expect(saturation.values).toEqual(
+      grid_values(series.data!, null, [[first_ms_ago, weighted_average]])
+    );
+
+    const resources = await api.projects[project_id]!.monitoring.resources.get({
+      $headers: bearer(token),
+      $query: SEVEN_DAY_RANGE,
+    });
+    expect(resources.error).toBeNull();
+    expect(resources.data!.machines).toEqual([
+      {
+        key: host,
+        series: [
+          {
+            resource: 'cpu',
+            values: grid_values(resources.data!, null, [[first_ms_ago, weighted_average]]),
+            average: weighted_average,
+            peak: 60,
+            latest: 10,
+            samples: 3,
+          },
+        ],
+      },
+    ]);
+  });
+
+  test('a 15-minute range over that period is empty', async () => {
+    const range = {
+      from: new Date(bucket_ms).toISOString(),
+      to: new Date(bucket_ms + 15 * 60_000).toISOString(),
+    };
+
+    const series = await api.projects[project_id]!.monitoring.series.get({
+      $headers: bearer(token),
+      $query: range,
+    });
+    expect(series.error).toBeNull();
+    expect(series.data!.bucket_seconds).toBe(60);
+    const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
+    expect(saturation.values).toEqual(Array.from({ length: 15 }, () => null));
+
+    const resources = await api.projects[project_id]!.monitoring.resources.get({
+      $headers: bearer(token),
+      $query: range,
+    });
+    expect(resources.error).toBeNull();
+    expect(resources.data!.machines).toEqual([]);
+  });
+});
+
+test('an unaligned from counts the five-minute bucket that contains it', async () => {
+  const { project_id } = await create_project(token, 'Unaligned Monitoring');
+  const base_ms = ALIGNED_BASE_MS;
+  const from_ms = base_ms + 150_000;
+  const range = {
+    from: new Date(from_ms).toISOString(),
+    to: new Date(from_ms + 6 * HOUR_MS).toISOString(),
+  };
+  for (const [minute, value] of [
+    [1, 20],
+    [3, 40],
+  ] as const) {
+    await ingest_gauge({
+      project_id,
+      metric_name: SATURATION_METRIC,
+      time_unix_nano: BigInt(base_ms + minute * 60_000) * NANOS_PER_MS,
+      value,
+      service_name: 'host',
+      host: 'box-u',
+    });
+  }
+
+  const series = await api.projects[project_id]!.monitoring.series.get({
+    $headers: bearer(token),
+    $query: range,
+  });
+  expect(series.error).toBeNull();
+  expect(series.data!.bucket_seconds).toBe(15 * 60);
+  expect(Date.parse(series.data!.bucket_start_ats[0]!)).toBe(base_ms);
+  const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
+  expect(saturation.values[0]).toBe(30);
+
+  const resources = await api.projects[project_id]!.monitoring.resources.get({
+    $headers: bearer(token),
+    $query: range,
+  });
+  expect(resources.error).toBeNull();
+  const cpu = resources.data!.machines[0]!.series[0]!;
+  expect(cpu).toMatchObject({ resource: 'cpu', average: 30, samples: 2 });
+  expect(cpu.values[0]).toBe(30);
+});
+
+// The grid's last bucket opens six hours after the base and `to` falls inside the rollup bucket
+// that opens five minutes later, so a reading after `to` in that rollup bucket shares the last
+// grid bucket with one before it.
+test('an unaligned to counts the five-minute bucket that contains it', async () => {
+  const { project_id } = await create_project(token, 'Unaligned To Monitoring');
+  const base_ms = ALIGNED_BASE_MS;
+  const to_ms = base_ms + 6 * HOUR_MS + 450_000;
+  const range = {
+    from: new Date(to_ms - 6 * HOUR_MS).toISOString(),
+    to: new Date(to_ms).toISOString(),
+  };
+  for (const [minute, value] of [
+    [363, 20],
+    [368, 80],
+  ] as const) {
+    await ingest_gauge({
+      project_id,
+      metric_name: SATURATION_METRIC,
+      time_unix_nano: BigInt(base_ms + minute * 60_000) * NANOS_PER_MS,
+      value,
+      service_name: 'host',
+      host: 'box-t',
+    });
+  }
+
+  const series = await api.projects[project_id]!.monitoring.series.get({
+    $headers: bearer(token),
+    $query: range,
+  });
+  expect(series.error).toBeNull();
+  expect(series.data!.bucket_seconds).toBe(15 * 60);
+  expect(Date.parse(series.data!.bucket_start_ats.at(-1)!)).toBe(base_ms + 6 * HOUR_MS);
+  const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
+  expect(saturation.values.at(-1)).toBe(50);
+
+  const resources = await api.projects[project_id]!.monitoring.resources.get({
+    $headers: bearer(token),
+    $query: range,
+  });
+  expect(resources.error).toBeNull();
+  const cpu = resources.data!.machines[0]!.series[0]!;
+  expect(cpu).toMatchObject({ resource: 'cpu', average: 50, samples: 2 });
+  expect(cpu.values.at(-1)).toBe(50);
+});
+
 describe('GET /projects/:project_id/monitoring/endpoint', () => {
   beforeEach(reset_controller);
 
@@ -1531,7 +1846,7 @@ describe('monitoring access', () => {
 });
 
 describe('monitoring endpoints read exactly [from, to)', () => {
-  const start_ms = Date.parse('2026-01-01T00:00:00.000Z');
+  const start_ms = ALIGNED_BASE_MS;
   const minute_ms = 60_000;
   const range = {
     from: new Date(start_ms).toISOString(),
@@ -1558,13 +1873,13 @@ describe('monitoring endpoints read exactly [from, to)', () => {
   }
 
   async function write_range_cpu(minutes: number, value: number) {
-    await db.insert(otelMetrics).values({
-      service_name: 'host',
-      resource_attributes: { [RESOURCE_PROJECT_ATTRIBUTE]: project_id, 'host.name': 'box-1' },
+    await ingest_gauge({
+      project_id,
       metric_name: SATURATION_METRIC,
-      metric_type: 'gauge',
       time_unix_nano: nanos(minutes),
       value,
+      service_name: 'host',
+      host: 'box-1',
     });
   }
 

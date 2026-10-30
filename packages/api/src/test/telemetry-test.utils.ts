@@ -144,11 +144,17 @@ export const attribute = (key: string, value: string | number | boolean): OtlpEx
 export const metrics_export = (
   service_name: string,
   scope_name: string,
-  metrics: readonly OtlpExportFixture[]
+  metrics: readonly OtlpExportFixture[],
+  resource_attributes: Record<string, string | number | boolean> = {}
 ): OtlpExportFixture => ({
   resourceMetrics: [
     {
-      resource: { attributes: [attribute(SERVICE_NAME_ATTRIBUTE, service_name)] },
+      resource: {
+        attributes: [
+          attribute(SERVICE_NAME_ATTRIBUTE, service_name),
+          ...Object.entries(resource_attributes).map(([key, value]) => attribute(key, value)),
+        ],
+      },
       scopeMetrics: [{ scope: { name: scope_name }, metrics }],
     },
   ],

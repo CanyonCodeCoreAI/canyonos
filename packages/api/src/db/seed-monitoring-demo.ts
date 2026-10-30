@@ -5,8 +5,10 @@ import { sql } from 'drizzle-orm';
 
 import { PROJECT_ID_ATTRIBUTE, STATUS_CODE } from '../modules/metrics/metrics.contract';
 import { RESOURCE_PROJECT_ATTRIBUTE } from '../modules/monitoring/monitoring.signals';
+import { append_metrics } from '../modules/telemetry/telemetry.repo';
 import { closeDb, db } from './client';
-import { otelLogs, otelMetrics, otelSpans, projects } from './schema';
+import { otelLogs, otelSpans, projects } from './schema';
+import type { MetricRow } from '../modules/telemetry/telemetry.repo';
 
 const HOURS = 24;
 const SECOND_NANOS = 1_000_000_000n;
@@ -91,7 +93,7 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
 
   const span_rows: (typeof otelSpans.$inferInsert)[] = [];
   const log_rows: (typeof otelLogs.$inferInsert)[] = [];
-  const metric_rows: (typeof otelMetrics.$inferInsert)[] = [];
+  const metric_rows: MetricRow[] = [];
 
   for (let hour = 0; hour < HOURS; hour += 1) {
     const hour_start = now - BigInt(HOURS - hour) * HOUR_NANOS;
@@ -233,9 +235,13 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
     await tx.execute(
       sql`delete from otel_metrics where resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
     );
+    await tx.execute(
+      sql`delete from otel_metric_rollups where resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+    );
     await tx.insert(otelSpans).values(span_rows);
     await tx.insert(otelLogs).values(log_rows);
-    await tx.insert(otelMetrics).values(metric_rows);
+    // The ingest path's append, so the five-minute rollups the 1h and 24h views read exist too.
+    await append_metrics(tx, metric_rows);
   });
 
   console.log(

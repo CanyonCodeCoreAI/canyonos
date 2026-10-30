@@ -207,12 +207,13 @@ endpoint used as configured              endpoint.rstrip("/") + signal path
                      configured OTLP receiver(s)
                                   │
                                   ▼
-┌──────────────────────────── dashboard API: telemetryRoutes ───────────────────────────┐
-│ POST /v1/traces  ──▶ ingest_trace_export  ──▶ otel_spans ──▶ requests_repo, metrics_repo │
-│ POST /v1/metrics ──▶ ingest_metric_export ──▶ otel_metrics                          │
-│ POST /v1/logs    ──▶ ingest_logs_export    ──▶ otel_logs                             │
-│ map_span: project_id ──▶ canyon.project.id                                           │
-└──────────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────── dashboard API: telemetryRoutes ─────────────────────────────┐
+│ POST /v1/traces  ──▶ ingest_trace_export  ──▶ otel_spans ──▶ requests.repo, metrics.repo │
+│ POST /v1/metrics ──▶ ingest_metric_export ──▶ otel_metrics + otel_metric_rollups         │
+│                                               (one transaction) ──▶ monitoring.repo      │
+│ POST /v1/logs    ──▶ ingest_logs_export    ──▶ otel_logs ──▶ monitoring.repo             │
+│ map_span: project_id ──▶ canyon.project.id                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Failure and retry
@@ -250,3 +251,10 @@ _delete_expired_rows (sent or unsent)
   └─ logs_waiting: observed_at older than LOG_RETENTION_SECONDS = 1800
        finished_at IS NULL ──▶ never deleted as an in-flight trace
 ```
+
+That queue retention is on the replica only. The dashboard API prunes its own tables on its own
+schedule: once an hour it deletes raw ticks from `otel_metrics` whose sample time is older than
+`METRICS_RAW_RETENTION_DAYS` (default 3) and rollups from `otel_metric_rollups` whose bucket start
+is older than `METRICS_ROLLUP_RETENTION_DAYS` (default 120). The two retentions do not depend on
+each other: the exporter queue only has to hold a row until it is delivered, while the dashboard
+keeps what it received for as long as the monitoring screens need it.

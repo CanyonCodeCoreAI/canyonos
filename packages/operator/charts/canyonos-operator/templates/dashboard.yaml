@@ -178,6 +178,8 @@ spec:
             - {name: AUTH_MODE, value: password}
             - {name: LOG_LEVEL, value: info}
             - {name: CANYONOS_PROJECTS_FILE, value: /etc/canyonos/projects/projects.json}
+            - {name: METRICS_RAW_RETENTION_DAYS, value: {{ .Values.dashboard.metricsRawRetentionDays | quote }}}
+            - {name: METRICS_ROLLUP_RETENTION_DAYS, value: {{ .Values.dashboard.metricsRollupRetentionDays | quote }}}
           ports: [{name: http, containerPort: 3000}]
           readinessProbe:
             httpGet: {path: /healthz, port: 3000}

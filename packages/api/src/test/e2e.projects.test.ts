@@ -5,14 +5,25 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { eq, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs, otelMetrics, otelSpans, projectWorkflows } from '@api/db/schema';
+import {
+  otelLogs,
+  otelMetricRollups,
+  otelMetrics,
+  otelSpans,
+  projectWorkflows,
+} from '@api/db/schema';
 import { PROJECT_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
 import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { authenticate, bearer, create_test_project } from './project-test.utils';
 import { reset_controller, seed_running_project } from './redis-test.utils';
-import { write_project_span } from './telemetry-test.utils';
+import {
+  encode_metrics_export,
+  metrics_export,
+  post_otlp,
+  write_project_span,
+} from './telemetry-test.utils';
 import type { TestProjectFile } from './project-test.utils';
 
 setupE2ETests();
@@ -154,19 +165,33 @@ describe('GET /projects/:project_id/stats', () => {
 async function write_telemetry(project_id: string): Promise<void> {
   await write_project_span(project_id, { span_id: `span-${project_id}` });
   const resource_attributes = { [RESOURCE_PROJECT_ATTRIBUTE]: project_id };
-  await db.insert(otelMetrics).values({
+  const now_unix_nano = BigInt(Date.now()) * 1_000_000n;
+  const response = await post_otlp(
+    '/v1/metrics',
+    encode_metrics_export(
+      metrics_export(
+        'canyonos-test',
+        'canyonos.test.metrics',
+        [
+          {
+            name: 'canyonos.test.gauge',
+            gauge: { dataPoints: [{ timeUnixNano: String(now_unix_nano), asDouble: 1 }] },
+          },
+        ],
+        resource_attributes
+      )
+    )
+  );
+  expect(response.status).toBe(200);
+  await db.insert(otelLogs).values({
     resource_attributes,
-    metric_name: 'canyonos.test.gauge',
-    metric_type: 'gauge',
-    time_unix_nano: 1n,
-    value: 1,
+    time_unix_nano: now_unix_nano,
+    observed_time_unix_nano: now_unix_nano,
+    body: 'hi',
   });
-  await db
-    .insert(otelLogs)
-    .values({ resource_attributes, time_unix_nano: 1n, observed_time_unix_nano: 1n, body: 'hi' });
 }
 
-/** How many spans, metrics and logs name project_id. */
+/** How many spans, metrics, metric rollups and logs name project_id. */
 async function telemetry_counts(project_id: string): Promise<number[]> {
   const count = sql<number>`count(*)::int`;
   const [spans] = await db
@@ -179,11 +204,17 @@ async function telemetry_counts(project_id: string): Promise<number[]> {
     .where(
       sql`${otelMetrics.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
     );
+  const [rollups] = await db
+    .select({ count })
+    .from(otelMetricRollups)
+    .where(
+      sql`${otelMetricRollups.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+    );
   const [logs] = await db
     .select({ count })
     .from(otelLogs)
     .where(sql`${otelLogs.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`);
-  return [spans!.count, metrics!.count, logs!.count];
+  return [spans!.count, metrics!.count, rollups!.count, logs!.count];
 }
 
 describe('DELETE /projects/:project_id', () => {
@@ -203,8 +234,8 @@ describe('DELETE /projects/:project_id', () => {
 
     const detail = await api.projects[project_id]!.get({ $headers: headers });
     expect(detail.error?.status as number).toBe(404);
-    expect(await telemetry_counts(project_id)).toEqual([0, 0, 0]);
-    expect(await telemetry_counts(other_id)).toEqual([1, 1, 1]);
+    expect(await telemetry_counts(project_id)).toEqual([0, 0, 0, 0]);
+    expect(await telemetry_counts(other_id)).toEqual([1, 1, 1, 1]);
   });
 
   test('refuses a running project with 409 projects.running and keeps it', async () => {
