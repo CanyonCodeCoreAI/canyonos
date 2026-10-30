@@ -56,6 +56,8 @@ Kubernetes reports:
   dashboard read. Where the reconciler judges a replica's `healthy` status and
   heartbeat, the operator takes pod readiness: the readiness probe is the Local
   Controller's `/readyz`, which passes only while it reports `healthy`;
+- `routing_table:replicas`, every replica whose pod still exists, stopping ones too,
+  which a Local Controller reads to fail a call handed to a replica that is gone;
 - `agent:<Agent>:desired_replicas`, mirrored from the CanyonAgent.
 
 A replica's address is its pod's DNS name (`helloagent-0.helloagent.<ns>.svc:50051`),

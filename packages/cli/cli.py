@@ -350,12 +350,19 @@ def _run_command():
     )
     add("upgrade", lambda args: sys.exit(run_upgrade()))
 
-    # Test has args: prompt, --json, --timeout.
-    test = add(
-        "test",
-        lambda args: sys.exit(
-            run_test(args.prompt, as_json=args.json, timeout=args.timeout)
-        ),
+    # Test has args: prompt, --json, --timeout, --target.
+    test = add_target(
+        add(
+            "test",
+            lambda args: sys.exit(
+                run_test(
+                    args.prompt,
+                    as_json=args.json,
+                    timeout=args.timeout,
+                    kubernetes=on_kubernetes(args),
+                )
+            ),
+        )
     )
     test.add_argument(
         "prompt",

@@ -12,12 +12,15 @@ access goes through `kubectl`, so every way of signing in to a cluster (EKS,
 OpenShift, a kubeconfig) works, and a namespace's edit role is all it needs.
 """
 
+import contextlib
 import io
 import json
 import os
 import re
+import socket
 import subprocess
 import tarfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -53,6 +56,9 @@ BUILD_START_TIMEOUT_SECONDS = 600
 UPLOAD_EXCLUDES = (".git", ".venv", "node_modules", "__pycache__")
 # Where a build pod takes the upload (builders.UploadPort in the operator).
 UPLOAD_PORT = 8090
+# The project's endpoint inside its namespace (builders.EndpointName and its API port).
+ENDPOINT_SERVICE = "svc/canyonos-endpoint"
+ENDPOINT_PORT = 8080
 OPERATOR_HINT = (
     "Install the CanyonOS operator once per cluster: helm install canyonos "
     "oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator "
@@ -573,16 +579,22 @@ def _env_secret(k8s, project, env_values):
     return k8s.get("env_secret") or (f"{project}-env" if env_values else None)
 
 
-def _summary(namespace, project_obj, config):
+def _endpoint_arguments(config):
+    """The endpoint's method and the names of its arguments, from the config."""
     endpoint = config.get("endpoint") or {}
     method = endpoint.get("method", "")
-    url = project_obj.get("status", {}).get("endpointURL", "")
-    arguments = []
     for agent_spec in config.get("agents") or []:
         if agent_spec.get("name") == endpoint.get("agent"):
             for function in agent_spec.get("functions") or []:
                 if function.get("name") == method:
-                    arguments = [a.get("name") for a in function.get("arguments") or []]
+                    arguments = function.get("arguments") or []
+                    return method, [a.get("name") for a in arguments]
+    return method, []
+
+
+def _summary(namespace, project_obj, config):
+    method, arguments = _endpoint_arguments(config)
+    url = project_obj.get("status", {}).get("endpointURL", "")
     body = json.dumps({name: "your query" for name in arguments})
     lines = [Text.assemble(("Namespace  ", "bold"), namespace)]
     if ".svc:" in url:
@@ -592,7 +604,7 @@ def _summary(namespace, project_obj, config):
         lines.append(
             Text.assemble(
                 ("From here  ", "bold"),
-                f"kubectl -n {namespace} port-forward svc/canyonos-endpoint 8080:8080",
+                f"kubectl -n {namespace} port-forward {ENDPOINT_SERVICE} 8080:{ENDPOINT_PORT}",
             )
         )
         url = "http://127.0.0.1:8080"
@@ -606,6 +618,11 @@ def _summary(namespace, project_obj, config):
     )
     lines.append(
         Text.assemble(("Poll       ", "bold"), f"curl {url}/status/<request_id>")
+    )
+    lines.append(
+        Text.assemble(
+            ("Test       ", "bold"), 'canyonos test --target kubernetes "your query"'
+        )
     )
     lines.append(
         Text.assemble(("Status     ", "bold"), "canyonos status --target kubernetes")
@@ -800,6 +817,88 @@ def run_kubernetes_serve(port=8081):
             f"{port}:8080",
         ]
     )
+
+
+def _free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class EndpointForward:
+    """A port-forward to the project's endpoint on one local port, started again when
+    kubectl ends it (it does when its connection to the pod drops, as on a busy
+    laptop), so a long request can be polled to the end; until close()."""
+
+    def __init__(self, namespace, port=None):
+        self.namespace, self.port = namespace, port or _free_port()
+        self._closed = threading.Event()
+        self._process = self._start()
+        threading.Thread(target=self._keep_up, daemon=True).start()
+
+    def _start(self):
+        process = subprocess.Popen(
+            ["kubectl", "port-forward", "-n", self.namespace, ENDPOINT_SERVICE,
+             f"{self.port}:{ENDPOINT_PORT}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )  # fmt: skip
+        line = process.stdout.readline()
+        if f"127.0.0.1:{self.port}" not in line:
+            process.terminate()
+            raise RuntimeError(
+                f"Could not reach the endpoint in {self.namespace}: "
+                f"{line.strip() or 'kubectl port-forward stopped'}"
+            )
+        # kubectl writes a line per connection: read them, or a long poll fills the pipe.
+        threading.Thread(target=process.stdout.read, daemon=True).start()
+        return process
+
+    def _keep_up(self):
+        while not self._closed.wait(1):
+            if self._process.poll() is not None and not self._closed.is_set():
+                with contextlib.suppress(RuntimeError, OSError):
+                    self._process = self._start()
+
+    def close(self):
+        self._closed.set()
+        self._process.terminate()
+
+
+@contextlib.contextmanager
+def kubernetes_endpoint(config_path=None):
+    """The deployed project's endpoint, reached here through a port-forward while in
+    use, in the fields `canyonos test` reads on Docker: `url` (to POST a query to),
+    `public_host`, `api_port` and the method's `arguments`."""
+    namespace, project = _namespace_and_project(config_path)
+    found = kubectl(
+        ["get", "canyonproject", project, "-n", namespace, "-o", "json"], check=False
+    )
+    if found.returncode:
+        raise RuntimeError(
+            f"No CanyonOS project {project!r} in namespace {namespace}: deploy it first "
+            f"with canyonos deploy --target kubernetes ({(found.stderr or '').strip()})"
+        )
+    ready = condition(json.loads(found.stdout), "Ready")
+    if ready.get("status") != "True":
+        raise RuntimeError(
+            f"{project} in {namespace} is not ready ({ready.get('message') or 'starting'}): "
+            "see canyonos status --target kubernetes"
+        )
+    method, arguments = _endpoint_arguments(
+        load_config(resolve_config(config_path), read_dotenv())
+    )
+    forward = EndpointForward(namespace)
+    try:
+        yield {
+            "url": f"http://127.0.0.1:{forward.port}/{method}",
+            "public_host": "127.0.0.1",
+            "api_port": forward.port,
+            "arguments": arguments,
+        }
+    finally:
+        forward.close()
 
 
 def run_kubernetes_clean(config_path=None):

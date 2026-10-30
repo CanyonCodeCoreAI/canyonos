@@ -125,14 +125,18 @@ kubernetes:
 ```bash
 canyonos deploy --target kubernetes      # build in the cluster, apply, wait until ready
 canyonos status --target kubernetes      # the project and each agent's replicas (--json for scripts)
+canyonos test --target kubernetes "hi"   # send one query to the deployed project and print the result
 canyonos logs --target kubernetes        # the global controller's logs (or: HelloAgent, HelloAgent-0)
 canyonos stop --target kubernetes        # remove the project; namespace, config and Secret stay
 canyonos clean --target kubernetes       # stop, then remove the CLI's ConfigMap and Secret
 ```
 
 These take the same options as on Docker: `logs [agent or replica] [--tail N|all]
-[--no-follow]`, `status [--json]`, and they read the same `global_controller.yaml`.
-`stop --all` and `clean --all` (every project on this machine) are Docker's only.
+[--no-follow]`, `status [--json]`, `test [prompt] [--json] [--timeout S]`, and they
+read the same `global_controller.yaml`. `test` queries the project as deployed, through
+a port-forward it opens and closes itself, so it needs no exposed endpoint; unlike on
+Docker it never deploys. `stop --all` and `clean --all` (every project on this
+machine) are Docker's only.
 
 A deploy hands the project to the cluster, as `canyonos deploy` hands it to the global
 controller's container on Docker. The CLI turns `.env` into a Secret, asks the operator

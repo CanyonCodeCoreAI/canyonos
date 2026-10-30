@@ -9,12 +9,16 @@
  */
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { $ } from 'bun';
 
 const ROOT = join(import.meta.dir, '..');
 const VENV = join(ROOT, '.venv');
+const WINDOWS = process.platform === 'win32';
+// Where the venv keeps `canyonos`: uv makes Scripts on Windows, bin elsewhere.
+const VENV_BIN = join(VENV, WINDOWS ? 'Scripts' : 'bin');
+const SHELL = Bun.env.SHELL || (WINDOWS ? Bun.env.ComSpec || 'cmd.exe' : '/bin/sh');
 const CLI_ENV = join(ROOT, 'packages/cli/.env');
 
 $.cwd(ROOT);
@@ -44,12 +48,12 @@ await $`uv sync`;
 
 console.log('\nCanyonOS dev shell: `canyonos` runs from this checkout. Type `exit` to leave.\n');
 
-const shell = Bun.spawn([Bun.env.SHELL || '/bin/sh'], {
+const shell = Bun.spawn([SHELL], {
   cwd: ROOT,
   env: {
     ...Bun.env,
     VIRTUAL_ENV: VENV,
-    PATH: `${join(VENV, 'bin')}:${Bun.env.PATH}`,
+    PATH: `${VENV_BIN}${delimiter}${Bun.env.PATH}`,
   },
   stdio: ['inherit', 'inherit', 'inherit'],
 });

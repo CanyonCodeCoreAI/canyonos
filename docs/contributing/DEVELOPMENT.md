@@ -191,14 +191,16 @@ kubernetes:
 ```bash
 canyonos deploy --target kubernetes       # builds its images in the cluster, waits until ready
 canyonos status --target kubernetes       # its agents and replicas
+canyonos test --target kubernetes "hi"    # one query to the deployed project, and its result
 canyonos logs --target kubernetes         # the global controller's logs (or: an agent, a replica)
 canyonos serve --target kubernetes        # the dashboard, on http://127.0.0.1:8081
 canyonos clean --target kubernetes        # when done; scripts/kind/down.sh removes the cluster
 ```
 
-The deploy prints how to call the endpoint, through a `kubectl port-forward`. `canyonos
-test` and `sync`, and `stop --all` or `clean --all`, are Docker's only: send a request
-through the port-forward, and deploy again after a change. See
+`canyonos test --target kubernetes` opens a port-forward to the project's endpoint
+itself; the deploy also prints the `kubectl port-forward` to call it with curl.
+`canyonos sync`, and `stop --all` or `clean --all`, are Docker's only: deploy again
+after a change. See
 [Kubernetes deployment](../guides/KUBERNETES.md) for the `kubernetes:` section's other
 settings.
 

@@ -38,8 +38,10 @@ type contract struct {
 		AddressesKey string            `json:"addresses_key"`
 		StatefulKey  string            `json:"stateful_key"`
 		UpKey        string            `json:"up_key"`
+		ReplicasKey  string            `json:"replicas_key"`
 		Addresses    map[string]string `json:"addresses"`
 		Stateful     map[string]string `json:"stateful"`
+		Replicas     map[string]string `json:"replicas"`
 	} `json:"routing"`
 }
 
@@ -74,7 +76,8 @@ func TestConstantsMatchTheContract(t *testing.T) {
 		t.Errorf("provider/port: contract %s/%d, operator %s/%d", c.Provider, c.ReplicaPort, Provider, ReplicaPort)
 	}
 	if c.Routing.AgentsKey != AgentsKey || c.Routing.AddressesKey != AddressesKey ||
-		c.Routing.StatefulKey != StatefulKey || c.Routing.UpKey != UpKey {
+		c.Routing.StatefulKey != StatefulKey || c.Routing.UpKey != UpKey ||
+		c.Routing.ReplicasKey != ReplicasKey {
 		t.Errorf("routing keys differ: %+v", c.Routing)
 	}
 	if c.DesiredReplicasKey != DesiredReplicasKey(helloAgent) {

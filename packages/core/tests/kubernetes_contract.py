@@ -134,8 +134,10 @@ def contract():
             "addresses_key": routing.ROUTING_ADDRESSES_KEY,
             "stateful_key": routing.ROUTING_STATEFUL_KEY,
             "up_key": routing.ROUTING_UP_KEY,
+            "replicas_key": routing.ROUTING_REPLICAS_KEY,
             "addresses": redis.hashes[routing.ROUTING_ADDRESSES_KEY],
             "stateful": redis.hashes.get(routing.ROUTING_STATEFUL_KEY, {}),
+            "replicas": redis.hashes[routing.ROUTING_REPLICAS_KEY],
         },
         "llm_gateway_env": _llm_gateway_env_vars(),
     }

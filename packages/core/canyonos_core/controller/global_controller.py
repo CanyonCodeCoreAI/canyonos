@@ -966,7 +966,8 @@ class GlobalController(ControllerContext):
         are read in parallel, like _poll_machine_metrics, so a slow one does not hold
         up the others.
         """
-        hosts = dict(self.machine_redis)
+        # No machine Redis (Kubernetes: every replica writes to the project's): this one.
+        hosts = dict(self.machine_redis) or {"project": self.redis}
         # Futures already queued finished, per host, so a poll reads only those still
         # running or new. One set per host: the threads share nothing.
         finished = self.__dict__.setdefault("_finished_futures", {})

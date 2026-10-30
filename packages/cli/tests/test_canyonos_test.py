@@ -497,3 +497,36 @@ def test_the_wait_lasts_until_the_deploy_stops_and_explains_it(
     assert err.value.root_cause.endswith("Workflow 0/1")
     assert seen[0]["env"]["DOCKER_HOST"] == "unix:///tmp/docker.sock"
     assert seen[0]["timeout"] == test_cmd.DOCKER_LOGS_TIMEOUT
+
+
+def test_on_kubernetes_the_deployed_project_is_queried_and_nothing_deployed(
+    monkeypatch,
+):
+    import contextlib
+
+    seen = {}
+    endpoint = {"url": "http://127.0.0.1:43210/main", "arguments": ["query"]}
+
+    @contextlib.contextmanager
+    def kubernetes_endpoint():
+        yield endpoint
+
+    def query(run, reached, timeout, number, total):
+        seen.update(endpoint=reached, phases=(number, total))
+        run.begin("query", number, "Query the workflow", total=total)
+        run.result = {"greeting": "hi"}
+        run.done("answered")
+
+    def never(*_a, **_k):
+        raise AssertionError("nothing is deployed or stopped on Docker")
+
+    monkeypatch.setattr(
+        test_cmd.kubernetes_target, "kubernetes_endpoint", kubernetes_endpoint
+    )
+    monkeypatch.setattr(test_cmd, "_query", query)
+    monkeypatch.setattr(test_cmd, "run_deploy", never)
+    monkeypatch.setattr(test_cmd, "stop_existing", never)
+    monkeypatch.setattr(test_cmd, "existing_deploy", never)
+
+    assert test_cmd.run_test("hi", kubernetes=True) == 0
+    assert seen == {"endpoint": endpoint, "phases": (1, 1)}

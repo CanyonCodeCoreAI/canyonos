@@ -6,7 +6,8 @@ import type { RedisClient } from 'bun';
 import { config } from '@core/env';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
-import { project_running, with_redis_at } from '../canyonos/canyonos.redis';
+import { project_running, with_redis, with_redis_at } from '../canyonos/canyonos.redis';
+import { registered_projects } from '../canyonos/canyonos.registry';
 import { canyonos_repo } from '../canyonos/canyonos.repo';
 import { governance_repo } from './governance.repo';
 import type { GovernanceConfig } from './governance.repo';
@@ -25,12 +26,19 @@ export async function publish_spend(redis: RedisClient, project_id: string): Pro
   await governance_repo.write_spend(redis, await governance_repo.spend_since(project_id, agents));
 }
 
-/** A project whose controller is not the one on its port is skipped: it is not running. */
+/** A project whose controller is not the one on its port is skipped: it is not running. On
+ * Kubernetes its Redis is the one the operator lists, with its password, and a project the
+ * operator no longer lists is skipped too. */
 async function publish_project_spend(project_id: string, redis_port: number): Promise<void> {
-  await with_redis_at(redis_port, async (redis) => {
+  const publish = async (redis: RedisClient) => {
     if (!(await project_running(redis, project_id))) return;
     await publish_spend(redis, project_id);
-  });
+  };
+  if (!config.canyonos.projectsFile) {
+    await with_redis_at(redis_port, publish);
+    return;
+  }
+  if (registered_projects().has(project_id)) await with_redis(project_id, publish);
 }
 
 /** Writes every running project's governed spend to its controller; one failure skips one project. */

@@ -252,7 +252,7 @@ def _run_cli(monkeypatch, *argv):
 def _fake_test_command(monkeypatch):
     """Replace the deploy behind `canyonos test` with one that prints its JSON result."""
 
-    def run_test(prompt, as_json, timeout):
+    def run_test(prompt, as_json, timeout, kubernetes=False):
         upgrade.ui.set_quiet(as_json)
         print(json.dumps({"ok": True, "prompt": prompt}))
         return 0

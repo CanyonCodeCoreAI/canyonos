@@ -87,6 +87,11 @@
     },
     "addresses_key": "routing_table:addresses",
     "agents_key": "routing_table:agents",
+    "replicas": {
+      "HelloAgent": "[\"helloagent-0.helloagent.acme.svc:50051\", \"helloagent-1.helloagent.acme.svc:50051\"]",
+      "Workflow": "[\"workflow-0.workflow.acme.svc:50051\"]"
+    },
+    "replicas_key": "routing_table:replicas",
     "stateful": {
       "HelloAgent": "true"
     },

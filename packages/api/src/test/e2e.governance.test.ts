@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
@@ -432,5 +436,39 @@ describe('project governance', () => {
     await publish_spend_once();
 
     expect(await read_governance_spend()).toEqual({});
+  });
+
+  test('on Kubernetes spend goes to the Redis the operator lists, not to the stored port', async () => {
+    const { project_id } = await governed_project('gov-publish-k8s@canyonos.test');
+    // The port stored for it leads nowhere: on Kubernetes the listed Redis is used.
+    await register_at(project_id, CLOSED_PORT);
+    await seed_review_spend(project_id, 'gov-publish-k8s');
+    await seed_governance({
+      agents: {
+        ReviewAgent: {
+          requires: [],
+          spend: { since: SPEND_SINCE, rules: [{ above_usd: 5, action: { kind: 'deny' } }] },
+        },
+      },
+    });
+    // Stored, but no longer listed: gone from the cluster, so it is skipped.
+    const token = await authenticate('gov-publish-k8s-gone@canyonos.test');
+    const gone = await create_test_project(token, { name: 'Gone From The Cluster' });
+    await register_at(gone.project_id, CLOSED_PORT);
+
+    const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+    const path = join(dir, 'projects.json');
+    const redis = { host: config.canyonos.redisHost, port: config.canyonos.redisPort };
+    writeFileSync(path, JSON.stringify({ projects: [{ project_id, name: 'governed', redis }] }));
+    const docker = config.canyonos.projectsFile;
+    config.canyonos.projectsFile = path;
+    try {
+      await publish_spend_once();
+    } finally {
+      config.canyonos.projectsFile = docker;
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    expect(await read_governance_spend()).toEqual({ ReviewAgent: 7 });
   });
 });

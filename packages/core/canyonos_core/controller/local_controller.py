@@ -1416,8 +1416,16 @@ class LocalController(object):
         """Fail every call handed to a replica that is neither routed nor draining, such
         as one on a machine that died, so its caller gets an error instead of waiting."""
         # Not routing_table:addresses, which drops a draining replica whose calls still finish.
-        known = self.redis.hgetall("routing_table:replicas").values()
-        known = {address for addresses in known for address in json.loads(addresses)}
+        published = self.redis.hgetall("routing_table:replicas")
+        if not published:
+            # Nothing has published the table (every writer lists each agent, even one
+            # with no replica): failing every call as gone would be the wrong answer.
+            return
+        known = {
+            address
+            for addresses in published.values()
+            for address in json.loads(addresses)
+        }
         for future_id, address in list(self._forwarded.items()):
             if address not in known:
                 call = self.redis.hgetall(f"future:{future_id}")

@@ -770,3 +770,114 @@ def test_status_json_has_the_shape_docker_status_json_has():
             "launch_error": "no node",
         }
     }
+
+
+def _deployed(ready="True"):
+    project = {
+        "status": {
+            "conditions": [
+                {"type": "Ready", "status": ready, "message": "Redis is starting"}
+            ]
+        }
+    }
+    return SimpleNamespace(returncode=0, stdout=json.dumps(project), stderr="")
+
+
+@pytest.fixture
+def deployed_project():
+    """The project's namespace and config, as `canyonos test` reads them."""
+    with (
+        patch(
+            "canyonos.kubernetes_target._namespace_and_project",
+            return_value=("acme", "demo"),
+        ),
+        patch("canyonos.kubernetes_target.resolve_config", return_value="config"),
+        patch("canyonos.kubernetes_target.read_dotenv", return_value={}),
+        patch("canyonos.kubernetes_target.load_config", return_value=config()),
+    ):
+        yield
+
+
+def test_test_reaches_the_deployed_endpoint_through_a_port_forward(deployed_project):
+    forwards = []
+
+    class Forward:
+        def __init__(self, namespace):
+            self.namespace, self.port, self.closed = namespace, 43210, False
+            forwards.append(self)
+
+        def close(self):
+            self.closed = True
+
+    with (
+        patch("canyonos.kubernetes_target.kubectl", return_value=_deployed()),
+        patch("canyonos.kubernetes_target.EndpointForward", Forward),
+    ):
+        with kubernetes_target.kubernetes_endpoint() as endpoint:
+            assert endpoint == {
+                "url": "http://127.0.0.1:43210/main",
+                "public_host": "127.0.0.1",
+                "api_port": 43210,
+                "arguments": ["query"],
+            }
+            assert not forwards[0].closed
+    assert forwards[0].namespace == "acme" and forwards[0].closed
+
+
+@pytest.mark.parametrize(
+    "found, said",
+    [
+        (
+            SimpleNamespace(returncode=1, stdout="", stderr="NotFound"),
+            "deploy it first",
+        ),
+        (_deployed("False"), r"not ready \(Redis is starting\)"),
+    ],
+)
+def test_test_needs_a_project_deployed_and_ready(deployed_project, found, said):
+    with (
+        patch("canyonos.kubernetes_target.kubectl", return_value=found),
+        patch("canyonos.kubernetes_target.EndpointForward") as forward,
+    ):
+        with pytest.raises(RuntimeError, match=said):
+            with kubernetes_target.kubernetes_endpoint():
+                pass
+    forward.assert_not_called()
+
+
+def test_the_endpoint_forward_is_started_again_on_the_same_port():
+    import time
+
+    def process(ends):
+        return SimpleNamespace(
+            stdout=io.StringIO("Forwarding from 127.0.0.1:50123 -> 8080\n"),
+            poll=lambda: 1 if ends else None,
+            terminate=lambda: None,
+        )
+
+    with patch(
+        "canyonos.kubernetes_target.subprocess.Popen",
+        side_effect=[process(ends=True), process(ends=False)],
+    ) as popen:
+        forward = kubernetes_target.EndpointForward("acme", port=50123)
+        deadline = time.monotonic() + 5
+        while popen.call_count < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        forward.close()
+
+    assert popen.call_count == 2, "kubectl ended the forward: it is started again"
+    for call in popen.call_args_list:
+        assert call.args[0][-2:] == ["svc/canyonos-endpoint", "50123:8080"]
+
+
+def test_an_endpoint_that_cannot_be_forwarded_says_why():
+    refused = SimpleNamespace(
+        stdout=io.StringIO('error: services "canyonos-endpoint" is forbidden\n'),
+        poll=lambda: 1,
+        terminate=lambda: None,
+    )
+    with patch("canyonos.kubernetes_target.subprocess.Popen", return_value=refused):
+        with pytest.raises(
+            RuntimeError, match="Could not reach the endpoint in acme: .*forbidden"
+        ):
+            kubernetes_target.EndpointForward("acme", port=50124)

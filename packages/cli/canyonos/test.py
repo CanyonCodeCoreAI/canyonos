@@ -25,7 +25,7 @@ import urllib.request
 from rich.panel import Panel
 from rich.text import Text
 
-from canyonos import ui
+from canyonos import kubernetes_target, ui
 from canyonos.constants import (
     endpoint_answers,
     existing_config_path,
@@ -340,9 +340,17 @@ def _require_current_deploy():
         )
 
 
-def _run_test(run, timeout=REQUEST_TIMEOUT):
+def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False):
     """Query the workflow, standing up our own local deploy first unless one is
-    already up. The config is restored whatever happens."""
+    already up. The config is restored whatever happens. On Kubernetes, query the
+    project deployed in the cluster, through a port-forward."""
+    if kubernetes:
+        # Never deployed from here: the cluster's deploy is queried as it stands.
+        run.against_existing = True
+        with kubernetes_target.kubernetes_endpoint() as endpoint:
+            _query(run, endpoint, timeout, number=1, total=1)
+        return
+
     config_path = existing_config_path()
 
     existing = existing_deploy()
@@ -446,7 +454,7 @@ def _payload(run):
     }
 
 
-def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
+def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT, kubernetes=False):
     """Run `canyonos test`: deploy the project, send one query, report the result, and
     return the exit code. A failed deploy is left running for debugging."""
     run = _Run(prompt or _sample_query()[0] or DEFAULT_QUERY)
@@ -455,7 +463,7 @@ def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
     try:
         container_live = False
         try:
-            _run_test(run, timeout=timeout)
+            _run_test(run, timeout=timeout, kubernetes=kubernetes)
         except KeyboardInterrupt:
             run.error = "cancelled by user"
         except EOFError:

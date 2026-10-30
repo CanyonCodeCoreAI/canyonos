@@ -23,7 +23,8 @@ type Agent struct {
 
 // TrackedKey is the operator's own note of the replica addresses whose status keys
 // may still be in Redis: a status key outlives a replica's record while its pod
-// shuts down (it still reports its status), and goes once the pod does.
+// shuts down (it still reports its status), and goes once the pod does. The same
+// addresses are the agent's entry in ReplicasKey.
 func TrackedKey(agentName string) string {
 	return "operator:" + agentName + ":addresses"
 }
@@ -105,7 +106,8 @@ func forgetGone(ctx context.Context, pipe redis.Pipeliner, agentName string, tra
 
 // PublishRouting writes the project's routing table from the replica records, as
 // core's publish_routing_snapshot does: every agent listed, its replicas' addresses
-// oldest first, stateful flags, and agents no longer listed removed. It also writes
+// oldest first, every replica that still exists (stopping ones too), stateful
+// flags, and agents no longer listed removed. It also writes
 // UpKey, the agents with a replica up, which governance and the dashboard read (one
 // missing from it counts as down). Core's reconciler judges it from each
 // replica's `healthy` status and heartbeat. Here a replica is up when it has a record,
@@ -129,6 +131,7 @@ func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) erro
 			pipe.SRem(ctx, AgentsKey, stale)
 			pipe.HDel(ctx, StatefulKey, stale)
 			pipe.HDel(ctx, AddressesKey, stale)
+			pipe.HDel(ctx, ReplicasKey, stale)
 		}
 	}
 	// Rebuilt inside the transaction, so a reader never sees it half written.
@@ -150,9 +153,22 @@ func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) erro
 		} else {
 			pipe.HDel(ctx, AddressesKey, agent.Name)
 		}
+		tracked, err := rdb.SMembers(ctx, TrackedKey(agent.Name)).Result()
+		if err != nil {
+			return err
+		}
+		pipe.HSet(ctx, ReplicasKey, agent.Name, AddressesJSON(existingAddresses(addresses, tracked)))
 	}
 	_, err = pipe.Exec(ctx)
 	return err
+}
+
+// existingAddresses are the routed replicas and the stopping ones whose pods still
+// run, in address order (core lists them by replica ID, which sorts the same).
+func existingAddresses(routed, tracked []string) []string {
+	addresses := slices.Concat(routed, tracked)
+	slices.Sort(addresses)
+	return slices.Compact(addresses)
 }
 
 // routedAddresses are an agent's replica addresses oldest first, ties in ID order, read

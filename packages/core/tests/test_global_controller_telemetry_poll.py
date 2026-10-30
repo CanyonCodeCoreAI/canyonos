@@ -93,6 +93,17 @@ class TelemetryPollTests(unittest.TestCase):
 
         self.assertEqual(set(controller._finished_futures), {"a"})
 
+    def test_without_machine_redis_the_project_redis_is_pulled(self):
+        # Kubernetes: no machine Redis is registered; every replica writes to one Redis.
+        controller = _controller({})
+        controller.redis = MagicMock(name="project")
+        with patch("canyonos_core.controller.global_controller.send_telemetry") as send:
+            controller._send_telemetry_per_host()
+
+        self.assertEqual(
+            [call.args[0] for call in send.call_args_list], [controller.redis]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

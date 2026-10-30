@@ -317,6 +317,50 @@ class LocalControllerMetricsTests(unittest.TestCase):
         self.assertEqual(controller.request_queue.unfinished_tasks, 0)
         self.assertEqual(controller._cut_off, {"running", "queued"})
 
+    def _forwarding_controller(self, published):
+        failed = []
+        calls = {
+            "future:a": {"service": "Analyst", "method": "run"},
+            "future:b": {"service": "Writer", "method": "draft"},
+        }
+        tables = {"routing_table:replicas": published}
+        controller = SimpleNamespace(
+            redis=SimpleNamespace(
+                hgetall=lambda key: tables.get(key) or calls.get(key) or {}
+            ),
+            _forwarded={"a": "analyst-0:50051", "b": "writer-1:50051"},
+            _mark_future_failed=lambda future_id, error, error_name: failed.append(
+                (future_id, error, error_name)
+            ),
+        )
+        return controller, failed
+
+    def test_a_call_to_a_replica_that_is_gone_fails(self):
+        # writer-1 is draining: out of routing, still listed, so its call may finish.
+        controller, failed = self._forwarding_controller(
+            {
+                "Analyst": json.dumps(["analyst-1:50051"]),
+                "Writer": json.dumps(["writer-0:50051", "writer-1:50051"]),
+            }
+        )
+        LocalController._fail_calls_to_gone_replicas(controller)
+        self.assertEqual(
+            failed,
+            [
+                (
+                    "a",
+                    "Analyst.run stopped before it finished: its replica is gone "
+                    "(its machine may have stopped).",
+                    "ReplicaRemovedError",
+                )
+            ],
+        )
+
+    def test_no_published_replicas_table_fails_no_call(self):
+        controller, failed = self._forwarding_controller({})
+        LocalController._fail_calls_to_gone_replicas(controller)
+        self.assertEqual(failed, [])
+
     def test_a_request_is_pending_until_the_loop_has_processed_it(self):
         pending = []
         controller = SimpleNamespace(

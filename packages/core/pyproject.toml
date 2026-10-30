@@ -3,7 +3,7 @@
 
 [project]
 name = "canyonos-core"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 description = "Distributed agent orchestration framework (CanyonOS core runtime)"
 license = "AGPL-3.0-only"
 requires-python = ">=3.10"

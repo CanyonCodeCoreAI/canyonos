@@ -78,6 +78,12 @@ func TestWritingTheContractsReplicasGivesExactlyItsRedisState(t *testing.T) {
 	if got := rdb.HGetAll(ctx, StatefulKey).Val(); !maps.Equal(got, c.Routing.Stateful) {
 		t.Errorf("stateful: got %v, want %v", got, c.Routing.Stateful)
 	}
+	if len(c.Routing.Replicas) == 0 {
+		t.Fatal("the contract has no replicas table")
+	}
+	if got := rdb.HGetAll(ctx, ReplicasKey).Val(); !maps.Equal(got, c.Routing.Replicas) {
+		t.Errorf("replicas:\n got  %v\n want %v", got, c.Routing.Replicas)
+	}
 	if keys := rdb.Keys(ctx, "controller:*:replica_id").Val(); len(keys) != 0 {
 		t.Errorf("a replica reads its ID from CANYONOS_REPLICA_ID, not Redis: %v", keys)
 	}
@@ -107,6 +113,15 @@ func TestAStoppingReplicaLeavesAtOnceAndItsKeysWhenItsPodGoes(t *testing.T) {
 	if rdb.Exists(ctx, StatusKey(gone.Address())).Val() != 1 {
 		t.Error("its status stays while its pod shuts down")
 	}
+	if err := PublishRouting(ctx, rdb, []Agent{{Name: helloAgent}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rdb.HGet(ctx, AddressesKey, helloAgent).Val(); got != AddressesJSON([]string{both[0].Address()}) {
+		t.Errorf("a stopping replica takes no new calls: %s", got)
+	}
+	if got := rdb.HGet(ctx, ReplicasKey, helloAgent).Val(); got != AddressesJSON(addressesOf(both)) {
+		t.Errorf("a stopping replica still exists, so calls it holds are not failed as gone: %s", got)
+	}
 
 	// Its pod is gone.
 	if err := SyncReplicas(ctx, rdb, helloAgent, both[:1], addressesOf(both[:1]), 1); err != nil {
@@ -128,6 +143,9 @@ func TestAStoppingReplicaLeavesAtOnceAndItsKeysWhenItsPodGoes(t *testing.T) {
 	if got := rdb.HGet(ctx, AddressesKey, helloAgent).Val(); got != AddressesJSON([]string{both[0].Address()}) {
 		t.Errorf("routing still names the stopped replica: %s", got)
 	}
+	if got := rdb.HGet(ctx, ReplicasKey, helloAgent).Val(); got != AddressesJSON([]string{both[0].Address()}) {
+		t.Errorf("a replica whose pod is gone must leave the replicas table: %s", got)
+	}
 }
 
 func TestAnAgentNoLongerListedLeavesTheRoutingTable(t *testing.T) {
@@ -143,8 +161,9 @@ func TestAnAgentNoLongerListedLeavesTheRoutingTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rdb.SIsMember(ctx, AgentsKey, helloAgent).Val() ||
-		rdb.HExists(ctx, AddressesKey, helloAgent).Val() || rdb.HExists(ctx, StatefulKey, helloAgent).Val() {
-		t.Error("an unlisted agent must leave the agents set, addresses and stateful flags")
+		rdb.HExists(ctx, AddressesKey, helloAgent).Val() || rdb.HExists(ctx, StatefulKey, helloAgent).Val() ||
+		rdb.HExists(ctx, ReplicasKey, helloAgent).Val() {
+		t.Error("an unlisted agent must leave the agents set, addresses, replicas and stateful flags")
 	}
 }
 
@@ -159,6 +178,9 @@ func TestAnAgentWithNoReadyReplicaHasNoAddresses(t *testing.T) {
 	}
 	if rdb.HExists(ctx, AddressesKey, helloAgent).Val() {
 		t.Error("no ready replica: callers must see NoEndpointFound, not a dead address")
+	}
+	if got := rdb.HGet(ctx, ReplicasKey, helloAgent).Val(); got != "[]" {
+		t.Errorf("no replica exists, as core writes it: %q", got)
 	}
 	if !rdb.SIsMember(ctx, AgentsKey, helloAgent).Val() {
 		t.Error("the agent is still known")

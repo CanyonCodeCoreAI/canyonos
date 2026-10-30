@@ -26,6 +26,9 @@ const (
 	AddressesKey = "routing_table:addresses"
 	StatefulKey  = "routing_table:stateful"
 	UpKey        = "routing_table:up"
+	// ReplicasKey lists every replica that still exists, stopping ones too: a call
+	// handed to a replica not listed there fails as gone (core's local controller).
+	ReplicasKey = "routing_table:replicas"
 )
 
 // Replica is one ready pod of an agent.
