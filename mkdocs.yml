@@ -14,7 +14,6 @@ nav:
   - Guides:
       - Overview: guides/README.md
       - Workflow design: guides/WORKFLOW_DESIGN.md
-      - Limitations: guides/LIMITATIONS.md
       - Prompt management: guides/PROMPTS.md
       - Autoscaling: guides/SCALING.md
       - Dashboard: guides/DASHBOARD.md
@@ -26,6 +25,7 @@ nav:
       - LLM gateway: guides/LLM_GATEWAY.md
       - EC2 deployment: guides/EC2.md
       - Kubernetes deployment: guides/KUBERNETES.md
+      - Limitations: guides/LIMITATIONS.md
       - Troubleshooting: guides/TROUBLESHOOTING.md
   - Architecture:
       - Overview: architecture/README.md
