@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "3.1136.0",
-    "elysia": "1.4.28",
+    "elysia": "1.4.29",
     "zod": "4.6.6"
   },
   "devDependencies": {
