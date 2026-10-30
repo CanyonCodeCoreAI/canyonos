@@ -25,6 +25,7 @@ nav:
       - Images and dependencies: guides/IMAGES_AND_DEPENDENCIES.md
       - LLM gateway: guides/LLM_GATEWAY.md
       - EC2 deployment: guides/EC2.md
+      - Kubernetes deployment: guides/KUBERNETES.md
       - Troubleshooting: guides/TROUBLESHOOTING.md
   - Architecture:
       - Overview: architecture/README.md
@@ -33,6 +34,7 @@ nav:
       - Endpoint: architecture/ENDPOINT.md
       - LLM gateway: architecture/LLM_GATEWAY.md
       - Machine metrics poller: architecture/MACHINE_METRICS_POLLER.md
+      - Operator: architecture/OPERATOR.md
       - OTLP exporter: architecture/OTLP_EXPORTER.md
       - Reconciler: architecture/RECONCILER.md
   - Contributing:
