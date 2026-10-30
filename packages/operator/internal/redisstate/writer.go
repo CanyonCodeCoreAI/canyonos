@@ -105,7 +105,14 @@ func forgetGone(ctx context.Context, pipe redis.Pipeliner, agentName string, tra
 
 // PublishRouting writes the project's routing table from the replica records, as
 // core's publish_routing_snapshot does: every agent listed, its replicas' addresses
-// oldest first, stateful flags, and agents no longer listed removed.
+// oldest first, stateful flags, and agents no longer listed removed. It also writes
+// UpKey, the agents with a replica up, which governance and the dashboard read (one
+// missing from it counts as down). Core's reconciler judges it from each
+// replica's `healthy` status and heartbeat. Here a replica is up when it has a record,
+// that is when its pod is ready and not terminating: the readiness probe is the
+// LocalController's /readyz, which passes only while it reports `healthy`, so
+// Kubernetes already judges what the reconciler does. Pod readiness changes requeue
+// the agent, so the set follows them without a heartbeat of its own.
 func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) error {
 	listed := make(map[string]bool, len(agents))
 	for _, agent := range agents {
@@ -124,6 +131,8 @@ func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) erro
 			pipe.HDel(ctx, AddressesKey, stale)
 		}
 	}
+	// Rebuilt inside the transaction, so a reader never sees it half written.
+	pipe.Del(ctx, UpKey)
 	for _, agent := range agents {
 		pipe.SAdd(ctx, AgentsKey, agent.Name)
 		if agent.Stateful {
@@ -137,6 +146,7 @@ func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) erro
 		}
 		if len(addresses) > 0 {
 			pipe.HSet(ctx, AddressesKey, agent.Name, AddressesJSON(addresses))
+			pipe.SAdd(ctx, UpKey, agent.Name)
 		} else {
 			pipe.HDel(ctx, AddressesKey, agent.Name)
 		}

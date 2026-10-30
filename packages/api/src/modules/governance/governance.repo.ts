@@ -8,7 +8,6 @@ import type { RedisClient } from 'bun';
 import { db } from '@api/db/client';
 import { badGateway, conflict } from '@core/errors';
 
-import { CONTROLLER_IDENTITY_KEY } from '../canyonos/canyonos.redis';
 import { projectSpans, spanAgentName, spanCost } from '../metrics/metrics.sql';
 import { SpendRuleSchema } from './governance.types';
 import type { AgentRules } from './governance.types';
@@ -17,11 +16,9 @@ const CONFIG_KEY = 'governance:config';
 const SPEND_KEY = 'governance:spend';
 const LLMS_KEY = 'llms:config';
 const SCALING_KEY = 'scaling:config';
-const ROUTING_TABLE_KEY = 'routing_table:replicas';
+// Written by the reconciler (on Kubernetes, the operator) from replica health.
+const UP_AGENTS_KEY = 'routing_table:up';
 const SAVE_ATTEMPTS = 5;
-// The Global Controller's default when the manifest sets none (schema/manifest.py).
-const DEFAULT_POLL_INTERVAL_SECONDS = 5;
-const HEARTBEAT_POLLS = 3;
 const EDGE_DAYS = 7;
 const DAY_MS = 86_400_000;
 
@@ -135,35 +132,9 @@ export const governance_repo = {
       : false;
   },
 
-  /**
-   * The agents with at least one replica up, the reconciler's own definition: the replica
-   * reports `healthy` and its heartbeat is at most three polls old.
-   */
+  /** The agents with a replica up, as the controller's governance reads them; any other is down. */
   async read_up_agents(redis: RedisClient): Promise<Set<string>> {
-    const stored_interval = Number(await redis.hget(CONTROLLER_IDENTITY_KEY, 'poll_interval'));
-    const poll_interval = stored_interval > 0 ? stored_interval : DEFAULT_POLL_INTERVAL_SECONDS;
-    const routing = (await redis.hgetall(ROUTING_TABLE_KEY)) ?? {};
-    const now = Date.now() / 1000;
-
-    const replica_up = async (address: string): Promise<boolean> => {
-      const [status, observed_at] = await Promise.all([
-        redis.get(`controller:${address}:status`),
-        redis.hget(`controller:${address}:metrics`, 'observed_at'),
-      ]);
-      const age = now - Number(observed_at);
-      return status === 'healthy' && observed_at !== null && age <= HEARTBEAT_POLLS * poll_interval;
-    };
-
-    const up = new Set<string>();
-    await Promise.all(
-      Object.entries(routing).map(async ([agent, raw]) => {
-        const addresses = z.array(z.string()).safeParse(parse_json(raw));
-        if (!addresses.success) return;
-        const replicas = await Promise.all(addresses.data.map(replica_up));
-        if (replicas.some(Boolean)) up.add(agent);
-      })
-    );
-    return up;
+    return new Set(await redis.smembers(UP_AGENTS_KEY));
   },
 
   /** Each agent's span cost since its own start, from one query; agents with none read 0. */

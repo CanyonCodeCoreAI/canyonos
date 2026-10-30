@@ -11,18 +11,17 @@ nothing from `canyonos_core`.
 
 import json
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 POLICY_RULES_KEY = "policy:rules"
 CONFIG_KEY = "governance:config"
 SPEND_KEY = "governance:spend"
-ROUTING_REPLICAS_KEY = "routing_table:replicas"
+# Duplicated from canyonos_core.reconciler.routing, which replica images do not carry:
+# the agents with a replica up, as the reconciler (or, on Kubernetes, the operator) judges.
+ROUTING_UP_KEY = "routing_table:up"
 # Duplicated from canyonos_core.endpoint, which replica images do not carry.
 ENDPOINT_AGENT_NAME = "endpoint"
-# A replica is down once it misses this many heartbeats, the reconciler's own window.
-HEARTBEAT_POLLS = 3
 ACTION_KINDS = ("switch_model", "deny")
 
 logger = logging.getLogger(__name__)
@@ -187,61 +186,23 @@ def _agents(raw, previous):
         return previous.agents if previous is not None else {}
 
 
-def _addresses(raw):
-    """A routing entry's replica addresses; an unreadable one has none, so its agent
-    counts as down."""
-    try:
-        addresses = json.loads(raw)
-    except ValueError:
-        return []
-    return addresses if isinstance(addresses, list) else []
-
-
-def _fresh(observed_at, now, poll_interval):
-    try:
-        return now - float(observed_at) <= HEARTBEAT_POLLS * poll_interval
-    except (TypeError, ValueError):
-        return False
-
-
-def load(redis, poll_interval, previous=None):
-    """One snapshot of every rule, the published spend, and the agents with a healthy
-    replica, from a redis-py client. An unreadable `governance:config` keeps
-    `previous`'s agent rules; an unreadable `policy:rules` raises ValueError, and the
-    caller keeps its previous snapshot."""
+def load(redis, previous=None):
+    """One snapshot of every rule, the published spend, and the agents with a replica
+    up (`routing_table:up`; one missing from it is down), from a redis-py client. An
+    unreadable `governance:config` keeps `previous`'s agent rules; an unreadable
+    `policy:rules` raises ValueError, and the caller keeps its previous snapshot."""
     pipe = redis.pipeline(transaction=False)
     pipe.get(POLICY_RULES_KEY)
     pipe.get(CONFIG_KEY)
     pipe.get(SPEND_KEY)
-    pipe.hgetall(ROUTING_REPLICAS_KEY)
-    policy_raw, config_raw, spend_raw, routing = pipe.execute()
-
-    policy = json.loads(policy_raw) if policy_raw else []
-    agents = _agents(config_raw, previous)
-
-    addresses_by_agent = {
-        _text(agent): _addresses(addresses) for agent, addresses in routing.items()
-    }
-    replicas = [
-        (agent, address)
-        for agent, addresses in addresses_by_agent.items()
-        for address in addresses
-    ]
-    pipe = redis.pipeline(transaction=False)
-    for _, address in replicas:
-        pipe.get(f"controller:{address}:status")
-        pipe.hget(f"controller:{address}:metrics", "observed_at")
-    heartbeats = pipe.execute() if replicas else []
-
-    now = time.time()
-    up = set()
-    for index, (agent, _) in enumerate(replicas):
-        status, observed_at = heartbeats[2 * index], heartbeats[2 * index + 1]
-        if _text(status) == "healthy" and _fresh(observed_at, now, poll_interval):
-            up.add(agent)
+    pipe.smembers(ROUTING_UP_KEY)
+    policy_raw, config_raw, spend_raw, up = pipe.execute()
 
     return Rules(
-        policy=policy, agents=agents, spend=_spend(spend_raw), up=frozenset(up)
+        policy=json.loads(policy_raw) if policy_raw else [],
+        agents=_agents(config_raw, previous),
+        spend=_spend(spend_raw),
+        up=frozenset(_text(agent) for agent in up),
     )
 
 

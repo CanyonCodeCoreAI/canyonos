@@ -27,6 +27,8 @@ export interface FlowNodeSpec {
 export type FlowEdgeData = {
   edge_type: 'route' | 'call' | 'loop' | 'return';
   label: string | null;
+  // Where the path turns, measured from the source; halfway to the target when unset.
+  bend_from_source?: number;
 };
 
 export interface FlowEdgeSpec {

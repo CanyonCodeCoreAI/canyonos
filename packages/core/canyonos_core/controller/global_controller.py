@@ -497,8 +497,6 @@ class GlobalController(ControllerContext):
         payload = {
             "project_id": str(self.config.get("project_id")),
             "project_name": os.environ.get("CANYONOS_PROJECT_NAME", ""),
-            # The dashboard API judges heartbeats with the same window as core.
-            "poll_interval": str(self.poll_interval),
         }
         targets = list(self.machine_redis.values()) or [self.redis]
         for redis_client in targets:

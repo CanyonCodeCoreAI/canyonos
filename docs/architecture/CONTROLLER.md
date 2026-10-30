@@ -293,7 +293,8 @@ LocalController / LocalControllerServicer
              request:completed, request:<request_id>:waiting
   reads  ◀── controller:<host>:<port>:draining,
              routing_table:addresses, routing_table:stateful, policy:rules,
-             governance:config, governance:spend, routing_table:replicas,
+             governance:config, governance:spend, routing_table:up,
+             routing_table:replicas,
              request:<request_id>:context, request:<request_id>:futures,
              request:<request_id>:future,
              future:<future_id>, future:<future_id>:consumers,
@@ -309,7 +310,7 @@ endpoint / Future
 reconciler
   writes ──▶ agent_instance:*, agent:<name>:instances, controller:<host>:<port>:draining,
              routing_table:agents, routing_table:addresses,
-             routing_table:stateful
+             routing_table:stateful, routing_table:up
 ```
 
 ## gRPC services

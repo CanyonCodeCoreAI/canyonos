@@ -15,6 +15,7 @@ import type {
   AgentRules,
   AgentSpend,
   AgentStatus,
+  CostAction,
   GovernanceAgent,
   GovernanceResponse,
   SpendRule,
@@ -37,22 +38,19 @@ function rules_of(stored: StoredAgentRules | undefined): AgentRules {
   return { requires: stored?.requires ?? [], spend: stored?.spend ?? null };
 }
 
-/** The index of the rule with the highest threshold below usd, or null when none is passed. */
-function tripped_rule_index(rules: readonly SpendRule[], usd: number): number | null {
-  let tripped: number | null = null;
-  rules.forEach((rule, index) => {
-    if (rule.above_usd < usd && (tripped === null || rule.above_usd > rules[tripped]!.above_usd)) {
-      tripped = index;
-    }
-  });
-  return tripped;
+/** The action of the rule with the highest threshold below usd, or null when none is passed. */
+function tripped_action(rules: readonly SpendRule[], usd: number): CostAction | null {
+  const passed = rules.filter((rule) => rule.above_usd < usd);
+  if (passed.length === 0) return null;
+  return passed.reduce((highest, rule) => (rule.above_usd > highest.above_usd ? rule : highest))
+    .action;
 }
 
 function spend_of(rules: AgentRules, usd: number | undefined): AgentSpend | null {
   const since = rules.spend?.since;
   if (!rules.spend || since === undefined) return null;
   const total = usd ?? 0;
-  return { since, usd: total, tripped_rule_index: tripped_rule_index(rules.spend.rules, total) };
+  return { since, usd: total, tripped_action: tripped_action(rules.spend.rules, total) };
 }
 
 async function read_governance(

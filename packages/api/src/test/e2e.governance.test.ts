@@ -19,10 +19,10 @@ import {
   seed_governance,
   seed_governance_spend,
   seed_llms,
-  seed_replica_health,
   seed_running_project,
   seed_scaling,
   seed_scaling_agents,
+  seed_up_agents,
 } from './redis-test.utils';
 import { write_project_span } from './telemetry-test.utils';
 import type { AgentRules, GovernanceAgent } from '../modules/governance/governance.types';
@@ -55,7 +55,7 @@ const LLMS = {
   open: { model_id: 'claude-haiku' },
 };
 
-/** A running project whose agents are all healthy except TestRunnerAgent, whose heartbeat is stale. */
+/** A running project whose agents are all up except TestRunnerAgent. */
 async function governed_project(
   email: string
 ): Promise<{ headers: Record<string, string>; project_id: string }> {
@@ -63,15 +63,7 @@ async function governed_project(
   const { project_id } = await create_test_project(token, { name: 'Governance Project' });
   await seed_running_project(project_id, { prompts: {} });
   await seed_scaling_agents([...AGENTS.map((name) => sampled(name, 2)), { name: 'Idle' }]);
-  for (const [index, name] of AGENTS.entries()) {
-    const fresh = name !== 'TestRunnerAgent';
-    await seed_replica_health(
-      name,
-      `10.0.0.${index}:50051`,
-      true,
-      now_seconds() - (fresh ? 1 : 600)
-    );
-  }
+  await seed_up_agents(AGENTS.filter((name) => name !== 'TestRunnerAgent'));
   await seed_governance({ agents: { MergeAgent: { requires: ['TestRunnerAgent'] } } });
   return { headers: bearer(token), project_id };
 }
@@ -297,7 +289,7 @@ describe('project governance', () => {
     expect(by_name(saved.data!.agents, 'ReviewAgent').spend).toEqual({
       since,
       usd: 7,
-      tripped_rule_index: 0,
+      tripped_action: { kind: 'switch_model', model: 'gpt-5.5-mini' },
     });
     expect(await read_governance_spend()).toEqual({ ReviewAgent: 7 });
   });

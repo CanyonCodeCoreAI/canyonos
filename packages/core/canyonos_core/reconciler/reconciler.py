@@ -24,6 +24,7 @@ from canyonos_core.reconciler.machine_provisioner import MachineProvisioner
 from canyonos_core.reconciler.parallel import run_in_parallel
 from canyonos_core.reconciler.replica_provisioner import ReplicaProvisioner
 from canyonos_core.reconciler.replicas import log_tail
+from canyonos_core.reconciler.routing import publish_up_agents
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,7 +65,8 @@ class Reconciler(object):
     # ------------------------------------------------------------------ #
 
     def _reconcile(self, agent_names=None):
-        """Converge the named agents, or every configured agent when agent_names is None."""
+        """Converge the named agents, or every configured agent when agent_names is None,
+        and publish which agents have a replica up."""
         if self.context.refresh_agent_specs_from_redis():
             logger.info(
                 "Adopted %d published agent spec(s).", len(self.context.agent_specs)
@@ -83,6 +85,7 @@ class Reconciler(object):
         # desired_agent_specs falls back to the configured count, so a fill would undo the stop.
         if state.is_stopping(self.context.redis):
             self._terminate_machines()
+            self._publish_up_agents()
             return
 
         names = (
@@ -106,6 +109,8 @@ class Reconciler(object):
             self.replica_provisioner.remove_unfinished()
         except Exception as e:
             logger.warning("Failed to remove unfinished launches: %s", e)
+        # Before provisioning, which can take minutes on EC2: liveness must not wait on it.
+        self._publish_up_agents()
 
         # A named agent that could not be checked has nothing to fill into.
         if agent_names is not None and not checked:
@@ -344,6 +349,36 @@ class Reconciler(object):
             return time.time() - float(observed_at) <= self.stale_after
         except (TypeError, ValueError):
             return False
+
+    def _publish_up_agents(self):
+        """Publish, to every machine's Redis, the agents with a replica up: a routed one,
+        not draining, that reports `healthy` with a fresh heartbeat (a database has none,
+        so its `healthy`, written once it answers, is enough). Every agent's, whichever
+        were reconciled, so the set follows liveness on every pass."""
+        try:
+            up = {
+                replica["agent_name"]
+                for replica in list_replicas(self.context.redis)
+                if replica["agent_name"] in self.context.agent_specs_by_name
+                and "draining_at" not in replica
+                and self._is_up(replica)
+            }
+            publish_up_agents(up, self.context.redis, self.context.machine_redis)
+        except Exception as e:
+            logger.warning("Failed to publish the agents up: %s", e)
+
+    def _is_up(self, replica):
+        is_database = (
+            self.context.agent_specs_by_name[replica["agent_name"]].get("type")
+            == "database"
+        )
+        machine_redis = self.context.machine_redis_for_replica(replica)
+        try:
+            status = machine_redis.get(f"controller:{replica['address']}:status")
+        except Exception as e:
+            logger.warning("Failed to read the status of %s: %s", replica["address"], e)
+            return False
+        return status == "healthy" and (is_database or self._reports_are_fresh(replica))
 
     def _may_still_be_booting(self, replica):
         """Whether the replica was created within the startup grace period."""

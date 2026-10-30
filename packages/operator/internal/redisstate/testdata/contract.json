@@ -90,6 +90,7 @@
     "stateful": {
       "HelloAgent": "true"
     },
-    "stateful_key": "routing_table:stateful"
+    "stateful_key": "routing_table:stateful",
+    "up_key": "routing_table:up"
   }
 }

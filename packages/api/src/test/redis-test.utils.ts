@@ -14,7 +14,7 @@ export const ACTIVE_AGENTS_KEY = 'agents:active';
 export const GOVERNANCE_CONFIG_KEY = 'governance:config';
 export const GOVERNANCE_SPEND_KEY = 'governance:spend';
 export const LLMS_CONFIG_KEY = 'llms:config';
-export const ROUTING_TABLE_KEY = 'routing_table:replicas';
+export const UP_AGENTS_KEY = 'routing_table:up';
 
 /** An agent as the controller publishes it: its spec, desired count and newest load sample. */
 export interface SeededAgent {
@@ -100,9 +100,7 @@ export async function reset_controller(): Promise<void> {
     await redis.del(GOVERNANCE_CONFIG_KEY);
     await redis.del(GOVERNANCE_SPEND_KEY);
     await redis.del(LLMS_CONFIG_KEY);
-    await redis.del(ROUTING_TABLE_KEY);
-    const replica_keys = (await redis.send('KEYS', ['controller:*:*'])) as string[];
-    for (const key of replica_keys) await redis.del(key);
+    await redis.del(UP_AGENTS_KEY);
   });
 }
 
@@ -169,23 +167,9 @@ export async function seed_llms(llms: unknown): Promise<void> {
   await with_test_redis((redis) => redis.set(LLMS_CONFIG_KEY, JSON.stringify(llms)));
 }
 
-/**
- * Routes address to agent and writes its heartbeat the way a Local Controller does:
- * `observed_at` in epoch seconds.
- */
-export async function seed_replica_health(
-  agent: string,
-  address: string,
-  healthy: boolean,
-  observed_at: number
-): Promise<void> {
-  await with_test_redis(async (redis) => {
-    const routed = await redis.hget(ROUTING_TABLE_KEY, agent);
-    const addresses = routed === null ? [] : (JSON.parse(routed) as string[]);
-    await redis.hset(ROUTING_TABLE_KEY, agent, JSON.stringify([...addresses, address]));
-    await redis.set(`controller:${address}:status`, healthy ? 'healthy' : 'unhealthy');
-    await redis.hset(`controller:${address}:metrics`, 'observed_at', String(observed_at));
-  });
+/** Publishes agents as the ones with a replica up, the way the reconciler does. */
+export async function seed_up_agents(agents: readonly string[]): Promise<void> {
+  await with_test_redis((redis) => redis.sadd(UP_AGENTS_KEY, ...agents));
 }
 
 export async function read_governance_config(): Promise<unknown> {

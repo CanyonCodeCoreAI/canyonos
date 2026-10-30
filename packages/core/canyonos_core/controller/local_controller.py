@@ -162,7 +162,7 @@ class LocalController(object):
         self._metrics_interval = float(os.environ.get("CANYONOS_POLL_INTERVAL", 5))
         # Before the server serves, so no call arrives ahead of its admission check.
         try:
-            self._rules = governance.load(self.redis.client, self._metrics_interval)
+            self._rules = governance.load(self.redis.client)
         except Exception as e:
             logger.warning(
                 "Could not load the governance rules, admitting every call: %s", e
@@ -604,9 +604,7 @@ class LocalController(object):
         """Replace the governance snapshot, keeping the previous one when Redis can't
         give a readable one."""
         try:
-            self._rules = governance.load(
-                self.redis.client, self._metrics_interval, previous=self._rules
-            )
+            self._rules = governance.load(self.redis.client, previous=self._rules)
         except Exception as e:
             logger.warning("Keeping the previous governance rules: %s", e)
 

@@ -103,15 +103,11 @@ test_runner_unrouted() {
   [ "$routes" = "[]" ]
 }
 
-# A replica record exists while the container still boots; the governance check
-# counts the agent up only once a replica reports healthy.
-test_runner_healthy() {
-  local routes address
-  routes="$(test_runner_routes)" || exit 1
-  for address in $(python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])))' "$routes"); do
-    [ "$(redis GET "controller:$address:status")" = healthy ] && return 0
-  done
-  return 1
+# A replica record exists while the container still boots; the reconciler puts the
+# agent in routing_table:up, which governance reads, once a replica reports healthy
+# with a fresh heartbeat.
+test_runner_up() {
+  [ "$(redis SISMEMBER routing_table:up TestRunnerAgent)" = 1 ]
 }
 
 # Sends the test query to POST /review and waits for it; $1 names its artifacts.
@@ -198,7 +194,8 @@ step "1. Deploy, then canyonos test answers with a review"
 canyonos stop || true
 canyonos deploy --serve false </dev/null >"$ARTIFACTS_DIR/deploy.log" 2>&1 ||
   { cat "$ARTIFACTS_DIR/deploy.log"; fail "the deploy failed"; }
-# Two polls: a replica's first heartbeat, then every controller's snapshot that reads it.
+# Two polls: the reconciler's pass that counts each replica up, then every controller's
+# snapshot that reads it.
 sleep $((RULES_REFRESH * 2))
 canyonos test "$QUERY" --json --timeout "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/test.json" ||
   { cat "$ARTIFACTS_DIR/test.json"; fail "canyonos test failed"; }
@@ -247,7 +244,7 @@ grep -q '"error_name": *"DependencyDown"' "$ARTIFACTS_DIR/root-refused.json" ||
 step "5. With TestRunnerAgent back and the seed restored, the query succeeds again"
 redis SET agent:TestRunnerAgent:desired_replicas 1
 redis SET governance:config "$GOVERNANCE_SEED"
-wait_until 120 test_runner_healthy || fail "TestRunnerAgent has no healthy replica after 120s"
+wait_until 120 test_runner_up || fail "TestRunnerAgent is not up after 120s"
 sleep "$RULES_REFRESH"
 send_query restored
 expect_done restored

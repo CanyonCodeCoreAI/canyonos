@@ -25,6 +25,7 @@ const (
 	AgentsKey    = "routing_table:agents"
 	AddressesKey = "routing_table:addresses"
 	StatefulKey  = "routing_table:stateful"
+	UpKey        = "routing_table:up"
 )
 
 // Replica is one ready pod of an agent.

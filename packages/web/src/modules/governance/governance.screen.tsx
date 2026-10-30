@@ -4,7 +4,19 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
 import { getRouteApi } from '@tanstack/react-router';
-import { GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react';
+import {
+  ArrowRightIcon,
+  BotIcon,
+  GaugeIcon,
+  InfoIcon,
+  PlayIcon,
+  PlusIcon,
+  PowerIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  XIcon,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Controller, useFieldArray, useForm } from 'react-hook-form';
 import type { UseQueryResult } from '@tanstack/react-query';
@@ -34,6 +46,7 @@ import {
 } from '@repo/ui/shadcn/select';
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -41,7 +54,7 @@ import {
 } from '@repo/ui/shadcn/sheet';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@repo/ui/shadcn/toggle-group';
-import { TooltipProvider } from '@repo/ui/shadcn/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@repo/ui/shadcn/tooltip';
 import type {
   FlowEdgeSpec,
   FlowNodeFooterRow,
@@ -71,6 +84,12 @@ const CARD_BODY_PX = 7 * REM_PX;
 const FOOTER_EDGE_PX = 1 * REM_PX;
 const FOOTER_ROW_PX = 1.75 * REM_PX;
 const ROW_GAP_PX = 2 * REM_PX;
+// A column stacks at most this many agents; past it the graph turns to rows, which wrap at it.
+const MAX_AGENTS_IN_LINE = 6;
+// A card's width (`nodeWidthToken`, 14rem) plus the gap between cards in a row.
+const ROW_STEP_PX = 16 * REM_PX;
+// Room between rows for the calls' elbows.
+const LEVEL_GAP_PX = 4 * REM_PX;
 
 // React Flow places top-left corners before it measures cards, so a column is stacked by an
 // estimate that errs tall: a card grows with its footer rows, and a long model id wraps.
@@ -112,7 +131,7 @@ function nodeLook(agent: GovernanceAgent): NodeLook {
   if (agent.unmet_requires.length > 0) {
     return { tag: requiresTag(agent.unmet_requires), tone: 'warning' };
   }
-  if (agent.spend !== null && agent.spend.tripped_rule_index !== null) {
+  if (agent.spend !== null && agent.spend.tripped_action !== null) {
     return { tag: 'Cap tripped', tone: 'warning' };
   }
   return { tag: null, tone: 'ok' };
@@ -128,23 +147,13 @@ function spentPart(agent: GovernanceAgent): string[] {
   return [`${usd(agent.spend.usd)} since ${day(agent.spend.since)}`];
 }
 
-/** "$7.00 since Oct 20, 2026 · cap $5.00": the spend and the lowest threshold it is held to. */
-function spendParts(agent: GovernanceAgent): string[] {
-  if (agent.spend === null) return [];
-  const thresholds = (agent.rules.spend?.rules ?? []).map((rule) => rule.above_usd);
-  const cap = thresholds.length === 0 ? [] : [`cap ${usd(Math.min(...thresholds))}`];
-  return [...spentPart(agent), ...cap];
-}
-
-function trippedPart(agent: GovernanceAgent): string[] {
-  const index = agent.spend?.tripped_rule_index ?? null;
-  const rule = index === null ? undefined : agent.rules.spend?.rules[index];
-  if (rule === undefined) return [];
-  switch (rule.action.kind) {
+function spendEffect(action: CostAction | null): string {
+  if (action === null) return 'Within limits';
+  switch (action.kind) {
     case 'switch_model':
-      return [`switched to ${rule.action.model}`];
+      return `Switched to ${action.model}`;
     case 'deny':
-      return ['calls refused'];
+      return 'Calls refused';
   }
 }
 
@@ -186,16 +195,27 @@ const knownCalls = (agents: readonly GovernanceAgent[], edges: readonly Governan
   );
 };
 
+type Orientation = 'columns' | 'rows';
+type Point = FlowNodeSpec['position'];
+type Level = readonly GovernanceAgent[];
+
+const CALL_ANCHORS: Record<Orientation, Pick<FlowEdgeSpec, 'source_anchor' | 'target_anchor'>> = {
+  columns: { source_anchor: 'right', target_anchor: 'left' },
+  rows: { source_anchor: 'bottom', target_anchor: 'top' },
+};
+
+interface Layout {
+  readonly positions: Map<string, Point>;
+  /** How far below its card each caller's calls turn; a caller left out turns them halfway. */
+  readonly bends: Map<string, number>;
+}
+
 /**
- * Agents in columns by the longest chain of callers above them, so a caller sits left of what it
- * calls; agents in one column stack in the order the API lists them. A cycle stops deepening at
- * the agent count.
+ * Agents grouped by the longest chain of callers above them, so a caller's level comes before what
+ * it calls; each level keeps the order the API lists them. A cycle stops deepening at the agent
+ * count.
  */
-export function layoutNodes(
-  agents: readonly GovernanceAgent[],
-  edges: readonly GovernanceEdge[]
-): FlowNodeSpec[] {
-  const calls = knownCalls(agents, edges);
+function callLevels(agents: readonly GovernanceAgent[], calls: readonly GovernanceEdge[]): Level[] {
   const deepest = Math.max(agents.length - 1, 0);
   const depth = new Map(agents.map((agent) => [agent.name, 0]));
   for (let pass = 0; pass < agents.length; pass += 1) {
@@ -204,41 +224,107 @@ export function layoutNodes(
       depth.set(target, Math.max(depth.get(target) ?? 0, reached));
     }
   }
-  const columnBottom = new Map<number, number>();
-  return agents.map((agent) => {
-    const column = depth.get(agent.name) ?? 0;
-    const y = columnBottom.get(column) ?? 0;
-    const footer = footerRows(agent);
-    columnBottom.set(column, y + cardHeightPx(footer) + ROW_GAP_PX);
-    const { tag, tone } = nodeLook(agent);
-    return {
-      id: agent.name,
-      position: { x: column * COLUMN_STEP_PX, y },
-      data: {
-        kind: 'agent',
-        file: agent.name,
-        role: roleLine(agent),
-        tag,
-        tone,
-        chips: [],
-        footer,
-      },
-    };
-  });
+  const levels = Array.from({ length: deepest + 1 }, (): GovernanceAgent[] => []);
+  for (const agent of agents) levels[depth.get(agent.name) ?? 0]?.push(agent);
+  return levels.filter((level) => level.length > 0);
 }
 
-function edgeSpecs(
+const levelHeightPx = (level: Level) =>
+  Math.max(...level.map((agent) => cardHeightPx(footerRows(agent))));
+
+function columnLayout(levels: readonly Level[]): Layout {
+  const positions = new Map<string, Point>();
+  levels.forEach((level, column) => {
+    let y = 0;
+    for (const agent of level) {
+      positions.set(agent.name, { x: column * COLUMN_STEP_PX, y });
+      y += cardHeightPx(footerRows(agent)) + ROW_GAP_PX;
+    }
+  });
+  return { positions, bends: new Map() };
+}
+
+const wrapped = (level: Level): Level[] =>
+  Array.from({ length: Math.ceil(level.length / MAX_AGENTS_IN_LINE) }, (_, row) =>
+    level.slice(row * MAX_AGENTS_IN_LINE, (row + 1) * MAX_AGENTS_IN_LINE)
+  );
+
+/**
+ * Each level a row, centred on the widest one. A level wraps every MAX_AGENTS_IN_LINE agents, each
+ * second row shifted half a card so its cards sit under the gaps the calls into it pass through.
+ * Calls turn below the caller's whole level, so one from a first-row card drops through those gaps
+ * instead of turning behind the row under it.
+ */
+function rowLayout(levels: readonly Level[]): Layout {
+  const widest = Math.max(...levels.map((level) => Math.min(level.length, MAX_AGENTS_IN_LINE)));
+  const positions = new Map<string, Point>();
+  const bends = new Map<string, number>();
+  let y = 0;
+  for (const level of levels) {
+    const rows = wrapped(level);
+    const indent = ((widest - (rows[0]?.length ?? 0)) * ROW_STEP_PX) / 2;
+    rows.forEach((row, index) => {
+      const shift = index % 2 === 1 ? ROW_STEP_PX / 2 : 0;
+      row.forEach((agent, column) => {
+        positions.set(agent.name, { x: indent + shift + column * ROW_STEP_PX, y });
+      });
+      y += levelHeightPx(row) + LEVEL_GAP_PX;
+    });
+    const levelBottom = y - LEVEL_GAP_PX;
+    for (const agent of level) {
+      const cardBottom = (positions.get(agent.name)?.y ?? 0) + cardHeightPx(footerRows(agent));
+      bends.set(agent.name, levelBottom - cardBottom + LEVEL_GAP_PX / 2);
+    }
+  }
+  return { positions, bends };
+}
+
+const LAYOUT: Record<Orientation, (levels: readonly Level[]) => Layout> = {
+  columns: columnLayout,
+  rows: rowLayout,
+};
+
+function agentNode(agent: GovernanceAgent, position: Point): FlowNodeSpec {
+  const { tag, tone } = nodeLook(agent);
+  return {
+    id: agent.name,
+    position,
+    data: {
+      kind: 'agent',
+      file: agent.name,
+      role: roleLine(agent),
+      tag,
+      tone,
+      chips: [],
+      footer: footerRows(agent),
+    },
+  };
+}
+
+/**
+ * Levels of callers as columns, left to right, until one level holds more than MAX_AGENTS_IN_LINE;
+ * then as rows, top to bottom, so a wide fan-out spreads across the canvas instead of down it.
+ */
+function governanceFlow(
   agents: readonly GovernanceAgent[],
   edges: readonly GovernanceEdge[]
-): FlowEdgeSpec[] {
-  return knownCalls(agents, edges).map(({ source, target }) => ({
-    id: `${source}->${target}`,
-    source,
-    target,
-    source_anchor: 'right',
-    target_anchor: 'left',
-    data: { edge_type: 'call', label: null },
-  }));
+): { nodes: FlowNodeSpec[]; edges: FlowEdgeSpec[] } {
+  const calls = knownCalls(agents, edges);
+  const levels = callLevels(agents, calls);
+  const orientation: Orientation = levels.some((level) => level.length > MAX_AGENTS_IN_LINE)
+    ? 'rows'
+    : 'columns';
+  const { positions, bends } = LAYOUT[orientation](levels);
+  return {
+    nodes: agents.map((agent) => agentNode(agent, positions.get(agent.name) ?? { x: 0, y: 0 })),
+    edges: calls.map(({ source, target }) => ({
+      id: `${source}->${target}`,
+      source,
+      target,
+      ...CALL_ANCHORS[orientation],
+      data: { edge_type: 'call', label: null, bend_from_source: bends.get(source) },
+    })),
+  };
 }
 
 const governanceNodeTestId = (id: string) => `governance-node-${id}`;
@@ -248,11 +334,18 @@ const TOOLBAR_PANEL =
 const TOOLBAR_BUTTON =
   'text-muted-foreground hover:text-foreground h-7 gap-1.5 px-2.5 text-xs active:scale-[0.96] focus-visible:ring-ring focus-visible:ring-2';
 
-// Both sheets slide over the canvas on the same drawer curve, quicker out than in.
-const SHEET_OVERLAY = 'bg-black/25 dark:bg-black/40';
+// Both sheets slide over the canvas on the same drawer curve, quicker out than in. They take half
+// the canvas so a rule reads on one line; a narrow canvas gives them 28rem, or all of it.
+const SHEET_OVERLAY = 'bg-black/10 dark:bg-black/45';
 const SHEET_PANEL =
-  'w-full gap-0 overflow-y-auto shadow-[var(--shadow-lg)] ease-[cubic-bezier(0.32,0.72,0,1)] data-[state=closed]:duration-200 data-[state=open]:duration-300 motion-reduce:animate-none sm:max-w-md';
-const SHEET_HEADER = 'border-border/60 gap-1 border-b px-6 pt-5 pb-4';
+  'w-[max(50%,min(28rem,100%))] max-w-none gap-0 overflow-y-auto shadow-[var(--shadow-lg)] ease-[cubic-bezier(0.32,0.72,0,1)] data-[state=closed]:duration-200 data-[state=open]:duration-300 motion-reduce:animate-none sm:max-w-none';
+const SHEET_HEADER = 'border-border/60 flex-row items-start gap-3 border-b px-6 py-5';
+const SHEET_ICON =
+  'bg-muted ring-border/70 grid size-9 shrink-0 place-items-center rounded-lg ring-1 [&_svg]:size-4';
+// The status colour marks the dot and tints the pill; text stays foreground, which the status
+// colours are too light to carry at this size.
+const STATUS_COLOR =
+  'data-[status=up]:[--status:var(--flow-workflow)] data-[status=down]:[--status:var(--destructive)] data-[status=stopped]:[--status:var(--chart-3)] data-[status=unknown]:[--status:var(--muted-foreground)]';
 
 type Panel = 'policy';
 
@@ -331,7 +424,7 @@ function GovernanceBody({
     );
   }
   const { agents, edges } = query.data;
-  const calls = edgeSpecs(agents, edges);
+  const flow = governanceFlow(agents, edges);
   return (
     <>
       <RefreshError query={query} />
@@ -341,9 +434,9 @@ function GovernanceBody({
       >
         {/* The canvas keeps its edges from mount, so a new call between agents remounts it. */}
         <FlowCanvas
-          key={calls.map((call) => call.id).join('\n')}
-          nodes={layoutNodes(agents, edges)}
-          edges={calls}
+          key={flow.edges.map((call) => call.id).join('\n')}
+          nodes={flow.nodes}
+          edges={flow.edges}
           nodeTestId={governanceNodeTestId}
           onNodeClick={(id) => void navigate({ search: { agent: id } })}
           showControls
@@ -464,11 +557,22 @@ function PolicySheet({
         container={container}
         overlayClassName={SHEET_OVERLAY}
         className={SHEET_PANEL}
+        showCloseButton={false}
         data-testid="governance-policy-sheet"
       >
         <SheetHeader className={SHEET_HEADER}>
-          <SheetTitle className="pr-8 text-base">Scaling policy</SheetTitle>
-          <SheetDescription className="text-xs text-pretty">{SCALING_SCOPE}</SheetDescription>
+          <span className={`${SHEET_ICON} text-muted-foreground`} aria-hidden>
+            <GaugeIcon />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <SheetTitle className="text-base font-semibold tracking-tight">
+              Scaling policy
+            </SheetTitle>
+            <SheetDescription className="max-w-prose text-xs text-pretty">
+              {SCALING_SCOPE}
+            </SheetDescription>
+          </div>
+          <CloseButton />
         </SheetHeader>
         <div className="px-6 py-5">
           <PolicyBody project_id={project_id} />
@@ -505,6 +609,22 @@ function PolicyBody({ project_id }: { readonly project_id: string }) {
   );
 }
 
+function CloseButton() {
+  return (
+    <SheetClose asChild>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="text-muted-foreground -mt-1 -mr-2 size-8 shrink-0"
+      >
+        <XIcon aria-hidden />
+        <span className="sr-only">Close</span>
+      </Button>
+    </SheetClose>
+  );
+}
+
 function AgentDrawer({
   project_id,
   agents,
@@ -531,25 +651,35 @@ function AgentDrawer({
         container={container}
         overlayClassName={SHEET_OVERLAY}
         className={SHEET_PANEL}
+        showCloseButton={false}
         data-testid="governance-drawer"
       >
-        <SheetHeader className={SHEET_HEADER}>
-          <SheetTitle className="pr-8 font-mono text-base break-all">{agent.name}</SheetTitle>
-          <SheetDescription className="text-xs tabular-nums">
-            {STATUS_LABEL[agent.status]} · {agent.replicas_running}/{agent.replicas_expected}{' '}
-            replicas
-          </SheetDescription>
-        </SheetHeader>
-        <div className="flex flex-col gap-7 px-6 pt-5">
-          <StopAgentButton project_id={project_id} agent={agent} />
-          <RulesForm project_id={project_id} agents={agents} agent={agent} />
-        </div>
+        <TooltipProvider delayDuration={200}>
+          <AgentHeader project_id={project_id} agent={agent} />
+          <div className="flex flex-1 flex-col px-6 pt-5">
+            <RulesForm project_id={project_id} agents={agents} agent={agent} />
+          </div>
+        </TooltipProvider>
       </SheetContent>
     </Sheet>
   );
 }
 
-function StopAgentButton({
+function StatusPill({ status }: { readonly status: AgentStatus }) {
+  return (
+    <span
+      className={`text-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[color-mix(in_srgb,var(--status)_14%,transparent)] px-2 py-0.5 text-[0.6875rem] leading-4 font-medium ${STATUS_COLOR}`}
+      data-status={status}
+      data-testid="governance-drawer-status"
+    >
+      <span className="size-1.5 rounded-full bg-(--status)" aria-hidden />
+      {STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+/** The agent at a glance, with the one action that changes its replicas: stop or start it. */
+function AgentHeader({
   project_id,
   agent,
 }: {
@@ -559,31 +689,50 @@ function StopAgentButton({
   const set = useSetStopped(project_id, agent.name);
   const stopped = agent.status === 'stopped';
   const warn = agent.scaling_policy_present && !stopped;
+  const error = set.error
+    ? governanceErrorMessage(set.error, `Could not ${stopped ? 'start' : 'stop'} the agent.`)
+    : null;
 
   return (
-    <div className="flex flex-col items-start gap-2">
-      <Button
-        type="button"
-        size="sm"
-        variant={stopped ? 'default' : 'outline'}
-        disabled={set.isPending}
-        aria-describedby={warn ? 'governance-stop-note' : undefined}
-        onClick={() => set.mutate(!stopped)}
-      >
-        {stopped ? 'Start agent' : 'Stop agent'}
-      </Button>
+    <>
+      <SheetHeader className={SHEET_HEADER}>
+        <span className={`${SHEET_ICON} text-flow-agent`} aria-hidden>
+          <BotIcon />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <SheetTitle className="truncate text-base font-semibold tracking-tight">
+              {agent.name}
+            </SheetTitle>
+            <StatusPill status={agent.status} />
+          </div>
+          <SheetDescription className="text-xs tabular-nums">{roleLine(agent)}</SheetDescription>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant={stopped ? 'default' : 'outline'}
+          className="active:scale-[0.96]"
+          disabled={set.isPending}
+          aria-describedby={warn ? 'governance-stop-note' : undefined}
+          onClick={() => set.mutate(!stopped)}
+        >
+          {stopped ? <PlayIcon aria-hidden /> : <PowerIcon aria-hidden />}
+          {stopped ? 'Start agent' : 'Stop agent'}
+        </Button>
+        <CloseButton />
+      </SheetHeader>
+      <HeaderNotes warn={warn} error={error} />
+    </>
+  );
+}
+
+function HeaderNotes({ warn, error }: { readonly warn: boolean; readonly error: string | null }) {
+  if (!warn && error === null) return null;
+  return (
+    <div className="border-border/60 bg-muted/40 flex flex-col gap-1 border-b px-6 py-2.5">
       <ScalingNote warn={warn} />
-      <FormError
-        error={
-          set.error
-            ? governanceErrorMessage(
-                set.error,
-                `Could not ${stopped ? 'start' : 'stop'} the agent.`
-              )
-            : null
-        }
-        test_id="governance-stop-error"
-      />
+      <FormError error={error} test_id="governance-stop-error" />
     </div>
   );
 }
@@ -593,7 +742,7 @@ function ScalingNote({ warn }: { readonly warn: boolean }) {
   return (
     <p
       id="governance-stop-note"
-      className="text-muted-foreground text-xs"
+      className="text-muted-foreground text-xs text-pretty"
       data-testid="governance-stop-note"
     >
       A scaling policy is set, so the controller starts it again at its minimum replicas.
@@ -635,13 +784,19 @@ function RulesForm({
   readonly agent: GovernanceAgent;
 }) {
   const save = useSaveAgentRules(project_id, agent.name);
+  // `since` is always a key: its date field registers it, and a key the stored rules lack would
+  // read as an edit before any.
+  const stored: AgentRules = {
+    requires: agent.rules.requires,
+    spend: { since: undefined, ...(agent.rules.spend ?? { rules: [] }) },
+  };
   const form = useForm<AgentRules>({
     resolver: zodResolver(AgentRulesSchema),
-    values: { requires: agent.rules.requires, spend: agent.rules.spend ?? { rules: [] } },
+    values: stored,
     resetOptions: { keepDirtyValues: true },
   });
   const rules = useFieldArray({ control: form.control, name: 'spend.rules' });
-  const others = agents.filter((other) => other.name !== agent.name).map((other) => other.name);
+  const others = agents.filter((other) => other.name !== agent.name);
   // Reset to what was saved, so a saved form is clean and follows the polled rules again.
   const submit = form.handleSubmit((values) =>
     save.mutate(
@@ -655,15 +810,15 @@ function RulesForm({
 
   return (
     <form
-      className="flex flex-col gap-7"
+      className="flex flex-1 flex-col gap-4"
       aria-label={`Rules of ${agent.name}`}
       data-state={save.isPending ? 'saving' : 'editing'}
       onSubmit={submit}
     >
-      <section className="flex flex-col gap-3">
-        <SectionHeading title="Requires">
-          Calls to {agent.name} are refused while any of these has no replica up.
-        </SectionHeading>
+      <Section
+        title="Requires"
+        info={`Calls to ${agent.name} are refused with DependencyDown while any agent picked here has no healthy replica.`}
+      >
         <Controller
           control={form.control}
           name="requires"
@@ -672,21 +827,29 @@ function RulesForm({
           )}
         />
         <UnmetRequires unmet={agent.unmet_requires} />
-      </section>
+      </Section>
 
-      <section className="flex flex-col gap-3">
-        <SectionHeading title="Spend rules">The highest threshold passed wins.</SectionHeading>
-        <SpendLine agent={agent} />
+      <Section
+        title="Spend rules"
+        info="Past a threshold, the agent's LLM calls switch to another model, or its calls are refused with SpendLimit. When several thresholds are passed, the highest one decides."
+      >
+        <SpendSummary agent={agent} />
         <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-xs">
-            <span className="text-muted-foreground">Count spend from</span>
+          <label className="flex flex-col gap-1.5 text-xs">
+            <span className="text-muted-foreground flex items-center gap-1.5 font-medium">
+              Count spend from
+              <InfoTip label="About the spend start">
+                Spend counts from this date. Left empty, the stored start is kept; a new rule counts
+                from the moment it is saved.
+              </InfoTip>
+            </span>
             <Controller
               control={form.control}
               name="spend.since"
               render={({ field }) => (
                 <Input
                   type="datetime-local"
-                  className="w-auto"
+                  className="w-auto tabular-nums"
                   value={toLocalInput(field.value)}
                   onChange={(event) =>
                     field.onChange(
@@ -703,6 +866,7 @@ function RulesForm({
             type="button"
             size="sm"
             variant="outline"
+            className="active:scale-[0.96]"
             onClick={() =>
               form.setValue('spend.since', new Date().toISOString(), { shouldDirty: true })
             }
@@ -710,58 +874,116 @@ function RulesForm({
             From now
           </Button>
         </div>
-        <p className="text-muted-foreground text-xs text-pretty">
-          Left empty, the stored start is kept; for a new rule the count starts now.
-        </p>
-        {rules.fields.map((field, index) => (
-          <SpendRuleRow
-            key={field.id}
-            form={form}
-            index={index}
-            models={agent.models}
-            onRemove={() => rules.remove(index)}
-          />
-        ))}
+        <RuleList empty={rules.fields.length === 0}>
+          {rules.fields.map((field, index) => (
+            <SpendRuleRow
+              key={field.id}
+              form={form}
+              index={index}
+              models={agent.models}
+              onRemove={() => rules.remove(index)}
+            />
+          ))}
+        </RuleList>
         <Button
           type="button"
           size="sm"
           variant="ghost"
-          className="self-start"
+          className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/25 w-full border border-dashed active:scale-[0.99]"
           onClick={() => rules.append(NEW_RULE)}
         >
           <PlusIcon aria-hidden />
           Add rule
         </Button>
-      </section>
+      </Section>
 
       <FormError
         error={save.error ? governanceErrorMessage(save.error, 'Could not save the rules.') : null}
         test_id="governance-form-error"
       />
-      <div className="border-border/60 bg-background sticky bottom-0 -mx-6 flex items-center justify-between gap-3 border-t px-6 py-4">
-        <p className="text-muted-foreground text-xs">
-          Rules apply on the controller&apos;s next poll.
-        </p>
-        <Button type="submit" size="sm" disabled={save.isPending}>
-          {save.isPending ? 'Saving…' : 'Save rules'}
-        </Button>
+      <div className="border-border/60 bg-background/85 sticky bottom-0 -mx-6 mt-auto flex items-center justify-between gap-3 border-t px-6 py-3.5 backdrop-blur-md">
+        <SaveState dirty={form.formState.isDirty} />
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={!form.formState.isDirty || save.isPending}
+            onClick={() => {
+              form.reset(stored, { keepDirtyValues: false });
+              save.reset();
+            }}
+          >
+            Discard
+          </Button>
+          <Button type="submit" size="sm" className="active:scale-[0.96]" disabled={save.isPending}>
+            {save.isPending ? 'Saving…' : 'Save rules'}
+          </Button>
+        </div>
       </div>
     </form>
   );
 }
 
-function SectionHeading({
+function SaveState({ dirty }: { readonly dirty: boolean }) {
+  if (!dirty) {
+    return (
+      <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        Rules apply on the controller&apos;s next poll.
+        <InfoTip label="About the poll">
+          Each replica&apos;s controller rereads its rules every poll interval, the{' '}
+          <code className="font-mono">poll_interval</code> in{' '}
+          <code className="font-mono">global_controller.yaml</code> (5 seconds by default), so a
+          save takes effect within seconds, without a redeploy.
+        </InfoTip>
+      </p>
+    );
+  }
+  return (
+    <p className="text-foreground flex items-center gap-2 text-xs font-medium" role="status">
+      <span className="bg-chart-3 size-1.5 rounded-full" aria-hidden />
+      Unsaved changes
+    </p>
+  );
+}
+
+function Section({
   title,
+  info,
   children,
 }: {
   readonly title: string;
+  readonly info: string;
   readonly children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <h3 className="text-foreground text-[0.8125rem] font-semibold">{title}</h3>
-      <p className="text-muted-foreground text-xs text-pretty">{children}</p>
-    </div>
+    <section className="bg-card ring-border/70 flex flex-col gap-3 rounded-xl p-4 ring-1">
+      <h3 className="text-foreground flex items-center gap-1.5 text-[0.8125rem] font-semibold">
+        {title}
+        <InfoTip label={`About ${title.toLowerCase()}`}>{info}</InfoTip>
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+/** A help icon whose tooltip explains the term beside it, on hover and on keyboard focus. */
+function InfoTip({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring relative inline-grid size-4 shrink-0 place-items-center rounded-full transition-colors after:absolute after:-inset-3 focus-visible:ring-2 focus-visible:outline-none"
+        >
+          <InfoIcon className="size-3.5" aria-hidden />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent sideOffset={6} className="max-w-72 leading-relaxed font-normal text-pretty">
+        {children}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -770,7 +992,7 @@ function RequiresToggle({
   value,
   onChange,
 }: {
-  readonly others: readonly string[];
+  readonly others: readonly GovernanceAgent[];
   readonly value: string[];
   readonly onChange: (value: string[]) => void;
 }) {
@@ -782,35 +1004,110 @@ function RequiresToggle({
       type="multiple"
       size="sm"
       variant="outline"
-      className="flex-wrap justify-start bg-transparent p-0"
+      className="flex-wrap justify-start gap-1.5 bg-transparent p-0"
       aria-label="Requires"
       value={value}
       onValueChange={onChange}
     >
-      {others.map((name) => (
-        <ToggleGroupItem key={name} value={name} className="font-mono text-xs">
-          {name}
+      {others.map((other) => (
+        <ToggleGroupItem
+          key={other.name}
+          value={other.name}
+          className="data-[state=on]:border-flow-agent/45 data-[state=on]:bg-flow-agent/10 h-8 gap-2 rounded-md px-2.5 text-xs font-medium shadow-none data-[state=on]:shadow-none"
+        >
+          <span
+            className={`size-1.5 shrink-0 rounded-full bg-(--status) ${STATUS_COLOR}`}
+            data-status={other.status}
+            aria-hidden
+          />
+          {other.name}
+          <ChipStatus status={other.status} />
         </ToggleGroupItem>
       ))}
     </ToggleGroup>
   );
 }
 
+/** An agent that is not up says so in text too, not by its dot's colour alone. */
+function ChipStatus({ status }: { readonly status: AgentStatus }) {
+  if (status === 'up') return null;
+  return <span className="text-muted-foreground font-normal"> {STATUS_LABEL[status]}</span>;
+}
+
 function UnmetRequires({ unmet }: { readonly unmet: readonly string[] }) {
   if (unmet.length === 0) return null;
   return (
-    <p className="text-destructive text-xs" data-testid="governance-unmet">
+    <p
+      className="bg-destructive/8 text-destructive flex items-start gap-2 rounded-lg px-3 py-2 text-xs text-pretty"
+      data-testid="governance-unmet"
+    >
+      <TriangleAlertIcon className="mt-px size-3.5 shrink-0" aria-hidden />
       Not up right now: {unmet.join(', ')}. Calls to this agent are refused.
     </p>
   );
 }
 
-function SpendLine({ agent }: { readonly agent: GovernanceAgent }) {
+/** What the agent has spent since its rules started counting, and what that does to it now. */
+function SpendSummary({ agent }: { readonly agent: GovernanceAgent }) {
   if (agent.spend === null) return null;
   return (
-    <p className="text-foreground font-mono text-xs tabular-nums" data-testid="governance-spend">
-      {[...spendParts(agent), ...trippedPart(agent)].join(' · ')}
-    </p>
+    <dl
+      className="bg-border/60 ring-border/60 flex flex-wrap gap-px overflow-hidden rounded-lg ring-1"
+      data-testid="governance-spend"
+    >
+      <SpendStat
+        label="Spent"
+        value={usd(agent.spend.usd)}
+        info="Model spend from the agent's telemetry since the start date. The dashboard refreshes it about once a minute."
+      />
+      <SpendStat label="Counting since" value={day(agent.spend.since)} />
+      <SpendStat label="Now" value={spendEffect(agent.spend.tripped_action)} wide />
+    </dl>
+  );
+}
+
+function SpendStat({
+  label,
+  value,
+  info,
+  wide = false,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly info?: string;
+  readonly wide?: boolean;
+}) {
+  return (
+    <div
+      className="bg-card flex min-w-0 flex-1 basis-32 flex-col gap-1 px-3 py-2.5 data-[wide=true]:grow-[2] data-[wide=true]:basis-48"
+      data-wide={wide}
+    >
+      <dt className="text-muted-foreground flex items-center gap-1.5 text-[0.6875rem] font-medium tracking-wide uppercase">
+        {label}
+        <StatInfo label={label} info={info} />
+      </dt>
+      <dd className="text-foreground text-sm font-semibold break-words tabular-nums">{value}</dd>
+    </div>
+  );
+}
+
+function StatInfo({ label, info }: { readonly label: string; readonly info: string | undefined }) {
+  if (info === undefined) return null;
+  return <InfoTip label={`About ${label.toLowerCase()}`}>{info}</InfoTip>;
+}
+
+function RuleList({ empty, children }: { readonly empty: boolean; readonly children: ReactNode }) {
+  if (empty) {
+    return (
+      <p className="text-muted-foreground ring-border/60 rounded-lg px-3 py-3 text-xs ring-1">
+        No spend rules: calls run at any spend.
+      </p>
+    );
+  }
+  return (
+    <div className="divide-border/60 ring-border/60 divide-y overflow-hidden rounded-lg ring-1">
+      {children}
+    </div>
   );
 }
 
@@ -834,20 +1131,30 @@ function SpendRuleRow({
   const threshold_invalid = form.getFieldState(threshold, form.formState).invalid;
   return (
     <div
-      className="border-border/50 bg-muted/30 flex flex-wrap items-end gap-2 rounded-md border p-2.5"
+      className="flex flex-wrap items-center gap-2 px-3 py-2.5"
       data-testid="governance-spend-rule"
     >
-      <label className="flex flex-col gap-1 text-xs">
-        <span className="text-muted-foreground">Above USD</span>
-        <Input
-          type="number"
-          step="0.01"
-          min="0"
-          className="w-24"
-          aria-invalid={threshold_invalid}
-          {...form.register(threshold, { valueAsNumber: true })}
-        />
+      <label className="text-muted-foreground flex items-center gap-2 text-xs font-medium">
+        Above
+        <span className="relative">
+          <span
+            className="pointer-events-none absolute inset-y-0 left-2.5 grid place-items-center"
+            aria-hidden
+          >
+            $
+          </span>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            className="text-foreground w-24 pl-5.5 tabular-nums"
+            aria-label="Above USD"
+            aria-invalid={threshold_invalid}
+            {...form.register(threshold, { valueAsNumber: true })}
+          />
+        </span>
       </label>
+      <ArrowRightIcon className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
       <Controller
         control={form.control}
         name={`spend.rules.${index}.action`}
@@ -864,7 +1171,7 @@ function SpendRuleRow({
         type="button"
         size="icon"
         variant="ghost"
-        className="text-muted-foreground ml-auto"
+        className="text-muted-foreground hover:text-destructive ml-auto size-8"
         aria-label="Remove rule"
         onClick={onRemove}
       >
@@ -936,7 +1243,7 @@ function ModelField({
       <Input
         aria-label="Model"
         aria-invalid={invalid}
-        className="w-44 font-mono"
+        className="min-w-40 flex-1 font-mono text-xs"
         placeholder="Model id"
         value={action.model}
         onChange={(event) => onChange({ ...action, model: event.target.value })}
@@ -946,12 +1253,16 @@ function ModelField({
   const options = models.includes(action.model) ? models : [action.model, ...models];
   return (
     <Select value={action.model} onValueChange={(model) => onChange({ ...action, model })}>
-      <SelectTrigger aria-label="Model" aria-invalid={invalid} className="w-44 font-mono">
+      <SelectTrigger
+        aria-label="Model"
+        aria-invalid={invalid}
+        className="min-w-40 flex-1 font-mono text-xs"
+      >
         <SelectValue placeholder="Pick a model" />
       </SelectTrigger>
       <SelectContent>
         {options.filter(Boolean).map((model) => (
-          <SelectItem key={model} value={model} className="font-mono">
+          <SelectItem key={model} value={model} className="font-mono text-xs">
             {model}
           </SelectItem>
         ))}

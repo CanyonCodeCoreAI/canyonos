@@ -95,7 +95,7 @@ function FlowCanvasBody({
             // never removed: there is no edit to persist and the next generation restores it.
             deleteKeyCode={null}
             fitView
-            fitViewOptions={{ maxZoom: 0.85, padding: 0.3 }}
+            fitViewOptions={{ maxZoom: 1.05, padding: 0.1 }}
             proOptions={{ hideAttribution: true }}
             panOnScroll
             minZoom={0.3}

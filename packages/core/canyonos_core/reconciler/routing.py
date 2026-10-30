@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Publish the routing table; the spec list given is the complete world."""
+"""Publish the routing table, and which agents have a replica up; the spec list given is
+the complete world."""
 
 import json
 import logging
@@ -16,6 +17,9 @@ ROUTING_STATEFUL_KEY = "routing_table:stateful"
 # Every replica that still exists, draining ones too, so their running calls can finish.
 ROUTING_REPLICAS_KEY = "routing_table:replicas"
 AGENTS_SET_KEY = "routing_table:agents"
+# The agents with a replica up: routed, reporting `healthy`, with a fresh heartbeat.
+# Governance and the dashboard read it; an agent missing from it counts as down.
+ROUTING_UP_KEY = "routing_table:up"
 
 
 def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
@@ -64,3 +68,21 @@ def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
                     redis_client.hdel(ROUTING_ADDRESSES_KEY, agent_name)
         except Exception as e:
             logger.warning("Failed to publish routing to a machine's Redis: %s", e)
+
+
+def publish_up_agents(up_agents, primary_redis, machine_redis=None):
+    """Write the agents with a replica up to each machine's Redis. New ones are added
+    before the rest are removed, so a reader never sees an agent that stayed up missing."""
+    up_agents = set(up_agents)
+    targets = list((machine_redis or {}).values()) or [primary_redis]
+    for redis_client in targets:
+        try:
+            if up_agents:
+                redis_client.sadd(ROUTING_UP_KEY, *up_agents)
+            down = redis_client.smembers(ROUTING_UP_KEY) - up_agents
+            if down:
+                redis_client.srem(ROUTING_UP_KEY, *down)
+        except Exception as e:
+            logger.warning(
+                "Failed to publish the agents up to a machine's Redis: %s", e
+            )

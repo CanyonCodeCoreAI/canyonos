@@ -175,7 +175,7 @@ function NodeStatus({
         }}
         aria-hidden
       />
-      {tag ?? 'Online'}
+      {tag ?? 'Up'}
     </span>
   );
 }

@@ -34,8 +34,11 @@ export const AgentStatusSchema = z.enum(['up', 'down', 'stopped', 'unknown']);
 export const AgentSpendSchema = z.object({
   since: z.string().datetime(),
   usd: z.number(),
-  /** The rule with the highest threshold the spend passed, by its index in `rules.spend.rules`. */
-  tripped_rule_index: z.number().int().nullable(),
+  /**
+   * What the rule with the highest threshold the spend passed does to the agent's calls now; null
+   * while the spend is within every threshold.
+   */
+  tripped_action: CostActionSchema.nullable(),
 });
 
 export const GovernanceAgentSchema = z.object({

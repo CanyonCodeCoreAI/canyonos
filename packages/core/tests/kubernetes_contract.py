@@ -133,6 +133,7 @@ def contract():
             "agents_key": routing.AGENTS_SET_KEY,
             "addresses_key": routing.ROUTING_ADDRESSES_KEY,
             "stateful_key": routing.ROUTING_STATEFUL_KEY,
+            "up_key": routing.ROUTING_UP_KEY,
             "addresses": redis.hashes[routing.ROUTING_ADDRESSES_KEY],
             "stateful": redis.hashes.get(routing.ROUTING_STATEFUL_KEY, {}),
         },

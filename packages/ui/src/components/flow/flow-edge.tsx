@@ -63,6 +63,25 @@ function labelPoint(
   return { x: targetX, y: targetY + direction * approach };
 }
 
+function bendCenter(
+  sourceX: number,
+  sourceY: number,
+  sourcePosition: Position,
+  bend: number | undefined
+): { centerX?: number; centerY?: number } {
+  if (bend === undefined) return {};
+  switch (sourcePosition) {
+    case Position.Bottom:
+      return { centerY: sourceY + bend };
+    case Position.Top:
+      return { centerY: sourceY - bend };
+    case Position.Right:
+      return { centerX: sourceX + bend };
+    case Position.Left:
+      return { centerX: sourceX - bend };
+  }
+}
+
 export function FlowEdge({
   sourceX,
   sourceY,
@@ -80,6 +99,7 @@ export function FlowEdge({
     sourcePosition,
     targetPosition,
     borderRadius: 14,
+    ...bendCenter(sourceX, sourceY, sourcePosition, data?.bend_from_source),
   });
 
   const edge_type = data?.edge_type ?? 'route';

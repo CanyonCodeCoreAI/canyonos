@@ -61,7 +61,11 @@ const GOVERNANCE: GovernanceResponse = {
           ],
         },
       },
-      spend: { since: SINCE, usd: 7, tripped_rule_index: 0 },
+      spend: {
+        since: SINCE,
+        usd: 7,
+        tripped_action: { kind: 'switch_model', model: 'gpt-5.5-mini' },
+      },
     }),
   ],
   edges: [
@@ -207,6 +211,96 @@ test('the canvas draws one node per agent and one edge per call', async ({ page 
   await expect(canvas(page).locator('.react-flow__edge')).toHaveCount(GOVERNANCE.edges.length);
 });
 
+const box = async (page: Page, name: string) => {
+  const bounds = await node(page, name).boundingBox();
+  if (bounds === null) throw new Error(`${name} has no box`);
+  return bounds;
+};
+
+test('agents an agent calls stack in a column to its right', async ({ page }) => {
+  await openGovernance(page);
+
+  const caller = await box(page, 'Workflow');
+  const called = await Promise.all(
+    ['TestRunnerAgent', 'ReviewAgent', 'MergeAgent'].map((name) => box(page, name))
+  );
+  for (const bounds of called) {
+    expect(bounds.x).toBeCloseTo(called[0]!.x, 0);
+    expect(bounds.x).toBeGreaterThan(caller.x + caller.width);
+  }
+  expect(called[1]!.y).toBeGreaterThan(called[0]!.y);
+});
+
+test('more than six agents called from one level wrap in rows of six below their caller', async ({
+  page,
+}) => {
+  const analysts = Array.from({ length: 12 }, (_, index) => `Analyst${index}`);
+  await openGovernance(page, '', {
+    agents: [agent('Workflow'), ...analysts.map((name) => agent(name))],
+    edges: analysts.map((target) => ({ source: 'Workflow', target })),
+  });
+
+  const caller = await box(page, 'Workflow');
+  const called = await Promise.all(analysts.map((name) => box(page, name)));
+  const [first, second] = [called.slice(0, 6), called.slice(6)];
+  for (const row of [first, second]) {
+    for (const [index, bounds] of row.entries()) {
+      expect(bounds.y).toBeCloseTo(row[0]!.y, 0);
+      if (index > 0) expect(bounds.x).toBeGreaterThan(row[index - 1]!.x + row[index - 1]!.width);
+    }
+  }
+  expect(first[0]!.y).toBeGreaterThan(caller.y + caller.height);
+  expect(second[0]!.y).toBeGreaterThan(first[0]!.y + first[0]!.height);
+  // A second-row card's middle sits in the gap between two cards above, where its call passes.
+  for (const [index, bounds] of second.slice(0, 5).entries()) {
+    const middle = bounds.x + bounds.width / 2;
+    expect(middle).toBeGreaterThan(first[index]!.x + first[index]!.width);
+    expect(middle).toBeLessThan(first[index + 1]!.x);
+  }
+  await expect(canvas(page).locator('.react-flow__edge')).toHaveCount(analysts.length);
+});
+
+/** The cards a call's line passes behind, other than its own two ends. */
+async function cardsCrossed(page: Page, source: string, target: string): Promise<string[]> {
+  return page.evaluate(
+    ([from, to]) => {
+      const path = document.querySelector<SVGPathElement>(
+        `[data-testid="rf__edge-${from}->${to}"] path.react-flow__edge-path`
+      );
+      const matrix = path?.getScreenCTM();
+      if (!path || !matrix) throw new Error(`no call ${from}->${to}`);
+      const cards = [...document.querySelectorAll<HTMLElement>('.react-flow__node')]
+        .filter((card) => card.dataset.id !== from && card.dataset.id !== to)
+        .map((card) => ({ id: card.dataset.id ?? '', box: card.getBoundingClientRect() }));
+      const crossed = new Set<string>();
+      for (let at = 0; at <= path.getTotalLength(); at += 2) {
+        const { x, y } = path.getPointAtLength(at).matrixTransform(matrix);
+        for (const { id, box } of cards) {
+          if (x > box.left && x < box.right && y > box.top && y < box.bottom) crossed.add(id);
+        }
+      }
+      return [...crossed];
+    },
+    [source, target]
+  );
+}
+
+test('a call out of a wrapped row never passes behind another card', async ({ page }) => {
+  const analysts = Array.from({ length: 12 }, (_, index) => `Analyst${index}`);
+  const calls = [
+    ...analysts.map((target) => ({ source: 'Workflow', target })),
+    { source: 'Analyst0', target: 'Summarizer' },
+  ];
+  await openGovernance(page, '', {
+    agents: [agent('Workflow'), ...analysts.map((name) => agent(name)), agent('Summarizer')],
+    edges: calls,
+  });
+
+  for (const { source, target } of calls) {
+    expect(await cardsCrossed(page, source, target), `${source}->${target}`).toEqual([]);
+  }
+});
+
 test('a node says its state in text and in tone', async ({ page }) => {
   await openGovernance(page);
 
@@ -224,7 +318,7 @@ test('a node says its state in text and in tone', async ({ page }) => {
   await expect(node(page, 'MergeAgent')).not.toContainText('cap $5.00');
   await expect(node(page, 'Workflow').locator('[data-tone]')).toHaveAttribute('data-tone', 'ok');
   await expect(node(page, 'Workflow')).toContainText('1/1 replicas');
-  await expect(node(page, 'Workflow')).toContainText('Online');
+  await expect(node(page, 'Workflow')).toContainText('Up');
 });
 
 test('a node lists its required agents and spend rules below its card', async ({ page }) => {
@@ -313,7 +407,7 @@ test('the drawer shows the stored rules and the spend against them', async ({ pa
   await expect(requires.getByRole('button')).toHaveText([
     'Workflow',
     'TestRunnerAgent',
-    'ReviewAgent',
+    'ReviewAgent Down',
   ]);
   await expect(requires.getByRole('button', { name: 'TestRunnerAgent' })).toHaveAttribute(
     'aria-pressed',
@@ -333,9 +427,73 @@ test('the drawer shows the stored rules and the spend against them', async ({ pa
   await expect(rules.nth(1).getByRole('combobox', { name: 'Action' })).toHaveText('Refuse calls');
   await expect(rules.nth(1).getByRole('combobox', { name: 'Model' })).toHaveCount(0);
 
-  await expect(form.getByTestId('governance-spend')).toHaveText(
-    '$7.00 since Oct 20, 2026 · cap $5.00 · switched to gpt-5.5-mini'
+  await expect(form.getByTestId('governance-spend').getByRole('definition')).toHaveText([
+    '$7.00',
+    'Oct 20, 2026',
+    'Switched to gpt-5.5-mini',
+  ]);
+});
+
+test('the drawer takes half the canvas, so a spend rule reads on one line', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await openGovernance(page, '?agent=MergeAgent');
+
+  const box = await canvas(page).boundingBox();
+  await expect
+    .poll(async () => (await drawer(page).boundingBox())?.width)
+    .toBeCloseTo((box?.width ?? 0) / 2, 0);
+  const rule = drawer(page).getByTestId('governance-spend-rule').nth(0);
+  const threshold = await rule.getByLabel('Above USD').boundingBox();
+  const model = await rule.getByRole('combobox', { name: 'Model' }).boundingBox();
+  expect(model?.y).toBeCloseTo(threshold?.y ?? 0, 0);
+});
+
+test('a drawer opens with nothing unsaved, with or without spend rules', async ({ page }) => {
+  for (const name of ['MergeAgent', 'TestRunnerAgent']) {
+    await openGovernance(page, `?agent=${name}`);
+    await expect(drawer(page).getByRole('heading', { name })).toBeVisible();
+    await expect(drawer(page).getByRole('status')).toHaveCount(0);
+    await expect(drawer(page).getByRole('button', { name: 'Discard' })).toBeDisabled();
+  }
+});
+
+test('Discard after a failed save also clears its error', async ({ page }) => {
+  const stub = await openGovernance(page, '?agent=MergeAgent');
+  stub.write_failure = (route) =>
+    fulfillJson(route, { error: 'governance.unknown_agent', message: 'Not saved' }, 422);
+  const form = drawer(page);
+
+  await form.getByTestId('governance-spend-rule').nth(0).getByLabel('Above USD').fill('8');
+  await form.getByRole('button', { name: 'Save rules' }).click();
+  await expect(form.getByTestId('governance-form-error')).toHaveText('Not saved');
+
+  await form.getByRole('button', { name: 'Discard' }).click();
+  await expect(form.getByTestId('governance-form-error')).toHaveCount(0);
+});
+
+test('the poll note explains what a poll is, on keyboard focus too', async ({ page }) => {
+  await openGovernance(page, '?agent=MergeAgent');
+
+  await drawer(page).getByRole('button', { name: 'About the poll' }).focus();
+
+  await expect(page.getByRole('tooltip')).toContainText(
+    'rereads its rules every poll interval, the poll_interval in global_controller.yaml'
   );
+});
+
+test('an edit is marked unsaved until Discard restores the stored rules', async ({ page }) => {
+  await openGovernance(page, '?agent=MergeAgent');
+  const form = drawer(page);
+  const threshold = form.getByTestId('governance-spend-rule').nth(0).getByLabel('Above USD');
+
+  await expect(form.getByRole('button', { name: 'Discard' })).toBeDisabled();
+  await threshold.fill('8');
+  await expect(form.getByRole('status')).toHaveText('Unsaved changes');
+
+  await form.getByRole('button', { name: 'Discard' }).click();
+  await expect(threshold).toHaveValue('5');
+  await expect(form.getByRole('status')).toHaveCount(0);
+  await expect(form.getByRole('button', { name: 'Discard' })).toBeDisabled();
 });
 
 test('saving sends the edited rules and confirms', async ({ page }) => {

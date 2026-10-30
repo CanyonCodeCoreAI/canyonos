@@ -45,9 +45,10 @@ draining gets its replacement in the same pass instead of after its drain ends.
 | `agent_instance:{replica_id}` | hash | `ReplicaProvisioner`; `draining_at`: `ReplicaProvisioner.remove_replica` with drain | both |
 | `machine_record:{launch_id}` | hash | `MachineProvisioner`, before `start_machine` | `MachineProvisioner`: the machines up for placement, `find_dead` and `find_surplus` each pass, and `terminate` |
 | `routing_table:agents` / `:addresses` / `:stateful` | set / hash / hash | `publish_routing_snapshot` | routing clients |
+| `routing_table:up` | set | `_publish_up_agents`, every pass, on every machine's Redis: the agents with a replica not draining that reports `healthy` with a fresh heartbeat (a database: `healthy` alone) | governance (Local Controller, LLM gateway), dashboard API |
 | `controller:{host}:{port}:metrics` | hash | the agent's `LocalController` | GlobalController poll; reconciler freshness and idle checks |
 | `controller:{host}:{port}:draining` | string | `ReplicaProvisioner.remove_replica` with drain | the agent's `LocalController`, each metrics interval |
-| `controller:{host}:{port}:status` | string | the agent's `LocalController` | GlobalController only — deliberately not a health signal |
+| `controller:{host}:{port}:status` | string | the agent's `LocalController` | GlobalController; the reconciler only for `routing_table:up`, never to remove a replica |
 | `endpoint:address` | hash | GlobalController — `_apply_config`, deleted once a stop empties the fleet | dashboard API |
 
 The first five are owned here; the rest is pre-existing observed state this reads. Desired

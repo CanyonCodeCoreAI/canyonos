@@ -51,7 +51,7 @@ def refresh(redis) -> None:
     llms.refresh_llms(redis)
     prompts.refresh_prompts(redis)
     try:
-        rules = governance.load(redis, poll_interval=REFRESH_SECONDS, previous=rules)
+        rules = governance.load(redis, previous=rules)
     except Exception as e:
         log.warning(
             "Failed to refresh the governance rules; keeping the last ones: %s", e

@@ -52,6 +52,10 @@ Kubernetes reports:
   terminating;
 - `routing_table:agents`, `routing_table:addresses` and `routing_table:stateful`
   for every agent and the endpoint;
+- `routing_table:up`, the agents with a ready replica, which governance and the
+  dashboard read. Where the reconciler judges a replica's `healthy` status and
+  heartbeat, the operator takes pod readiness: the readiness probe is the Local
+  Controller's `/readyz`, which passes only while it reports `healthy`;
 - `agent:<Agent>:desired_replicas`, mirrored from the CanyonAgent.
 
 A replica's address is its pod's DNS name (`helloagent-0.helloagent.<ns>.svc:50051`),

@@ -130,6 +130,7 @@ class ReloadPropagationTests(unittest.TestCase):
     def _reconciler(self, redis, agents, provisioner):
         context = ControllerContext.__new__(ControllerContext)
         context.redis = redis
+        context.machine_redis = {}
         context.config_path = "/tmp/canyonos.yaml"
         context.machine_redis_for_replica = lambda replica: redis
         context._set_agent_specs(agents)
