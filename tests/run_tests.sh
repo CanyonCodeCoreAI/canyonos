@@ -16,8 +16,9 @@ python3 -m pytest "$SCRIPT_DIR" "$SCRIPT_DIR/../packages"
 
 TEST_DIR="/tmp/canyonos_test_env_$$"
 PROJECT_NAME="canyonos_test"
-# The helloworld example's Redis port, which the dashboard keeps for this project.
+# Pinned in each copy below: the tests call 8082, and the dashboard keeps this project's Redis port.
 REDIS_PORT=6380
+PIN_PORTS="s/^endpoint:\$/endpoint:\n  api_port: 8082/; s/^redis:\$/redis:\n  port: $REDIS_PORT/"
 
 # Each copy below is its own CanyonOS project, so each one is stopped from its folder.
 function cleanup {
@@ -37,6 +38,7 @@ cd "$TEST_DIR"
 
 echo ">> 1. Copying the helloworld example..."
 cp -R "$SCRIPT_DIR/../examples/helloworld" $PROJECT_NAME
+perl -pi -e "$PIN_PORTS" $PROJECT_NAME/config/global_controller.yaml
 cd $PROJECT_NAME
 
 echo ">> 2. Building and deploying the project (canyonos deploy)..."
@@ -63,6 +65,7 @@ canyonos stop
 cd "$TEST_DIR"
 cp -R "$SCRIPT_DIR/../examples/helloworld" context_propagation
 cp "$SCRIPT_DIR/context_propagation_workflow.py" context_propagation/agents/workflow.py
+perl -pi -e "$PIN_PORTS" context_propagation/config/global_controller.yaml
 cd context_propagation
 canyonos deploy --serve false </dev/null
 

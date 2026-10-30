@@ -360,8 +360,8 @@ def _run_command():
     test.add_argument(
         "prompt",
         nargs="?",
-        default=DEFAULT_QUERY,
-        help=f"Prompt sent to the workflow (default: {DEFAULT_QUERY!r})",
+        help="Prompt sent to the workflow (default: the project's test_query.txt, "
+        f"else {DEFAULT_QUERY!r})",
     )
     test.add_argument(
         "--json",

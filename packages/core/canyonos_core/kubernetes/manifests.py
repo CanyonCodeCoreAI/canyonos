@@ -37,7 +37,11 @@ def config_folder(config_path):
     files = {}
     for name in sorted(os.listdir(folder)):
         path = os.path.join(folder, name)
-        if name.endswith((".yaml", ".yml")) and os.path.isfile(path):
+        if (
+            name.endswith((".yaml", ".yml"))
+            and not name.startswith(".")
+            and os.path.isfile(path)
+        ):
             with open(path, encoding="utf-8") as f:
                 files[name] = f.read()
     if os.path.basename(config_path) != "global_controller.yaml":

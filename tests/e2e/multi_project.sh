@@ -108,8 +108,9 @@ expect_routes() {
 
 step "Staging helloworld and portfolio in $WORK_DIR"
 cp -R "$REPO_ROOT/examples/helloworld" "$WORK_DIR/helloworld"
-# Fixed so it can't race the portfolio fixture's api_port 8080 when both deploy at once.
-perl -pi -e 's/^endpoint:$/endpoint:\n  api_port: 8082/' "$WORK_DIR/helloworld/config/global_controller.yaml"
+# Fixed so they can't race the portfolio fixture's api_port 8080 and Redis 6379 when both deploy at once.
+perl -pi -e 's/^endpoint:$/endpoint:\n  api_port: 8082/; s/^redis:$/redis:\n  port: 6380/' \
+  "$WORK_DIR/helloworld/config/global_controller.yaml"
 cp -R "$REPO_ROOT/examples/portfolio" "$WORK_DIR/portfolio"
 cp -R "$E2E_DIR/portfolio/.canyon" "$WORK_DIR/portfolio/.canyon"
 cat >"$WORK_DIR/portfolio/.env" <<EOF
@@ -202,7 +203,6 @@ grep -q "greeting" "$ARTIFACTS_DIR/helloworld-result.json" || fail "helloworld r
 step "canyonos test in another folder named helloworld tests that folder, not the running one"
 mkdir "$WORK_DIR/twin"
 cp -R "$REPO_ROOT/examples/helloworld" "$WORK_DIR/twin/helloworld"
-perl -pi -e 's/port: 6380/port: 6390/' "$WORK_DIR/twin/helloworld/config/global_controller.yaml"
 (cd "$WORK_DIR/twin/helloworld" && canyonos test hello --json >"$ARTIFACTS_DIR/test-twin.json") ||
   { cat "$ARTIFACTS_DIR/test-twin.json"; fail "canyonos test failed in the second helloworld folder"; }
 grep -q '"against_existing_deploy": false' "$ARTIFACTS_DIR/test-twin.json" ||
@@ -235,6 +235,13 @@ FREE_API="http://127.0.0.1:$(cd "$WORK_DIR/helloworld" && uv run --project "$REP
 [ "$FREE_API" != "http://127.0.0.1:8080" ] || fail "helloworld's endpoint did not move off 8080"
 python3 "$E2E_DIR/query.py" "$FREE_API" main query hello 60 >"$ARTIFACTS_DIR/helloworld-free-port-result.json"
 grep -q "greeting" "$ARTIFACTS_DIR/helloworld-free-port-result.json" || fail "helloworld on $FREE_API returned no greeting"
+
+step "helloworld's machine metrics go to its own Redis, not portfolio's"
+FREE_REDIS="$(grep -o 'so Redis is on [0-9]*' "$ARTIFACTS_DIR/deploy-helloworld-free-port.log" | grep -o '[0-9]*$')"
+HELLO_REDIS_CONTAINER="$(docker ps --format '{{.Names}}' | grep -E '^canyonos-helloworld-[0-9a-f]{8}-redis-localhost$')"
+hello_metrics() { docker exec "$HELLO_REDIS_CONTAINER" redis-cli -p "$FREE_REDIS" exists machine:localhost:metrics; }
+for _ in $(seq 15); do [ "$(hello_metrics)" = 1 ] && break; sleep 2; done
+[ "$(hello_metrics)" = 1 ] || fail "no machine metrics in helloworld's Redis on $FREE_REDIS"
 (cd "$WORK_DIR/helloworld" && canyonos stop)
 
 step "canyonos serve from portfolio re-registers without recreating the api"
@@ -272,6 +279,20 @@ fi
 kill "$holder"
 grep -q "Port 8090 is taken. Change \`dashboard_port\`, or remove it" "$ARTIFACTS_DIR/serve-taken-port.log" ||
   fail "serve did not say dashboard_port 8090 is taken: $(cat "$ARTIFACTS_DIR/serve-taken-port.log")"
+
+step "With 8080 held, a deploy pinned to it stops before anything is built"
+python3 -m http.server 8080 >/dev/null 2>&1 &
+holder=$!
+sleep 1
+perl -pi -e 's/^endpoint:$/endpoint:\n  api_port: 8080/' "$WORK_DIR/helloworld/config/global_controller.yaml"
+if (cd "$WORK_DIR/helloworld" && canyonos deploy </dev/null >"$ARTIFACTS_DIR/deploy-helloworld-pinned-8080.log" 2>&1); then
+  kill "$holder"
+  fail "helloworld deployed on a taken api_port"
+fi
+kill "$holder"
+grep -q "Port 8080 is already in use" "$ARTIFACTS_DIR/deploy-helloworld-pinned-8080.log" ||
+  fail "the deploy did not say 8080 is taken: $(cat "$ARTIFACTS_DIR/deploy-helloworld-pinned-8080.log")"
+sed -i.bak '/api_port:/d' "$WORK_DIR/helloworld/config/global_controller.yaml"
 
 step "With 8080 held and no dashboard up, the endpoint and the dashboard get their own ports"
 sed -i.bak '/^dashboard_port:/d' "$WORK_DIR/helloworld/config/global_controller.yaml"

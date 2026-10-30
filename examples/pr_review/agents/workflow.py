@@ -26,8 +26,9 @@ from agents.merge_agent import MergeAgent
 class Workflow(object):
     def review(self, pr: dict) -> dict:
         if isinstance(pr, str):
-            # `canyonos test` sends its query as text: the request body as JSON.
-            pr = json.loads(pr)["pr"]
+            # `canyonos test` sends its query as text: the PR's title, then its diff.
+            title, _, diff = pr.partition("\n")
+            pr = {"title": title, "diff": diff.strip("\n")}
 
         # Each call returns a Future at once and the next takes it as an argument,
         # so all three are dispatched before any result. Each Future feeds one

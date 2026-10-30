@@ -167,4 +167,3 @@ ec2-pool:
   subnet_id: ${EC2_SUBNET_ID}
   security_group_ids:
     - ${EC2_SECURITY_GROUP_ID}
-

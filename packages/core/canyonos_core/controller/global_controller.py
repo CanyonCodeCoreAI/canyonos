@@ -405,7 +405,8 @@ class GlobalController(ControllerContext):
         governance_seed = None
         for filename in sorted(os.listdir(config_dir)):
             name, extension = os.path.splitext(filename)
-            if extension in (".yaml", ".yml"):
+            # Hidden files include the binary `._name.yaml` copies macOS writes.
+            if extension in (".yaml", ".yml") and not filename.startswith("."):
                 # Project-relative, so an error names the file as the user knows it.
                 path = os.path.relpath(os.path.join(config_dir, filename))
                 with open(path, "r") as f:
@@ -695,7 +696,7 @@ class GlobalController(ControllerContext):
             host,
             None,
             CONTROLLER_IMAGE,
-            self.config.get("redis", {}).get("port", 6379),
+            self.config.get("redis", {}).get("port", DEFAULT_REDIS_PORT),
             wants_gpu,
         )
         if container_name:

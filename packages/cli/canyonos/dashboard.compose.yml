@@ -19,6 +19,8 @@ services:
 
   api:
     image: ${CANYONOS_API_IMAGE}
+    # Bun as PID 1 ignores SIGTERM, so without an init `docker compose stop` waits 10s to kill it.
+    init: true
     depends_on:
       db:
         condition: service_healthy

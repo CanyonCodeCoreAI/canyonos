@@ -65,7 +65,7 @@ Verify the workflow works by deploying everything locally and sending a test que
 canyonos test "your query"
 ```
 
-With no query, `hello` is sent. If you ran `canyonos convert`, it saved a sample query from your project: `canyonos test "$(cat .canyon/config/test_query.txt)"`.
+With no query, the one in `config/test_query.txt` is sent (`canyonos convert` saves it in `.canyon/config/`), or `hello` if there is none.
 
 - Every agent runs locally during the test, whatever the `provider`.
 - If the test fails, see [Troubleshooting](guides/TROUBLESHOOTING.md#canyonos-test-fails).

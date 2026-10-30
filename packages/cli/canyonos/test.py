@@ -46,6 +46,7 @@ from canyonos.deploy import (
 from canyonos.gc import _error_detail, deployed_endpoint, existing_deploy
 from canyonos.init import docker_env, load_state, stop_existing
 from canyonos.os_support import is_terminal
+from canyonos.quickstart import _sample_query
 from canyonos.sync import deployed_fingerprints, project_fingerprints
 from canyonos.theme import GREEN, WHITE
 from canyonos.verify import verify_runtime
@@ -448,7 +449,7 @@ def _payload(run):
 def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
     """Run `canyonos test`: deploy the project, send one query, report the result, and
     return the exit code. A failed deploy is left running for debugging."""
-    run = _Run(prompt or DEFAULT_QUERY)
+    run = _Run(prompt or _sample_query()[0] or DEFAULT_QUERY)
     ui.set_quiet(as_json)
 
     try:

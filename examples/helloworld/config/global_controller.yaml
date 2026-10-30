@@ -45,7 +45,6 @@ logs: false
 
 redis:
   host: localhost
-  port: 6380
   db: 0
 
 otel:

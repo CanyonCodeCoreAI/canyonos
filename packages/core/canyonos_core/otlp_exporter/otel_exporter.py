@@ -380,8 +380,13 @@ def _shutdown_exporters(exporters, reason):
 
 
 def _handle_shutdown(signum, frame):
+    """Stop the main loop and shut down every exporter, which ends an export still
+    waiting to retry, so the process exits at once."""
     global _running
     _running = False
+    _shutdown_exporters(_trace_exporters, "shutting the exporter process down")
+    _shutdown_exporters(_metric_exporters, "shutting the exporter process down")
+    _shutdown_exporters(_log_exporters, "shutting the exporter process down")
 
 
 def _reload_destinations_if_changed():
@@ -1019,9 +1024,6 @@ def main():
                 last_delete = time.time()
             time.sleep(1)
     finally:
-        _shutdown_exporters(_trace_exporters, "shutting the exporter process down")
-        _shutdown_exporters(_metric_exporters, "shutting the exporter process down")
-        _shutdown_exporters(_log_exporters, "shutting the exporter process down")
         logger.info("OTel exporter process exiting.")
 
 

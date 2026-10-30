@@ -104,11 +104,15 @@ done
 
 # The starter `canyonos new-app` writes has to deploy and answer as it is, with no
 # LLM: `canyonos test` deploys it, queries its endpoint and reports the answer.
+# The binary files macOS hides in config/ must not stop it.
 step "canyonos new-app writes a project that deploys and answers"
 STARTER_DIR="$(mktemp -d)/starter"
 mkdir "$STARTER_DIR"
 out="$ARTIFACTS_DIR/new-app-test.json"
-(cd "$STARTER_DIR" && canyonos new-app && canyonos test --json >"$out") || { cat "$out"; exit 1; }
+(cd "$STARTER_DIR" && canyonos new-app)
+printf '\0\5\26\7\0\2\0\0' >"$STARTER_DIR/config/._policy.yaml"
+printf '\0\0\0\1Bud1' >"$STARTER_DIR/config/.DS_Store"
+(cd "$STARTER_DIR" && canyonos test --json >"$out") || { cat "$out"; exit 1; }
 grep -q '"MyAgent got: hello"' "$out" || { cat "$out"; exit 1; }
 
 # A replica that can't launch has to fail the deploy at once, naming the agent and why.
@@ -144,9 +148,12 @@ grep -q '"root_cause": "config/llms.yaml:[0-9]*: is not valid YAML' "$out" || { 
 step "canyonos stop (any previous deploy)"
 canyonos stop || true
 
+# With no query given, `canyonos test` sends the project's test_query.txt.
 step "canyonos test"
-canyonos test "$QUERY" --json --timeout "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/test.json" ||
+canyonos test --json --timeout "$REQUEST_TIMEOUT" >"$ARTIFACTS_DIR/test.json" ||
   { cat "$ARTIFACTS_DIR/test.json"; exit 1; }
+python3 -c 'import json, sys; sys.exit(json.load(sys.stdin)["query"] != sys.argv[1])' "$QUERY" \
+  <"$ARTIFACTS_DIR/test.json" || { cat "$ARTIFACTS_DIR/test.json"; exit 1; }
 python3 -c 'import json, sys; json.dump(json.load(sys.stdin)["result"], sys.stdout)' \
   <"$ARTIFACTS_DIR/test.json" | python3 "$CHECK"
 
