@@ -39,15 +39,18 @@ on the cluster `kubectl` points at instead of Docker on this machine; see
 
 ## Usage reporting
 
-Usage reporting is off until you say yes. The CLI asks once, in the terminal, after the first `canyonos deploy` that brings a workflow up; dismissing the question counts as no. 
-When it is on, each run of `new-app`, `convert`, `validate`, `deploy`, `test`, `serve`, `stop` or `clean` records one event: the command name, whether it succeeded, when it ran, the CLI version and a random installation id. Arguments, paths, prompts, code, environment variables, credentials or any other information are never collected. All the process happens on the background, sending never slows your commands down or changes their output; an event is deleted only once the API has stored it. Run `canyonos contact` to see your choice, `canyonos contact --usage off` to turn it off, which also deletes the unsent events and forgets the installation id, or `canyonos contact --usage on` to turn it on again under a new id.
+Usage reporting is on by default. Before the first event is recorded, the CLI prints a notice on stderr saying that the command that just finished will be reported, what is sent, a link to this section and the command that turns it off. The notice is shown once. That first event is not sent until your next `canyonos` command, so running `canyonos contact --usage off` right after the notice deletes it and nothing is ever sent.
+
+Each run of `new-app`, `convert`, `validate`, `deploy`, `test`, `serve`, `stop` or `clean` records one event: the command name, whether it succeeded, when it ran, the CLI version and a random installation id. No sensitive information is sent: never your arguments, paths, prompts, code, environment variables, credentials or anything else. Events are sent in the background, so sending never slows your commands down or changes their output; an event is deleted only once the API has stored it.
+
+To turn it off, run `canyonos contact --usage off`. That also deletes the unsent events and forgets the installation id. `canyonos contact` shows your choice and, in a terminal, lets you change it; `canyonos contact --usage on` turns it on again under a new id.
 
 Each event holds only these fields:
 
 | Field | What it holds |
 |---|---|
 | `event_id` | A random id for this event, so it is stored once even if it is sent twice |
-| `installation_id` | The random id of this installation, made when you turn reporting on |
+| `installation_id` | The random id of this installation, made with the first event or when you turn reporting back on |
 | `command` | The command that ran, one of those listed above |
 | `succeeded` | Whether the command succeeded |
 | `occurred_at` | When it ran, in UTC to the millisecond |
@@ -55,4 +58,4 @@ Each event holds only these fields:
 
 ## Feedback
 
-`canyonos feedback "your message"` sends your message to Canyon Code right away, with the CLI version, your OS and CPU type. When usage reporting is on, it also sends your installation id. When it is off, it sends no installation id and asks before sending; `--yes` skips the question, and a non-interactive run without it sends nothing.
+`canyonos feedback "your message"` sends your message to Canyon Code right away, with the CLI version, your OS and CPU type. When usage reporting has an installation id, it also sends it. Otherwise it sends no installation id and asks before sending; `--yes` skips the question, and a non-interactive run without it sends nothing.

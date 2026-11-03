@@ -3,9 +3,9 @@
 
 """
 Your usage reporting choice, kept in `~/.canyonos/usage/settings.json`. The file is
-written once you answer the question after your first deploy or run `canyonos
-contact`; until then reporting is off. Every file here is private to you and replaced
-in one step, so an interrupted write never leaves half a file behind.
+written when the first usage event is recorded, right after its notice, or when you run
+`canyonos contact`; until then nothing has been recorded. Every file here is private to
+you and replaced in one step, so an interrupted write never leaves half a file behind.
 """
 
 import json
@@ -55,8 +55,8 @@ def is_uuid4(value: object) -> bool:
 
 
 def load_settings() -> UsageSettings | None:
-    """Read your saved usage reporting choice. Return None when you haven't been asked
-    yet, which includes a settings file that is missing, unreadable or malformed."""
+    """Read your saved usage reporting choice. Return None when none is saved yet, which
+    includes a settings file that is missing, unreadable or malformed."""
     try:
         raw = json.loads(settings_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -71,6 +71,16 @@ def load_settings() -> UsageSettings | None:
     if reporting is False and installation_id is None:
         return UsageSettings(False, None)
     return None
+
+
+def settings_stamp() -> tuple[int, int] | None:
+    """What identifies the saved settings file right now, or None when there is none.
+    Every save replaces the file, so the stamp changes with each one."""
+    try:
+        stat = settings_path().stat()
+    except OSError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns
 
 
 def ensure_private_dir(path: Path) -> None:

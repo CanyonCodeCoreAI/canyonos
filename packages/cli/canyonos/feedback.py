@@ -3,8 +3,7 @@
 
 """
 Logic for `canyonos feedback`: send your message to Canyon Code right away, through the
-same API as usage reporting. While usage reporting is off it asks first and sends no
-installation id.
+same API as usage reporting. Without an installation id to send with it, it asks first.
 """
 
 import platform
@@ -39,7 +38,7 @@ def _confirm_anonymous_send() -> bool:
 
 def run_feedback(message, yes=False):
     """Run `canyonos feedback`: send `message` with the CLI version, OS and CPU type, plus
-    the installation id while usage reporting is on. While it is off, ask at a terminal
+    the installation id while usage reporting has one. Without one, ask at a terminal
     first unless `yes` says the user already agreed, and refuse to send otherwise."""
     if env.usage_url is None:
         raise RuntimeError(
@@ -55,7 +54,7 @@ def run_feedback(message, yes=False):
     if not reporting and not yes:
         if not is_interactive():
             raise RuntimeError(
-                "Usage reporting is off, so feedback asks before sending. Run it in a "
+                "Feedback without an installation id asks before sending. Run it in a "
                 "terminal, or add --yes to send it anonymously."
             )
         if not _confirm_anonymous_send():

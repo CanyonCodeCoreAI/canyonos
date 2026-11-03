@@ -43,6 +43,7 @@ from canyonos.usage.delivery import (
     start_delivery,
 )
 from canyonos.usage.outbox import recording_usage
+from canyonos.usage.settings import settings_stamp
 from canyonos.validate import run_validate
 from utils.help_screen import DESCRIPTIONS, print_custom_help
 
@@ -65,24 +66,24 @@ class _RootParser(argparse.ArgumentParser):
 
 def main():
     """Run the `canyonos` command you typed, showing the help screen if there is none
-    and any error in the terminal, then start sending waiting usage events in the
-    background. The CLI restarts itself with a hidden argument to be that sender."""
+    and any error in the terminal. A reported command then starts sending waiting usage
+    events in the background: the CLI restarts itself with a hidden argument to be that
+    sender."""
     if sys.argv[1:] == [DELIVERY_ARGUMENT]:
         deliver_pending_events()
         return
+    settings_at_start = settings_stamp()
     prepare_console()
     # A coding agent's shell stops a command with SIGTERM: take the Ctrl+C path, so cleanup runs.
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        _run_command()
+        _run_command(settings_at_start)
     except KeyboardInterrupt:
         ui.say("Cancelled.")
         sys.exit(130)
-    finally:
-        start_delivery()
 
 
-def _run_command():
+def _run_command(settings_at_start):
     parser = _RootParser(prog="canyonos")
     parser.add_argument(
         "-v",
@@ -276,7 +277,7 @@ def _run_command():
         "-y",
         "--yes",
         action="store_true",
-        help="Send without asking while usage reporting is off; it still sends no installation id",
+        help="Send without asking when there is no installation id; it still sends none",
     )
 
     # Convert has args: --agent, --scope, -y, --install-only. With none of them it
@@ -416,6 +417,8 @@ def _run_command():
     except RuntimeError as e:
         ui.fail(e)
         sys.exit(1)
+    finally:
+        start_delivery(args.command, settings_at_start)
 
 
 if __name__ == "__main__":

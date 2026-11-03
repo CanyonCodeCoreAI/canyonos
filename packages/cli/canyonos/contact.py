@@ -3,7 +3,7 @@
 
 """
 Logic for `canyonos contact`: see and change what the CLI shares with Canyon Code.
-Today that is only usage reporting, which stays off until you agree to it.
+Today that is only usage reporting, which is on by default.
 """
 
 from canyonos import ui

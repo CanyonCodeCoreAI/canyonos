@@ -3,8 +3,8 @@
 
 """
 Sends the usage events waiting in `~/.canyonos/usage/outbox/` to the usage API selected
-by `canyonos.env`. Every `canyonos` run ends by starting a background copy of the CLI
-that does the sending, so it never slows a command down, shows anything or changes how
+by `canyonos.env`. Every run of a reported command ends by starting a background copy of
+the CLI that does the sending, so it never slows a command down, shows anything or changes how
 the command exits. Events stay in the outbox until the API has stored them.
 """
 
@@ -27,7 +27,13 @@ from canyonos.usage.outbox import (
     is_reportable_version,
     pending_events,
 )
-from canyonos.usage.settings import is_uuid4, load_settings, outbox_dir, usage_dir
+from canyonos.usage.settings import (
+    is_uuid4,
+    load_settings,
+    outbox_dir,
+    settings_stamp,
+    usage_dir,
+)
 
 DELIVERY_ARGUMENT = "__usage-delivery"
 EVENTS_PATH = "/usage/events"
@@ -65,12 +71,20 @@ def _reporting_is_on() -> bool:
     return settings is not None and settings.usage_reporting
 
 
-def start_delivery() -> None:
-    """Start sending the waiting usage events in the background as a `canyonos` run
-    ends, when usage reporting is on, events are waiting and a usage API is selected.
-    Return at once without waiting for it; never show anything or raise."""
+def start_delivery(command: str, settings_at_start: tuple[int, int] | None) -> None:
+    """Start sending the waiting usage events in the background as a run of a reported
+    `command` ends, when usage reporting is on, events are waiting and a usage API is
+    selected. `settings_at_start` is the settings stamp taken as the run started: a run
+    during which the settings were first saved, by its own first-event notice or by a
+    run beside it, sends nothing, so the first event waits for a run that starts after
+    the notice and can still be deleted. Return at once without waiting for it; never
+    show anything or raise."""
     try:
-        if env.usage_url is None or not _reporting_is_on() or not pending_events():
+        if command not in REPORTED_COMMANDS or env.usage_url is None:
+            return
+        if settings_at_start is None or settings_stamp() != settings_at_start:
+            return
+        if not _reporting_is_on() or not pending_events():
             return
         spawn_detached(delivery_command(), cwd=usage_dir())
     # Usage reporting must never change what the command printed or how it exited.

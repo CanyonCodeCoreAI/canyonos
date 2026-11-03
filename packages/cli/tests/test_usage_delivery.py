@@ -178,7 +178,7 @@ def test_starts_a_detached_sender_when_events_wait(monkeypatch, reporting, home)
     outbox.record_event("deploy", True)
     spawned = Spawned(monkeypatch)
 
-    delivery.start_delivery()
+    delivery.start_delivery("deploy", settings.settings_stamp())
 
     [(command, options)] = spawned.calls
     assert command == delivery.delivery_command()
@@ -189,7 +189,7 @@ def test_no_sender_without_a_usage_url(monkeypatch, reporting):
     outbox.record_event("deploy", True)
     spawned = Spawned(monkeypatch)
 
-    delivery.start_delivery()
+    delivery.start_delivery("deploy", settings.settings_stamp())
 
     assert spawned.calls == []
 
@@ -198,7 +198,7 @@ def test_no_sender_with_an_empty_outbox(monkeypatch, reporting):
     monkeypatch.setattr(env, "usage_url", "https://usage.example.com")
     spawned = Spawned(monkeypatch)
 
-    delivery.start_delivery()
+    delivery.start_delivery("deploy", settings.settings_stamp())
 
     assert spawned.calls == []
 
@@ -212,7 +212,7 @@ def test_no_sender_while_reporting_is_off(monkeypatch, choice):
     (settings.outbox_dir() / "left-over.json").write_text("{}")
     spawned = Spawned(monkeypatch)
 
-    delivery.start_delivery()
+    delivery.start_delivery("deploy", settings.settings_stamp())
 
     assert spawned.calls == []
 
@@ -222,7 +222,7 @@ def test_a_sender_that_cannot_start_is_silent(monkeypatch, reporting, capsys):
     outbox.record_event("deploy", True)
     Spawned(monkeypatch, popen=lambda *_a, **_k: raise_(OSError("no fork")))
 
-    delivery.start_delivery()
+    delivery.start_delivery("deploy", settings.settings_stamp())
 
     assert capsys.readouterr() == ("", "")
 
@@ -231,7 +231,7 @@ def test_unreadable_usage_state_is_silent(monkeypatch, capsys):
     monkeypatch.setattr(env, "usage_url", "https://usage.example.com")
     monkeypatch.setattr(delivery, "load_settings", lambda: raise_(ValueError("bug")))
 
-    delivery.start_delivery()
+    delivery.start_delivery("deploy", settings.settings_stamp())
 
     assert capsys.readouterr() == ("", "")
 
@@ -264,16 +264,28 @@ def run_cli(monkeypatch, *argv):
 @pytest.fixture
 def started(monkeypatch):
     calls = []
-    monkeypatch.setattr(cli, "start_delivery", lambda: calls.append(True))
+    monkeypatch.setattr(
+        cli, "start_delivery", lambda command, _stamp: calls.append(command)
+    )
     return calls
 
 
 @pytest.mark.parametrize(
-    "argv",
-    [[], ["-h"], ["-v"], ["clean"], ["status"], ["no-such-command"], ["test", "--x"]],
-    ids=["no-command", "help", "version", "command", "status", "unknown", "bad-flag"],
+    ("argv", "expected"),
+    [
+        ([], []),
+        (["-h"], []),
+        (["-v"], []),
+        (["no-such-command"], []),
+        (["test", "--x"], []),
+        (["clean"], ["clean"]),
+        (["status"], ["status"]),
+    ],
+    ids=["no-command", "help", "version", "unknown", "bad-flag", "command", "status"],
 )
-def test_every_invocation_ends_by_starting_delivery(monkeypatch, started, argv):
+def test_only_a_command_that_ran_hands_over_to_delivery(
+    monkeypatch, started, argv, expected
+):
     monkeypatch.setattr(cli, "run_clean", lambda **_k: None)
     monkeypatch.setattr(cli, "run_status", lambda as_json: None)
 
@@ -282,7 +294,7 @@ def test_every_invocation_ends_by_starting_delivery(monkeypatch, started, argv):
     except SystemExit:
         pass
 
-    assert started == [True]
+    assert started == expected
 
 
 def test_a_failing_command_still_starts_delivery_and_keeps_its_exit(
@@ -294,7 +306,7 @@ def test_a_failing_command_still_starts_delivery_and_keeps_its_exit(
         run_cli(monkeypatch, "stop")
 
     assert exited.value.code == 1
-    assert started == [True]
+    assert started == ["stop"]
 
 
 def test_the_hidden_argument_only_delivers(monkeypatch, started, capsys):
@@ -540,7 +552,13 @@ def test_the_cli_delivers_in_the_background_after_it_exits(
 
     started = time.monotonic()
     result = subprocess.run(
-        [sys.executable, "-c", "import cli; cli.main()", "status", "--help"],
+        [
+            sys.executable,
+            "-c",
+            "import cli; cli.main()",
+            "validate",
+            str(home / "none"),
+        ],
         capture_output=True,
         text=True,
         timeout=60,
@@ -548,8 +566,8 @@ def test_the_cli_delivers_in_the_background_after_it_exits(
     )
     elapsed = time.monotonic() - started
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 2, result.stderr
     assert delivery.DELIVERY_ARGUMENT not in result.stdout + result.stderr
     assert wait_for(lambda: outbox.pending_events() == [])
-    assert api.sizes() == [3]
+    assert api.sizes() == [4]
     assert elapsed < 30

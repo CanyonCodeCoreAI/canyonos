@@ -72,7 +72,6 @@ from canyonos.serve import (
 )
 from canyonos.stop import stop_project
 from canyonos.sync import project_fingerprints, run_sync, save_deployed_fingerprints
-from canyonos.usage.consent import offer_after_first_deploy
 from canyonos.validate import _print_findings, collect_findings
 
 # Test seams: a failed-build test monkeypatches both down so it doesn't have to
@@ -457,10 +456,6 @@ def run_deploy(
                 ui.fail(f"Teardown after failed deploy also failed: {teardown_error}")
         raise
 
-    # Ctrl+C while tailing logs still returns state, so only a workflow that came up
-    # counts as the successful deploy the usage question waits for.
-    if ready:
-        offer_after_first_deploy()
     return state
 
 

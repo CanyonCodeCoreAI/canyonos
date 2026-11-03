@@ -43,6 +43,11 @@ CONTRACT_KEYS = {
 }
 STORED_KEYS = CONTRACT_KEYS | {"received_at"}
 FEEDBACK_KEYS = {"feedback_id", "message", "cli_version", "os", "arch", "received_at"}
+NOTICE = "No sensitive information is sent."
+DOCS_URL = (
+    "https://github.com/CanyonCodeCoreAI/canyonos/blob/main/docs/guides/CLI.md"
+    "#usage-reporting"
+)
 NOT_REPORTED = [
     ["-v"],
     ["-h"],
@@ -177,21 +182,87 @@ def opt_in(cli):
     return cli.settings()["installation_id"]
 
 
-def test_reporting_is_off_until_chosen(cli):
-    assert new_app(cli).returncode == 0
-    assert failing_validate(cli).returncode != 0
-    shown = cli.run("contact")
-
-    assert shown.returncode == 0
-    assert "Usage reporting is off" in shown.stdout
+def test_reporting_is_on_by_default_and_announced_once_before_the_first_event(
+    cli, usage_stack
+):
+    for argv in NOT_REPORTED:
+        assert NOTICE not in cli.run(*argv).stderr
+    assert "on by default" in cli.run("contact").stdout
     assert not cli.usage.exists()
 
+    first = cli.run("validate", "--json", str(cli.home / "missing.canyon"))
+    second = new_app(cli)
 
-def test_declining_persists_and_records_nothing(cli):
+    assert first.returncode != 0
+    json.loads(first.stdout)
+    for detail in (
+        NOTICE,
+        "`validate` run that just finished",
+        "command name, whether it succeeded, when it ran, the CLI version",
+        "random installation id",
+        "Never sent:",
+        DOCS_URL,
+        "canyonos contact --usage off",
+    ):
+        assert detail in first.stderr
+    assert second.returncode == 0
+    assert NOTICE not in second.stderr
+
+    installation_id = cli.settings()["installation_id"]
+    items = [plain(item) for item in stored(usage_stack, installation_id, 2)]
+    outcomes = sorted((item["command"], item["succeeded"]) for item in items)
+    assert outcomes == [("new-app", True), ("validate", False)]
+
+
+def test_turning_it_off_right_after_the_notice_sends_nothing(cli, usage_stack):
+    cli.lock.unlink(missing_ok=True)
+    first = new_app(cli)
+    assert NOTICE in first.stderr
+    [held] = cli.pending_events()
+    assert not wait_until(cli.lock.exists, timeout=3), "the notice run started a sender"
+
+    for argv in (["contact"], ["contact", "-h"], ["contact", "--usage", "of"], ["-v"]):
+        cli.run(*argv)
+        assert not wait_until(cli.lock.exists, timeout=3), f"{argv} started a sender"
+    assert cli.run("contact", "--usage", "off").returncode == 0
+
+    assert not wait_until(cli.lock.exists, timeout=3), "turning it off started a sender"
+    assert cli.pending() == []
+    assert cli.settings() == {"usage_reporting": False, "installation_id": None}
+    assert usage_stack.table.items_where("event_id", held["event_id"]) == []
+
+
+def test_two_first_runs_at_once_share_one_notice_and_hold_both_events(cli):
+    cli.lock.unlink(missing_ok=True)
+    runs = [
+        subprocess.Popen(
+            [str(CANYONOS), "validate", str(cli.home / f"missing-{n}")],
+            cwd=cli.home,
+            env=cli.environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for n in range(2)
+    ]
+    errors = [run.communicate(timeout=120)[1] for run in runs]
+
+    assert sum(NOTICE in error for error in errors) == 1
+    assert not wait_until(cli.lock.exists, timeout=3), "a first run started a sender"
+    events = cli.pending_events()
+    assert len(events) == 2
+    assert {event["installation_id"] for event in events} == {
+        cli.settings()["installation_id"]
+    }
+
+
+def test_turning_it_off_first_records_nothing_and_shows_no_notice(cli):
     assert cli.run("contact", "--usage", "off").returncode == 0
     new_app(cli)
-    failing_validate(cli)
+    result = failing_validate(cli)
 
+    assert NOTICE not in result.stderr
     assert cli.settings() == {"usage_reporting": False, "installation_id": None}
     assert cli.pending() == []
 
@@ -261,10 +332,10 @@ def test_an_unreachable_api_changes_nothing_and_keeps_the_events(
     [queued] = cli.pending_events()
     assert queued["command"] == "validate"
 
-    cli.run("-v")
+    failing_validate(cli)
 
-    [item] = stored(usage_stack, installation_id, 1)
-    assert plain(item)["event_id"] == queued["event_id"]
+    items = stored(usage_stack, installation_id, 2)
+    assert queued["event_id"] in {plain(item)["event_id"] for item in items}
     assert wait_until(lambda: cli.pending() == [])
 
 
@@ -272,20 +343,18 @@ def test_events_wait_while_the_api_cannot_store_them(cli, usage_stack):
     installation_id = opt_in(cli)
     failing_validate(cli, usage_url="")
     new_app(cli, usage_url="")
-    queued = {event["event_id"] for event in cli.pending_events()}
-
     usage_stack.stop_dynamo()
     try:
-        result = cli.run_and_settle("-v")
-        assert result.returncode == 0
-        assert {event["event_id"] for event in cli.pending_events()} == queued
+        cli.run_and_settle("validate", str(cli.home / "missing.canyon"))
+        queued = {event["event_id"] for event in cli.pending_events()}
+        assert len(queued) == 3
     finally:
         usage_stack.start_dynamo()
 
-    cli.run("-h")
+    failing_validate(cli)
 
-    items = stored(usage_stack, installation_id, 2)
-    assert {plain(item)["event_id"] for item in items} == queued
+    items = stored(usage_stack, installation_id, 4)
+    assert queued < {plain(item)["event_id"] for item in items}
     assert wait_until(lambda: cli.pending() == [])
 
 
@@ -295,15 +364,18 @@ def test_a_resent_event_is_stored_once(cli, usage_stack):
     [path] = cli.pending()
     contents = path.read_bytes()
 
-    cli.run("-v")
-    [first] = stored(usage_stack, installation_id, 1)
+    failing_validate(cli)
+    stored(usage_stack, installation_id, 2)
     assert wait_until(lambda: cli.pending() == [])
 
     path.write_bytes(contents)
-    cli.run_and_settle("-v")
+    cli.run_and_settle("validate", str(cli.home / "missing.canyon"))
 
     assert cli.pending() == []
-    assert usage_stack.table.items_where("installation_id", installation_id) == [first]
+    items = usage_stack.table.items_where("installation_id", installation_id)
+    event_ids = [plain(item)["event_id"] for item in items]
+    assert len(event_ids) == 3
+    assert len(set(event_ids)) == 3
 
 
 def test_only_the_contract_fields_reach_the_table(cli, usage_stack):
@@ -341,7 +413,7 @@ def test_feedback_while_reporting_is_on_carries_the_installation_id(cli, usage_s
     assert plain(item)["message"] == "deploy hangs at step 3"
 
 
-def test_feedback_while_reporting_is_off_asks_first_and_sends_no_id(cli, usage_stack):
+def test_feedback_before_the_first_event_asks_first_and_sends_no_id(cli, usage_stack):
     message = f"sent after yes {uuid.uuid4()}"
 
     status, output = cli.answer("feedback", message, keys="\r")

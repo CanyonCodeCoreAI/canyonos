@@ -11,7 +11,6 @@ import uuid
 import pytest
 
 from canyonos import contact
-from canyonos import deploy as deploy_cmd
 from canyonos.usage import consent, settings
 from canyonos.usage.settings import UsageSettings
 
@@ -20,11 +19,6 @@ from canyonos.usage.settings import UsageSettings
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     return tmp_path
-
-
-@pytest.fixture
-def interactive(monkeypatch):
-    monkeypatch.setattr(consent, "is_interactive", lambda: True)
 
 
 def answer_with(monkeypatch, answer):
@@ -53,7 +47,7 @@ def queue_event(name="event.json"):
     return path
 
 
-def test_reporting_is_off_until_asked():
+def test_nothing_is_saved_until_the_first_event():
     assert settings.load_settings() is None
     assert not settings.settings_path().exists()
 
@@ -72,40 +66,21 @@ def test_reporting_is_off_until_asked():
         f'{{"usage_reporting": false, "installation_id": "{uuid.uuid4()}"}}',
     ],
 )
-def test_a_corrupt_settings_file_reads_as_never_asked(contents):
+def test_a_corrupt_settings_file_reads_as_nothing_saved(contents):
     settings.ensure_private_dir(settings.usage_dir())
     settings.settings_path().write_text(contents)
 
     assert settings.load_settings() is None
 
 
-def test_an_unreadable_settings_file_reads_as_never_asked():
+def test_an_unreadable_settings_file_reads_as_nothing_saved():
     settings.ensure_private_dir(settings.settings_path())
 
     assert settings.load_settings() is None
 
 
-def test_declining_persists_off_with_no_id(monkeypatch, interactive):
-    answer_with(monkeypatch, False)
-
-    consent.offer_after_first_deploy()
-
-    assert saved() == {"usage_reporting": False, "installation_id": None}
-    assert settings.load_settings() == UsageSettings(False, None)
-
-
-def test_dismissing_the_question_counts_as_declining(monkeypatch, interactive):
-    answer_with(monkeypatch, None)
-
-    consent.offer_after_first_deploy()
-
-    assert saved() == {"usage_reporting": False, "installation_id": None}
-
-
-def test_accepting_persists_a_stable_installation_id(monkeypatch, interactive):
-    answer_with(monkeypatch, True)
-
-    consent.offer_after_first_deploy()
+def test_turning_on_persists_a_stable_installation_id():
+    settings.set_usage_reporting(True)
     first = saved()
 
     assert first["usage_reporting"] is True
@@ -114,51 +89,6 @@ def test_accepting_persists_a_stable_installation_id(monkeypatch, interactive):
         settings.set_usage_reporting(True).installation_id == first["installation_id"]
     )
     assert saved() == first
-
-
-def test_the_question_is_asked_only_once(monkeypatch, interactive):
-    asked = answer_with(monkeypatch, False)
-
-    consent.offer_after_first_deploy()
-    consent.offer_after_first_deploy()
-
-    assert len(asked) == 1
-
-
-def test_a_corrupt_settings_file_is_asked_again(monkeypatch, interactive):
-    settings.ensure_private_dir(settings.usage_dir())
-    settings.settings_path().write_text("{")
-    asked = answer_with(monkeypatch, False)
-
-    consent.offer_after_first_deploy()
-
-    assert len(asked) == 1
-    assert saved() == {"usage_reporting": False, "installation_id": None}
-
-
-def test_without_a_terminal_nothing_is_asked_or_written(monkeypatch):
-    monkeypatch.setattr(consent.sys.stdin, "isatty", lambda: False)
-    asked = answer_with(monkeypatch, True)
-
-    consent.offer_after_first_deploy()
-
-    assert asked == []
-    assert not settings.usage_dir().exists()
-
-
-def test_a_save_failure_warns_instead_of_failing_the_deploy(
-    monkeypatch, interactive, capsys
-):
-    answer_with(monkeypatch, True)
-
-    def unwritable(_enabled):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(consent, "set_usage_reporting", unwritable)
-
-    consent.offer_after_first_deploy()
-
-    assert "Could not save your usage reporting choice" in capsys.readouterr().err
 
 
 def test_the_question_says_exactly_what_is_sent(monkeypatch, capsys):
@@ -173,7 +103,7 @@ def test_the_question_says_exactly_what_is_sent(monkeypatch, capsys):
         "when it ran",
         "CLI version",
         "random installation id",
-        "canyonos contact",
+        consent.DOCS_URL,
     ):
         assert detail in output
 
@@ -250,7 +180,7 @@ def test_contact_without_a_terminal_only_shows_the_state(monkeypatch, capsys):
     assert asked == []
     assert not settings.usage_dir().exists()
     output = capsys.readouterr().out
-    assert "haven't been asked yet" in output
+    assert "on by default" in output
     assert "canyonos contact --usage on" in output
 
 
@@ -282,68 +212,6 @@ def test_contact_reports_a_save_failure_as_a_command_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Could not save usage settings"):
         contact.run_contact(usage="on")
-
-
-@pytest.fixture
-def deployable(monkeypatch, tmp_path):
-    """A deploy whose every step succeeds and whose workflow comes up."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "global_controller.yaml").touch()
-    monkeypatch.setattr(deploy_cmd, "_ensure_docker_running", lambda: None)
-    monkeypatch.setattr(deploy_cmd, "collect_findings", lambda _root: [])
-    monkeypatch.setattr(deploy_cmd, "run_init", lambda **_k: None)
-    monkeypatch.setattr(deploy_cmd, "save_project_id", lambda _path: None)
-    monkeypatch.setattr(deploy_cmd, "save_deployed_fingerprints", lambda _f: None)
-    monkeypatch.setattr(deploy_cmd, "run_sync", lambda: True)
-    monkeypatch.setattr(deploy_cmd, "configure_resources", lambda _path: True)
-    monkeypatch.setattr(deploy_cmd, "load_state", lambda: {"port": 8000})
-    monkeypatch.setattr(deploy_cmd, "post_deploy", lambda *_a: None)
-    monkeypatch.setattr(deploy_cmd, "stop_project", lambda _state: None)
-    monkeypatch.setattr(
-        deploy_cmd,
-        "_stream_logs_and_autoserve",
-        lambda *_a, on_ready, **_k: on_ready(True),
-    )
-
-
-def test_an_interactive_deploy_that_comes_up_asks(monkeypatch, deployable, interactive):
-    asked = answer_with(monkeypatch, False)
-
-    deploy_cmd.run_deploy(serve=False)
-
-    assert len(asked) == 1
-
-
-def test_a_non_interactive_deploy_never_asks(monkeypatch, deployable):
-    monkeypatch.setattr(consent.sys.stdin, "isatty", lambda: False)
-    asked = answer_with(monkeypatch, True)
-
-    deploy_cmd.run_deploy(serve=False)
-
-    assert asked == []
-    assert not settings.usage_dir().exists()
-
-
-def test_a_deploy_interrupted_before_it_came_up_does_not_ask(
-    monkeypatch, deployable, interactive
-):
-    monkeypatch.setattr(
-        deploy_cmd, "_stream_logs_and_autoserve", lambda *_a, **_k: None
-    )
-    asked = answer_with(monkeypatch, True)
-
-    deploy_cmd.run_deploy(serve=False)
-
-    assert asked == []
-
-
-def test_a_quiet_deploy_does_not_ask(monkeypatch, deployable, interactive):
-    asked = answer_with(monkeypatch, True)
-
-    deploy_cmd.run_deploy(quiet=True)
-
-    assert asked == []
 
 
 def test_contact_is_wired_into_the_cli(home):

@@ -631,7 +631,7 @@ def test_target_kubernetes_runs_the_kubernetes_command(monkeypatch):
         ) as on_kubernetes,
         pytest.raises(SystemExit) as exited,
     ):
-        cli._run_command()
+        cli._run_command(None)
 
     on_kubernetes.assert_called_once_with(True)
     on_docker.assert_not_called()
@@ -656,7 +656,7 @@ def test_stop_and_clean_on_kubernetes_exit_zero_when_done(monkeypatch):
             ),
             pytest.raises(SystemExit) as exited,
         ):
-            cli._run_command()
+            cli._run_command(None)
         assert exited.value.code == 0, command
 
 
@@ -677,7 +677,7 @@ def test_all_is_refused_on_kubernetes(monkeypatch):
             patch(f"canyonos.kubernetes_target.run_kubernetes_{command}") as on_cluster,
             pytest.raises(SystemExit) as exited,
         ):
-            cli._run_command()
+            cli._run_command(None)
         assert exited.value.code == 1, command
         on_docker.assert_not_called()
         on_cluster.assert_not_called()

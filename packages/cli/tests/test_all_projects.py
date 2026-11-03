@@ -196,7 +196,7 @@ def test_stop_all_reaches_run_stop(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["canyonos", "stop", "--all"])
 
     with pytest.raises(SystemExit):
-        cli._run_command()
+        cli._run_command(None)
 
     assert seen == {"all_projects": True}
 
@@ -207,7 +207,7 @@ def test_clean_all_and_yes_reach_run_clean(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["canyonos", "clean", "--all", "-y"])
 
     with pytest.raises(SystemExit):
-        cli._run_command()
+        cli._run_command(None)
 
     assert seen == {"all_projects": True, "yes": True}
 

@@ -15,11 +15,17 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from canyonos import env
 from canyonos.env import VERSION
+from canyonos.os_support import file_lock
+from canyonos.usage.consent import show_first_event_notice
 from canyonos.usage.settings import (
+    UsageSettings,
     ensure_private_dir,
     load_settings,
     outbox_dir,
+    set_usage_reporting,
+    usage_dir,
     write_private_json,
 )
 
@@ -87,15 +93,29 @@ def _make_room() -> None:
         oldest.unlink(missing_ok=True)
 
 
+def _start_reporting(command: str) -> UsageSettings | None:
+    # Nothing could ever send the event without a usage API, so the notice waits too.
+    if env.usage_url is None:
+        return None
+    ensure_private_dir(usage_dir())
+    # Two first runs at once must show one notice and agree on one installation id.
+    with file_lock(usage_dir() / "settings.lock", wait=True):
+        settings = load_settings()
+        if settings is not None:
+            return settings
+        show_first_event_notice(command)
+        return set_usage_reporting(True)
+
+
 def record_event(command: str, succeeded: bool) -> None:
     """Add a usage event for `command` to the outbox when usage reporting is on and the
-    command is one that is reported. A full outbox drops its oldest event first."""
-    settings = load_settings()
-    if command not in REPORTED_COMMANDS or settings is None:
+    command is one that is reported. Reporting is on by default: the first event is
+    preceded by the notice and starts the installation id. A full outbox drops its
+    oldest event first."""
+    if command not in REPORTED_COMMANDS or not is_reportable_version(VERSION):
         return
-    if not settings.usage_reporting or settings.installation_id is None:
-        return
-    if not is_reportable_version(VERSION):
+    settings = load_settings() or _start_reporting(command)
+    if settings is None or settings.installation_id is None:
         return
     event = build_event(
         command, succeeded, settings.installation_id, datetime.now(timezone.utc)

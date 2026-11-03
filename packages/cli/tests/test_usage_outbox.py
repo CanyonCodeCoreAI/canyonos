@@ -143,7 +143,7 @@ def test_commands_that_only_show_or_set_local_state_record_nothing(reporting, co
     assert events() == []
 
 
-def test_nothing_is_recorded_until_reporting_is_turned_on():
+def test_nothing_is_recorded_or_announced_without_a_usage_api():
     with outbox.recording_usage("deploy"):
         pass
 
