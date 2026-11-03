@@ -14,7 +14,7 @@
 #   - `canyonos stop` and `canyonos clean` remove the project and leave the namespace.
 #
 # Usage: scripts/kind/e2e.sh   (CANYONOS_KIND_CLUSTER names another cluster than canyonos)
-# Needs docker, kind, kubectl and bun on this machine; everything else runs in a
+# Needs docker, kind, kubectl, bun and git on this machine; everything else runs in a
 # container on the kind network, so it runs the same on Linux, macOS, Windows (Git Bash)
 # and in CI.
 set -euo pipefail
@@ -44,15 +44,15 @@ inside() {
 
   log "Tools"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get -qq update >/dev/null && apt-get -qq install -y git curl >/dev/null
+  apt-get -qq update >/dev/null && apt-get -qq install -y curl >/dev/null
   pip install -q --root-user-action=ignore --disable-pip-version-check uv==0.12.15
   arch="$(dpkg --print-architecture)"
   curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl"
   chmod +x /usr/local/bin/kubectl
-  # The checkout as it is, uncommitted changes included, without build outputs.
-  git config --global --add safe.directory '*'
+  # The checkout as it is, uncommitted changes included, without build outputs: the
+  # files listed on the host, since git cannot follow a worktree's host path from here.
   mkdir -p /w
-  git -C /src ls-files -co --exclude-standard -z | tar -C /src --null -T - -cf - | tar -C /w -xf -
+  tar -C /src --null -T /kube/files -cf - | tar -C /w -xf -
   (cd /w && uv sync --locked -q)
 
   log "A namespace and a user who may only edit it"
@@ -203,6 +203,7 @@ CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "$(dirname "${BASH_SOURCE[0]}")/operator
 kube="$(mktemp -d)"
 trap 'rm -rf "${kube}"' EXIT
 kind get kubeconfig --internal --name "${CLUSTER_NAME}" > "${kube}/admin"
+git -C "${REPO}" ls-files -co --exclude-standard -z > "${kube}/files"
 docker run --rm --network kind \
   -v "${REPO}:/src:ro" -v "$(cd "${kube}" && { pwd -W 2>/dev/null || pwd; }):/kube:ro" \
   python:3.12-slim bash /src/scripts/kind/e2e.sh --inside

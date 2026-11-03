@@ -242,8 +242,9 @@ it. `kubectl get pods -n my-project` shows the project's pods, and
 scripts/kind/e2e.sh
 ```
 
-`e2e.sh` is the whole path, and what CI runs (`Kubernetes E2E`) for changes to the
-operator, the chart, or the Kubernetes parts of core, the CLI and the API. It builds
+`e2e.sh` is the whole path, and what CI runs (`Kubernetes E2E`) on each pull request
+and on `main` for changes to core, the CLI, the API, the operator (the chart included)
+or `scripts/kind`. It builds
 the images with `bun run canyonos:dev --images-only`, installs them (`operator.sh`), and
 deploys `examples/helloworld` with the real CLI as a user who may only edit one
 namespace. It then checks requests, the dashboard, a Redis password rotation, `stop`

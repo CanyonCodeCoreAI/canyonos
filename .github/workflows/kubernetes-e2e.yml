@@ -4,23 +4,29 @@
 # CanyonOS on Kubernetes end to end: a kind cluster as scripts/kind/up.sh makes it,
 # then scripts/kind/e2e.sh (the chart with the builder and the dashboard, a deploy
 # with the real CLI by a user who may only edit one namespace, requests, the
-# dashboard, a Redis password rotation, stop and clean). Run for changes that can
-# break that path; it takes about twenty-five minutes on a GitHub runner.
+# dashboard, a Redis password rotation, stop and clean). It takes about twenty-five
+# minutes on a GitHub runner. It runs for the same packages as the Docker E2E (e2e.yml),
+# since a change anywhere in them can break the deploy, plus the operator and the kind
+# scripts: on each pull request and on main.
 
 name: Kubernetes E2E
 
 on:
   pull_request:
     paths:
+      - "packages/cli/**"
+      - "packages/core/**"
+      - "packages/api/**"
       - "packages/operator/**"
-      - "packages/cli/canyonos/kubernetes_target.py"
-      - "packages/cli/cli.py"
-      - "packages/core/canyonos_core/kubernetes/**"
-      - "packages/core/canyonos_core/cli.py"
-      - "packages/core/canyonos_core/controller/**"
-      - "packages/core/canyonos_core/schema/kubernetes_block.py"
-      - "packages/core/Dockerfile"
-      - "packages/api/src/modules/canyonos/**"
+      - "scripts/kind/**"
+      - ".github/workflows/kubernetes-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/cli/**"
+      - "packages/core/**"
+      - "packages/api/**"
+      - "packages/operator/**"
       - "scripts/kind/**"
       - ".github/workflows/kubernetes-e2e.yml"
   workflow_dispatch:
