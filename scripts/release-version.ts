@@ -6,8 +6,9 @@ import { join } from 'node:path';
 // `semver` marks a file that only takes SemVer, where 1.0.0rc1 is spelled 1.0.0-rc1.
 export type Manifest = { path: string; pattern: RegExp; semver?: boolean };
 
-// Every file that states the shared version. `uv lock` derives the lockfile entries
-// from the pyproject files, so `set` never writes those; `check` still reads them.
+// Every file that states the shared version. `uv lock` and `bun install` derive the
+// lockfile entries from the pyproject and package.json files, so `set` never writes
+// those; `check` still reads them.
 export const manifests: Manifest[] = [
   { path: 'packages/cli/pyproject.toml', pattern: /^(version = ")([^"]+)(")$/m },
   { path: 'packages/core/pyproject.toml', pattern: /^(version = ")([^"]+)(")$/m },
@@ -31,6 +32,17 @@ export const lockfileEntries: Manifest[] = [
   {
     path: 'uv.lock (canyonos-core)',
     pattern: /^(name = "canyonos-core"\nversion = ")([^"]+)(")$/m,
+  },
+  // Bun spells a release candidate the SemVer way, 1.0.0-rc1.
+  {
+    path: 'bun.lock (@canyonos/api)',
+    pattern: /^(\s*"name": "@canyonos\/api",\n\s*"version": ")([^"]+)(",)$/m,
+    semver: true,
+  },
+  {
+    path: 'bun.lock (web)',
+    pattern: /^(\s*"name": "web",\n\s*"version": ")([^"]+)(",)$/m,
+    semver: true,
   },
 ];
 
@@ -103,8 +115,13 @@ async function set(root: string, version: string): Promise<void> {
     const file = Bun.file(join(root, fileOf(manifest)));
     await Bun.write(file, writeVersion(manifest, await file.text(), version));
   }
-  const lock = Bun.spawnSync(['uv', 'lock'], { cwd: root, stdout: 'inherit', stderr: 'inherit' });
-  if (lock.exitCode !== 0) throw new Error('uv lock failed.');
+  for (const command of [
+    ['uv', 'lock'],
+    ['bun', 'install', '--lockfile-only'],
+  ]) {
+    const run = Bun.spawnSync(command, { cwd: root, stdout: 'inherit', stderr: 'inherit' });
+    if (run.exitCode !== 0) throw new Error(`${command.join(' ')} failed.`);
+  }
   await check(root, version);
 }
 

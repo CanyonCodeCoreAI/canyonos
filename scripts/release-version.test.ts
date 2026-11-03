@@ -34,7 +34,8 @@ describe('reading versions', () => {
       '0.3.0'
     );
     expect(readVersion(manifest('packages/web/package.json'), packageJson)).toBe('0.1.2');
-    expect(lockfileEntries.map((entry) => readVersion(entry, lockfile))).toEqual([
+    const uvEntries = lockfileEntries.filter((entry) => entry.path.startsWith('uv.lock'));
+    expect(uvEntries.map((entry) => readVersion(entry, lockfile))).toEqual([
       '0.1.731',
       '0.3.0',
     ]);
