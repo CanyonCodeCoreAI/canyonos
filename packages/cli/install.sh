@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # Installs the canyonos CLI from a prebuilt binary attached to the latest stable
-# "v*" GitHub release.
+# "v0.2.*" GitHub release.
 # Usage: curl -fsSL <raw-url>/install.sh | sh
 
 set -eu
@@ -12,18 +12,18 @@ set -eu
 REPO="CanyonCodeCoreAI/canyonos"
 INSTALL_DIR="${CANYONOS_INSTALL_DIR:-$HOME/.local/bin}"
 
-# Reads the /releases JSON on stdin and prints the newest stable "vX.Y.Z" tag
+# Reads the /releases JSON on stdin and prints the newest stable "v0.2.PATCH" tag
 # that is not a pre-release. The array is collapsed to one release per line so the
 # tag and the pre-release flag of the same release stay together. The API lists
 # by creation date, so the tags are sorted by version before the newest is taken.
-# A suffixed tag such as v1.2.3-rc.1 is skipped whatever its flag, and so is any
-# tag with another prefix (cli-v*, core-v*, ...).
+# A suffixed tag such as v0.2.0-rc.1 is skipped whatever its flag, and so is every
+# tag outside the v0.2 release line (including v0.1.*, v1.*, cli-v*, core-v*, ...).
 latest_release_tag() {
     tr -d ' \n' \
         | sed 's/},{/}\
 {/g' \
         | grep -v '"prerelease":true' \
-        | grep -oE '"tag_name":"v[0-9]+\.[0-9]+\.[0-9]+"' \
+        | grep -oE '"tag_name":"v0\.2\.[0-9]+"' \
         | sed 's/^"tag_name":"v//; s/"$//' \
         | sort -t . -k 1,1n -k 2,2n -k 3,3n \
         | tail -n1 \
@@ -60,7 +60,7 @@ if [ -z "$tag" ]; then
 fi
 
 if [ -z "$tag" ]; then
-    echo "error: could not find a v* release for $REPO" >&2
+    echo "error: could not find a v0.2.* release for $REPO" >&2
     exit 1
 fi
 

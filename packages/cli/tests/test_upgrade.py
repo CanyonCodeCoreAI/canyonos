@@ -105,8 +105,8 @@ def test_the_repository_policy_is_one_the_cli_reads():
 
     latest, supported = upgrade.parse_policy(policy)
 
-    assert supported[0] == latest
-    assert len(supported) == 3
+    assert latest == "0.2.0"
+    assert supported == ["0.2.0"]
 
 
 @pytest.mark.parametrize("version", ["0.1.734", "0.1.735", "0.1.735.dev0", "0.2.0"])

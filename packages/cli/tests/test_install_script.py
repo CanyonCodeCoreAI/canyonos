@@ -27,33 +27,39 @@ def run_selector(name, releases):
     return result.stdout.strip()
 
 
-def test_installer_picks_the_newest_stable_v_release():
+def test_installer_picks_the_newest_stable_0_2_release():
     releases = [
-        {"tag_name": "v0.1.734", "prerelease": True},
-        {"tag_name": "cli-v0.1.735", "prerelease": False},
-        {"tag_name": "v0.1.733-rc.1", "prerelease": False},
-        {"tag_name": "v0.1.732", "prerelease": False},
-        {"tag_name": "cli-v0.1.731", "prerelease": False},
+        {"tag_name": "v0.2.1", "prerelease": True},
+        {"tag_name": "v1.0.0", "prerelease": False},
+        {"tag_name": "v0.1.738", "prerelease": False},
+        {"tag_name": "cli-v0.2.0", "prerelease": False},
+        {"tag_name": "v0.2.0-rc.1", "prerelease": False},
+        {"tag_name": "v0.2.0", "prerelease": False},
     ]
 
-    assert run_selector("latest_release_tag", releases) == "v0.1.732"
+    assert run_selector("latest_release_tag", releases) == "v0.2.0"
 
 
 def test_installer_picks_the_highest_version_whatever_the_list_order():
     releases = [
-        {"tag_name": "v0.1.733", "prerelease": False},
-        {"tag_name": "v0.1.9", "prerelease": False},
-        {"tag_name": "v0.1.734", "prerelease": False},
-        {"tag_name": "v0.1.735", "prerelease": True},
+        {"tag_name": "v0.2.1", "prerelease": False},
+        {"tag_name": "v0.2.9", "prerelease": False},
+        {"tag_name": "v0.2.10", "prerelease": False},
+        {"tag_name": "v0.2.11", "prerelease": True},
     ]
 
-    assert run_selector("latest_release_tag", releases) == "v0.1.734"
+    assert run_selector("latest_release_tag", releases) == "v0.2.10"
 
 
-def test_installer_finds_no_v_release_among_legacy_tags():
+def test_installer_rejects_releases_outside_the_0_2_line():
     assert (
         run_selector(
-            "latest_release_tag", [{"tag_name": "cli-v0.1.731", "prerelease": False}]
+            "latest_release_tag",
+            [
+                {"tag_name": "v0.1.738", "prerelease": False},
+                {"tag_name": "v1.0.0", "prerelease": False},
+                {"tag_name": "cli-v0.2.0", "prerelease": False},
+            ],
         )
         == ""
     )

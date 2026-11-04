@@ -54,7 +54,7 @@ Each event holds only these fields:
 | `command` | The command that ran, one of those listed above |
 | `succeeded` | Whether the command succeeded |
 | `occurred_at` | When it ran, in UTC to the millisecond |
-| `cli_version` | The CLI version, for example `0.1.738` |
+| `cli_version` | The CLI version, for example `0.2.0` |
 
 ## Feedback
 

@@ -6,9 +6,9 @@ import { join } from 'node:path';
 // `semver` marks a file that only takes SemVer, where 1.0.0rc1 is spelled 1.0.0-rc1.
 export type Manifest = { path: string; pattern: RegExp; semver?: boolean };
 
-// Every file that states the shared version. `uv lock` and `bun install` derive the
-// lockfile entries from the pyproject and package.json files, so `set` never writes
-// those; `check` still reads them.
+// Every file that states the shared version. `uv lock` derives its entries from the
+// pyproject files. Bun does not refresh workspace versions in bun.lock, so `set`
+// writes those entries after updating the lockfile.
 export const manifests: Manifest[] = [
   { path: 'packages/cli/pyproject.toml', pattern: /^(version = ")([^"]+)(")$/m },
   { path: 'packages/core/pyproject.toml', pattern: /^(version = ")([^"]+)(")$/m },
@@ -122,6 +122,12 @@ async function set(root: string, version: string): Promise<void> {
     const run = Bun.spawnSync(command, { cwd: root, stdout: 'inherit', stderr: 'inherit' });
     if (run.exitCode !== 0) throw new Error(`${command.join(' ')} failed.`);
   }
+  const bunLockPath = join(root, 'bun.lock');
+  let bunLock = await Bun.file(bunLockPath).text();
+  for (const entry of lockfileEntries.filter((entry) => fileOf(entry) === 'bun.lock')) {
+    bunLock = writeVersion(entry, bunLock, version);
+  }
+  await Bun.write(bunLockPath, bunLock);
   await check(root, version);
 }
 

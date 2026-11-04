@@ -20,6 +20,8 @@ const chart =
   'apiVersion: v2\nname: canyonos-operator\nversion: 0.1.731\nappVersion: "0.1.731"\nkubeVersion: ">=1.32.0-0"\n';
 const lockfile =
   '[[package]]\nname = "canyonos"\nversion = "0.1.731"\nsource = { editable = "packages/cli" }\n\n[[package]]\nname = "canyonos-core"\nversion = "0.3.0"\nsource = { editable = "packages/core" }\n';
+const bunLock =
+  '{\n  "workspaces": {\n    "packages/api": {\n      "name": "@canyonos/api",\n      "version": "1.0.0-rc1",\n    },\n    "packages/web": {\n      "name": "web",\n      "version": "1.0.0-rc1",\n    },\n  },\n}\n';
 
 const manifest = (path: string) => {
   const found = [...manifests, ...lockfileEntries].find((entry) => entry.path === path);
@@ -35,9 +37,11 @@ describe('reading versions', () => {
     );
     expect(readVersion(manifest('packages/web/package.json'), packageJson)).toBe('0.1.2');
     const uvEntries = lockfileEntries.filter((entry) => entry.path.startsWith('uv.lock'));
-    expect(uvEntries.map((entry) => readVersion(entry, lockfile))).toEqual([
-      '0.1.731',
-      '0.3.0',
+    expect(uvEntries.map((entry) => readVersion(entry, lockfile))).toEqual(['0.1.731', '0.3.0']);
+    const bunEntries = lockfileEntries.filter((entry) => entry.path.startsWith('bun.lock'));
+    expect(bunEntries.map((entry) => readVersion(entry, bunLock))).toEqual([
+      '1.0.0rc1',
+      '1.0.0rc1',
     ]);
   });
 
@@ -58,6 +62,12 @@ describe('writing versions', () => {
     ).toBe('# CanyonOS - Distributed Agent Framework\n__version__ = "0.1.732"\n');
     expect(writeVersion(manifest('packages/web/package.json'), packageJson, '0.1.732')).toBe(
       '{\n  "name": "web",\n  "private": true,\n  "version": "0.1.732",\n  "type": "module"\n}\n'
+    );
+    const bunEntries = lockfileEntries.filter((entry) => entry.path.startsWith('bun.lock'));
+    expect(
+      bunEntries.reduce((content, entry) => writeVersion(entry, content, '0.1.732'), bunLock)
+    ).toBe(
+      '{\n  "workspaces": {\n    "packages/api": {\n      "name": "@canyonos/api",\n      "version": "0.1.732",\n    },\n    "packages/web": {\n      "name": "web",\n      "version": "0.1.732",\n    },\n  },\n}\n'
     );
   });
 });

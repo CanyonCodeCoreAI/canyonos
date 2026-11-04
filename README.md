@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/CanyonCodeCoreAI/canyonos/actions/workflows/ci.yml"><img src="https://github.com/CanyonCodeCoreAI/canyonos/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="https://github.com/CanyonCodeCoreAI/canyonos/releases"><img src="https://img.shields.io/github/v/release/CanyonCodeCoreAI/canyonos?filter=cli-v*&sort=semver&label=release" alt="Latest release"></a>
+  <a href="https://github.com/CanyonCodeCoreAI/canyonos/releases"><img src="https://img.shields.io/github/v/release/CanyonCodeCoreAI/canyonos?filter=v0.2.*&sort=semver&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
 </p>

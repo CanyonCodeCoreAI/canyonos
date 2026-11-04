@@ -14,7 +14,7 @@ see [Try it on a laptop](#try-it-on-a-laptop). To develop CanyonOS itself on one
 
 A cluster admin installs it once, with Helm, from the chart each release publishes
 (`<version>` is the CLI's, as `canyonos --version` prints it; the chart spells a release
-candidate as SemVer, `1.0.0-rc1` for `1.0.0rc1`):
+candidate as SemVer, `0.2.0-rc1` for `0.2.0rc1`):
 
 ```bash
 helm install canyonos oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator \
