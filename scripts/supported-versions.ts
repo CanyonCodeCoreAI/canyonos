@@ -5,10 +5,15 @@ import { join } from 'node:path';
 
 import { isReleaseVersion } from './release-version';
 
-// The latest stable CLI release and the two before it.
+// The latest stable CLI release and the two before it, within its MAJOR.MINOR series:
+// a minor or major bump leaves the older series unsupported.
 export const supportedCount = 3;
 
 export type SupportedVersions = { latest: string; supported: string[] };
+
+function series(version: string): string {
+  return version.split('.').slice(0, 2).join('.');
+}
 
 function newestFirst(a: string, b: string): number {
   const [left, right] = [a, b].map((version) => version.split('.').map(Number));
@@ -24,7 +29,10 @@ export function supportedWindow(versions: string[]): SupportedVersions {
       throw new Error(`${version} is not a release version like 0.1.732.`);
     }
   }
-  const supported = [...new Set(versions)].sort(newestFirst).slice(0, supportedCount);
+  const newest = [...new Set(versions)].sort(newestFirst);
+  const supported = newest
+    .filter((version) => series(version) === series(newest[0]!))
+    .slice(0, supportedCount);
   return { latest: supported[0]!, supported };
 }
 
