@@ -183,12 +183,13 @@ step "canyonos status"
 canyonos status | tee "$ARTIFACTS_DIR/status.log"
 grep -qE "$WHOLE_CURL" "$ARTIFACTS_DIR/status.log"
 
-# Prints "<desired> <running> <launch error>" for IntentAgent, read from `canyonos status --json`.
-intent_replicas() {
+# Prints "<desired> <running> <launch error>" for an agent, read from `canyonos status --json`.
+agent_replicas() {
   canyonos status --json >"$ARTIFACTS_DIR/status.json"
-  python3 -c 'import json, sys; agent = json.load(sys.stdin)["agents"]["IntentAgent"]; print(agent["desired_replicas"], agent["running_replicas"], agent["launch_error"])' \
-    <"$ARTIFACTS_DIR/status.json"
+  python3 -c 'import json, sys; agent = json.load(sys.stdin)["agents"][sys.argv[1]]; print(agent["desired_replicas"], agent["running_replicas"], agent["launch_error"])' \
+    "$1" <"$ARTIFACTS_DIR/status.json"
 }
+intent_replicas() { agent_replicas IntentAgent; }
 
 step "canyonos status --json"
 [ "$(intent_replicas)" = "1 1 None" ] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
@@ -251,6 +252,25 @@ code="$(curl -s -o "$ARTIFACTS_DIR/missing-argument.json" -w '%{http_code}' \
   -X POST "$API_URL/$ROUTE" -H 'Content-Type: application/json' -d '{}')"
 cat "$ARTIFACTS_DIR/missing-argument.json"
 [ "$code" = 400 ] || { echo "expected a 400, got $code"; exit 1; }
+
+# SIGTERM drains a replica as the reconciler does: `docker stop` during a call lets
+# the call finish, and the replica exits 0 instead of being killed at the deadline.
+step "docker stop drains the Workflow replica during a call"
+workflow="$(docker ps --filter name=-workflow- --format '{{.Names}}' | head -n 1)"
+python3 "$E2E_DIR/query.py" "$API_URL" "$ROUTE" "$ARGUMENT" "$QUERY" "$REQUEST_TIMEOUT" \
+  >"$ARTIFACTS_DIR/sigterm-result.json" 2>"$ARTIFACTS_DIR/sigterm-query.log" &
+query_pid=$!
+for _ in $(seq 30); do grep -q -- '-> request ' "$ARTIFACTS_DIR/sigterm-query.log" && break; sleep 1; done
+sleep 5
+docker wait "$workflow" >"$ARTIFACTS_DIR/sigterm-exit-code" &
+wait_pid=$!
+docker stop "$workflow"
+wait "$wait_pid"
+wait "$query_pid" || { cat "$ARTIFACTS_DIR/sigterm-query.log"; exit 1; }
+python3 "$CHECK" <"$ARTIFACTS_DIR/sigterm-result.json"
+[ "$(cat "$ARTIFACTS_DIR/sigterm-exit-code")" = 0 ] || { docker logs "$workflow" 2>&1 | tail -n 50; exit 1; }
+for _ in $(seq 60); do [ "$(agent_replicas Workflow)" = "1 1 None" ] && break; sleep 2; done
+[ "$(agent_replicas Workflow)" = "1 1 None" ] || { cat "$ARTIFACTS_DIR/status.json"; exit 1; }
 
 # After the queries, since it kills a gateway: LLM calls, streams, child processes, passthrough, prices and restart, from inside a replica.
 step "LLM gateway and proxy inside an agent replica"

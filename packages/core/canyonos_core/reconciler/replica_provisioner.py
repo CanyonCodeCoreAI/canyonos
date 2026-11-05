@@ -30,12 +30,11 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
     DEFAULT_CPU,
     DEFAULT_MEMORY_MB,
 )
+from canyonos_core.reconciler.replicas import DRAIN_TIMEOUT_SECONDS
 from canyonos_core.reconciler.routing import publish_routing_snapshot
 from canyonos_core.scaling import contract
 
 PORT_CLAIM_LOCK_SECONDS = 10
-# How long a draining replica may keep running before it is removed anyway.
-DRAIN_TIMEOUT_SECONDS = 180
 logger = logging.getLogger(__name__)
 
 

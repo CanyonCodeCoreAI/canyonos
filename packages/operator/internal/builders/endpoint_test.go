@@ -35,7 +35,7 @@ func TestTheEndpointRunsTheCoreImageAsDockerDoes(t *testing.T) {
 		"CANYONOS_ENDPOINT_METHOD":        "run",
 		"CANYONOS_ENDPOINT_ARGUMENTS":     "query,limit",
 		envHealthPort:                     "8099",
-		"CANYONOS_SHUTDOWN_GRACE_SECONDS": "120",
+		"CANYONOS_SHUTDOWN_GRACE_SECONDS": "175", // 180 s grace minus the 5 s preStop pause
 		"CANYONOS_REDIS_HOST":             "canyonos-redis.acme.svc",
 	} {
 		if env[name].Value != value {
@@ -68,7 +68,7 @@ func TestTheEndpointPodIsRestrictedAndHasNoAPIAccess(t *testing.T) {
 	if container.Lifecycle == nil || container.Lifecycle.PreStop.Sleep.Seconds != 5 {
 		t.Error("a stopping endpoint must keep serving while callers stop sending to it")
 	}
-	if container.ReadinessProbe.HTTPGet.Path != "/readyz" || *pod.TerminationGracePeriodSeconds != 120 {
+	if container.ReadinessProbe.HTTPGet.Path != "/readyz" || *pod.TerminationGracePeriodSeconds != 180 {
 		t.Errorf("probe %s grace %d", container.ReadinessProbe.HTTPGet.Path, *pod.TerminationGracePeriodSeconds)
 	}
 }

@@ -11,6 +11,7 @@ calls and report their results.
 import json
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -23,7 +24,10 @@ from flask import Flask, jsonify, request
 
 from canyonos_core.controller import canyonos_context
 from canyonos_core.controller.future import Future
-from canyonos_core.controller.local_controller import LocalController
+from canyonos_core.controller.local_controller import (
+    LocalController,
+    shutdown_grace_seconds,
+)
 from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT
 
 import local_controller_pb2
@@ -206,7 +210,12 @@ def worker_app():
 def main():
     """Start the forwarding local controller and a gunicorn worker per CPU serving the
     endpoint; report healthy once its port accepts connections, and exit, reported
-    failed, when gunicorn or the controller stops."""
+    failed, when gunicorn or the controller stops.
+
+    SIGTERM, which reaches only this process, stops gunicorn first: it takes no new
+    connections and finishes its requests, each of which queues its call through the
+    controller. The controller then drains as any replica does, and the process exits 0.
+    """
     logging.basicConfig(level=logging.INFO)
     controller = LocalController(publish_ready=False)
     server = subprocess.Popen(
@@ -225,10 +234,18 @@ def main():
             "canyonos_core.endpoint.app:worker_app()",
         ]
     )
+    remove_at = None
 
-    threading.Thread(
+    def stop_serving(signum, frame):
+        nonlocal remove_at
+        remove_at = remove_at or time.time() + shutdown_grace_seconds()
+        server.terminate()
+
+    signal.signal(signal.SIGTERM, stop_serving)
+    controller_thread = threading.Thread(
         target=controller.run, name="endpoint-controller", daemon=True
-    ).start()
+    )
+    controller_thread.start()
     while server.poll() is None:
         try:
             socket.create_connection(("127.0.0.1", ENDPOINT_PORT), timeout=1).close()
@@ -238,5 +255,9 @@ def main():
         controller.mark_ready()
         break
     server.wait()
+    if remove_at is not None:
+        controller.drain_until(remove_at)
+        controller_thread.join()
+        sys.exit(0)
     controller.mark_failed()
     sys.exit(server.returncode)

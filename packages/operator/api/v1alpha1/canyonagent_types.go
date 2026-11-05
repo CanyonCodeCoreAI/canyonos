@@ -95,7 +95,7 @@ type CanyonAgentSpec struct {
 	// calls it accepted before it is killed.
 	// +kubebuilder:validation:Minimum=20
 	// +kubebuilder:validation:Maximum=3600
-	// +kubebuilder:default=120
+	// +kubebuilder:default=180
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
 

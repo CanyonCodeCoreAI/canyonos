@@ -50,6 +50,9 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 logger = logging.getLogger(__name__)
 
 MAX_PORT_ATTEMPTS = 50
+# How long a draining replica may keep running before it is removed anyway, and so
+# its grace period from SIGTERM to the kill, as a pod's is on Kubernetes.
+DRAIN_TIMEOUT_SECONDS = 180
 NETWORK = "canyonos-local"
 HOST_GATEWAY = "host.docker.internal"
 # The host port in Docker's "Bind for 0.0.0.0:8080 failed" and "listen tcp
@@ -194,6 +197,10 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             "--add-host",
             "host.docker.internal:host-gateway",
             *(_publish_args(bind_ip, host_port, container_port) if publish else []),
+            "--stop-timeout",
+            str(DRAIN_TIMEOUT_SECONDS),
+            "-e",
+            f"CANYONOS_SHUTDOWN_GRACE_SECONDS={DRAIN_TIMEOUT_SECONDS}",
             "-e",
             f"CANYONOS_AGENT_PORT={agent_port}",
             "-e",

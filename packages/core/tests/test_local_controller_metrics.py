@@ -206,6 +206,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
             agent_name="Alpha",
             _stateful=set(stateful),
             servicer=SimpleNamespace(refusing=False),
+            _shutdown_at=None,
             _failed_leftovers=False,
             failed_leftovers=[],
             _metrics_key="controller:localhost:50051:metrics",

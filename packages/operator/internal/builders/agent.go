@@ -165,7 +165,7 @@ func AgentStatefulSet(p *canyonosv1alpha1.CanyonProject, agent *canyonosv1alpha1
 // health checks and the SIGTERM drain. The agent's own env comes first, so it
 // cannot override the platform's, as `-e` beats `--env-file` on Docker.
 func AgentEnv(p *canyonosv1alpha1.CanyonProject, agent *canyonosv1alpha1.CanyonAgent) []corev1.EnvVar {
-	grace := int64(120)
+	grace := int64(180)
 	if agent.Spec.TerminationGracePeriodSeconds != nil {
 		grace = *agent.Spec.TerminationGracePeriodSeconds
 	}

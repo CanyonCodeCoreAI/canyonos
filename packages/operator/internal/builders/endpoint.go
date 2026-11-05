@@ -33,8 +33,8 @@ const (
 	// endpoint-0.endpoint.<ns>.svc.
 	EndpointWorkload = "endpoint"
 	// endpointGrace is how long a stopping endpoint finishes its HTTP requests (its
-	// gunicorn allows 30 s) and the calls it forwarded.
-	endpointGrace = 120
+	// gunicorn allows 30 s) and the calls it forwarded: an agent's default, as on Docker.
+	endpointGrace = 180
 	// endpointPreStop covers the time a Service's endpoints and an ingress controller
 	// take to drop a stopping endpoint pod.
 	endpointPreStop = 5
@@ -228,7 +228,8 @@ func endpointEnv(p *canyonosv1alpha1.CanyonProject) []corev1.EnvVar {
 		pollIntervalEnv(p),
 		logsEnabledEnv(p),
 		{Name: envHealthPort, Value: strconv.Itoa(HealthPort)},
-		{Name: "CANYONOS_SHUTDOWN_GRACE_SECONDS", Value: strconv.Itoa(endpointGrace)},
+		// As for an agent: the drain counts from the SIGTERM that follows the preStop pause.
+		{Name: "CANYONOS_SHUTDOWN_GRACE_SECONDS", Value: strconv.Itoa(endpointGrace - endpointPreStop)},
 		{Name: envHome, Value: tmpDir},
 	}, append(replicaIDEnv(EndpointAgentName), RedisEnv(p)...)...)
 }

@@ -183,6 +183,27 @@ sequenceDiagram
 
 A call waiting for a person's answer counts as running, so a drain that reaches the 180 s limit fails it and its request ends as `error`.
 
+### On SIGTERM
+
+SIGTERM, the standard request to stop, starts the same drain without the
+reconciler: Kubernetes sends it when it scales down or rolls a pod, Docker on
+`docker stop`. Each container gets a grace period from SIGTERM to the kill, and
+`CANYONOS_SHUTDOWN_GRACE_SECONDS` tells the replica how long it is: on Docker the
+reconciler starts it with `--stop-timeout` of the same 180 s its own drain allows; on
+Kubernetes the operator gives the pod's grace period (180 s by default) minus its
+`preStop` pause. SIGTERM makes now plus that the removal time, which the heartbeat
+follows as it would the `:draining` key: refuse, report `draining = 1`, fail
+leftovers two heartbeats before. Once the conditions above hold on its own
+heartbeat, or at the removal time, the controller stops and the process exits 0.
+No key is written, so a pod restarted under the same name starts undrained.
+
+The reconciler's own removals still drain through the key and then remove the
+container with `docker rm -f`; by then the replica is idle or out of time.
+
+The endpoint's container also runs gunicorn, which SIGTERM does not reach. The
+endpoint stops it first, so it takes no new connections and finishes its requests,
+each of which queues its call through the controller; then the controller drains.
+
 ### Who reads draining_at
 
 ```mermaid

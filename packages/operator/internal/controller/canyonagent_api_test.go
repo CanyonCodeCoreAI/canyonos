@@ -52,7 +52,7 @@ var _ = Describe("CanyonAgent API", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: testNamespace}, created)).To(Succeed())
 		Expect(created.Spec.Type).To(Equal("agent"))
 		Expect(*created.Spec.Replicas).To(Equal(int32(1)))
-		Expect(*created.Spec.TerminationGracePeriodSeconds).To(Equal(int64(120)))
+		Expect(*created.Spec.TerminationGracePeriodSeconds).To(Equal(int64(180)))
 	})
 
 	It("changes the replica count through /scale, as the global controller does", func() {

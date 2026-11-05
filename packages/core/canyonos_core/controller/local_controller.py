@@ -12,6 +12,7 @@ import logging
 import os
 import queue
 import random
+import signal
 import sys
 import threading
 import time
@@ -117,6 +118,15 @@ FUTURE_RESULT_TIMEOUT_SECONDS = human_input.QUESTION_TIMEOUT_SECONDS + 300
 ENDPOINT_LOG_SOURCE = "Endpoint"
 # Every outbound call goes through the gateway, so a gateway that keeps dying fails the replica.
 MAX_GATEWAY_RESTARTS = 3
+# Put on the request queue once a drain started by drain_until is over; run() then stops.
+_DRAINED = object()
+
+
+def shutdown_grace_seconds():
+    """How long this replica has from SIGTERM until it is killed: what whatever runs it
+    sets in CANYONOS_SHUTDOWN_GRACE_SECONDS (the reconciler as `docker run
+    --stop-timeout`, the operator from the pod's grace period), else Docker's 10 s."""
+    return float(os.environ.get("CANYONOS_SHUTDOWN_GRACE_SECONDS", 10))
 
 
 def log_source_name(agent_name):
@@ -234,6 +244,8 @@ class LocalController(object):
         # Written by the reconciler when it starts draining this replica.
         self._draining_key = f"controller:{self.agent_host}:{self.public_port}:draining"
         self._draining = False
+        # Set by drain_until (on SIGTERM): the removal time, used as the reconciler's key is.
+        self._shutdown_at = None
         self._failed_leftovers = False
         # Calls the drain failed back to their callers; nothing they do later is reported.
         self._cut_off = set()
@@ -521,7 +533,7 @@ class LocalController(object):
             try:
                 self._watch_llm_gateway()
                 # Read before collecting, so a heartbeat saying draining comes after refusals began.
-                remove_at = self.redis.get(self._draining_key)
+                remove_at = self._shutdown_at or self.redis.get(self._draining_key)
                 self._draining = remove_at is not None
                 # A stateful replica keeps taking calls; open_requests holds its drain instead.
                 self.servicer.refusing = (
@@ -544,7 +556,38 @@ class LocalController(object):
                 self._fail_calls_to_gone_replicas()
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
+            # Outside the try, so an unreachable Redis cannot keep a stopping replica alive.
+            if self._shutdown_at is not None and (
+                self._is_idle() or time.time() >= self._shutdown_at
+            ):
+                self.request_queue.put(_DRAINED)
+                return
             self._metrics_stop_event.wait(self._metrics_interval)
+
+    def _is_idle(self):
+        """The reconciler's idle check (ReplicaProvisioner._is_idle) on this replica's
+        own heartbeat, so its own drain ends when the reconciler's would. Running calls
+        are read in-process: the served and completed counters live in Redis."""
+        metrics = self._collect_metrics()
+        with self._executor_futures_lock:
+            running = bool(self._executor_futures)
+        return (
+            metrics["draining"] == "1"
+            and metrics["queue_length"] == "0"
+            and metrics["open_requests"] == "0"
+            and metrics["pending_requests"] == "0"
+            and not running
+        )
+
+    def drain_until(self, remove_at):
+        """Drain as when the reconciler removes this replica, with `remove_at` as the
+        removal time; run() stops the controller once the replica is idle or that time
+        comes. SIGTERM starts it; a later call keeps the first time."""
+        if self._shutdown_at is None:
+            logger.info(
+                "Draining for up to %.0f s, then stopping.", remove_at - time.time()
+            )
+            self._shutdown_at = remove_at
 
     def _load_agent(self):
         """Dynamically load and instantiate the agent class."""
@@ -725,12 +768,15 @@ class LocalController(object):
     # ------------------------------------------------------------------ #
 
     def run(self):
-        """Take requests off the queue and process them, sleeping while it is empty."""
+        """Take requests off the queue and process them, sleeping while it is empty,
+        until interrupted or a drain started by drain_until is over; then stop."""
         logger.info("Local controller started, waiting for requests...")
         try:
             while True:
                 # Blocks until a request is queued.
                 raw = self.request_queue.get()
+                if raw is _DRAINED:
+                    break
                 data = None
                 try:
                     data = json.loads(raw)
@@ -748,7 +794,8 @@ class LocalController(object):
                     # in no one's hands; a forward is counted in _unsent before this.
                     self.request_queue.task_done()
         except KeyboardInterrupt:
-            self.stop()
+            pass
+        self.stop()
 
     def _mark_future_failed(
         self,
@@ -1542,4 +1589,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     controller = LocalController(port=args.port)
+    grace_seconds = shutdown_grace_seconds()
+    # SIGTERM, the standard request to stop, starts the reconciler's drain.
+    signal.signal(
+        signal.SIGTERM,
+        lambda signum, frame: controller.drain_until(time.time() + grace_seconds),
+    )
     controller.run()

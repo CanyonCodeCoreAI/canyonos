@@ -1315,7 +1315,7 @@ spec:
                   routing).
                 type: boolean
               terminationGracePeriodSeconds:
-                default: 120
+                default: 180
                 description: |-
                   terminationGracePeriodSeconds is how long a stopping replica may finish the
                   calls it accepted before it is killed.
