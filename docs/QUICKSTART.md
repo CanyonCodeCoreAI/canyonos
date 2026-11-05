@@ -13,24 +13,27 @@ yourself? Run this from anywhere:
 canyonos quickstart
 ```
 
-It picks a sample workflow, sets it up, asks for the one API key it needs, deploys
-it, and waits for your first request to come back.
+It picks a sample workflow, copies it out of the install, deploys it, and waits
+for your first request to come back. The workflows it offers are already in
+CanyonOS format; porting an app of your own is `canyonos convert`, above.
 
-It shows you each command and waits for you to type it before running it. Eight
+It shows you each command and waits for you to type it before running it. Six
 stages:
 
-| #   | Stage                | Command            | What it does                                                              |
-| --- | -------------------- | ------------------ | ------------------------------------------------------------------------- |
-| 1   | System Prerequisites | `canyonos doctor`  | Checks Docker, git and everything else a deploy needs                     |
-| 2   | Workflow Selection   | —                  | Pick a sample workflow from a menu                                        |
-| 3   | Workflow Setup       | —                  | Downloads that workflow                                                   |
-| 4   | Workflow Convert     | `canyonos convert` | [Optional] Converts a project into CanyonOS format                        |
-| 5   | Environment Config   | —                  | Asks for the API keys the workflow needs and writes them to its `.env`    |
-| 6   | Deployment           | `canyonos deploy`  | Builds an image per agent, then starts the workflow                       |
-| 7   | Deployment Health    | `canyonos doctor`  | Checks the running deploy: controller, Redis, agents, endpoint, dashboard |
-| 8   | First Request        | `curl -X POST …`   | Sends your first request                                                  |
+| #   | Stage                | Command                               | What it does                                                              |
+| --- | -------------------- | ------------------------------------- | ------------------------------------------------------------------------- |
+| 1   | System Prerequisites | `canyonos doctor`                     | Checks Docker and everything else a deploy needs                          |
+| 2   | Workflow Selection   | —                                     | Pick a workflow from a menu; Hello World is the default                   |
+| 3   | Workflow Setup       | `cd ./<workflow>`                     | Copies the workflow out of the install, then `cd`s in                     |
+| 4   | Deployment           | `canyonos deploy`                     | Builds an image per agent, then starts the workflow                       |
+| 5   | Deployment Health    | `canyonos doctor`                     | Checks the running deploy: controller, Redis, agents, endpoint, dashboard |
+| 6   | First Request        | `curl -X POST …`                      | Sends your first request                                                  |
 
-- You need Docker running, git, and an API key.
+A workflow that needs an API key ships a `.env` naming it. The quickstart points
+you at that file after setup; open it and set your key before the deploy stage.
+
+- You need Docker running. Hello World needs no API key; the other workflows do.
+- The workflows ship with the CLI, so nothing is downloaded and a first run works offline.
 - Ctrl-C stops the run. Anything already deployed keeps running.
 - At the end it offers `canyonos clean` to remove deployment.
 

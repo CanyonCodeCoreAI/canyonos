@@ -278,16 +278,22 @@ class CliCase:
         input_text: str | None = None,
         timeout: float = 10.0,
         env: Mapping[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run a command without a terminal, then kill its process group. Output goes
-        to artifact files, so a lingering descendant cannot hold the call open."""
+        to artifact files, so a lingering descendant cannot hold the call open.
+
+        `cwd` defaults to the case's own directory; a case passes one when the
+        command has to run inside a folder it wrote under there.
+        """
+        working_dir = cwd or self.cwd
         command = [os.fspath(part) for part in argv]
         stdout_path = self._artifact_path(Path(command[0]).name, "stdout")
         stderr_path = stdout_path.with_suffix(".stderr")
         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
             process = subprocess.Popen(
                 command,
-                cwd=self.cwd,
+                cwd=working_dir,
                 env={**self.env, **(env or {})},
                 stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
                 stdout=stdout,
@@ -311,7 +317,7 @@ class CliCase:
             json.dumps(
                 {
                     "argv": command,
-                    "cwd": str(self.cwd),
+                    "cwd": str(working_dir),
                     "returncode": process.returncode,
                     "timed_out": timed_out,
                 },
@@ -334,10 +340,15 @@ class CliCase:
         input_text: str | None = None,
         timeout: float = 10.0,
         env: Mapping[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run the installed `canyonos` console script without a terminal."""
         return self.run(
-            [self.cli, *args], input_text=input_text, timeout=timeout, env=env
+            [self.cli, *args],
+            input_text=input_text,
+            timeout=timeout,
+            env=env,
+            cwd=cwd,
         )
 
     def run_python(

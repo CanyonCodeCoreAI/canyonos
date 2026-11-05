@@ -4,12 +4,12 @@
 # Advisor Agent
 #
 # Final stage. Turns the computed portfolio metrics and risk figures into a
-# short, plain-English briefing using a small, cheap Baseten Model API, called
+# short, plain-English briefing using a small, cheap OpenAI model, called
 # through the openai SDK. Token telemetry is recorded onto this execution's
 # future:<future_id> hash transparently by the CanyonOS LLM gateway each agent
-# container's Baseten calls are routed through. Configure with env vars:
-#   BASETEN_API_KEY   (required)
-#   BASETEN_MODEL_ID  (default: deepseek-ai/DeepSeek-V4-Flash-0731)
+# container's OpenAI calls are routed through. Configure with env vars:
+#   OPENAI_API_KEY   (required)
+#   OPENAI_MODEL_ID  (default: gpt-4o-mini)
 #
 # If the LLM is unavailable (returns an empty string), it falls back to a
 # deterministic templated summary so the pipeline still returns.
@@ -17,7 +17,7 @@
 # The instructions are the AdvisorAgent.summarize system prompt in config/prompts.yaml, which the
 # LLM gateway adds to every chat completion.
 #
-# Resource profile: cheap CPU; the LLM cost sits in the Baseten call, not here.
+# Resource profile: cheap CPU; the LLM cost sits in the OpenAI call, not here.
 
 import os
 
@@ -27,12 +27,10 @@ from openai import OpenAI
 class AdvisorAgent(object):
     def __init__(self):
         self.tools = [self.summarize]
-        self.model_id = os.environ.get(
-            "BASETEN_MODEL_ID", "deepseek-ai/DeepSeek-V4-Flash-0731"
-        )
+        self.model_id = os.environ.get("OPENAI_MODEL_ID", "gpt-4o-mini")
         self._client = OpenAI(
-            base_url="https://inference.baseten.co/v1",
-            api_key=os.environ["BASETEN_API_KEY"],
+            base_url="https://api.openai.com/v1",
+            api_key=os.environ["OPENAI_API_KEY"],
         )
 
     def summarize(self, holdings: dict, metrics: dict, risk: dict) -> str:
@@ -46,7 +44,7 @@ class AdvisorAgent(object):
             )
             return response.choices[0].message.content
         except Exception as e:
-            print(f"AdvisorAgent: Baseten call failed ({e}); using templated summary.")
+            print(f"AdvisorAgent: OpenAI call failed ({e}); using templated summary.")
             return self._fallback_summary(metrics, risk)
 
     def _build_prompt(self, holdings: dict, metrics: dict, risk: dict) -> str:

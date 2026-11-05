@@ -30,7 +30,14 @@ include = ["canyonos*", "utils*"]
 py-modules = ["cli"]
 
 [tool.setuptools.package-data]
-canyonos = ["dashboard.compose.yml", "new_app_template/**/*", "new_app_template/**/.*"]
+canyonos = [
+    "dashboard.compose.yml",
+    "new_app_template/**/*",
+    "new_app_template/**/.*",
+    # The quickstart's workflows; `.*` catches each one's .env.
+    "starters/**/*",
+    "starters/**/.*",
+]
 
 [dependency-groups]
 dev = [

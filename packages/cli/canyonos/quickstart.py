@@ -6,25 +6,21 @@ Logic for `canyonos quickstart`: the guided first run, from a fresh machine to a
 first request answered.
 
 Each stage shows a command and waits for the user to type it back before running
-it, so they finish having run `canyonos doctor`, `canyonos convert`, `canyonos
-deploy` and a `curl` themselves. Choosing a workflow and cloning it are the
+it, so they finish having run `canyonos doctor`, `canyonos deploy` and a `curl`
+themselves. Choosing a workflow and copying it out of the package are the
 exceptions; neither is a command anyone could type.
 """
 
+import importlib.resources
 import json
 import os
 import shlex
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 
-
 from canyonos import ui
-from canyonos import os_support
-from canyonos.convert import run_convert
 from canyonos.clean import run_clean
 from canyonos.constants import CANYON_DIR
 from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
@@ -32,17 +28,20 @@ from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos.gc import deploy_status, deployed_endpoint
 from canyonos.init import load_state
+from canyonos.new_app import PYTHON_TEMPLATE_SUFFIX
+from canyonos.os_support import write_private_file
 from utils.tui import select_menu
 
 
 # Every stage in order. `_step` takes its heading from here, so a stage is named
 # in one place rather than at each call site.
+#
+# Setting a workflow up is one stage doing two things: copying it out of the
+# package and entering its folder. Neither is a step on its own.
 STAGES = (
     "System Prerequisites",
     "Workflow Selection",
     "Workflow Setup",
-    "Workflow Convert [Optional]",
-    "Environment Config",
     "Deployment",
     "Deployment Health",
     "First Request",
@@ -52,21 +51,13 @@ TOTAL_STEPS = len(STAGES)
 # The progress bar in each heading: one block per stage, not per minute.
 BAR_DONE, BAR_TODO = "█", "░"
 
-# Stages that take minutes, and the note shown under their heading so a long
-# wait does not read as a hang.
-SLOW_STAGES = {
-    4: "takes a few minutes if the workflow needs conversion",
-    6: "takes a while on a first run, while each agent's image builds",
-    8: "~1-2 min, while the agents work through the request",
-}
-
 # Characters of an unexpected endpoint reply to show before truncating it.
 MAX_REPLY_SHOWN = 200
 
 # The project's env file, which the manifest passes to every container.
 ENV_FILENAME = ".env"
 
-# Stage 8's request, in seconds: accepting it, answering it, one poll, and the
+# Stage 6's request, in seconds: accepting it, answering it, one poll, and the
 # gap between polls.
 SUBMIT_TIMEOUT = 30
 REQUEST_TIMEOUT = 300
@@ -77,78 +68,88 @@ POLL_TIMEOUT = 10
 # which changes part-way through the run.
 PROMPT = "canyonos-quickstart $"
 
-# `_typed`'s answer when an optional command was not typed, distinct from a
-# command that ran and returned None.
+# `_typed`'s answer for an optional command the user declined, told apart from
+# what the command itself returns when it does run.
 SKIPPED = object()
+
 
 # Seconds held between stages, so one that finishes instantly is still readable.
 STEP_PAUSE = 1.0
 
-# The workflows on offer. `repo`, `ref` and `path` locate one subdirectory of a
-# public repository at a pinned commit; `secrets` is what stage 5 asks for: the
-# keys the workflow needs, not every key its `.env.example` lists.
+# Where the bundled workflows sit inside the package. scripts/bundle-starters.ts
+# fills it from examples/; the wheel and the binary both carry it.
+STARTERS_DIR = "starters"
+
+# The workflows on offer, in the order the menu lists them. Hello World comes
+# first because the cursor starts there: it is the default, and the only one that
+# reaches a trace without an API key.
 #
-# Pinned to a commit, never a branch. A workflow that moves under the CLI is a
-# first run that breaks for reasons the user cannot see.
+# All of them are already in CanyonOS format, so a first run deploys what it
+# copied. Porting an app of your own is `canyonos convert`, which the quickstart
+# keeps out of the way.
+#
+# `secrets` is the keys that workflow needs, not every key its `.env.example`
+# lists -- and `needs` says the same thing in the menu, so nobody picks a
+# workflow and finds out three stages later.
 STARTERS = {
-    "tradingagent": {
-        "label": "TradingAgents",
-        "summary": "Multi-agent financial analysis",
-        "repo": "CanyonCodeCoreAI/workflows",
-        "ref": "ed6203f4f99e80c181014959110e514e77ce5b0c",
-        "path": "tradingagent",
+    "helloworld": {
+        "label": "Hello World",
+        "summary": "Two agents and a greeting",
+        "needs": "no API key needed",
+        "secrets": [],
+    },
+    "portfolio": {
+        "label": "Portfolio",
+        "summary": "Portfolio analysis from a plain-English request",
+        "needs": "needs an OpenAI key",
         "secrets": ["OPENAI_API_KEY"],
     },
 }
 
-# `advice.detachedHead` would otherwise print a paragraph about detached HEADs
-# at a user who never asked to check anything out.
-GIT = ["git", "-c", "advice.detachedHead=false"]
-GIT_TIMEOUT = 600
-
 
 def _step(number):
-    """Show the heading for stage `number` in the terminal, with its progress bar
-    and any note about how long it takes. Pauses first so the stage that just
-    finished can be read, but only where someone is watching."""
+    """Show the heading for stage `number` in the terminal, with its progress
+    bar. Pauses first so the stage that just finished can be read, but only where
+    someone is watching."""
     if sys.stdin.isatty():
         time.sleep(STEP_PAUSE)
 
     ui.blank()
     bar = BAR_DONE * number + BAR_TODO * (TOTAL_STEPS - number)
     ui.heading(f"[{number}/{TOTAL_STEPS}] {bar}  {STAGES[number - 1]}")
-    if slow := SLOW_STAGES.get(number):
-        ui.hint(f"  {slow}")
     ui.blank()
 
 
 def _typed(command, run, what, optional=False):
-    """Show `command` and the one line `what` it does, wait for the user to type
+    """Show `command` and the phrase `what` it does, wait for the user to type
     it back, then call `run` and return its result.
 
-    Returns None when a required command was not typed, and SKIPPED when an
-    optional one was not. A required command refuses anything else and asks
-    again, since one command is on offer at a time and accepting something near
-    it would teach the wrong line; an optional one takes anything else as a no.
+    Enter runs it too: the command is the only one on offer, so an empty line is
+    an answer of yes. Anything else is a typo, which is named and asked again,
+    since accepting something near the command would teach the wrong line. An
+    `optional` command takes anything else as a no and returns SKIPPED, without
+    running anything.
     """
-    ui.say(f"{what} Run:")
+    ui.say(f"Run the command below to {what}:")
     ui.blank()
     ui.command(f"  {command}")
+    ui.blank()
+    # The same shape as the workflow menu's footer, so both prompts in the run
+    # say how to answer them in the same way.
+    if optional:
+        ui.hint("press enter to run it · or type anything else to skip it")
+    else:
+        ui.hint("press enter to run it · or type it out · ctrl-c to cancel")
     ui.blank()
 
     while True:
         typed = " ".join(ui.ask(PROMPT, suffix=" ").split())
-        if typed == command:
+        if typed in ("", command):
             ui.blank()
             return run()
         if optional:
             ui.blank()
             return SKIPPED
-        if not typed:
-            ui.blank()
-            ui.say("Nothing typed; stopping here.")
-            ui.hint(f"  -> run `{command}` yourself to carry on from this step")
-            return None
         ui.warn(f"Expected `{command}`.")
 
 
@@ -160,35 +161,38 @@ def _is_project(folder):
     ) or os.path.isfile(os.path.join(folder, "config", "global_controller.yaml"))
 
 
-def _clone_url(starter):
-    """The address `starter`'s repository is cloned from."""
-    return f"https://github.com/{starter['repo']}.git"
+def _bundled(name):
+    """The bundled workflow `name` inside the package, as a traversable."""
+    return importlib.resources.files("canyonos").joinpath(STARTERS_DIR, name)
 
 
-def _git(args, cwd=None):
-    """Run one git command, raising RuntimeError carrying git's own message when
-    it fails: git says why far better than this could paraphrase."""
-    result = subprocess.run(
-        [*GIT, *args], cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(f"`git {' '.join(args)}` failed: {detail}")
+def _starter_files(name):
+    """Yield (relative target path, contents) for every file of the bundled
+    workflow `name`.
+
+    Read as bytes, since a workflow may carry images beside its code, and written
+    back byte for byte.
+    """
+    root = str(_bundled(name))
+    for directory, _, filenames in os.walk(root):
+        for filename in filenames:
+            source = os.path.join(directory, filename)
+            relative = os.path.relpath(source, root)
+            with open(source, "rb") as f:
+                yield relative.removesuffix(PYTHON_TEMPLATE_SUFFIX), f.read()
 
 
 def _fetch(name, into=None):
-    """Clone the starter `name` into a folder of its own under `into` (the
-    current directory by default) and return that folder.
+    """Copy the bundled workflow `name` into a folder of its own under `into`
+    (the current directory by default) and return that folder.
 
     A folder already holding this workflow is returned untouched, so a second run
     after a failure keeps a filled-in `.env`. One holding anything else raises
     RuntimeError rather than being written over.
 
-    Only the one workflow's subdirectory is fetched, at its pinned commit: these
-    sit beside each other in a single repository, and pulling all of them to use
-    one makes a slow first impression.
+    Copied out of the package rather than fetched: a first run works on a machine
+    with no network, and the workflow cannot move under the CLI between releases.
     """
-    starter = STARTERS[name]
     destination = os.path.join(into or os.getcwd(), name)
 
     if os.path.exists(destination):
@@ -199,28 +203,23 @@ def _fetch(name, into=None):
             "Move it or run `canyonos quickstart` from another folder."
         )
 
-    with tempfile.TemporaryDirectory() as clone:
-        _git(
-            ["clone", "--filter=blob:none", "--no-checkout", _clone_url(starter), clone]
+    # An install whose package data did not make it would otherwise write an
+    # empty folder and fail several stages later, as a deploy with no agents.
+    if not os.path.isdir(str(_bundled(name))):
+        raise RuntimeError(
+            f"This CanyonOS install is missing the bundled {name} workflow. "
+            "Reinstall the CLI, or copy the workflow from the examples folder."
         )
-        _git(["sparse-checkout", "set", starter["path"]], cwd=clone)
-        _git(["checkout", starter["ref"]], cwd=clone)
 
-        # A sparse checkout of a path the commit does not have succeeds and
-        # leaves nothing behind, so a workflow list that has drifted from its
-        # repository would otherwise surface several steps later as a
-        # FileNotFoundError naming a temporary directory.
-        source = os.path.join(clone, starter["path"])
-        if not os.path.isdir(source):
-            raise RuntimeError(
-                f"{starter['repo']} has no {starter['path']} at "
-                f"{starter['ref'][:12]}. The workflow list and that repository "
-                "disagree; one of them needs updating."
-            )
-
-        # copytree, not a move: the clone is inside a temporary directory that
-        # may be on another filesystem, where a rename cannot cross over.
-        shutil.copytree(source, destination, symlinks=True)
+    for relative, contents in _starter_files(name):
+        target = os.path.join(destination, relative)
+        os.makedirs(os.path.dirname(target) or destination, exist_ok=True)
+        # The user's key goes in `.env`, so only they can read it.
+        if relative == ENV_FILENAME:
+            write_private_file(target, contents.decode("utf-8"))
+        else:
+            with open(target, "wb") as f:
+                f.write(contents)
 
     return destination
 
@@ -230,7 +229,7 @@ def _choose_starter():
     None when the user cancelled or there is no terminal to ask on."""
     return select_menu(
         [
-            (name, f"{starter['label']} — {starter['summary']}")
+            (name, f"{starter['label']} — {starter['summary']}, {starter['needs']}")
             for name, starter in STARTERS.items()
         ],
         "Select a workflow to get started:",
@@ -254,8 +253,8 @@ def _get_starter():
         return None
 
     _step(3)
-    ui.say(f"Cloning {STARTERS[name]['label']} at its pinned commit...")
-    with ui.status("Cloning..."):
+    ui.say(f"Copying {STARTERS[name]['label']} into this folder...")
+    with ui.status("Copying..."):
         try:
             folder = _fetch(name)
         except RuntimeError as e:
@@ -268,142 +267,65 @@ def _get_starter():
 
 # Keys reach the agents only through the project's `.env`: the manifest passes
 # it to every container as `env_file`, and an exported shell variable does not
-# reach them.
+# reach them. Each workflow ships one naming the keys it needs, so the ask is to
+# edit a file that is already there rather than to answer a prompt.
 
 
-def _env_path(folder):
-    """Path to the project's `.env`, whether or not it exists yet."""
-    return os.path.join(folder, ENV_FILENAME)
+def _ask_for_keys(names):
+    """Say which keys the workflow needs and where to put them. Nothing to say
+    for a workflow that needs none, which is the point of Hello World."""
+    if not names:
+        return
 
-
-def _assigned_name(line):
-    """The variable a `.env` line assigns, or None. Commented lines count: a
-    starter ships the key it needs as `# OPENAI_API_KEY=`."""
-    if "=" not in line:
-        return None
-    return line.split("=", 1)[0].lstrip("#").strip() or None
-
-
-def _env_values(folder):
-    """Name to value for every uncommented assignment in the project's `.env`,
-    or `{}` when there is no such file. Commented lines are documentation of
-    what could be set, not something that is."""
-    try:
-        with open(_env_path(folder), encoding="utf-8") as f:
-            lines = f.read().splitlines()
-    except OSError:
-        return {}
-
-    found = {}
-    for line in lines:
-        if line.lstrip().startswith("#") or "=" not in line:
-            continue
-        name, _, value = line.partition("=")
-        found[name.strip()] = value.strip()
-    return found
-
-
-def _missing_keys(folder, names):
-    """Which of `names` the project's `.env` has no usable value for. Present but
-    empty counts as missing: an empty `KEY=` reaches the provider as an empty key
-    and comes back a 401."""
-    have = _env_values(folder)
-    return [name for name in names if not have.get(name)]
-
-
-def _write_keys(folder, secrets):
-    """Write `secrets` into the project's private `.env` and return its path.
-    Every other line is kept, and any line assigning one of these names is
-    dropped rather than left above the new value, commented ones included."""
-    path = _env_path(folder)
-    kept = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            kept = [
-                line
-                for line in f.read().splitlines()
-                if _assigned_name(line) not in secrets
-            ]
-    except OSError:
-        pass
-
-    lines = [*kept, "", *(f"{name}={value}" for name, value in secrets.items()), ""]
-    os_support.write_private_file(path, "\n".join(lines))
-    return path
-
-
-def _collect_keys(folder, names):
-    """Run stage 5: ask for each key the project still needs and save them to its
-    `.env`. A key already exported in this shell is taken without asking.
-
-    Returns True once every key has a value, or False after showing where to set
-    one the user left empty.
-    """
-    needed = _missing_keys(folder, names)
-    if not needed:
-        ui.ok("Environment already configured.")
-        return True
-
-    ui.say("Configure the required environment variables:")
+    ui.blank()
+    ui.say("In another terminal, open this workflow's env file:")
+    ui.blank()
+    # The full path, so the command works from whatever folder that terminal
+    # happens to be in -- this run's `cd` moved only this process.
+    ui.command(f"  vi {os.path.join(os.getcwd(), ENV_FILENAME)}")
+    ui.blank()
+    ui.say("Set your key in it, then carry on here:")
+    ui.blank()
+    for name in names:
+        ui.command(f"  {name}=<your key>")
     ui.blank()
 
-    collected = {}
-    for name in needed:
-        from_shell = os.environ.get(name, "").strip()
-        if from_shell:
-            ui.ok(f"{name} — taken from your environment")
-            collected[name] = from_shell
-            continue
 
-        value = ui.secret(f"{name}")
-        if not value:
-            ui.blank()
-            ui.fail(f"No value provided for {name}.")
-            ui.hint(f"  -> set it in {_env_path(folder)} and run again")
-            return False
-        collected[name] = value
-
-    _write_keys(folder, collected)
-    ui.blank()
-    ui.ok("Environment configuration saved.")
+def _change_into(folder):
+    """Change into `folder`. True, so `_typed` can tell it apart from a command
+    that was never typed."""
+    os.chdir(folder)
     return True
 
 
-def _convert_project(folder):
-    """Run stage 4: convert the workflow to CanyonOS format with `canyonos
-    convert`, or say it is already in that format and skip. Returns True when the
-    workflow is ready to deploy.
+def _prepare_project(folder):
+    """Finish stage 3: change into the workflow folder. Returns True when it is
+    ready to deploy.
 
-    The command is typed first and the decision comes after it, the same shape as
-    every other stage. Running `canyonos convert` on an already-converted project
-    would hand it to a coding assistant again for minutes, to end up where it
-    started.
+    `cd` is typed rather than done quietly, because every command after it runs
+    from in here, and a reader who missed that cannot repeat the run themselves.
+
+    Nothing to convert: every workflow on offer is already in CanyonOS format.
+    Porting an app of your own is `canyonos convert`, run in its own folder.
     """
-    _step(4)
-
-    def convert():
-        if _is_project(folder):
-            ui.ok("Already in CanyonOS format -- skipping the conversion.")
-            return True
-        return run_convert()
-
+    ui.blank()
     return bool(
         _typed(
-            "canyonos convert",
-            convert,
-            "Converts the workflow into CanyonOS format with a coding assistant.",
+            f"cd ./{os.path.basename(folder)}",
+            lambda: _change_into(folder),
+            "move into the workflow folder, where the rest of the run happens",
         )
     )
 
 
 def _deploy():
-    """Run stage 6: deploy the workflow, then check it and show the dashboard
+    """Run stage 4: deploy the workflow, then check it and show the dashboard
     address. Returns True when it is up and healthy."""
-    _step(6)
+    _step(4)
     deployed = _typed(
         "canyonos deploy",
         lambda: run_deploy(banner=False),
-        "Builds an image per agent, then starts the workflow.",
+        "build each agent's image and deploy the workflow",
     )
     if deployed is None:
         return False
@@ -418,18 +340,18 @@ def _deploy():
 
 
 def _health_check():
-    """Run stage 7: `canyonos doctor` a second time, which switches to its
+    """Run stage 5: `canyonos doctor` a second time, which switches to its
     post-deploy checklist once it finds a running deploy. Returns True when every
     check passed.
 
     A stack that only came up part way turns the first request into a long wait
     and then a timeout; this names the missing piece instead.
     """
-    _step(7)
+    _step(5)
     passed = _typed(
         "canyonos doctor",
         run_doctor,
-        "Checks the running deploy: controller, Redis, agents, endpoint, dashboard.",
+        "check the running deploy: controller, Redis, agents, endpoint, dashboard",
     )
     if passed is None:
         return False
@@ -455,8 +377,7 @@ def _deploy_is_up():
 
 
 def _offer_clean():
-    """Close the run by offering `canyonos clean`, and say what is still running
-    either way. Always True.
+    """Close the run by offering `canyonos clean`. Always True.
 
     The one optional command here: leaving the workflow up is a fine way to
     finish, and the dashboard just pointed at belongs to the deploy this would
@@ -471,7 +392,7 @@ def _offer_clean():
     result = _typed(
         "canyonos clean",
         run_clean,
-        "Stops the workflow and removes what the deploy created.",
+        "stop the workflow and remove what the deploy created",
         optional=True,
     )
 
@@ -540,7 +461,7 @@ def _await_result(endpoint, request_id, timeout=REQUEST_TIMEOUT):
 
 
 def _curl_for(endpoint):
-    """The `curl` stage 8 asks for, and the file its query came from.
+    """The `curl` stage 6 asks for, and the file its query came from.
 
     Built from what the deploy published -- the address and method from the
     manifest, the body keys from the served method's own arguments -- so it works
@@ -614,11 +535,22 @@ def _send_request(command, endpoint):
 
 
 def _first_request():
-    """Run stage 8: show the `curl` for the deployed endpoint, wait for the user
-    to type it, send it and wait for the answer. Returns True when the workflow
-    answered."""
-    _step(8)
+    """Run stage 6: send the first request, then offer to take the deploy down.
+    Returns True when the workflow answered.
 
+    The teardown is part of this stage rather than something after the run: the
+    deploy is up whether or not the request landed, so the offer has to come
+    either way, and it is the last thing anyone does here.
+    """
+    _step(6)
+    answered = _send_first_request()
+    _offer_clean()
+    return answered
+
+
+def _send_first_request():
+    """Show the `curl` for the deployed endpoint, wait for the user to type it,
+    send it and wait for the answer. True when the workflow answered."""
     try:
         endpoint = deployed_endpoint(load_state()["port"])
     except (KeyError, OSError, RuntimeError, ValueError):
@@ -634,7 +566,7 @@ def _first_request():
         _typed(
             command,
             lambda: _send_request(command, endpoint),
-            "Sends one request through the workflow and waits for the answer.",
+            "send one request through the workflow and wait for the answer",
         )
     )
 
@@ -671,7 +603,7 @@ def _quickstart():
     passed = _typed(
         "canyonos doctor",
         run_doctor,
-        "Checks Docker, git and everything else a deploy needs.",
+        "check Docker and everything else a deploy needs",
     )
     if passed is None:
         return False
@@ -691,30 +623,22 @@ def _quickstart():
 
     name, folder = picked
 
-    # `canyonos convert` and `canyonos deploy` read the project out of the current
-    # directory, the sample query is found relative to it, and the deploy names
-    # its containers after it. So the run changes into it once, the way a user
-    # would `cd`, rather than passing a path none of those commands would take.
-    os.chdir(folder)
-    ui.blank()
-    ui.hint(f"  the commands below run from ./{os.path.basename(folder)}")
-
-    if not _convert_project(folder):
+    # `canyonos deploy` reads the project out of the current directory, the
+    # sample query is found relative to it, and the deploy names its containers
+    # after it. So the run changes into it, the way a user would `cd`, rather
+    # than passing a path none of those commands would take.
+    if not _prepare_project(folder):
         return False
 
-    _step(5)
-    if not _collect_keys(folder, STARTERS[name]["secrets"]):
-        return False
+    _ask_for_keys(STARTERS[name]["secrets"])
 
     if not _deploy():
         return False
 
-    # The deploy is up from here either way, so a failed request still gets the
-    # teardown offer rather than leaving containers behind.
+    # Stage 6 makes the teardown offer itself, on its way out either way.
     if not _first_request():
-        _offer_clean()
         return False
 
     ui.blank()
     ui.ok("CanyonOS quickstart completed.")
-    return _offer_clean()
+    return True

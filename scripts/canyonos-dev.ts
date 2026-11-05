@@ -45,6 +45,10 @@ if (clusters.split(/\r?\n/).includes(CLUSTER)) {
 if (!existsSync(CLI_ENV)) await $`cp packages/cli/.env.example ${CLI_ENV}`;
 
 await $`uv sync`;
+// The CLI installs editable, so it reads the bundled workflows out of the
+// checkout. They are generated, not committed, and only `canyonos#build`
+// builds them -- this shell never runs it.
+await $`bun run starters:bundle`;
 
 console.log('\nCanyonOS dev shell: `canyonos` runs from this checkout. Type `exit` to leave.\n');
 

@@ -31,6 +31,19 @@
       "cache": true,
       "outputs": ["dist/**"]
     },
+    "//#starters:bundle": {
+      "cache": false,
+      "inputs": ["$TURBO_ROOT$/examples/**", "$TURBO_ROOT$/scripts/bundle-starters.ts"]
+    },
+    "//#starters:test": {
+      // Both rebuild the bundle in place, so they must not run at the same time.
+      "dependsOn": ["//#starters:bundle"],
+      "inputs": [
+        "$TURBO_ROOT$/examples/**",
+        "$TURBO_ROOT$/scripts/bundle-starters.ts",
+        "$TURBO_ROOT$/scripts/bundle-starters.test.ts"
+      ]
+    },
     "lint": {},
     "typecheck": {},
     "@canyonos/api#typecheck": {
@@ -62,8 +75,14 @@
     },
     "format:check": {},
     "test": {},
+    "canyonos#build": {
+      "cache": true,
+      "outputs": ["dist/**"],
+      "dependsOn": ["//#starters:bundle"]
+    },
     "canyonos#build:binary": {
       "cache": false,
+      "dependsOn": ["//#starters:bundle"],
       "command": [
         "uv",
         "run",
@@ -75,12 +94,14 @@
         "--output-dir=dist",
         "--include-data-file=canyonos/dashboard.compose.yml=canyonos/dashboard.compose.yml",
         "--include-data-dir=canyonos/new_app_template=canyonos/new_app_template",
+        "--include-data-dir=canyonos/starters=canyonos/starters",
         "--include-distribution-metadata=canyonos",
         "--assume-yes-for-downloads",
         "cli.py"
       ]
     },
     "canyonos#test": {
+      "dependsOn": ["//#starters:bundle", "//#starters:test"],
       "command": [
         "uv",
         "run",
@@ -103,7 +124,8 @@
     },
     "canyonos#test:e2e": {
       "cache": false,
-      "passThroughEnv": ["PYTEST_ADDOPTS"],
+      "dependsOn": ["//#starters:bundle"],
+      "passThroughEnv": ["PYTEST_ADDOPTS", "CANYONOS_ENV", "CANYONOS_CORE_IMAGE"],
       "command": [
         "uv",
         "run",

@@ -1,6 +1,6 @@
 # Examples
 
-We have 3 example workflows listed below. All of these workflows would work immediately with canyonos, following our design philosophy.
+We have 4 example workflows listed below. All of these workflows would work immediately with canyonos, following our design philosophy.
 
 Helloworld: No LLM involved, merely returns Hello World. The first step in building a workflow! Runs on this machine.
 

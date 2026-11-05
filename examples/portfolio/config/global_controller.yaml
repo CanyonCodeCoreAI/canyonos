@@ -13,7 +13,7 @@ provider: local
 
 agents:
   # Stage 0: parse the free-text request into structured holdings + lookback
-  # window (calls Baseten via the openai SDK, routed through the CanyonOS LLM gateway). Cheap CPU, one
+  # window (calls OpenAI via the openai SDK, routed through the CanyonOS LLM gateway). Cheap CPU, one
   # call per request, on the critical path before the fan-out.
   - name: IntentAgent
     replicas: 1
@@ -89,7 +89,7 @@ agents:
         returns:
           type: dict
 
-  # Stage 3: LLM briefing via Baseten. On the critical path, one call per
+  # Stage 3: LLM briefing via OpenAI. On the critical path, one call per
   # request.
   - name: AdvisorAgent
     replicas: 1
@@ -160,10 +160,10 @@ redis:
   db: 0
 
 # Machines for `provider: ec2-pool`.
-ec2-pool:
-  region: ${EC2_REGION}
-  machine_type:          # how many machines of each type the deploy starts
-    t3.micro: 3
-  subnet_id: ${EC2_SUBNET_ID}
-  security_group_ids:
-    - ${EC2_SECURITY_GROUP_ID}
+# ec2-pool:
+#   region: ${EC2_REGION}
+#   machine_type:          # how many machines of each type the deploy starts
+#     t3.micro: 3
+#   subnet_id: ${EC2_SUBNET_ID}
+#   security_group_ids:
+#     - ${EC2_SECURITY_GROUP_ID}

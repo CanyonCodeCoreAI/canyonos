@@ -38,7 +38,8 @@ dev = [
 [tool.ruff]
 required-version = "==0.16.10"
 # Ruff 0.16.7 formats fenced examples too; CI checks Python sources, not docs.
-extend-exclude = ["*.md"]
+# The bundled workflows are generated from examples/, which is linted already.
+extend-exclude = ["*.md", "packages/cli/canyonos/starters"]
 
 [tool.ruff.lint]
 # Preserve the documented Ruff default baseline; broader rules need an

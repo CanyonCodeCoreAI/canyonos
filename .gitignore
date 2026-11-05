@@ -45,6 +45,10 @@ stubs/
 grpc_stubs/
 docker_container/
 
+# The bundled workflows, generated from examples/ by scripts/bundle-starters.ts
+# as a dependency of `canyonos#build`; never edited by hand.
+packages/cli/canyonos/starters/
+
 # Logs
 *.log
 
@@ -79,4 +83,6 @@ site/
 .promptfoo/
 evals/results/
 
-examples/TradingAgents
+# Left behind by deploying or converting an example workflow where it sits.
+examples/*/uv.lock
+examples/*/.claude/
