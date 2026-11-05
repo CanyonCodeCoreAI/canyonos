@@ -21,13 +21,16 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `clean` | Stop the project if it is deployed, then remove the generated `.canyon` folder (and the project id, when `global_controller.yaml` lives there, so the next deploy is a new dashboard project), the project's CanyonOS skill, and the Docker images of the agents in this project's `global_controller.yaml` |
 | `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 | `validate` | Check the project root against the CanyonOS contract |
-| `doctor` | Check that your environment is ready |
+| `doctor` | Check that your environment is ready and, once deployed, every part of the deploy |
+| `target` | Show or choose where this project deploys: Docker on this machine, or Kubernetes |
 | `new-app` | Create a starter project with one agent in an empty folder |
 | `upgrade` | Upgrade the canyonos CLI to the latest release |
 | `-v`, `--version` | Print the installed version |
 
-`deploy`, `status`, `logs`, `serve`, `stop` and `clean` take `--target kubernetes` to work
-on the cluster `kubectl` points at instead of Docker on this machine; see
+A project runs on Docker on this machine unless its config says `target: kubernetes`,
+which `canyonos target kubernetes` sets: then `deploy`, `status`, `test`, `logs`,
+`serve`, `doctor`, `stop` and `clean` work on the cluster `kubectl` points at. Any of
+them takes `--target docker` or `--target kubernetes` to override it once; see
 [Kubernetes deployment](KUBERNETES.md).
 
 ## Contact

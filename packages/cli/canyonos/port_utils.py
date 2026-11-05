@@ -85,10 +85,12 @@ def find_free_port(
     start: int,
     max_attempts: int = DEFAULT_MAX_PORT_ATTEMPTS,
     host: str = "0.0.0.0",
+    skip: frozenset[int] = frozenset(),
 ) -> int:
-    """First bindable port at or after `start`, scanning up to `max_attempts`."""
+    """First bindable port at or after `start` that is not in `skip` (ports kept for
+    something not started yet), scanning up to `max_attempts`."""
     for port in range(start, min(start + max_attempts, 65536)):
-        if is_port_free(port, host):
+        if port not in skip and is_port_free(port, host):
             return port
     raise RuntimeError(
         f"no free port found after {max_attempts} attempts starting at {start}"

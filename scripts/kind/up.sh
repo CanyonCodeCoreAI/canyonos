@@ -249,13 +249,9 @@ if [ "${operator}" != "none" ]; then
   cat <<EOF
 
 Deploy a project to it, in the dev shell (bun run canyonos:dev), from the project's folder:
-  1. Add to config/global_controller.yaml:
-       kubernetes:
-         namespace: <a namespace for it, e.g. its name>
-         registry: localhost:${REGISTRY_PORT}
-  2. canyonos deploy --target kubernetes
-  3. canyonos serve --target kubernetes     # the dashboard, on http://127.0.0.1:8081
+  1. canyonos target kubernetes   # once: the namespace is the folder's name, the registry localhost:${REGISTRY_PORT}
+  2. canyonos deploy              # the endpoint on http://127.0.0.1:8080, the dashboard on 8081
 After changing CanyonOS, bun run canyonos:dev updates this cluster too.
-Done with it: canyonos clean --target kubernetes, and scripts/kind/down.sh for the cluster.
+Done with it: canyonos clean, and scripts/kind/down.sh for the cluster.
 EOF
 fi

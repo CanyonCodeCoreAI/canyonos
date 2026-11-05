@@ -32,6 +32,7 @@ def init(monkeypatch, tmp_path):
     monkeypatch.setattr(init_cmd, "endpoint_api_port", lambda _path: 8080)
     monkeypatch.setattr(init_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: 6379)
+    monkeypatch.setattr(init_cmd, "_existing_dashboard_port", lambda: None)
     return seen
 
 
@@ -84,7 +85,13 @@ def unset_ports(init, monkeypatch):
     monkeypatch.setattr(init_cmd, "endpoint_api_port", lambda _path: None)
     monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: None)
     monkeypatch.setattr(
-        init_cmd, "find_free_port", lambda port: init.get("free_from", port)
+        init_cmd,
+        "find_free_port",
+        lambda port, skip=frozenset(): next(
+            free
+            for free in range(init.get("free_from", port), 65536)
+            if free not in skip
+        ),
     )
     return init
 

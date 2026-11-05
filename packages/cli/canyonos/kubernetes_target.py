@@ -17,6 +17,7 @@ import io
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tarfile
@@ -34,12 +35,22 @@ from rich.text import Text
 
 from canyonos import env, ui
 from canyonos.constants import (
+    default_config_path,
     existing_config_path,
     project_env_path,
     project_root,
+    read_config,
 )
 from canyonos.deploy import save_project_id
-from canyonos.project import project_name
+from canyonos.forwards import (
+    DASHBOARD,
+    close_forward,
+    endpoint_forward,
+    forward_port,
+    open_forward,
+    running_forwards,
+)
+from canyonos.project import kubernetes_command, project_name
 
 GROUP = "canyonos.canyoncode.ai"
 API_VERSION = f"{GROUP}/v1alpha1"
@@ -59,6 +70,8 @@ UPLOAD_PORT = 8090
 # The project's endpoint inside its namespace (builders.EndpointName and its API port).
 ENDPOINT_SERVICE = "svc/canyonos-endpoint"
 ENDPOINT_PORT = 8080
+# Where the chart installs the operator, as the install step below says.
+OPERATOR_NAMESPACE = "canyonos-system"
 OPERATOR_HINT = (
     "Install the CanyonOS operator once per cluster: helm install canyonos "
     "oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator "
@@ -70,6 +83,10 @@ OPERATOR_HINT = (
 FATAL_REASONS = ("NameMismatch", "Unsupported", "ProjectNotFound")
 DASHBOARD_NAMESPACE = "canyonos-dashboard"
 DASHBOARD_SERVICE = "svc/canyonos-dashboard-web"
+DASHBOARD_PORT = 8080
+# Where this machine's forwards look for a free port first, as Docker does.
+LOCAL_ENDPOINT_PORT = 8080
+LOCAL_DASHBOARD_PORT = 8081
 # The project's Global Controller (builders.GCName in the operator).
 GLOBAL_CONTROLLER = "deployment/canyonos-gc"
 
@@ -137,7 +154,7 @@ def load_config(config_path, env_values=None):
     ):
         raise RuntimeError(
             f"{config_path} needs a `kubernetes:` block with `namespace` and `registry` "
-            "to deploy to Kubernetes (see docs/guides/KUBERNETES.md#configuration)"
+            "to deploy to Kubernetes: run `canyonos target kubernetes` to add one"
         )
     config["kubernetes"] = _expand(block, env_values or {})
     return config
@@ -448,6 +465,10 @@ def _forbidden(result):
     return "forbidden" in (result.stderr or "").lower()
 
 
+def _not_found(result):
+    return "notfound" in (result.stderr or "").lower().replace(" ", "")
+
+
 def require_operator():
     """Fail with the install step when the cluster has no CanyonOS API. Asked through
     discovery, which every signed-in user may read: reading the CRDs themselves needs
@@ -457,6 +478,85 @@ def require_operator():
         raise RuntimeError(
             f"The CanyonOS operator is not installed on this cluster. {OPERATOR_HINT}"
         )
+
+
+def operator_version():
+    """The operator's release, from the version label its chart puts on its
+    Deployment in OPERATOR_NAMESPACE, or None when it is not readable there."""
+    found = kubectl(
+        ["get", "deployment", "-n", OPERATOR_NAMESPACE,
+         "-l", "app.kubernetes.io/name=canyonos-operator",
+         "-o", r"jsonpath={.items[0].metadata.labels.app\.kubernetes\.io/version}"],
+        check=False,
+    )  # fmt: skip
+    if found.returncode:
+        return None
+    return (found.stdout or "").strip() or None
+
+
+def _cluster_reachable():
+    """Whether the cluster kubectl points at answers; every signed-in user may read
+    its version."""
+    return not kubectl(
+        ["get", "--raw", "/version", "--request-timeout=10s"], check=False
+    ).returncode
+
+
+def _operator_installed():
+    require_operator()
+    return True
+
+
+def current_context():
+    """The kubectl context commands use, or None when there is none."""
+    found = kubectl(["config", "current-context"], check=False)
+    if found.returncode:
+        return None
+    return found.stdout.strip() or None
+
+
+def cluster_checks():
+    """What deploying from here to the cluster kubectl points at needs, each with its
+    fix: the Kubernetes side of `canyonos doctor`'s Docker checks. Each needs the ones
+    before it, so run them with `stop_at_failure`."""
+    return [
+        (
+            "kubectl installed",
+            lambda: shutil.which("kubectl") is not None,
+            "install kubectl: https://kubernetes.io/docs/tasks/tools/",
+        ),
+        (
+            "Cluster reachable",
+            _cluster_reachable,
+            "point kubectl at your cluster (kubectl config use-context <name>), or "
+            "make a local one with `canyonos cluster up`",
+        ),
+        ("CanyonOS operator installed", _operator_installed, OPERATOR_HINT),
+    ]
+
+
+def local_registry():
+    """The registry a local cluster advertises in the standard `local-registry-hosting`
+    ConfigMap (KEP-1755; `canyonos cluster up` writes it), or None."""
+    try:
+        found = kubectl(
+            [
+                "get", "configmap", "local-registry-hosting", "-n", "kube-public",
+                "--request-timeout=10s",
+                "-o", r"jsonpath={.data.localRegistryHosting\.v1}",
+            ],
+            check=False,
+        )  # fmt: skip
+    except RuntimeError:
+        return None
+    if found.returncode:
+        return None
+    try:
+        hosting = yaml.safe_load(found.stdout)
+    except yaml.YAMLError:
+        return None
+    host = hosting.get("host") if isinstance(hosting, dict) else None
+    return host if isinstance(host, str) and host else None
 
 
 def ensure_namespace(namespace):
@@ -592,12 +692,62 @@ def _endpoint_arguments(config):
     return method, []
 
 
-def _summary(namespace, project_obj, config):
+def _in_cluster_only(url):
+    """Whether the endpoint is reachable inside the cluster only (no Ingress or URL)."""
+    return ".svc:" in (url or "")
+
+
+def _forward_endpoint(namespace, project, config):
+    """Keep the project's endpoint on this machine in the background, on its
+    `endpoint.api_port` or 8080 or the next free port, as Docker publishes it; return
+    its local URL, or None (with a warning) when it cannot be forwarded."""
+    api_port = (config.get("endpoint") or {}).get("api_port")
+    try:
+        port = open_forward(
+            endpoint_forward(namespace, project),
+            namespace,
+            ENDPOINT_SERVICE,
+            ENDPOINT_PORT,
+            api_port or LOCAL_ENDPOINT_PORT,
+            context=current_context(),
+            fixed=bool(api_port),
+            # Not the dashboard's port, even before it is opened: a request would reach
+            # the dashboard there.
+            skip=frozenset(
+                {
+                    forward_port(DASHBOARD)
+                    or config.get("dashboard_port")
+                    or LOCAL_DASHBOARD_PORT
+                }
+            ),
+        )
+    except RuntimeError as error:
+        ui.warn(f"The endpoint is not forwarded to this machine: {error}")
+        return None
+    return f"http://127.0.0.1:{port}"
+
+
+def _summary(namespace, project_obj, config, local_url=None, dashboard_url=None):
     method, arguments = _endpoint_arguments(config)
     url = project_obj.get("status", {}).get("endpointURL", "")
     body = json.dumps({name: "your query" for name in arguments})
-    lines = [Text.assemble(("Namespace  ", "bold"), namespace)]
-    if ".svc:" in url:
+    lines = [
+        Text.assemble(
+            ("Dashboard  ", "bold"),
+            dashboard_url
+            or f"not running -- start it with `{kubernetes_command('serve')}`",
+        ),
+        Text.assemble(("Namespace  ", "bold"), namespace),
+    ]
+    if _in_cluster_only(url) and local_url:
+        lines.append(
+            Text.assemble(
+                ("Endpoint   ", "bold"),
+                f"{local_url} (forwarded from the cluster until canyonos stop)",
+            )
+        )
+        url = local_url
+    elif _in_cluster_only(url):
         lines.append(
             Text.assemble(("Endpoint   ", "bold"), f"{url} (inside the cluster)")
         )
@@ -620,23 +770,20 @@ def _summary(namespace, project_obj, config):
         Text.assemble(("Poll       ", "bold"), f"curl {url}/status/<request_id>")
     )
     lines.append(
-        Text.assemble(
-            ("Test       ", "bold"), 'canyonos test --target kubernetes "your query"'
-        )
+        Text.assemble(("Test       ", "bold"), kubernetes_command('test "your query"'))
     )
-    lines.append(
-        Text.assemble(("Status     ", "bold"), "canyonos status --target kubernetes")
-    )
+    lines.append(Text.assemble(("Status     ", "bold"), kubernetes_command("status")))
     return Panel(
         Text("\n").join(lines), title="Deployed to Kubernetes", title_align="left"
     )
 
 
-def run_kubernetes_deploy(config_path=None, timeout=READY_TIMEOUT_SECONDS):
+def run_kubernetes_deploy(config_path=None, timeout=READY_TIMEOUT_SECONDS, serve=False):
     """Run `canyonos deploy --target kubernetes`: hand the project to the cluster, which
     builds its images and applies its objects from its config; this only uploads it,
-    with its `.env` as a Secret. Then wait until every agent is ready and show how
-    to call the endpoint."""
+    with its `.env` as a Secret. Then wait until every agent is ready, keep the
+    endpoint (and with `serve`, the dashboard) on this machine, and show how to call
+    it."""
     config_path = resolve_config(config_path)
     env_values = read_dotenv()
     config = load_config(config_path, env_values)
@@ -657,7 +804,18 @@ def run_kubernetes_deploy(config_path=None, timeout=READY_TIMEOUT_SECONDS):
     ui.ok(f"{len(agents)} agent(s) ready on Kubernetes")
     for line in scaling_conflicts(agents):
         ui.warn(line)
-    ui.panel(_summary(namespace, project_obj, config))
+    local_url = None
+    if _in_cluster_only(project_obj.get("status", {}).get("endpointURL")):
+        local_url = _forward_endpoint(namespace, project, config)
+    dashboard_port = forward_port(DASHBOARD)
+    if serve:
+        # As on Docker the deploy opens the dashboard; one the cluster lacks is a hint.
+        try:
+            dashboard_port = _open_dashboard()
+        except RuntimeError as error:
+            ui.hint(f"Dashboard not opened: {error}")
+    dashboard_url = f"http://127.0.0.1:{dashboard_port}" if dashboard_port else None
+    ui.panel(_summary(namespace, project_obj, config, local_url, dashboard_url))
     return agents
 
 
@@ -704,12 +862,21 @@ def _kubernetes_status(config_path):
         ["get", "canyonproject", project, "-n", namespace, "-o", "json"], check=False
     )
     if result.returncode:
-        ui.warn(f"No CanyonOS project {project!r} in namespace {namespace}")
-        report["errors"].append((result.stderr or "").strip())
+        error = (result.stderr or "").strip()
+        if _not_found(result):
+            ui.warn(f"No CanyonOS project {project!r} in namespace {namespace}")
+        else:
+            # Still a report: `status --json` prints its errors as on Docker.
+            error = f"Could not read {project} in {namespace}: {error}"
+            ui.fail(error)
+        report["errors"].append(error)
         return report
     report["running"] = True
     proj = json.loads(result.stdout)
     url = proj.get("status", {}).get("endpointURL")
+    local_port = forward_port(endpoint_forward(namespace, project))
+    if url and local_port:
+        url = f"http://127.0.0.1:{local_port} (forwarded from {url})"
     report["endpoint"] = {"url": url} if url else None
     ready = condition(proj, "Ready")
     state = (
@@ -718,19 +885,30 @@ def _kubernetes_status(config_path):
         else (ready.get("reason") or "Starting")
     )
     ui.ok(f"Project {project} in {namespace}: {state} · endpoint {url or '?'}")
+    agents = project_agents(namespace, project)
+    report["agents"] = {
+        a.get("spec", {}).get("agentName", ""): {
+            "desired_replicas": a.get("spec", {}).get("replicas"),
+            "running_replicas": a.get("status", {}).get("readyReplicas", 0),
+            "launch_error": _launch_error(a),
+        }
+        for a in agents
+    }
+    ui.panel(agents_table(agents))
+    for line in scaling_conflicts(agents):
+        ui.warn(line)
+    return report
+
+
+def agents_table(agents):
+    """Each agent's desired and ready replicas and its state, as `canyonos status`
+    shows them."""
     table = Table(title=None)
     for column in ("Agent", "Desired", "Ready", "State"):
         table.add_column(column)
-    agents = project_agents(namespace, project)
-    report["agents"] = {}
     for a in agents:
         spec, status = a.get("spec", {}), a.get("status", {})
         agent_ready = condition(a, "Ready")
-        report["agents"][spec.get("agentName", "")] = {
-            "desired_replicas": spec.get("replicas"),
-            "running_replicas": status.get("readyReplicas", 0),
-            "launch_error": _launch_error(a),
-        }
         table.add_row(
             spec.get("agentName", ""),
             str(spec.get("replicas", "")),
@@ -739,10 +917,7 @@ def _kubernetes_status(config_path):
             if agent_ready.get("status") == "True"
             else (agent_ready.get("message") or "Starting"),
         )
-    ui.panel(table)
-    for line in scaling_conflicts(agents):
-        ui.warn(line)
-    return report
+    return table
 
 
 def run_kubernetes_logs(follow=True, tail="200", agent=None, config_path=None):
@@ -777,27 +952,43 @@ def run_kubernetes_stop(config_path=None):
     stops the endpoint, drains every agent, then removes Redis and the global
     controller. The namespace, config and Secret stay for the next deploy."""
     namespace, project = _namespace_and_project(config_path)
-    with ui.status(f"Stopping {project} (agents drain first)..."):
-        kubectl(
-            [
-                "delete",
-                "canyonproject",
-                project,
-                "-n",
-                namespace,
-                "--ignore-not-found",
-                "--timeout=15m",
-            ],
-            timeout=960,
-        )
-    ui.ok(f"Stopped {project} in {namespace}")
+    try:
+        with ui.status(f"Stopping {project} (agents drain first)..."):
+            kubectl(
+                [
+                    "delete",
+                    "canyonproject",
+                    project,
+                    "-n",
+                    namespace,
+                    "--ignore-not-found",
+                    "--timeout=15m",
+                ],
+                timeout=960,
+            )
+        ui.ok(f"Stopped {project} in {namespace}")
+    finally:
+        # Also when the cluster can't be reached: the forwards would retry until then.
+        close_forward(endpoint_forward(namespace, project))
+        # As on Docker, the dashboard stays while another project here still runs.
+        if not running_forwards("endpoint-") and forward_port(DASHBOARD):
+            close_forward(DASHBOARD)
+            ui.ok("Closed the dashboard's port-forward")
     return True
 
 
-def run_kubernetes_serve(port=8081):
-    """Run `canyonos serve --target kubernetes`: open the cluster's dashboard here
-    through a port-forward, until Ctrl+C. Only who may port-forward into its
-    namespace can open it."""
+def run_kubernetes_serve(port=None):
+    """Run `canyonos serve --target kubernetes`: keep the cluster's dashboard on
+    127.0.0.1 here through a port-forward in the background, on `port`, else the
+    project's `dashboard_port`, else 8081 or the next free one, until `canyonos stop`.
+    Only who may port-forward into its namespace can open it. Returns the exit code."""
+    port = _open_dashboard(port)
+    ui.ok(f"Dashboard: http://127.0.0.1:{port} (until canyonos stop)")
+    return 0
+
+
+def _open_dashboard(port=None):
+    """Forward the cluster's dashboard as `canyonos serve` does; returns the local port."""
     found = kubectl(["get", DASHBOARD_SERVICE, "-n", DASHBOARD_NAMESPACE], check=False)
     if found.returncode:
         raise RuntimeError(
@@ -806,16 +997,17 @@ def run_kubernetes_serve(port=8081):
             "see docs/guides/KUBERNETES.md) or you may not open it there "
             f"({found.stderr.strip()})"
         )
-    ui.ok(f"Dashboard: http://127.0.0.1:{port} (Ctrl+C to stop)")
-    return subprocess.call(
-        [
-            "kubectl",
-            "port-forward",
-            "-n",
-            DASHBOARD_NAMESPACE,
-            DASHBOARD_SERVICE,
-            f"{port}:8080",
-        ]
+    if port is None:
+        port = read_config(default_config_path()).get("dashboard_port")
+    return open_forward(
+        DASHBOARD,
+        DASHBOARD_NAMESPACE,
+        DASHBOARD_SERVICE,
+        DASHBOARD_PORT,
+        port or LOCAL_DASHBOARD_PORT,
+        context=current_context(),
+        fixed=bool(port),
+        shared=True,
     )
 
 
@@ -825,30 +1017,52 @@ def _free_port():
         return probe.getsockname()[1]
 
 
-class EndpointForward:
-    """A port-forward to the project's endpoint on one local port, started again when
-    kubectl ends it (it does when its connection to the pod drops, as on a busy
-    laptop), so a long request can be polled to the end; until close()."""
+class PortForward:
+    """A port-forward to a Service (the project's endpoint unless told otherwise) on
+    one local port, started again when kubectl ends it (it does when its connection
+    to the pod drops, as on a busy laptop, or the pod is replaced), so a long request
+    can be polled to the end; until close(). `context` pins the kubectl context."""
 
-    def __init__(self, namespace, port=None):
+    def __init__(
+        self,
+        namespace,
+        port=None,
+        service=ENDPOINT_SERVICE,
+        remote_port=ENDPOINT_PORT,
+        context=None,
+    ):
         self.namespace, self.port = namespace, port or _free_port()
+        self.service, self.remote_port, self.context = service, remote_port, context
         self._closed = threading.Event()
+        # Every kubectl started and not seen to end, under the lock: close() ends them
+        # all, also one a restart is still starting, so none outlives the forward.
+        self._lock, self._started = threading.Lock(), []
         self._process = self._start()
         threading.Thread(target=self._keep_up, daemon=True).start()
 
     def _start(self):
-        process = subprocess.Popen(
-            ["kubectl", "port-forward", "-n", self.namespace, ENDPOINT_SERVICE,
-             f"{self.port}:{ENDPOINT_PORT}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )  # fmt: skip
+        context = ["--context", self.context] if self.context else []
+        with self._lock:
+            if self._closed.is_set():
+                raise RuntimeError("the forward is closed")
+            process = subprocess.Popen(
+                ["kubectl", *context, "port-forward", "-n", self.namespace,
+                 self.service, f"{self.port}:{self.remote_port}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                # Started from a forward's detached process on Windows, kubectl would
+                # otherwise open a console window of its own.
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )  # fmt: skip
+            self._started = [p for p in self._started if p.poll() is None]
+            self._started.append(process)
         line = process.stdout.readline()
-        if f"127.0.0.1:{self.port}" not in line:
+        # Not just the address: "Unable to listen on port N" names it too.
+        if not line.startswith(f"Forwarding from 127.0.0.1:{self.port} "):
             process.terminate()
             raise RuntimeError(
-                f"Could not reach the endpoint in {self.namespace}: "
+                f"Could not reach {self.service} in {self.namespace}: "
                 f"{line.strip() or 'kubectl port-forward stopped'}"
             )
         # kubectl writes a line per connection: read them, or a long poll fills the pipe.
@@ -861,9 +1075,20 @@ class EndpointForward:
                 with contextlib.suppress(RuntimeError, OSError):
                     self._process = self._start()
 
+    @property
+    def pid(self):
+        """The pid of the kubectl forwarding now."""
+        return self._process.pid
+
     def close(self):
-        self._closed.set()
-        self._process.terminate()
+        with self._lock:
+            self._closed.set()
+            for process in self._started:
+                process.terminate()
+        # So the port is free once close() returns.
+        for process in self._started:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=5)
 
 
 @contextlib.contextmanager
@@ -878,18 +1103,18 @@ def kubernetes_endpoint(config_path=None):
     if found.returncode:
         raise RuntimeError(
             f"No CanyonOS project {project!r} in namespace {namespace}: deploy it first "
-            f"with canyonos deploy --target kubernetes ({(found.stderr or '').strip()})"
+            f"with {kubernetes_command('deploy')} ({(found.stderr or '').strip()})"
         )
     ready = condition(json.loads(found.stdout), "Ready")
     if ready.get("status") != "True":
         raise RuntimeError(
             f"{project} in {namespace} is not ready ({ready.get('message') or 'starting'}): "
-            "see canyonos status --target kubernetes"
+            f"see {kubernetes_command('status')}"
         )
     method, arguments = _endpoint_arguments(
         load_config(resolve_config(config_path), read_dotenv())
     )
-    forward = EndpointForward(namespace)
+    forward = PortForward(namespace)
     try:
         yield {
             "url": f"http://127.0.0.1:{forward.port}/{method}",

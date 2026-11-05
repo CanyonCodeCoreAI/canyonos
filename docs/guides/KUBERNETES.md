@@ -1,7 +1,8 @@
 # Kubernetes deployment
 
-`canyonos deploy --target kubernetes` runs a project on the Kubernetes cluster
-`kubectl` points at. The CanyonOS operator, installed once per cluster, runs each
+A project whose config says `target: kubernetes` runs on the Kubernetes cluster
+`kubectl` points at: `canyonos target kubernetes` sets it once, and from then on
+`canyonos deploy`, `status`, `test` and the other commands work there. The CanyonOS operator, installed once per cluster, runs each
 project's Redis, global controller, endpoint and agents in the project's namespace.
 The cluster builds the agents' images itself and pushes them to your registry; the
 CLI only hands it the project. Nothing else on the cluster changes.
@@ -62,23 +63,28 @@ control plane and one worker; `--workers 3` for more), with Calico so NetworkPol
 enforced, metrics-server and Pod Security `restricted` in every namespace, and installs
 CanyonOS of the CLI's own release on it, with the builder and the dashboard. `kubectl`
 then points at the cluster. Run it again after upgrading the CLI to bring the cluster
-to the same release. Then, in your project's folder, add to
-`config/global_controller.yaml`:
+to the same release. Then, in your project's folder:
 
-```yaml
-kubernetes:
-  namespace: my-project
-  registry: localhost:5001
+```bash
+canyonos target kubernetes     # namespace: the folder's name; registry: localhost:5001
+canyonos deploy
 ```
 
-and deploy as in [Deploy and run](#deploy-and-run). `canyonos cluster down` deletes the
+and go on as in [Deploy and run](#deploy-and-run). `canyonos cluster down` deletes the
 cluster (`--all` also the registry and the images in it).
 
 ## Configuration
 
-Add a `kubernetes:` block to `global_controller.yaml`:
+`canyonos target kubernetes` adds `target: kubernetes` and a `kubernetes:` block to
+`global_controller.yaml`. The namespace defaults to the folder's name (`--namespace`
+to choose it), and the registry to the one the cluster advertises in the standard
+`local-registry-hosting` ConfigMap, as `canyonos cluster up` does (`--registry`
+otherwise, or it asks). What the block already says is kept. `canyonos target docker`
+switches the project back to Docker and keeps the block; `canyonos target` shows where
+it deploys and checks that this machine can reach it. Written by hand, it is:
 
 ```yaml
+target: kubernetes
 kubernetes:
   namespace: acme                       # required; created when missing and you may create namespaces
   registry: registry.example.com/acme   # required; where images are pushed, and nodes pull from
@@ -123,20 +129,29 @@ kubernetes:
 ## Deploy and run
 
 ```bash
-canyonos deploy --target kubernetes      # build in the cluster, apply, wait until ready
-canyonos status --target kubernetes      # the project and each agent's replicas (--json for scripts)
-canyonos test --target kubernetes "hi"   # send one query to the deployed project and print the result
-canyonos logs --target kubernetes        # the global controller's logs (or: HelloAgent, HelloAgent-0)
-canyonos stop --target kubernetes        # remove the project; namespace, config and Secret stay
-canyonos clean --target kubernetes       # stop, then remove the CLI's ConfigMap and Secret
+canyonos deploy      # build in the cluster, apply, wait until ready, keep the endpoint on 127.0.0.1
+canyonos status      # the project and each agent's replicas (--json for scripts)
+canyonos test "hi"   # send one query to the deployed project and print the result
+canyonos logs        # the global controller's logs (or: HelloAgent, HelloAgent-0)
+canyonos doctor      # the cluster, the operator's release, the project, its agents and endpoint
+canyonos stop        # remove the project; namespace, config and Secret stay
+canyonos clean       # stop, then remove the CLI's ConfigMap and Secret
 ```
 
 These take the same options as on Docker: `logs [agent or replica] [--tail N|all]
 [--no-follow]`, `status [--json]`, `test [prompt] [--json] [--timeout S]`, and they
-read the same `global_controller.yaml`. `test` queries the project as deployed, through
-a port-forward it opens and closes itself, so it needs no exposed endpoint; unlike on
-Docker it never deploys. `stop --all` and `clean --all` (every project on this
-machine) are Docker's only.
+read the same `global_controller.yaml`. `--target docker` or `--target kubernetes` on
+one command overrides the project's `target`. `test` queries the project as deployed,
+through a port-forward it opens and closes itself; unlike on Docker it never deploys.
+`stop --all` and `clean --all` cover every project on this machine's Docker, whatever
+the folder's target.
+
+Without `endpoint.host` or `endpoint.url`, `canyonos deploy` keeps the endpoint on
+`http://127.0.0.1:8080`, or the next free port, as on Docker; an `endpoint.api_port`
+you set is used as is and never moved, so a taken one leaves the endpoint unforwarded
+with a warning. A port-forward a background `canyonos` process holds open does it: it
+starts the forward again when the endpoint's pod is replaced, as on a redeploy, and
+`canyonos stop` closes it, also when the cluster can't be reached. With an Ingress or URL, the deploy prints that instead.
 
 A deploy hands the project to the cluster, as `canyonos deploy` hands it to the global
 controller's container on Docker. The CLI turns `.env` into a Secret, asks the operator
@@ -190,10 +205,13 @@ It runs in `canyonos-dashboard`: the API, the web front end and Postgres on a 1G
 disk, all under the restricted Pod Security profile. Open it with:
 
 ```bash
-canyonos serve --target kubernetes     # http://127.0.0.1:8081 until Ctrl+C
+canyonos serve     # http://127.0.0.1:8081, until canyonos stop
 ```
 
-It is a port-forward: only someone allowed to port-forward into `canyonos-dashboard`
+It is a port-forward, kept in the background like the endpoint's, on 8081 or the
+next free port, or on the project's `dashboard_port`, which is never moved. `canyonos stop` closes it with the last
+project forwarded here, as the local dashboard stops with the last project on Docker.
+As a port-forward, only someone allowed to port-forward into `canyonos-dashboard`
 can open it, and nothing is exposed outside the cluster. It always asks to sign in
 (`AUTH_MODE=password`), unlike the local dashboard: every project's global controller
 may reach its API. The first account made is its only one; registration closes after it.

@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from canyonos import env, ui
+from canyonos.forwards import close_forwards_to
 from canyonos.kubernetes_target import kubectl
 
 CLUSTER_ENV = "CANYONOS_KIND_CLUSTER"
@@ -365,12 +366,9 @@ def run_cluster_up(workers=None):
         _install_canyonos(name, env.PROD_CHART_VERSION)
     ui.ok(f"Cluster {name} is ready, with CanyonOS {version}; kubectl now points at it")
     ui.say(
-        "Deploy a project to it: add to its config/global_controller.yaml\n"
-        "  kubernetes:\n"
-        "    namespace: <a namespace for it, e.g. its name>\n"
-        f"    registry: localhost:{REGISTRY_PORT}\n"
-        "then run canyonos deploy --target kubernetes, and canyonos serve --target "
-        "kubernetes for the dashboard. canyonos cluster down removes the cluster."
+        "Deploy a project to it: in its folder run canyonos target kubernetes, then "
+        "canyonos deploy, and canyonos serve for the dashboard. canyonos cluster down "
+        "removes the cluster."
     )
     return True
 
@@ -385,6 +383,7 @@ def run_cluster_down(remove_registry=False):
         ui.ok(f"Deleted the kind cluster {name}")
     else:
         ui.say(f"No kind cluster {name}")
+    close_forwards_to(f"kind-{name}")
     if remove_registry:
         subprocess.run(["docker", "rm", "-f", REGISTRY_NAME], capture_output=True)
         ui.ok(f"Removed the registry {REGISTRY_NAME}")

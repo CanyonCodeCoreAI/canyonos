@@ -179,26 +179,23 @@ scripts/kind/up.sh       # once: CanyonOS's images if missing, the cluster, its 
 bun run canyonos:dev     # as every day: rebuilds the images, updates CanyonOS on the cluster, opens the dev shell
 ```
 
-In the dev shell, deploy a project as on Docker, with `--target kubernetes`. Add to its
-`config/global_controller.yaml`:
-
-```yaml
-kubernetes:
-  namespace: my-project        # created if missing
-  registry: localhost:5001
-```
+In the dev shell, point a project at the cluster once, then use the commands as on
+Docker:
 
 ```bash
-canyonos deploy --target kubernetes       # builds its images in the cluster, waits until ready
-canyonos status --target kubernetes       # its agents and replicas
-canyonos test --target kubernetes "hi"    # one query to the deployed project, and its result
-canyonos logs --target kubernetes         # the global controller's logs (or: an agent, a replica)
-canyonos serve --target kubernetes        # the dashboard, on http://127.0.0.1:8081
-canyonos clean --target kubernetes        # when done; scripts/kind/down.sh removes the cluster
+canyonos target kubernetes   # target: kubernetes, namespace: the folder's name, registry: localhost:5001
+canyonos deploy              # builds its images in the cluster, waits until ready
+canyonos status              # its agents and replicas
+canyonos test "hi"           # one query to the deployed project, and its result
+canyonos logs                # the global controller's logs (or: an agent, a replica)
+canyonos doctor              # the cluster, the operator, the project, its agents and endpoint
+canyonos serve               # the dashboard, on http://127.0.0.1:8081
+canyonos clean               # when done; scripts/kind/down.sh removes the cluster
 ```
 
-`canyonos test --target kubernetes` opens a port-forward to the project's endpoint
-itself; the deploy also prints the `kubectl port-forward` to call it with curl.
+`canyonos deploy` keeps the endpoint on `http://127.0.0.1:8080` and `canyonos serve`
+the dashboard on 8081, each through a port-forward a background `canyonos` process
+holds open until `canyonos stop`.
 `canyonos sync`, and `stop --all` or `clean --all`, are Docker's only: deploy again
 after a change. See
 [Kubernetes deployment](../guides/KUBERNETES.md) for the `kubernetes:` section's other

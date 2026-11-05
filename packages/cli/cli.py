@@ -26,6 +26,7 @@ from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos import kubernetes_local, kubernetes_target
 from canyonos.feedback import run_feedback
+from canyonos.forwards import FORWARD_ARGUMENT, run_forward
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
 from canyonos.os_support import prepare_console
@@ -35,6 +36,8 @@ from canyonos.provision import run_provision
 from canyonos.status import run_status
 from canyonos.stop import run_stop
 from canyonos.sync import run_sync_and_reload
+from canyonos.project import TARGETS, resolve_target
+from canyonos.target import run_target
 from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
 from canyonos.upgrade import notify_if_outdated, run_upgrade
 from canyonos.usage.delivery import (
@@ -71,6 +74,9 @@ def main():
     sender."""
     if sys.argv[1:] == [DELIVERY_ARGUMENT]:
         deliver_pending_events()
+        return
+    if sys.argv[1:2] == [FORWARD_ARGUMENT]:
+        run_forward(sys.argv[2])
         return
     settings_at_start = settings_stamp()
     prepare_console()
@@ -139,15 +145,14 @@ def _run_command(settings_at_start):
     def add_target(command):
         command.add_argument(
             "--target",
-            choices=("docker", "kubernetes"),
-            default="docker",
-            help="Where the project runs: Docker on this machine (default) or the "
-            "Kubernetes cluster kubectl points at",
+            choices=TARGETS,
+            help="Where the project runs: Docker on this machine or the Kubernetes "
+            "cluster kubectl points at (default: the project's `target`, else docker)",
         )
         return command
 
     def on_kubernetes(args):
-        return args.target == "kubernetes"
+        return resolve_target(args.target) == "kubernetes"
 
     deploy = add_target(
         add(
@@ -155,7 +160,7 @@ def _run_command(settings_at_start):
             lambda args: sys.exit(
                 0
                 if (
-                    kubernetes_target.run_kubernetes_deploy()
+                    kubernetes_target.run_kubernetes_deploy(serve=args.serve)
                     if on_kubernetes(args)
                     else run_deploy(serve=args.serve, verbose=args.verbose)
                 )
@@ -179,19 +184,20 @@ def _run_command(settings_at_start):
     )
 
     def this_machine_or_cluster(local, cluster):
-        """Run `local(args)`, or `cluster()` with --target kubernetes: the project in this
-        folder only, since --all means every project on this machine."""
+        """Run `local(args)`, or `cluster()` on Kubernetes: the project in this folder
+        only. --all means every project on this machine, so it always runs `local`,
+        whatever this folder's target, and is refused with --target kubernetes."""
 
         def run(args):
-            if not on_kubernetes(args):
-                return local(args)
             if args.all:
-                ui.fail(
-                    "--all covers the projects on this machine, not a cluster's; run "
-                    "the command with --target kubernetes from each project's folder"
-                )
-                return False
-            return cluster()
+                if args.target == "kubernetes":
+                    ui.fail(
+                        "--all covers the projects on this machine, not a cluster's; "
+                        "run the command from each project's folder"
+                    )
+                    return False
+                return local(args)
+            return cluster() if on_kubernetes(args) else local(args)
 
         return lambda args: sys.exit(0 if run(args) else 1)
 
@@ -319,7 +325,14 @@ def _run_command(settings_at_start):
         action="store_true",
         help="Install the CanyonOS skill and exit, without launching the coding agent",
     )
-    add("doctor", lambda args: sys.exit(0 if run_doctor() else 1))
+    add_target(
+        add(
+            "doctor",
+            lambda args: sys.exit(
+                0 if run_doctor(kubernetes=on_kubernetes(args)) else 1
+            ),
+        )
+    )
     add_target(
         add(
             "serve",
@@ -348,6 +361,29 @@ def _run_command(settings_at_start):
         "--json",
         action="store_true",
         help="Print a single JSON object with each agent's replica counts and nothing else",
+    )
+    target = add(
+        "target",
+        lambda args: sys.exit(
+            0
+            if run_target(args.target, namespace=args.namespace, registry=args.registry)
+            else 1
+        ),
+    )
+    target.add_argument(
+        "target",
+        nargs="?",
+        choices=TARGETS,
+        help="Where this project deploys from now on (default: show where it does)",
+    )
+    target.add_argument(
+        "--namespace",
+        help="kubernetes: the project's namespace (default: the folder's name)",
+    )
+    target.add_argument(
+        "--registry",
+        help="kubernetes: where images are pushed and nodes pull from (default: the "
+        "local registry the cluster advertises, else asked)",
     )
     add("upgrade", lambda args: sys.exit(run_upgrade()))
 

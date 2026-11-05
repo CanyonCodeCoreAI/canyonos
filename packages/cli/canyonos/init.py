@@ -23,7 +23,10 @@ from pyfiglet import figlet_format
 
 from canyonos import env, project, ui
 from canyonos.constants import (
+    DEFAULT_API_PORT,
+    DEFAULT_DASHBOARD_PORT,
     DEFAULT_REDIS_PORT,
+    dashboard_port,
     default_config_path,
     endpoint_api_port,
     existing_config_path,
@@ -32,6 +35,7 @@ from canyonos.constants import (
     private_ip,
     public_ip,
 )
+from canyonos.dashboard_stack import _existing_dashboard_port
 from canyonos.docker_cmd import (
     DOCKER_PULL_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -577,6 +581,15 @@ def redis_port_of(state):
     )
 
 
+def _dashboard_port(config_path):
+    """The port the local dashboard is on, or will take when it starts."""
+    return (
+        _existing_dashboard_port()
+        or dashboard_port(config_path)
+        or DEFAULT_DASHBOARD_PORT
+    )
+
+
 def run_init(banner=True, image=GC_IMAGE):
     """Replace any existing Global Controller with a fresh container from `image` and
     save its ID and port for later commands; run at the start of `canyonos deploy`.
@@ -608,7 +621,19 @@ def run_init(banner=True, image=GC_IMAGE):
         redis_port = find_free_port(preferred_redis)
         if redis_port != preferred_redis:
             ui.warn(f"Port {preferred_redis} is taken, so Redis is on {redis_port}.")
-    last_api_port = saved.get("api_port") if api_port is None else None
+    last_api_port = None
+    if api_port is None:
+        # Free on 127.0.0.1 too, as find_free_port checks: on macOS Docker publishes
+        # 0.0.0.0 beside a kubectl port-forward on 127.0.0.1, which would then answer
+        # the endpoint's requests. Off the dashboard's port too: it may start after.
+        dashboard = _dashboard_port(config_path)
+        preferred_api = saved.get("api_port") or DEFAULT_API_PORT
+        last_api_port = find_free_port(preferred_api, skip=frozenset({dashboard}))
+        if last_api_port != preferred_api:
+            why = "is the dashboard's" if preferred_api == dashboard else "is taken"
+            ui.warn(
+                f"Port {preferred_api} {why}, so the endpoint is on {last_api_port}."
+            )
 
     with ui.status("Pulling Global Controller image..."):
         _pull_image(image)

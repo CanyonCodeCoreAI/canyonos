@@ -78,6 +78,7 @@ _AGENT_KEYS_BY_TYPE = {
 
 _MANIFEST_KEYS = frozenset(
     {
+        "target",
         "provider",
         "agents",
         "poll_interval",
@@ -93,6 +94,10 @@ _MANIFEST_KEYS = frozenset(
         "kubernetes",
     }
 )
+# Who runs the project: Docker on the deploying machine (the default) or the Kubernetes
+# cluster. Keep in sync with the CLI's canyonos/target.py: the CLI and the core image
+# ship separately.
+TARGETS = ("docker", "kubernetes")
 _ENDPOINT_KEYS = frozenset({"api_port", "agent", "method"})
 _REDIS_KEYS = frozenset({"host", "port", "db"})
 # Keys that used to mean something and now do nothing, each with the message
@@ -202,6 +207,7 @@ class Manifest:
     """The project's `global_controller.yaml`, checked and parsed by `load_manifest`."""
 
     agents: tuple
+    target: str = TARGETS[0]
     provider: str = providers.DEFAULT
     poll_interval: float = 5
     cleanup_interval: float = 10
@@ -212,7 +218,7 @@ class Manifest:
     otel: OtelSpec | None = None
     endpoint: EndpointSpec | None = None
     dashboard_port: int = 8081
-    # Read only by `canyonos deploy --target kubernetes`.
+    # Read only by a deploy to Kubernetes.
     kubernetes: KubernetesSpec | None = None
     path: str = ""
 
@@ -319,6 +325,29 @@ def _agent_type(collector, node, prefix):
         )
         return None
     return value
+
+
+def _target(collector, node):
+    """The target in any casing, lowercased; Kubernetes needs the `kubernetes:` section."""
+    value = _string(collector, node, "target", "", TARGETS[0])
+    if value.casefold() not in TARGETS:
+        collector.add(
+            node,
+            "target",
+            "target",
+            f"expected one of {list(TARGETS)}, got {_describe(value)}",
+        )
+        return TARGETS[0]
+    target = value.casefold()
+    if target == "kubernetes" and node.get("kubernetes") is None:
+        collector.add(
+            node,
+            "target",
+            "target",
+            "is kubernetes, but the kubernetes: section is missing or empty -- run "
+            "`canyonos target kubernetes` to add one",
+        )
+    return target
 
 
 def _provider(collector, node, prefix):
@@ -705,6 +734,7 @@ def load_manifest(path):
     provider = _provider(collector, document, "")
     manifest = Manifest(
         agents=agent_specs,
+        target=_target(collector, document),
         provider=provider,
         poll_interval=_number(collector, document, "poll_interval", "", 5, 0),
         cleanup_interval=_number(collector, document, "cleanup_interval", "", 10, 0),

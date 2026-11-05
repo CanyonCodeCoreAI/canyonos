@@ -80,6 +80,8 @@ external stores and concurrency controls; follow the
 - For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
   using developer-supplied identifiers. If unavailable, leave the top-level
   `provider: local` and report that EC2 is not configured.
+- Leave `target` and the `kubernetes:` block out. To deploy to Kubernetes, the
+  developer runs `canyonos target kubernetes`, which writes both; say so in the report.
 
 ## 4. Validate and stop
 
@@ -111,7 +113,9 @@ project folder, with no terminal attached:
   or of one replica such as `IntentAgent-1`; `--tail N` or `--tail all` for more.
 - Any change, config or code, takes effect only after another `canyonos deploy`.
 - `canyonos validate --json`: recheck `.canyon` after an edit.
-- `canyonos stop` removes the deploy; `canyonos clean` also removes `.canyon` and the images.
+- `canyonos stop` removes the deploy. `canyonos clean` also removes `.canyon` and the
+  images on Docker; with `target: kubernetes` it removes only the project's ConfigMap
+  and Secret in the cluster, and `.canyon` and the images stay.
 
 Every command exits non-zero on failure.
 

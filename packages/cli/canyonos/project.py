@@ -10,6 +10,10 @@ in the `com.docker.compose.project` label, so two projects run side by side on
 one machine and Docker Desktop shows each as its own group. The CLI's own
 records for a project live under `~/.canyonos/projects/<project>/`.
 
+Where the project runs is its `target`: Docker on this machine, or the Kubernetes
+cluster `kubectl` points at. Its `global_controller.yaml` says it once, so every
+command in its folder goes there; `--target` on one command overrides it.
+
 The container and image names mirror
 `canyonos_core/controller/utils/container_names.py`. The CLI and the
 canyonos_core image ship separately and cannot share an import, so keep the
@@ -19,6 +23,8 @@ two in step.
 import os
 import re
 
+import yaml
+
 from canyonos.constants import default_config_path, read_config
 from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
 
@@ -26,6 +32,10 @@ DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
 PROJECT_LABEL = "com.docker.compose.project"
 ROLE_LABEL = "canyonos.role"
 GC_ROLE = "global-controller"
+
+# Keep in sync with canyonos_core/schema/manifest.py.
+TARGETS = ("docker", "kubernetes")
+DEFAULT_TARGET = TARGETS[0]
 
 MAX_PROJECT_LENGTH = 24
 DEFAULT_PROJECT = "default"
@@ -57,6 +67,41 @@ def project_name():
     name = normalise(folder_name())
     project_id = read_config(default_config_path()).get("project_id")
     return f"{name}-{project_id[:8]}" if project_id else name
+
+
+def configured_target(config_path=None):
+    """The `target` in this project's config, lowercased, or docker without one (or
+    without a config). Any other value, or a config that is not valid YAML, is
+    refused here, before a command acts on it: a Kubernetes project must not pass
+    for a Docker one."""
+    config_path = config_path or default_config_path()
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        return DEFAULT_TARGET
+    except (OSError, yaml.YAMLError) as error:
+        raise RuntimeError(f"Could not read {config_path}: {error}") from None
+    value = config.get("target") if isinstance(config, dict) else None
+    if value is None:
+        return DEFAULT_TARGET
+    if not isinstance(value, str) or value.casefold() not in TARGETS:
+        raise RuntimeError(
+            f"`target: {value}` in {config_path} is not one of {', '.join(TARGETS)}"
+        )
+    return value.casefold()
+
+
+def resolve_target(flag):
+    """The target a command runs on: its `--target` when given, else the project's."""
+    return flag or configured_target()
+
+
+def kubernetes_command(command):
+    """How to run `canyonos <command>` on Kubernetes from this folder: as is once the
+    project's target is kubernetes, else with `--target kubernetes`."""
+    flag = "" if configured_target() == "kubernetes" else " --target kubernetes"
+    return f"canyonos {command}{flag}"
 
 
 def project_group():

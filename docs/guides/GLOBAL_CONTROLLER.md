@@ -101,6 +101,10 @@ class in its `entrypoint` file.
 
 These go at the top level of the file, next to `agents`:
 
+- `target`: who runs the project. `docker` (the default) is Docker on the machine that
+  runs `canyonos deploy`; `kubernetes` is the cluster `kubectl` points at, with the
+  `kubernetes:` block. `canyonos target kubernetes` sets both; see
+  [Kubernetes deployment](KUBERNETES.md).
 - `provider`: where every entry runs. `local` (the default) is this machine. `ec2-pool`
   runs them on a pool of Amazon EC2 machines from the `ec2-pool` section below, each replica
   on the least loaded machine by its `resources`. `ec2-assign` gives each replica an EC2
@@ -136,7 +140,7 @@ A deploy opens these ports on the machine that runs `canyonos deploy`, and no ot
 
 | What | Setting | Default | Open on |
 |---|---|---|---|
-| Endpoint | `endpoint.api_port` | `8080`, else the next free one | every interface |
+| Endpoint | `endpoint.api_port` | `8080`, else the next free one that isn't the dashboard's | every interface |
 | Redis | `redis.port` | `6379`, else the next free one | every interface |
 | Global Controller | none | the last deploy's port or `8000`, else the next free one | `127.0.0.1` |
 | Each database | its `db_port` | `5432` | every interface |
@@ -234,10 +238,11 @@ instead of an in-process store, and the agent no longer needs
 | `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379`, else the next free one / `0` | The controller's own Redis. |
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | none | Where telemetry goes. See below. |
+| `target` | `docker` | `docker` or `kubernetes`, in any casing. Who runs the project; `kubernetes` needs the `kubernetes:` block. |
 | `provider` | `local` | `local`, `ec2-pool` or `ec2-assign`, in any casing. Where every entry runs. |
 | `ec2-pool` | none | Required when `provider: ec2-pool`, for `machine_type`. See [EC2 deployment](EC2.md). |
 | `ec2-assign` | none | Required when `provider: ec2-assign`, for `machine_type`. See [EC2 deployment](EC2.md). |
-| `endpoint.api_port` | `8080`, else the next free one | Host port of the HTTP endpoint, published on the machine that runs `canyonos deploy`. |
+| `endpoint.api_port` | `8080`, else the next free one that isn't the dashboard's | Host port of the HTTP endpoint, published on the machine that runs `canyonos deploy`. |
 | `endpoint.agent` | required | The entry of type `agent` the endpoint serves. |
 | `endpoint.method` | required | One of that agent's `functions`, served at `POST /<method>`. |
 | `dashboard_port` | `8081`, else the next free one | Host port of the local dashboard. |

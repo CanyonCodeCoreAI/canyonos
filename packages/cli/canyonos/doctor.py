@@ -8,8 +8,11 @@ view (one is up). Each check just reports pass/fail plus a suggested fix --
 nothing here attempts to auto-fix anything.
 """
 
+import json
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
 
 from canyonos import ui
 from canyonos.constants import (
@@ -23,6 +26,8 @@ from canyonos.dashboard_stack import (
     _endpoint_healthy,
     _existing_dashboard_port,
 )
+from canyonos import env, kubernetes_target as k8s
+from canyonos.forwards import DASHBOARD, endpoint_forward, forward_port
 from canyonos.gc import deploy_status, deployed_endpoint
 from canyonos.init import (
     docker_running,
@@ -194,8 +199,10 @@ def _print_post_deploy(state, status):
     return all(results)
 
 
-def _run_checks(checks):
-    """Run every check, print a pass/fail checklist, and return True if all passed."""
+def _run_checks(checks, stop_at_failure=False):
+    """Run every check, print a pass/fail checklist, and return True if all passed.
+    With `stop_at_failure`, each check needs the ones before it, so the first failure
+    ends the list."""
     all_ok = True
     for label, check, fix in checks:
         try:
@@ -210,12 +217,150 @@ def _run_checks(checks):
             ui.fail(label)
             ui.hint(f"  -> {fix}")
             all_ok = False
+            if stop_at_failure:
+                break
 
     return all_ok
 
 
-def run_doctor():
+def _operator_version_check():
+    """The operator's release, from the version label Helm puts on its Deployment,
+    against the CLI's: `canyonos deploy` stops on a mismatch, so a project still running
+    on another release was deployed before an upgrade. Who may not read the operator's
+    namespace is told it was not checked."""
+    version = k8s.operator_version()
+    if not version:
+        ui.hint(
+            f"CanyonOS operator: version not checked (none readable in {k8s.OPERATOR_NAMESPACE})"
+        )
+        return True
+    return _print_check(
+        "CanyonOS operator",
+        env.is_development or version == env.VERSION,
+        f"version {version}",
+        f"the cluster runs CanyonOS {version} and this CLI is {env.VERSION} -- "
+        "upgrade one to the other's release, then `canyonos deploy`",
+    )
+
+
+def _project_ready_check(namespace, project, found):
+    ready = k8s.condition(found, "Ready")
+    return _print_check(
+        "Project",
+        ready.get("status") == "True",
+        f"{project} in namespace {namespace}",
+        f"{ready.get('reason') or 'Starting'}: {ready.get('message') or 'not ready yet'}"
+        " -- see `canyonos logs`",
+    )
+
+
+def _kubernetes_agents_check(namespace, project):
+    agents = k8s.project_agents(namespace, project)
+    ui.panel(k8s.agents_table(agents))
+    for agent in agents:
+        error = k8s._launch_error(agent)
+        if error:
+            ui.hint(f"  -> {agent.get('spec', {}).get('agentName')}: {error}")
+    return all(k8s.condition(a, "Ready").get("status") == "True" for a in agents)
+
+
+def _kubernetes_endpoint_check(namespace, project, found):
+    """The endpoint through this machine's forward of it, or a short one of its own;
+    an Ingress or URL the project serves is asked directly."""
+    url = found.get("status", {}).get("endpointURL") or ""
+    if not k8s._in_cluster_only(url):
+        return _print_check(
+            "Endpoint",
+            _endpoint_answers_at(url),
+            url,
+            "nothing answers there -- check the Ingress or `endpoint.url`",
+        )
+    port = forward_port(endpoint_forward(namespace, project))
+    if port:
+        detail = f"127.0.0.1:{port} (forwarded until `canyonos stop`)"
+        return _print_check(
+            "Endpoint",
+            _endpoint_answers_at(f"http://127.0.0.1:{port}"),
+            detail,
+            f"nothing answers on {port} -- `canyonos deploy` again opens it anew",
+        )
+    forward = k8s.PortForward(namespace)
+    try:
+        answers = _endpoint_answers_at(f"http://127.0.0.1:{forward.port}")
+    finally:
+        forward.close()
+    return _print_check(
+        "Endpoint",
+        answers,
+        f"{url} (not forwarded here: `canyonos deploy` keeps it on 127.0.0.1)",
+        "the endpoint isn't answering -- see `canyonos logs`",
+    )
+
+
+def _endpoint_answers_at(url):
+    """Any HTTP answer from the endpoint at `url`, the probe `endpoint_answers` sends;
+    an unknown request id takes the endpoint about two seconds to refuse, so it gets
+    longer here, through a port-forward or an Ingress."""
+    try:
+        urllib.request.urlopen(
+            f"{url.rstrip('/')}/status/canyonos-test-probe", timeout=5
+        )
+    except urllib.error.HTTPError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _kubernetes_dashboard_check():
+    port = forward_port(DASHBOARD)
+    if port is None:
+        ui.hint("Dashboard not open here -- open it with `canyonos serve`")
+        return True
+    return _print_check(
+        "Dashboard",
+        _endpoint_healthy(f"http://127.0.0.1:{port}/healthz"),
+        f"127.0.0.1:{port} (forwarded until `canyonos stop`)",
+        "the dashboard isn't answering -- `canyonos serve` again",
+    )
+
+
+def _kubernetes_doctor():
+    """`canyonos doctor` for a project on Kubernetes: what deploying there needs, then,
+    once deployed, the operator's release, the project, each agent's replicas, the
+    endpoint and the dashboard, guarded as on Docker."""
+    namespace, project = k8s._namespace_and_project(None)
+    ui.say(f"Kubernetes: {project} in namespace {namespace}")
+    if not _run_checks(k8s.cluster_checks(), stop_at_failure=True):
+        return False
+    found = k8s.kubectl(
+        ["get", "canyonproject", project, "-n", namespace, "-o", "json"], check=False
+    )
+    if found.returncode:
+        if not k8s._not_found(found):
+            ui.fail(f"Could not read {project} in {namespace}")
+            ui.hint(f"  -> {(found.stderr or '').strip()}")
+            return False
+        ui.say(f"No deploy of {project} in namespace {namespace} -- `canyonos deploy`")
+        return True
+    found = json.loads(found.stdout)
+    ui.say("Deploy is up -- post-deploy checks:")
+    results = [
+        _guard("CanyonOS operator", _operator_version_check),
+        _guard("Project", lambda: _project_ready_check(namespace, project, found)),
+        _guard("Workflow agents", lambda: _kubernetes_agents_check(namespace, project)),
+        _guard(
+            "Endpoint", lambda: _kubernetes_endpoint_check(namespace, project, found)
+        ),
+        _guard("Dashboard", _kubernetes_dashboard_check),
+    ]
+    return all(results)
+
+
+def run_doctor(kubernetes=False):
     """Print the pre- or post-deploy checklist, whichever applies, and return True if it all passed."""
+    if kubernetes:
+        return _kubernetes_doctor()
     try:
         state = load_state()
     except FileNotFoundError:

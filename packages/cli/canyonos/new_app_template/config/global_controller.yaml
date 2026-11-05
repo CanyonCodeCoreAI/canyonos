@@ -32,3 +32,6 @@ otel:
       protocol: http
       endpoint: http://host.docker.internal:3000
       headers: {}
+
+# Deploys run on Docker on this machine unless `target: kubernetes` is set here;
+# `canyonos target kubernetes` sets it, with the settings a cluster needs.
