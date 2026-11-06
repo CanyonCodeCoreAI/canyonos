@@ -150,13 +150,14 @@ def test_quiet_skips_the_resource_picker(monkeypatch, deployable):
     assert deploy_cmd.run_deploy(quiet=True) == STATE
 
 
-def test_the_deploy_panel_shows_how_to_answer_a_question():
+def test_the_deploy_panel_shows_how_to_answer_a_question(monkeypatch):
     endpoint = {
         "public_host": "127.0.0.1",
         "api_port": 8084,
         "url": "http://127.0.0.1:8084/main",
         "arguments": ["query"],
     }
+    monkeypatch.setattr(deploy_cmd, "existing_config_path", lambda: "gc.yaml")
 
     text = deploy_cmd.summary_body(None, endpoint).plain
 
@@ -211,6 +212,7 @@ def test_the_summary_names_a_moved_endpoint_and_records_its_port(
     monkeypatch.setattr(deploy_cmd, "endpoint_api_port", lambda _path: configured)
     monkeypatch.setattr(deploy_cmd, "remember_api_port", recorded.append)
     monkeypatch.setattr(deploy_cmd, "_print_deploy_summary", lambda *_a: None)
+    monkeypatch.setattr(deploy_cmd, "_existing_dashboard_port", lambda: None)
 
     deploy_cmd._deploy_summary(
         {**STATE, "api_port": remembered}, serve=False, on_ready=lambda _ready: None

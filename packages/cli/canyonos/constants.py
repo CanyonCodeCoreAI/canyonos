@@ -14,6 +14,7 @@ import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.error import MarkedYAMLError
 
+from canyonos.dashboard_registration import API_PORT as DASHBOARD_API_PORT
 from canyonos.port_utils import is_port_free
 
 DEFAULT_API_PORT = 8080
@@ -178,6 +179,16 @@ def port_in_use(port):
 def dashboard_port(config_path):
     """The `dashboard_port` the config sets, or None."""
     return read_config(config_path).get("dashboard_port")
+
+
+def sends_to_dashboard(config_path):
+    """Whether the config's telemetry reaches the local dashboard: it sets no
+    `otel.destinations`, so the default applies, or lists the dashboard's address."""
+    destinations = (read_config(config_path).get("otel") or {}).get("destinations")
+    return not destinations or any(
+        destination["endpoint"] == f"http://host.docker.internal:{DASHBOARD_API_PORT}"
+        for destination in destinations
+    )
 
 
 def container_path(relative):

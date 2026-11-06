@@ -46,6 +46,7 @@ from canyonos.constants import (
     project_root,
     read_config,
     round_trip_yaml,
+    sends_to_dashboard,
     write_config,
 )
 from canyonos.dashboard_stack import (
@@ -472,14 +473,26 @@ def _curl_example(url, body):
 
 
 def summary_body(dashboard_url, endpoint):
-    """Build the deploy panel's text: the dashboard URL, and how to call, poll and
+    """Build the deploy panel's text: the dashboard URL, a warning when the dashboard
+    is down or the project's `otel:` block leaves it out, and how to call, poll and
     answer the endpoint described by its published record, when there is one."""
     body = Text()
     body.append("Dashboard  ", "dim")
+    to_dashboard = sends_to_dashboard(existing_config_path())
+    no_telemetry = (
+        "No telemetry configured -- add the `local` entry to your `otel:` block"
+    )
     if dashboard_url:
         body.append(dashboard_url, f"bold {GREEN}")
+        if not to_dashboard:
+            body.append(f"  {no_telemetry}", "yellow")
+    elif to_dashboard:
+        body.append(
+            "Not running -- run `canyonos serve` to bring it up for telemetry",
+            "yellow",
+        )
     else:
-        body.append("not running -- start it with `canyonos serve`", WHITE)
+        body.append(f"Not running. {no_telemetry}", "yellow")
 
     if endpoint:
         host, api_port = endpoint["public_host"], endpoint["api_port"]
@@ -542,7 +555,11 @@ def _start_dashboard(report_failure=True):
 
 def _deploy_summary(state, serve, on_ready):
     on_ready(True)
-    dashboard = _start_dashboard() if serve else None
+    if serve:
+        dashboard = _start_dashboard()
+    else:
+        port = _existing_dashboard_port()
+        dashboard = dashboard_url(port) if port else None
     try:
         endpoint = deployed_endpoint(state["port"])
     except GCError:

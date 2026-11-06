@@ -48,6 +48,7 @@ import log_convert
 import otel_reader
 from canyonos_core.controller.utils.schema import DB_PATH, init_db
 from canyonos_core.schema.otel_destinations import (
+    LOCAL_DASHBOARD_DESTINATION,
     destination_problems,
     destinations_problem,
     duplicate_name_message,
@@ -216,7 +217,7 @@ def _trace_build_exporter(destination):
     )
 
 
-def _probe_destination(destination_name, exporter):
+def _probe_destination(destination, exporter):
     """Report whether a destination actually answers, without failing startup.
 
     An empty export is a real OTLP request, so this exercises the endpoint,
@@ -231,13 +232,20 @@ def _probe_destination(destination_name, exporter):
         detail = f": {e}"
     if reachable:
         logger.info(
-            "OTel destination %s answered a connectivity check.", destination_name
+            "OTel destination %s answered a connectivity check.", destination["name"]
+        )
+    elif destination["endpoint"] == LOCAL_DASHBOARD_DESTINATION["endpoint"]:
+        logger.warning(
+            "The local dashboard is not answering at %s. Run `canyonos serve` to "
+            "bring up the dashboard for telemetry; it stays queued until then%s",
+            destination["endpoint"],
+            detail,
         )
     else:
         logger.warning(
             "OTel destination %s did not answer a connectivity check, so nothing "
             "will reach it until that is fixed; spans stay queued meanwhile%s",
-            destination_name,
+            destination["name"],
             detail,
         )
 
@@ -351,7 +359,7 @@ def _trace_build_exporters(raw):
                 destination["name"],
                 destination["protocol"],
             )
-            _probe_destination(destination["name"], exporter)
+            _probe_destination(destination, exporter)
     except Exception:
         _shutdown_exporters(
             exporters,

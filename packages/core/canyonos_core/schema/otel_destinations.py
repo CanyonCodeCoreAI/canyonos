@@ -14,6 +14,12 @@ SUPPORTED_PROTOCOLS = ("grpc", "http", "http/protobuf")
 DESTINATION_KEYS = frozenset(
     {"name", "protocol", "endpoint", "headers", "insecure", "timeout"}
 )
+LOCAL_DASHBOARD_DESTINATION = {
+    "name": "local",
+    "protocol": "http",
+    "endpoint": "http://host.docker.internal:3000",
+    "headers": {},
+}
 
 
 def _normalize_protocol(protocol):

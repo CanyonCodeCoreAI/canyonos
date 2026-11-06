@@ -237,7 +237,7 @@ instead of an in-process store, and the agent no longer needs
 | `project_id` | generated | Written back into the file on first deploy. Leave it out on a new project. |
 | `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379`, else the next free one / `0` | The controller's own Redis. |
 | `logs` | `true` | Stream failure detail into each future. |
-| `otel.destinations` | none | Where telemetry goes. See below. |
+| `otel.destinations` | the local dashboard | Where telemetry goes. See below. |
 | `target` | `docker` | `docker` or `kubernetes`, in any casing. Who runs the project; `kubernetes` needs the `kubernetes:` block. |
 | `provider` | `local` | `local`, `ec2-pool` or `ec2-assign`, in any casing. Where every entry runs. |
 | `ec2-pool` | none | Required when `provider: ec2-pool`, for `machine_type`. See [EC2 deployment](EC2.md). |
@@ -253,10 +253,9 @@ with "is no longer used; telemetry is configured under otel:". Remove it.
 
 #### `otel.destinations`
 
-Without this block the exporter still runs but sends nothing, and the log
-says so once at startup. The list is consumed by the Global Controller's
-exporter only, on the machine that runs `canyonos deploy`, so an endpoint
-only needs to be reachable from there.
+Without this block, telemetry goes to the local dashboard. A block replaces
+that default, so keep `local` beside other destinations. Endpoints only need
+to be reachable from the machine running `canyonos deploy`.
 
 ```yaml
 otel:

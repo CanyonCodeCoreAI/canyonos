@@ -10,7 +10,7 @@ import tempfile
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -258,6 +258,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller.llm_prices = {}
         controller.redis = _FakeRedis()
         controller.machine_redis = {}
+        controller.process_supervisor = MagicMock()
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
         with open(controller.config_path, "w") as f:
             f.write(_MANIFEST)
@@ -304,6 +305,7 @@ class ScalingEntryPointTests(unittest.TestCase):
         controller.llm_prices = {}
         controller.redis = _FakeRedis()
         controller.machine_redis = {}
+        controller.process_supervisor = MagicMock()
         controller.config_path = os.path.join(config_dir, "global_controller.yaml")
         with open(controller.config_path, "w") as f:
             f.write(_MANIFEST)

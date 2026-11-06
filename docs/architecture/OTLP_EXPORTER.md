@@ -179,7 +179,7 @@ future:{future_id}.logs JSON array
 global_controller.yaml
 otel.destinations
       │
-      ├─ absent ──▶ _otel_destinations = None ──▶ no SET; existing Redis key remains
+      ├─ absent ──▶ LOCAL_DASHBOARD_DESTINATION (host.docker.internal:3000)
       ├─ GlobalController._otel_destinations
       │      └─ config_env.expand_env_value
       │

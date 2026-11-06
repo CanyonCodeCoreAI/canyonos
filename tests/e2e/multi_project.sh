@@ -6,7 +6,8 @@
 # Runs two projects side by side on one machine with the shared dashboard:
 # helloworld and the portfolio fixture are deployed at the same time, each on
 # its own ports, and the dashboard must list both and read each one's Redis.
-# Then one project is stopped, the other keeps answering, the stopped one
+# helloworld runs with no `otel:` block, and its traces must still reach the
+# dashboard. Then one project is stopped, the other keeps answering, the stopped one
 # redeployed without `endpoint.api_port` or `redis.port` moves past the
 # other's 8080 and 6379 and warns that the running dashboard ignores its
 # `dashboard_port`, `canyonos serve` from the other re-registers without
@@ -111,6 +112,8 @@ cp -R "$REPO_ROOT/examples/helloworld" "$WORK_DIR/helloworld"
 # Fixed so they can't race the portfolio fixture's api_port 8080 and Redis 6379 when both deploy at once.
 perl -pi -e 's/^endpoint:$/endpoint:\n  api_port: 8082/; s/^redis:$/redis:\n  port: 6380/' \
   "$WORK_DIR/helloworld/config/global_controller.yaml"
+# No `otel:` block, so its telemetry goes to the dashboard by default.
+perl -0pi -e 's/^otel:\n(?:  .*\n)*//m' "$WORK_DIR/helloworld/config/global_controller.yaml"
 cp -R "$REPO_ROOT/examples/portfolio" "$WORK_DIR/portfolio"
 cp -R "$E2E_DIR/portfolio/.canyon" "$WORK_DIR/portfolio/.canyon"
 cat >"$WORK_DIR/portfolio/.env" <<EOF
@@ -199,6 +202,16 @@ grep -q '"name":"HelloAgent","replicas_expected":1,"replicas_running":1' "$ARTIF
 step "Query the helloworld endpoint at $HELLO_API"
 python3 "$E2E_DIR/query.py" "$HELLO_API" main query hello 60 >"$ARTIFACTS_DIR/helloworld-result.json"
 grep -q "greeting" "$ARTIFACTS_DIR/helloworld-result.json" || fail "helloworld returned no greeting"
+
+step "helloworld's traces reach the dashboard without an otel: block"
+window="$(python3 -c 'from datetime import datetime, timedelta, timezone; now = datetime.now(timezone.utc); print("from=%s&to=%s" % tuple((now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ") for h in (-1, 1)))')"
+for _ in $(seq 30); do
+  api GET "/projects/$HELLO_ID/monitoring/traces?$window" >/dev/null
+  grep -q '"trace_id"' "$ARTIFACTS_DIR/api-response.json" && break
+  sleep 2
+done
+grep -q '"trace_id"' "$ARTIFACTS_DIR/api-response.json" ||
+  fail "helloworld's trace never reached the dashboard: $(cat "$ARTIFACTS_DIR/api-response.json")"
 
 step "canyonos test in another folder named helloworld tests that folder, not the running one"
 mkdir "$WORK_DIR/twin"

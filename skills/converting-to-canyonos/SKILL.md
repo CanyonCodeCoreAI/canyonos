@@ -74,8 +74,8 @@ external stores and concurrency controls; follow the
 - Check each image's dependency set with `uv pip compile`, using the target
   Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.
-- For local dashboard tracing, use the [OTel configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#oteldestinations)
-  unless disabled or another destination was chosen.
+- Local dashboard tracing needs no config. Add an [`otel:` block](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#oteldestinations)
+  only when another destination was chosen, keeping its `local` entry.
 - For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
 - For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
   using developer-supplied identifiers. If unavailable, leave the top-level

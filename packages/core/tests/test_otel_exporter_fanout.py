@@ -176,10 +176,13 @@ class OTelExporterFanoutTests(unittest.TestCase):
             "https://us.collector.example/otel/v1/traces",
         )
 
-    def test_controller_destinations_is_none_when_otel_not_configured(self):
+    def test_controller_destinations_default_to_the_local_dashboard(self):
         from canyonos_core.controller.global_controller import GlobalController
+        from canyonos_core.schema.otel_destinations import LOCAL_DASHBOARD_DESTINATION
 
-        self.assertIsNone(GlobalController._otel_destinations({}))
+        self.assertEqual(
+            GlobalController._otel_destinations({}), [LOCAL_DASHBOARD_DESTINATION]
+        )
 
     def _destinations_on(self, target, destinations):
         from canyonos_core.controller.global_controller import GlobalController
@@ -819,7 +822,9 @@ class OTelExporterLifecycleLoggingTests(unittest.TestCase):
         exporter = MagicMock(name="exporter")
         exporter.export.return_value = SpanExportResult.SUCCESS
         with self.assertLogs(otel_exporter.logger, level="INFO") as captured:
-            otel_exporter._probe_destination("live", exporter)
+            otel_exporter._probe_destination(
+                {"name": "live", "endpoint": "http://collector:4318"}, exporter
+            )
         exporter.export.assert_called_once_with([])
         self.assertTrue(
             any("answered a connectivity check" in line for line in captured.output)
@@ -829,7 +834,9 @@ class OTelExporterLifecycleLoggingTests(unittest.TestCase):
         exporter = MagicMock(name="exporter")
         exporter.export.side_effect = RuntimeError("connection refused")
         with self.assertLogs(otel_exporter.logger, level="WARNING") as captured:
-            otel_exporter._probe_destination("dead", exporter)
+            otel_exporter._probe_destination(
+                {"name": "dead", "endpoint": "http://collector:4318"}, exporter
+            )
         self.assertTrue(
             any(
                 "did not answer a connectivity check" in line

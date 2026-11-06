@@ -64,6 +64,7 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 from canyonos_core.schema import SchemaError, check_project, load_manifest
+from canyonos_core.schema.otel_destinations import LOCAL_DASHBOARD_DESTINATION
 from canyonos_core.schema.yaml_lines import parse_failure
 
 sys.path.insert(0, os.path.abspath("grpc_stubs"))
@@ -274,13 +275,16 @@ class GlobalController(ControllerContext):
 
     @staticmethod
     def _otel_destinations(otel_cfg):
-        """Resolve otel.destinations (${ENV_VAR} refs expanded), plus the dashboard
-        CANYONOS_DASHBOARD_OTLP_ENDPOINT names, or None when there are none.
+        """Resolve otel.destinations (the local dashboard when unset, ${ENV_VAR} refs
+        expanded), plus the dashboard CANYONOS_DASHBOARD_OTLP_ENDPOINT names, or None
+        when there are none.
 
         On Kubernetes, destinations on host.docker.internal (Docker Desktop's way back
         to the laptop, which no cluster has) are skipped. None makes the exporter
         flush instead of exporting."""
-        destinations = expand_env_value(otel_cfg.get("destinations") or [])
+        destinations = expand_env_value(
+            otel_cfg.get("destinations") or [LOCAL_DASHBOARD_DESTINATION]
+        )
         if os.environ.get(TARGET_ENV) == "kubernetes":
             kept = []
             for destination in destinations:
