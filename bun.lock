@@ -22,7 +22,7 @@
     },
     "packages/api": {
       "name": "@canyonos/api",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@elysiajs/cors": "1.4.2",
         "@elysiajs/openapi": "1.4.15",
@@ -124,7 +124,7 @@
     },
     "packages/web": {
       "name": "web",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@canyonos/api": "*",
         "@elysiajs/eden": "^1.4.9",
