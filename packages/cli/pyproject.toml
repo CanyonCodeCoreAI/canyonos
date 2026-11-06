@@ -42,7 +42,7 @@ canyonos = [
 [dependency-groups]
 dev = [
     "pexpect==4.9.0",
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
 ]
 release = [
     "nuitka==4.2.2",
