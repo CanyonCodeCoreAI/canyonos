@@ -57,8 +57,9 @@ function isSkipped(name: string): boolean {
 // Each workflow's `.env`, written into the bundle so the first thing a user sees
 // is the key they have to fill in.
 //
-// The value is left empty, so `canyonos deploy` warns about the unset key before
-// the build rather than letting the first request come back a 401.
+// A placeholder, not empty: the agents build their OpenAI client at startup and an
+// empty key stops them, failing the deploy. With the placeholder the deploy comes
+// up, and only requests fail until the key is set.
 //
 // Hand-written rather than copied from `.env.example`, which lists every key a
 // workflow could take; this is the one it needs.
@@ -73,8 +74,8 @@ export const STARTERS = [
     name: 'portfolio',
     env: [
       '# Your OpenAI API key, used by IntentAgent and AdvisorAgent.',
-      '# Get one at https://platform.openai.com/api-keys, then set it below.',
-      'OPENAI_API_KEY=',
+      '# Get one at https://platform.openai.com/api-keys, then replace the value below.',
+      'OPENAI_API_KEY=REPLACE_WITH_YOUR_API_KEY',
       '',
       '# The model both agents call. Defaults to gpt-4o-mini when unset.',
       '#OPENAI_MODEL_ID=gpt-4o-mini',

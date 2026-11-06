@@ -49,7 +49,7 @@ test('every workflow ships, with its Python renamed so Nuitka leaves it alone', 
   expect(files.some((path) => path.endsWith(`.py${PYTHON_BUNDLE_SUFFIX}`))).toBe(true);
 });
 
-test('a workflow needing a key ships a .env naming it, left empty', () => {
+test('a workflow needing a key ships a .env naming it, with a placeholder', () => {
   const files = bundleContents();
 
   for (const starter of STARTERS) {
@@ -59,8 +59,8 @@ test('a workflow needing a key ships a .env naming it, left empty', () => {
       continue;
     }
     expect(env).toBeDefined();
-    // Empty, so `canyonos deploy` warns about the unset key before the build.
-    expect(env).toContain('OPENAI_API_KEY=\n');
+    // Not empty: an empty key stops the agents at startup and fails the deploy.
+    expect(env).toContain('OPENAI_API_KEY=REPLACE_WITH_YOUR_API_KEY\n');
   }
 });
 
