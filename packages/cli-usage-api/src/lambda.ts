@@ -10,8 +10,8 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 
 import { createApp } from './app';
+import { createAwsClients } from './aws';
 import { loadConfig } from './config';
-import { createDynamoClient } from './dynamodb';
 import { createFeedbackRepository } from './feedback.repository';
 import { toRequest, toResult } from './lambda.adapter';
 import { createUsageRepository } from './usage.repository';
@@ -20,10 +20,10 @@ const config = loadConfig();
 if (config.environment !== 'production') {
   throw new Error(`The Lambda serves production only; APP_ENV is ${config.environment}.`);
 }
-const client = createDynamoClient(config);
+const clients = createAwsClients(config);
 const app = createApp({
-  repository: createUsageRepository(client, config.tableName),
-  feedbackRepository: createFeedbackRepository(client, config.feedbackTableName),
+  repository: createUsageRepository(clients.firehose, config.streamName),
+  feedbackRepository: createFeedbackRepository(clients.s3, config.feedbackBucketName),
 });
 
 export const handler = async (

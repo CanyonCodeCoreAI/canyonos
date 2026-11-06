@@ -5,7 +5,8 @@
 End-to-end tests of CLI usage reporting and feedback: the installed `canyonos` command
 runs as a real process with its home in a temporary folder, records events in its
 outbox, and its background sender delivers them to the real usage API, read back from
-DynamoDB. `canyonos feedback` sends to the same API right away.
+the moto server standing in for Firehose and S3. `canyonos feedback` sends to the same API
+right away.
 Run with `bun run cli:usage:test:cli-e2e`; it needs Docker and Bun.
 """
 
@@ -149,19 +150,15 @@ def failing_validate(cli, **options):
 
 
 def stored(stack, installation_id, count):
-    """Wait until DynamoDB holds `count` events of this installation and return them."""
+    """Wait until the store holds `count` events of this installation and return them."""
 
     def enough():
-        items = stack.table.items_where("installation_id", installation_id)
+        items = stack.store.events_where("installation_id", installation_id)
         return items if len(items) >= count else None
 
     items = wait_until(enough)
     assert items is not None, f"expected {count} stored events"
     return items
-
-
-def plain(item):
-    return {key: next(iter(value.values())) for key, value in item.items()}
 
 
 @pytest.fixture
@@ -209,7 +206,7 @@ def test_reporting_is_on_by_default_and_announced_once_before_the_first_event(
     assert NOTICE not in second.stderr
 
     installation_id = cli.settings()["installation_id"]
-    items = [plain(item) for item in stored(usage_stack, installation_id, 2)]
+    items = stored(usage_stack, installation_id, 2)
     outcomes = sorted((item["command"], item["succeeded"]) for item in items)
     assert outcomes == [("new-app", True), ("validate", False)]
 
@@ -229,7 +226,7 @@ def test_turning_it_off_right_after_the_notice_sends_nothing(cli, usage_stack):
     assert not wait_until(cli.lock.exists, timeout=3), "turning it off started a sender"
     assert cli.pending() == []
     assert cli.settings() == {"usage_reporting": False, "installation_id": None}
-    assert usage_stack.table.items_where("event_id", held["event_id"]) == []
+    assert usage_stack.store.events_where("event_id", held["event_id"]) == []
 
 
 def test_two_first_runs_at_once_share_one_notice_and_hold_both_events(cli):
@@ -274,7 +271,7 @@ def test_opting_in_keeps_one_installation_id(cli, usage_stack):
     new_app(cli)
     failing_validate(cli)
 
-    items = [plain(item) for item in stored(usage_stack, installation_id, 2)]
+    items = stored(usage_stack, installation_id, 2)
     assert {item["installation_id"] for item in items} == {installation_id}
     assert cli.settings()["installation_id"] == installation_id
 
@@ -295,7 +292,7 @@ def test_changing_the_preference_purges_and_starts_a_new_id(
 
     assert second_id != first_id
     assert len(stored(usage_stack, second_id, 1)) == 1
-    assert usage_stack.table.items_where("installation_id", first_id) == []
+    assert usage_stack.store.events_where("installation_id", first_id) == []
 
 
 def test_only_commands_that_act_on_an_app_are_reported(cli, usage_stack):
@@ -307,11 +304,11 @@ def test_only_commands_that_act_on_an_app_are_reported(cli, usage_stack):
     assert new_app(cli).returncode == 0
     assert failing_validate(cli).returncode != 0
 
-    items = [plain(item) for item in stored(usage_stack, installation_id, 2)]
+    items = stored(usage_stack, installation_id, 2)
     outcomes = sorted((item["command"], item["succeeded"]) for item in items)
     assert outcomes == [("new-app", True), ("validate", False)]
     assert wait_until(lambda: cli.pending() == [])
-    assert len(usage_stack.table.items_where("installation_id", installation_id)) == 2
+    assert len(usage_stack.store.events_where("installation_id", installation_id)) == 2
 
 
 def test_an_unreachable_api_changes_nothing_and_keeps_the_events(
@@ -335,7 +332,7 @@ def test_an_unreachable_api_changes_nothing_and_keeps_the_events(
     failing_validate(cli)
 
     items = stored(usage_stack, installation_id, 2)
-    assert queued["event_id"] in {plain(item)["event_id"] for item in items}
+    assert queued["event_id"] in {item["event_id"] for item in items}
     assert wait_until(lambda: cli.pending() == [])
 
 
@@ -343,26 +340,27 @@ def test_events_wait_while_the_api_cannot_store_them(cli, usage_stack):
     installation_id = opt_in(cli)
     failing_validate(cli, usage_url="")
     new_app(cli, usage_url="")
-    usage_stack.stop_dynamo()
+    usage_stack.stop_store()
     try:
         cli.run_and_settle("validate", str(cli.home / "missing.canyon"))
         queued = {event["event_id"] for event in cli.pending_events()}
         assert len(queued) == 3
     finally:
-        usage_stack.start_dynamo()
+        usage_stack.start_store()
 
     failing_validate(cli)
 
     items = stored(usage_stack, installation_id, 4)
-    assert queued < {plain(item)["event_id"] for item in items}
+    assert queued < {item["event_id"] for item in items}
     assert wait_until(lambda: cli.pending() == [])
 
 
-def test_a_resent_event_is_stored_once(cli, usage_stack):
+def test_a_resent_event_is_stored_again_under_the_same_id(cli, usage_stack):
     installation_id = opt_in(cli)
     new_app(cli, usage_url="")
     [path] = cli.pending()
     contents = path.read_bytes()
+    resent_id = json.loads(contents)["event_id"]
 
     failing_validate(cli)
     stored(usage_stack, installation_id, 2)
@@ -372,13 +370,13 @@ def test_a_resent_event_is_stored_once(cli, usage_stack):
     cli.run_and_settle("validate", str(cli.home / "missing.canyon"))
 
     assert cli.pending() == []
-    items = usage_stack.table.items_where("installation_id", installation_id)
-    event_ids = [plain(item)["event_id"] for item in items]
-    assert len(event_ids) == 3
+    items = stored(usage_stack, installation_id, 4)
+    event_ids = [item["event_id"] for item in items]
+    assert event_ids.count(resent_id) == 2
     assert len(set(event_ids)) == 3
 
 
-def test_only_the_contract_fields_reach_the_table(cli, usage_stack):
+def test_only_the_contract_fields_are_stored(cli, usage_stack):
     installation_id = opt_in(cli)
     secret_dir = cli.home / "acme-secret-project" / "sk-live-path-token"
     result = cli.run(
@@ -408,9 +406,9 @@ def test_feedback_while_reporting_is_on_carries_the_installation_id(cli, usage_s
     result = cli.run("feedback", "deploy hangs at step 3")
 
     assert result.returncode == 0, result.stderr
-    [item] = usage_stack.feedback_table.items_where("installation_id", installation_id)
+    [item] = usage_stack.store.feedback_where("installation_id", installation_id)
     assert set(item) == FEEDBACK_KEYS | {"installation_id"}
-    assert plain(item)["message"] == "deploy hangs at step 3"
+    assert item["message"] == "deploy hangs at step 3"
 
 
 def test_feedback_before_the_first_event_asks_first_and_sends_no_id(cli, usage_stack):
@@ -420,7 +418,7 @@ def test_feedback_before_the_first_event_asks_first_and_sends_no_id(cli, usage_s
 
     assert status == 0
     assert "Thanks, your feedback was sent." in output
-    [item] = usage_stack.feedback_table.items_where("message", message)
+    [item] = usage_stack.store.feedback_where("message", message)
     assert set(item) == FEEDBACK_KEYS
 
 
@@ -436,7 +434,7 @@ def test_feedback_declined_or_without_a_terminal_sends_nothing(cli, usage_stack)
     assert result.returncode == 1
     assert "--yes" in result.stderr
     for message in (declined, no_terminal):
-        assert usage_stack.feedback_table.items_where("message", message) == []
+        assert usage_stack.store.feedback_where("message", message) == []
 
 
 def test_feedback_outside_the_length_limit_names_the_limit(cli, usage_stack):
@@ -453,5 +451,5 @@ def test_feedback_with_yes_sends_without_asking_and_without_an_id(cli, usage_sta
     result = cli.run("feedback", "--yes", message)
 
     assert result.returncode == 0, result.stderr
-    [item] = usage_stack.feedback_table.items_where("message", message)
+    [item] = usage_stack.store.feedback_where("message", message)
     assert set(item) == FEEDBACK_KEYS

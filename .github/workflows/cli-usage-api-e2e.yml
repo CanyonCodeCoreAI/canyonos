@@ -49,7 +49,7 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # The tests start, stop and remove their own DynamoDB Local container, pinned in
+      # The tests start, stop and remove their own moto server container, pinned in
       # packages/cli-usage-api/docker-compose.yml, so they can take it down mid-run.
       - name: Run E2E Tests
         run: bun run cli:usage:test:e2e
@@ -68,7 +68,7 @@ jobs:
         run: uv sync --locked
 
       # Runs the real `canyonos` CLI against the real API; tests/cli_usage starts and
-      # removes its own DynamoDB Local container.
+      # removes its own moto server container.
       - name: Run CLI feature E2E Tests
         run: bun run cli:usage:test:cli-e2e
 

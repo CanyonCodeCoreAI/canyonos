@@ -121,7 +121,7 @@ describe('toResult', () => {
 
 describe('the Lambda round trip', () => {
   const repository: UsageRepository = {
-    storeEvents: async (events) => ({ stored: events.length, duplicates: 0 }),
+    storeEvents: async (events) => ({ stored: events.length }),
   };
   const app = createApp({ repository, feedbackRepository: unusedFeedbackRepository });
   const invoke = async (event: APIGatewayProxyEventV2) =>
@@ -131,7 +131,7 @@ describe('the Lambda round trip', () => {
     const body = Buffer.from(JSON.stringify({ events: usageEvents(2) })).toString('base64');
     const result = await invoke(apiGatewayEvent({ body, isBase64Encoded: true }));
     expect(result.statusCode).toBe(200);
-    expect(JSON.parse(result.body ?? '')).toEqual({ stored: 2, duplicates: 0 });
+    expect(JSON.parse(result.body ?? '')).toEqual({ stored: 2 });
   });
 
   test('rejects an invalid batch', async () => {

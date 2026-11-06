@@ -17,7 +17,7 @@ const recordingRepository = () => {
   const repository: UsageRepository = {
     async storeEvents(events, receivedAt) {
       calls.push({ events, receivedAt });
-      return { stored: events.length, duplicates: 0 };
+      return { stored: events.length };
     },
   };
   return { calls, repository };
@@ -52,7 +52,7 @@ describe('POST /usage/events', () => {
     const { status, body } = await send(post({ events }), repository);
 
     expect(status).toBe(200);
-    expect(body).toEqual({ stored: 2, duplicates: 0 });
+    expect(body).toEqual({ stored: 2 });
     expect(calls).toEqual([{ events, receivedAt: RECEIVED_AT.toISOString() }]);
   });
 

@@ -10,7 +10,7 @@ from cli_usage_stack import UsageStack
 
 @pytest.fixture(scope="session")
 def usage_stack():
-    """The real usage API and its DynamoDB Local for the whole run, removed at the end."""
+    """The real usage API and its moto server for the whole run, removed at the end."""
     missing = [tool for tool in ("docker", "bun") if shutil.which(tool) is None]
     if missing:
         pytest.fail(f"The CLI usage end-to-end tests need {' and '.join(missing)}.")

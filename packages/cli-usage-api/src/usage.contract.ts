@@ -58,10 +58,7 @@ export const UsageEventBatchSchema = z
   })
   .strict();
 
-export const UsageEventsStoredSchema = z.object({
-  stored: z.number().int().nonnegative(),
-  duplicates: z.number().int().nonnegative(),
-});
+export const UsageEventsStoredSchema = z.object({ stored: z.number().int().nonnegative() });
 
 export type UsageEvent = z.infer<typeof UsageEventSchema>;
 export type UsageEventBatch = z.infer<typeof UsageEventBatchSchema>;

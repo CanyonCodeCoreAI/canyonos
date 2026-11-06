@@ -128,7 +128,7 @@ export const createApp = ({
       '/usage/events',
       async ({ body }) => {
         const result = await repository.storeEvents(body.events, now().toISOString());
-        log('usage_events_stored', { stored: result.stored, duplicates: result.duplicates });
+        log('usage_events_stored', { stored: result.stored });
         return result;
       },
       {

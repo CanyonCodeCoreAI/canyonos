@@ -3,33 +3,37 @@
 
 /**
  * Configuration of the CLI usage API. Every environment variable the service reads is read here.
- * Production talks to AWS DynamoDB over HTTPS with the Lambda's role; every other environment
- * talks to a DynamoDB Local on the loopback interface with dummy credentials, so neither a
- * developer's AWS profile nor a test can ever reach a real table.
+ * Production talks to AWS Firehose and S3 over HTTPS with the Lambda's role; every other
+ * environment talks to a moto server on the loopback interface with dummy credentials, so neither
+ * a developer's AWS profile nor a test can ever reach a real stream or bucket.
  */
 
 const APP_ENVIRONMENTS = ['development', 'test', 'production'] as const;
 export type AppEnvironment = (typeof APP_ENVIRONMENTS)[number];
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-const SDK_ENDPOINT_OVERRIDES = ['AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_DYNAMODB'] as const;
+const SDK_ENDPOINT_OVERRIDES = [
+  'AWS_ENDPOINT_URL',
+  'AWS_ENDPOINT_URL_FIREHOSE',
+  'AWS_ENDPOINT_URL_S3',
+] as const;
 
 export const LOCAL_DEFAULTS = {
-  tableName: 'canyonos-cli-usage-events',
-  feedbackTableName: 'canyonos-cli-feedback',
+  streamName: 'canyonos-cli-usage-events',
+  feedbackBucketName: 'canyonos-cli-usage',
   region: 'us-east-1',
-  dynamodbEndpoint: 'http://127.0.0.1:8010',
+  awsEndpoint: 'http://127.0.0.1:8010',
   port: 8787,
 } as const;
 
-export type DynamoTarget = { kind: 'aws' } | { kind: 'local'; endpoint: string };
+export type AwsTarget = { kind: 'aws' } | { kind: 'local'; endpoint: string };
 
 export interface CliUsageConfig {
   readonly environment: AppEnvironment;
-  readonly tableName: string;
-  readonly feedbackTableName: string;
+  readonly streamName: string;
+  readonly feedbackBucketName: string;
   readonly region: string;
-  readonly dynamodb: DynamoTarget;
+  readonly aws: AwsTarget;
   readonly port: number;
 }
 
@@ -58,43 +62,43 @@ function requireLoopbackEndpoint(value: string, environment: AppEnvironment): st
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`CLI_USAGE_DYNAMODB_ENDPOINT is not a URL: ${value}`);
+    throw new Error(`CLI_USAGE_AWS_ENDPOINT is not a URL: ${value}`);
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`CLI_USAGE_DYNAMODB_ENDPOINT must use http or https, got ${url.protocol}`);
+    throw new Error(`CLI_USAGE_AWS_ENDPOINT must use http or https, got ${url.protocol}`);
   }
   if (!LOOPBACK_HOSTS.has(url.hostname)) {
     throw new Error(
-      `APP_ENV=${environment} only talks to a DynamoDB Local on the loopback interface; ` +
-        `CLI_USAGE_DYNAMODB_ENDPOINT points at ${url.hostname}.`
+      `APP_ENV=${environment} only talks to a moto server on the loopback interface; ` +
+        `CLI_USAGE_AWS_ENDPOINT points at ${url.hostname}.`
     );
   }
   return url.origin;
 }
 
 function loadProductionConfig(env: EnvSource): CliUsageConfig {
-  if (present(env.CLI_USAGE_DYNAMODB_ENDPOINT)) {
+  if (present(env.CLI_USAGE_AWS_ENDPOINT)) {
     throw new Error(
-      'APP_ENV=production uses the regional AWS DynamoDB endpoint over HTTPS; ' +
-        'unset CLI_USAGE_DYNAMODB_ENDPOINT.'
+      'APP_ENV=production uses the regional AWS endpoints over HTTPS; ' +
+        'unset CLI_USAGE_AWS_ENDPOINT.'
     );
   }
   const sdkOverride = SDK_ENDPOINT_OVERRIDES.find((name) => present(env[name]));
   if (sdkOverride) {
     throw new Error(`APP_ENV=production refuses an endpoint override; unset ${sdkOverride}.`);
   }
-  const tableName = present(env.CLI_USAGE_TABLE_NAME);
-  if (!tableName) throw new Error('APP_ENV=production requires CLI_USAGE_TABLE_NAME.');
-  const feedbackTableName = present(env.CLI_FEEDBACK_TABLE_NAME);
-  if (!feedbackTableName) throw new Error('APP_ENV=production requires CLI_FEEDBACK_TABLE_NAME.');
+  const streamName = present(env.CLI_USAGE_STREAM_NAME);
+  if (!streamName) throw new Error('APP_ENV=production requires CLI_USAGE_STREAM_NAME.');
+  const feedbackBucketName = present(env.CLI_FEEDBACK_BUCKET_NAME);
+  if (!feedbackBucketName) throw new Error('APP_ENV=production requires CLI_FEEDBACK_BUCKET_NAME.');
   const region = present(env.AWS_REGION);
   if (!region) throw new Error('APP_ENV=production requires AWS_REGION.');
   return {
     environment: 'production',
-    tableName,
-    feedbackTableName,
+    streamName,
+    feedbackBucketName,
     region,
-    dynamodb: { kind: 'aws' },
+    aws: { kind: 'aws' },
     port: resolvePort(present(env.CLI_USAGE_PORT)),
   };
 }
@@ -108,13 +112,13 @@ export function loadConfig(env: EnvSource = process.env): CliUsageConfig {
   if (environment === 'production') return loadProductionConfig(env);
   return {
     environment,
-    tableName: present(env.CLI_USAGE_TABLE_NAME) ?? LOCAL_DEFAULTS.tableName,
-    feedbackTableName: present(env.CLI_FEEDBACK_TABLE_NAME) ?? LOCAL_DEFAULTS.feedbackTableName,
+    streamName: present(env.CLI_USAGE_STREAM_NAME) ?? LOCAL_DEFAULTS.streamName,
+    feedbackBucketName: present(env.CLI_FEEDBACK_BUCKET_NAME) ?? LOCAL_DEFAULTS.feedbackBucketName,
     region: LOCAL_DEFAULTS.region,
-    dynamodb: {
+    aws: {
       kind: 'local',
       endpoint: requireLoopbackEndpoint(
-        present(env.CLI_USAGE_DYNAMODB_ENDPOINT) ?? LOCAL_DEFAULTS.dynamodbEndpoint,
+        present(env.CLI_USAGE_AWS_ENDPOINT) ?? LOCAL_DEFAULTS.awsEndpoint,
         environment
       ),
     },

@@ -2,38 +2,36 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * End-to-end tests of the CLI usage API: the real server over HTTP against a disposable
- * DynamoDB Local container this file starts, stops, restarts and removes. The table is read back
- * with a test-owned client, which the test configuration keeps on the loopback interface.
+ * End-to-end tests of the CLI usage API: the real server over HTTP against a disposable moto
+ * server container this file starts, stops, restarts and removes. The bucket is read back with
+ * test-owned clients, which the test configuration keeps on the loopback interface.
  */
 
 import { join } from 'node:path';
 
-import { GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { GetObjectCommand, NoSuchKey, paginateListObjectsV2 } from '@aws-sdk/client-s3';
 import { $ } from 'bun';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { Subprocess } from 'bun';
 
+import { createAwsClients } from '../src/aws';
 import { loadConfig } from '../src/config';
-import { createDynamoClient } from '../src/dynamodb';
 import { MAX_FEEDBACK_MESSAGE_LENGTH } from '../src/feedback.contract';
-import { FEEDBACK_TABLE_PARTITION_KEY } from '../src/feedback.repository';
 import { feedback, usageEvent, usageEvents } from '../src/test.fixtures';
 import { MAX_REQUEST_BODY_BYTES } from '../src/usage.contract';
-import { USAGE_TABLE_PARTITION_KEY } from '../src/usage.repository';
-import { ensureTable, waitForDynamo } from '../src/usage.table';
+import { createBucketAndStream, USAGE_EVENTS_PREFIX, waitForMoto } from '../src/usage.store';
+import type { AwsClients } from '../src/aws';
 import type { UsageEvent } from '../src/usage.contract';
 
 const PACKAGE_DIR = join(import.meta.dir, '..');
 const CONTAINER = `canyonos-cli-usage-e2e-${process.pid}`;
-const TABLE = 'canyonos-cli-usage-events-e2e';
-const FEEDBACK_TABLE = 'canyonos-cli-feedback-e2e';
+const STREAM = 'canyonos-cli-usage-events-e2e';
+const BUCKET = 'canyonos-cli-usage-e2e';
 
 const composeImage = async () => {
   const compose = await Bun.file(join(PACKAGE_DIR, 'docker-compose.yml')).text();
   const image = /^\s*image:\s*(\S+)$/m.exec(compose)?.[1];
-  if (!image) throw new Error('docker-compose.yml names no DynamoDB Local image');
+  if (!image) throw new Error('docker-compose.yml names no moto image');
   return image;
 };
 
@@ -44,18 +42,19 @@ const freePort = () => {
   return port;
 };
 
-const dynamoPort = freePort();
+const motoPort = freePort();
 const apiPort = freePort();
 const apiUrl = `http://127.0.0.1:${apiPort}`;
 const testEnv = {
   APP_ENV: 'test',
-  CLI_USAGE_DYNAMODB_ENDPOINT: `http://127.0.0.1:${dynamoPort}`,
-  CLI_USAGE_TABLE_NAME: TABLE,
-  CLI_FEEDBACK_TABLE_NAME: FEEDBACK_TABLE,
+  CLI_USAGE_AWS_ENDPOINT: `http://127.0.0.1:${motoPort}`,
+  CLI_USAGE_STREAM_NAME: STREAM,
+  CLI_FEEDBACK_BUCKET_NAME: BUCKET,
   CLI_USAGE_PORT: String(apiPort),
 };
+const testConfig = loadConfig(testEnv);
 
-let dynamo: DynamoDBClient;
+let clients: AwsClients;
 let server: Subprocess | undefined;
 
 const waitForApi = async () => {
@@ -83,40 +82,54 @@ const postEvents = (events: unknown[]) => postBody(JSON.stringify({ events }));
 const postFeedback = (body: unknown) =>
   postBody(JSON.stringify(body), 'application/json', '/feedback');
 
-const storedItem = async (id: string, table = TABLE, key = USAGE_TABLE_PARTITION_KEY) => {
-  const { Item } = await dynamo.send(
-    new GetItemCommand({
-      TableName: table,
-      Key: { [key]: { S: id } },
-      ConsistentRead: true,
-    })
+const readObject = async (key: string) => {
+  const object = await clients.s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  return (await object.Body?.transformToString()) ?? '';
+};
+
+/** Every stored copy of the event with this id, in the order it was stored. */
+const storedEvent = async (eventId: string) => {
+  const copies: Record<string, unknown>[] = [];
+  const pages = paginateListObjectsV2(
+    { client: clients.s3 },
+    { Bucket: BUCKET, Prefix: USAGE_EVENTS_PREFIX }
   );
-  return Item;
+  for await (const page of pages) {
+    for (const { Key } of page.Contents ?? []) {
+      for (const line of (await readObject(Key ?? '')).split('\n').filter(Boolean)) {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        if (event.event_id === eventId) copies.push(event);
+      }
+    }
+  }
+  return copies;
+};
+
+const storedFeedback = async (feedbackId: string) => {
+  try {
+    return JSON.parse(await readObject(`feedback/${feedbackId}.json`)) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof NoSuchKey) return undefined;
+    throw error;
+  }
 };
 
 const expectStored = async (events: readonly UsageEvent[]) => {
   for (const event of events) {
-    const item = await storedItem(event.event_id);
-    expect(item).toMatchObject({
-      event_id: { S: event.event_id },
-      installation_id: { S: event.installation_id },
-      command: { S: event.command },
-      succeeded: { BOOL: event.succeeded },
-      occurred_at: { S: event.occurred_at },
-      cli_version: { S: event.cli_version },
-    });
+    expect(await storedEvent(event.event_id)).toEqual([
+      { ...event, received_at: expect.any(String) },
+    ]);
   }
 };
 
 beforeAll(async () => {
   const image = await composeImage();
-  await $`docker run -d --name ${CONTAINER} -p 127.0.0.1:${dynamoPort}:8000 ${image} -jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal`.quiet();
+  await $`docker run -d --name ${CONTAINER} -p 127.0.0.1:${motoPort}:5000 ${image}`.quiet();
 
-  dynamo = createDynamoClient(loadConfig(testEnv));
-  await waitForDynamo(dynamo);
-  expect(await ensureTable(dynamo, TABLE, USAGE_TABLE_PARTITION_KEY)).toBe('created');
-  expect(await ensureTable(dynamo, TABLE, USAGE_TABLE_PARTITION_KEY)).toBe('existing');
-  expect(await ensureTable(dynamo, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY)).toBe('created');
+  clients = createAwsClients(testConfig);
+  await waitForMoto(clients);
+  await createBucketAndStream(clients, testConfig);
+  await createBucketAndStream(clients, testConfig);
 
   server = Bun.spawn(['bun', 'run', 'src/server.ts'], {
     cwd: PACKAGE_DIR,
@@ -128,14 +141,15 @@ beforeAll(async () => {
 
 const removeServerAndContainer = () => {
   server?.kill();
-  dynamo?.destroy();
+  clients?.firehose.destroy();
+  clients?.s3.destroy();
   Bun.spawnSync(['docker', 'rm', '-f', CONTAINER], { stdout: 'ignore', stderr: 'ignore' });
 };
 
 process.on('exit', removeServerAndContainer);
 afterAll(removeServerAndContainer);
 
-describe('POST /usage/events against DynamoDB Local', () => {
+describe('POST /usage/events against moto', () => {
   test('stores a single event with the time the server received it', async () => {
     const event = usageEvent({ command: 'convert', succeeded: false });
     const before = Date.now();
@@ -143,8 +157,8 @@ describe('POST /usage/events against DynamoDB Local', () => {
     const response = await postEvents([event]);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ stored: 1, duplicates: 0 });
-    const item = await storedItem(event.event_id);
+    expect(await response.json()).toEqual({ stored: 1 });
+    const [item] = await storedEvent(event.event_id);
     expect(Object.keys(item ?? {}).sort()).toEqual([
       'cli_version',
       'command',
@@ -154,7 +168,7 @@ describe('POST /usage/events against DynamoDB Local', () => {
       'received_at',
       'succeeded',
     ]);
-    expect(Date.parse(item?.received_at?.S ?? '')).toBeGreaterThanOrEqual(before - 1000);
+    expect(Date.parse(String(item?.received_at))).toBeGreaterThanOrEqual(before - 1000);
     await expectStored([event]);
   });
 
@@ -164,31 +178,19 @@ describe('POST /usage/events against DynamoDB Local', () => {
     const response = await postEvents(events);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ stored: 25, duplicates: 0 });
+    expect(await response.json()).toEqual({ stored: 25 });
     await expectStored(events);
   });
 
-  test('stores a resent event once and keeps the first copy', async () => {
+  test('stores a resent event again under the same event id', async () => {
     const events = usageEvents(3);
-    const first = await postEvents(events);
-    expect(await first.json()).toEqual({ stored: 3, duplicates: 0 });
-    const firstReceivedAt = (await storedItem(events[0]?.event_id ?? ''))?.received_at;
+    expect(await (await postEvents(events)).json()).toEqual({ stored: 3 });
 
     const resent = await postEvents([...events, usageEvent()]);
 
     expect(resent.status).toBe(200);
-    expect(await resent.json()).toEqual({ stored: 1, duplicates: 3 });
-    expect((await storedItem(events[0]?.event_id ?? ''))?.received_at).toEqual(firstReceivedAt);
-  });
-
-  test('stores an event repeated inside one batch once', async () => {
-    const event = usageEvent();
-
-    const response = await postEvents([event, event]);
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ stored: 1, duplicates: 1 });
-    await expectStored([event]);
+    expect(await resent.json()).toEqual({ stored: 4 });
+    expect(await storedEvent(events[0]?.event_id ?? '')).toHaveLength(2);
   });
 
   test('rejects a body that is not JSON', async () => {
@@ -209,7 +211,7 @@ describe('POST /usage/events against DynamoDB Local', () => {
     const response = await postEvents([valid, { ...usageEvent(), command: 'status' }]);
 
     expect(response.status).toBe(422);
-    expect(await storedItem(valid.event_id)).toBeUndefined();
+    expect(await storedEvent(valid.event_id)).toEqual([]);
   });
 
   test('rejects fields outside the contract', async () => {
@@ -223,7 +225,7 @@ describe('POST /usage/events against DynamoDB Local', () => {
   });
 });
 
-describe('POST /feedback against DynamoDB Local', () => {
+describe('POST /feedback against moto', () => {
   test('stores feedback without an installation id, stamped with the time received', async () => {
     const sent = feedback();
     const before = Date.now();
@@ -232,7 +234,7 @@ describe('POST /feedback against DynamoDB Local', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ stored: true });
-    const item = await storedItem(sent.feedback_id, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY);
+    const item = await storedFeedback(sent.feedback_id);
     expect(Object.keys(item ?? {}).sort()).toEqual([
       'arch',
       'cli_version',
@@ -241,8 +243,8 @@ describe('POST /feedback against DynamoDB Local', () => {
       'os',
       'received_at',
     ]);
-    expect(item).toMatchObject({ message: { S: sent.message }, os: { S: 'Darwin' } });
-    expect(Date.parse(item?.received_at?.S ?? '')).toBeGreaterThanOrEqual(before - 1000);
+    expect(item).toMatchObject({ message: sent.message, os: 'Darwin' });
+    expect(Date.parse(String(item?.received_at))).toBeGreaterThanOrEqual(before - 1000);
   });
 
   test('stores the installation id when one is sent', async () => {
@@ -250,12 +252,7 @@ describe('POST /feedback against DynamoDB Local', () => {
 
     expect((await postFeedback(sent)).status).toBe(200);
 
-    expect(
-      (await storedItem(sent.feedback_id, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY))
-        ?.installation_id
-    ).toEqual({
-      S: sent.installation_id ?? '',
-    });
+    expect((await storedFeedback(sent.feedback_id))?.installation_id).toBe(sent.installation_id);
   });
 
   test('keeps the first copy of a resent feedback', async () => {
@@ -266,9 +263,7 @@ describe('POST /feedback against DynamoDB Local', () => {
 
     expect(resent.status).toBe(200);
     expect(await resent.json()).toEqual({ stored: false });
-    expect(
-      (await storedItem(sent.feedback_id, FEEDBACK_TABLE, FEEDBACK_TABLE_PARTITION_KEY))?.message
-    ).toEqual({ S: sent.message });
+    expect((await storedFeedback(sent.feedback_id))?.message).toBe(sent.message);
   });
 
   test('rejects an empty or too long message and fields outside the contract', async () => {
@@ -286,12 +281,11 @@ describe('POST /feedback against DynamoDB Local', () => {
   });
 });
 
-describe('when DynamoDB is unavailable', () => {
-  const earlier = usageEvent();
+describe('when the store is unavailable', () => {
   const pending = usageEvents(5);
 
   test('answers 503 instead of success', async () => {
-    expect((await postEvents([earlier])).status).toBe(200);
+    expect((await postEvents([usageEvent()])).status).toBe(200);
     await $`docker stop ${CONTAINER}`.quiet();
 
     const response = await postEvents(pending);
@@ -307,14 +301,16 @@ describe('when DynamoDB is unavailable', () => {
     expect(await response.json()).toMatchObject({ error: 'internal_error' });
   });
 
-  test('stores the resent batch once DynamoDB is back, keeping the earlier events', async () => {
+  // moto keeps its data in memory, so the restarted server starts empty.
+  test('stores the resent batch once the store is back', async () => {
     await $`docker start ${CONTAINER}`.quiet();
-    await waitForDynamo(dynamo);
+    await waitForMoto(clients);
+    await createBucketAndStream(clients, testConfig);
 
     const response = await postEvents(pending);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ stored: 5, duplicates: 0 });
-    await expectStored([earlier, ...pending]);
+    expect(await response.json()).toEqual({ stored: 5 });
+    await expectStored(pending);
   });
 });

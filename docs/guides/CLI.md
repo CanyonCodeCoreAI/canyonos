@@ -52,7 +52,7 @@ Each event holds only these fields:
 
 | Field | What it holds |
 |---|---|
-| `event_id` | A random id for this event, so it is stored once even if it is sent twice |
+| `event_id` | A random id for this event, so it is counted once even if it is sent twice |
 | `installation_id` | The random id of this installation, made with the first event or when you turn reporting back on |
 | `command` | The command that ran, one of those listed above |
 | `succeeded` | Whether the command succeeded |
