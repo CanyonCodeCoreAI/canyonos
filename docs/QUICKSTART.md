@@ -27,7 +27,7 @@ stages:
 | 3   | Workflow Setup       | `cd ./<workflow>`                     | Copies the workflow out of the install, then `cd`s in                     |
 | 4   | Deployment           | `canyonos deploy`                     | Builds an image per agent, then starts the workflow                       |
 | 5   | Deployment Health    | `canyonos doctor`                     | Checks the running deploy: controller, Redis, agents, endpoint, dashboard |
-| 6   | First Request        | `curl -X POST …`                      | Sends your first request                                                  |
+| 6   | First Request        | `curl -X POST …`                      | Sends your first request and fills the dashboard with example runs        |
 
 A workflow that needs an API key ships a `.env` naming it. The quickstart points
 you at that file after setup; open it and set your key before the deploy stage.
@@ -35,6 +35,7 @@ you at that file after setup; open it and set your key before the deploy stage.
 - You need Docker running. Hello World needs no API key; the other workflows do.
 - The workflows ship with the CLI, so nothing is downloaded and a first run works offline.
 - Ctrl-C stops the run. Anything already deployed keeps running.
+- After your first request, the dashboard is filled with example runs of the same workflow. They are samples, not your usage.
 - At the end it offers `canyonos clean` to remove deployment.
 
 ## Your own project

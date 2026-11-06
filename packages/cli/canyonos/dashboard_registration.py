@@ -19,6 +19,9 @@ API_PORT = 3000
 ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 1
 TIMEOUT_SECONDS = 10
+# Replaying a recorded week writes tens of thousands of rows; seconds on a fast
+# machine, longer on a slow one under Docker.
+SAMPLE_DATA_TIMEOUT_SECONDS = 60
 
 
 class RegistrationError(Exception):
@@ -36,14 +39,14 @@ def _error_message(error: urllib.error.HTTPError) -> str:
     return f"the dashboard api answered HTTP {error.code}"
 
 
-def _post(url: str, payload: bytes) -> dict:
+def _post(url: str, payload: bytes, timeout: float = TIMEOUT_SECONDS) -> dict:
     request = urllib.request.Request(
         url,
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         registered = json.loads(response.read())
     if not isinstance(registered, dict):
         raise RegistrationError("the dashboard api answered with an unexpected body")
@@ -72,3 +75,24 @@ def register_project(redis_port: int, api_port: int = API_PORT) -> dict:
         except (OSError, ValueError) as e:
             failure = f"the dashboard api did not answer: {e}"
     raise RegistrationError(failure)
+
+
+def add_sample_data(project_id: str, workflow: str, api_port: int = API_PORT) -> dict:
+    """Ask the dashboard to add its recorded run of `workflow` to this project.
+
+    The api replays a run of that bundled workflow it ships, spread across the
+    week ending now, so a first request lands among a week of earlier ones
+    instead of alone. The body names a workflow, never data: the only data the
+    api can write here is its own.
+
+    Returns the api's `{spans, logs, metrics}`. Raises RegistrationError with
+    the api's message when it does not answer.
+    """
+    url = f"http://127.0.0.1:{api_port}/projects/{project_id}/sample-data"
+    payload = json.dumps({"workflow": workflow}).encode()
+    try:
+        return _post(url, payload, SAMPLE_DATA_TIMEOUT_SECONDS)
+    except urllib.error.HTTPError as e:
+        raise RegistrationError(_error_message(e)) from None
+    except (OSError, ValueError) as e:
+        raise RegistrationError(f"the dashboard api did not answer: {e}") from None

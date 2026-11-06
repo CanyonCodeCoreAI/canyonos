@@ -58,7 +58,7 @@ def ready(monkeypatch):
     monkeypatch.setattr(quickstart, "_prepare_project", lambda folder: True)
     monkeypatch.setattr(quickstart, "_ask_for_keys", lambda names: None)
     monkeypatch.setattr(quickstart, "_deploy", lambda: True)
-    monkeypatch.setattr(quickstart, "_first_request", lambda: True)
+    monkeypatch.setattr(quickstart, "_first_request", lambda workflow: True)
     monkeypatch.setattr(quickstart, "_offer_clean", lambda: True)
 
 
@@ -903,6 +903,7 @@ def test_a_failed_request_still_offers_to_take_the_deploy_down(monkeypatch):
     types(monkeypatch, "canyonos doctor")
     monkeypatch.setattr(quickstart, "run_doctor", lambda: True)
     monkeypatch.setattr(quickstart, "_send_first_request", lambda: False)
+    monkeypatch.setattr(quickstart, "_add_sample_data", lambda workflow: None)
     offered = []
     monkeypatch.setattr(
         quickstart, "_offer_clean", lambda: offered.append(True) or True
@@ -910,3 +911,79 @@ def test_a_failed_request_still_offers_to_take_the_deploy_down(monkeypatch):
 
     assert quickstart.run_quickstart() is False
     assert offered == [True]
+
+
+def stage_six(monkeypatch, answered, calls):
+    """Stand in for everything stage 6 does except the order it does it in."""
+    monkeypatch.setattr(quickstart, "_step", lambda n: None)
+    monkeypatch.setattr(
+        quickstart, "_send_first_request", lambda: calls.append("request") or answered
+    )
+    monkeypatch.setattr(
+        quickstart, "_add_sample_data", lambda workflow: calls.append(workflow)
+    )
+    monkeypatch.setattr(quickstart, "_show_dashboard", lambda caption=None: None)
+    monkeypatch.setattr(quickstart, "_offer_clean", lambda: True)
+
+
+@pytest.mark.parametrize("workflow", sorted(quickstart.STARTERS))
+def test_the_chosen_workflows_runs_are_added_after_the_request(monkeypatch, workflow):
+    """Every bundled workflow ships a recorded week, and it is asked for after
+    the request, never before: it is there to give the user's own trace
+    somewhere to sit."""
+    calls = []
+    stage_six(monkeypatch, True, calls)
+
+    assert quickstart._first_request(workflow) is True
+    assert calls == ["request", workflow]
+
+
+def test_a_request_that_failed_still_gets_the_example_runs(monkeypatch):
+    """A workflow ships a placeholder key, so its first request fails until
+    someone fills one in -- and that is the run that most needs a dashboard with
+    something in it. The stage still reports the failure."""
+    calls = []
+    stage_six(monkeypatch, False, calls)
+
+    assert quickstart._first_request("portfolio") is False
+    assert calls == ["request", "portfolio"]
+
+
+def test_the_workflow_name_reaches_the_dashboard_api(monkeypatch, capsys):
+    """The api keeps one recording per workflow, picked by the name sent."""
+    sent = []
+    monkeypatch.setattr(quickstart, "load_state", lambda: {"port": 8000})
+    monkeypatch.setattr(quickstart, "redis_port_of", lambda state: 6379)
+    monkeypatch.setattr(
+        quickstart, "register_project", lambda port: {"project_id": "p-1"}
+    )
+    monkeypatch.setattr(
+        quickstart,
+        "add_sample_data",
+        lambda project_id, workflow: (
+            sent.append((project_id, workflow)) or {"spans": 3, "logs": 1, "metrics": 9}
+        ),
+    )
+
+    quickstart._add_sample_data("helloworld")
+
+    assert sent == [("p-1", "helloworld")]
+    assert "3 spans" in shown(capsys)
+
+
+def test_a_dashboard_that_will_not_take_the_example_runs_does_not_stop_the_run(
+    monkeypatch, capsys
+):
+    """The request landed and the dashboard works either way; this only decides
+    whether it opens full or nearly empty."""
+
+    def refuse(port):
+        raise quickstart.RegistrationError("the dashboard api did not answer")
+
+    monkeypatch.setattr(quickstart, "load_state", lambda: {"port": 8000})
+    monkeypatch.setattr(quickstart, "redis_port_of", lambda state: 6379)
+    monkeypatch.setattr(quickstart, "register_project", refuse)
+
+    quickstart._add_sample_data("portfolio")
+
+    assert "kept only this run's trace" in shown(capsys)

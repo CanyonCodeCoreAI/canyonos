@@ -18,7 +18,10 @@ import {
   ProjectIdParams,
   ProjectStatsSchema,
   ProjectSummarySchema,
+  SampleDataBody,
+  SampleDataSchema,
 } from './projects.types';
+import { add_sample_data } from './sample-data';
 
 const doc = { tags: ['Projects'], security: [{ bearerAuth: [] }] };
 
@@ -44,6 +47,24 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
     response: { 200: ProjectStatsSchema },
     detail: { ...doc, summary: 'Get project statistics' },
   })
+  .post(
+    '/:project_id/sample-data',
+    ({ params, body }) => add_sample_data(params.project_id, body.workflow),
+    {
+      params: ProjectIdParams,
+      body: SampleDataBody,
+      response: { 200: SampleDataSchema },
+      detail: {
+        ...doc,
+        summary: 'Add the recorded example run to this project',
+        description:
+          'Replays a run of the named bundled workflow that this API ships, spread across the ' +
+          'week ending now, so a first run opens a dashboard with history rather than one ' +
+          'request. The body names a workflow, never data: the only rows it can write are its ' +
+          'own. Repeatable, and it never touches rows the project produced itself.',
+      },
+    }
+  )
   .use(requestsRoutes)
   .use(metricsRoutes)
   .use(monitoringRoutes)

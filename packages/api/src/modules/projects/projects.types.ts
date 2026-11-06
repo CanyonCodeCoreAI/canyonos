@@ -24,6 +24,20 @@ export const ProjectStatsSchema = z.object({
 
 export const ProjectDeletedSchema = z.object({ project_id: z.string().uuid() });
 
+// The bundled workflows that ship a recorded run; anything else is refused, so the route can only
+// ever write data the api itself carries.
+export const SampleWorkflowSchema = z.enum(['helloworld', 'portfolio']);
+
+export const SampleDataBody = z.object({ workflow: SampleWorkflowSchema });
+
+// What the sample run added, so a caller can say so rather than guess.
+export const SampleDataSchema = z.object({
+  spans: z.number().int(),
+  logs: z.number().int(),
+  metrics: z.number().int(),
+});
+
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 export type ProjectStats = z.infer<typeof ProjectStatsSchema>;
 export type ProjectDeleted = z.infer<typeof ProjectDeletedSchema>;
+export type SampleWorkflow = z.infer<typeof SampleWorkflowSchema>;

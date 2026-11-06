@@ -23,11 +23,16 @@ import urllib.request
 from canyonos import ui
 from canyonos.clean import run_clean
 from canyonos.constants import CANYON_DIR
+from canyonos.dashboard_registration import (
+    RegistrationError,
+    add_sample_data,
+    register_project,
+)
 from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos.gc import deploy_status, deployed_endpoint
-from canyonos.init import load_state
+from canyonos.init import load_state, redis_port_of
 from canyonos.new_app import PYTHON_TEMPLATE_SUFFIX
 from canyonos.os_support import write_private_file
 from utils.tui import select_menu
@@ -426,7 +431,7 @@ def _sample_query():
     return None, None
 
 
-def _show_dashboard():
+def _show_dashboard(caption="Watch it run in the dashboard:"):
     """Show the dashboard address in the terminal, or say how to start it. Never
     opens a browser: on a server there is none to open."""
     port = _existing_dashboard_port()
@@ -435,7 +440,7 @@ def _show_dashboard():
         return
 
     ui.blank()
-    ui.say("Watch it run in the dashboard:")
+    ui.say(caption)
     ui.command(f"  {dashboard_url(port)}")
 
 
@@ -534,9 +539,10 @@ def _send_request(command, endpoint):
     return False
 
 
-def _first_request():
-    """Run stage 6: send the first request, then offer to take the deploy down.
-    Returns True when the workflow answered.
+def _first_request(workflow):
+    """Run stage 6: send the first request, fill the dashboard with `workflow`'s
+    recorded runs, then offer to take the deploy down. Returns True when the
+    workflow answered.
 
     The teardown is part of this stage rather than something after the run: the
     deploy is up whether or not the request landed, so the offer has to come
@@ -544,8 +550,29 @@ def _first_request():
     """
     _step(6)
     answered = _send_first_request()
+    # Whether or not the request landed. A workflow shipping a placeholder key
+    # fails its first request until someone fills one in, and that is the run
+    # that most needs a dashboard with something in it.
+    _add_sample_data(workflow)
+    _show_dashboard("See your request and the example runs in the dashboard:")
     _offer_clean()
     return answered
+
+
+def _add_sample_data(workflow):
+    """Ask the dashboard to add `workflow`'s example runs to this project, whether
+    or not the first request worked. Never fails the run."""
+    try:
+        state = load_state()
+        project = register_project(redis_port_of(state))
+        ui.blank()
+        ui.say("Adding example runs to the dashboard...")
+        added = add_sample_data(project["project_id"], workflow)
+    except (KeyError, OSError, RuntimeError, ValueError, RegistrationError) as e:
+        ui.warn(f"The dashboard kept only this run's trace: {e}")
+        return
+
+    ui.ok(f"Added example runs ({added['spans']} spans).")
 
 
 def _send_first_request():
@@ -636,7 +663,7 @@ def _quickstart():
         return False
 
     # Stage 6 makes the teardown offer itself, on its way out either way.
-    if not _first_request():
+    if not _first_request(name):
         return False
 
     ui.blank()

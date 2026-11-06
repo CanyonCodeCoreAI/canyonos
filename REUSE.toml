@@ -26,6 +26,8 @@ path = [
   "**/*.txt",
   "tests/e2e/portfolio/.canyon/**",
   "packages/api/src/db/migrations/**",
+  # Recorded telemetry, gzipped: no room for a header.
+  "packages/api/src/db/*.fixture.json.gz",
   "packages/web/src/routeTree.gen.ts",
   # Kubernetes YAML that controller-gen regenerates, and Go module files.
   "packages/operator/charts/*/crds/**",
