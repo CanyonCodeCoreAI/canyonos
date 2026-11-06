@@ -78,7 +78,7 @@ AGENTS = {
     "claude": {
         "label": "Claude Code",
         "cli": "claude",
-        "args": [],
+        "attended": [],
         "unattended": [
             "-p",
             "--verbose",
@@ -95,11 +95,143 @@ AGENTS = {
     "codex": {
         "label": "Codex",
         "cli": "codex",
-        "args": ["-c", "sandbox_workspace_write.network_access=true"],
-        "unattended": ["exec", "--sandbox", "workspace-write"],
+        "attended": ["-c", "sandbox_workspace_write.network_access=true"],
+        "unattended": [
+            "exec",
+            "--sandbox",
+            "workspace-write",
+            "-c",
+            "sandbox_workspace_write.network_access=true",
+        ],
         "skill_dirs": {
             "local": f".codex/skills/{SKILL_NAME}",
             "global": os.path.expanduser(f"~/.codex/skills/{SKILL_NAME}"),
+        },
+    },
+    "gemini": {
+        "label": "Gemini CLI",
+        "cli": "gemini",
+        "attended": [],
+        "unattended": ["--yolo", "-p"],
+        "skill_dirs": {
+            "local": f".gemini/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.gemini/skills/{SKILL_NAME}"),
+        },
+    },
+    "opencode": {
+        "label": "OpenCode",
+        "cli": "opencode",
+        "attended": ["--prompt"],
+        "unattended": ["run", "--auto"],
+        "skill_dirs": {
+            "local": f".opencode/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.config/opencode/skills/{SKILL_NAME}"),
+        },
+    },
+    "pi": {
+        "label": "Pi",
+        "cli": "pi",
+        "attended": [],
+        "unattended": ["-p"],
+        "skill_dirs": {
+            "local": f".pi/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.pi/agent/skills/{SKILL_NAME}"),
+        },
+    },
+    "copilot": {
+        "label": "GitHub Copilot CLI",
+        "cli": "copilot",
+        "attended": ["-i"],
+        "unattended": ["--allow-all", "-p"],
+        "skill_dirs": {
+            "local": f".github/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.copilot/skills/{SKILL_NAME}"),
+        },
+    },
+    "cursor": {
+        "label": "Cursor CLI",
+        "cli": "cursor-agent",
+        "attended": [],
+        "unattended": ["-p", "--force"],
+        "skill_dirs": {
+            "local": f".cursor/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.cursor/skills/{SKILL_NAME}"),
+        },
+    },
+    "droid": {
+        "label": "Factory Droid",
+        "cli": "droid",
+        "attended": [],
+        "unattended": ["exec", "--auto", "high"],
+        "skill_dirs": {
+            "local": f".factory/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.factory/skills/{SKILL_NAME}"),
+        },
+    },
+    "grok": {
+        "label": "Grok Build",
+        "cli": "grok",
+        "attended": [],
+        "unattended": ["--always-approve", "--trust", "-p"],
+        "skill_dirs": {
+            "local": f".grok/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.grok/skills/{SKILL_NAME}"),
+        },
+    },
+    "devin": {
+        "label": "Devin for Terminal",
+        "cli": "devin",
+        "attended": ["--"],
+        "unattended": [
+            "--permission-mode",
+            "dangerous",
+            "--respect-workspace-trust",
+            "false",
+            "-p",
+        ],
+        "skill_dirs": {
+            "local": f".devin/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.config/devin/skills/{SKILL_NAME}"),
+        },
+    },
+    "mastra": {
+        "label": "Mastra Code",
+        "cli": "mastracode",
+        "attended": ["--tui-prompt"],
+        "unattended": ["-p"],
+        "skill_dirs": {
+            "local": f".mastracode/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.mastracode/skills/{SKILL_NAME}"),
+        },
+    },
+    "deepagents": {
+        "label": "Deep Agents",
+        "cli": "dcode",
+        "attended": ["-m"],
+        "unattended": ["-S", "all", "-n"],
+        "skill_dirs": {
+            "local": f".deepagents/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.deepagents/agent/skills/{SKILL_NAME}"),
+        },
+    },
+    "vibe": {
+        "label": "Mistral Vibe",
+        "cli": "vibe",
+        "attended": [],
+        "unattended": ["--auto-approve", "-p"],
+        "skill_dirs": {
+            "local": f".vibe/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.vibe/skills/{SKILL_NAME}"),
+        },
+    },
+    "cline": {
+        "label": "Cline",
+        "cli": "cline",
+        "attended": ["-i"],
+        "unattended": ["--auto-approve", "true"],
+        "skill_dirs": {
+            "local": f".cline/skills/{SKILL_NAME}",
+            "global": os.path.expanduser(f"~/.cline/skills/{SKILL_NAME}"),
         },
     },
 }
@@ -290,8 +422,7 @@ def _launch_agent(agent: str, prompt: str, log_path: str | None) -> int | None:
 
     if log_path:
         prompt += UNATTENDED_NOTE
-    unattended_args = spec["unattended"] if log_path else []
-    argv = [spec["cli"], *unattended_args, *spec["args"], prompt]
+    argv = [spec["cli"], *spec["unattended" if log_path else "attended"], prompt]
     # No check=True: the agent exiting non-zero (including the user quitting it)
     # is an ordinary outcome, not something to raise a traceback over.
     if not log_path:

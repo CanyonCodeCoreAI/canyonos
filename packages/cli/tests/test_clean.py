@@ -96,7 +96,8 @@ def test_emptied_skill_folders_are_removed_and_user_skills_kept(monkeypatch, tmp
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
     claude_skill, codex_skill = (
-        tmp_path / spec["skill_dirs"]["local"] for spec in clean.convert.AGENTS.values()
+        tmp_path / clean.convert.AGENTS[agent]["skill_dirs"]["local"]
+        for agent in ("claude", "codex")
     )
     user_skill = claude_skill.parent / "my-own-skill"
     for skill_dir in (claude_skill, codex_skill, user_skill):

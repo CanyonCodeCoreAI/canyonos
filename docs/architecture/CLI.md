@@ -68,7 +68,7 @@ deploy took in, which `canyonos test` checks; `canyonos stop` removes both.
 **This skill does not provide any big capabilities, merely an abstraction to downloading a skill file and getting your agent to convert/build a workflow for you.**
 
 ```
- you ──▶ canyonos convert ──▶ pick agent (Claude/Codex) + scope
+ you ──▶ canyonos convert ──▶ pick coding agent + scope
                           └─▶ fetch the porting skill from GitHub
                           └─▶ launch your coding agent with it
                                       │
@@ -211,7 +211,7 @@ And to observe without changing anything:
 ## canyonos convert:
 ### INPUT: canyonos convert
 #### Steps:
-1. Asks the user which coding agent they want to use for this [Codex/Claude]
+1. Asks the user which coding agent they want to use for this
 2. Asks the user if they want to download the skill locally or globally (So the skill can be viewed either only in this directory or across your entire laptop)
 3. Opens said coding agent, giving it instructions to build a new .canyon folder with the code (Nicks skill)
   4. Periodically the coding agent should ask the user config related questions (which provider, entrypoints, OTEL location)

@@ -31,7 +31,7 @@ Three systems replaced by one install.
 
 ## Requirements
 - [Docker](https://docs.docker.com/desktop/) with Compose v2 — used to manage everything
-- Optional: A coding agent in terminal (used only by canyonos convert to convert workflow to canyonos compatible format) — [Claude Code CLI](https://code.claude.com/docs/en/overview) or [Codex CLI](https://learn.chatgpt.com/docs/codex/cli#getting-started)
+- Optional: A coding agent in terminal (used only by canyonos convert to convert workflow to canyonos compatible format) — Claude Code, Codex, Gemini CLI, OpenCode, Pi, GitHub Copilot CLI, Cursor CLI, Factory Droid, Grok Build, Devin, Mastra Code, Deep Agents, Mistral Vibe or Cline
 
 ## Installation
 
