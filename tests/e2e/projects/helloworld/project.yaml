@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The helloworld example as it ships: a Workflow calling HelloAgent, no LLM.
+source: examples/helloworld
+query: World
+calls: {Workflow.main: 1, HelloAgent.hello: 1}
+traits: [quick, text-query]
+timeout: 120

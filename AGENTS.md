@@ -14,7 +14,7 @@ A Bun + Turborepo workspace (TypeScript) and a uv workspace (Python) in one repo
 | `packages/web`  | Dashboard frontend                                                     | TypeScript (React, Vite) |
 | `packages/ui`   | Shared React components for `web`                                      | TypeScript (React)       |
 | `examples/`     | Sample workflows to deploy with `canyonos deploy`                      | Python                   |
-| `tests/`        | Cross-package integration and performance tests                        | Python                   |
+| `tests/`        | Cross-package E2E tests                                                | Python                   |
 
 How each part works is in [docs/architecture/](docs/architecture/README.md).
 
@@ -37,8 +37,8 @@ uv run canyonos <cmd>    # run the checkout's CLI from anywhere in the workspace
 
 bun run api:test:e2e     # API end-to-end tests
 bun run ui:test:e2e      # dashboard Playwright tests
-uv run pytest tests/ecosystem/cases --project=<name>   # ecosystem check of one real project
-tests/run_tests.sh       # full integration and performance run
+uv run pytest tests/e2e/cases --project=<name>   # deploy one project and run the E2E cases
+uv run pytest tests/e2e/scenarios                 # E2E checks that stage their own projects
 ```
 
 Run `bun run check` and `bun run test` before calling a change done.

@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# TradingAgents: 13 LangGraph agents (analysts, researchers, trader, risk debate,
+# portfolio manager) behind one Workflow endpoint. Runs before a release only:
+# one query takes about ten minutes of OpenAI calls.
+source:
+  repo: CanyonCodeCoreAI/workflows
+  ref: 461897badbd38513001df223b4e1be5957f98ba4
+  path: TradingAgents
+secrets: [OPENAI_API_KEY]
+traits: [llm, logs]
+timeout: 1800
+release_only: true

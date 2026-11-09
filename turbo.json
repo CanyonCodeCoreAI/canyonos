@@ -151,12 +151,12 @@
         "--frozen",
         "pytest",
         "tests",
-        "--ignore=tests/ecosystem"
+        "--ignore=tests/e2e"
       ],
       "inputs": [
         "tests/**",
         "!tests/**/__pycache__/**",
-        "!tests/ecosystem/**",
+        "!tests/e2e/**",
         "pyproject.toml",
         "uv.lock"
       ]

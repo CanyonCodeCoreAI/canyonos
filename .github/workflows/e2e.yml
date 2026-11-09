@@ -3,9 +3,11 @@
 
 name: E2E
 
-# The README flow (test, deploy, a query on the REST API) against a committed port
-# of examples/portfolio, with real agents, real price data and a real Bedrock call.
-# `canyonos convert` is not part of it: the port under tests/e2e is verified by hand.
+# Deploys the projects under tests/e2e/projects with the CLI and images from this
+# checkout, runs tests/e2e/cases against each one, and runs tests/e2e/scenarios.
+# A pull request and a push to main run every project not marked release_only.
+# Before a release, run it by hand with `release` to add those projects too.
+# The paths are everything the CLI, the three images and the projects are built from.
 
 on:
   pull_request:
@@ -13,7 +15,17 @@ on:
       - 'packages/cli/**'
       - 'packages/core/**'
       - 'packages/api/**'
+      - 'packages/web/**'
+      - 'packages/ui/**'
+      - 'packages/tsconfig/**'
+      - 'packages/cli-usage-api/package.json'
+      - 'examples/**'
+      - 'scripts/**'
       - 'tests/e2e/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'package.json'
+      - 'bun.lock'
       - '.github/workflows/e2e.yml'
   push:
     branches: [main]
@@ -21,67 +33,68 @@ on:
       - 'packages/cli/**'
       - 'packages/core/**'
       - 'packages/api/**'
+      - 'packages/web/**'
+      - 'packages/ui/**'
+      - 'packages/tsconfig/**'
+      - 'packages/cli-usage-api/package.json'
+      - 'examples/**'
+      - 'scripts/**'
       - 'tests/e2e/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'package.json'
+      - 'bun.lock'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
+    inputs:
+      projects:
+        description: "`release` for every project, `pr` for the pull request set, or project names separated by spaces."
+        required: false
+        default: release
+        type: string
 
+# A new push cancels the run it replaces; a run by hand has a group of its own, so
+# a merge to main never cancels a release check.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  portfolio:
-    # Fork PRs get no secrets, and without the AWS keys the run cannot be real.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+  projects:
+    # Fork and Dependabot PRs get no secrets, and without the model keys the runs
+    # cannot be real.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           version: "0.12.15"
           python-version: "3.11.15"
           enable-cache: true
-
-      - run: uv sync --locked
-
-      # Builds the core image from the Core image cache; the script uses it instead of building its own.
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: packages/core
-          file: packages/core/Dockerfile
-          load: true
-          tags: canyonos-core:ci
-          cache-from: type=gha,scope=canyonos-core
-
-      - name: Run the portfolio flow
+      - id: list
         env:
-          CANYONOS_CORE_IMAGE: canyonos-core:ci
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
-        run: tests/e2e/run.sh portfolio
+          PROJECTS: ${{ inputs.projects || 'pr' }}
+        run: echo "matrix=$(uv run --frozen python tests/e2e/projects.py $PROJECTS)" >> "$GITHUB_OUTPUT"
 
-      - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: e2e-portfolio
-          path: ${{ runner.temp }}/e2e-artifacts
-          retention-days: 7
-
-  governance:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+  project:
+    needs: projects
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJson(needs.projects.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,50 +108,7 @@ jobs:
 
       - run: uv sync --locked
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: packages/core
-          file: packages/core/Dockerfile
-          load: true
-          tags: canyonos-core:ci
-          cache-from: type=gha,scope=canyonos-core
-
-      - name: Run the governance flow
-        env:
-          CANYONOS_CORE_IMAGE: canyonos-core:ci
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          BEDROCK_SWITCH_MODEL_ID: ${{ vars.BEDROCK_SWITCH_MODEL_ID || 'meta.llama3-8b-instruct-v1:0' }}
-          E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
-        run: tests/e2e/governance.sh
-
-      - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: e2e-governance
-          path: ${{ runner.temp }}/e2e-artifacts
-          retention-days: 7
-
-  multi-project:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-        with:
-          version: "0.12.15"
-          python-version: "3.11.15"
-          enable-cache: true
-
-      - run: uv sync --locked
-
-      # Builds the core and web images from their caches (api builds in seconds); the script uses them instead of building its own.
+      # The core and web images come from their caches; the api builds in seconds.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -157,18 +127,116 @@ jobs:
           tags: canyonos-web:ci
           cache-from: type=gha,scope=canyonos-web
 
-      - name: Run two projects with the shared dashboard
+      - name: Run the cases for ${{ matrix.project }}
         env:
           CANYONOS_CORE_IMAGE: canyonos-core:ci
           CANYONOS_WEB_IMAGE: canyonos-web:ci
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
-        run: tests/e2e/multi_project.sh
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PROJECT: ${{ matrix.project }}
+          ARTIFACTS: ${{ runner.temp }}/e2e/${{ matrix.project }}
+        run: |
+          mkdir -p "$ARTIFACTS"
+          timeout -s INT 110m uv run --frozen pytest tests/e2e/cases \
+            --project="$PROJECT" --artifacts-dir="$ARTIFACTS" \
+            --junitxml="$ARTIFACTS/junit.xml" -o junit_family=xunit2 \
+            -p no:cacheprovider -v
 
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-multi-project
-          path: ${{ runner.temp }}/e2e-artifacts
-          retention-days: 7
+          name: e2e-${{ matrix.project }}
+          path: ${{ runner.temp }}/e2e
+          retention-days: 14
+
+  scenarios:
+    # The same rule as `projects`. A run by hand with project names runs only those
+    # projects; `pr`, `release` or nothing runs the scenarios too.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || contains(fromJson('["", "pr", "release"]'), inputs.projects))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.15"
+          python-version: "3.11.15"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: packages/core
+          file: packages/core/Dockerfile
+          load: true
+          tags: canyonos-core:ci
+          cache-from: type=gha,scope=canyonos-core
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packages/web/Dockerfile
+          target: canyonos
+          build-args: VITE_API_URL=/api
+          load: true
+          tags: canyonos-web:ci
+          cache-from: type=gha,scope=canyonos-web
+
+      - name: Run the scenarios
+        env:
+          CANYONOS_CORE_IMAGE: canyonos-core:ci
+          CANYONOS_WEB_IMAGE: canyonos-web:ci
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          BEDROCK_SWITCH_MODEL_ID: ${{ vars.BEDROCK_SWITCH_MODEL_ID || 'meta.llama3-8b-instruct-v1:0' }}
+          ARTIFACTS: ${{ runner.temp }}/e2e/scenarios
+        run: |
+          mkdir -p "$ARTIFACTS"
+          timeout -s INT 85m uv run --frozen pytest tests/e2e/scenarios \
+            --artifacts-dir="$ARTIFACTS" --junitxml="$ARTIFACTS/junit.xml" \
+            -o junit_family=xunit2 -p no:cacheprovider -v
+
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-scenarios
+          path: ${{ runner.temp }}/e2e
+          retention-days: 14
+
+  report:
+    # Every project the matrix listed, and the scenarios when they ran, must have
+    # results: one cut short before uploading any is reported as failed.
+    needs: [projects, project, scenarios]
+    if: always() && (needs.project.result != 'skipped' || needs.scenarios.result != 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: e2e-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Write report.md
+        env:
+          TITLE: "E2E: ${{ github.sha }}, run ${{ github.run_number }}"
+          PROJECTS: ${{ join(fromJson(needs.projects.outputs.matrix || '[]'), ' ') }}
+          SCENARIOS: ${{ needs.scenarios.result != 'skipped' && 'scenarios' || '' }}
+        run: |
+          mkdir -p artifacts
+          # shellcheck disable=SC2086
+          python3 tests/e2e/report.py artifacts report.md --title "$TITLE" \
+            --expect $PROJECTS $SCENARIOS
+          head -c 1000000 report.md >> "$GITHUB_STEP_SUMMARY"

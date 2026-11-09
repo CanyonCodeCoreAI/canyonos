@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# examples/pr_review as it is: four agents, a Bedrock review and the governance
+# rules in config/governance.yaml. scenarios/test_governance.py drives those rules
+# on every pull request; the cases run on it before a release.
+source: examples/pr_review
+query:
+  title: Add retry
+  diff: "+def retry(): ..."
+# The same pull request as `canyonos test` sends it: text, its title, then its diff.
+cli_query: "Add retry\n+def retry(): ..."
+calls:
+  Workflow.review: 1
+  TestRunnerAgent.run: 1
+  ReviewAgent.review: 1
+  MergeAgent.merge: 1
+secrets: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]
+env:
+  AWS_REGION: us-east-1
+traits: [llm, logs, quick]
+timeout: 300
+release_only: true

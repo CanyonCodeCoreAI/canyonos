@@ -40,8 +40,8 @@ asked.
 - PR comments: inline, plain, command + output; reply to bot threads only to
   discard them. Push to the PR branch only after the owner says "fix".
 - Unit tests prove only that lines do not throw. New coverage goes to
-  `tests/e2e/run.sh` + `tests/e2e/break_manifest.py` or
-  `packages/cli/tests/e2e`.
+  a case under `tests/e2e/cases` or `tests/e2e/scenarios` (a
+  `break_manifest.py` mode for a `validate` rule) or `packages/cli/tests/e2e`.
 
 ## Getting the branch
 

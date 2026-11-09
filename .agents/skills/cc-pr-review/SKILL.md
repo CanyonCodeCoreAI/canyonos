@@ -82,7 +82,8 @@ filled in: the brief is that session's only context.
   same breath gets its own `fix/<slug>` branch and PR, after the review,
   never a commit on the PR under review.
 - Tests: unit tests prove the lines do not throw. New coverage goes to
-  `tests/e2e/run.sh` with a `tests/e2e/break_manifest.py` mode, or to
+  a case under `tests/e2e/cases` or `tests/e2e/scenarios` (a
+  `tests/e2e/scenarios/break_manifest.py` mode for a `validate` rule), or to
   `packages/cli/tests/e2e`. Existing unit tests a fix breaks are updated.
 
 ## After the verdict

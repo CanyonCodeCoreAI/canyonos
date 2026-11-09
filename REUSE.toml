@@ -24,7 +24,7 @@ path = [
   "**/*.db",
   "**/*.rb",
   "**/*.txt",
-  "tests/e2e/portfolio/.canyon/**",
+  "tests/e2e/projects/portfolio/.canyon/**",
   "packages/api/src/db/migrations/**",
   # Recorded telemetry, gzipped: no room for a header.
   "packages/api/src/db/*.fixture.json.gz",

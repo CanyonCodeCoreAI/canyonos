@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# examples/portfolio with the port committed next to this file: five agents, real
+# yfinance prices and two Bedrock calls through the LLM gateway.
+source: examples/portfolio
+port: .canyon
+calls:
+  Workflow.main: 1
+  IntentAgent.parse: 1
+  MetricsAgent.compute: 3
+  PriceAgent.get_history: 3
+  RiskAgent.assess: 1
+  AdvisorAgent.summarize: 1
+secrets: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]
+env:
+  AWS_REGION: us-east-1
+traits: [llm, logs, quick, failing-query, prompts]
+timeout: 300

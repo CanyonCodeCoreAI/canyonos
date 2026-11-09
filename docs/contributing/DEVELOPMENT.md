@@ -7,12 +7,12 @@ and the checks to run before a pull request are in
 The commands are the same in development and production. The only differences
 are where the binary runs from and an optional `packages/cli/.env`:
 
-|  | Development | Open Source |
-| --- | --- | --- |
-| How it runs | `canyonos deploy` inside `bun run canyonos:dev`, or `uv run canyonos deploy` | `canyonos deploy` |
-| Environment | `development` via `packages/cli/.env` (copied once from `packages/cli/.env.example`, gitignored) | `production` by default, no `.env` |
-| Core image | `canyonos-core:dev` local | `ghcr.io/…/canyonos-core:<version>` |
-| Skill | `skills/converting-to-canyonos` from the checkout | downloaded from `main` |
+|             | Development                                                                                      | Open Source                         |
+| ----------- | ------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| How it runs | `canyonos deploy` inside `bun run canyonos:dev`, or `uv run canyonos deploy`                     | `canyonos deploy`                   |
+| Environment | `development` via `packages/cli/.env` (copied once from `packages/cli/.env.example`, gitignored) | `production` by default, no `.env`  |
+| Core image  | `canyonos-core:dev` local                                                                        | `ghcr.io/…/canyonos-core:<version>` |
+| Skill       | `skills/converting-to-canyonos` from the checkout                                                | downloaded from `main`              |
 
 ## Set up your environment
 
@@ -53,12 +53,12 @@ reverse are both fine. Outside `production` overrides are allowed; in
 `production` anything but unset/`prod` raises, so a released CLI can never be
 talked into a dev artifact.
 
-| Variable | `local` resolves to |
-|---|---|
-| `CANYONOS_CORE_IMAGE` | `canyonos-core:dev` |
+| Variable                | `local` resolves to                              |
+| ----------------------- | ------------------------------------------------ |
+| `CANYONOS_CORE_IMAGE`   | `canyonos-core:dev`                              |
 | `CANYONOS_SKILL_SOURCE` | `<workspace root>/skills/converting-to-canyonos` |
-| `CANYONOS_API_IMAGE` | `canyonos-api:dev` |
-| `CANYONOS_WEB_IMAGE` | `canyonos-web:dev` |
+| `CANYONOS_API_IMAGE`    | `canyonos-api:dev`                               |
+| `CANYONOS_WEB_IMAGE`    | `canyonos-web:dev`                               |
 
 ## Building the core image
 
@@ -271,12 +271,13 @@ cp packages/api/.env.test.example packages/api/.env.test
 cp packages/web/.env.example packages/web/.env
 ```
 
-| Suite     | Command                | Needs                                                                                                                               |
-| --------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| API       | `bun run api:test:e2e` | Postgres (`bun run docker:up`); resets the `canyonos_test` database                                                                 |
-| Dashboard | `bun run ui:test:e2e`  | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite itself, or reuses ones already running             |
-| Workflow  | `tests/run_tests.sh`   | Run inside the `bun run canyonos:dev` shell; deploys `examples/helloworld` to port `8082`, then runs the integration and load tests |
-| Kubernetes | `scripts/kind/e2e.sh` | The kind cluster from `scripts/kind/up.sh`; see [Kubernetes on kind](#kubernetes-on-kind) |
+| Suite            | Command                                              | Needs                                                                                                                                                             |
+| ---------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API              | `bun run api:test:e2e`                               | Postgres (`bun run docker:up`); resets the `canyonos_test` database                                                                                               |
+| Dashboard        | `bun run ui:test:e2e`                                | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite itself, or reuses ones already running                                           |
+| Deploy           | `uv run pytest tests/e2e/cases --project=helloworld` | Docker; builds the images from this checkout, deploys the project and runs the E2E cases against it                                                               |
+| Deploy scenarios | `uv run pytest tests/e2e/scenarios`                  | Docker; checks `canyonos validate`, the `canyonos new-app` starter, two projects on one dashboard and the governance rules; the governance one needs the AWS keys |
+| Kubernetes       | `scripts/kind/e2e.sh`                                | The kind cluster from `scripts/kind/up.sh`; see [Kubernetes on kind](#kubernetes-on-kind)                                                                         |
 
-`tests/README.md` covers running the workflow tests against a stack that is
-already deployed.
+[`tests/e2e/README.md`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/tests/e2e/README.md) lists the projects, their
+secrets and how to add a case.

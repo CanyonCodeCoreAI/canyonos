@@ -7,7 +7,8 @@ Runs a fake OpenAI-compatible server in the container, reached by the container'
 hostname so calls go through the proxy, and checks that LLM calls reach the gateway
 (their tokens land on the future in Redis), that streams arrive chunk by chunk, that a
 child process is caught too, that other calls pass through, that the prices the global
-controller published load, and that a killed gateway comes back.
+controller published load, and that a killed gateway comes back. The futures it
+records tokens on are deleted from Redis when it ends, whether it passed or not.
 
 Usage (inside the replica): python gateway_check.py
 """
@@ -32,13 +33,15 @@ GATEWAY_HEALTH = "http://127.0.0.1:8081/healthz"
 GATEWAY_PYTHON = "/opt/canyonos-gateway/bin/python"
 RESTART_TIMEOUT = 90
 USAGE = {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}
+WORDS = ("one", "two", "three")
 seen = []
+created = []
 
 
 class FakeProvider(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, *args):
+    def log_message(self, format, *args):
         pass
 
     def send_chunk(self, data):
@@ -62,7 +65,7 @@ class FakeProvider(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
-        for word in ("one", "two", "three"):
+        for word in WORDS:
             delta = {"choices": [{"index": 0, "delta": {"content": word}}]}
             self.send_chunk(f"data: {json.dumps(delta)}\n\n".encode())
             time.sleep(1)
@@ -72,6 +75,12 @@ class FakeProvider(BaseHTTPRequestHandler):
             )
         self.send_chunk(b"data: [DONE]\n\n")
         self.send_chunk(b"")
+
+
+def new_future():
+    """A future id for one check, noted so it is deleted at the end."""
+    created.append(uuid.uuid4().hex)
+    return created[-1]
 
 
 def post(path, body, future_id):
@@ -119,99 +128,125 @@ REDIS = redis.Redis(
     port=int(os.environ["CANYONOS_REDIS_PORT"]),
     decode_responses=True,
 )
-threading.Thread(
-    target=ThreadingHTTPServer(("0.0.0.0", FAKE_PORT), FakeProvider).serve_forever,
-    daemon=True,
-).start()
 
-future = uuid.uuid4().hex
-post("/v1/chat/completions", {"model": "fake-model", "messages": []}, future).read()
-check(
-    "an OpenAI-format call reaches the gateway",
-    tokens(future) == (3, 5),
-    tokens(future),
-)
 
-future = uuid.uuid4().hex
-arrivals, lines = [], []
-with post(
-    "/v1/chat/completions", {"model": "fake-model", "stream": True}, future
-) as response:
-    for line in response:
-        if line.startswith(b"data: {"):
-            arrivals.append(time.monotonic())
-            lines.append(line)
-check("a stream arrives chunk by chunk", arrivals[-1] - arrivals[0] >= 1.5, arrivals)
-check(
-    "the gateway asked for usage",
-    seen[-1][1].get("stream_options", {}).get("include_usage") is True,
-)
-check("the usage chunk is not relayed", not any(b'"usage"' in line for line in lines))
-check("the stream's tokens are recorded", tokens(future) == (3, 5), tokens(future))
+def main():
+    """Run every check in order; the first that fails exits 1."""
+    threading.Thread(
+        target=ThreadingHTTPServer(("0.0.0.0", FAKE_PORT), FakeProvider).serve_forever,
+        daemon=True,
+    ).start()
 
-future = uuid.uuid4().hex
-code = (
-    "import json, sys, urllib.request; "
-    f"r = urllib.request.Request({FAKE_URL + '/v1/chat/completions'!r}, "
-    "data=json.dumps({'model': 'fake-model'}).encode(), "
-    f"headers={{'Content-Type': 'application/json', 'x-canyonos-future-id': {future!r}}}, "
-    "method='POST'); urllib.request.urlopen(r, timeout=30).read()"
-)
-subprocess.run([sys.executable, "-c", code], check=True, timeout=60)
-check(
-    "a child process's call reaches the gateway",
-    tokens(future) == (3, 5),
-    tokens(future),
-)
+    future = new_future()
+    post("/v1/chat/completions", {"model": "fake-model", "messages": []}, future).read()
+    check(
+        "the gateway forwards the call to its provider",
+        [path for path, _ in seen] == ["/v1/chat/completions"],
+        seen,
+    )
+    check(
+        "an OpenAI-format call reaches the gateway",
+        tokens(future) == (3, 5),
+        tokens(future),
+    )
 
-future = uuid.uuid4().hex
-post("/v3/collectors/1/responses", {"answers": []}, future).read()
-check("a non-LLM POST reaches its host", seen[-1][0] == "/v3/collectors/1/responses")
-check(
-    "a non-LLM POST skips the gateway",
-    tokens(future) is None and not REDIS.exists(f"future:{future}"),
-)
+    future = new_future()
+    arrivals, lines = [], []
+    with post(
+        "/v1/chat/completions", {"model": "fake-model", "stream": True}, future
+    ) as response:
+        for line in response:
+            if line.startswith(b"data: {"):
+                arrivals.append(time.monotonic())
+                lines.append(line)
+    check("every chunk of the stream is relayed", len(arrivals) == len(WORDS), lines)
+    check(
+        "a stream arrives chunk by chunk", arrivals[-1] - arrivals[0] >= 1.5, arrivals
+    )
+    check(
+        "the gateway asked for usage",
+        seen[-1][1].get("stream_options", {}).get("include_usage") is True,
+    )
+    check(
+        "the usage chunk is not relayed", not any(b'"usage"' in line for line in lines)
+    )
+    check("the stream's tokens are recorded", tokens(future) == (3, 5), tokens(future))
 
-prices = subprocess.run(
-    [
-        GATEWAY_PYTHON,
-        "-c",
-        "import json, os, redis; from canyonos_core.llm_gateway import pricing; "
-        "r = redis.Redis(host=os.environ['CANYONOS_REDIS_HOST'], "
-        "port=int(os.environ['CANYONOS_REDIS_PORT']), decode_responses=True); "
-        "published = json.loads(r.get(pricing.LLM_PRICES_KEY) or '{}'); "
-        "prefixes = set(pricing.LLM_HOSTS.values()); "
-        "key = next(k for k in published if k.split('/', 1)[0] in prefixes); "
-        "pricing.load_published_prices(r); "
-        "got = pricing.token_prices(key.split('/', 1)[1], key.split('/', 1)[0])[:2]; "
-        "want = (published[key]['input_cost_per_million_tokens'], "
-        "published[key]['output_cost_per_million_tokens']); "
-        "print(len(published), key, got == want)",
-    ],
-    cwd="/app",
-    capture_output=True,
-    text=True,
-    timeout=60,
-)
-check(
-    "the published LiteLLM prices load",
-    prices.stdout.strip().endswith("True"),
-    prices.stdout + prices.stderr,
-)
+    future = new_future()
+    code = (
+        "import json, sys, urllib.request; "
+        f"r = urllib.request.Request({FAKE_URL + '/v1/chat/completions'!r}, "
+        "data=json.dumps({'model': 'fake-model'}).encode(), "
+        f"headers={{'Content-Type': 'application/json', 'x-canyonos-future-id': {future!r}}}, "
+        "method='POST'); urllib.request.urlopen(r, timeout=30).read()"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=60)
+    check(
+        "a child process's call reaches the gateway",
+        tokens(future) == (3, 5),
+        tokens(future),
+    )
 
-before = gateway_pids()
-check("the gateway is running", len(before) == 1, before)
-os.kill(before[0], signal.SIGKILL)
-deadline = time.monotonic() + RESTART_TIMEOUT
-restarted = False
-while not restarted and time.monotonic() < deadline:
-    time.sleep(1)
+    future = new_future()
+    post("/v3/collectors/1/responses", {"answers": []}, future).read()
+    check(
+        "a non-LLM POST reaches its host", seen[-1][0] == "/v3/collectors/1/responses"
+    )
+    check(
+        "a non-LLM POST skips the gateway",
+        tokens(future) is None and not REDIS.exists(f"future:{future}"),
+    )
+
+    prices = subprocess.run(
+        [
+            GATEWAY_PYTHON,
+            "-c",
+            "import json, os, redis; from canyonos_core.llm_gateway import pricing; "
+            "r = redis.Redis(host=os.environ['CANYONOS_REDIS_HOST'], "
+            "port=int(os.environ['CANYONOS_REDIS_PORT']), decode_responses=True); "
+            "published = json.loads(r.get(pricing.LLM_PRICES_KEY) or '{}'); "
+            "prefixes = set(pricing.LLM_HOSTS.values()); "
+            "key = next(k for k in published if k.split('/', 1)[0] in prefixes); "
+            "pricing.load_published_prices(r); "
+            "got = pricing.token_prices(key.split('/', 1)[1], key.split('/', 1)[0])[:2]; "
+            "want = (published[key]['input_cost_per_million_tokens'], "
+            "published[key]['output_cost_per_million_tokens']); "
+            "print(len(published), key, got == want)",
+        ],
+        cwd="/app",
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    check(
+        "the published LiteLLM prices load",
+        prices.stdout.strip().endswith("True"),
+        prices.stdout + prices.stderr,
+    )
+
+    before = gateway_pids()
+    check("the gateway is running", len(before) == 1, before)
+    os.kill(before[0], signal.SIGKILL)
+    deadline = time.monotonic() + RESTART_TIMEOUT
+    restarted = False
+    while not restarted and time.monotonic() < deadline:
+        time.sleep(1)
+        try:
+            urllib.request.urlopen(GATEWAY_HEALTH, timeout=2).read()
+            restarted = gateway_pids() not in ([], before)
+        except OSError:
+            pass
+    check("the gateway restarts after a kill", restarted, gateway_pids())
+    future = new_future()
+    post("/v1/chat/completions", {"model": "fake-model", "messages": []}, future).read()
+    check(
+        "a call reaches the restarted gateway", tokens(future) == (3, 5), tokens(future)
+    )
+
+
+if __name__ == "__main__":
     try:
-        urllib.request.urlopen(GATEWAY_HEALTH, timeout=2).read()
-        restarted = gateway_pids() not in ([], before)
-    except OSError:
-        pass
-check("the gateway restarts after a kill", restarted, gateway_pids())
-future = uuid.uuid4().hex
-post("/v1/chat/completions", {"model": "fake-model", "messages": []}, future).read()
-check("a call reaches the restarted gateway", tokens(future) == (3, 5), tokens(future))
+        main()
+    finally:
+        if created:
+            REDIS.delete(*(f"future:{future}" for future in created))

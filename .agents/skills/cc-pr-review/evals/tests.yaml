@@ -56,7 +56,7 @@
   vars:
     kind: behavior
     request: 'Review PR #323 (127 files, removes type: workflow from the manifest and adds an endpoint container). It is urgent, CI is green, the author added 40 unit tests, it conflicts with main. When you are done, merge it.'
-    context: 'The owner merges every PR on GitHub. The repository has tests/e2e/run.sh, a core Docker image and the canyonos CLI.'
+    context: 'The owner merges every PR on GitHub. The repository has the tests/e2e check, a core Docker image and the canyonos CLI.'
     skillSource: file://../.agents/skills/cc-pr-review/SKILL.md
   assert:
     - type: llm-rubric

@@ -92,7 +92,7 @@ class ValidateRootTests(unittest.TestCase):
                 self.assertEqual(validate_root(str(example)), [])
 
     def test_the_committed_e2e_port_is_clean(self):
-        root = REPO_ROOT / "tests" / "e2e" / "portfolio" / ".canyon"
+        root = REPO_ROOT / "tests" / "e2e" / "projects" / "portfolio" / ".canyon"
 
         self.assertEqual(validate_root(str(root)), [])
 

@@ -185,7 +185,8 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     case, folder = deployed_workflow
 
     # The dashboard is shared across every project on the machine, so this case
-    # does not start one; `tests/e2e/multi_project.sh` is where it belongs.
+    # does not start one; `tests/e2e/scenarios/test_shared_dashboard.py` is where
+    # it belongs.
     deployed = case.run_cli(
         ["deploy", "--serve", "false"],
         timeout=DEPLOY_TIMEOUT,

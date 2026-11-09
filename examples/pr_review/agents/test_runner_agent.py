@@ -12,7 +12,7 @@ FORBIDDEN = ("breakpoint(", "import pdb", "print(")
 
 class TestRunnerAgent(object):
     def __init__(self):
-        # tests/e2e/governance.sh sets it to stage a replica that crashes at boot.
+        # tests/e2e/scenarios/test_governance.py sets it to stage a replica that crashes at boot.
         if os.environ.get("TESTRUNNER_BROKEN") == "1":
             raise RuntimeError("TESTRUNNER_BROKEN is set")
         self.tools = [self.run]
