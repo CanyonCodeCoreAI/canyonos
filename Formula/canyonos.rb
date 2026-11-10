@@ -1,6 +1,6 @@
 class Canyonos < Formula
   desc "CLI for CanyonOS"
-  homepage "https://github.com/CanyonCodeCoreAI/canyonos"
+  homepage "https://canyonos.ai"
   version "0.2.0"
 
   on_macos do

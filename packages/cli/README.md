@@ -1,6 +1,6 @@
 # canyonos CLI
 
-The `canyonos` command line: port a project, deploy it, and manage the running deploy.
+The `canyonos` command line for [CanyonOS](https://canyonos.ai): port a project, deploy it, and manage the running deploy.
 
 ## Install
 
@@ -25,5 +25,5 @@ Run `canyonos -h` for every command.
 ## Develop
 
 Run the CLI from this checkout with `uv run canyonos <command>`. Setup is in
-[docs/contributing/DEVELOPMENT.md](../../docs/contributing/DEVELOPMENT.md), and how the CLI
-works is in [docs/architecture/CLI.md](../../docs/architecture/CLI.md).
+[docs/contributing/DEVELOPMENT.md](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/docs/contributing/DEVELOPMENT.md), and how the CLI
+works is in [docs/architecture/CLI.md](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/docs/architecture/CLI.md).

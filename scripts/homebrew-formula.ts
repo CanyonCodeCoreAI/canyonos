@@ -35,7 +35,7 @@ function stanza(hashes: Hashes, asset: Asset): string {
 export function renderFormula(version: string, hashes: Hashes): string {
   return `class Canyonos < Formula
   desc "CLI for CanyonOS"
-  homepage "https://github.com/${repository}"
+  homepage "https://canyonos.ai"
   version "${version}"
 
   on_macos do

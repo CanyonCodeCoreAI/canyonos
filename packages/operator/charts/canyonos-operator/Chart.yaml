@@ -4,6 +4,7 @@ apiVersion: v2
 name: canyonos-operator
 description: The CanyonOS operator, which runs CanyonOS projects (CanyonProject, CanyonAgent) on Kubernetes.
 type: application
+home: https://canyonos.ai
 version: 0.2.1
 appVersion: "0.2.1"
 kubeVersion: ">=1.32.0-0"

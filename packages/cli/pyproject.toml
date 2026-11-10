@@ -4,9 +4,17 @@
 [project]
 name = "canyonos"
 version = "0.2.1"
-description = "CanyonOS CLI"
+description = "Open-source platform for multi-agent apps: per-agent scaling, tracing and cost, in plain Python"
+readme = "README.md"
 license = "AGPL-3.0-only"
 requires-python = ">=3.10"
+keywords = ["multi-agent", "ai-agents", "llm", "observability", "opentelemetry", "llm-cost"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Monitoring",
+    "Programming Language :: Python :: 3",
+]
 dependencies = [
     "boto3[crt]>=1.43.109",
     "pyfiglet",
@@ -15,6 +23,12 @@ dependencies = [
     "rich",
     "ruamel.yaml",
 ]
+
+[project.urls]
+Homepage = "https://canyonos.ai"
+Documentation = "https://canyonos.readthedocs.io/en/stable/"
+Source = "https://github.com/CanyonCodeCoreAI/canyonos"
+Changelog = "https://canyonos.ai/changelog"
 
 [project.scripts]
 canyonos = "cli:main"
