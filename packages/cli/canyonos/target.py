@@ -3,7 +3,7 @@
 
 """
 Logic for `canyonos target`: show where this project deploys, or choose it once in
-its `global_controller.yaml`, so every command in the folder goes there.
+its `workflow_config.yaml`, so every command in the folder goes there.
 
 `canyonos target kubernetes` also fills in the `kubernetes:` block a deploy there
 needs, and both report whether this machine can reach the target, with the same
@@ -85,19 +85,32 @@ def _use_kubernetes(config_path, namespace, registry):
         )
     block["namespace"] = namespace
     block["registry"] = registry
-    if data.get("kubernetes") is not block:
-        data["kubernetes"] = block
     if "target" in data:
         data["target"] = "kubernetes"
     else:
-        # Beside the block it goes with, which is last in a new one.
-        data.insert(list(data).index("kubernetes"), "target", "kubernetes")
+        # First, where the config's order puts it.
+        data.insert(0, "target", "kubernetes")
+    if "kubernetes" in data:
+        data["kubernetes"] = block
+    else:
+        _insert_under_target(data, block)
     write_config(config_path, data, yaml_rt)
     ui.ok(
         f"This project deploys to Kubernetes: namespace {namespace}, images in "
         f"{registry}, on {_cluster()}"
     )
     return _run_checks(cluster_checks(), stop_at_failure=True)
+
+
+def _insert_under_target(data, block):
+    """Put the new `kubernetes:` block right under `target`, the setting it goes with.
+    The blank line and comment after `target` belong to the key that follows it, so
+    they move to the end of the block."""
+    data.insert(list(data).index("target") + 1, "kubernetes", block)
+    comment = data.ca.items.get("target")
+    if comment and comment[2] is not None:
+        block.ca.items[list(block)[-1]] = [None, None, comment[2], None]
+        comment[2] = None
 
 
 def _load(config_path):

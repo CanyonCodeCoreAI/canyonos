@@ -116,7 +116,7 @@ def _port_of(url: str) -> int:
 
 
 def _edit_manifest(directory: Path, edit) -> None:
-    path = project_root(directory) / "config" / "global_controller.yaml"
+    path = project_root(directory) / "config" / "workflow_config.yaml"
     path.write_text(edit(path.read_text()))
 
 
@@ -124,6 +124,26 @@ def _without_otel(text: str) -> str:
     edited = re.sub(r"^otel:\n(?:[ \t].*\n|\n)*", "", text, flags=re.M)
     assert "otel:" not in edited, edited
     return edited
+
+
+def _pinned(text: str) -> str:
+    """`text` with helloworld's api_port and Redis port fixed. The starter config has
+    no `redis:` block, so one is added; it keeps `host` so the block is still a
+    mapping once a later case removes the port."""
+    text = re.sub(
+        r"^endpoint:$",
+        f"endpoint:\n  api_port: {HELLOWORLD_API_PORT}",
+        text,
+        flags=re.M,
+    )
+    if re.search(r"^redis:$", text, flags=re.M):
+        return re.sub(
+            r"^redis:$", f"redis:\n  port: {HELLOWORLD_REDIS_PORT}", text, flags=re.M
+        )
+    return (
+        text.rstrip("\n")
+        + f"\n\nredis:\n  host: localhost\n  port: {HELLOWORLD_REDIS_PORT}\n"
+    )
 
 
 def _agent_names(directory: Path) -> set[str]:
@@ -241,22 +261,10 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
         project = load_project(name)
         secrets = {secret: f"not-a-real-{secret.lower()}" for secret in project.secrets}
         dirs[name] = stage(recorder, project, parent, secrets)
-    _edit_manifest(
-        dirs["helloworld"],
-        lambda text: _without_otel(
-            re.sub(
-                r"^redis:$",
-                f"redis:\n  port: {HELLOWORLD_REDIS_PORT}",
-                re.sub(
-                    r"^endpoint:$",
-                    f"endpoint:\n  api_port: {HELLOWORLD_API_PORT}",
-                    text,
-                    flags=re.M,
-                ),
-                flags=re.M,
-            )
-        ),
-    )
+    _edit_manifest(dirs["helloworld"], lambda text: _without_otel(_pinned(text)))
+    pinned = manifest(dirs["helloworld"])
+    assert pinned["endpoint"]["api_port"] == HELLOWORLD_API_PORT, pinned
+    assert pinned["redis"]["port"] == HELLOWORLD_REDIS_PORT, pinned
     api_after_first = ""
     with ThreadPoolExecutor(max_workers=len(PROJECTS)) as pool:
         running = [

@@ -9,7 +9,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 
 | Symptom | Likely cause |
 |---|---|
-| ``No <root>/config/global_controller.yaml here. Run `canyonos convert` first, or rerun from your project folder.`` | The project root has no manifest, or the command ran from the wrong directory. See [Project layout](BUILD_ARTIFACT.md) |
+| ``No <root>/config/workflow_config.yaml here. Run `canyonos convert` first, or rerun from your project folder.`` | The project root has no manifest, or the command ran from the wrong directory. See [Project layout](BUILD_ARTIFACT.md) |
 | `duplicate agent name ... (names are lowercased into one image tag)` | Two entries differ only in case |
 | `is required because provider is 'ec2-pool'` | `provider: ec2-pool` with no `ec2-pool:` block |
 | `is required because provider is 'ec2-assign'` | `provider: ec2-assign` with no `ec2-assign:` block |

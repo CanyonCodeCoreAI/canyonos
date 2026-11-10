@@ -12,7 +12,7 @@ Preserve prompt content and application behavior; do not invent or improve promp
 ## 1. Locate the source and config
 
 - Work in the project root: `.canyon` when the project folder has one, otherwise
-  the project folder itself. Find `config/global_controller.yaml` there and write
+  the project folder itself. Find `config/workflow_config.yaml` there and write
   `prompts.yaml` beside it. Respect an explicitly chosen destination.
 - Trace the manifest's agent entrypoints, relative to the root, to their LLM calls.
 - Search for message roles, prompt constants, template constructors, formatting

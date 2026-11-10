@@ -1,7 +1,7 @@
 # Autoscaling
 
 CanyonOS can add and remove replicas of each agent based on its load. Without a
-scaling policy, every agent runs the replica count set in `global_controller.yaml`.
+scaling policy, every agent runs the replica count set in `workflow_config.yaml`.
 
 ## Defining the policy
 
@@ -34,7 +34,7 @@ scaling:
 ## How scaling decides
 
 The Global Controller measures every agent's load each poll interval (`poll_interval`
-in `global_controller.yaml`, 5 seconds by default). It keeps the last 4 measurements
+in `workflow_config.yaml`, 5 seconds by default). It keeps the last 4 measurements
 for each agent.
 
 1. If the agent's replica count is outside `min_replicas` and `max_replicas`, it moves
@@ -62,4 +62,4 @@ works while the project is running.
   reloads, it publishes the file again and dashboard edits are lost. Copy any change
   you want to keep into `scaling.yaml`.
 - On startup and reload, every agent goes back to the replica count in
-  `global_controller.yaml`, and scaling starts again from there.
+  `workflow_config.yaml`, and scaling starts again from there.

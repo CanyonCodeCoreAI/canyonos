@@ -4,7 +4,7 @@
 """
 Logic for the pre-deploy resource picker: every agent's cpu, memory, gpu and
 replicas are shown (and filled with defaults when missing), the user can change
-any of them, and the result is written back to the global controller config.
+any of them, and the result is written back to the workflow config.
 """
 
 import math

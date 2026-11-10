@@ -34,9 +34,9 @@ On the deploying machine, run the following to deploy a sample Hello World examp
 ```bash
 cd ~/helloworld-ec2-assign
 canyonos deploy                       # choose 1. Deploy
-curl -X POST http://127.0.0.1:8082/main \
+curl -X POST http://127.0.0.1:8080/main \
   -H "Content-Type: application/json" -d '{"query": "World"}'
-curl http://127.0.0.1:8082/status/<request_id>
+curl http://127.0.0.1:8080/status/<request_id>
 ```
 
 Back on your own computer:
@@ -129,7 +129,7 @@ Run every remaining command from this folder.
 
 ### 2. Check how the agents get machines
 
-`config/global_controller.yaml` already puts each replica on a machine of its own:
+`config/workflow_config.yaml` already puts each replica on a machine of its own:
 
 ```yaml
 provider: ec2-assign
@@ -187,10 +187,12 @@ showing it; the deployment keeps running and `canyonos logs` shows it again.
 
 ### 4. Send a request
 
-On the deploying machine:
+On the deploying machine. The endpoint is on `8080` unless that port was taken;
+`canyonos deploy` prints these commands with the port it picked, and
+`canyonos status` shows them again.
 
 ```bash
-curl -X POST http://127.0.0.1:8082/main \
+curl -X POST http://127.0.0.1:8080/main \
   -H "Content-Type: application/json" \
   -d '{"query": "World"}'
 ```
@@ -204,7 +206,7 @@ The endpoint returns a request ID straight away:
 Poll for the result with that ID:
 
 ```bash
-curl http://127.0.0.1:8082/status/<request_id>
+curl http://127.0.0.1:8080/status/<request_id>
 ```
 
 When `status` is `done`, `result` contains:
@@ -373,7 +375,7 @@ network ACLs must allow the same traffic and its responses.
 | Agent machines    | `22` (SSH)                                          | Deploying machine                    |
 | Agent machines    | `50051`-`50150` (gRPC), `6379` (Redis)              | Deploying machine and agent machines |
 | Deploying machine | Endpoint gRPC port (see below)                      | Agent machines                       |
-| Deploying machine | API port: `8080` by default, `8082` for Hello World | Whoever calls the API                |
+| Deploying machine | API port: `8080`, else the next free one             | Whoever calls the API                |
 | Deploying machine | Dashboard port: `8081` by default                   | Whoever opens the dashboard          |
 
 If every machine shares one security group, add rules whose source is that same

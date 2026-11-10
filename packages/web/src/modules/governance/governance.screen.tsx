@@ -931,10 +931,8 @@ function SaveState({ dirty }: { readonly dirty: boolean }) {
       <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
         Rules apply on the controller&apos;s next poll.
         <InfoTip label="About the poll">
-          Each replica&apos;s controller rereads its rules every poll interval, the{' '}
-          <code className="font-mono">poll_interval</code> in{' '}
-          <code className="font-mono">global_controller.yaml</code> (5 seconds by default), so a
-          save takes effect within seconds, without a redeploy.
+          Each replica&apos;s controller rereads its rules on every poll, every 5 seconds by
+          default, so a save takes effect within seconds, without a redeploy.
         </InfoTip>
       </p>
     );

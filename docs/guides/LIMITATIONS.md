@@ -55,9 +55,9 @@ OPENAI_MODEL=gpt-4.1-mini
 
 Don't hardcode an API key, an account-specific resource ID, or a model that can't be changed, and check that the configured model is still available.
 
-### 4. Dependencies declared in `global_controller.yaml`
+### 4. Dependencies declared in `workflow_config.yaml`
 
-Each agent image installs only the CanyonOS base packages plus the `requirements` of that agent's entry in `global_controller.yaml`. The app's own `requirements.txt`, `pyproject.toml`, or lockfile is **not** installed, so each entry's `requirements` must list everything its serving path needs.
+Each agent image installs only the CanyonOS base packages plus the `requirements` of that agent's entry in `workflow_config.yaml`. The app's own `requirements.txt`, `pyproject.toml`, or lockfile is **not** installed, so each entry's `requirements` must list everything its serving path needs.
 
 The base packages are `BASE_AGENT_REQUIREMENTS` in [`packages/core/canyonos_core/stub_generator.py`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/packages/core/canyonos_core/stub_generator.py). They're installed in the same Python environment as each entry's `requirements`. `PROTOBUF_FLOOR` is forced, while `TESTED_MAJOR_VERSIONS` caps packages unless an entry asks for a newer version.
 
@@ -119,7 +119,7 @@ python3 -m compileall -q -x '/\.venv/' .
 python3 -c "from your_package.entrypoint import YourAgent"
 ```
 
-Then install only the packages declared for each `global_controller.yaml` entry into a fresh environment, and check that `python3 -m pip freeze` shows the same versions as the tested environment for every package the serving path uses.
+Then install only the packages declared for each `workflow_config.yaml` entry into a fresh environment, and check that `python3 -m pip freeze` shows the same versions as the tested environment for every package the serving path uses.
 
 Run at least one real request with a real model and the same data and tools as production. A successful import alone is not enough.
 

@@ -1,5 +1,4 @@
-# Autoscaling for every agent. Without a policy each agent keeps its replicas
-# from global_controller.yaml.
+# Autoscaling for every agent. Without a policy each agent runs one replica.
 #
 # scaling:
 #   min_replicas: 1

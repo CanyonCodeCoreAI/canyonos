@@ -89,7 +89,7 @@ while IFS='|' read -r case expected; do
   # validate checks a project root: its code and its manifest in config/.
   copy="$(mktemp -d)/project"
   cp -R "$PROJECT_DIR" "$copy"
-  uv run --project "$REPO_ROOT" python - "$copy/config/global_controller.yaml" "$case" <<'PY'
+  uv run --project "$REPO_ROOT" python - "$copy/config/workflow_config.yaml" "$case" <<'PY'
 import sys, yaml
 path, case = sys.argv[1:]
 config = yaml.safe_load(open(path))

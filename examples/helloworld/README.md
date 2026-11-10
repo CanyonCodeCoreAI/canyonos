@@ -16,7 +16,7 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 |---|---|
 | `agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
 | `agents/workflow.py` | `Workflow.main(query)` calls `HelloAgent().hello(name=query)`, waits for it with `.value()`, and returns `{"greeting": ...}`. |
-| `config/global_controller.yaml` | What to run: the two agents, on this machine (`provider: local`), and the `endpoint` that serves `Workflow.main` at `POST /main`, automatically published on the host at `8080` or the next free port. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
+| `config/workflow_config.yaml` | What to run: the two agents, on this machine (`provider: local`), and the `endpoint` that serves `Workflow.main` at `POST /main`, automatically published on the host at `8080` or the next free port. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
 | `config/policy.yaml` | Which callers can reach which agents. |
 
 ## Before you start
@@ -24,7 +24,7 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 - Docker is running, and `canyonos doctor` passes.
 - This example is already in CanyonOS format, so skip `canyonos convert`. It needs no `.env`.
 - It runs on this machine (`provider: local`). To run it on EC2, use [helloworld-ec2-assign](../helloworld-ec2-assign/README.md).
-- Work on a copy. Deploying writes into the project folder: it fills default resources and a `project_id` into `config/global_controller.yaml`.
+- Work on a copy. Deploying writes into the project folder: it fills default resources and a `project_id` into `config/workflow_config.yaml`.
 
 ```bash
 cd helloworld
@@ -139,5 +139,5 @@ canyonos clean   # also remove .canyon and the agents' images
 
 ## If something goes wrong
 
-- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old deploy still holds the port, remove `api_port` under `endpoint` in `config/global_controller.yaml` to restore automatic selection, or choose a free fixed port.
+- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old deploy still holds the port, remove `api_port` under `endpoint` in `config/workflow_config.yaml` to restore automatic selection, or choose a free fixed port.
 - More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

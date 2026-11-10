@@ -32,7 +32,7 @@ UNSCHEDULABLE_CPUS = 999
 
 
 def _config(deployed):
-    return project_root(deployed.dir) / "config" / "global_controller.yaml"
+    return project_root(deployed.dir) / "config" / "workflow_config.yaml"
 
 
 def _scaled_agent(deployed):
@@ -191,7 +191,7 @@ def test_canyonos_test_runs_on_a_synced_config(recorder, deployed, check):
 
 def test_canyonos_test_refuses_a_deploy_older_than_the_files(recorder, deployed):
     root = project_root(deployed.dir)
-    with (root / "config" / "global_controller.yaml").open("a") as config:
+    with (root / "config" / "workflow_config.yaml").open("a") as config:
         config.write("# edited\n")
     stale_config = canyonos(recorder, ["test", "--json"], cwd=deployed.dir, check=False)
     assert stale_config.code != 0, stale_config.output

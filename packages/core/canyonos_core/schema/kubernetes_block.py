@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The `kubernetes:` section of `global_controller.yaml`: where `canyonos deploy
+"""The `kubernetes:` section of `workflow_config.yaml`: where `canyonos deploy
 --target kubernetes` puts the project and how it fits the customer's cluster.
 
 Optional, and read only by that deploy: Docker and EC2 deploys ignore it. When it is

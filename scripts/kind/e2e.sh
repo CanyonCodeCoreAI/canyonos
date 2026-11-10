@@ -98,12 +98,12 @@ EOF
     shift 2
     (cd "${dir}" && KUBECONFIG="${kubeconfig}" COLUMNS=200 timeout 600 /w/.venv/bin/canyonos "$@" </dev/null)
   }
-  config_value() {  # project folder, dotted key: its value in global_controller.yaml
+  config_value() {  # project folder, dotted key: its value in workflow_config.yaml
     /w/.venv/bin/python -c 'import sys, yaml
 value = yaml.safe_load(open(sys.argv[1]))
 for key in sys.argv[2].split("."):
     value = value.get(key) if isinstance(value, dict) else None
-print("" if value is None else value)' "$1/config/global_controller.yaml" "$2"
+print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
   }
 
   log "canyonos target with no options takes the folder's name and the cluster's registry"
@@ -112,24 +112,29 @@ print("" if value is None else value)' "$1/config/global_controller.yaml" "$2"
   [ "$(config_value /tmp/Target_Check target)" = kubernetes ] \
     && [ "$(config_value /tmp/Target_Check kubernetes.namespace)" = target-check ] \
     && [ "$(config_value /tmp/Target_Check kubernetes.registry)" = "${REGISTRY}" ] \
-    || fail "target wrote: $(cat /tmp/Target_Check/config/global_controller.yaml)"
+    || fail "target wrote: $(cat /tmp/Target_Check/config/workflow_config.yaml)"
+  # The block goes right under `target`, keeping the file's order.
+  grep -A1 '^target: kubernetes$' /tmp/Target_Check/config/workflow_config.yaml | grep -q '^kubernetes:$' \
+    || fail "target did not put the kubernetes: block under target: $(cat /tmp/Target_Check/config/workflow_config.yaml)"
   shown="$(canyonos_in "${ADMIN}" /tmp/Target_Check target)" || fail "target (show): ${shown}"
   echo "${shown}" | grep -q "deploys to Kubernetes: namespace target-check" \
     || fail "target does not show where the project deploys: ${shown}"
 
   log "canyonos target fills an empty kubernetes: block, and validate refuses one"
   cp -r /w/examples/helloworld /tmp/Empty_Block
-  printf 'target: kubernetes\nkubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/config/global_controller.yaml
+  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Empty_Block/config/workflow_config.yaml
+  printf 'kubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/config/workflow_config.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Empty_Block validate 2>&1)" && fail "validate passed an empty kubernetes: block"
   echo "${said}" | grep -q "kubernetes: section is missing or empty" \
     || fail "validate did not name the empty kubernetes: block: ${said}"
   canyonos_in "${ADMIN}" /tmp/Empty_Block target kubernetes || fail "target with an empty kubernetes: block"
   [ "$(config_value /tmp/Empty_Block kubernetes.namespace)" = empty-block ] \
-    || fail "target left the kubernetes: block empty: $(cat /tmp/Empty_Block/config/global_controller.yaml)"
+    || fail "target left the kubernetes: block empty: $(cat /tmp/Empty_Block/config/workflow_config.yaml)"
 
   log "a config that is not valid YAML is refused, not taken for a Docker project"
   cp -r /w/examples/helloworld /tmp/Bad_Yaml
-  printf 'target: kubernetes\nkubernetes: [\n' >> /tmp/Bad_Yaml/config/global_controller.yaml
+  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Bad_Yaml/config/workflow_config.yaml
+  printf 'kubernetes: [\n' >> /tmp/Bad_Yaml/config/workflow_config.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Bad_Yaml stop 2>&1)" && fail "stop passed with a config that is not YAML: ${said}"
   echo "${said}" | grep -q "Could not read" || fail "stop did not say it could not read the config: ${said}"
 
@@ -143,13 +148,14 @@ print("" if value is None else value)' "$1/config/global_controller.yaml" "$2"
   case "${rc}" in
     124) fail "target waited for an answer with no terminal to ask" ;;
     0) [ "$(config_value /tmp/hw-deployer kubernetes.registry)" = "${REGISTRY}" ] \
-         || fail "target wrote another registry: $(cat /tmp/hw-deployer/config/global_controller.yaml)" ;;
+         || fail "target wrote another registry: $(cat /tmp/hw-deployer/config/workflow_config.yaml)" ;;
     *) echo "${said}" | grep -q -- "--registry" || fail "target failed without naming --registry"
-       if [ -n "$(config_value /tmp/hw-deployer target)" ]; then fail "a failed target still wrote the config"; fi ;;
+       cmp -s /w/examples/helloworld/config/workflow_config.yaml /tmp/hw-deployer/config/workflow_config.yaml \
+         || fail "a failed target still wrote the config: $(cat /tmp/hw-deployer/config/workflow_config.yaml)" ;;
   esac
 
   canyonos target kubernetes --namespace "${NS}" --registry "${REGISTRY}" || fail "target"
-  grep -q '^target: kubernetes' /hw/config/global_controller.yaml || fail "target not written"
+  grep -q '^target: kubernetes' /hw/config/workflow_config.yaml || fail "target not written"
   canyonos deploy || fail "deploy"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
   [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ] \
@@ -161,7 +167,7 @@ print("" if value is None else value)' "$1/config/global_controller.yaml" "$2"
   canyonos doctor || fail "doctor"
   canyonos logs --no-follow --tail 5 >/dev/null || fail "logs"
   canyonos logs HelloAgent-0 --no-follow --tail 5 >/dev/null || fail "logs HelloAgent-0"
-  project_id="$(grep -E '^project_id:' /hw/config/global_controller.yaml | awk '{print $2}')"
+  project_id="$(grep -E '^project_id:' /hw/config/workflow_config.yaml | awk '{print $2}')"
 
   log "The endpoint stays on 127.0.0.1:8080 when its pod is replaced"
   selector="$(as_deployer kubectl -n "${NS}" get svc canyonos-endpoint \
@@ -261,7 +267,7 @@ print("" if value is None else value)' "$1/config/global_controller.yaml" "$2"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "the dashboard is not on 127.0.0.1:8081"
 
   log "another project's serve keeps the running dashboard on its port"
-  printf 'dashboard_port: 9000\n' >> /tmp/Target_Check/config/global_controller.yaml
+  printf 'dashboard_port: 9000\n' >> /tmp/Target_Check/config/workflow_config.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Target_Check serve)" || fail "serve from another project: ${said}"
   echo "${said}" | grep -q "127.0.0.1:8081" || fail "serve moved the running dashboard: ${said}"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "the dashboard left 127.0.0.1:8081"
@@ -324,7 +330,7 @@ EOF
   # Its Docker checks fail in this container, which has no Docker: only the config counts.
   canyonos target docker || true
   [ "$(config_value /hw target)" = docker ] && [ "$(config_value /hw kubernetes.namespace)" = "${NS}" ] \
-    || fail "target docker wrote: $(cat /hw/config/global_controller.yaml)"
+    || fail "target docker wrote: $(cat /hw/config/workflow_config.yaml)"
 
   as_admin kubectl delete namespace "${NS}" --wait=false >/dev/null
 

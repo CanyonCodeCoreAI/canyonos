@@ -51,7 +51,7 @@ __all__ = [
 ]
 
 # The manifest, relative to the project root.
-CONFIG_PATH = os.path.join("config", "global_controller.yaml")
+CONFIG_PATH = os.path.join("config", "workflow_config.yaml")
 
 
 def _as_typed(path):

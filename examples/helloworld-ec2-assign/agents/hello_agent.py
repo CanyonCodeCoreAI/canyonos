@@ -3,7 +3,7 @@
 
 # Example Agent
 # Replace this with your agent implementation.
-# The class name must match the agent's 'name' in config/global_controller.yaml.
+# The class name must match the agent's 'name' in config/workflow_config.yaml.
 
 
 class HelloAgent(object):

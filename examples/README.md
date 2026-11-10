@@ -10,4 +10,4 @@ Portfolio: Manages your portfolio for you. You can state some holdings in plain 
 
 PR review: Reviews a pull request with three agents: one runs the tests, one reviews the change with an LLM, one merges it. Its `config/governance.yaml` refuses the merge while the test runner is down and moves the review to a cheaper model once it has spent more than $5.
 
-Each example declares its own ports in `config/global_controller.yaml` (Helloworld: API 8082, Redis 6380; Portfolio: API 8080, Redis 6379; PR review: API 8083, Redis 6382), so all of them can be deployed on the same machine at once.
+All of them can be deployed on the same machine at once: each deploy picks free ports for its endpoint and Redis, and `canyonos deploy` prints the address to call.

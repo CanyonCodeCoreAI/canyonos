@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The manifest schema: every key `global_controller.yaml` may carry.
+"""The manifest schema: every key `workflow_config.yaml` may carry.
 
 Anything not declared here is rejected, so a typo fails the deploy with a line
 number instead of being silently ignored, and a wrong type fails here rather
@@ -122,7 +122,7 @@ _RESOURCE_KEYS = frozenset({"cpu", "memory", "gpu"})
 
 @dataclass(frozen=True)
 class Resources:
-    """The compute resources requested for an agent in `global_controller.yaml`."""
+    """The compute resources requested for an agent in `workflow_config.yaml`."""
 
     cpu: float = 1
     memory: float = 512
@@ -131,7 +131,7 @@ class Resources:
 
 @dataclass(frozen=True)
 class RedisSpec:
-    """The `redis` section of `global_controller.yaml`: where the project Redis runs."""
+    """The `redis` section of `workflow_config.yaml`: where the project Redis runs."""
 
     host: str = "localhost"
     port: int = 6379
@@ -140,7 +140,7 @@ class RedisSpec:
 
 @dataclass(frozen=True)
 class OtelDestination:
-    """One `otel` destination in `global_controller.yaml`: where to send telemetry."""
+    """One `otel` destination in `workflow_config.yaml`: where to send telemetry."""
 
     name: str
     protocol: str
@@ -152,7 +152,7 @@ class OtelDestination:
 
 @dataclass(frozen=True)
 class OtelSpec:
-    """The `otel` section of `global_controller.yaml`."""
+    """The `otel` section of `workflow_config.yaml`."""
 
     destinations: tuple = ()
 
@@ -204,7 +204,7 @@ class DatabaseAgent(_Agent):
 
 @dataclass(frozen=True)
 class Manifest:
-    """The project's `global_controller.yaml`, checked and parsed by `load_manifest`."""
+    """The project's `workflow_config.yaml`, checked and parsed by `load_manifest`."""
 
     agents: tuple
     target: str = TARGETS[0]
@@ -459,7 +459,7 @@ def _check_agent_keys(collector, node, prefix, agent_type):
 
 
 def _agents(collector, node):
-    """Parse the `agents` list in `global_controller.yaml`; two names that differ only
+    """Parse the `agents` list in `workflow_config.yaml`; two names that differ only
     in case are a violation, since both would get the same image and container name,
     and so is `endpoint`, the name of the HTTP endpoint's own replica."""
     if "agents" not in node or node["agents"] is None:
@@ -508,7 +508,7 @@ def _agents(collector, node):
 
 
 def _otel(collector, node):
-    """Parse the `otel` section of `global_controller.yaml`, recording violations for
+    """Parse the `otel` section of `workflow_config.yaml`, recording violations for
     bad or duplicate destinations."""
     block = _mapping(collector, node, "otel", "", _OTEL_KEYS)
     if block is None:
@@ -651,7 +651,7 @@ def _by_agent(collector, node, key, prefix, agent_names):
 
 
 def _check_provider_sections(collector, node, provider, agent_specs):
-    """Check each provider's top-level section of `global_controller.yaml`, such as
+    """Check each provider's top-level section of `workflow_config.yaml`, such as
     `ec2-pool:`. Unknown and retired keys are always reported. The section's values are
     checked only for the deployment's `provider`, and the section itself is required
     then only if it has required keys."""
@@ -696,7 +696,7 @@ def _check_provider_sections(collector, node, provider, agent_specs):
 
 
 def load_manifest(path):
-    """Parse and check `global_controller.yaml`, reporting every problem at once.
+    """Parse and check `workflow_config.yaml`, reporting every problem at once.
 
     Raises:
         SchemaError: the manifest is unusable; `.violations` holds them all.

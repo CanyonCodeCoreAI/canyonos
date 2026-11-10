@@ -3,7 +3,7 @@
     {
       "apiVersion": "v1",
       "data": {
-        "global_controller.yaml": "agents: []\n"
+        "workflow_config.yaml": "agents: []\n"
       },
       "kind": "ConfigMap",
       "metadata": {
@@ -85,7 +85,7 @@
     {
       "apiVersion": "v1",
       "data": {
-        "global_controller.yaml": "agents: []\n"
+        "workflow_config.yaml": "agents: []\n"
       },
       "kind": "ConfigMap",
       "metadata": {

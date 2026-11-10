@@ -33,7 +33,7 @@ var _ = Describe("CanyonBuild controller", func() {
 		build := &canyonosv1alpha1.CanyonBuild{
 			ObjectMeta: metav1.ObjectMeta{Name: testBuildName, Namespace: namespace},
 			Spec: canyonosv1alpha1.CanyonBuildSpec{
-				Project: testProjectName, Config: "config/global_controller.yaml", Registry: "localhost:5001", Tag: "t1",
+				Project: testProjectName, Config: "config/workflow_config.yaml", Registry: "localhost:5001", Tag: "t1",
 			},
 		}
 		Expect(k8sClient.Create(ctx, build)).To(Succeed())

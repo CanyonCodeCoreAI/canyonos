@@ -1,22 +1,33 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Global Controller Configuration — portfolio-analysis fan-out pipeline
-# Lists all agents that CanyonOS manages, and the one the endpoint serves.
+# Workflow config — portfolio-analysis fan-out pipeline
 #
 # The pipeline fans out per-ticker metrics computation, then aggregates into
 # portfolio-level risk, then generates an LLM briefing. Resource classes below
 # reflect each stage's real cost so the scheduler has placement decisions to make.
 
+# Where the project deploys: `docker` is Docker on this machine.
+target: docker
+
 # Where every replica runs: `local` (this machine) or `ec2-pool` (machines from `ec2-pool:`).
 provider: local
 
+# Machines for `provider: ec2-pool`.
+# ec2-pool:
+#   region: ${EC2_REGION}
+#   machine_type:          # how many machines of each type the deploy starts
+#     t3.micro: 3
+#   subnet_id: ${EC2_SUBNET_ID}
+#   security_group_ids:
+#     - ${EC2_SECURITY_GROUP_ID}
+
+# The agents CanyonOS runs, and below them the one the endpoint serves.
 agents:
   # Stage 0: parse the free-text request into structured holdings + lookback
   # window (calls OpenAI via the openai SDK, routed through the CanyonOS LLM gateway). Cheap CPU, one
   # call per request, on the critical path before the fan-out.
   - name: IntentAgent
-    replicas: 1
     resources:
       cpu: 1
       memory: 256
@@ -34,7 +45,6 @@ agents:
   # Stage 0b: price history fetch. Network/IO-bound, cheap CPU. Called by
   # MetricsAgent, one fetch per ticker — high fan-out, so multiple replicas.
   - name: PriceAgent
-    replicas: 1
     resources:
       cpu: 1
       memory: 256
@@ -54,7 +64,6 @@ agents:
   # Stage 1: per-ticker metrics. Cheap CPU, high fan-out (one call per holding).
   # Calls PriceAgent remotely, then computes return/vol/Sharpe/drawdown.
   - name: MetricsAgent
-    replicas: 1
     resources:
       cpu: 1
       memory: 256
@@ -73,7 +82,6 @@ agents:
   # Stage 2: portfolio-level risk aggregation. Single call per request; needs
   # every ticker's metrics (the barrier).
   - name: RiskAgent
-    replicas: 1
     resources:
       cpu: 1
       memory: 256
@@ -92,7 +100,6 @@ agents:
   # Stage 3: LLM briefing via OpenAI. On the critical path, one call per
   # request.
   - name: AdvisorAgent
-    replicas: 1
     resources:
       cpu: 1
       memory: 512
@@ -113,7 +120,6 @@ agents:
 
   # The agent the endpoint serves over HTTP; it calls the stages above.
   - name: Workflow
-    replicas: 1
     resources:
       cpu: 1
       memory: 512
@@ -142,28 +148,5 @@ endpoint:
   agent: Workflow
   method: main
 
-otel:
-  # The dashboard api's own OTLP ingest. Base url only -- the exporter appends the
-  # per-signal path (/v1/traces, /v1/metrics, /v1/logs) to whatever is set here.
-  destinations:
-    - name: local
-      protocol: http
-      endpoint: http://canyonos-dashboard-api:3000
-      headers: {}
-
 # Polling interval in seconds
 poll_interval: 4
-logs: true
-
-redis:
-  host: localhost
-  db: 0
-
-# Machines for `provider: ec2-pool`.
-# ec2-pool:
-#   region: ${EC2_REGION}
-#   machine_type:          # how many machines of each type the deploy starts
-#     t3.micro: 3
-#   subnet_id: ${EC2_SUBNET_ID}
-#   security_group_ids:
-#     - ${EC2_SECURITY_GROUP_ID}

@@ -1,4 +1,12 @@
-# The agents CanyonOS runs for this project, and the HTTP endpoint it serves.
+# Where the project deploys: `docker` is Docker on this machine.
+# `canyonos target kubernetes` switches it to a cluster, with the settings a cluster needs.
+target: docker
+
+# Where every agent runs: `local` is this machine; `ec2-pool` and `ec2-assign` run
+# them on Amazon EC2.
+provider: local
+
+# The agents CanyonOS runs for this project.
 agents:
   - name: MyAgent
     entrypoint: agents/my_agent.py
@@ -24,14 +32,3 @@ agents:
 endpoint:
   agent: Workflow
   method: main
-
-# Sends traces, metrics and logs to the local dashboard.
-otel:
-  destinations:
-    - name: local
-      protocol: http
-      endpoint: http://canyonos-dashboard-api:3000
-      headers: {}
-
-# Deploys run on Docker on this machine unless `target: kubernetes` is set here;
-# `canyonos target kubernetes` sets it, with the settings a cluster needs.

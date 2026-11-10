@@ -1,7 +1,7 @@
 # Endpoint — Architecture
 
 The endpoint is the HTTP door into a deployment. It serves one agent method, named by
-the top-level `endpoint:` block in `global_controller.yaml`, at `POST /<method>`, and
+the top-level `endpoint:` block in `workflow_config.yaml`, at `POST /<method>`, and
 reports each request's result at `GET /status/<request_id>`. It runs no agent code: it
 queues the call and forwards it to a replica of the agent it serves.
 
@@ -45,7 +45,7 @@ endpoint:
 `agent` must be an entry of type `agent`, and `method` must be listed in that agent's
 `functions`. The argument names `canyonos test`, the deploy summary and the dashboard
 use come from that function's `arguments`. See
-[global_controller.yaml](../guides/GLOBAL_CONTROLLER.md).
+[workflow_config.yaml](../guides/WORKFLOW_CONFIG.md).
 
 ## A request end to end
 

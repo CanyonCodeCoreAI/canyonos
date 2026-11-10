@@ -176,7 +176,7 @@ future:{future_id}.logs JSON array
 ## Destinations and dashboard
 
 ```
-global_controller.yaml
+workflow_config.yaml
 otel.destinations
       │
       ├─ absent ──▶ LOCAL_DASHBOARD_DESTINATION (canyonos-dashboard-api:3000)

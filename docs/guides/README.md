@@ -34,7 +34,7 @@ against this contract but is not part of it.
 
 - [Project layout](BUILD_ARTIFACT.md): which folder is the project root, what
   becomes `/app` in the containers, and the names the platform uses.
-- [`global_controller.yaml`](GLOBAL_CONTROLLER.md): how to write the deploy file,
+- [`workflow_config.yaml`](WORKFLOW_CONFIG.md): how to write the deploy file,
   and every key in it, with defaults.
 - [Runtime contract](RUNTIME_CONTRACT.md): how agents are
   loaded, called, stubbed and torn down.

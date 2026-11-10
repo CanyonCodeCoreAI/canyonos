@@ -44,7 +44,7 @@ canyonos_core.server.deploy
               ├─ builder thread: _build_images ──▶ buildx bake, then database tags
               ├─ GlobalController(config_path)          (while the images build)
               │     ├─ ControllerContext.__init__
-              │     │    ├─ _load_config ──▶ .env + global_controller.yaml
+              │     │    ├─ _load_config ──▶ .env + workflow_config.yaml
               │     │    │                    + endpoint spec after the agents
               │     │    ├─ resolve_env_file
               │     │    └─ RedisClient

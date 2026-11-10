@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Global Controller Configuration
-# Lists all agents that CanyonOS manages.
+# Where the project deploys: `docker` is Docker on this machine, which starts the
+# EC2 machines below.
+target: docker
 
 # Where every replica runs: here, an EC2 machine of its own per replica, of the type
 # `ec2-assign: machine_type:` gives its agent. See docs/guides/EC2.md.
@@ -13,9 +14,9 @@ ec2-assign:
     HelloAgent: t3.micro
     Workflow: t3.micro
 
+# The agents CanyonOS runs.
 agents:
   - name: HelloAgent
-    replicas: 1
     resources:
       cpu: 1
       memory: 512
@@ -29,7 +30,6 @@ agents:
           type: str
 
   - name: Workflow
-    replicas: 1
     entrypoint: agents/workflow.py
     functions:
       - name: main
@@ -40,25 +40,8 @@ agents:
           type: dict
 
 endpoint:
-  api_port: 8082 # Defaults to 8080 if not filled
   agent: Workflow
   method: main
 
-dashboard_port: 8081 # Local dashboard's preferred port, defaults to 8081 if not filled
-
-poll_interval: 5
-
 # Stream failure/log detail into each future's `logs` field; on by default, off here to save bandwidth.
 logs: false
-
-redis:
-  host: localhost
-  port: 6380
-  db: 0
-
-otel:
-  destinations:
-    - name: local
-      protocol: http
-      endpoint: http://canyonos-dashboard-api:3000
-      headers: {}

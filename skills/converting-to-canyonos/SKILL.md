@@ -63,7 +63,7 @@ external stores and concurrency controls; follow the
 - Derive each agent's `functions` (the methods other agents or the endpoint
   call, with argument and return types built from builtins), paths and
   requirements from the source. Write configuration using the
-  [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md).
+  [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md).
 - Declare the top-level `endpoint: {agent, method}` block naming the agent the
   endpoint serves and its entry method. That method must be listed in the
   agent's `functions`, with the arguments the request body carries.
@@ -72,9 +72,9 @@ external stores and concurrency controls; follow the
   defaults without asking, and leave `endpoint.api_port`, `redis.port` and
   `dashboard_port` unset, so CanyonOS picks free ports, unless the source fixes one.
 - Check each image's dependency set with `uv pip compile`, using the target
-  Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#per-image-requirements).
+  Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.
-- Local dashboard tracing needs no config. Add an [`otel:` block](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md#oteldestinations)
+- Local dashboard tracing needs no config. Add an [`otel:` block](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#oteldestinations)
   only when another destination was chosen, keeping its `local` entry.
 - For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
 - For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)

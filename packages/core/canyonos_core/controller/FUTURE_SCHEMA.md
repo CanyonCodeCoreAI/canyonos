@@ -51,7 +51,7 @@ severity, and neither is optional for the range it covers:
   still says why.
 - **DEBUG/INFO only** (ambient context): captured by `LogHandler`, a `logging.Handler` attached
   to the root logger in `LocalController.__init__`, but only when `logs_enabled` is true (the
-  `logs:` key in `global_controller.yaml`, on by default -- set `logs: false` to opt out).
+  `logs:` key in `workflow_config.yaml`, on by default -- set `logs: false` to opt out).
   `LogHandler` explicitly refuses to handle WARNING and above so it can never duplicate what the
   failure path already wrote, and skips the Local Controller's own lines, which go only to the
   container's stdout.

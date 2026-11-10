@@ -42,16 +42,16 @@ MODES = {f.__name__: f for f in (rename, endpoint_name, env_file, ssh_key_env)}
 
 
 def rewrite_manifest(canyon: Path, edit) -> None:
-    """Load `canyon/config/global_controller.yaml`, let `edit` change it in place,
+    """Load `canyon/config/workflow_config.yaml`, let `edit` change it in place,
     and write it back as plain YAML."""
-    path = canyon / "config" / "global_controller.yaml"
+    path = canyon / "config" / "workflow_config.yaml"
     manifest = yaml.safe_load(path.read_text())
     edit(manifest)
     path.write_text(yaml.safe_dump(manifest, sort_keys=False))
 
 
 def break_manifest(canyon: Path, mode: str) -> str:
-    """Break `canyon/config/global_controller.yaml` the way `mode` says and return
+    """Break `canyon/config/workflow_config.yaml` the way `mode` says and return
     the text one finding's summary has to contain."""
     expected = []
 

@@ -3,7 +3,7 @@
 The log signal ships per-future log records -- captured while a future runs -- as OTel
 LogRecords correlated to their parent trace/span. This doc covers only the log-specific parts.
 
-There are two specific paths that logs go through, based on severity. Any log marked as an "error" or greater goes through its own path, and is always logged. On the other side, any other logs (genral logs, warnings) are optional (default=True), where if you set logging = False in global_controller.yaml, you will not receive any of these logs. 
+There are two specific paths that logs go through, based on severity. Any log marked as an "error" or greater goes through its own path, and is always logged. On the other side, any other logs (genral logs, warnings) are optional (default=True), where if you set logging = False in workflow_config.yaml, you will not receive any of these logs. 
 
 Note: If network bandwidth becomes an issue, set logging to False. Logs are bulky.
 

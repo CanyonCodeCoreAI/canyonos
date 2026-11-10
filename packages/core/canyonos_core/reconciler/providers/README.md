@@ -1,7 +1,7 @@
 # Cloud Provider Logic
 
 Backend implementations for where CanyonOS runs an agent's container. The top-level
-`provider:` in `global_controller.yaml` picks one for the whole deployment: `local`, `ec2-pool` or `ec2-assign`.
+`provider:` in `workflow_config.yaml` picks one for the whole deployment: `local`, `ec2-pool` or `ec2-assign`.
 
 The providers differ in where each agent container runs: local runs on the deployment host, while EC2 launches a separate EC2 machine.
 
@@ -73,7 +73,7 @@ record counts as finished once it has `address`.
 
 Every provider also has a schema module (`_schema.py`; ec2-pool's is `_schema_pool.py`
 and ec2-assign's `_schema_assign.py`, as they share the `EC2/` package), which the manifest schema checks
-`global_controller.yaml` against. It must not import `_provider.py`, since the CLI reads it:
+`workflow_config.yaml` against. It must not import `_provider.py`, since the CLI reads it:
 
 | Name | Holds |
 | --- | --- |

@@ -159,11 +159,11 @@ def _typed(command, run, what, optional=False):
 
 
 def _is_project(folder):
-    """True if `folder` holds a `global_controller.yaml`, in either layout: under
+    """True if `folder` holds a `workflow_config.yaml`, in either layout: under
     a ported `CANYON_DIR`, or in a `config/` at its root."""
     return os.path.isfile(
-        os.path.join(folder, CANYON_DIR, "config", "global_controller.yaml")
-    ) or os.path.isfile(os.path.join(folder, "config", "global_controller.yaml"))
+        os.path.join(folder, CANYON_DIR, "config", "workflow_config.yaml")
+    ) or os.path.isfile(os.path.join(folder, "config", "workflow_config.yaml"))
 
 
 def _bundled(name):

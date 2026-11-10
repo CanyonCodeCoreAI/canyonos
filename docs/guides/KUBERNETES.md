@@ -76,7 +76,7 @@ cluster (`--all` also the registry and the images in it).
 ## Configuration
 
 `canyonos target kubernetes` adds `target: kubernetes` and a `kubernetes:` block to
-`global_controller.yaml`. The namespace defaults to the folder's name (`--namespace`
+`workflow_config.yaml`. The namespace defaults to the folder's name (`--namespace`
 to choose it), and the registry to the one the cluster advertises in the standard
 `local-registry-hosting` ConfigMap, as `canyonos cluster up` does (`--registry`
 otherwise, or it asks). What the block already says is kept. `canyonos target docker`
@@ -140,7 +140,7 @@ canyonos clean       # stop, then remove the CLI's ConfigMap and Secret
 
 These take the same options as on Docker: `logs [agent or replica] [--tail N|all]
 [--no-follow]`, `status [--json]`, `test [prompt] [--json] [--timeout S]`, and they
-read the same `global_controller.yaml`. `--target docker` or `--target kubernetes` on
+read the same `workflow_config.yaml`. `--target docker` or `--target kubernetes` on
 one command overrides the project's `target`. `test` queries the project as deployed,
 through a port-forward it opens and closes itself; unlike on Docker it never deploys.
 `stop --all` and `clean --all` cover every project on this machine's Docker, whatever
@@ -148,7 +148,7 @@ the folder's target.
 
 Without `endpoint.host` or `endpoint.url`, `canyonos deploy` keeps the endpoint on
 `http://127.0.0.1:8080`, or the next free port by the same rule as on Docker (see
-[Ports a deploy opens](GLOBAL_CONTROLLER.md#ports-a-deploy-opens)); an `endpoint.api_port`
+[Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens)); an `endpoint.api_port`
 you set is used as is and never moved, so a taken one leaves the endpoint unforwarded
 with a warning. A port-forward a background `canyonos` process holds open does it: it
 starts the forward again when the endpoint's pod is replaced, as on a redeploy, and
@@ -160,10 +160,10 @@ for a build (a CanyonBuild) in the project's namespace and uploads the project r
 (`.canyon` once the project is converted, as on Docker) to the build's pod through a
 port-forward; `.env` and any other `.env*` file, `.git` and local environments are
 never uploaded. The build builds each agent's image on the cluster's builder, pushes it by
-digest, and applies the project's objects from `global_controller.yaml` itself, so a
+digest, and applies the project's objects from `workflow_config.yaml` itself, so a
 redeploy of unchanged code restarts nothing. The CLI needs no Docker for this.
 
-The first deploy writes a `project_id` into `global_controller.yaml`; commit it, so
+The first deploy writes a `project_id` into `workflow_config.yaml`; commit it, so
 telemetry stays under one project across deploys and targets. The project is named
 after its folder and the start of that id (`helloworld-4eeed6f3`), as on Docker, so two
 folders of the same name never share a CanyonProject in a namespace.

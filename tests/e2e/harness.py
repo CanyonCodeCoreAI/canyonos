@@ -546,8 +546,8 @@ def as_argument(endpoint: Endpoint, query) -> str:
 
 
 def manifest(workspace: Path) -> dict:
-    """The project's parsed `config/global_controller.yaml`."""
-    path = project_root(workspace) / "config" / "global_controller.yaml"
+    """The project's parsed `config/workflow_config.yaml`."""
+    path = project_root(workspace) / "config" / "workflow_config.yaml"
     return yaml.safe_load(path.read_text())
 
 
@@ -621,7 +621,7 @@ def deployed_project_id(
     recorder: Recorder, api: Api, workspace: Path, name: str
 ) -> str:
     """The dashboard id of the project deployed from `workspace`: the `project_id`
-    `canyonos deploy` saved in its `global_controller.yaml`, which the dashboard
+    `canyonos deploy` saved in its `workflow_config.yaml`, which the dashboard
     registers it under. Fail unless the dashboard lists that id as `name`."""
     project_id = cli_value(
         recorder,
@@ -629,7 +629,7 @@ def deployed_project_id(
         "read_config(default_config_path()).get('project_id')",
         "from canyonos.constants import default_config_path, read_config",
     )
-    assert project_id, f"no project_id in {workspace.name}'s global_controller.yaml"
+    assert project_id, f"no project_id in {workspace.name}'s workflow_config.yaml"
     projects = api.get("/projects").json()
     names = {project["id"]: project["name"] for project in projects}
     assert names.get(project_id) == name, (

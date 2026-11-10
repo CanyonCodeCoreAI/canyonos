@@ -11,7 +11,7 @@ one machine and Docker Desktop shows each as its own group. The CLI's own
 records for a project live under `~/.canyonos/projects/<project>/`.
 
 Where the project runs is its `target`: Docker on this machine, or the Kubernetes
-cluster `kubectl` points at. Its `global_controller.yaml` says it once, so every
+cluster `kubectl` points at. Its `workflow_config.yaml` says it once, so every
 command in its folder goes there; `--target` on one command overrides it.
 
 The container and image names mirror

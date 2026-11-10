@@ -229,7 +229,7 @@ def add_parsers(subparsers):
         "-c",
         "--config",
         default=CONFIG_PATH,
-        help=f"Path to global controller config (default: {CONFIG_PATH})",
+        help=f"Path to the workflow config (default: {CONFIG_PATH})",
     )
     build.add_argument(
         "--builder", required=True, help="The BuildKit to build on (tcp://host:1234)"
@@ -279,6 +279,6 @@ def add_parsers(subparsers):
         "-c",
         "--config",
         default=CONFIG_PATH,
-        help=f"Path to global controller config (default: {CONFIG_PATH})",
+        help=f"Path to the workflow config (default: {CONFIG_PATH})",
     )
     run_gc.set_defaults(func=_cmd_run_gc)

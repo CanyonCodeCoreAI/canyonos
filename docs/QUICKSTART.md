@@ -158,7 +158,7 @@ Run `canyonos deploy` again to apply your changes.
 
 #### Configuring the Global Controller
 
-Every setting is described in [global_controller.yaml](guides/GLOBAL_CONTROLLER.md).
+Every setting is described in [workflow_config.yaml](guides/WORKFLOW_CONFIG.md).
 
 For `provider: ec2-pool` specifically (`canyonos provision`, AMI/IAM/security group requirements, the `ec2-pool:` config block), see [EC2 deployment](guides/EC2.md).
 
@@ -170,7 +170,7 @@ canyonos stop helloworld     # stop a project by name, folder name or ID (or its
 canyonos stop --all          # stop every project on this machine
 ```
 
-With more than one project deployed, `canyonos stop` lists them: tick the ones to stop with space, then press enter. Without a terminal it names them and stops none, so pass the names. A name two projects share is refused; use the ID instead. `stop --all` also finds projects whose folder was deleted before `canyonos stop`, whose containers keep holding their ports. `stop` leaves your project folder (including `.canyon/` and `.env`) and the built images in place, so the next deploy is quick. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
+With more than one project deployed, `canyonos stop` lists them: tick the ones to stop with space, then press enter. Without a terminal it names them and stops none, so pass the names. A name two projects share is refused; use the ID instead. `stop --all` also finds projects whose folder was deleted before `canyonos stop`, whose containers keep holding their ports. `stop` leaves your project folder (including `.canyon/` and `.env`) and the built images in place, so the next deploy is quick. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `workflow_config.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
 
 ### Clean generated files
 

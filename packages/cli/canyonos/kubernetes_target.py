@@ -139,7 +139,7 @@ def _expand(value, values):
 
 
 def load_config(config_path, env_values=None):
-    """`global_controller.yaml` as a dict, `${VAR}` filled in inside the `kubernetes:`
+    """`workflow_config.yaml` as a dict, `${VAR}` filled in inside the `kubernetes:`
     block from `.env` alone: the values the build in the cluster sees too. Fails with
     a fix when the block is missing; the build checks the rest."""
     with open(config_path, encoding="utf-8") as f:

@@ -65,7 +65,7 @@ def test_validate_says_it_checked_nothing_without_a_manifest(recorder, tmp_path)
     empty.mkdir()
     body = _validate(recorder, empty, tmp_path, 2)
     assert body["errors"] is None and body["findings"] == [], body
-    assert "config/global_controller.yaml not found" in body["error"], body
+    assert "config/workflow_config.yaml not found" in body["error"], body
 
 
 def test_validate_expands_a_variable_from_the_project_env(recorder, staged):

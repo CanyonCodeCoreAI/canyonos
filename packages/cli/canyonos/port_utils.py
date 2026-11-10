@@ -12,7 +12,7 @@ One rule for the whole codebase:
     (`reserved_ports()`). All but Redis also hop when Docker refuses the port,
     so only a port Docker holds is chosen.
   - A user-declared port -- `api_port`, `dashboard_port` and `redis.port` from
-    global_controller.yaml -- fails fast, because it is read back statically
+    workflow_config.yaml -- fails fast, because it is read back statically
     and must not be silently moved.
 
 A port conflict surfaces in one of two ways, depending on where the caller runs:

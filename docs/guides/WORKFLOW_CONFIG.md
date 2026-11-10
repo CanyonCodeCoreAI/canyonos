@@ -1,14 +1,12 @@
-# global_controller.yaml
+# workflow_config.yaml
 
-Global Controller is our central authority and control plane inside CanyonOS. It handles things such as deployment, scaling, and pulling telemetry.
-
-`global_controller.yaml` is the one file that tells global controller how to deploy everything. When
-you run `canyonos deploy`, CanyonOS reads this file and starts exactly what it
-describes.
+`workflow_config.yaml` describes your workflow: the agents it runs, the endpoint
+that serves it, and where it runs. When you run `canyonos deploy`, CanyonOS reads
+this file and starts exactly what it describes.
 
 ## Where it lives
 
-It lives at `config/global_controller.yaml` in the [project root](BUILD_ARTIFACT.md).
+It lives at `config/workflow_config.yaml` in the [project root](BUILD_ARTIFACT.md).
 `canyonos convert` can write it for you.
 
 You can change it in two ways:
@@ -23,6 +21,9 @@ Either way, run `canyonos deploy` again to apply the change.
 This file runs one agent that looks up stock prices, and the `Workflow` agent that calls it:
 
 ```yaml
+target: docker
+provider: local
+
 agents:
   - name: PriceAgent
     entrypoint: agents/price_agent.py
@@ -54,6 +55,9 @@ endpoint:
 
 Reading it top to bottom:
 
+- `target: docker` and `provider: local` deploy it with Docker on this machine. Both
+  are the defaults, so they can be left out, but they come first because they decide
+  where everything below runs.
 - `PriceAgent` is an agent whose code is in `agents/price_agent.py`. CanyonOS runs two
   copies of it, each with one CPU core and 256 MB of memory, and installs `yfinance`
   into it. `functions` lists the methods the workflow calls on it, here `get_price`.
@@ -61,6 +65,11 @@ Reading it top to bottom:
   answer it. Its `functions` list `main`, the method the endpoint serves.
 - `endpoint` is the web address CanyonOS serves for you, on port `8080`. A request to
   `POST /main` runs the `main` method of the `Workflow` class.
+
+`canyonos new-app` and the examples keep this order: `target` and `provider` with
+their blocks, then `agents`, then `endpoint`, then any other settings.
+`canyonos target kubernetes` puts the `kubernetes:` block right under `target`. CanyonOS
+reads the keys in any order.
 
 ## The `agents` list
 
@@ -124,16 +133,11 @@ These go at the top level of the file, next to `agents`:
 - `ec2-assign`: the same as `ec2-pool`, used when `provider` is `ec2-assign`, except that
   `machine_type` gives every agent its machine type, such as
   `{HelloAgent: t3.micro, Workflow: t3.micro}`.
-- `otel`: where to send your app's traces, metrics, and logs, if you use an
-  observability tool. Each destination has a `name`, a `protocol` (`grpc`, `http`, or
-  `http/protobuf`), and an `endpoint`.
-- `poll_interval`: how often, in seconds, the Global Controller checks that everything
-  is running (default `5`).
-- `redis`: where CanyonOS keeps track of your running app (default `localhost:6379`,
-  else the next free port).
-  Most projects leave this alone. Its containers reach it on the project's Docker network;
-  the port is published on `127.0.0.1` only, so nothing outside the machine reaches it.
 - `project_id`: filled in by the first deploy. Leave it as it is.
+
+Every other key has a default that suits most projects, so you can leave it out.
+The [Reference](#reference) lists them all, such as `otel` to send traces to your
+own observability tool.
 
 ### Ports a deploy opens
 
@@ -195,10 +199,10 @@ every problem at once, each with the line it's on, so you can fix them all in on
 ## Reference
 
 The schema in `canyonos_core/schema` checks the manifest
-`global_controller.yaml` before anything is built. A key it does not know is
+`workflow_config.yaml` before anything is built. A key it does not know is
 an error, so this page lists every key it accepts.
 
-### `global_controller.yaml`
+### `workflow_config.yaml`
 
 #### Agent entries
 
@@ -300,7 +304,6 @@ port the API is on.
 agents:
   - name: EmailAgent
     entrypoint: email_assistant.py
-    replicas: 1
     resources:
       cpu: 1
       memory: 1024
@@ -328,24 +331,11 @@ agents:
 endpoint:
   agent: Workflow
   method: main
-
-poll_interval: 5
-
-redis:
-  host: localhost
-  db: 0
-
-otel:
-  destinations:
-    - name: local
-      protocol: http
-      endpoint: http://canyonos-dashboard-api:3000
-      headers: {}
 ```
 
 #### Editing with `canyonos config`
 
-`canyonos config` opens the existing `global_controller.yaml` in a small
+`canyonos config` opens the existing `workflow_config.yaml` in a small
 terminal UI. View shows what is in the file. Change lets you edit or delete a
 key and saves in place. It does not create the file or fill in defaults.
 

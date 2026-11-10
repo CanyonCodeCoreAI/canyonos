@@ -85,7 +85,7 @@ def _test(recorder, directory):
 
 
 def _manifest(directory):
-    return directory / "config" / "global_controller.yaml"
+    return directory / "config" / "workflow_config.yaml"
 
 
 def test_new_app_deploys_and_answers(recorder, starter):

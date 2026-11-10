@@ -477,7 +477,7 @@ test('the poll note explains what a poll is, on keyboard focus too', async ({ pa
   await drawer(page).getByRole('button', { name: 'About the poll' }).focus();
 
   await expect(page.getByRole('tooltip')).toContainText(
-    'rereads its rules every poll interval, the poll_interval in global_controller.yaml'
+    'rereads its rules on every poll, every 5 seconds by default'
   );
 });
 

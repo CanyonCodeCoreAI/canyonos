@@ -11,7 +11,7 @@
 - `receiver`: a build pod's upload of the project (`canyonos_core.cli receive`).
 - `commands`: the `build`, `apply-project`, `receive` and `run-gc` subcommands.
 
-The `kubernetes:` section of `global_controller.yaml` is parsed with every other section,
+The `kubernetes:` section of `workflow_config.yaml` is parsed with every other section,
 in schema/kubernetes_block.py: the schema package parses the whole config, so moving
 one section here would make the two packages import each other.
 

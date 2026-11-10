@@ -257,7 +257,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             if clashed not in (None, host_port):
                 raise RuntimeError(
                     f"Port {clashed} is already in use on {host}. Free it, or change "
-                    "the endpoint's `api_port` in global_controller.yaml or delete it "
+                    "the endpoint's `api_port` in workflow_config.yaml or delete it "
                     "so CanyonOS picks a free port."
                 )
             host_port += 1

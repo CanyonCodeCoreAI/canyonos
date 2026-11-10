@@ -223,7 +223,7 @@ class LocalController(object):
         # launches the replica names it.
         self.replica_id = os.environ.get("CANYONOS_REPLICA_ID")
 
-        # global_controller.yaml's `logs:` flag, on by default -- set `logs: false` to opt out. Only
+        # workflow_config.yaml's `logs:` flag, on by default -- set `logs: false` to opt out. Only
         # gates the rich `logs` detail below -- never the cheap `error`/`failed` fields, always written.
         self.logs_enabled = (
             os.environ.get("CANYONOS_LOGS_ENABLED", "true").lower() == "true"

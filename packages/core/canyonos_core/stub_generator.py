@@ -4,7 +4,7 @@
 """
 Stub generator for CanyonOS agents.
 
-Reads the functions an agent declares in `global_controller.yaml` and generates
+Reads the functions an agent declares in `workflow_config.yaml` and generates
 an importable Python stub file where each function returns a Future object.
 Similar in spirit to how gRPC generates *_pb2_grpc.py stub files from .proto
 definitions.

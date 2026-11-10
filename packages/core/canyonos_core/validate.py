@@ -13,7 +13,7 @@ image Python or the runtime's module names.
     python -m canyonos_core.validate <root> [--json]
 
 Exit 0 when the project is clean, 1 when anything was found, and 2 when it could
-not be checked because `config/global_controller.yaml` is missing.
+not be checked because `config/workflow_config.yaml` is missing.
 """
 
 import argparse

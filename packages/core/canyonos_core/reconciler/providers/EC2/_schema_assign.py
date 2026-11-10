@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""What `global_controller.yaml` may set for ec2-assign: the `ec2-assign:` section. Each
+"""What `workflow_config.yaml` may set for ec2-assign: the `ec2-assign:` section. Each
 replica gets an EC2 machine of its own, of the type `machine_type` maps its agent to.
 It takes the same keys as ec2-pool's `ec2-pool:` otherwise, and runs on the same
 `_provider.py`.

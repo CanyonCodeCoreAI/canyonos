@@ -57,7 +57,7 @@ class Fleet:
 
 def _pin_ports(directory: Path) -> None:
     """Give the copy fixed ports, so the two deploys can't race for the same ones."""
-    path = project_root(directory) / "config" / "global_controller.yaml"
+    path = project_root(directory) / "config" / "workflow_config.yaml"
     text = re.sub(
         r"^endpoint:$",
         f"endpoint:\n  api_port: {SECOND_API_PORT}",

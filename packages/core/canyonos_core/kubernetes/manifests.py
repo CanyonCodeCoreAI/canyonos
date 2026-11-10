@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The Kubernetes objects of a project, from its `global_controller.yaml`: a ConfigMap of
+"""The Kubernetes objects of a project, from its `workflow_config.yaml`: a ConfigMap of
 the config folder, one CanyonProject and one CanyonAgent per agent.
 
 Rendered next to the schema that checks the file, in the core image: the in-cluster
@@ -33,7 +33,7 @@ DEFAULT_MEMORY_MB = 512
 
 def config_folder(config_path):
     """Every YAML file in the config folder, by name: the ConfigMap's contents (the
-    global controller reads global_controller.yaml and, when there, scaling.yaml)."""
+    global controller reads workflow_config.yaml and, when there, scaling.yaml)."""
     folder = os.path.dirname(os.path.abspath(config_path))
     files = {}
     for name in sorted(os.listdir(folder)):
@@ -45,9 +45,9 @@ def config_folder(config_path):
         ):
             with open(path, encoding="utf-8") as f:
                 files[name] = f.read()
-    if os.path.basename(config_path) != "global_controller.yaml":
+    if os.path.basename(config_path) != "workflow_config.yaml":
         # The global controller pod reads this name.
-        files["global_controller.yaml"] = files.pop(os.path.basename(config_path))
+        files["workflow_config.yaml"] = files.pop(os.path.basename(config_path))
     return files
 
 

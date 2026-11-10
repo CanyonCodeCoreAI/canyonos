@@ -571,7 +571,7 @@ class GlobalController(ControllerContext):
             logger.critical(
                 "Redis container %s on %s is not serving port %d. Remove it "
                 "with `docker rm -f %s`, or change `redis.port` in "
-                "global_controller.yaml.",
+                "workflow_config.yaml.",
                 container_name,
                 host,
                 redis_port,
@@ -636,7 +636,7 @@ class GlobalController(ControllerContext):
                     self._run_cmd(["docker", "rm", "-f", "-v", container_name], host)
                     if "port" in (self.config.get("redis") or {}):
                         advice = (
-                            "Free it, or change `redis.port` in global_controller.yaml "
+                            "Free it, or change `redis.port` in workflow_config.yaml "
                             "or delete it so CanyonOS picks a free port."
                         )
                     else:

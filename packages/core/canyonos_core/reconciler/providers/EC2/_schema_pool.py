@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""What `global_controller.yaml` may set for ec2-pool: the `ec2-pool:` section.
+"""What `workflow_config.yaml` may set for ec2-pool: the `ec2-pool:` section.
 
 Only `machine_type` is required: `region`, `subnet_id` and `security_group_ids` default
 to the deploying machine's own when it is an EC2 machine, such as one made by

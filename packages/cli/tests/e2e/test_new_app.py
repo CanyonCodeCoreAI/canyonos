@@ -27,7 +27,7 @@ def test_new_app_writes_a_starter_that_passes_the_manifest_schema(cli_case: CliC
     assert result.returncode == 0, result.stderr
     assert "Created new CanyonOS project" in result.stdout
     assert written_files(cli_case) == sorted(path for path, _ in template_files())
-    manifest = cli_case.cwd / "config" / "global_controller.yaml"
+    manifest = cli_case.cwd / "config" / "workflow_config.yaml"
     assert validate_project(str(manifest), str(cli_case.cwd)) == ()
 
 

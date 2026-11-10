@@ -40,9 +40,9 @@ def project_root():
 
 
 def default_config_path():
-    """Build the path of the Global Controller's `global_controller.yaml` inside the
-    project root, whether or not the file is there."""
-    return os.path.join(project_root(), "config", "global_controller.yaml")
+    """Build the path of the project's `workflow_config.yaml` inside the project
+    root, whether or not the file is there."""
+    return os.path.join(project_root(), "config", "workflow_config.yaml")
 
 
 def project_env_path():

@@ -10,7 +10,7 @@ region has no VPC at all. A run that stops partway removes what it created. Ever
 a run creates is tagged with its provision ID, so Tear down AWS later deletes
 that machine with its own security group and key pair, and nothing you made yourself.
 The machine's subnet and security group are what its agent machines get too: when the
-`ec2-pool:` or `ec2-assign:` section of `global_controller.yaml` leaves them out, the EC2
+`ec2-pool:` or `ec2-assign:` section of `workflow_config.yaml` leaves them out, the EC2
 provider reads them from the machine it runs on.
 """
 
@@ -44,7 +44,7 @@ SWAP_GIB = 2
 MACHINE_NAME = "canyonos-controller"
 ROLE_NAME = "canyonos-controller"
 # Ports you reach the machine on from your own address: SSH, then the API (8080, or
-# 8082 in Hello World) and the dashboard (8081).
+# 8082 when 8080 is taken, since it skips the dashboard's) and the dashboard (8081).
 CALLER_PORTS = ((22, 22), (8080, 8082))
 CALLER_IP_URL = "https://checkip.amazonaws.com"
 REPO = "CanyonCodeCoreAI/canyonos"
@@ -1017,7 +1017,7 @@ class _AwsProvision:
             ui.warn(
                 f"Agent machines outside {CANYONOS_AMI_REGION} need an AMI with Docker "
                 "and zstd: set ami_id under ec2-assign: or ec2-pool: in "
-                "global_controller.yaml."
+                "workflow_config.yaml."
             )
         return region
 
@@ -1326,7 +1326,7 @@ class _AwsProvision:
         ui.blank()
         ui.hint(
             "To run agents on EC2, set `provider: ec2-assign` and give each agent a "
-            "machine type under `ec2-assign: machine_type:` in global_controller.yaml, "
+            "machine type under `ec2-assign: machine_type:` in workflow_config.yaml, "
             "or `provider: ec2-pool` with a pool under `ec2-pool: machine_type:`. They launch "
             "into this machine's subnet and security group."
         )

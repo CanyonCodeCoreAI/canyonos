@@ -13,7 +13,7 @@ behavior; do not invent limits that refuse real calls.
 ## 1. Locate the source and config
 
 - Work in the project root: `.canyon` when the project folder has one, otherwise
-  the project folder itself. Find `config/global_controller.yaml` there and write `llms.yaml`
+  the project folder itself. Find `config/workflow_config.yaml` there and write `llms.yaml`
   and `scaling.yaml` beside it. Respect an explicitly chosen destination.
 - Trace each manifest entry's entrypoint, relative to the root.
 - Read existing `llms.yaml` and `scaling.yaml` first. Keep their entries, names
@@ -22,7 +22,7 @@ behavior; do not invent limits that refuse real calls.
 ## 2. Memory
 
 Follow the [Runtime contract](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/RUNTIME_CONTRACT.md)
-and [database entries](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/GLOBAL_CONTROLLER.md).
+and [database entries](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md).
 
 - For each agent, find state that outlives one call: attributes on `self`,
   module globals, caches, conversation history, and framework stores such as
@@ -86,7 +86,7 @@ Follow [Autoscaling](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
 ## 5. Verify and report
 
 - Parse both files. Check every rule in steps 3 and 4, and that every agent
-  named in `llms.yaml` is an entry in `global_controller.yaml`; under a
+  named in `llms.yaml` is an entry in `workflow_config.yaml`; under a
   misspelled name, the real agent's calls are refused.
 - Run `canyonos validate` from the project folder and resolve findings until
   exit 0, or report the blocker.

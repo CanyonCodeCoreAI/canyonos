@@ -130,7 +130,7 @@ INPUT: canyonos test "Test Query"
 
 1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [project_root()]
 2. If a deploy is already running, checks the project's files against `deployed.json` and fails, naming `canyonos deploy` or `canyonos sync`, if they changed since; otherwise sends the query to that deploy and stops here [_require_current_deploy()]
-3. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
+3. Goes into workflow_config.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
 4. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
    - All agent containers are up and their names are as expected
@@ -202,7 +202,7 @@ And to observe without changing anything:
 ### INPUT: canyonos test "Test Query"
 #### Steps:
 1. Detects the working directory (goes into .canyon folder for commands if .canyon exists, uses current dir otherwise) [project_root()]
-2. Goes into global_controller.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
+2. Goes into workflow_config.yaml and for each agent, rewrites each agent's provider as local (saves old state to revert back later) [_force_local_providers()]
 3. Then we deploy [canyonos deploy]
    - Certain things are verified about this deployment, like:
    - All agent containers are up and their names are as expected

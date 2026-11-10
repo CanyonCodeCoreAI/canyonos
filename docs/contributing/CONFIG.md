@@ -1,11 +1,11 @@
 # Configuration internals
 
 How a project's config gets from the files a user edits to the running system. For
-what each setting means, see [the user guide](../guides/GLOBAL_CONTROLLER.md).
+what each setting means, see [the user guide](../guides/WORKFLOW_CONFIG.md).
 
 ## Where the files are
 
-The CLI reads `config/global_controller.yaml` in the project root
+The CLI reads `config/workflow_config.yaml` in the project root
 (`project_root` and `default_config_path` in
 `packages/cli/canyonos/constants.py`). `canyonos config` edits that file on the host
 and nothing else.
@@ -32,7 +32,7 @@ allows `${VAR}` only in string fields.
 `packages/core/canyonos_core/schema/` checks a project before any stub is generated.
 `validate_project` is what the in-container deploy calls.
 
-- `manifest.py`: `global_controller.yaml`. `load_manifest` parses it into frozen
+- `manifest.py`: `workflow_config.yaml`. `load_manifest` parses it into frozen
   dataclasses (`Manifest`, `CodeAgent`, `DatabaseAgent`, `RedisSpec`, `OtelSpec`,
   `EndpointSpec`) and collects every violation before raising one
   `SchemaError`.
@@ -92,4 +92,4 @@ today, so users apply changes with `canyonos deploy`.
 2. Parse it in `load_manifest` or `_agent` with the helpers in `schema/_checks.py`.
 3. Read it where it's used, and publish it in `_apply_config` if other processes need it.
 4. Add an E2E schema check, and document it in
-   [the user guide](../guides/GLOBAL_CONTROLLER.md).
+   [the user guide](../guides/WORKFLOW_CONFIG.md).

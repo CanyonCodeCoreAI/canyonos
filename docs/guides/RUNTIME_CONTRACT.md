@@ -10,7 +10,7 @@ rules apply under every provider.
 
 | Input | Where |
 |---|---|
-| manifest | `config/global_controller.yaml` |
+| manifest | `config/workflow_config.yaml` |
 | agent functions | `functions` on an agent entry |
 | entrypoint | `entrypoint` on an agent entry, relative to the project root |
 | endpoint | `endpoint:` in the manifest, naming the agent method served over HTTP |
@@ -34,7 +34,7 @@ Each agent entry produces one Python stub: a class with the entry's name and
 one method per function in its `functions`. Each method takes the declared
 arguments as keywords, with no defaults, and returns a `Future` right away.
 The stub imports nothing from your code, which is why argument and return
-types are limited to builtins (see [Manifest reference](GLOBAL_CONTROLLER.md#agent-functions)).
+types are limited to builtins (see [Manifest reference](WORKFLOW_CONFIG.md#agent-functions)).
 
 The stub is written into every build context, including the agent's own, in
 two places: at the agent's `entrypoint` path, and at the context root under

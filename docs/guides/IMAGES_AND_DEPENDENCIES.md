@@ -30,7 +30,7 @@ not put a package on `sys.path`.
 
 Each image installs the platform base list plus that entry's `requirements`
 from the manifest. See [Per-image
-requirements](GLOBAL_CONTROLLER.md#per-image-requirements) for the base list,
+requirements](WORKFLOW_CONFIG.md#per-image-requirements) for the base list,
 the version caps and the floors the build enforces.
 
 ## What the sweep copies

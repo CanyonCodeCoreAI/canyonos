@@ -183,8 +183,9 @@ function NoPolicy({ error }: { readonly error: string | null }) {
         </CollapsibleTrigger>
       </CardHeading>
       <p className="text-muted-foreground text-sm">
-        Every agent keeps its current replica count until the next reload, then the count set in
-        global_controller.yaml. Add a policy to let each agent grow and shrink with its own load.
+        Every agent keeps its current replica count until the next reload, then goes back to the
+        count it was deployed with. Add a policy to let each agent grow and shrink with its own
+        load.
       </p>
       <CardError error={error} />
     </div>

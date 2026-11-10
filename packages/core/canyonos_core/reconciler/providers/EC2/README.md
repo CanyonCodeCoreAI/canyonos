@@ -8,7 +8,7 @@
 - AWS Credentials. The host needs IAM permissions to execute certain EC2 commands. The `AmazonEC2FullAccess` policy in IAM covers all of the needed permissions. For the exact IAM permissions needed, look below in the `IAM Permissions` section.
 - Same VPC as subnet_id.
   - Easiest way of doing this is making the host its own EC2 machine inside the same VPC.
-- Config block added to `global_controller.yaml` (shown below). The security group would also need to allow specific ports in.
+- Config block added to `workflow_config.yaml` (shown below). The security group would also need to allow specific ports in.
 
 ## AWS-side setup
 
@@ -20,7 +20,7 @@
   - On the host, ports 8080 and 8081 need to be accessible by whoever queries the endpoint (0.0.0.0 for example)
   - On the host, the port the endpoint publishes for its gRPC controller (on the host's private IP only) needs to be accessible by the machines' security group over custom TCP. Agents send results back there; without it every request stays "pending".
 
-## Config (`ec2-pool:` block in `global_controller.yaml`)
+## Config (`ec2-pool:` block in `workflow_config.yaml`)
 
 `machine_type`, the pool of machines to start, is always required. When you deploy from an EC2 machine, such as one made by `canyonos provision`, any of `region`, `subnet_id` and `security_group_ids` you leave out is read from that machine's EC2 metadata (IMDSv2). Set them when deploying from elsewhere, or to launch agents somewhere else.
 
@@ -50,7 +50,7 @@ The host machine needs these IAM Permissions to be able to launch external EC2 m
   - CreateTags
   - ImportKeyPair
 - IAM:
-  - PassRole (only needed if you set `ec2-pool.iam_profile_name in global_controller.yaml`)
+  - PassRole (only needed if you set `ec2-pool.iam_profile_name in workflow_config.yaml`)
 
 You can paste the exact JSON below in the "create manual policy" field in IAM when generating permissions for a role. Drop the `iam:PassRole` statement if you're not setting `ec2-pool.iam_profile_name`.
 `iam:PassRole` gives all created machines a IAM role and its permissions, enabling stuff like Bedrock.
@@ -76,7 +76,7 @@ You can paste the exact JSON below in the "create manual policy" field in IAM wh
 ```
 
 
-## [OPTIONAL] Extra Configurations in the ec2-pool block in `global_controller.yaml`
+## [OPTIONAL] Extra Configurations in the ec2-pool block in `workflow_config.yaml`
 
 The ec2 config block given above has the bare minimum needed to get the machines up and running, to add separate settings, you can add these following fields in the block.
 
