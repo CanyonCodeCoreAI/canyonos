@@ -53,7 +53,6 @@ MAX_PORT_ATTEMPTS = 50
 # How long a draining replica may keep running before it is removed anyway, and so
 # its grace period from SIGTERM to the kill, as a pod's is on Kubernetes.
 DRAIN_TIMEOUT_SECONDS = 180
-NETWORK = "canyonos-local"
 HOST_GATEWAY = "host.docker.internal"
 # The host port in Docker's "Bind for 0.0.0.0:8080 failed" and "listen tcp
 # 0.0.0.0:8080: bind" messages.
@@ -109,7 +108,7 @@ def publishes_port(controller, machine, agent_spec):
     """Whether a replica's container port is published on its machine. Only callers on
     other machines need it: a replica on another machine, and the endpoint its agents
     there call back. A database is published on its `db_port`. Any other replica on this
-    machine is reached by name on canyonos-local, so it publishes nothing."""
+    machine is reached by name on the project's network, so it publishes nothing."""
     return (
         not _is_local_host(machine["private_host"])
         or agent_spec.get("type") == "database"
@@ -130,7 +129,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
     user = machine.get("user")
     container = container_name(replica_id)
     is_local = _is_local_host(host)
-    # A remote machine has no canyonos-local network, so reach its Redis via the host.
+    # A remote machine has no project network, so reach its Redis via the host.
     redis_host = redis_container_name(host) if is_local else HOST_GATEWAY
 
     inspect = controller._run_cmd(
@@ -189,7 +188,11 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             "run",
             "-d",
             *project_label_args(),
-            *(["--network", NETWORK] if is_local else ["--restart", "unless-stopped"]),
+            *(
+                ["--network", project_group()]
+                if is_local
+                else ["--restart", "unless-stopped"]
+            ),
             "--name",
             container,
             # Docker Desktop resolves this automatically; native Linux Docker
@@ -279,7 +282,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
         "public_host": machine["public_host"],
         "host_port": str(host_port),
         "container_port": str(container_port),
-        # An unpublished replica's only address is the one on canyonos-local, as a
+        # An unpublished replica's only address is the one on the project's network, as a
         # pod's is on Kubernetes.
         "published_address": f"{host}:{host_port}" if publish else address,
         "address": address,

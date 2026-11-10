@@ -211,7 +211,7 @@ class RedisPortTests(unittest.TestCase):
         run_cmd.calls = []
         return run_cmd
 
-    def test_publishes_the_declared_port(self):
+    def test_publishes_the_declared_port_on_this_machine_only(self):
         run_cmd = self._run_cmd_factory(conflicts=0)
         gc = self._controller(run_cmd)
         with (
@@ -219,7 +219,7 @@ class RedisPortTests(unittest.TestCase):
             patch("canyonos_core.controller.global_controller._wait_for_redis"),
         ):
             gc._launch_redis_containers()
-        self.assertEqual(run_cmd.published, "6379:6379")
+        self.assertEqual(run_cmd.published, "127.0.0.1:6379:6379")
         self.assertEqual(gc.redis_ports["localhost"], 6379)
 
     def test_port_conflict_exits_without_retrying(self):

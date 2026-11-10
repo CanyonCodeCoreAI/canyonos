@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Tell the local dashboard api which Redis port a project's controller uses.
+"""Tell the local dashboard api which Redis a project's controller uses: its container
+and port, on the project's network the dashboard joins first.
 
 Temporary: applied now so multi-project dashboards work without blocking the flow;
 revisit with the project-key design in CAN-521 (the api should not hold
@@ -15,7 +16,10 @@ import time
 import urllib.error
 import urllib.request
 
-API_PORT = 3000
+from canyonos import project
+from canyonos.constants import DASHBOARD_API_PORT
+from canyonos.dashboard_stack import join_project_network
+
 ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 1
 TIMEOUT_SECONDS = 10
@@ -53,15 +57,22 @@ def _post(url: str, payload: bytes, timeout: float = TIMEOUT_SECONDS) -> dict:
     return registered
 
 
-def register_project(redis_port: int, api_port: int = API_PORT) -> dict:
-    """Register the project whose controller writes to Redis on `redis_port`.
+def register_project(redis_port: int, api_port: int = DASHBOARD_API_PORT) -> dict:
+    """Connect the dashboard api to the project's network, then register the project
+    with its Redis container's name and `redis_port`.
 
     Returns the api's `{project_id, name}`. Connection failures and 5xx answers
     are retried, up to ATTEMPTS in all; a 4xx answer is final. Raises
-    RegistrationError carrying the api's message when registration fails.
+    RegistrationError carrying Docker's or the api's message when joining the
+    network or registration fails.
     """
     url = f"http://127.0.0.1:{api_port}/canyonos/projects"
-    payload = json.dumps({"redis_port": redis_port}).encode()
+    joined = join_project_network(project.project_group())
+    if joined is not None:
+        raise RegistrationError(joined)
+    payload = json.dumps(
+        {"redis_host": project.redis_container_name(), "redis_port": redis_port}
+    ).encode()
     failure = "the dashboard api did not answer"
     for attempt in range(ATTEMPTS):
         if attempt:
@@ -77,7 +88,9 @@ def register_project(redis_port: int, api_port: int = API_PORT) -> dict:
     raise RegistrationError(failure)
 
 
-def add_sample_data(project_id: str, workflow: str, api_port: int = API_PORT) -> dict:
+def add_sample_data(
+    project_id: str, workflow: str, api_port: int = DASHBOARD_API_PORT
+) -> dict:
     """Ask the dashboard to add its recorded run of `workflow` to this project.
 
     The api replays a run of that bundled workflow it ships, spread across the

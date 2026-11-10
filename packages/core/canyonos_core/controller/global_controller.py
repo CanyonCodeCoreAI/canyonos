@@ -41,6 +41,7 @@ from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import (
     CONTROLLER_IMAGE,
     metrics_container_name,
+    project_group,
     project_label_args,
     redis_container_name,
 )
@@ -83,7 +84,6 @@ logger = logging.getLogger(__name__)
 # machine: the 180-second drain plus removal; any left over keep Redis up for the next startup.
 STOP_TIMEOUT_SECONDS = 240
 
-LOCAL_NETWORK = "canyonos-local"
 # Docker Desktop's name for the host machine; it means nothing inside a cluster.
 DOCKER_HOST = "host.docker.internal"
 GLOBAL_CONTROLLER_LOG_SOURCE = "Global Controller"
@@ -589,10 +589,8 @@ class GlobalController(ControllerContext):
             )
             self.redis_ports[host] = redis_port
         else:
-            self._run_cmd(["docker", "network", "create", LOCAL_NETWORK], host)
-
             # Redis listens on the declared port inside the container too, so
-            # agents reaching it by container name over the local network use
+            # agents reaching it by container name over the project's network use
             # the same number the host does.
             cmd = [
                 "docker",
@@ -602,10 +600,10 @@ class GlobalController(ControllerContext):
                 "--name",
                 container_name,
                 "--network",
-                LOCAL_NETWORK,
+                project_group(),
                 *resource_limit_args(),
                 "-p",
-                f"{redis_port}:{redis_port}",
+                f"127.0.0.1:{redis_port}:{redis_port}",
                 "redis:alpine",
                 "redis-server",
                 "--port",

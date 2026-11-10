@@ -32,6 +32,7 @@ DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
 PROJECT_LABEL = "com.docker.compose.project"
 ROLE_LABEL = "canyonos.role"
 GC_ROLE = "global-controller"
+NETWORK_ROLE = "project-network"
 
 # Keep in sync with canyonos_core/schema/manifest.py.
 TARGETS = ("docker", "kubernetes")
@@ -118,6 +119,18 @@ def gc_role_label_args():
     """Return the `docker run` flags that mark a container as a Global Controller, so
     `canyonos stop` can tell whether another project still needs the dashboard."""
     return ["--label", f"{ROLE_LABEL}={GC_ROLE}"]
+
+
+def network_label_args():
+    """Return the `docker network create` flags that put this project's network in its
+    group and mark it as a project's network, which the dashboard joins."""
+    return [*project_label_args(), "--label", f"{ROLE_LABEL}={NETWORK_ROLE}"]
+
+
+def redis_container_name():
+    """Return the name of this project's Redis container, as the Global Controller
+    names it."""
+    return f"canyonos-{project_name()}-redis-localhost"
 
 
 def gc_container_name():

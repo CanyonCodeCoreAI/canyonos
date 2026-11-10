@@ -21,8 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from canyonos import env
+from canyonos import env, project
 from canyonos.constants import DEFAULT_DASHBOARD_PORT, public_ip
+from canyonos.docker_cmd import DOCKER_CLEANUP_TIMEOUT
 from canyonos.os_support import file_lock, make_private_dir, write_private_file
 from canyonos.port_utils import (
     DEFAULT_MAX_PORT_ATTEMPTS,
@@ -72,7 +73,9 @@ class DashboardStack:
 
 
 def _run(
-    argv: list[str], env: dict[str, str] | None = None
+    argv: list[str],
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         argv,
@@ -81,6 +84,7 @@ def _run(
         encoding="utf-8",
         errors="replace",
         env=env,
+        timeout=timeout,
     )
 
 
@@ -132,6 +136,72 @@ def _compose_argv(stack: DashboardStack, manifest: Path) -> list[str]:
 def _container_name(service: str) -> str:
     """Compose's default container name for `service` in this project (single instance only)."""
     return f"{COMPOSE_PROJECT}-{service}-1"
+
+
+def join_project_network(network: str) -> str | None:
+    """Connect the dashboard api to a project's network, so it reaches that project's
+    Redis by name. Returns why it couldn't, or None once connected, already or now."""
+    container = _container_name("api")
+    result = _run(["docker", "network", "connect", network, container])
+    detail = (result.stderr or result.stdout).strip()
+    if result.returncode == 0 or "already exists in network" in detail:
+        return None
+    return (
+        f"connecting {container} to the network {network} failed: "
+        f"{detail or f'exit code {result.returncode}'}"
+    )
+
+
+def leave_project_network(network: str) -> None:
+    """Disconnect the dashboard api from a project's network, so the network can go;
+    one not connected, or a Docker that doesn't answer in time, is left to the network
+    removal that follows to report."""
+    try:
+        _run(
+            [
+                "docker",
+                "network",
+                "disconnect",
+                "--force",
+                network,
+                _container_name("api"),
+            ],
+            timeout=DOCKER_CLEANUP_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _project_networks() -> list[str]:
+    """The name of every project's network on this machine."""
+    listed = _run(
+        [
+            "docker",
+            "network",
+            "ls",
+            "--filter",
+            f"label={project.ROLE_LABEL}={project.NETWORK_ROLE}",
+            "--format",
+            "{{.Name}}",
+        ]
+    )
+    return listed.stdout.split()
+
+
+def _leave_project_networks() -> None:
+    """Disconnect a stopped dashboard api from every project's network before it starts.
+    Docker Desktop publishes the api's port through one of the networks the container
+    starts on, and loses it for the host once that network is disconnected, so the api
+    must start on its own network only and join the projects' afterwards."""
+    for network in _project_networks():
+        leave_project_network(network)
+
+
+def _join_project_networks() -> None:
+    """Connect a just-started dashboard api to every project's network, so projects
+    already running keep their dashboard when compose recreates it."""
+    for network in _project_networks():
+        join_project_network(network)
 
 
 def _existing_dashboard_port() -> int | None:
@@ -512,9 +582,11 @@ def run_dashboard(
 
             report(ServeResult(True, "pull", _pull(stack, manifest, managed_env)))
 
+            _leave_project_networks()
             stack, managed_env = _start(
                 stack, manifest, managed_env, movable=not configured_port
             )
+            _join_project_networks()
             report(ServeResult(True, "start", "dashboard stack started"))
 
             url = _verify(stack.web_port)

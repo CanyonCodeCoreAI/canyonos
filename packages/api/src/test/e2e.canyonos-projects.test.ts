@@ -15,6 +15,7 @@ import { reset_controller, seed_project_name, seed_running_project } from './red
 setupE2ETests();
 
 const CLOSED_PORT = 1;
+const CONTAINER_REDIS_HOST = 'canyonos-other-redis-localhost';
 const NO_PROMPTS = { prompts: {} };
 
 const error_code = (res: { error: { value?: unknown } | null }) =>
@@ -64,6 +65,28 @@ describe('POST /canyonos/projects', () => {
     expect(error_code(res)).toBe('canyonos.identity_unusable');
   });
 
+  test('an api on loopback reaches a container host on its own Redis host and stores the sent host', async () => {
+    const project_id = await run_controller('in-container');
+
+    const res = await api.canyonos.projects.post({
+      redis_host: CONTAINER_REDIS_HOST,
+      redis_port: config.canyonos.redisPort,
+    });
+
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual({ project_id, name: 'in-container' });
+    expect((await read_project(project_id))?.redis_host).toBe(CONTAINER_REDIS_HOST);
+  });
+
+  test('a host other than a CanyonOS Redis container is rejected before any connection', async () => {
+    for (const redis_host of ['10.0.0.5', 'example.com', 'canyonos-a-redis-localhost.evil.com']) {
+      const res = await api.canyonos.projects.post({ redis_host, redis_port: 6379 });
+
+      expect(res.error?.status as number).toBe(422);
+      expect(error_code(res)).toBe('validation_error');
+    }
+  });
+
   test('a port outside 1..65535 is rejected before any connection', async () => {
     for (const redis_port of [0, 65536, 6379.5]) {
       const res = await register(redis_port);
@@ -95,6 +118,21 @@ describe('Redis-backed routes use the project port', () => {
     const token = await authenticate('canyonos-port-default@canyonos.test');
     const { project_id } = await create_test_project(token, { name: 'Default Port' });
     await seed_running_project(project_id, NO_PROMPTS);
+
+    const res = await api.projects[project_id]!.prompts.get({ $headers: bearer(token) });
+
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual([]);
+  });
+
+  test('an api on loopback reads a project stored with a container host on its own Redis host', async () => {
+    const token = await authenticate('canyonos-container-host@canyonos.test');
+    const { project_id } = await create_test_project(token, { name: 'Container Host' });
+    await seed_running_project(project_id, NO_PROMPTS);
+    await db
+      .update(projects)
+      .set({ redis_host: CONTAINER_REDIS_HOST, redis_port: config.canyonos.redisPort })
+      .where(eq(projects.id, project_id));
 
     const res = await api.projects[project_id]!.prompts.get({ $headers: bearer(token) });
 

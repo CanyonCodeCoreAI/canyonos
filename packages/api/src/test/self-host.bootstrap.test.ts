@@ -23,6 +23,7 @@ import { write_project_span } from './telemetry-test.utils';
 
 setupE2ETests();
 
+const REDIS_HOST = 'canyonos-billing-redis-localhost';
 const REDIS_PORT = 6380;
 const NOW_NANOS = BigInt(Date.now()) * 1_000_000n;
 const MINUTE_NANOS = 60_000_000_000n;
@@ -50,7 +51,7 @@ async function seed_user_project(label: string): Promise<string> {
 }
 
 const save_project = (project_id: string | null, project_name: string | null = null) =>
-  save_controller_project({ project_id, project_name }, REDIS_PORT);
+  save_controller_project({ project_id, project_name }, REDIS_HOST, REDIS_PORT);
 
 const rejection = (promise: Promise<unknown>) =>
   promise.then(
@@ -189,12 +190,16 @@ describe('canyonos reads', () => {
     expect(requests.data?.items.map((item) => item.session_id)).toEqual(['canyonos-user-trace']);
   });
 
-  test('an existing project only takes the port: name, creator, timestamps stay', async () => {
+  test('an existing project only takes the Redis: name, creator, timestamps stay', async () => {
     const project_id = await seed_user_project('kept-owner');
     const before = await read_project(project_id);
 
     expect(await save_project(project_id, 'renamed')).toEqual({ project_id, name: 'kept-owner' });
 
-    expect(await read_project(project_id)).toEqual({ ...before!, redis_port: REDIS_PORT });
+    expect(await read_project(project_id)).toEqual({
+      ...before!,
+      redis_host: REDIS_HOST,
+      redis_port: REDIS_PORT,
+    });
   });
 });

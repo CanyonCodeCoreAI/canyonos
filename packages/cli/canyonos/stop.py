@@ -23,6 +23,7 @@ from canyonos.dashboard_stack import (
     COMPOSE_PROJECT,
     _container_name,
     _existing_dashboard_port,
+    leave_project_network,
     stop_dashboard,
     teardown_dashboard,
 )
@@ -54,94 +55,119 @@ def _container_state(container_id, env):
 
 
 def stop_project(state):
-    """Tear down the project's container and volume, leaving the dashboard; returns
-    what it couldn't.
+    """Tear down the project's Global Controller, its replicas and Redis, its network and
+    volume, leaving the dashboard; returns what it couldn't.
 
-    Teardown reports rather than raises. It runs both on its own and as the
-    first step of `canyonos deploy`, so a resource that won't go away must not
-    also block starting over -- the state file is preserved either way, which
-    is what makes a later retry possible.
+    Nothing is removed when the Global Controller is not running, since only it can
+    tear down the replicas and Redis it started. Teardown reports rather than raises:
+    it is also the first step of `canyonos deploy`, which starts over anyway, and the
+    state file stays whenever something is left, so `canyonos stop` can be retried.
     """
     container_id = state["container_id"]
     state_path = project.state_path()
-    volume = project.workspace_volume()
     # The exact engine this deploy's container was created on, not whatever
     # context is active now -- they can differ (see docker_env).
     env = docker_env(state)
     with ui.status("Tearing down..."):
-        failures = []
         # A stale record cannot answer /clean, so establish this before making
         # an HTTP request that would otherwise add a full request timeout.
-        exists, container_running = _container_state(container_id, env)
-
-        # Stop any running deploy first, so the local controller and Redis
-        # containers it spawned via docker-outside-of-docker get torn down
-        # too. Removing the GC container itself doesn't touch them -- they're
-        # sibling containers on the host, not nested inside it.
-        if container_running:
-            try:
-                post_clean(state["port"])
-            except GCError as e:
-                # 409 is "no deploy running", which is the desired end state.
-                if e.code != 409:
-                    failures.append(f"Cleaning the running deployment failed: {e}")
-
-            failure = cleanup_docker(
-                ["docker", "stop", container_id],
-                action=f"Stopping Global Controller {container_id[:12]}",
-                missing_text="No such container",
-                timeout=DOCKER_CLEANUP_TIMEOUT,
-                env=env,
-            )
-            if failure:
-                failures.append(failure)
-
-        if exists:
-            failure = cleanup_docker(
-                ["docker", "rm", container_id],
-                action=f"Removing Global Controller {container_id[:12]}",
-                missing_text="No such container",
-                timeout=DOCKER_CLEANUP_TIMEOUT,
-                env=env,
-            )
-            if failure:
-                failures.append(failure)
-
-        # Remove the workspace volume only after the container is gone (docker
-        # refuses to remove a volume still in use). A missing volume is already
-        # the desired end state; every other failure remains retryable.
-        failure = cleanup_docker(
-            ["docker", "volume", "rm", volume],
-            action=f"Removing workspace volume {volume}",
-            missing_text="No such volume",
-            timeout=DOCKER_CLEANUP_TIMEOUT,
-            env=env,
-        )
-        if failure:
-            failures.append(failure)
-
-        if not failures:
-            # The controller's gone; state.json goes last so a failed removal can be retried.
-            for path in (
-                os.path.join(project.state_dir(), "deployed.json"),
-                state_path,
-            ):
-                try:
-                    os.remove(path)
-                except FileNotFoundError:
-                    pass
-                except OSError as e:
-                    failures.append(f"Removing CanyonOS state at {path} failed: {e}")
+        running = _container_state(container_id, env)[1]
+        if running:
+            failures = _tear_down(container_id, state["port"], env)
+        else:
+            failures = [
+                f"Could not stop `{project.folder_name()}`: its Global Controller is "
+                "not running, so its replicas and Redis cannot be torn down."
+            ]
 
     if failures:
         ui.fail("Teardown incomplete:\n- " + "\n- ".join(failures))
         ui.hint(
             f"State was preserved at {state_path}, so `canyonos stop` can be retried."
         )
-    elif not exists:
-        ui.warn("The deploy was already gone; cleaned up local state.")
+        if not running:
+            ui.hint(
+                "Remove the project's containers with `docker rm -f`, or every CanyonOS "
+                "project's with `canyonos stop --all`, then deploy again."
+            )
     else:
         ui.ok("Deploy torn down")
+    return failures
+
+
+def _tear_down(container_id, port, env):
+    """Have the running Global Controller remove its deploy, then remove it, the
+    project's network and volume, and the state files; returns what it couldn't."""
+    failures = []
+    # Stop any running deploy first, so the local controller and Redis
+    # containers it spawned via docker-outside-of-docker get torn down
+    # too. Removing the GC container itself doesn't touch them -- they're
+    # sibling containers on the host, not nested inside it.
+    try:
+        post_clean(port)
+    except GCError as e:
+        # 409 is "no deploy running", which is the desired end state.
+        if e.code != 409:
+            failures.append(f"Cleaning the running deployment failed: {e}")
+
+    failure = cleanup_docker(
+        ["docker", "stop", container_id],
+        action=f"Stopping Global Controller {container_id[:12]}",
+        missing_text="No such container",
+        timeout=DOCKER_CLEANUP_TIMEOUT,
+        env=env,
+    )
+    if failure:
+        failures.append(failure)
+
+    failure = cleanup_docker(
+        ["docker", "rm", container_id],
+        action=f"Removing Global Controller {container_id[:12]}",
+        missing_text="No such container",
+        timeout=DOCKER_CLEANUP_TIMEOUT,
+        env=env,
+    )
+    if failure:
+        failures.append(failure)
+
+    network = project.project_group()
+    leave_project_network(network)
+    failure = cleanup_docker(
+        ["docker", "network", "rm", network],
+        action=f"Removing Docker network {network}",
+        missing_text="not found",
+        timeout=DOCKER_CLEANUP_TIMEOUT,
+        env=env,
+    )
+    if failure:
+        failures.append(failure)
+
+    # Remove the workspace volume only after the container is gone (docker
+    # refuses to remove a volume still in use). A missing volume is already
+    # the desired end state; every other failure remains retryable.
+    volume = project.workspace_volume()
+    failure = cleanup_docker(
+        ["docker", "volume", "rm", volume],
+        action=f"Removing workspace volume {volume}",
+        missing_text="No such volume",
+        timeout=DOCKER_CLEANUP_TIMEOUT,
+        env=env,
+    )
+    if failure:
+        failures.append(failure)
+
+    if not failures:
+        # The controller's gone; state.json goes last so a failed removal can be retried.
+        for path in (
+            os.path.join(project.state_dir(), "deployed.json"),
+            project.state_path(),
+        ):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                failures.append(f"Removing CanyonOS state at {path} failed: {e}")
     return failures
 
 

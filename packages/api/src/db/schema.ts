@@ -59,6 +59,7 @@ export const projects = pgTable('projects', {
   name: text('name').notNull(),
   // Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
   // with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
+  redis_host: text('redis_host'),
   redis_port: integer('redis_port'),
   created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
     .notNull()

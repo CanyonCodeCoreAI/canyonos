@@ -113,7 +113,7 @@ only on a graceful shutdown that by definition does not run when a container is 
 OOMs or hangs. No TTL, so a dead replica reads `healthy` forever — hence direct probes.
 `_is_healthy` needs two independent positives, a TCP connect and a fresh metrics hash.
 The connect goes to the record's `address`, the one the Global Controller calls: a local
-replica by name on `canyonos-local`, since it publishes no port.
+replica by name on its project's Docker network, since it publishes no port.
 Neither suffices alone: a gRPC server can accept connections while the agent behind it is
 wedged, and a stale hash cannot tell "wedged" from "never there".
 

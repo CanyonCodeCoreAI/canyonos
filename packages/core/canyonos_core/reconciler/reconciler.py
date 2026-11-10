@@ -319,7 +319,7 @@ class Reconciler(object):
 
     def _port_is_open(self, replica):
         """Whether something is listening at the replica's address, the one the Global
-        Controller calls: by name on canyonos-local, or at another machine's IP."""
+        Controller calls: by name on the project's network, or at another machine's IP."""
         host, _, port = replica.get("address", "").rpartition(":")
         if not host or not port:
             return False

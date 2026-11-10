@@ -93,8 +93,8 @@ lists the project's containers. Run `canyonos stop` to remove them.
 
 `canyonos clean --all` removes everything CanyonOS put on the machine; run it before
 uninstalling. Without the CLI, do the same by hand. `~/.canyonos/projects` has a folder
-for each project CanyonOS deployed, and each project's containers and volumes carry
-the label `com.docker.compose.project=canyonos-<project>`.
+for each project CanyonOS deployed, and each project's containers, volumes and network
+carry the label `com.docker.compose.project=canyonos-<project>`.
 
 First list what will be removed:
 
@@ -102,10 +102,11 @@ First list what will be removed:
 for p in $(ls ~/.canyonos/projects); do
   docker ps -a --filter "label=com.docker.compose.project=canyonos-$p" --format '{{.Names}}'
   docker volume ls --filter "label=com.docker.compose.project=canyonos-$p" --format '{{.Name}}'
+  docker network ls --filter "label=com.docker.compose.project=canyonos-$p" --format '{{.Name}}'
 done
 ```
 
-Then remove it, with the dashboard, the shared network and CanyonOS's records:
+Then remove it, with the dashboard, the networks and CanyonOS's records:
 
 ```bash
 for p in $(ls ~/.canyonos/projects); do
@@ -113,7 +114,10 @@ for p in $(ls ~/.canyonos/projects); do
   docker volume ls -q --filter "label=com.docker.compose.project=canyonos-$p" | xargs docker volume rm
 done
 docker compose -p canyonos-dashboard down --volumes
-docker network rm canyonos-local
+for p in $(ls ~/.canyonos/projects); do
+  docker network ls -q --filter "label=com.docker.compose.project=canyonos-$p" | xargs docker network rm
+done
+docker network rm canyonos-local   # shared by every project before each got its own
 rm -rf ~/.canyonos
 docker images 'canyonos-*'   # then `docker image rm` the ones CanyonOS built or pulled
 ```

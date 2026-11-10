@@ -17,7 +17,7 @@ Every `canyonos` command. Run `canyonos <command> --help` for its options. How t
 | `test` | Deploy locally and send one test prompt end to end, or send it to the deploy that's already running if your files haven't changed since it started |
 | `logs` | Re-attach to the deploy log stream |
 | `serve` | Start the local dashboard separately |
-| `stop` | Remove the deploy's containers and workspace, keeping its images; stop the dashboard, keeping its history, if no other project runs |
+| `stop` | Remove the deploy's containers, network and workspace, keeping its images; stop the dashboard, keeping its history, if no other project runs |
 | `clean` | Stop the project if it is deployed, then remove the generated `.canyon` folder (and the project id, when `global_controller.yaml` lives there, so the next deploy is a new dashboard project), the project's CanyonOS skill, and the Docker images of the agents in this project's `global_controller.yaml` |
 | `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 | `validate` | Check the project root against the CanyonOS contract |

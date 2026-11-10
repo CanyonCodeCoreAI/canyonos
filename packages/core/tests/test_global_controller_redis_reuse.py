@@ -126,7 +126,7 @@ class RedisContainerReuseTests(unittest.TestCase):
         docker_run_calls = self._run(controller, inspect_stdout="false\n")
 
         cmd = docker_run_calls[0]
-        self.assertIn("6390:6390", cmd)
+        self.assertIn("127.0.0.1:6390:6390", cmd)
         self.assertEqual(cmd[-3:], ["redis-server", "--port", "6390"])
 
     def test_a_running_container_on_another_port_is_not_adopted(self):

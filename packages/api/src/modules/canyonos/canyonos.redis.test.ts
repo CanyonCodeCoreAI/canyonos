@@ -38,7 +38,9 @@ describe('with_redis_at', () => {
     const refused = new Error('ECONNREFUSED');
     connect.mockRejectedValue(refused);
 
-    expect(await rejection(with_redis_at(6379, async () => 'unreached'))).toMatchObject({
+    expect(
+      await rejection(with_redis_at('localhost', 6379, async () => 'unreached'))
+    ).toMatchObject({
       status: 502,
       code: 'canyonos.controller_unreachable',
       cause: refused,
@@ -51,7 +53,7 @@ describe('with_redis_at', () => {
 
     expect(
       await rejection(
-        with_redis_at(6379, async () => {
+        with_redis_at('localhost', 6379, async () => {
           throw failure;
         })
       )
@@ -64,7 +66,7 @@ describe('with_redis_at', () => {
 
     expect(
       await rejection(
-        with_redis_at(6379, async () => {
+        with_redis_at('localhost', 6379, async () => {
           throw failure;
         })
       )
@@ -72,7 +74,7 @@ describe('with_redis_at', () => {
   });
 
   test('the operation result is returned and the connection closed', async () => {
-    expect(await with_redis_at(6379, async () => 42)).toBe(42);
+    expect(await with_redis_at('localhost', 6379, async () => 42)).toBe(42);
     expect(connect).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(1);
   });

@@ -51,11 +51,6 @@ from canyonos.port_utils import find_free_port, is_port_conflict
 GC_IMAGE = env.core_image
 GC_CONTAINER_PORT = 8000
 
-# Same network canyonos_core's own GlobalController creates for local-provider
-# Redis/agent containers -- the GC container needs to be on it too, e.g. to
-# resolve <container_name>:50051 for its own cleanup gRPC calls.
-LOCAL_NETWORK = "canyonos-local"
-
 # The project's workspace volume (`project.workspace_volume()`) is mounted here.
 # Files are copied in via `canyonos sync` (docker cp), not mounted live, so
 # host-side edits don't reach a running build. `canyonos stop` removes the
@@ -353,19 +348,20 @@ def _run_container(
     # Without a unix socket here (Docker Desktop's named pipe on Windows), the engine
     # still serves the alias inside its own VM, so that is what gets mounted.
     host_socket = active_socket or GC_DOCKER_SOCKET
-    # Idempotent: succeeds silently if the network already exists (created by
-    # this or a prior GC/Redis launch).
+    # Idempotent: succeeds silently if the network already exists (created by a
+    # prior deploy).
+    network_name = project.project_group()
     network = run_docker(
-        ["docker", "network", "create", LOCAL_NETWORK],
+        ["docker", "network", "create", *project.network_label_args(), network_name],
         timeout=DOCKER_QUICK_TIMEOUT,
-        action=f"Creating Docker network {LOCAL_NETWORK}",
+        action=f"Creating Docker network {network_name}",
     )
     if (
         network.returncode != 0
         and "already exists" not in (network.stderr or "").lower()
     ):
         raise RuntimeError(
-            f"Could not create Docker network {LOCAL_NETWORK}: "
+            f"Could not create Docker network {network_name}: "
             f"{network.stderr.strip() or network.stdout.strip()}"
         )
     host_private_ip = private_ip()
@@ -386,7 +382,7 @@ def _run_container(
             "-p",
             f"127.0.0.1:{port}:{GC_CONTAINER_PORT}",
             "--network",
-            LOCAL_NETWORK,
+            network_name,
             # Docker-outside-of-Docker: GC shells out to `docker` to launch
             # Redis/agent containers, so it needs the host's real daemon --
             # specifically the same one this command itself just used, not
@@ -397,7 +393,7 @@ def _run_container(
             f"{project.workspace_volume()}:{GC_WORKSPACE_PATH}",
             "--add-host=host.docker.internal:host-gateway",
             "-e",
-            "CANYONOS_REDIS_HOST=host.docker.internal",
+            f"CANYONOS_REDIS_HOST={project.redis_container_name()}",
             "-e",
             f"CANYONOS_REDIS_PORT={redis_port}",
             *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),

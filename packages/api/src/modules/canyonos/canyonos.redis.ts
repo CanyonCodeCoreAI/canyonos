@@ -11,6 +11,16 @@ import { canyonos_repo } from './canyonos.repo';
 
 export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
 
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '::1']);
+
+/** The host the api reaches a project's Redis on. An api running on the host itself (its
+ * configured Redis on loopback, as with `bun run dashboard:dev`) cannot resolve the container
+ * name a project stored, so it reaches the project's published port on loopback instead. */
+export function reachable_redis_host(stored_host: string | null): string {
+  const configured = config.canyonos.redisHost;
+  return stored_host === null || LOOPBACK_HOSTS.has(configured) ? configured : stored_host;
+}
+
 /** Where a project's Redis is and how to sign in to it. */
 export interface RedisTarget {
   readonly host: string;
@@ -31,30 +41,39 @@ export function redis_url({
   const credentials = password
     ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`
     : '';
-  return `${tls ? 'rediss' : 'redis'}://${credentials}${host}:${port}`;
+  const authority = host.includes(':') ? `[${host}]` : host;
+  return `${tls ? 'rediss' : 'redis'}://${credentials}${authority}:${port}`;
 }
 
+/** Bun's RedisClient ignores connectionTimeout while the TCP connect is pending, so a Redis
+ * whose address stopped answering would hold the request until the server's idle timeout. */
+const CONNECT_TIMEOUT_MS = 3000;
+
 async function connect(redis: RedisClient): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timed_out = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Redis connect timed out')), CONNECT_TIMEOUT_MS);
+  });
   try {
-    await redis.connect();
+    await Promise.race([redis.connect(), timed_out]);
   } catch (error) {
     throw badGateway(
       'canyonos.controller_unreachable',
       'The running controller could not be reached',
       { cause: error }
     );
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-/** Runs operation against the configured host's Redis on redis_port, then closes the connection. */
+/** Runs operation against the Redis on redis_host:redis_port, then closes the connection. */
 export async function with_redis_at<T>(
+  redis_host: string,
   redis_port: number,
   operation: (redis: RedisClient) => Promise<T>
 ): Promise<T> {
-  return with_redis_url(
-    redis_url({ host: config.canyonos.redisHost, port: redis_port }),
-    operation
-  );
+  return with_redis_url(redis_url({ host: redis_host, port: redis_port }), operation);
 }
 
 /** Runs operation against the Redis at url, then closes the connection. */
@@ -94,8 +113,12 @@ export async function with_redis<T>(
       "This project isn't running in the cluster. Deploy it again with `canyonos deploy --target kubernetes`."
     );
   }
-  const redis_port = await canyonos_repo.find_redis_port(project_id);
-  return with_redis_at(redis_port ?? config.canyonos.redisPort, operation);
+  const project = await canyonos_repo.find_redis(project_id);
+  return with_redis_at(
+    reachable_redis_host(project?.redis_host ?? null),
+    project?.redis_port ?? config.canyonos.redisPort,
+    operation
+  );
 }
 
 export async function project_running(redis: RedisClient, project_id: string): Promise<boolean> {

@@ -9,7 +9,7 @@ import { LOG_DOMAINS, logger } from '@core/logger';
 
 import { UUID_RE } from '../auth/project-access';
 import { load_prompts } from '../prompts/prompts.service';
-import { CONTROLLER_IDENTITY_KEY, with_redis_at } from './canyonos.redis';
+import { CONTROLLER_IDENTITY_KEY, reachable_redis_host, with_redis_at } from './canyonos.redis';
 import { canyonos_repo } from './canyonos.repo';
 import type { RegisteredProject } from './canyonos.types';
 
@@ -29,9 +29,10 @@ async function read_identity(redis: RedisClient): Promise<ControllerIdentity> {
   };
 }
 
-/** Stores the identity's project, or gives an existing one the new Redis port. */
+/** Stores the identity's project, or gives an existing one the new Redis. */
 export async function save_controller_project(
   { project_id, project_name }: ControllerIdentity,
+  redis_host: string,
   redis_port: number
 ): Promise<RegisteredProject> {
   if (project_id === null || !UUID_RE.test(project_id)) {
@@ -44,14 +45,19 @@ export async function save_controller_project(
   return canyonos_repo.save_registration({
     project_id,
     name: project_name || DEFAULT_PROJECT_NAME,
+    redis_host,
     redis_port,
   });
 }
 
-/** Registers the project whose controller publishes its identity on redis_port. */
-export async function register_project_at(redis_port: number): Promise<RegisteredProject> {
-  const identity = await with_redis_at(redis_port, read_identity);
-  const project = await save_controller_project(identity, redis_port);
+/** Registers the project whose controller publishes its identity on redis_host:redis_port.
+ * The project keeps redis_host as sent, even when the api reaches it on loopback. */
+export async function register_project_at(
+  redis_host: string,
+  redis_port: number
+): Promise<RegisteredProject> {
+  const identity = await with_redis_at(reachable_redis_host(redis_host), redis_port, read_identity);
+  const project = await save_controller_project(identity, redis_host, redis_port);
   // A failed prompt load must not fail the registration: the prompts listing stores them later.
   await load_prompts(project.project_id).catch((error: unknown) =>
     canyonos_logger.warn('Could not load stored prompts', { error })
@@ -61,7 +67,8 @@ export async function register_project_at(redis_port: number): Promise<Registere
 
 export async function bootstrap_canyonos(): Promise<void> {
   // Without a reachable controller the dashboard still starts; the CLI registers projects later.
-  await register_project_at(config.canyonos.redisPort).catch((error: unknown) =>
-    canyonos_logger.warn('Could not register the configured controller project', { error })
+  await register_project_at(config.canyonos.redisHost, config.canyonos.redisPort).catch(
+    (error: unknown) =>
+      canyonos_logger.warn('Could not register the configured controller project', { error })
   );
 }

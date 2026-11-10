@@ -14,12 +14,12 @@ import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.error import MarkedYAMLError
 
-from canyonos.dashboard_registration import API_PORT as DASHBOARD_API_PORT
 from canyonos.port_utils import is_port_free
 
 DEFAULT_API_PORT = 8080
 DEFAULT_REDIS_PORT = 6379
 DEFAULT_DASHBOARD_PORT = 8081
+DASHBOARD_API_PORT = 3000
 
 _EC2_TOKEN_URL = "http://169.254.169.254/latest/api/token"
 _EC2_PUBLIC_IP_URL = "http://169.254.169.254/latest/meta-data/public-ipv4"

@@ -115,13 +115,14 @@ of the machine, whose settings and JWT secret live in `~/.canyonos/dashboard/.en
 Every command that starts, stops or removes that stack holds the lock
 `~/.canyonos/dashboard/.lock`, so commands from different project folders wait
 for each other instead of racing. Once the stack is healthy, and only when this
-folder's Global Controller reports a running deploy, `serve` sends the
-project's Redis port to `POST /canyonos/projects` on the dashboard api. The api
-reads the controller's identity from that port on its own Redis host and keeps
-the port for the project's prompts, scaling and monitoring pages. A failed
-registration prints a warning and never fails `serve` or `deploy`; run
-`canyonos serve` again to retry. This per-project Redis port is temporary until
-the project-key design in CAN-521.
+folder's Global Controller reports a running deploy, `serve` connects the
+dashboard api to the project's Docker network and sends the project's Redis
+container name and port to `POST /canyonos/projects` on the dashboard api. The
+api reads the controller's identity from that Redis and keeps its name and port
+for the project's prompts, scaling and monitoring pages. A failed registration
+prints a warning and never fails `serve` or `deploy`; run `canyonos serve` again
+to retry. This per-project Redis address is temporary until the project-key
+design in CAN-521.
 
 ### `canyonos test`
 
@@ -166,10 +167,12 @@ explicit, at two depths:
   canyonos clean     remove        remove     remove    stopped, history kept
 ```
 
-- **`stop`** — full teardown of the running deploy. Removes its containers *and*
-  the `/workspace` volume (your copied files), keeping images for a quick
-  redeploy. Every `deploy` quietly does this to the project's previous
-  controller, so each deploy starts clean.
+- **`stop`** — full teardown of the running deploy. Removes its containers, its
+  Docker network *and* the `/workspace` volume (your copied files), keeping
+  images for a quick redeploy. It refuses when the project's Global Controller
+  is not running, since only the controller can tear down its replicas and
+  Redis. Every `deploy` quietly does this to the project's previous controller,
+  so each deploy starts clean.
 - **`clean`** — `stop`, then the project's build output: `.canyon`, the skill
   `convert` installed, and the agent images.
 

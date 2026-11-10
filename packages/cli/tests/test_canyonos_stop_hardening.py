@@ -87,7 +87,7 @@ def test_successful_cleanup_removes_state(monkeypatch, tmp_path):
     assert not state_path.exists()
 
 
-def test_stopped_controller_is_removed_without_calling_clean(monkeypatch, tmp_path):
+def test_a_stopped_controller_is_left_in_place_with_its_state(monkeypatch, tmp_path):
     state_path = _state(monkeypatch, tmp_path)
     monkeypatch.setattr(
         stop_cmd, "_container_state", lambda _container_id, _env: (True, False)
@@ -102,12 +102,11 @@ def test_stopped_controller_is_removed_without_calling_clean(monkeypatch, tmp_pa
 
     monkeypatch.setattr(docker_cmd.subprocess, "run", docker)
 
-    stop_cmd.run_stop()
+    assert stop_cmd.run_stop() is False
 
     assert clean_calls == []
-    assert ["docker", "stop", "abcdef123456"] not in docker_calls
-    assert ["docker", "rm", "abcdef123456"] in docker_calls
-    assert not state_path.exists()
+    assert docker_calls == []
+    assert state_path.exists()
 
 
 def test_a_dashboard_stop_failure_is_reported_after_the_project_is_gone(

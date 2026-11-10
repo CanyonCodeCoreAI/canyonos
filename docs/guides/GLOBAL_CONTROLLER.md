@@ -131,7 +131,8 @@ These go at the top level of the file, next to `agents`:
   is running (default `5`).
 - `redis`: where CanyonOS keeps track of your running app (default `localhost:6379`,
   else the next free port).
-  Most projects leave this alone.
+  Most projects leave this alone. Its containers reach it on the project's Docker network;
+  the port is published on `127.0.0.1` only, so nothing outside the machine reaches it.
 - `project_id`: filled in by the first deploy. Leave it as it is.
 
 ### Ports a deploy opens
@@ -141,7 +142,7 @@ A deploy opens these ports on the machine that runs `canyonos deploy`, and no ot
 | What | Setting | Default | Open on |
 |---|---|---|---|
 | Endpoint | `endpoint.api_port` | `8080`, else the next free one that isn't the dashboard's | every interface |
-| Redis | `redis.port` | `6379`, else the next free one | every interface |
+| Redis | `redis.port` | `6379`, else the next free one | `127.0.0.1` |
 | Global Controller | none | the last deploy's port or `8000`, else the next free one | `127.0.0.1` |
 | Each database | its `db_port` | `5432` | every interface |
 | Dashboard, shared by every project | `dashboard_port` | `8081`, else the next free one | every interface |
