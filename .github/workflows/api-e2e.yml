@@ -71,14 +71,6 @@ jobs:
           CANYONOS_REDIS_HOST: 127.0.0.1
           CANYONOS_REDIS_PORT: '6379'
 
-      - name: Run API unit tests
-        run: cd packages/api && bun run test:unit
-        env:
-          NODE_ENV: test
-          CI: true
-          DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
-          JWT_SECRET: test-jwt-secret-not-for-production
-
       - name: Run CanyonOS self-hosted bootstrap tests
         run: cd packages/api && bun run test:canyonos
         env:

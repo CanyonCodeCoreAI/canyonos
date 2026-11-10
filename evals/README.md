@@ -6,8 +6,7 @@ evaluate model responses, not a running CanyonOS application or an agent's actua
 file edits.
 
 ```bash
-bun run skills:test  # deterministic structure checks
-bun run skills:check # structure checks plus Promptfoo config validation
+bun run skills:check # Promptfoo config validation and smoke checks
 
 # Requires OPENAI_API_KEY and makes paid model calls.
 bun run skills:eval

@@ -372,6 +372,21 @@ def test_a_root_call_whose_requirement_is_down_gets_a_403(recorder, governed):
     assert status["status"] == "error", status
     assert status["error"] == refusal["error"], status
 
+    cli = canyonos(
+        recorder,
+        ["test", TEXT_QUERY, "--json", "--timeout", str(REQUEST_TIMEOUT)],
+        cwd=governed.dir,
+        timeout=REQUEST_TIMEOUT + 120,
+        check=False,
+    )
+    report = cli.json()
+    assert cli.code != 0, cli.output[-3000:]
+    assert report["against_existing_deploy"] is True, cli.stdout
+    assert report["error"] == (
+        f"Workflow query was refused: {refusal['error']}. "
+        "Run `canyonos status` to check the deploy."
+    ), cli.output[-3000:]
+
 
 def test_the_query_succeeds_once_the_requirement_is_back(recorder, governed, check):
     """With Workflow still requiring TestRunnerAgent, bringing the agent back is

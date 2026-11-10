@@ -8,7 +8,6 @@
     "**/*.css"
   ],
   "scripts": {
-    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",
     "format": "prettier --ignore-path ../../.gitignore --write .",

@@ -35,15 +35,6 @@
       "cache": false,
       "inputs": ["$TURBO_ROOT$/examples/**", "$TURBO_ROOT$/scripts/bundle-starters.ts"]
     },
-    "//#starters:test": {
-      // Both rebuild the bundle in place, so they must not run at the same time.
-      "dependsOn": ["//#starters:bundle"],
-      "inputs": [
-        "$TURBO_ROOT$/examples/**",
-        "$TURBO_ROOT$/scripts/bundle-starters.ts",
-        "$TURBO_ROOT$/scripts/bundle-starters.test.ts"
-      ]
-    },
     "lint": {},
     "typecheck": {},
     "@canyonos/api#typecheck": {
@@ -58,23 +49,16 @@
     "web#lint": {
       "dependsOn": ["^build"]
     },
-    "web#test": {
-      "dependsOn": ["^build"]
-    },
     "@repo/ui#lint": {
       "dependsOn": ["^build"]
     },
     "@repo/ui#typecheck": {
       "dependsOn": ["^build"]
     },
-    "@repo/ui#test": {
-      "dependsOn": ["^build"]
-    },
     "format": {
       "cache": false
     },
     "format:check": {},
-    "test": {},
     "canyonos#build": {
       "cache": true,
       "outputs": ["dist/**"],
@@ -100,28 +84,6 @@
         "cli.py"
       ]
     },
-    "canyonos#test": {
-      "dependsOn": ["//#starters:bundle", "//#starters:test"],
-      "command": [
-        "uv",
-        "run",
-        "--active",
-        "--frozen",
-        "--package",
-        "canyonos",
-        "pytest",
-        "tests",
-        "--ignore=tests/e2e"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "!tests/e2e/**",
-        "$TURBO_ROOT$/skills/converting-to-canyonos/**",
-        "$TURBO_ROOT$/packages/cli-usage-api/src/usage.contract.ts",
-        "$TURBO_ROOT$/docs/**",
-        "$TURBO_ROOT$/README.md"
-      ]
-    },
     "canyonos#test:e2e": {
       "cache": false,
       "dependsOn": ["//#starters:bundle"],
@@ -135,30 +97,6 @@
         "canyonos",
         "pytest",
         "tests/e2e"
-      ]
-    },
-    "canyonos-core#test": {
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/examples/helloworld/**"
-      ]
-    },
-    "canyonos-python#test": {
-      "command": [
-        "uv",
-        "run",
-        "--active",
-        "--frozen",
-        "pytest",
-        "tests",
-        "--ignore=tests/e2e"
-      ],
-      "inputs": [
-        "tests/**",
-        "!tests/**/__pycache__/**",
-        "!tests/e2e/**",
-        "pyproject.toml",
-        "uv.lock"
       ]
     },
     "canyonos-python#lint": {

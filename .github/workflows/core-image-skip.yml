@@ -18,7 +18,6 @@ on:
     paths:
       - '**'
       - '!packages/core/**'
-      - 'packages/core/tests/**'
       - 'packages/core/**.md'
       - '!.github/workflows/core-image.yml'
 

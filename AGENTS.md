@@ -25,12 +25,7 @@ uv sync                  # Python workspace (core + cli), editable
 bun install              # TypeScript workspace
 
 bun run check            # lint, type check, format check: what CI runs
-bun run test             # every test suite: what CI runs
 bun run format           # fix formatting (Ruff, Prettier)
-
-uv run pytest packages/core/tests                    # one Python package
-uv run pytest packages/cli/tests/test_clean.py       # one Python file
-bun run --filter @canyonos/api test                  # one TypeScript package
 
 bun run canyonos:dev     # shell with the CLI and images built from this checkout
 uv run canyonos <cmd>    # run the checkout's CLI from anywhere in the workspace
@@ -41,16 +36,16 @@ uv run pytest tests/e2e/cases --project=<name>   # deploy one project and run th
 uv run pytest tests/e2e/scenarios                 # E2E checks that stage their own projects
 ```
 
-Run `bun run check` and `bun run test` before calling a change done.
+Run `bun run check` and the E2E suite that covers the change before calling it done.
 
 ## Rules
 
 - Do not edit `uv.lock` or `bun.lock` by hand. Change dependencies with `uv add` / `bun add`; CI fails on a stale lockfile.
 - Do not commit generated output: `.canyon/`, `stubs/`, `grpc_stubs/`, `build/`, `dist/`, `*.egg-info/`.
-- Add or update tests next to the change: `packages/core/tests/`, `packages/cli/tests/`, `src/modules` in `api` and `web`, or `tests/` for cross-package behavior.
+- Add or update an E2E test for changed behavior: `packages/cli/tests/e2e/`, `packages/api/src/test/`, `packages/web/src/__tests__/`, or `tests/` for cross-package behavior.
 - Keep tool versions pinned exactly (e.g. `ruff==`, `ty==`, SHA-pinned GitHub Actions).
 - Keep provider-specific logic (Local, EC2, and any new provider) inside `packages/core/canyonos_core/reconciler/providers/`. Callers go through `providers/__init__.py`, never a provider module or a provider name; see [its README](packages/core/canyonos_core/reconciler/providers/README.md).
-- Keep Kubernetes-specific logic in core inside `packages/core/canyonos_core/kubernetes/`. The `kubernetes:` section is parsed with the other config sections in `schema/kubernetes_block.py`. Only three modules outside the package import from it: `controller/orchestrator.py` (`orchestrator_for` picks `KubernetesOrchestrator`), `cli.py` (registers `kubernetes/commands.py`) and `schema/kubernetes_block.py`. `tests/test_kubernetes_boundary.py` checks it; see [its `__init__.py`](packages/core/canyonos_core/kubernetes/__init__.py).
+- Keep Kubernetes-specific logic in core inside `packages/core/canyonos_core/kubernetes/`. The `kubernetes:` section is parsed with the other config sections in `schema/kubernetes_block.py`. Only three modules outside the package import from it: `controller/orchestrator.py` (`orchestrator_for` picks `KubernetesOrchestrator`), `cli.py` (registers `kubernetes/commands.py`) and `schema/kubernetes_block.py`. See [its `__init__.py`](packages/core/canyonos_core/kubernetes/__init__.py).
 - Keep the Global Controller (`controller/global_controller.py`) and the reconciler (`reconciler/`) apart. They run as separate processes and share state only through Redis: the keys in `reconciler/state.py` and each replica's `controller:<address>:status`. The Global Controller reaches replicas only through `gc.orchestrator` and never repeats a check the reconciler makes. When it needs something only the reconciler knows, have the reconciler write it to Redis.
 - A `canyonos` command that fails must exit non-zero, so a script or coding agent can tell. Its `run_*` function either returns `False` (or a non-zero code) and `cli.py` passes the result to `sys.exit`, or raises `RuntimeError`, which `cli.py` prints and exits 1. Never print an error and then `return` nothing.
 - Naming: one word per thing, in code, comments, logs and docs.

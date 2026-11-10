@@ -59,7 +59,7 @@ def _record_from_dashboard(request_id):
         return {}
     output, status_code, status_message = row
     if status_code == "STATUS_CODE_ERROR":
-        return {"failed": "1", "error_message": status_message}
+        return {"failed": "1", "error": status_message}
     return {"result": output}
 
 

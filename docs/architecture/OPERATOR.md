@@ -67,8 +67,8 @@ as long as the pod is. The pod learns it only from `CANYONOS_REPLICA_ID`, set in
 spec, as Docker and EC2 pass theirs at `docker run`. Routing lists an agent's
 replicas oldest first, as core does.
 A pod leaves routing the moment it starts terminating. The key formats are generated
-from core's Python (`packages/core/tests/kubernetes_contract.py` writes
-`internal/redisstate/testdata/contract.json`) and tested on both sides.
+from the shared `internal/redisstate/testdata/contract.json` fixture, exercised
+by the operator's Kubernetes integration suite.
 
 ## The dashboard's list of projects
 

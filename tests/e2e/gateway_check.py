@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +33,7 @@ FAKE_URL = f"http://{socket.gethostname()}:{FAKE_PORT}"
 GATEWAY_HEALTH = "http://127.0.0.1:8081/healthz"
 GATEWAY_PYTHON = "/opt/canyonos-gateway/bin/python"
 RESTART_TIMEOUT = 90
+CONFIG_TIMEOUT = 20
 USAGE = {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}
 WORDS = ("one", "two", "three")
 seen = []
@@ -109,6 +111,140 @@ def check(name, ok, detail=""):
     print(f"{'ok' if ok else 'FAIL'}: {name} {detail}".rstrip())
     if not ok:
         sys.exit(1)
+
+
+def _refusal(error):
+    try:
+        return json.loads(error.read().decode())
+    except (UnicodeDecodeError, ValueError):
+        return {}
+
+
+def _wait_for_denial(name, body, reason_prefix, reason_suffix=None):
+    """Wait for the gateway's Redis refresh, then prove its refused call was not forwarded."""
+    deadline = time.monotonic() + CONFIG_TIMEOUT
+    last_response = None
+    while time.monotonic() < deadline:
+        future = new_future()
+        before = len(seen)
+        try:
+            post("/v1/chat/completions", body, future).read()
+        except urllib.error.HTTPError as error:
+            refusal = _refusal(error)
+            reason = refusal.get("message")
+            matched = isinstance(reason, str) and (
+                reason == reason_prefix
+                if reason_suffix is None
+                else reason.startswith(reason_prefix) and reason.endswith(reason_suffix)
+            )
+            if error.code == 403 and matched:
+                check(
+                    f"{name} returns the policy reason",
+                    refusal.get("error", {}).get("message") == reason,
+                    refusal,
+                )
+                check(
+                    f"{name} never reaches its provider",
+                    len(seen) == before,
+                    seen[before:],
+                )
+                return
+            # The gateway may still have the prior policy between Redis refreshes.
+            # In particular, the first new 403 can name the previous policy.
+            last_response = {"code": error.code, "refusal": refusal}
+        except OSError as error:
+            check(f"{name} reaches the gateway", False, error)
+        else:
+            last_response = {"code": 200, "provider_calls": seen[before:]}
+        time.sleep(0.5)
+    check(f"{name} refreshes in time", False, last_response)
+
+
+def _wait_for_allowed_control(body):
+    """Wait for an allowed config and prove the one successful request reaches the fake host."""
+    deadline = time.monotonic() + CONFIG_TIMEOUT
+    last_refusal = None
+    while time.monotonic() < deadline:
+        future = new_future()
+        before = len(seen)
+        try:
+            post("/v1/chat/completions", body, future).read()
+        except urllib.error.HTTPError as error:
+            last_refusal = _refusal(error)
+            time.sleep(0.5)
+            continue
+        except OSError as error:
+            check("the allowed control reaches the gateway", False, error)
+        check(
+            "the allowed control reaches its provider",
+            len(seen) == before + 1 and seen[-1][1] == body,
+            seen[before:],
+        )
+        return
+    check("the allowed control refreshes in time", False, last_refusal)
+
+
+def _set_llms(config):
+    REDIS.set("llms:config", json.dumps(config))
+
+
+def _restore_llms(raw):
+    if raw is None:
+        REDIS.delete("llms:config")
+    else:
+        REDIS.set("llms:config", raw)
+
+
+def check_llm_policy():
+    """Exercise configured policy through the deployed gateway and fake upstream."""
+    saved = REDIS.get("llms:config")
+    agent = os.environ["CANYONOS_AGENT_NAME"]
+    try:
+        denied_model = "fake-model"
+        _set_llms(
+            {
+                "restricted": {
+                    "model_id": denied_model,
+                    "agents": {"AnotherAgent": None},
+                }
+            }
+        )
+        _wait_for_denial(
+            "an agent denied a model",
+            {"model": denied_model, "messages": []},
+            f"canyonos denied: {agent} is not allowed to use restricted",
+        )
+
+        cap = 0.0001
+        _set_llms(
+            {
+                "capped": {
+                    "model_id": "gpt-5-nano",
+                    "max_tokens": 1000,
+                    "agents": {agent: cap},
+                }
+            }
+        )
+        _wait_for_denial(
+            "a call over its per-request cap",
+            {"model": "gpt-5-nano", "messages": [], "max_tokens": 1000},
+            f"canyonos denied: {agent} call to capped could cost up to $",
+            f"over its ${cap} per-request cap",
+        )
+
+        _set_llms(
+            {
+                "allowed": {
+                    "model_id": "gpt-5-nano",
+                    "agents": {agent: None},
+                }
+            }
+        )
+        _wait_for_allowed_control(
+            {"model": "gpt-5-nano", "messages": [], "max_tokens": 1000}
+        )
+    finally:
+        _restore_llms(saved)
 
 
 def gateway_pids():
@@ -223,6 +359,8 @@ def main():
         prices.stdout.strip().endswith("True"),
         prices.stdout + prices.stderr,
     )
+
+    check_llm_policy()
 
     before = gateway_pids()
     check("the gateway is running", len(before) == 1, before)

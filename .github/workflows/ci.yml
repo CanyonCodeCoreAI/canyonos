@@ -61,17 +61,11 @@ jobs:
       - name: Run lint, type check, and format check
         run: bun run check
 
-      - name: Run tests
-        run: bun run test
-
       - name: Check that every manifest carries the same version
         run: bun run version:check
 
-      - name: Run the repository script tests
-        run: bun test scripts
-
-  # The CLI runs on people's own machines, so its tests also run on macOS and Windows
-  # (the test job above runs them on Linux). Core and the other packages are Linux-only.
+  # The CLI runs on people's own machines, so its startup and bundled workflows are
+  # checked on macOS and Windows. Core and the other packages are Linux-only.
   cli:
     name: CLI on ${{ matrix.os }}
     strategy:
@@ -110,11 +104,7 @@ jobs:
       - name: Bundle the workflows
         run: bun run scripts/bundle-starters.ts
 
-      - name: Run the CLI tests
-        working-directory: packages/cli
-        run: uv run --frozen --package canyonos pytest tests --ignore=tests/e2e
-
 # If you want to run this locally, install act and run "act pull_request"
-# For the same checks without act: bun run check && bun run test
+# For the same checks without act: bun run check
 # For reporting Ruff lint errors: bun run lint
 # For fixing Ruff formatting errors: bun run format

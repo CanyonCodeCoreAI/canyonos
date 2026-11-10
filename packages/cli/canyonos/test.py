@@ -276,6 +276,14 @@ def _query(run, endpoint, timeout, number=3, total=3):
 
     try:
         request_id = _send_query(run.endpoint, body)
+    except urllib.error.HTTPError as e:
+        detail = _error_detail(e)
+        if e.code == 403:
+            raise RuntimeError(
+                f"Workflow query was refused: {detail}. "
+                "Run `canyonos status` to check the deploy."
+            ) from None
+        raise RuntimeError(f"Workflow query failed: {detail}") from None
     except OSError as e:
         raise RuntimeError(
             f"Could not reach the workflow at {run.endpoint}: {e}"

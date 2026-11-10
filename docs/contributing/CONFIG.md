@@ -91,5 +91,5 @@ today, so users apply changes with `canyonos deploy`.
    a field with its default to the matching dataclass.
 2. Parse it in `load_manifest` or `_agent` with the helpers in `schema/_checks.py`.
 3. Read it where it's used, and publish it in `_apply_config` if other processes need it.
-4. Add schema tests in `packages/core/tests/`, and document it in
+4. Add an E2E schema check, and document it in
    [the user guide](../guides/GLOBAL_CONTROLLER.md).

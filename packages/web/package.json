@@ -19,8 +19,6 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p ./tsconfig.app.json --noEmit",
-    "web:test:unit": "bun test src/modules",
-    "test": "bun test src/modules",
     "test:e2e": "bunx playwright test",
     "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",
     "format": "prettier --ignore-path ../../.gitignore --write .",

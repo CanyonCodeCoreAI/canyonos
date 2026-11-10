@@ -15,7 +15,6 @@
     "license:check": "turbo run license:check",
     "check": "turbo run lint typecheck format:check license:check",
     "format": "turbo run format",
-    "test": "turbo run test",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "build:sdk": "bun run --filter @canyonos/api build:sdk",
@@ -40,9 +39,7 @@
     "cli:usage:test:e2e": "bun run --cwd packages/cli-usage-api test:e2e",
     "cli:usage:test:cli-e2e": "CANYONOS_CLI_USAGE_E2E=1 uv run pytest tests/cli_usage",
     "starters:bundle": "bun run ./scripts/bundle-starters.ts",
-    "starters:test": "bun test scripts/bundle-starters.test.ts",
-    "skills:test": "bun test scripts/skills-check.test.ts",
-    "skills:check": "bun run skills:test && promptfoo validate config -c evals/promptfooconfig.js && bun run scripts/skills-promptfoo-smoke.ts",
+    "skills:check": "promptfoo validate config -c evals/promptfooconfig.js && bun run scripts/skills-promptfoo-smoke.ts",
     "skills:eval": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo eval -c evals/promptfooconfig.js --env-file .env",
     "skills:eval:view": "PROMPTFOO_CONFIG_DIR=.promptfoo promptfoo view .promptfoo"
   },

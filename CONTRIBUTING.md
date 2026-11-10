@@ -32,15 +32,14 @@ To run the CLI, Core and dashboard from this checkout, see [DEVELOPMENT.md](docs
 ## Making a change
 
 1. Fork the repo (or create a branch if you have write access) from `main`.
-2. Make your change and add or update tests next to it, e.g. `packages/core/tests/`.
+2. Make your change and add or update an E2E test at the boundary it changes.
 3. Run the same checks CI runs:
 
    ```bash
    bun run check   # lint, type check, format check (Ruff, ty, oxlint, Prettier)
-   bun run test    # all test suites
    ```
 
-   To fix formatting: `bun run format`. To run one package's tests: `uv run pytest packages/core/tests`.
+   To fix formatting: `bun run format`. See [DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md#tests) for E2E commands.
 4. Commit with a [Conventional Commits](https://www.conventionalcommits.org/) message:
    `fix(core): ...`, `feat(cli): ...`, `docs: ...`. Fill in the
    [PR template](.github/pull_request_template.md); this format helps moderators review your PR.

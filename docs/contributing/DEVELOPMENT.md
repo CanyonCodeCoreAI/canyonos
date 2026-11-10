@@ -249,20 +249,13 @@ and `clean`. Everything but the image builds runs in a container on the kind net
 so it runs the same on any OS.
 
 For the operator alone, `make manifests generate fmt vet test lint` in
-`packages/operator` (in the `golang:1.27.0` container) runs its unit and envtest suites.
+`packages/operator` (in the `golang:1.27.0` container) runs its envtest integration suite.
 
 ## Tests
 
-Every suite runs from the workspace root through Turborepo:
+`bun run check` runs lint, type checks and the format check from the workspace root.
 
-```bash
-bun run test
-```
-
-`bun run check` runs lint, type checks and the format check the same way.
-
-The end-to-end suites are separate from `bun run test`. Each needs the local
-env files first:
+Each end-to-end suite needs the local env files first:
 
 ```bash
 cp .docker/.env.example .docker/.env

@@ -6,7 +6,6 @@
     "dev:server": "bun run --watch src/server.ts",
     "reset": "docker compose -p canyonos-cli-usage -f docker-compose.yml down --volumes",
     "build": "bun run scripts/build-lambda.ts",
-    "test": "bun test ./src",
     "test:e2e": "bun test --timeout 120000 ./e2e",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",

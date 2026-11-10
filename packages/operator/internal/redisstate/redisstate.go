@@ -5,8 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 // Package redisstate is the Redis data CanyonOS's Python side reads about replicas:
 // each ready replica's record, the replica sets, the desired counts and the routing
-// table. Its format is fixed by testdata/contract.json, generated from that Python
-// (packages/core/tests/kubernetes_contract.py); the tests here check against it.
+// table. Its format is fixed by testdata/contract.json; the Kubernetes integration
+// suite checks it.
 package redisstate
 
 import (

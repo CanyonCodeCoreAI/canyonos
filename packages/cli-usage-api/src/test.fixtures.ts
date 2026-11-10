@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-/** Valid usage events and feedback for the unit and end-to-end tests of the CLI usage API. */
+/** Valid usage events and feedback for the CLI usage API end-to-end test. */
 
 import type { Feedback } from './feedback.contract';
 import type { FeedbackRepository } from './feedback.repository';
