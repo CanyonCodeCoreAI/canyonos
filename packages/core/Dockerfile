@@ -49,7 +49,7 @@ RUN pip install --no-cache-dir setuptools==84.0.0
 
 # Installs dependencies from pyproject.toml alone so source edits don't reinstall them.
 COPY pyproject.toml /src/
-RUN pip install /src
+RUN --mount=type=cache,target=/root/.cache/pip pip install /src
 COPY . /src
 RUN pip install --no-deps /src
 

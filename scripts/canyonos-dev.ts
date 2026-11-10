@@ -23,11 +23,34 @@ const CLI_ENV = join(ROOT, 'packages/cli/.env');
 
 $.cwd(ROOT);
 
-await $`docker build -f packages/core/Dockerfile -t canyonos-core:dev packages/core`;
-await $`docker build -f packages/api/Dockerfile -t canyonos-api:dev .`;
-await $`docker build -f packages/web/Dockerfile --target canyonos --build-arg VITE_API_URL=/api -t canyonos-web:dev .`;
+const imagesOnly = process.argv.includes('--images-only');
+// The CLI steps don't use the images, so they run while the images build.
+const cliReady = imagesOnly
+  ? Promise.resolve()
+  : (async () => {
+      if (!existsSync(CLI_ENV)) await $`cp packages/cli/.env.example ${CLI_ENV}`;
+      await $`uv sync`;
+      // The CLI installs editable, so it reads the bundled workflows out of the
+      // checkout. They are generated, not committed, and only `canyonos#build`
+      // builds them -- this shell never runs it.
+      await $`bun run starters:bundle`;
+    })();
+const BAKE = {
+  target: {
+    core: { context: 'packages/core', dockerfile: 'Dockerfile', tags: ['canyonos-core:dev'] },
+    api: { context: '.', dockerfile: 'packages/api/Dockerfile', tags: ['canyonos-api:dev'] },
+    web: {
+      context: '.',
+      dockerfile: 'packages/web/Dockerfile',
+      target: 'canyonos',
+      args: { VITE_API_URL: '/api' },
+      tags: ['canyonos-web:dev'],
+    },
+  },
+};
+await $`docker buildx bake --load -f - core api web < ${new Response(JSON.stringify(BAKE))}`;
 
-if (process.argv.includes('--images-only')) process.exit(0);
+if (imagesOnly) process.exit(0);
 
 // The kind cluster runs these images too: push them there and upgrade it, so it never runs an
 // older CanyonOS than the dev shell. Without kind or the cluster there is nothing to do, and a
@@ -42,13 +65,7 @@ if (clusters.split(/\r?\n/).includes(CLUSTER)) {
   }
 }
 
-if (!existsSync(CLI_ENV)) await $`cp packages/cli/.env.example ${CLI_ENV}`;
-
-await $`uv sync`;
-// The CLI installs editable, so it reads the bundled workflows out of the
-// checkout. They are generated, not committed, and only `canyonos#build`
-// builds them -- this shell never runs it.
-await $`bun run starters:bundle`;
+await cliReady;
 
 console.log('\nCanyonOS dev shell: `canyonos` runs from this checkout. Type `exit` to leave.\n');
 
