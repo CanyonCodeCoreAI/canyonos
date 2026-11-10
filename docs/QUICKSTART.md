@@ -165,19 +165,21 @@ For `provider: ec2-pool` specifically (`canyonos provision`, AMI/IAM/security gr
 ### 6. Stop
 
 ```bash
-canyonos stop         # stop this project, and the dashboard if no other project is running
-canyonos stop --all   # stop every project on this machine
+canyonos stop                # stop the only deployed project, and the dashboard with it
+canyonos stop helloworld     # stop a project by name, folder name or ID (or its start), from any folder
+canyonos stop --all          # stop every project on this machine
 ```
 
-`stop --all` also finds projects whose folder was deleted before `canyonos stop`, whose containers keep holding their ports. `stop` leaves your project folder (including `.canyon/` and `.env`) and the built images in place, so the next deploy is quick. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
+With more than one project deployed, `canyonos stop` lists them: tick the ones to stop with space, then press enter. Without a terminal it names them and stops none, so pass the names. A name two projects share is refused; use the ID instead. `stop --all` also finds projects whose folder was deleted before `canyonos stop`, whose containers keep holding their ports. `stop` leaves your project folder (including `.canyon/` and `.env`) and the built images in place, so the next deploy is quick. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `global_controller.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
 
 ### Clean generated files
 
-Stops the project if it is deployed, then removes the `.canyon` folder, the CanyonOS skill `canyonos convert` installed in this project, and the Docker images of the agents in this project's `global_controller.yaml`. Other projects' images stay, and `.env` is never touched.
+Stops the project if it is deployed, then removes its `.canyon` folder, the CanyonOS skill `canyonos convert` installed in its folder, and its agents' Docker images. Other projects' images stay, and `.env` is never touched. `clean` picks projects as `stop` does, from the deployed ones and this folder's; it lists them when there is more than one.
 
 ```bash
 canyonos clean
-canyonos clean --all   # remove everything CanyonOS put on this machine
+canyonos clean helloworld   # clean a project by name, folder name or ID, from any folder
+canyonos clean --all        # remove everything CanyonOS put on this machine
 ```
 
 ## Dashboard

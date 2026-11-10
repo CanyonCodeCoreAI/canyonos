@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
+import json
 import subprocess
 
 from pathlib import Path
@@ -16,10 +17,7 @@ def _state(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path / "portfolio")
     state_path = Path(project.state_path())
     state_path.parent.mkdir(parents=True)
-    state_path.write_text(
-        '{"container_id": "abcdef123456", "port": 8000}', encoding="utf-8"
-    )
-    monkeypatch.setattr(stop_cmd, "require_state", lambda: dict(STATE))
+    state_path.write_text(json.dumps(STATE), encoding="utf-8")
     monkeypatch.setattr(
         stop_cmd, "_container_state", lambda _container_id, _env: (True, True)
     )

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos stop`: tear down the deploy of the project in the current folder,
-or of every project with --all, found by label whether or not its folder still exists.
+Logic for `canyonos stop`: tear down the deploys of the projects it is given or picks
+(see selection.py), or of every project with --all, found by label whether or not its
+folder still exists.
 Its containers, /workspace volume and network go; its images and `.canyon` stay for a
 fast redeploy, and the shared dashboard is stopped with its history kept once no other
 project's Global Controller runs. `canyonos deploy` and `canyonos clean` reuse it.
@@ -12,7 +13,7 @@ project's Global Controller runs. `canyonos deploy` and `canyonos clean` reuse i
 import os
 import shutil
 
-from canyonos import project, ui
+from canyonos import project, selection, ui
 from canyonos.docker_cmd import (
     DOCKER_CLEANUP_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -27,7 +28,7 @@ from canyonos.dashboard_stack import (
     stop_dashboard,
     teardown_dashboard,
 )
-from canyonos.gc import GCError, post_clean, require_state
+from canyonos.gc import GCError, post_clean
 from canyonos.init import GC_CONTAINER_PORT, docker_env, load_state
 from canyonos.usage.consent import is_interactive
 from utils.tui import select_menu
@@ -54,50 +55,70 @@ def _container_state(container_id, env):
     return True, result.stdout.strip() == "true"
 
 
-def stop_project(state):
-    """Tear down the project's Global Controller, its replicas and Redis, its network and
-    volume, leaving the dashboard; returns what it couldn't.
+def controller_running(state):
+    """True when the Global Controller `state` records runs, on the Docker engine it was
+    deployed on."""
+    return _container_state(state["container_id"], docker_env(state))[1]
 
-    Nothing is removed when the Global Controller is not running, since only it can
-    tear down the replicas and Redis it started. Teardown reports rather than raises:
-    it is also the first step of `canyonos deploy`, which starts over anyway, and the
-    state file stays whenever something is left, so `canyonos stop` can be retried.
+
+def stop_project(state, name=None):
+    """Stop project `name`, by default this folder's: through its Global Controller
+    while it runs, else by removing every container, volume and network labelled with
+    the project. The dashboard is left. Returns what it couldn't remove; the state
+    file stays whenever something is left, so the stop can be retried.
+
+    It decides nothing: whether a project may be stopped is `stop_if_safe`'s call.
+    Teardown reports rather than raises, since it is also a step of `canyonos deploy`.
     """
-    container_id = state["container_id"]
-    state_path = project.state_path()
+    name = name or project.project_name()
     # The exact engine this deploy's container was created on, not whatever
     # context is active now -- they can differ (see docker_env).
     env = docker_env(state)
-    with ui.status("Tearing down..."):
+    with ui.status(f"Tearing down {name}..."):
         # A stale record cannot answer /clean, so establish this before making
         # an HTTP request that would otherwise add a full request timeout.
-        running = _container_state(container_id, env)[1]
-        if running:
-            failures = _tear_down(container_id, state["port"], env)
+        if controller_running(state):
+            failures = _tear_down(name, state["container_id"], state["port"], env)
         else:
-            failures = [
-                f"Could not stop `{project.folder_name()}`: its Global Controller is "
-                "not running, so its replicas and Redis cannot be torn down."
-            ]
-
-    if failures:
-        ui.fail("Teardown incomplete:\n- " + "\n- ".join(failures))
-        ui.hint(
-            f"State was preserved at {state_path}, so `canyonos stop` can be retried."
-        )
-        if not running:
-            ui.hint(
-                "Remove the project's containers with `docker rm -f`, or every CanyonOS "
-                "project's with `canyonos stop --all`, then deploy again."
+            failures = _remove_project_resources([name], env) or _remove_state_files(
+                [name]
             )
+    if failures:
+        ui.fail(f"Teardown of {name} incomplete:\n- " + "\n- ".join(failures))
+        ui.hint(
+            f"State was preserved at {project.state_path(name)}, so "
+            f"`canyonos stop {name}` can be retried."
+        )
     else:
-        ui.ok("Deploy torn down")
+        ui.ok(f"{name} torn down")
     return failures
 
 
-def _tear_down(container_id, port, env):
-    """Have the running Global Controller remove its deploy, then remove it, the
-    project's network and volume, and the state files; returns what it couldn't."""
+def stop_if_safe(state, name=None):
+    """`stop_project` for project `name`, by default this folder's, unless its Global
+    Controller is not running: why it went down is unknown, so what it started is
+    removed only when the user names the project. Returns what it couldn't stop."""
+    name = name or project.project_name()
+    if controller_running(state):
+        return stop_project(state, name)
+    failure = (
+        f"Could not stop `{name}`: its Global Controller is not running, so removing "
+        f"its replicas and Redis is not safe. Run `canyonos stop {name}` to force it."
+    )
+    ui.fail(failure)
+    return [failure]
+
+
+def stopper(choice):
+    """How to stop the projects of `choice`: `stop_project` when the user named or
+    ticked them, else `stop_if_safe`."""
+    return stop_project if choice.confirmed else stop_if_safe
+
+
+def _tear_down(name, container_id, port, env):
+    """Have the running Global Controller of project `name` remove its deploy, then
+    remove it, the project's network and volume, and the state files; returns what it
+    couldn't."""
     failures = []
     # Stop any running deploy first, so the local controller and Redis
     # containers it spawned via docker-outside-of-docker get torn down
@@ -130,7 +151,7 @@ def _tear_down(container_id, port, env):
     if failure:
         failures.append(failure)
 
-    network = project.project_group()
+    network = project.project_group(name)
     leave_project_network(network)
     failure = cleanup_docker(
         ["docker", "network", "rm", network],
@@ -145,7 +166,7 @@ def _tear_down(container_id, port, env):
     # Remove the workspace volume only after the container is gone (docker
     # refuses to remove a volume still in use). A missing volume is already
     # the desired end state; every other failure remains retryable.
-    volume = project.workspace_volume()
+    volume = project.workspace_volume(name)
     failure = cleanup_docker(
         ["docker", "volume", "rm", volume],
         action=f"Removing workspace volume {volume}",
@@ -159,8 +180,8 @@ def _tear_down(container_id, port, env):
     if not failures:
         # The controller's gone; state.json goes last so a failed removal can be retried.
         for path in (
-            os.path.join(project.state_dir(), "deployed.json"),
-            project.state_path(),
+            os.path.join(project.state_dir(name), "deployed.json"),
+            project.state_path(name),
         ):
             try:
                 os.remove(path)
@@ -171,10 +192,10 @@ def _tear_down(container_id, port, env):
     return failures
 
 
-def _list_docker(argv, action):
+def _list_docker(argv, action, env=None):
     """The lines a Docker listing prints, or the failure as a string."""
     try:
-        result = run_docker(argv, timeout=DOCKER_QUICK_TIMEOUT, action=action)
+        result = run_docker(argv, timeout=DOCKER_QUICK_TIMEOUT, action=action, env=env)
     except RuntimeError as e:
         return str(e)
     if result.returncode != 0:
@@ -231,10 +252,11 @@ _PROJECT_RESOURCES = (
 LEGACY_NETWORK = "canyonos-local"
 
 
-def _remove_project_resources(projects):
+def _remove_project_resources(projects, env=None):
     """Remove every container, volume and network labelled with one of `projects`,
-    whether or not its folder still exists; returns what it couldn't. Matched against
-    CanyonOS's records, since another Compose stack can also be named `canyonos-...`."""
+    whether or not its folder still exists, on the Docker engine `env` points at;
+    returns what it couldn't. Matched against CanyonOS's records, since another
+    Compose stack can also be named `canyonos-...`."""
     groups = {f"canyonos-{name}" for name in projects}
     failures = []
     for listing, field, remove, kind in _PROJECT_RESOURCES:
@@ -247,6 +269,7 @@ def _remove_project_resources(projects):
                 f'{{{{.{field}}}}} {{{{.Label "{project.PROJECT_LABEL}"}}}}',
             ],
             f"Listing CanyonOS {kind}",
+            env,
         )
         if isinstance(listed, str):
             failures.append(listed)
@@ -272,14 +295,15 @@ def _remove_project_resources(projects):
                         _container_name("api"),
                     ],
                     f"Disconnecting the dashboard from {network}",
+                    env,
                 )
-            names.append(LEGACY_NETWORK)
         if names:
             failure = cleanup_docker(
                 [*remove, *names],
                 action=f"Removing CanyonOS {kind}",
                 missing_text="not found" if kind == "networks" else "No such",
                 timeout=DOCKER_CLEANUP_TIMEOUT,
+                env=env,
             )
             if failure:
                 failures.append(failure)
@@ -351,11 +375,14 @@ _OWN_IMAGES = tuple(
 )
 
 
-def _remove_images(projects):
-    """Remove CanyonOS's own images and the agent images of `projects`; returns what it
-    couldn't. Removed by name and tag, so another name for the same image (a registry
-    copy) keeps it."""
-    references = [*_OWN_IMAGES, *(f"canyonos-{name}-*" for name in projects)]
+def agent_images(name):
+    """The `docker images` reference every agent image of project `name` matches."""
+    return f"canyonos-{name}-*"
+
+
+def remove_images(references):
+    """Remove the images matching `references`; returns what it couldn't. Removed by
+    name and tag, so another name for the same image (a registry copy) keeps it."""
     listed = _list_docker(
         [
             "docker",
@@ -437,10 +464,20 @@ def stop_all(remove_everything=False):
             failures.append("Stopping the dashboard failed")
         failures += _clean_deployments()
         failures += _remove_project_resources(projects)
+        failure = cleanup_docker(
+            ["docker", "network", "rm", LEGACY_NETWORK],
+            action=f"Removing Docker network {LEGACY_NETWORK}",
+            missing_text="not found",
+            timeout=DOCKER_CLEANUP_TIMEOUT,
+        )
+        if failure:
+            failures.append(failure)
         if not failures:
             failures += _remove_state_files(projects)
         if remove_everything and not failures:
-            failures += _remove_images(projects)
+            failures += remove_images(
+                [*_OWN_IMAGES, *(agent_images(name) for name in projects)]
+            )
         if remove_everything and not failures:
             failures += _remove_home()
     command = "clean --all" if remove_everything else "stop --all"
@@ -465,19 +502,13 @@ def stop_all(remove_everything=False):
     return not failures
 
 
-def run_stop(all_projects=False):
-    """Run `canyonos stop`: `stop_project`, then stop the dashboard if no other
-    project runs, or `stop_all` with `all_projects`. Returns True when nothing of
-    the project is left running."""
-    if all_projects:
-        return stop_all()
-    state = require_state()
-    if state is None:
-        return True
-    failures = stop_project(state)
+def stop_unused_dashboard(projects):
+    """Stop the dashboard unless a Global Controller still runs on the Docker engine of
+    one of `projects`, which were just stopped; False when stopping it failed."""
     with ui.status("Stopping the dashboard..."):
-        dashboard_kept = project.other_global_controllers_running(
-            state["container_id"], docker_env(state)
+        dashboard_kept = any(
+            project.other_global_controllers_running(None, docker_env(p.state))
+            for p in projects
         )
         if not dashboard_kept and not stop_dashboard():
             ui.fail("Stopping the dashboard failed")
@@ -487,4 +518,26 @@ def run_stop(all_projects=False):
             "The dashboard was left running because another CanyonOS project is "
             "still deployed."
         )
-    return not failures
+    return True
+
+
+def stop_projects(choice):
+    """Stop each deployed project of `choice` as `stopper` says, then stop the dashboard
+    if no other project runs. Returns True when nothing of them is left running."""
+    stop = stopper(choice)
+    stopped = [not stop(p.state, p.name) for p in choice.projects]
+    return stop_unused_dashboard(choice.projects) and all(stopped)
+
+
+def run_stop(all_projects=False, refs=()):
+    """Run `canyonos stop`: `stop_projects` on the deployed projects `refs` name or
+    `selection.choose` picks, or `stop_all` with `all_projects`. Returns True when
+    each was found and nothing of it is left running."""
+    if all_projects:
+        return stop_all()
+    choice = selection.choose("stop", refs, selection.deployed_projects())
+    if not choice.projects:
+        if choice.ok:
+            ui.warn("No deploy is running.")
+        return choice.ok
+    return stop_projects(choice) and choice.ok

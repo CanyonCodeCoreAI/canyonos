@@ -133,6 +133,8 @@ def test_the_endpoints_port_is_recorded_beside_the_rest(init):
         "docker_socket": "/sock",
         "redis_port": 6379,
         "api_port": 8085,
+        "project_id": None,
+        "project_dir": os.getcwd(),
     }
 
 

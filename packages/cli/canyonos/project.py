@@ -105,9 +105,10 @@ def kubernetes_command(command):
     return f"canyonos {command}{flag}"
 
 
-def project_group():
-    """Return the Docker group every container of this project is labelled with."""
-    return f"canyonos-{project_name()}"
+def project_group(name=None):
+    """Return the Docker group every container of project `name`, by default this
+    folder's, is labelled with."""
+    return f"canyonos-{name or project_name()}"
 
 
 def project_label_args():
@@ -138,9 +139,10 @@ def gc_container_name():
     return f"canyonos-{project_name()}-global-controller"
 
 
-def workspace_volume():
-    """Return the Docker volume this project's files are copied into for a deploy."""
-    return f"canyonos-{project_name()}-workspace"
+def workspace_volume(name=None):
+    """Return the Docker volume the files of project `name`, by default this folder's,
+    are copied into for a deploy."""
+    return f"canyonos-{name or project_name()}-workspace"
 
 
 def image_name(agent):
@@ -160,15 +162,16 @@ def projects_dir():
     return os.path.join(os.path.expanduser("~/.canyonos"), "projects")
 
 
-def state_dir():
-    """Return the folder under `~/.canyonos` that holds this project's records."""
-    return os.path.join(projects_dir(), project_name())
+def state_dir(name=None):
+    """Return the folder under `~/.canyonos` that holds the records of project `name`,
+    by default this folder's."""
+    return os.path.join(projects_dir(), name or project_name())
 
 
-def state_path():
-    """Return the file that records this project's Global Controller container and
-    port."""
-    return os.path.join(state_dir(), "state.json")
+def state_path(name=None):
+    """Return the file that records the Global Controller container and port of
+    project `name`, by default this folder's."""
+    return os.path.join(state_dir(name), "state.json")
 
 
 def sync_manifest_path():
@@ -177,9 +180,10 @@ def sync_manifest_path():
 
 
 def other_global_controllers_running(own_container_id, env=None):
-    """Return True when a Global Controller other than `own_container_id` is running
-    on this Docker engine, from any project. Also True when Docker can't answer,
-    so the shared dashboard is never taken down from under another project."""
+    """Return True when a Global Controller other than `own_container_id` (any, when
+    None) is running on this Docker engine, from any project. Also True when Docker
+    can't answer, so the shared dashboard is never taken down from under another
+    project."""
     try:
         result = run_docker(
             [

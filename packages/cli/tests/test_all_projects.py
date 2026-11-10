@@ -100,7 +100,8 @@ def test_every_projects_resources_are_removed_by_label(docker):
     assert docker.removals() == [
         ["docker", "rm", "-f", "-v", "a1", "b2"],
         ["docker", "volume", "rm", "canyonos-portfolio-workspace"],
-        ["docker", "network", "rm", "canyonos-portfolio", "canyonos-local"],
+        ["docker", "network", "rm", "canyonos-portfolio"],
+        ["docker", "network", "rm", "canyonos-local"],
     ]
 
 
@@ -198,7 +199,7 @@ def test_stop_all_reaches_run_stop(monkeypatch):
     with pytest.raises(SystemExit):
         cli._run_command(None)
 
-    assert seen == {"all_projects": True}
+    assert seen == {"all_projects": True, "refs": []}
 
 
 def test_clean_all_and_yes_reach_run_clean(monkeypatch):
@@ -209,7 +210,7 @@ def test_clean_all_and_yes_reach_run_clean(monkeypatch):
     with pytest.raises(SystemExit):
         cli._run_command(None)
 
-    assert seen == {"all_projects": True, "yes": True}
+    assert seen == {"all_projects": True, "yes": True, "refs": []}
 
 
 def test_clean_all_removes_images_by_name_then_the_canyonos_folder(docker):

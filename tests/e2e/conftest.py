@@ -38,6 +38,7 @@ from .harness import (
     result_of,
     sign_in,
     stage,
+    stop_project,
 )
 from .projects import Project, list_projects, load_check, load_project
 
@@ -262,8 +263,8 @@ def _tear_down(recorder, workspace: Path, artifacts_dir: Path, *, raise_on_failu
         collect_container_logs(recorder, artifacts_dir / "containers")
     except Exception:
         (artifacts_dir / "containers_error.txt").write_text(traceback.format_exc())
-    stop = canyonos(recorder, ["stop"], cwd=workspace, check=False)
-    if raise_on_failure and stop.code != 0:
+    stop = stop_project(recorder, workspace)
+    if raise_on_failure and stop is not None and stop.code != 0:
         raise CallFailed(stop)
 
 

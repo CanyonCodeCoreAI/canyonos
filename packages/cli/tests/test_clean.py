@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
+import json
 import os
 import subprocess
 
 import pytest
 
-from canyonos import clean
+from canyonos import clean, docker_cmd, stop as stop_cmd
 
 
 def completed(argv, returncode=0, stdout="", stderr=""):
@@ -45,7 +46,7 @@ def test_docker_unavailable_warns_and_does_not_crash(monkeypatch, tmp_path):
     warnings = []
     in_project(monkeypatch, tmp_path, "portfolio")
     monkeypatch.setattr(
-        clean.subprocess,
+        docker_cmd.subprocess,
         "run",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("docker")),
     )
@@ -62,7 +63,7 @@ def test_canyon_directory_is_removed(monkeypatch, tmp_path):
     (canyon_dir / "artifact").write_text("built")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        clean.subprocess,
+        docker_cmd.subprocess,
         "run",
         lambda argv, **_: completed(argv),
     )
@@ -74,7 +75,7 @@ def test_canyon_directory_is_removed(monkeypatch, tmp_path):
 
 def test_project_skills_are_removed_and_global_skills_kept(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
+    monkeypatch.setattr(docker_cmd.subprocess, "run", lambda argv, **_: completed(argv))
     skill_dirs = {
         scope: [
             tmp_path / spec["skill_dirs"][scope]
@@ -94,7 +95,7 @@ def test_project_skills_are_removed_and_global_skills_kept(monkeypatch, tmp_path
 
 def test_emptied_skill_folders_are_removed_and_user_skills_kept(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
+    monkeypatch.setattr(docker_cmd.subprocess, "run", lambda argv, **_: completed(argv))
     claude_skill, codex_skill = (
         tmp_path / clean.convert.AGENTS[agent]["skill_dirs"]["local"]
         for agent in ("claude", "codex")
@@ -119,7 +120,7 @@ def test_symlinked_skill_is_unlinked_and_its_target_kept(monkeypatch, tmp_path):
     skill_link.parent.mkdir(parents=True)
     skill_link.symlink_to(target, target_is_directory=True)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
+    monkeypatch.setattr(docker_cmd.subprocess, "run", lambda argv, **_: completed(argv))
 
     clean.run_clean()
 
@@ -134,18 +135,18 @@ def test_image_removal_failure_warns_without_forcing(monkeypatch, tmp_path):
     def fake_run(argv, **_):
         calls.append(argv)
         if argv[:2] == ["docker", "images"]:
-            return completed(argv, stdout="image-in-use\n")
+            return completed(argv, stdout="image-in-use:latest\n")
         return completed(
             argv, returncode=1, stderr="image is being used by running container"
         )
 
     in_project(monkeypatch, tmp_path, "portfolio")
-    monkeypatch.setattr(clean.subprocess, "run", fake_run)
+    monkeypatch.setattr(docker_cmd.subprocess, "run", fake_run)
     monkeypatch.setattr(clean.ui, "warn", warnings.append)
 
     clean.run_clean()
 
-    assert calls[1] == ["docker", "image", "rm", "image-in-use"]
+    assert calls[1] == ["docker", "image", "rm", "image-in-use:latest"]
     assert "-f" not in calls[1]
     assert "image is being used by running container" in warnings[-1]
 
@@ -153,13 +154,18 @@ def test_image_removal_failure_warns_without_forcing(monkeypatch, tmp_path):
 def _deployed(monkeypatch, tmp_path, stopped):
     root = in_project(monkeypatch, tmp_path, "portfolio")
     (root / ".canyon").mkdir()
-    state_path = clean.project.state_path()
+    state_path = stop_cmd.project.state_path()
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
     with open(state_path, "w", encoding="utf-8") as f:
-        f.write("{}")
+        json.dump({"container_id": "abc", "port": 8000, "project_dir": str(root)}, f)
     calls = []
-    monkeypatch.setattr(clean, "run_stop", lambda: calls.append(True) or stopped)
-    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
+    monkeypatch.setattr(
+        stop_cmd,
+        "stop_if_safe",
+        lambda _state, _name: calls.append(True) or ([] if stopped else ["left"]),
+    )
+    monkeypatch.setattr(clean, "stop_unused_dashboard", lambda _projects: True)
+    monkeypatch.setattr(docker_cmd.subprocess, "run", lambda argv, **_: completed(argv))
     return root, calls
 
 
@@ -183,8 +189,8 @@ def test_a_project_that_wont_stop_is_not_cleaned(monkeypatch, tmp_path):
 def test_a_project_never_deployed_is_cleaned_without_stopping(monkeypatch, tmp_path):
     in_project(monkeypatch, tmp_path, "never-deployed")
     monkeypatch.setattr(
-        clean, "run_stop", lambda: pytest.fail("nothing is deployed to stop")
+        stop_cmd, "stop_if_safe", lambda *_: pytest.fail("nothing is deployed to stop")
     )
-    monkeypatch.setattr(clean.subprocess, "run", lambda argv, **_: completed(argv))
+    monkeypatch.setattr(docker_cmd.subprocess, "run", lambda argv, **_: completed(argv))
 
     assert clean.run_clean() is True

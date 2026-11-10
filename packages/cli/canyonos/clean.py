@@ -1,150 +1,122 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Logic for canyonos clean: stop the project if it is deployed, then remove its
-generated artifacts, skill and agent images; with --all, everything CanyonOS put on
-this machine."""
+"""Logic for canyonos clean: stop each project it is given or picks (see
+selection.py) if it is deployed, then remove its `.canyon`, CanyonOS skills and agent
+images; with --all, everything CanyonOS put on this machine."""
 
 import os
 import shutil
-import subprocess
 
-import yaml
-
-from canyonos import convert, project, ui
+from canyonos import convert, selection, ui
 from canyonos.constants import CANYON_DIR, default_config_path
-from canyonos.stop import confirm_clean_all, run_stop, stop_all
+from canyonos.stop import (
+    agent_images,
+    confirm_clean_all,
+    remove_images,
+    stop_all,
+    stop_unused_dashboard,
+    stopper,
+)
+
+# What `canyonos clean` removes from a project's folder: its port and the skill
+# `canyonos convert` installs there for each coding agent, leaving global installs.
+_LOCAL_FILES = (
+    CANYON_DIR,
+    *(spec["skill_dirs"]["local"] for spec in convert.AGENTS.values()),
+)
 
 
-def _project_images():
-    """Return the image name of every agent in the project's `global_controller.yaml`,
-    or None when the file is missing or can't be read."""
-    try:
-        with open(default_config_path(), encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
-    except (OSError, yaml.YAMLError):
-        return None
-    agent_specs = config.get("agents") if isinstance(config, dict) else None
-    return [
-        project.image_name(agent_spec["name"])
-        for agent_spec in agent_specs or []
-        if isinstance(agent_spec, dict) and isinstance(agent_spec.get("name"), str)
-    ]
+def _local_files(folder):
+    """The paths under `folder` that `canyonos clean` removes and that exist."""
+    paths = (os.path.join(os.path.abspath(folder), path) for path in _LOCAL_FILES)
+    return [path for path in paths if os.path.lexists(path)]
 
 
-def _remove_canyon_images(images):
-    """Remove the images CanyonOS built for this project's agents, leaving other
-    projects' images and the CanyonOS images themselves in place. Returns False when
-    Docker refused."""
-    if images is None:
-        ui.hint(
-            f"No readable {default_config_path()} here, so no Docker images were "
-            "removed."
-        )
-        return True
-    if not images:
-        return True
-
-    filters = [arg for image in images for arg in ("--filter", f"reference={image}")]
-    try:
-        result = subprocess.run(
-            ["docker", "images", *filters, "-q"],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-    except OSError as error:
-        ui.warn(f"Could not clean Docker images: {error}")
-        return False
-
-    if result.returncode != 0:
-        detail = result.stderr.strip() or "docker images failed"
-        ui.warn(f"Could not list Canyon Docker images: {detail}")
-        return False
-
-    image_ids = list(dict.fromkeys(result.stdout.split()))
-    if not image_ids:
-        return True
-
-    try:
-        with ui.status("Removing Canyon Docker images..."):
-            result = subprocess.run(
-                ["docker", "image", "rm", *image_ids],
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-    except OSError as error:
-        ui.warn(f"Could not clean Docker images: {error}")
-        return False
-
-    if result.returncode != 0:
-        detail = result.stderr.strip() or "docker image rm failed"
-        ui.warn(f"Could not remove Canyon Docker images: {detail}")
-        return False
-
-    ui.ok(f"Removed {len(image_ids)} Canyon Docker image(s).")
-    return True
-
-
-def _remove_emptied_parents(path):
+def _remove_emptied_parents(path, root):
+    """Remove the folders between `path` and `root` that its removal left empty."""
+    root = os.path.abspath(root)
     parent = os.path.dirname(path)
-    while parent and not os.listdir(parent):
+    while parent != root and not os.listdir(parent):
         os.rmdir(parent)
         parent = os.path.dirname(parent)
 
 
-def _remove_canyon_skills():
-    """Removes the skill `canyonos convert` installs into this project, leaving global
-    installs. Returns False when one could not be removed."""
+def _remove_local_files(folder):
+    """Remove the local files of the project in `folder`; False when one stayed."""
     removed_all = True
-    for spec in convert.AGENTS.values():
-        skill_dir = spec["skill_dirs"]["local"]
+    for path in _local_files(folder):
         try:
-            if os.path.islink(skill_dir):
-                os.unlink(skill_dir)
-            elif os.path.isdir(skill_dir):
-                shutil.rmtree(skill_dir)
+            if os.path.islink(path):
+                os.unlink(path)
             else:
-                continue
-            _remove_emptied_parents(skill_dir)
+                shutil.rmtree(path)
+            _remove_emptied_parents(path, folder)
         except OSError as error:
-            ui.warn(f"Could not remove {skill_dir}: {error}")
+            ui.warn(f"Could not remove {path}: {error}")
             removed_all = False
             continue
-        ui.ok(f"Removed {skill_dir}.")
+        ui.ok(f"Removed {path}.")
     return removed_all
 
 
-def run_clean(all_projects=False, yes=False):
-    """Stop the current project if it is deployed, then remove its `.canyon` folder (and
-    the project id, when `global_controller.yaml` lives there), CanyonOS skill and its
-    agents' Docker images; with `all_projects`, `stop_all(remove_everything=True)`,
-    asked first unless `yes`. Returns False if any could not be removed."""
+def _clean_project(target, stop):
+    """Stop `target` with `stop` if it is deployed, then remove its local files and its
+    agents' images; False when any of it stayed."""
+    # Docker won't remove the image of a container that still runs.
+    if target.state is not None and stop(target.state, target.name):
+        ui.fail(f"{target.name} could not be stopped, so nothing of it was cleaned.")
+        return False
+    removed = True
+    if target.folder is not None and os.path.isdir(target.folder):
+        removed = _remove_local_files(target.folder)
+    else:
+        ui.hint(
+            f"{target.name}'s folder is not on this machine any more, so only its "
+            "deploy and images were removed."
+        )
+    failures = remove_images([agent_images(target.name)])
+    for failure in failures:
+        ui.warn(failure)
+    return removed and not failures
+
+
+def _candidates():
+    """Every deployed project, and the current folder's when it holds something to
+    clean and isn't deployed."""
+    deployed = selection.deployed_projects()
+    here = selection.current_project()
+    holds_files = _local_files(here.folder) or os.path.isfile(default_config_path())
+    if holds_files and here.name not in {p.name for p in deployed}:
+        return [*deployed, here]
+    return deployed
+
+
+def run_clean(all_projects=False, yes=False, refs=()):
+    """Run `canyonos clean` on the projects `refs` name or `selection.choose` picks:
+    stop each that is deployed, then remove its `.canyon`, CanyonOS skills and
+    agents' images. With `all_projects`, `stop_all(remove_everything=True)`, asked
+    first unless `yes`. Returns False if a project wasn't found or any could not be
+    removed."""
     if all_projects:
         if not yes and not confirm_clean_all():
             return False
         return stop_all(remove_everything=True)
-    # Docker won't remove the image of a container that still runs.
-    if os.path.isfile(project.state_path()) and not run_stop():
-        ui.fail("The project could not be stopped, so nothing was cleaned.")
-        return False
-    # A built project keeps its agent list inside .canyon, which goes first.
-    images = _project_images()
-    canyon_dir = os.path.join(os.getcwd(), CANYON_DIR)
-
-    if os.path.isdir(canyon_dir):
-        with ui.status(f"Cleaning {canyon_dir}..."):
-            shutil.rmtree(canyon_dir)
-        ui.ok(f"Removed {CANYON_DIR}.")
-    else:
-        ui.say(f"No {CANYON_DIR} folder to remove.")
-
-    removed = [_remove_canyon_skills(), _remove_canyon_images(images)]
-    if not all(removed):
+    choice = selection.choose("clean", refs, _candidates())
+    if not choice.projects:
+        if choice.ok:
+            ui.say(
+                "Nothing to clean: no project is deployed, and this folder holds no "
+                "CanyonOS project."
+            )
+        return choice.ok
+    stop = stopper(choice)
+    cleaned = [_clean_project(target, stop) for target in choice.projects]
+    deployed = [target for target in choice.projects if target.state is not None]
+    if deployed and not stop_unused_dashboard(deployed):
+        cleaned.append(False)
+    if not all(cleaned):
         ui.fail("Clean incomplete; see the warnings above.")
         return False
     ui.ok("Clean complete.")
-    return True
+    return choice.ok

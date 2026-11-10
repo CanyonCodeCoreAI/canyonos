@@ -8,12 +8,17 @@ in and what came out without the case doing anything extra."""
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json as _json
 import os
+import pty
 import re
+import select
 import shutil
 import signal
+import struct
 import subprocess
+import termios
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -25,6 +30,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 API_URL = "http://127.0.0.1:3000"
 OUTPUT_LIMIT = 20_000
 KILL_GRACE = 10
+TERMINAL_SIZE = (40, 120)
+ESCAPE_SEQUENCE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 AUTH_MODES = ("none", "password")
 SIGN_IN_EMAIL = "e2e@canyonos.test"
 SIGN_IN_PASSWORD = "e2e-password-1"
@@ -198,6 +205,76 @@ def run(
     return call
 
 
+def run_in_terminal(
+    recorder: Recorder,
+    argv: list[str],
+    *,
+    cwd,
+    answers: list[tuple[str, str]],
+    env: dict[str, str] | None = None,
+    timeout: int = 600,
+    check: bool = True,
+) -> Call:
+    """Run a command to completion in a terminal, as someone at the keyboard would:
+    `answers` are (prompt, keys) pairs, and each time the command's output shows the
+    next prompt, its keys are typed. The output is recorded without its escape
+    sequences. A timeout stops the command's process group, as in `run`."""
+    controller, terminal = pty.openpty()
+    fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", *TERMINAL_SIZE, 0, 0))
+    started = time.monotonic()
+    process = subprocess.Popen(
+        argv,
+        cwd=str(cwd),
+        env=env,
+        stdin=terminal,
+        stdout=terminal,
+        stderr=terminal,
+        start_new_session=True,
+    )
+    os.close(terminal)
+    pending, written, unread = list(answers), [], 0
+    output, code = "", None
+    while code is None:
+        if time.monotonic() - started > timeout:
+            _stop_group(process)
+            output += f"\n[timed out after {timeout}s]"
+            code = -1
+            break
+        if not select.select([controller], [], [], 1)[0]:
+            code = process.poll()
+            continue
+        try:
+            chunk = os.read(controller, 4096).decode(errors="replace")
+        except OSError:
+            chunk = ""
+        if not chunk:
+            code = process.wait()
+            break
+        output += chunk
+        shown = ESCAPE_SEQUENCE.sub("", output)
+        while pending and pending[0][0] in shown[unread:]:
+            prompt, keys = pending.pop(0)
+            unread = shown.index(prompt, unread) + len(prompt)
+            os.write(controller, keys.encode())
+            written.append(keys)
+    os.close(controller)
+    unanswered = [prompt for prompt, _ in pending]
+    call = recorder.record(
+        Call(
+            kind="cli",
+            label=" ".join(argv),
+            input=repr(written),
+            output=ESCAPE_SEQUENCE.sub("", output)
+            + (f"\n[never prompted: {unanswered}]" if unanswered else ""),
+            code=code,
+            seconds=round(time.monotonic() - started, 2),
+        )
+    )
+    if check and (code != 0 or unanswered):
+        raise CallFailed(call)
+    return call
+
+
 def _signal_group(process: subprocess.Popen, sig: signal.Signals) -> None:
     with contextlib.suppress(PermissionError, ProcessLookupError):
         os.killpg(process.pid, sig)
@@ -227,6 +304,29 @@ def canyonos(
     """Run the checkout's `canyonos` command in the project directory `cwd`."""
     argv = ["uv", "run", "--project", str(REPO_ROOT), "--frozen", "canyonos", *args]
     return run(recorder, argv, cwd=cwd, env=cli_env(), timeout=timeout, check=check)
+
+
+def canyonos_in_terminal(
+    recorder: Recorder,
+    args: list[str],
+    *,
+    cwd,
+    answers: list[tuple[str, str]],
+    timeout: int = 600,
+    check: bool = True,
+) -> Call:
+    """Run the checkout's `canyonos` command in a terminal from `cwd`, typing each of
+    `answers` when its prompt shows (see `run_in_terminal`)."""
+    argv = ["uv", "run", "--project", str(REPO_ROOT), "--frozen", "canyonos", *args]
+    return run_in_terminal(
+        recorder,
+        argv,
+        cwd=cwd,
+        answers=answers,
+        env=cli_env(),
+        timeout=timeout,
+        check=check,
+    )
 
 
 def docker(
@@ -495,6 +595,25 @@ def project_group(recorder: Recorder, workspace: Path) -> str:
         workspace,
         "project_group()",
         "from canyonos.project import project_group",
+    )
+
+
+def stop_project(
+    recorder: Recorder, workspace: Path, *, timeout: int = 600
+) -> Call | None:
+    """`canyonos stop <name>` for the project deployed from `workspace`, named so the
+    stop never has to ask which project when others are deployed too. None when the
+    folder has no deploy record, so there is nothing to stop."""
+    name = cli_value(
+        recorder,
+        workspace,
+        "project_name() if os.path.isfile(state_path()) else None",
+        "import os; from canyonos.project import project_name, state_path",
+    )
+    if name is None:
+        return None
+    return canyonos(
+        recorder, ["stop", name], cwd=workspace, timeout=timeout, check=False
     )
 
 

@@ -34,8 +34,7 @@ You author `config/` and the code. The build generates the other three
 inside the Global Controller container's copy of the root, not in your folder.
 These four names are reserved at the top of the root, so `canyonos convert`
 refuses a source folder that has any of them. `canyonos clean` deletes `.canyon`
-if there is one, and removes the local Docker image of each agent listed in
-`config/global_controller.yaml`.
+if there is one, and removes the project's agent images.
 
 Every path in the manifest (`entrypoint`) is relative to the root. It has to be
 a `.py` file, it cannot be absolute, and it cannot use `..` to climb out. A

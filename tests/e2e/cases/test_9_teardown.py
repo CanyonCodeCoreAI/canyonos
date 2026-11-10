@@ -20,6 +20,7 @@ from ..harness import (
     docker,
     manifest,
     project_containers,
+    stop_project,
 )
 
 
@@ -39,7 +40,8 @@ def test_stop_removes_the_project_and_its_records(recorder, deployed, artifacts_
     assert all(path.is_file() for path in records), records
     assert _volume_exists(recorder, volume), f"no workspace volume {volume}"
 
-    canyonos(recorder, ["stop"], cwd=deployed.dir, timeout=600)
+    stop = stop_project(recorder, deployed.dir)
+    assert stop is not None and stop.code == 0, stop and stop.output
 
     leftovers = project_containers(recorder, deployed.group, every=True)
     assert not leftovers, leftovers

@@ -53,7 +53,7 @@ Three things worth internalizing about this diagram:
 2. **The dashboard is separate.** It's its own compose stack that just *renders* the OTLP traces your workflow emits — it isn't in the deploy critical path. A failure for this command doesn't stop the deployment nor the traces, just prevents automatic trace collection and visualization.
 
 State connecting the CLI to its container is a single file per project:
-`~/.canyonos/projects/<project>/state.json` (container id + port), where
+`~/.canyonos/projects/<project>/state.json` (container id, port, project id and folder), where
 `<project>` is the normalised name of the folder `canyonos` runs from plus the
 first 8 characters of its `project_id`. Every command that needs the container
 reads it. Next to it, `deployed.json` holds fingerprints of the files the running
@@ -169,14 +169,17 @@ explicit, at two depths:
 
 - **`stop`** — full teardown of the running deploy. Removes its containers, its
   Docker network *and* the `/workspace` volume (your copied files), keeping
-  images for a quick redeploy. It refuses when the project's Global Controller
-  is not running, since only the controller can tear down its replicas and
-  Redis. Every `deploy` quietly does this to the project's previous controller,
-  so each deploy starts clean.
+  images for a quick redeploy. When the project's Global Controller is not
+  running, why it went down is unknown, so `stop` refuses unless the project was
+  named or ticked in the menu; then it removes everything labelled with the
+  project. Every `deploy` quietly does this to the project's previous controller,
+  refusing the same way, so each deploy starts clean.
 - **`clean`** — `stop`, then the project's build output: `.canyon`, the skill
   `convert` installed, and the agent images.
 
-Both act only on the current project. The dashboard is shared by every project on
+Both act on the projects named by name, folder name or ID, from any folder.
+Without names they act on the only deployed project, or ask which in a menu, and
+`clean` also offers the current folder's project. The dashboard is shared by every project on
 the machine, so it keeps running while another project's Global Controller is still
 up. With `--all`, `stop` tears down every project on the machine, and `clean`
 removes everything CanyonOS put there, the dashboard's data and `~/.canyonos` included.

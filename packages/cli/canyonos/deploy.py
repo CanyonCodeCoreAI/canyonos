@@ -71,7 +71,7 @@ from canyonos.serve import (
     _warn_if_dashboard_port_ignored,
     serve_dashboard,
 )
-from canyonos.stop import stop_project
+from canyonos.stop import stop_if_safe
 from canyonos.sync import project_fingerprints, run_sync, save_deployed_fingerprints
 from canyonos.validate import _print_findings, collect_findings
 
@@ -450,7 +450,7 @@ def run_deploy(
         # Torn down only if it never came up; a failure after that is just a reporting problem.
         if not ready:
             try:
-                stop_project(load_state())
+                stop_if_safe(load_state())
             except Exception as teardown_error:
                 # Otherwise an unexpected teardown failure would replace the
                 # real deploy error below instead of just supplementing it.

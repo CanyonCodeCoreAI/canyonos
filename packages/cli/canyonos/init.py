@@ -34,6 +34,7 @@ from canyonos.constants import (
     port_in_use,
     private_ip,
     public_ip,
+    read_config,
 )
 from canyonos.dashboard_stack import _existing_dashboard_port
 from canyonos.docker_cmd import (
@@ -482,6 +483,8 @@ def _save_state(container_id, port, docker_socket=None, redis_port=None, api_por
                     "docker_socket": docker_socket,
                     "redis_port": redis_port,
                     "api_port": api_port,
+                    "project_id": read_config(default_config_path()).get("project_id"),
+                    "project_dir": os.getcwd(),
                 },
                 f,
             )
@@ -533,9 +536,9 @@ def stop_existing():
     orphans the last one, which then can't be reached through state.json.
     """
     # Deferred: stop.py imports from this module, so a top-level import cycles.
-    from canyonos.stop import stop_project
+    from canyonos.stop import stop_if_safe
 
-    if os.path.isfile(project.state_path()) and stop_project(load_state()):
+    if os.path.isfile(project.state_path()) and stop_if_safe(load_state()):
         ui.warn(
             "Starting a new Global Controller anyway; the leftovers above need cleaning up by hand."
         )

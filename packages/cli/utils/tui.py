@@ -15,6 +15,8 @@ from canyonos.theme import GREEN
 UP_KEYS = ("\x1b[A", "\x1bOA", "k")
 DOWN_KEYS = ("\x1b[B", "\x1bOB", "j")
 CANCEL_KEYS = ("\x03", "\x1b")
+ENTER_KEYS = ("\r", "\n")
+TOGGLE_KEY = " "
 DELETE_KEYS = ("d", "D")
 QUIT_KEYS = ("q", "Q")
 
@@ -28,6 +30,9 @@ DELETE_ACTION = object()
 # from None (which callers use for a single-level cancel/back) so a caller can
 # unwind an entire nested session. Callers check `result is QUIT_ACTION`.
 QUIT_ACTION = object()
+
+# What a menu's key handler returns to keep the menu open.
+MENU_CONTINUE = object()
 
 
 def select_menu(
@@ -52,7 +57,62 @@ def select_menu(
     """
     if not options or not is_terminal(sys.stdin):
         return None
+    n = len(options)
+    # Shown only when single digits can reach every option.
+    hints = [f"1-{n} jump", "enter select"] if 1 < n <= 9 else ["enter select"]
+    if deletable:
+        hints.append("d delete")
+    if quittable:
+        hints.append("q quit")
 
+    def on_key(key, idx):
+        if key in ENTER_KEYS:
+            return options[idx][0]
+        if deletable and key in DELETE_KEYS:
+            return (DELETE_ACTION, options[idx][0])
+        if quittable and key in QUIT_KEYS:
+            return QUIT_ACTION
+        if key.isdigit() and key != "0" and int(key) <= n:
+            return options[int(key) - 1][0]
+        return MENU_CONTINUE
+
+    return _run_menu(options, title, hints, on_key, header=header, footer=footer)
+
+
+def multi_select_menu(options, title, selected=()):
+    """Arrow-key multi-select over `options` (a list of (value, label) pairs): space
+    ticks or unticks the hovered option, enter confirms. The values in `selected`
+    start ticked.
+
+    Returns the ticked values in option order, possibly none, or None if there's
+    nothing to choose from or the user cancelled (Esc/Ctrl-C).
+    """
+    if not options or not is_terminal(sys.stdin):
+        return None
+    ticked = {i for i, (value, _) in enumerate(options) if value in selected}
+
+    def on_key(key, idx):
+        if key in ENTER_KEYS:
+            return [value for i, (value, _) in enumerate(options) if i in ticked]
+        if key == TOGGLE_KEY:
+            ticked.symmetric_difference_update({idx})
+        return MENU_CONTINUE
+
+    return _run_menu(
+        options,
+        title,
+        ["space select", "enter confirm"],
+        on_key,
+        mark=lambda i: "◉" if i in ticked else "○",
+    )
+
+
+def _run_menu(options, title, hints, on_key, mark=None, header=None, footer=None):
+    """Draw `options` (a list of (value, label) pairs) under `title` and move the
+    cursor with the arrow keys until `on_key(key, idx)` returns a result, which is
+    returned. `on_key` returns MENU_CONTINUE to keep the menu open, and None on
+    Esc/Ctrl-C ends it. `mark(i)` prefixes each option's first line; `hints` go in
+    the help line between moving and cancelling."""
     out = sys.stderr
     idx = 0
     n = len(options)
@@ -63,20 +123,14 @@ def select_menu(
         for i, (_, label) in enumerate(options):
             label_lines = str(label).splitlines() or [""]
             for j, line in enumerate(label_lines):
+                if j == 0 and mark is not None:
+                    line = f"{mark(i)} {line}"
                 if i == idx and j == 0:
                     lines.append(f"{_GREEN}❯ {line}\x1b[0m")
                 else:
                     lines.append(f"  {line}")
         lines.extend(f"  {line}" for line in footer or ())
-        # Shown only when single digits can reach every option.
-        jump = f" · 1-{n} jump" if 1 < n <= 9 else ""
-        hint = f"↑/↓ move{jump} · enter select"
-        if deletable:
-            hint += " · d delete"
-        if quittable:
-            hint += " · q quit"
-        hint += " · esc cancel"
-        lines += ["", hint]
+        lines += ["", " · ".join(["↑/↓ move", *hints, "esc cancel"])]
         # Each line clears only its own leftover tail, so redraws overwrite in place.
         return "\x1b[K\r\n".join(lines) + "\x1b[K"
 
@@ -98,20 +152,16 @@ def select_menu(
                 prev_frame = text
 
                 key = read_key()
-                if key in ("\r", "\n"):
-                    return options[idx][0]
                 if key in CANCEL_KEYS:
                     return None
                 if key in UP_KEYS:
                     idx = (idx - 1) % n
                 elif key in DOWN_KEYS:
                     idx = (idx + 1) % n
-                elif deletable and key in DELETE_KEYS:
-                    return (DELETE_ACTION, options[idx][0])
-                elif quittable and key in QUIT_KEYS:
-                    return QUIT_ACTION
-                elif key.isdigit() and key != "0" and int(key) <= n:
-                    return options[int(key) - 1][0]
+                else:
+                    result = on_key(key, idx)
+                    if result is not MENU_CONTINUE:
+                        return result
         finally:
             out.write("\x1b[?25h\r\n")
             out.flush()
@@ -132,7 +182,7 @@ def input_line(prompt, hint="enter save · esc back", error=None):
                 out.write(f"\r\x1b[K{prompt}{buffer}")
                 out.flush()
                 key = read_key()
-                if key in ("\r", "\n"):
+                if key in ENTER_KEYS:
                     return buffer.strip()
                 if key in CANCEL_KEYS:
                     return None

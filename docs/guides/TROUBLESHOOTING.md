@@ -84,9 +84,9 @@ lists the project's containers. Run `canyonos stop` to remove them.
 | Symptom | Likely cause |
 |---|---|
 | Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
-| `canyonos clean` deleted `.canyon` | That is what it does: it stops the project, then removes the whole `.canyon` and the images of the agents in `global_controller.yaml` |
+| `canyonos clean` deleted `.canyon` | That is what it does: it stops the project, then removes the whole `.canyon` and its agents' images |
 | EC2 machines remain after `canyonos stop` | The stop waited 4 minutes and moved on. See [EC2 deployment](EC2.md) |
-| Images remain after `canyonos clean` | Docker was unreachable, the images live on a different Docker context than the one the deploy used, or the agent was removed from `global_controller.yaml` before `clean` ran |
+| Images remain after `canyonos clean` | Docker was unreachable, or the images live on a different Docker context than the one the deploy used |
 | Containers, volumes or images remain after uninstalling the CLI | `canyonos clean --all` was not run first. See below |
 
 ### Cleaning up after the CLI is already uninstalled

@@ -47,6 +47,7 @@ from ..harness import (
     result_of,
     sign_in,
     stage,
+    stop_project,
 )
 from ..projects import load_project
 
@@ -89,7 +90,8 @@ def _deploy(recorder, directory: Path, name: str) -> None:
 
 
 def _stop(recorder, directory: Path) -> None:
-    call = canyonos(recorder, ["stop"], cwd=directory, timeout=600, check=False)
+    call = stop_project(recorder, directory)
+    assert call is not None, f"nothing is deployed from {directory}"
     assert call.code == 0, call.output
 
 
@@ -211,8 +213,8 @@ def _tear_down(recorder, dirs: dict[str, Path], groups: dict[str, str]) -> None:
     fail naming each stop that failed and each group left with containers."""
     problems = []
     for directory in dirs.values():
-        call = canyonos(recorder, ["stop"], cwd=directory, timeout=600, check=False)
-        if call.code != 0:
+        call = stop_project(recorder, directory)
+        if call is not None and call.code != 0:
             problems.append(f"canyonos stop in {directory}: {call.output[-2000:]}")
     for group in groups.values():
         left = project_containers(recorder, group, every=True)
@@ -432,8 +434,8 @@ def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fle
             what=f"machine metrics in {container}",
         )
     finally:
-        stop = canyonos(recorder, ["stop"], cwd=directory, timeout=600, check=False)
-    assert stop.code == 0, stop.output
+        stop = stop_project(recorder, directory)
+    assert stop is None or stop.code == 0, stop.output
 
 
 def test_serve_registers_again_without_recreating_the_api(recorder, fleet):
@@ -519,5 +521,5 @@ def test_endpoint_and_a_starting_dashboard_get_their_own_ports(recorder, fleet):
         assert dashboard_containers(recorder) == DASHBOARD_CONTAINERS
         _greets(recorder, directory, "own-port")
     finally:
-        stop = canyonos(recorder, ["stop"], cwd=directory, timeout=600, check=False)
-    assert stop.code == 0, stop.output
+        stop = stop_project(recorder, directory)
+    assert stop is None or stop.code == 0, stop.output

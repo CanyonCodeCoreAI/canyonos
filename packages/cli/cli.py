@@ -185,15 +185,19 @@ def _run_command(settings_at_start):
 
     def this_machine_or_cluster(local, cluster):
         """Run `local(args)`, or `cluster()` on Kubernetes: the project in this folder
-        only. --all means every project on this machine, so it always runs `local`,
-        whatever this folder's target, and is refused with --target kubernetes."""
+        only. --all and project names mean projects on this machine, so they always
+        run `local`, whatever this folder's target, and are refused with --target
+        kubernetes."""
 
         def run(args):
-            if args.all:
+            if args.all and args.projects:
+                ui.fail("Name projects or pass --all, not both")
+                return False
+            if args.all or args.projects:
                 if args.target == "kubernetes":
                     ui.fail(
-                        "--all covers the projects on this machine, not a cluster's; "
-                        "run the command from each project's folder"
+                        "--all and project names cover the projects on this machine, "
+                        "not a cluster's; run the command from each project's folder"
                     )
                     return False
                 return local(args)
@@ -205,10 +209,20 @@ def _run_command(settings_at_start):
         add(
             "clean",
             this_machine_or_cluster(
-                lambda args: run_clean(all_projects=args.all, yes=args.yes),
+                lambda args: run_clean(
+                    all_projects=args.all, yes=args.yes, refs=args.projects
+                ),
                 kubernetes_target.run_kubernetes_clean,
             ),
         )
+    )
+    clean.add_argument(
+        "projects",
+        nargs="*",
+        metavar="PROJECT",
+        help="The name, folder name or ID (or its start) of a project to clean. "
+        "Without one, cleans the only deployed project or this folder's, or asks "
+        "which",
     )
     clean.add_argument(
         "--all",
@@ -224,10 +238,17 @@ def _run_command(settings_at_start):
         add(
             "stop",
             this_machine_or_cluster(
-                lambda args: run_stop(all_projects=args.all),
+                lambda args: run_stop(all_projects=args.all, refs=args.projects),
                 kubernetes_target.run_kubernetes_stop,
             ),
         )
+    )
+    stop.add_argument(
+        "projects",
+        nargs="*",
+        metavar="PROJECT",
+        help="The name, folder name or ID (or its start) of a deployed project to "
+        "stop. Without one, stops the only deployed project, or asks which",
     )
     stop.add_argument(
         "--all",

@@ -11,7 +11,7 @@ not valid YAML, with its line."""
 
 import pytest
 
-from ..harness import canyonos, docker, project_containers, project_group
+from ..harness import canyonos, docker, project_containers, project_group, stop_project
 
 TEST_TIMEOUT = 900
 DASHBOARD_GROUP = "canyonos-dashboard"
@@ -75,7 +75,7 @@ def starter(recorder, images, tmp_path):
     directory.mkdir()
     canyonos(recorder, ["new-app"], cwd=directory)
     yield directory
-    canyonos(recorder, ["stop"], cwd=directory, check=False)
+    stop_project(recorder, directory)
 
 
 def _test(recorder, directory):

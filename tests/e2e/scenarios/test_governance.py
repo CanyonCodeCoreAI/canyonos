@@ -43,6 +43,7 @@ from ..harness import (
     redis_port,
     stage,
     submit,
+    stop_project,
 )
 from ..projects import load_check, load_project
 
@@ -278,8 +279,8 @@ def governed(recorder, images, tmp_path_factory):
             seed=_parse_rules(seed_raw),
         )
     finally:
-        stop = canyonos(recorder, ["stop"], cwd=directory, check=False)
-    assert stop.code == 0, stop.output[-2000:]
+        stop = stop_project(recorder, directory)
+    assert stop is None or stop.code == 0, stop.output[-2000:]
 
 
 def test_the_query_passes_with_every_requirement_up(recorder, governed, check):
