@@ -15,6 +15,8 @@ import os
 import re
 
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# The project root of a converted project, inside the folder `canyonos` runs in.
+CANYON_DIR = ".canyon"
 
 
 def read_dotenv(path):
@@ -64,15 +66,21 @@ def expand_env_value(value, env=os.environ):
 
 def resolve_env_file(config_path):
     """
-    Return the absolute path of the project's `.env`, the one in the folder above
-    `config_path`'s, or None when there is none.
+    Return the absolute path of the project's `.env`, the one deploy ships to the
+    Global Controller as `/workspace/.env`, or None when there is none. That is the
+    `.env` of the folder `canyonos` runs in, beside a `.canyon` root, else the root's
+    own: the root is the folder above `config_path`'s.
 
     Raises:
         ValueError: the file exists but is unreadable. Deploy should fail here
             rather than start a fleet of agents with no API keys.
     """
-    path = os.path.abspath(os.path.join(os.path.dirname(config_path), "..", ".env"))
-    if not os.path.isfile(path):
+    root = os.path.dirname(os.path.dirname(os.path.abspath(config_path)))
+    candidates = [os.path.join(root, ".env")]
+    if os.path.basename(root) == CANYON_DIR:
+        candidates.insert(0, os.path.join(os.path.dirname(root), ".env"))
+    path = next((path for path in candidates if os.path.isfile(path)), None)
+    if path is None:
         return None
     if not os.access(path, os.R_OK):
         raise ValueError(f".env is not readable: {path}")

@@ -235,20 +235,42 @@ def _usd(amount):
     return f"{amount:.2f}".rstrip("0").rstrip(".")
 
 
-def refuse_call(rules, agent, function, context):
-    """Why the call to `agent.function` is refused, or None to let it run."""
+def _down(rules, agent, redis):
+    """The first agent `agent` requires that has no replica up, or None. The snapshot
+    can be a poll behind the reconciler, so a dependency missing from it is looked up
+    again in `routing_table:up` when `redis` is given."""
+    missing = [
+        dependency
+        for dependency in rules.agents.get(agent, {}).get("requires", [])
+        if dependency not in rules.up
+    ]
+    if missing and redis is not None:
+        try:
+            up = {_text(name) for name in redis.smembers(ROUTING_UP_KEY)}
+        except Exception as exc:
+            logger.warning(
+                "Refusing on the last snapshot of %s: %s", ROUTING_UP_KEY, exc
+            )
+        else:
+            missing = [dependency for dependency in missing if dependency not in up]
+    return missing[0] if missing else None
+
+
+def refuse_call(rules, agent, function, context, redis=None):
+    """Why the call to `agent.function` is refused, or None to let it run. `redis` is
+    a redis-py client, read only before refusing for a dependency that is down."""
     if not _policy_allows(rules.policy, agent, context):
         return Refusal(
             "PolicyDenied",
             f"Policy denied the call to {agent}.{function}: no rule in policy.yaml "
             "allows it for this request.",
         )
-    for dependency in rules.agents.get(agent, {}).get("requires", []):
-        if dependency not in rules.up:
-            return Refusal(
-                "DependencyDown",
-                f"{agent} requires {dependency}, which has no healthy replica right now.",
-            )
+    dependency = _down(rules, agent, redis)
+    if dependency is not None:
+        return Refusal(
+            "DependencyDown",
+            f"{agent} requires {dependency}, which has no healthy replica right now.",
+        )
     tripped = _tripped(rules, agent)
     if tripped is not None and tripped["action"]["kind"] == "deny":
         since = rules.agents[agent]["spend"].get("since", "the deploy")

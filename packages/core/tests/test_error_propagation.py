@@ -47,6 +47,8 @@ def _bind_failure_marker(controller):
     controller._unsent = 0
     controller._unsent_lock = threading.Lock()
     controller._forwarded = {}
+    controller._taken = set()
+    controller._gone = set()
     controller._count_unsent = lambda change: LocalController._count_unsent(
         controller, change
     )

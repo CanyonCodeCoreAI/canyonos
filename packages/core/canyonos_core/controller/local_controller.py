@@ -185,6 +185,10 @@ class LocalController(object):
         self.replica_id = None
         # self._forwarded is how a replica remembers which replica is running each call it handed off, so it can fail those calls if that replica disappears.
         self._forwarded = {}
+        # The calls in _forwarded whose replica took them; the rest are still being sent.
+        self._taken = set()
+        # Addresses of forwards whose replica left routing_table:replicas, as of the last tick.
+        self._gone = set()
         # Cache for gRPC stubs to remote controllers
         self._remote_channels = {}  # address -> grpc.Channel
         self._remote_stubs = {}  # address -> LocalControllerStub
@@ -672,7 +676,11 @@ class LocalController(object):
             # Left to _process_request, which reports it as MalformedRequest.
             return None
         refusal = governance.refuse_call(
-            self._rules, agent_name, function, self._request_context(data)
+            self._rules,
+            agent_name,
+            function,
+            self._request_context(data),
+            redis=self.redis.client,
         )
         if refusal is None:
             return None
@@ -1317,6 +1325,7 @@ class LocalController(object):
         # ping-pong between replicas).
         data["route_to"] = address
         self._forwarded[data.get("future_id")] = address
+        self._taken.discard(data.get("future_id"))
         request = local_controller_pb2.JsonResponse(response=json.dumps(data))
         call = self._get_remote_stub(address).Execute.future(
             request, timeout=FORWARD_TIMEOUT_SECONDS
@@ -1344,6 +1353,8 @@ class LocalController(object):
         of retries, fails the request."""
         error = call.exception()
         if error is None:
+            if self._forwarded.get(data.get("future_id")) == address:
+                self._taken.add(data.get("future_id"))
             self._count_unsent(-1)
             return
         retries = data.get("retries", 0) + 1
@@ -1370,9 +1381,9 @@ class LocalController(object):
             self._count_unsent(-1)
             return
         data["retries"] = retries
-        if error.code() == grpc.StatusCode.UNAVAILABLE:
-            # Never reached, so routing picks again; a timed-out one may have queued
-            # it, and its duplicate check drops a resend.
+        if error.code() == grpc.StatusCode.UNAVAILABLE or address in self._gone:
+            # Never reached, or its replica is gone, so routing picks again; a timed-out
+            # one may have queued it, and its duplicate check drops a resend.
             data.pop("route_to")
         logger.warning(
             "Forwarding a request to %s failed (%s); queueing it again.",
@@ -1460,8 +1471,10 @@ class LocalController(object):
                 )
 
     def _fail_calls_to_gone_replicas(self):
-        """Fail every call handed to a replica that is neither routed nor draining, such
-        as one on a machine that died, so its caller gets an error instead of waiting."""
+        """Fail every call a replica took and then left the routing table without
+        draining, such as one on a machine that died, so its caller gets an error
+        instead of waiting. A call that replica never took is left to _on_forwarded,
+        which routes it again."""
         # Not routing_table:addresses, which drops a draining replica whose calls still finish.
         published = self.redis.hgetall("routing_table:replicas")
         if not published:
@@ -1473,8 +1486,10 @@ class LocalController(object):
             for addresses in published.values()
             for address in json.loads(addresses)
         }
-        for future_id, address in list(self._forwarded.items()):
-            if address not in known:
+        forwarded = list(self._forwarded.items())
+        self._gone = {address for _, address in forwarded if address not in known}
+        for future_id, address in forwarded:
+            if address in self._gone and future_id in self._taken:
                 call = self.redis.hgetall(f"future:{future_id}")
                 self._mark_future_failed(
                     future_id,
@@ -1503,6 +1518,7 @@ class LocalController(object):
         # Code in this process waiting on the value (wait_for_result) wakes at once.
         notify_result(future_id)
         self._forwarded.pop(future_id, None)
+        self._taken.discard(future_id)
         for address in self.redis.smembers(f"future:{future_id}:consumers"):
             if address and address != self._my_address:
                 self._send_result_callback(

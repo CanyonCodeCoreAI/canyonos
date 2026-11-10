@@ -77,6 +77,14 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
         except ValueError:
             payload = None
         forwarded = isinstance(payload, dict) and "route_to" in payload
+        # Pinned to another replica whose address now reaches this one, as a removed
+        # container's IP given to its replacement does: never queued, so the sender's
+        # retry routes it again.
+        if forwarded and payload["route_to"] != self.my_address:
+            context.abort(
+                grpc.StatusCode.UNAVAILABLE,
+                f"This is {self.my_address}, not {payload['route_to']}",
+            )
         # Only forwarded work is turned away; this replica's own calls still run.
         if self.refusing and forwarded:
             # Never queued, so the sender's retry picks another replica.

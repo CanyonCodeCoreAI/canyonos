@@ -43,6 +43,7 @@ def _endpoint_controller(redis):
         _resolve_address=lambda agent_name, request_id: "endpoint-0:50051",
         _get_remote_stub=Mock(),
         _forwarded={},
+        _taken=set(),
     )
     for name in (
         "_send_result_callback",

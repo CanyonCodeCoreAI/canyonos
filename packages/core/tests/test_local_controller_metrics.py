@@ -330,6 +330,7 @@ class LocalControllerMetricsTests(unittest.TestCase):
                 hgetall=lambda key: tables.get(key) or calls.get(key) or {}
             ),
             _forwarded={"a": "analyst-0:50051", "b": "writer-1:50051"},
+            _taken={"a", "b"},
             _mark_future_failed=lambda future_id, error, error_name: failed.append(
                 (future_id, error, error_name)
             ),

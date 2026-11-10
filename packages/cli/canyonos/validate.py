@@ -25,7 +25,7 @@ import textwrap
 import uuid
 
 from canyonos import env, ui
-from canyonos.constants import existing_config_path, project_root
+from canyonos.constants import CANYON_DIR, existing_config_path, project_root
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
 from canyonos.init import docker_is_local, docker_running
 
@@ -59,31 +59,55 @@ def _import_validate_root():
 
 
 def _in_process(root):
-    """Findings from the imported validator, or None when it is not there."""
+    """Findings from the imported validator, or None when it is not there. The
+    validator imports the project's `.env`, which is not this CLI's to keep."""
     validate_root = _import_validate_root()
     if validate_root is None:
         return None
-    return [dict(finding._asdict()) for finding in validate_root(root)]
+    environ = dict(os.environ)
+    try:
+        return [dict(finding._asdict()) for finding in validate_root(root)]
+    finally:
+        os.environ.clear()
+        os.environ.update(environ)
+
+
+def _mounts(root):
+    """The `docker run` volumes and working directory that show the validator `root`
+    and the `.env` deploy ships with it: beside a `.canyon` root, the one in the
+    folder holding it, mounted where the Global Controller has it."""
+    root = os.path.abspath(root)
+    env_path = os.path.join(os.path.dirname(root), ".env")
+    if os.path.basename(root) != CANYON_DIR or not os.path.isfile(env_path):
+        return ["-v", f"{root}:{WORKSPACE}:ro"], WORKSPACE
+    workdir = f"{WORKSPACE}/{CANYON_DIR}"
+    return [
+        "-v",
+        f"{root}:{workdir}:ro",
+        "-v",
+        f"{env_path}:{WORKSPACE}/.env:ro",
+    ], workdir
 
 
 def _docker_argv(root, name):
     """The `docker run` that validates `root` inside the core image.
 
-    The root is the mount, so the container sees no more of the host than the
-    artifact being checked, and every path in the findings is already relative
-    to it. The image's own entrypoint starts the server, so it is replaced. The
-    name is what finds the container again if the run has to be abandoned.
+    The root and the project's `.env` are the mounts, so the container sees no
+    more of the host than the artifact being checked, and every path in the
+    findings is already relative to the root. The image's own entrypoint starts
+    the server, so it is replaced. The name is what finds the container again if
+    the run has to be abandoned.
     """
+    mounts, workdir = _mounts(root)
     return [
         "docker",
         "run",
         "--rm",
         "--name",
         name,
-        "-v",
-        f"{os.path.abspath(root)}:{WORKSPACE}:ro",
+        *mounts,
         "-w",
-        WORKSPACE,
+        workdir,
         "--entrypoint",
         "python",
         env.core_image,
