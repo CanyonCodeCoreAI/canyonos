@@ -147,7 +147,8 @@ through a port-forward it opens and closes itself; unlike on Docker it never dep
 the folder's target.
 
 Without `endpoint.host` or `endpoint.url`, `canyonos deploy` keeps the endpoint on
-`http://127.0.0.1:8080`, or the next free port, as on Docker; an `endpoint.api_port`
+`http://127.0.0.1:8080`, or the next free port by the same rule as on Docker (see
+[Ports a deploy opens](GLOBAL_CONTROLLER.md#ports-a-deploy-opens)); an `endpoint.api_port`
 you set is used as is and never moved, so a taken one leaves the endpoint unforwarded
 with a warning. A port-forward a background `canyonos` process holds open does it: it
 starts the forward again when the endpoint's pod is replaced, as on a redeploy, and

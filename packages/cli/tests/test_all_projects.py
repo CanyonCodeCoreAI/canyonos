@@ -156,7 +156,7 @@ def test_the_dashboard_is_stopped_first_and_left_on_no_projects_network(
 
     assert calls_before == [0]
     disconnect = ["docker", "network", "disconnect", "--force", "canyonos-portfolio"]
-    assert [*disconnect, "canyonos-dashboard-api-1"] in docker.calls
+    assert [*disconnect, "canyonos-dashboard-api"] in docker.calls
 
 
 def test_state_files_go_and_other_records_stay(docker):

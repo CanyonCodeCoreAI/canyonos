@@ -109,8 +109,8 @@ To iterate on the API or web code without rebuilding images, run the dashboard
 on the host instead.
 
 The workflow's `otel.destinations` must point at `http://host.docker.internal:3000`
-(see [global_controller.yaml](../guides/GLOBAL_CONTROLLER.md#oteldestinations));
-`examples/portfolio` already does.
+(see [global_controller.yaml](../guides/GLOBAL_CONTROLLER.md#oteldestinations)), as
+the API then runs on the host instead of in its container.
 
 Inside the `bun run canyonos:dev` shell, deploy without the image-based
 dashboard, then start the host dashboard from the checkout:

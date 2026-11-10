@@ -56,10 +56,10 @@ pytestmark = pytest.mark.steps
 PROJECTS = ("helloworld", "portfolio")
 DASHBOARD_GROUP = "canyonos-dashboard"
 DASHBOARD_CONTAINERS = [
-    f"{DASHBOARD_GROUP}-{service}-1" for service in ("api", "db", "web")
+    f"{DASHBOARD_GROUP}-{service}" for service in ("api", "db", "web")
 ]
-DASHBOARD_API = f"{DASHBOARD_GROUP}-api-1"
-DASHBOARD_WEB = f"{DASHBOARD_GROUP}-web-1"
+DASHBOARD_API = f"{DASHBOARD_GROUP}-api"
+DASHBOARD_WEB = f"{DASHBOARD_GROUP}-web"
 DEPLOY_TIMEOUT = 1800
 HELLOWORLD_API_PORT = 8082
 HELLOWORLD_REDIS_PORT = 6380

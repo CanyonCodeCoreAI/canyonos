@@ -16,9 +16,9 @@ from ..harness import (
 )
 
 DASHBOARD = [
-    "canyonos-dashboard-api-1",
-    "canyonos-dashboard-db-1",
-    "canyonos-dashboard-web-1",
+    "canyonos-dashboard-api",
+    "canyonos-dashboard-db",
+    "canyonos-dashboard-web",
 ]
 REPLICA_SUFFIX = "-[0-9a-f]{8}"
 

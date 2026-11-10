@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from canyonos import init as init_cmd, project
+from canyonos import init as init_cmd, ports, project
 
 
 def test_docker_runtime_start_uses_bounded_translated_command(monkeypatch):
@@ -72,6 +72,7 @@ def test_state_save_failure_removes_the_new_container(monkeypatch):
     monkeypatch.setattr(init_cmd, "endpoint_api_port", lambda _path: 8080)
     monkeypatch.setattr(init_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: 6379)
+    monkeypatch.setattr(ports, "claimed", lambda _path: {})
     monkeypatch.setattr(
         init_cmd,
         "_run_container",

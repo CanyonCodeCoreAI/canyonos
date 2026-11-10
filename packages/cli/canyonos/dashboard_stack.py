@@ -21,21 +21,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from canyonos import env, project
-from canyonos.constants import DEFAULT_DASHBOARD_PORT, public_ip
+from canyonos import env, ports, project
+from canyonos.constants import (
+    DEFAULT_DASHBOARD_API_PORT,
+    DEFAULT_DASHBOARD_PORT,
+    public_ip,
+)
 from canyonos.docker_cmd import DOCKER_CLEANUP_TIMEOUT
 from canyonos.os_support import file_lock, make_private_dir, write_private_file
 from canyonos.port_utils import (
     DEFAULT_MAX_PORT_ATTEMPTS,
-    find_free_port,
-    is_port_conflict,
+    clashed_port,
     is_port_free,
+    next_port,
 )
 
 COMPOSE_PROJECT = "canyonos-dashboard"
 API_IMAGE = env.api_image
 WEB_IMAGE = env.web_image
 LOCK_WAIT_MESSAGE = "waiting for another canyonos command to finish with the dashboard"
+# The services the dashboard publishes on the host, each with the port it listens on
+# in its container, the host port it starts from, and its name in a warning: the web
+# app (none, as the CLI prints its address itself) and the API, which the CLI reaches.
+SERVICE_PORTS = {
+    "web": (8080, DEFAULT_DASHBOARD_PORT, None),
+    "api": (3000, DEFAULT_DASHBOARD_API_PORT, "the dashboard's API"),
+}
+# The services a project's containers reach by container name on its network.
+NETWORK_SERVICES = ("api", "db")
 
 
 @dataclass(frozen=True)
@@ -60,10 +73,11 @@ class PhaseFailure(Exception):
 
 @dataclass(frozen=True)
 class DashboardStack:
-    """Where the dashboard's files live on this machine and the port it serves on."""
+    """Where the dashboard's files live on this machine and the host port each of its
+    services (`SERVICE_PORTS`) is published on."""
 
     state_dir: Path
-    web_port: int = DEFAULT_DASHBOARD_PORT
+    host_ports: dict[str, int]
 
     @property
     def env_path(self) -> Path:
@@ -134,42 +148,45 @@ def _compose_argv(stack: DashboardStack, manifest: Path) -> list[str]:
 
 
 def _container_name(service: str) -> str:
-    """Compose's default container name for `service` in this project (single instance only)."""
-    return f"{COMPOSE_PROJECT}-{service}-1"
+    """The container name `dashboard.compose.yml` gives `service`."""
+    return f"{COMPOSE_PROJECT}-{service}"
 
 
 def join_project_network(network: str) -> str | None:
-    """Connect the dashboard api to a project's network, so it reaches that project's
-    Redis by name. Returns why it couldn't, or None once connected, already or now."""
-    container = _container_name("api")
-    result = _run(["docker", "network", "connect", network, container])
-    detail = (result.stderr or result.stdout).strip()
-    if result.returncode == 0 or "already exists in network" in detail:
-        return None
-    return (
-        f"connecting {container} to the network {network} failed: "
-        f"{detail or f'exit code {result.returncode}'}"
-    )
+    """Connect the dashboard's api and database to a project's network: the api reaches
+    that project's Redis by name, and the project's telemetry and endpoint reach them
+    by theirs. Returns why it couldn't, or None once connected, already or now."""
+    for service in NETWORK_SERVICES:
+        container = _container_name(service)
+        result = _run(["docker", "network", "connect", network, container])
+        detail = (result.stderr or result.stdout).strip()
+        if result.returncode != 0 and "already exists in network" not in detail:
+            return (
+                f"connecting {container} to the network {network} failed: "
+                f"{detail or f'exit code {result.returncode}'}"
+            )
+    return None
 
 
 def leave_project_network(network: str) -> None:
-    """Disconnect the dashboard api from a project's network, so the network can go;
-    one not connected, or a Docker that doesn't answer in time, is left to the network
-    removal that follows to report."""
-    try:
-        _run(
-            [
-                "docker",
-                "network",
-                "disconnect",
-                "--force",
-                network,
-                _container_name("api"),
-            ],
-            timeout=DOCKER_CLEANUP_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        pass
+    """Disconnect the dashboard's api and database from a project's network, so the
+    network can go; one not connected, or a Docker that doesn't answer in time, is left
+    to the network removal that follows to report."""
+    for service in NETWORK_SERVICES:
+        try:
+            _run(
+                [
+                    "docker",
+                    "network",
+                    "disconnect",
+                    "--force",
+                    network,
+                    _container_name(service),
+                ],
+                timeout=DOCKER_CLEANUP_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _project_networks() -> list[str]:
@@ -189,7 +206,7 @@ def _project_networks() -> list[str]:
 
 
 def _leave_project_networks() -> None:
-    """Disconnect a stopped dashboard api from every project's network before it starts.
+    """Disconnect a stopped dashboard from every project's network before it starts.
     Docker Desktop publishes the api's port through one of the networks the container
     starts on, and loses it for the host once that network is disconnected, so the api
     must start on its own network only and join the projects' afterwards."""
@@ -198,7 +215,7 @@ def _leave_project_networks() -> None:
 
 
 def _join_project_networks() -> None:
-    """Connect a just-started dashboard api to every project's network, so projects
+    """Connect a just-started dashboard to every project's network, so projects
     already running keep their dashboard when compose recreates it."""
     for network in _project_networks():
         join_project_network(network)
@@ -208,8 +225,14 @@ def _existing_dashboard_port() -> int | None:
     """The host port an already-running dashboard `web` container owns, if any
     -- so re-running `canyonos serve` reconnects to the same stack instead of
     picking a new port out from under it."""
+    return _published_port("web", SERVICE_PORTS["web"][0])
+
+
+def _published_port(service: str, container_port: int) -> int | None:
+    """The host port the running dashboard's `service` publishes `container_port`
+    on, or None when it isn't running."""
     try:
-        result = _run(["docker", "container", "inspect", _container_name("web")])
+        result = _run(["docker", "container", "inspect", _container_name(service)])
     except OSError:
         return None
     if result.returncode != 0:
@@ -217,7 +240,9 @@ def _existing_dashboard_port() -> int | None:
 
     try:
         containers = json.loads(result.stdout)
-        bindings = containers[0]["NetworkSettings"]["Ports"].get("8080/tcp") or []
+        bindings = (
+            containers[0]["NetworkSettings"]["Ports"].get(f"{container_port}/tcp") or []
+        )
     except (IndexError, KeyError, TypeError, json.JSONDecodeError):
         return None
 
@@ -230,10 +255,75 @@ def _existing_dashboard_port() -> int | None:
     return None
 
 
+def _ports_path() -> Path:
+    return _state_dir() / "ports.json"
+
+
+def _saved_service_ports() -> dict[str, int]:
+    """The ports picked last, by service; empty before the first pick."""
+    try:
+        saved = json.loads(_ports_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(saved, dict):
+        return {}
+    return {
+        service: port
+        for service, port in saved.items()
+        if service in SERVICE_PORTS and isinstance(port, int)
+    }
+
+
+def _save_service_ports(picked: dict[str, int]) -> None:
+    _state_dir().mkdir(parents=True, exist_ok=True)
+    _ports_path().write_text(json.dumps(picked) + "\n", encoding="utf-8")
+
+
+def _pinned(dashboard_port: int | None) -> dict[str, int]:
+    """The services whose port the config sets: `web`, by `dashboard_port`."""
+    return {"web": dashboard_port} if dashboard_port else {}
+
+
+def service_ports(dashboard_port: int | None = None) -> dict[str, int]:
+    """The host ports the dashboard's services are on, by service: a running
+    dashboard's, else the ones it starts on next: `dashboard_port` (the config's) for
+    `web`, else the ones picked last, else their defaults."""
+    saved = {**_saved_service_ports(), **_pinned(dashboard_port)}
+    return {
+        service: _published_port(service, container_port) or saved.get(service, default)
+        for service, (container_port, default, _what) in SERVICE_PORTS.items()
+    }
+
+
+def pick_service_ports(
+    claims: dict[int, str] | None = None, dashboard_port: int | None = None
+) -> dict[str, int]:
+    """Pick and save the host ports the dashboard's services start on, under
+    `ports.held()`: a running dashboard's, else `dashboard_port` for `web` as it is
+    (`_validate` refuses it when taken), else the defaults when they are free and not
+    in `claims` (by default, what the rest of CanyonOS here claims), else the next
+    port that is."""
+    claims = dict(ports.claimed(picking_dashboard=True) if claims is None else claims)
+    saved = _saved_service_ports()
+    pinned = _pinned(dashboard_port)
+    picked = {}
+    for service, (container_port, default, what) in SERVICE_PORTS.items():
+        port = (
+            _published_port(service, container_port)
+            or pinned.get(service)
+            or ports.pick(default, what, claims)
+        )
+        claims[port] = ports.DASHBOARD
+        picked[service] = port
+    if picked != saved:
+        _save_service_ports(picked)
+    return picked
+
+
 def _validate(configured_port: int | None = None) -> DashboardStack:
     """Checks docker is usable and the state dir is writable, then returns a DashboardStack on the
-    running dashboard's port, else on `configured_port` (failing when it is taken), else on the
-    first free port from the default."""
+    running dashboard's ports, else on the ones `pick_service_ports` picks, with `configured_port`
+    for the web (failing when it is taken)."""
     if shutil.which("docker") is None:
         raise PhaseFailure("validate", "docker is not on PATH")
 
@@ -255,20 +345,26 @@ def _validate(configured_port: int | None = None) -> DashboardStack:
     except OSError:
         raise PhaseFailure("validate", "dashboard state directory is not writable")
 
-    web_port = _existing_dashboard_port()
-    if web_port is None and configured_port and not is_port_free(configured_port):
-        raise PhaseFailure(
-            "validate",
-            f"Port {configured_port} is taken. Change `dashboard_port`, or remove it "
-            "so CanyonOS picks a free port.",
-        )
-    # Hop past a squatter (e.g. the endpoint's api_port) rather than block serve.
-    try:
-        web_port = web_port or find_free_port(configured_port or DEFAULT_DASHBOARD_PORT)
-    except RuntimeError as e:
-        raise PhaseFailure("validate", str(e)) from e
+    # Past the ports the rest of CanyonOS here holds or picked, such as an endpoint's
+    # that Docker publishes only once its deploy gets that far.
+    with ports.held():
+        claims = ports.claimed(picking_dashboard=True)
+        if (
+            configured_port
+            and _existing_dashboard_port() is None
+            and (configured_port in claims or not is_port_free(configured_port))
+        ):
+            raise PhaseFailure(
+                "validate",
+                f"Port {configured_port} is taken. Change `dashboard_port`, or remove "
+                "it so CanyonOS picks a free port.",
+            )
+        try:
+            picked = pick_service_ports(claims, configured_port)
+        except RuntimeError as e:
+            raise PhaseFailure("validate", str(e)) from e
 
-    return DashboardStack(state_dir, web_port)
+    return DashboardStack(state_dir, picked)
 
 
 def _env_value(value: str) -> str:
@@ -305,7 +401,10 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
             or secrets.token_urlsafe(32),
             "CANYONOS_API_IMAGE": API_IMAGE,
             "CANYONOS_WEB_IMAGE": WEB_IMAGE,
-            "CANYONOS_WEB_PORT": str(stack.web_port),
+            **{
+                f"CANYONOS_{service.upper()}_PORT": str(port)
+                for service, port in stack.host_ports.items()
+            },
         }
         write_private_file(
             stack.env_path,
@@ -342,19 +441,12 @@ def _command_failure_message(
     return f"{message}: {_redact_logs(detail, managed_env['CANYONOS_JWT_SECRET'])}"
 
 
-def _clashed_port(result: subprocess.CompletedProcess[str]) -> int | None:
-    """Return the port `docker compose up` could not publish because another process
-    or container holds it, or None."""
-    port = re.search(r"(?:\d{1,3}(?:\.\d{1,3}){3}|::\]?):(\d+)", result.stderr or "")
-    return int(port.group(1)) if port and is_port_conflict(result.stderr) else None
-
-
 def _start_failure_message(
     result: subprocess.CompletedProcess[str], managed_env: dict[str, str]
 ) -> str:
     """Say why `docker compose up` failed, naming the port when another process or
     container already holds one the dashboard publishes."""
-    port = _clashed_port(result)
+    port = clashed_port(result.stderr)
     if port:
         return f"port {port} is already in use by another process or container"
     return _command_failure_message("docker compose up failed", result, managed_env)
@@ -396,9 +488,11 @@ def _start(
     managed_env: dict[str, str],
     movable: bool,
 ) -> tuple[DashboardStack, dict[str, str]]:
-    """Run `docker compose up` and return the stack and env it started with. When
-    `movable` (no `dashboard_port`), a web port Docker refuses moves to the next one,
-    so only a port Docker holds is chosen."""
+    """Run `docker compose up` and return the stack and env it started with. A port
+    Docker refuses moves to the next one the rest of CanyonOS here doesn't claim, the
+    web port only when `movable` (no `dashboard_port`), so only a port Docker holds
+    is chosen."""
+    others = frozenset(ports.claimed(picking_dashboard=True))
     for _ in range(DEFAULT_MAX_PORT_ATTEMPTS):
         try:
             result = _run(
@@ -416,9 +510,20 @@ def _start(
             raise PhaseFailure("start", "could not run docker compose up")
         if result.returncode == 0:
             return stack, managed_env
-        if not (movable and _clashed_port(result) == stack.web_port):
+        clashed = clashed_port(result.stderr)
+        service = next(
+            (
+                service
+                for service, port in stack.host_ports.items()
+                if port == clashed and (movable or service != "web")
+            ),
+            None,
+        )
+        if service is None:
             raise PhaseFailure("start", _start_failure_message(result, managed_env))
-        stack = replace(stack, web_port=stack.web_port + 1)
+        moved = next_port(clashed, others | set(stack.host_ports.values()))
+        stack = replace(stack, host_ports={**stack.host_ports, service: moved})
+        _save_service_ports(stack.host_ports)
         managed_env, _ = _prepare(stack)
     raise PhaseFailure(
         "start", f"no free port found after {DEFAULT_MAX_PORT_ATTEMPTS} attempts"
@@ -589,7 +694,7 @@ def run_dashboard(
             _join_project_networks()
             report(ServeResult(True, "start", "dashboard stack started"))
 
-            url = _verify(stack.web_port)
+            url = _verify(stack.host_ports["web"])
             report(ServeResult(True, "verify", "dashboard health checks passed", url))
             return ServeResult(True, "verify", "dashboard health checks passed", url)
         except PhaseFailure as failure:

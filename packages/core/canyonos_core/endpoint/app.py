@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 
 # How many requests each worker serves at once; the rest wait for a free thread.
 WORKER_THREADS = 16
-# The local dashboard's Postgres, as published on the host.
+# The local dashboard's Postgres, by its container name on the project's network.
 DASHBOARD_DATABASE_URL = (
-    "postgresql://canyonos:canyonos@host.docker.internal:5432/canyonos"
+    "postgresql://canyonos:canyonos@canyonos-dashboard-db:5432/canyonos"
 )
 
 

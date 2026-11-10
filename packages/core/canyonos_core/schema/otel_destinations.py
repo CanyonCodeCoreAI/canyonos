@@ -14,10 +14,13 @@ SUPPORTED_PROTOCOLS = ("grpc", "http", "http/protobuf")
 DESTINATION_KEYS = frozenset(
     {"name", "protocol", "endpoint", "headers", "insecure", "timeout"}
 )
+# The local dashboard's API by its container name, on the network each project shares
+# with it, so its host port never matters here.
+LOCAL_DASHBOARD_ENDPOINT = "http://canyonos-dashboard-api:3000"
 LOCAL_DASHBOARD_DESTINATION = {
     "name": "local",
     "protocol": "http",
-    "endpoint": "http://host.docker.internal:3000",
+    "endpoint": LOCAL_DASHBOARD_ENDPOINT,
     "headers": {},
 }
 

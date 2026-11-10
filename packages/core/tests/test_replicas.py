@@ -147,8 +147,39 @@ class PublishesPortTests(unittest.TestCase):
         ):
             replica = _launch(controller, spec, LOCAL)
         run = controller._run_cmd.call_args_list[-1].args[0]
+        self._last_run = run
         published = [run[i + 1] for i, arg in enumerate(run) if arg == "-p"]
         return replica, published
+
+    def test_a_moved_endpoint_port_skips_the_ports_the_cli_reserved(self):
+        """8081 is the dashboard's, which may start after the endpoint."""
+        controller = _controller()
+        controller.config = {"provider": "local"}
+        controller.agent_specs_by_name = {"W": {"functions": [{"name": "main"}]}}
+        controller.redis = MagicMock()
+        controller.redis.hgetall.return_value = {
+            "api_port": "8080",
+            "arguments": "[]",
+            "public_host": "127.0.0.1",
+            "method": "main",
+        }
+        refusals = ["Bind for 0.0.0.0:8080 failed: port is already allocated"]
+
+        def run_cmd(cmd, *_args):
+            if cmd[:2] == ["docker", "run"] and refusals:
+                return SimpleNamespace(returncode=125, stdout="", stderr=refusals.pop())
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        controller._run_cmd = MagicMock(side_effect=run_cmd)
+        spec = {**self.ENDPOINT, "api_port": None, "agent": "W", "method": "main"}
+        with (
+            patch.object(replicas, "CONTROLLER_IMAGE", "canyonos-core:dev"),
+            patch.dict(os.environ, {"CANYONOS_RESERVED_PORTS": "6379,8081"}),
+        ):
+            _launch(controller, spec, LOCAL)
+
+        run = controller._run_cmd.call_args_list[-1].args[0]
+        self.assertIn("8082:8080", run)
 
     def test_a_local_deployments_endpoint_publishes_only_its_api_port(self):
         replica, published = self._launch_endpoint("local")

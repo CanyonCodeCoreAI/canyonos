@@ -39,6 +39,16 @@ class IsPortConflictTests(unittest.TestCase):
             )
         )
 
+    def test_recognises_docker_desktop_on_windows(self):
+        self.assertTrue(
+            port_utils.is_port_conflict(
+                "docker: Error response from daemon: ports are not available: exposing "
+                "port TCP 127.0.0.1:8000 -> 127.0.0.1:0: listen tcp4 127.0.0.1:8000: "
+                "bind: Only one usage of each socket address (protocol/network "
+                "address/port) is normally permitted."
+            )
+        )
+
     def test_none_and_empty_are_not_conflicts(self):
         self.assertFalse(port_utils.is_port_conflict(None))
         self.assertFalse(port_utils.is_port_conflict(""))
@@ -58,6 +68,33 @@ class IsPortConflictTests(unittest.TestCase):
         """subprocess without text=True yields bytes; the helper is str-only."""
         with self.assertRaises(TypeError):
             port_utils.is_port_conflict(b"port is already allocated")
+
+
+class ClashedPortTests(unittest.TestCase):
+    def test_names_the_host_port_of_each_docker_message(self):
+        for stderr, port in [
+            ("Bind for 0.0.0.0:8080 failed: port is already allocated", 8080),
+            ("Bind for [::]:8081 failed: port is already allocated", 8081),
+            (
+                "failed to bind host port for 0.0.0.0:6379:172.18.0.2:6379/tcp: "
+                "address already in use",
+                6379,
+            ),
+            (
+                "ports are not available: exposing port TCP 127.0.0.1:8000 -> "
+                "127.0.0.1:0: listen tcp4 127.0.0.1:8000: bind: Only one usage of "
+                "each socket address",
+                8000,
+            ),
+        ]:
+            with self.subTest(stderr=stderr):
+                self.assertEqual(port_utils.clashed_port(stderr), port)
+
+    def test_a_failure_that_is_not_a_port_conflict_names_no_port(self):
+        self.assertIsNone(
+            port_utils.clashed_port("pull access denied for 127.0.0.1:5001/app")
+        )
+        self.assertIsNone(port_utils.clashed_port(None))
 
 
 class IsPortFreeTests(unittest.TestCase):

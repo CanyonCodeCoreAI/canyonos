@@ -6,9 +6,11 @@
 One rule for the whole codebase:
   - Internal service ports (the Global Controller, and the dashboard, the
     endpoint and Redis when the config sets no `dashboard_port`, `api_port` or
-    `redis.port`) hop to the next free port on a conflict. All but Redis hop
-    when Docker refuses the port, so only a port Docker holds is chosen; Redis
-    is probed just before the Global Controller starts it.
+    `redis.port`) hop to the next port that is free and that the rest of
+    CanyonOS on this machine doesn't claim: the CLI picks them that way
+    (cli/canyonos/ports.py) and hands the claimed ones to the Global Controller
+    (`reserved_ports()`). All but Redis also hop when Docker refuses the port,
+    so only a port Docker holds is chosen.
   - A user-declared port -- `api_port`, `dashboard_port` and `redis.port` from
     global_controller.yaml -- fails fast, because it is read back statically
     and must not be silently moved.
@@ -28,26 +30,65 @@ duplicated as a twin in the other build artifact:
     cli/canyonos/port_utils.py  <->  canyonos_core/controller/utils/port_utils.py
 
 The CLI and the canyonos_core Docker image ship separately and cannot share an
-import, so keep the two copies byte-for-byte identical.
+import, so keep the two copies byte-for-byte identical (a CLI test checks).
 """
 
 from __future__ import annotations
 
 import os
+import re
 import socket
 
 # Docker emits the first message for a container-vs-container port clash, and the
 # second when a non-container listener (a stray process, an ssh tunnel, a manual
-# `docker run -p`) already holds the port.
-PORT_CONFLICT_MARKERS = ("port is already allocated", "address already in use")
+# `docker run -p`) already holds the port. Docker Desktop says "ports are not
+# available" instead, and on Windows names the socket error rather than "address
+# already in use". Matched without case.
+PORT_CONFLICT_MARKERS = (
+    "port is already allocated",
+    "address already in use",
+    "ports are not available",
+    "only one usage of each socket address",
+)
+# The host port in Docker's "Bind for 0.0.0.0:8080 failed", "listen tcp
+# 0.0.0.0:8080: bind" and "exposing port TCP 127.0.0.1:8080 ->" messages.
+_CLASHED_PORT = re.compile(r"(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]*\]):(\d+)")
 
 DEFAULT_MAX_PORT_ATTEMPTS = 500
+
+# The ports the CLI hands the Global Controller as taken by the rest of CanyonOS
+# here (the dashboard, port-forwards, other projects, its own), comma-separated, so
+# a port it moves on a conflict skips them too.
+RESERVED_PORTS_ENV = "CANYONOS_RESERVED_PORTS"
+
+
+def reserved_ports(environ=os.environ) -> frozenset[int]:
+    """The ports `RESERVED_PORTS_ENV` lists in `environ`."""
+    listed = environ.get(RESERVED_PORTS_ENV, "").split(",")
+    return frozenset(int(port) for port in listed if port.strip().isdigit())
+
+
+def next_port(port: int, skip: frozenset[int] = frozenset()) -> int:
+    """The first port after `port` that is not in `skip`."""
+    port += 1
+    while port in skip:
+        port += 1
+    return port
 
 
 def is_port_conflict(stderr: str | None) -> bool:
     """True if `docker run` stderr indicates the published host port was taken."""
-    text = stderr or ""
+    text = (stderr or "").lower()
     return any(marker in text for marker in PORT_CONFLICT_MARKERS)
+
+
+def clashed_port(stderr: str | None) -> int | None:
+    """The host port a `docker run` or `docker compose up` could not publish because
+    something holds it, or None when it failed otherwise or its message names none."""
+    if not is_port_conflict(stderr):
+        return None
+    match = _CLASHED_PORT.search(stderr or "")
+    return int(match.group(1)) if match else None
 
 
 def is_port_free(port: int, host: str = "0.0.0.0") -> bool:

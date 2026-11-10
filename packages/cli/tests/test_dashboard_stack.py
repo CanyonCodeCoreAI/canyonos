@@ -28,8 +28,10 @@ def project(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(dashboard_stack.shutil, "which", lambda _: "/usr/bin/docker")
+    # Nothing else of CanyonOS holds a port, so the first one asked is the one taken.
+    monkeypatch.setattr(dashboard_stack.ports, "claimed", lambda **_: {})
     monkeypatch.setattr(
-        dashboard_stack, "find_free_port", lambda start, max_attempts=50: start
+        dashboard_stack.ports, "pick", lambda port, _what, _claims: port
     )
     return tmp_path
 
@@ -103,9 +105,9 @@ def test_state_directory_and_port_validation_failures_do_not_pull(
     calls.clear()
     monkeypatch.setattr(dashboard_stack, "_state_dir", lambda: tmp_path / "state")
     monkeypatch.setattr(
-        dashboard_stack,
-        "find_free_port",
-        lambda start=8080, max_attempts=50: (_ for _ in ()).throw(
+        dashboard_stack.ports,
+        "pick",
+        lambda *_a: (_ for _ in ()).throw(
             RuntimeError(
                 "no free port found for the dashboard after 50 attempts starting at 8080"
             )
@@ -277,6 +279,11 @@ def test_success_pulls_starts_and_verifies(monkeypatch, project):
         ("http://127.0.0.1:8081/healthz", 5),
         ("http://127.0.0.1:8081/api/healthz", 5),
     ]
+    state_dir = project / "home" / ".canyonos" / "dashboard"
+    env_lines = (state_dir / ".env").read_text(encoding="utf-8").splitlines()
+    assert {"CANYONOS_WEB_PORT=8081", "CANYONOS_API_PORT=3000"} <= set(env_lines)
+    saved = json.loads((state_dir / "ports.json").read_text(encoding="utf-8"))
+    assert saved == {"web": 8081, "api": 3000}
 
 
 def test_shell_image_keyword_does_not_override_resolved_images(monkeypatch, project):
@@ -365,10 +372,17 @@ def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
                     [
                         {
                             "NetworkSettings": {
+                                # Each service's own; one answer stands for all.
                                 "Ports": {
                                     "8080/tcp": [
                                         {"HostIp": "127.0.0.1", "HostPort": "8080"}
-                                    ]
+                                    ],
+                                    "3000/tcp": [
+                                        {"HostIp": "0.0.0.0", "HostPort": "3000"}
+                                    ],
+                                    "5432/tcp": [
+                                        {"HostIp": "127.0.0.1", "HostPort": "5432"}
+                                    ],
                                 }
                             }
                         }
@@ -381,8 +395,8 @@ def test_existing_dashboard_container_skips_port_check(monkeypatch, project):
 
     install_docker(monkeypatch, calls, response)
     monkeypatch.setattr(
-        dashboard_stack,
-        "find_free_port",
+        dashboard_stack.ports,
+        "pick",
         lambda *a, **k: pytest.fail(
             "the existing dashboard owns port 8080, should not search for a new one"
         ),
@@ -425,6 +439,14 @@ def test_manifest_publishes_the_web_on_every_interface():
     assert ports == ["${CANYONOS_WEB_PORT}:8080"]
 
 
+def test_manifest_publishes_the_api_on_the_picked_port_and_postgres_nowhere():
+    services = _shipped_manifest()["services"]
+
+    # The default keeps a `.env` an older CLI wrote working.
+    assert services["api"]["ports"] == ["${CANYONOS_API_PORT:-3000}:3000"]
+    assert "ports" not in services["db"]
+
+
 def test_dashboard_url_uses_the_public_ip_on_ec2(monkeypatch):
     monkeypatch.setattr(dashboard_stack, "public_ip", lambda: "54.85.117.239")
 
@@ -441,10 +463,10 @@ def test_dashboard_url_falls_back_to_loopback_off_ec2(monkeypatch):
     "stderr",
     [
         "Error response from daemon: driver failed programming external connectivity "
-        "on endpoint canyonos-dashboard-api-1 (fd4d): "
-        "Bind for 0.0.0.0:3000 failed: port is already allocated",
+        "on endpoint canyonos-dashboard-api (fd4d): "
+        "Bind for 0.0.0.0:8095 failed: port is already allocated",
         "Error response from daemon: Ports are not available: exposing port TCP "
-        "0.0.0.0:3000 -> 127.0.0.1:0: listen tcp 0.0.0.0:3000: bind: address already in use",
+        "0.0.0.0:8095 -> 127.0.0.1:0: listen tcp 0.0.0.0:8095: bind: address already in use",
     ],
 )
 def test_a_port_conflict_on_start_names_the_port(monkeypatch, project, stderr):
@@ -454,10 +476,49 @@ def test_a_port_conflict_on_start_names_the_port(monkeypatch, project, stderr):
         return completed(argv)
 
     install_docker(monkeypatch, [], response)
-    result = dashboard_stack.run_dashboard()
+    monkeypatch.setattr(dashboard_stack, "is_port_free", lambda _port: True)
+    # A `dashboard_port` stays where it is set.
+    result = dashboard_stack.run_dashboard(configured_port=8095)
 
     assert result.phase == "start"
     assert result.message == (
-        "port 3000 is already in use by another process or container"
+        "port 8095 is already in use by another process or container"
     )
     assert result.log_path is not None
+
+
+@pytest.mark.parametrize(
+    ("taken", "service", "configured"),
+    [(3000, "api", 8095), (8081, "web", None)],
+)
+def test_a_port_docker_refuses_moves_and_is_saved(
+    monkeypatch, project, taken, service, configured
+):
+    ups = []
+
+    def response(argv):
+        if argv[-5:] == ["up", "-d", "--wait", "--wait-timeout", "180"]:
+            ups.append(argv)
+            if len(ups) == 1:
+                return completed(
+                    argv,
+                    returncode=1,
+                    stderr=f"Bind for 0.0.0.0:{taken} failed: port is already allocated",
+                )
+        if argv[:3] == ["docker", "container", "inspect"]:
+            return completed(argv, returncode=1)
+        return completed(argv)
+
+    install_docker(monkeypatch, [], response)
+    monkeypatch.setattr(dashboard_stack, "_verify", lambda port: f"http://x:{port}")
+    # The API's even with `dashboard_port` set, which holds only the web port in place.
+    monkeypatch.setattr(dashboard_stack, "is_port_free", lambda _port: True)
+
+    result = dashboard_stack.run_dashboard(configured_port=configured)
+
+    assert result.ok, result.message
+    state_dir = project / "home" / ".canyonos" / "dashboard"
+    saved = json.loads((state_dir / "ports.json").read_text(encoding="utf-8"))
+    assert saved[service] == taken + 1
+    env_lines = (state_dir / ".env").read_text(encoding="utf-8").splitlines()
+    assert f"CANYONOS_{service.upper()}_PORT={taken + 1}" in env_lines

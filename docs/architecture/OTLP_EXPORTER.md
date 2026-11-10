@@ -179,7 +179,7 @@ future:{future_id}.logs JSON array
 global_controller.yaml
 otel.destinations
       │
-      ├─ absent ──▶ LOCAL_DASHBOARD_DESTINATION (host.docker.internal:3000)
+      ├─ absent ──▶ LOCAL_DASHBOARD_DESTINATION (canyonos-dashboard-api:3000)
       ├─ GlobalController._otel_destinations
       │      └─ config_env.expand_env_value
       │

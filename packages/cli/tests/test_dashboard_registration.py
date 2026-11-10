@@ -7,7 +7,15 @@ import urllib.error
 
 import pytest
 
-from canyonos import dashboard_registration
+from canyonos import dashboard_registration, dashboard_stack
+
+
+@pytest.fixture(autouse=True)
+def api_port(monkeypatch):
+    """The dashboard's API on a port its default isn't, as when 3000 was taken."""
+    monkeypatch.setattr(
+        dashboard_stack, "service_ports", lambda: {"api": 3005, "db": 5432}
+    )
 
 
 @pytest.fixture
@@ -62,3 +70,12 @@ def test_a_refusal_carries_the_apis_message(monkeypatch):
         dashboard_registration.RegistrationError, match="unknown workflow"
     ):
         dashboard_registration.add_sample_data("p-1", "not-a-workflow")
+
+
+def test_registration_and_sample_data_reach_the_api_where_it_is(sent, monkeypatch):
+    monkeypatch.setattr(dashboard_registration, "join_project_network", lambda _n: None)
+    dashboard_registration.register_project(6380)
+    dashboard_registration.add_sample_data("p-1", "helloworld")
+
+    assert sent[0]["url"] == "http://127.0.0.1:3005/canyonos/projects"
+    assert sent[1]["url"] == "http://127.0.0.1:3005/projects/p-1/sample-data"

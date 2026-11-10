@@ -188,6 +188,43 @@ class RedisContainerReuseTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._run(controller, inspect_stdout="true\n", served_port=None)
 
+    def _taken_port_message(self, config):
+        controller = _bare_controller()
+        controller.config = config
+        controller._stop_redis_containers = lambda: None
+
+        def fake_run_cmd(cmd, host, user=None):
+            if cmd[:2] == ["docker", "inspect"]:
+                return SimpleNamespace(returncode=0, stdout="false\n", stderr="")
+            if cmd[:2] == ["docker", "run"]:
+                return SimpleNamespace(
+                    returncode=125,
+                    stdout="",
+                    stderr="Bind for 0.0.0.0:6379 failed: port is already allocated",
+                )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        controller._run_cmd = fake_run_cmd
+        with (
+            self.assertLogs(
+                "canyonos_core.controller.global_controller", "CRITICAL"
+            ) as logs,
+            self.assertRaises(SystemExit),
+        ):
+            controller._launch_redis_containers()
+        return " ".join(logs.output)
+
+    def test_a_taken_redis_port_the_config_sets_names_the_setting(self):
+        message = self._taken_port_message({"redis": {"port": 6379}})
+
+        self.assertIn("change `redis.port`", message)
+
+    def test_a_taken_redis_port_the_cli_picked_says_to_deploy_again(self):
+        message = self._taken_port_message({})
+
+        self.assertIn("Deploy again", message)
+        self.assertNotIn("redis.port", message)
+
 
 if __name__ == "__main__":
     unittest.main()

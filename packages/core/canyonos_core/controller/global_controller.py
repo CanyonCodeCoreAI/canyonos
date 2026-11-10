@@ -65,7 +65,10 @@ from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 from canyonos_core.schema import SchemaError, check_project, load_manifest
-from canyonos_core.schema.otel_destinations import LOCAL_DASHBOARD_DESTINATION
+from canyonos_core.schema.otel_destinations import (
+    LOCAL_DASHBOARD_DESTINATION,
+    LOCAL_DASHBOARD_ENDPOINT,
+)
 from canyonos_core.schema.yaml_lines import parse_failure
 
 sys.path.insert(0, os.path.abspath("grpc_stubs"))
@@ -280,20 +283,23 @@ class GlobalController(ControllerContext):
         when there are none.
 
         On Kubernetes, destinations on host.docker.internal (Docker Desktop's way back
-        to the laptop, which no cluster has) are skipped. None makes the exporter
-        flush instead of exporting."""
+        to the laptop, which no cluster has) or on the local dashboard are skipped.
+        None makes the exporter flush instead of exporting."""
         destinations = expand_env_value(
             otel_cfg.get("destinations") or [LOCAL_DASHBOARD_DESTINATION]
         )
         if os.environ.get(TARGET_ENV) == "kubernetes":
             kept = []
             for destination in destinations:
-                if DOCKER_HOST in str(destination.get("endpoint", "")):
+                endpoint = str(destination.get("endpoint", ""))
+                if DOCKER_HOST in endpoint or endpoint.startswith(
+                    LOCAL_DASHBOARD_ENDPOINT
+                ):
                     logger.info(
                         "Skipping OTel destination %s on Kubernetes: %s is unreachable "
                         "in a cluster.",
                         destination.get("name"),
-                        DOCKER_HOST,
+                        endpoint,
                     )
                 else:
                     kept.append(destination)
@@ -628,12 +634,20 @@ class GlobalController(ControllerContext):
                     # `Created` state -- remove it, or the next deploy fails
                     # on the name instead of reporting the real problem.
                     self._run_cmd(["docker", "rm", "-f", "-v", container_name], host)
+                    if "port" in (self.config.get("redis") or {}):
+                        advice = (
+                            "Free it, or change `redis.port` in global_controller.yaml "
+                            "or delete it so CanyonOS picks a free port."
+                        )
+                    else:
+                        # The CLI picked it free and unclaimed: something outside
+                        # CanyonOS took it since.
+                        advice = "Deploy again, and CanyonOS picks another."
                     logger.critical(
-                        "Redis port %d on %s is already in use. Free it, or change "
-                        "`redis.port` in global_controller.yaml or delete it so "
-                        "CanyonOS picks a free port.",
+                        "Redis port %d on %s is already in use. %s",
                         redis_port,
                         host,
+                        advice,
                     )
                 else:
                     logger.critical(

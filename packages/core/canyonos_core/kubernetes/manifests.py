@@ -19,6 +19,7 @@ from canyonos_core.kubernetes.api import (
     resource_name,
 )
 from canyonos_core.schema.kubernetes_block import KubernetesDatabase
+from canyonos_core.schema.otel_destinations import LOCAL_DASHBOARD_ENDPOINT
 
 OBJECT_API_VERSION = f"{API_GROUP}/{API_VERSION}"
 LABEL_PROJECT = f"{API_GROUP}/project"
@@ -276,9 +277,12 @@ def render(
             "the ec2: block only applies to EC2 and is ignored on Kubernetes"
         )
     for destination in (config.get("otel") or {}).get("destinations") or []:
-        if "host.docker.internal" in str(destination.get("endpoint", "")):
+        endpoint = str(destination.get("endpoint", ""))
+        if "host.docker.internal" in endpoint or endpoint.startswith(
+            LOCAL_DASHBOARD_ENDPOINT
+        ):
             warnings.append(
-                f"otel destination {destination.get('name')!r} points at host.docker.internal, "
+                f"otel destination {destination.get('name')!r} points at {endpoint}, "
                 "which a cluster does not have: it is skipped there"
             )
     return objects, warnings

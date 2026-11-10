@@ -22,8 +22,9 @@ import subprocess
 import sys
 import time
 
+from canyonos import ports
 from canyonos.os_support import spawn_detached
-from canyonos.port_utils import find_free_port, is_port_free
+from canyonos.port_utils import is_port_free
 
 FORWARD_ARGUMENT = "__port-forward"
 DASHBOARD = "dashboard"
@@ -112,14 +113,16 @@ def open_forward(
     port,
     context=None,
     fixed=False,
-    skip=frozenset(),
+    dashboard_port=None,
     shared=False,
 ):
     """Keep `service`'s `remote_port` in `namespace` on 127.0.0.1 in the background,
-    on `port` or, unless `fixed` (a port the config sets), the next free one not in
-    `skip`, and return the port. A forward of the same service and port already
-    running is kept; a `shared` one (the dashboard every project here uses) is kept on
-    its port whatever port is asked, as Docker keeps a running dashboard."""
+    on `port` or, unless `fixed` (a port the config sets), the next one free and not
+    claimed by the rest of CanyonOS here (`ports.claimed`, with the config's
+    `dashboard_port`), and return the port. A forward of the same service and port
+    already running is kept; a `shared` one (the dashboard every project here uses)
+    is kept on its port whatever port is asked, as Docker keeps a running
+    dashboard."""
     wanted = {
         "namespace": namespace,
         "service": service,
@@ -132,17 +135,24 @@ def open_forward(
     if record and _running(name) and all(record.get(k) == wanted[k] for k in compared):
         return record["port"]
     close_forward(name)
-    # Free on every interface, not only 127.0.0.1: on macOS a port Docker publishes on
-    # 0.0.0.0 still binds on 127.0.0.1, and the forward would shadow it there.
-    if fixed and not is_port_free(port):
-        raise RuntimeError(f"port {port} is taken; a port the config sets is not moved")
-    record = {**wanted, "port": port if fixed else find_free_port(port, skip=skip)}
     os.makedirs(forwards_dir(), exist_ok=True)
     for path in (_log_path(name), _pid_path(name)):
         with contextlib.suppress(OSError):
             os.remove(path)
-    with open(_record_path(name), "w", encoding="utf-8") as f:
-        json.dump(record, f)
+    # The record is the forward's claim, so it is written under the ports lock.
+    with ports.held():
+        # A shared forward is the dashboard, so the dashboard's port isn't held
+        # against it. Free on every interface, not only 127.0.0.1: on macOS a port
+        # Docker publishes on 0.0.0.0 still binds on 127.0.0.1, and the forward would
+        # shadow it there.
+        claims = ports.claimed(dashboard_port, picking_dashboard=shared)
+        if fixed and (port in claims or not is_port_free(port)):
+            raise RuntimeError(
+                f"port {port} is taken; a port the config sets is not moved"
+            )
+        record = {**wanted, "port": port if fixed else ports.pick(port, None, claims)}
+        with open(_record_path(name), "w", encoding="utf-8") as f:
+            json.dump(record, f)
     spawn_detached(_forward_command(_record_path(name)), cwd=forwards_dir())
     # Ready once its own kubectl listens (its pid is written then), not once the port
     # answers: another deploy's forward may have taken the same port meanwhile.

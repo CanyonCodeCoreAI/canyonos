@@ -53,12 +53,15 @@ def test_dashboard_uses_all_500_candidates(monkeypatch, tmp_path, conflicts):
         return CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(dashboard_stack, "_run", run)
+    monkeypatch.setattr(dashboard_stack.ports, "claimed", lambda **_: {})
     monkeypatch.setattr(
         dashboard_stack,
         "_prepare",
-        lambda stack: ({"CANYONOS_WEB_PORT": str(stack.web_port)}, ""),
+        lambda stack: ({"CANYONOS_WEB_PORT": str(stack.host_ports["web"])}, ""),
     )
-    stack = dashboard_stack.DashboardStack(tmp_path, 8081)
+    stack = dashboard_stack.DashboardStack(
+        tmp_path, {"web": 8081, "api": 3000, "db": 5432}
+    )
     managed_env = {"CANYONOS_WEB_PORT": "8081"}
     manifest = tmp_path / "dashboard.compose.yml"
 
@@ -66,7 +69,7 @@ def test_dashboard_uses_all_500_candidates(monkeypatch, tmp_path, conflicts):
         started, started_env = dashboard_stack._start(
             stack, manifest, managed_env, movable=True
         )
-        assert started.web_port == 8580
+        assert started.host_ports["web"] == 8580
         assert started_env["CANYONOS_WEB_PORT"] == "8580"
     else:
         with pytest.raises(

@@ -713,13 +713,7 @@ def _forward_endpoint(namespace, project, config):
             fixed=bool(api_port),
             # Not the dashboard's port, even before it is opened: a request would reach
             # the dashboard there.
-            skip=frozenset(
-                {
-                    forward_port(DASHBOARD)
-                    or config.get("dashboard_port")
-                    or LOCAL_DASHBOARD_PORT
-                }
-            ),
+            dashboard_port=config.get("dashboard_port"),
         )
     except RuntimeError as error:
         ui.warn(f"The endpoint is not forwarded to this machine: {error}")
@@ -971,9 +965,12 @@ def run_kubernetes_stop(config_path=None):
         # Also when the cluster can't be reached: the forwards would retry until then.
         close_forward(endpoint_forward(namespace, project))
         # As on Docker, the dashboard stays while another project here still runs.
-        if not running_forwards("endpoint-") and forward_port(DASHBOARD):
+        # Closed also when its process was killed outright, so its kubectl and port go.
+        if not running_forwards("endpoint-"):
+            was_open = forward_port(DASHBOARD)
             close_forward(DASHBOARD)
-            ui.ok("Closed the dashboard's port-forward")
+            if was_open:
+                ui.ok("Closed the dashboard's port-forward")
     return True
 
 

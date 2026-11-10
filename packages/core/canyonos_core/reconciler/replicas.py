@@ -6,7 +6,6 @@ containers the same way: this one directly, any other over SSH."""
 
 import logging
 import os
-import re
 import socket
 import time
 from contextlib import contextmanager
@@ -28,7 +27,12 @@ from canyonos_core.controller.utils.container_names import (
     redis_container_name,
 )
 from canyonos_core.controller.utils.env_file import env_file_args
-from canyonos_core.controller.utils.port_utils import is_port_conflict
+from canyonos_core.controller.utils.port_utils import (
+    clashed_port,
+    is_port_conflict,
+    next_port,
+    reserved_ports,
+)
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.endpoint import (
     ENDPOINT_PORT,
@@ -54,9 +58,6 @@ MAX_PORT_ATTEMPTS = 50
 # its grace period from SIGTERM to the kill, as a pod's is on Kubernetes.
 DRAIN_TIMEOUT_SECONDS = 180
 HOST_GATEWAY = "host.docker.internal"
-# The host port in Docker's "Bind for 0.0.0.0:8080 failed" and "listen tcp
-# 0.0.0.0:8080: bind" messages.
-_CLASHED_PORT = re.compile(r"(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]*\]):(\d+)")
 
 
 def _port_bound(port):
@@ -247,9 +248,11 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             # A failed port bind leaves a `Created` container under this name; remove it
             # so the retry doesn't hit a name conflict instead of the port conflict.
             controller._run_cmd(["docker", "rm", "-f", "-v", container], host, user)
-            clashed = _clashed_port(result.stderr)
+            clashed = clashed_port(result.stderr)
             if api_port and clashed == api_port and not agent_spec["api_port"]:
-                api_port += 1
+                # Past the ports the CLI keeps for the rest of CanyonOS here, such
+                # as the dashboard's, which may not be published yet.
+                api_port = next_port(api_port, reserved_ports())
                 continue
             if clashed not in (None, host_port):
                 raise RuntimeError(
@@ -493,13 +496,6 @@ def _image_args(controller, agent_spec, image, host, user, api_port):
         return
     with env_file_args(controller, host, user, _is_local_host(host)) as args:
         yield [*args, image]
-
-
-def _clashed_port(stderr):
-    """Return the host port a failed `docker run` could not publish, or None when
-    Docker's message does not name one."""
-    match = _CLASHED_PORT.search(stderr or "")
-    return int(match.group(1)) if match else None
 
 
 def _clear_stale_status(machine_redis, host, address, container):

@@ -17,7 +17,6 @@ import urllib.error
 import urllib.request
 
 from canyonos import project
-from canyonos.constants import DASHBOARD_API_PORT
 from canyonos.dashboard_stack import join_project_network
 
 ATTEMPTS = 3
@@ -57,16 +56,25 @@ def _post(url: str, payload: bytes, timeout: float = TIMEOUT_SECONDS) -> dict:
     return registered
 
 
-def register_project(redis_port: int, api_port: int = DASHBOARD_API_PORT) -> dict:
+def _api_port() -> int:
+    """The host port the dashboard's API is on."""
+    # Imported here: the dashboard's stack reads ports this module has no need of.
+    from canyonos.dashboard_stack import service_ports
+
+    return service_ports()["api"]
+
+
+def register_project(redis_port: int, api_port: int | None = None) -> dict:
     """Connect the dashboard api to the project's network, then register the project
-    with its Redis container's name and `redis_port`.
+    with its Redis container's name and `redis_port`, with the dashboard's API on
+    `api_port`, or where it is when that is None.
 
     Returns the api's `{project_id, name}`. Connection failures and 5xx answers
     are retried, up to ATTEMPTS in all; a 4xx answer is final. Raises
     RegistrationError carrying Docker's or the api's message when joining the
     network or registration fails.
     """
-    url = f"http://127.0.0.1:{api_port}/canyonos/projects"
+    url = f"http://127.0.0.1:{api_port or _api_port()}/canyonos/projects"
     joined = join_project_network(project.project_group())
     if joined is not None:
         raise RegistrationError(joined)
@@ -89,9 +97,10 @@ def register_project(redis_port: int, api_port: int = DASHBOARD_API_PORT) -> dic
 
 
 def add_sample_data(
-    project_id: str, workflow: str, api_port: int = DASHBOARD_API_PORT
+    project_id: str, workflow: str, api_port: int | None = None
 ) -> dict:
-    """Ask the dashboard to add its recorded run of `workflow` to this project.
+    """Ask the dashboard, its API on `api_port` or where it is when that is None, to
+    add its recorded run of `workflow` to this project.
 
     The api replays a run of that bundled workflow it ships, spread across the
     week ending now, so a first request lands among a week of earlier ones
@@ -101,7 +110,9 @@ def add_sample_data(
     Returns the api's `{spans, logs, metrics}`. Raises RegistrationError with
     the api's message when it does not answer.
     """
-    url = f"http://127.0.0.1:{api_port}/projects/{project_id}/sample-data"
+    url = (
+        f"http://127.0.0.1:{api_port or _api_port()}/projects/{project_id}/sample-data"
+    )
     payload = json.dumps({"workflow": workflow}).encode()
     try:
         return _post(url, payload, SAMPLE_DATA_TIMEOUT_SECONDS)

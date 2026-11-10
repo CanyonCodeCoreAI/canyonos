@@ -21,10 +21,9 @@ import urllib.request
 # Formatting
 from pyfiglet import figlet_format
 
-from canyonos import env, project, ui
+from canyonos import env, ports, project, ui
 from canyonos.constants import (
     DEFAULT_API_PORT,
-    DEFAULT_DASHBOARD_PORT,
     DEFAULT_REDIS_PORT,
     dashboard_port,
     default_config_path,
@@ -36,7 +35,6 @@ from canyonos.constants import (
     public_ip,
     read_config,
 )
-from canyonos.dashboard_stack import _existing_dashboard_port
 from canyonos.docker_cmd import (
     DOCKER_PULL_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -44,7 +42,11 @@ from canyonos.docker_cmd import (
     cleanup_docker,
     run_docker,
 )
-from canyonos.port_utils import find_free_port, is_port_conflict
+from canyonos.port_utils import (
+    RESERVED_PORTS_ENV,
+    is_port_conflict,
+    next_port,
+)
 
 
 # Production is `env.PROD_CORE_IMAGE`; a developer can point this at the image
@@ -336,10 +338,14 @@ def _run_container(
     redis_port=DEFAULT_REDIS_PORT,
     api_port=None,
     max_attempts=50,
+    reserved=frozenset(),
 ):
     """Start this project's Global Controller container, published on 127.0.0.1 at
-    `port`, or at the next free port after it, and tell it Redis's port and, for an
-    endpoint whose port isn't set, the port it had last deploy."""
+    `port`, or at the next free port after it that isn't `reserved`, and tell it
+    Redis's port, the `reserved` ports and, for an endpoint whose port isn't set, the
+    port it had last deploy."""
+    if port in reserved:
+        port = next_port(port, reserved)
     start_port = port
     # The real socket behind whatever's active right now, not the
     # /var/run/docker.sock alias -- some other app can hold that alias and
@@ -398,6 +404,8 @@ def _run_container(
             "-e",
             f"CANYONOS_REDIS_PORT={redis_port}",
             *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),
+            "-e",
+            f"{RESERVED_PORTS_ENV}={','.join(map(str, sorted(reserved | {port})))}",
             # So the GC's own docker-outside-of-docker calls resolve the
             # socket unambiguously too, instead of falling back to whatever
             # a bare `docker` invocation inside the container would default to.
@@ -447,10 +455,10 @@ def _run_container(
             )
             if failure:
                 raise RuntimeError(failure)
-            port += 1
+            port = next_port(port, reserved)
             continue
         if is_port_conflict(result.stderr):
-            port += 1
+            port = next_port(port, reserved)
             continue
         raise RuntimeError(
             "Could not start the CanyonOS controller container: "
@@ -580,15 +588,6 @@ def redis_port_of(state):
     )
 
 
-def _dashboard_port(config_path):
-    """The port the local dashboard is on, or will take when it starts."""
-    return (
-        _existing_dashboard_port()
-        or dashboard_port(config_path)
-        or DEFAULT_DASHBOARD_PORT
-    )
-
-
 def run_init(banner=True, image=GC_IMAGE):
     """Replace any existing Global Controller with a fresh container from `image` and
     save its ID and port for later commands; run at the start of `canyonos deploy`.
@@ -602,61 +601,59 @@ def run_init(banner=True, image=GC_IMAGE):
     preferred = saved.get("port") or GC_CONTAINER_PORT
     stop_existing()
 
-    # After stop_existing(), so the last deploy's ports read as free.
-    config_path = existing_config_path()
-    # Without `api_port`, the reconciler picks the endpoint's port when Docker binds it.
-    api_port = endpoint_api_port(config_path)
-    if api_port is not None and port_in_use(api_port):
-        raise RuntimeError(
-            f"Port {api_port} is already in use, and the endpoint needs it. Free it, or "
-            f"change `endpoint.api_port` in {config_path} or delete it so CanyonOS picks "
-            "a free port."
-        )
-    # A taken `redis.port` is left to the Global Controller, which reuses this
-    # project's own Redis when a crashed deploy left it running there.
-    redis_port = local_redis_port(config_path)
-    if redis_port is None:
-        preferred_redis = saved.get("redis_port") or DEFAULT_REDIS_PORT
-        redis_port = find_free_port(preferred_redis)
-        if redis_port != preferred_redis:
-            ui.warn(f"Port {preferred_redis} is taken, so Redis is on {redis_port}.")
-    last_api_port = None
-    if api_port is None:
-        # Free on 127.0.0.1 too, as find_free_port checks: on macOS Docker publishes
-        # 0.0.0.0 beside a kubectl port-forward on 127.0.0.1, which would then answer
-        # the endpoint's requests. Off the dashboard's port too: it may start after.
-        dashboard = _dashboard_port(config_path)
-        preferred_api = saved.get("api_port") or DEFAULT_API_PORT
-        last_api_port = find_free_port(preferred_api, skip=frozenset({dashboard}))
-        if last_api_port != preferred_api:
-            why = "is the dashboard's" if preferred_api == dashboard else "is taken"
-            ui.warn(
-                f"Port {preferred_api} {why}, so the endpoint is on {last_api_port}."
-            )
-
     with ui.status("Pulling Global Controller image..."):
         _pull_image(image)
-    with ui.status("Starting Global Controller container..."):
-        container_id, port, docker_socket = _run_container(
-            image=image, port=preferred, redis_port=redis_port, api_port=last_api_port
-        )
-    try:
-        _save_state(container_id, port, docker_socket, redis_port, last_api_port)
-    except OSError as e:
-        cleanup_failure = cleanup_docker(
-            ["docker", "rm", "-f", container_id],
-            action=f"Removing Global Controller {container_id[:12]}",
-            missing_text="No such container",
-        )
-        detail = (
-            f" Automatic cleanup also failed: {cleanup_failure}"
-            if cleanup_failure
-            else ""
-        )
-        raise RuntimeError(
-            f"Could not save Global Controller state at {project.state_path()}: {e}. "
-            f"Removed container {container_id[:12]}.{detail}"
-        ) from None
+    # After stop_existing(), so the last deploy's ports read as free. Picked and saved
+    # under the ports lock: a deploy at the same moment then sees them as claimed.
+    config_path = existing_config_path()
+    with ports.held():
+        claims = ports.claimed(dashboard_port(config_path))
+        # Without `api_port`, the reconciler picks the endpoint's port when Docker
+        # binds it, starting from the one picked here.
+        api_port = endpoint_api_port(config_path)
+        if api_port is not None and (port_in_use(api_port) or api_port in claims):
+            raise RuntimeError(
+                f"Port {api_port} is already in use, and the endpoint needs it. Free "
+                f"it, or change `endpoint.api_port` in {config_path} or delete it so "
+                "CanyonOS picks a free port."
+            )
+        # A taken `redis.port` is left to the Global Controller, which reuses this
+        # project's own Redis when a crashed deploy left it running there.
+        redis_port = local_redis_port(config_path)
+        if redis_port is None:
+            preferred_redis = saved.get("redis_port") or DEFAULT_REDIS_PORT
+            redis_port = ports.pick(preferred_redis, "Redis", claims)
+        claims[redis_port] = "Redis"
+        last_api_port = None
+        if api_port is None:
+            preferred_api = saved.get("api_port") or DEFAULT_API_PORT
+            last_api_port = ports.pick(preferred_api, "the endpoint", claims)
+            claims[last_api_port] = "the endpoint"
+        with ui.status("Starting Global Controller container..."):
+            container_id, port, docker_socket = _run_container(
+                image=image,
+                port=preferred,
+                redis_port=redis_port,
+                api_port=last_api_port,
+                reserved=frozenset(claims),
+            )
+        try:
+            _save_state(container_id, port, docker_socket, redis_port, last_api_port)
+        except OSError as e:
+            cleanup_failure = cleanup_docker(
+                ["docker", "rm", "-f", container_id],
+                action=f"Removing Global Controller {container_id[:12]}",
+                missing_text="No such container",
+            )
+            detail = (
+                f" Automatic cleanup also failed: {cleanup_failure}"
+                if cleanup_failure
+                else ""
+            )
+            raise RuntimeError(
+                f"Could not save Global Controller state at {project.state_path()}: "
+                f"{e}. Removed container {container_id[:12]}.{detail}"
+            ) from None
     ui.ok(f"Global Controller running in container {container_id[:12]} on port {port}")
     if port != preferred:
         ui.warn(f"Port {preferred} is taken, so the Global Controller is on {port}.")

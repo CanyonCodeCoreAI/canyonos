@@ -110,6 +110,9 @@ def test_a_running_container_holding_the_name_is_refused_not_removed(docker):
     [
         "Bind for 127.0.0.1:8000 failed: port is already allocated",
         "listen tcp 127.0.0.1:8000: bind: address already in use",
+        # Docker Desktop on Windows.
+        "ports are not available: exposing port TCP 127.0.0.1:8000 -> 127.0.0.1:0: "
+        "listen tcp4 127.0.0.1:8000: bind: Only one usage of each socket address",
     ],
 )
 def test_a_port_collision_retry_still_gets_the_name(docker, message):
@@ -144,3 +147,22 @@ def test_a_taken_port_moves_to_the_next(docker):
     _container_id, port, _socket = init_cmd._run_container(port=9000)
 
     assert port == 9001
+
+
+def test_a_moved_port_skips_the_reserved_ones(docker):
+    docker.runs = [
+        _bind_failure(9000),
+        completed(["docker", "run"], stdout=f"{CONTAINER_ID}\n"),
+    ]
+
+    _container_id, port, _socket = init_cmd._run_container(
+        port=9000, reserved=frozenset({9001, 9002})
+    )
+
+    assert port == 9003
+
+
+def test_the_controller_is_told_the_reserved_ports_and_its_own(docker):
+    init_cmd._run_container(port=9000, reserved=frozenset({8081, 6379}))
+
+    assert "CANYONOS_RESERVED_PORTS=6379,8081,9000" in docker.run_calls[0]

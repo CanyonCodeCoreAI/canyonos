@@ -5,6 +5,8 @@ services:
   # Fast-path bundled DB, hardcoded creds -- fine for local dev, not for anything real.
   db:
     image: postgres:16-alpine
+    # Fixed names: a project's containers reach the api and db by them.
+    container_name: canyonos-dashboard-db
     environment:
       POSTGRES_USER: canyonos
       POSTGRES_PASSWORD: canyonos
@@ -14,11 +16,10 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
-    ports:
-      - "127.0.0.1:5432:5432"
 
   api:
     image: ${CANYONOS_API_IMAGE}
+    container_name: canyonos-dashboard-api
     # Bun as PID 1 ignores SIGTERM, so without an init `docker compose stop` waits 10s to kill it.
     init: true
     depends_on:
@@ -31,7 +32,7 @@ services:
     # renames canyonos' `project_id` attribute to the `canyon.project.id` every
     # dashboard query filters on.
     ports:
-      - "3000:3000"
+      - "${CANYONOS_API_PORT:-3000}:3000"
     environment:
       DATABASE_URL: postgresql://canyonos:canyonos@db:5432/canyonos
       JWT_SECRET: ${CANYONOS_JWT_SECRET}
@@ -44,6 +45,7 @@ services:
       - host.docker.internal:host-gateway
   web:
     image: ${CANYONOS_WEB_IMAGE}
+    container_name: canyonos-dashboard-web
     depends_on:
       api:
         condition: service_healthy

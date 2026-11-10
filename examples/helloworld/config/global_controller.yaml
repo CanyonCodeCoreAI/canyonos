@@ -51,5 +51,5 @@ otel:
   destinations:
     - name: local
       protocol: http
-      endpoint: http://host.docker.internal:3000
+      endpoint: http://canyonos-dashboard-api:3000
       headers: {}

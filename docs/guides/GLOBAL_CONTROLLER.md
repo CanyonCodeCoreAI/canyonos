@@ -146,17 +146,33 @@ A deploy opens these ports on the machine that runs `canyonos deploy`, and no ot
 | Global Controller | none | the last deploy's port or `8000`, else the next free one | `127.0.0.1` |
 | Each database | its `db_port` | `5432` | every interface |
 | Dashboard, shared by every project | `dashboard_port` | `8081`, else the next free one | every interface |
+| The dashboard's API | none | `3000`, else the next free one | every interface |
 
-The dashboard's API also listens on `3000`, and its own database on `127.0.0.1:5432`.
-Agents open no port: the Global Controller reaches them over a private Docker
-network. A taken `db_port`, or a taken `api_port` or `redis.port` you set, stops the
-deploy with a message that names it. The Global Controller, and a dashboard, endpoint or
-Redis whose port isn't set, move to the next free port instead, and `canyonos deploy`
-says when the Global Controller, the endpoint or Redis moved. A taken `dashboard_port` you set
-stops only the dashboard. A dashboard already running is reused on its own port, and
-`canyonos deploy` warns when that isn't this project's `dashboard_port`. With
-`provider: EC2`, each machine also opens `50051` and up for its agents, on its
-private IP only; see [EC2 deployment](EC2.md).
+The dashboard's own database opens no port: projects reach it by name on their Docker
+network, so a database can keep `5432`. Agents open no port: the Global Controller reaches them over a private Docker
+network. With `provider: EC2`, each machine also opens `50051` and up for its agents,
+on its private IP only; see [EC2 deployment](EC2.md).
+
+Every port is picked by one rule:
+
+- **A port you set is never moved.** A taken `db_port`, `api_port` or `redis.port`
+  stops the deploy with a message that names the setting; a taken `dashboard_port`
+  stops only the dashboard. A `redis.port` held by this project's own Redis, left by a
+  deploy that crashed, is reused.
+- **A port you didn't set** starts at the one it had last deploy, or its default, and
+  moves to the next one that is free on every interface and that nothing else of
+  CanyonOS on this machine holds or has picked: another project's Global Controller,
+  Redis or endpoint, a Kubernetes port-forward, or the dashboard's ports, even before
+  the dashboard starts. `canyonos deploy` says when the Global Controller, the endpoint,
+  Redis, or the dashboard's API moved.
+- **Deploys started at the same moment** pick their ports one at a time, so each gets
+  its own.
+- **A port taken after it was picked**, by something outside CanyonOS, moves the
+  Global Controller, the endpoint or the dashboard on to the next one by the same rule.
+  Redis stops the deploy instead; deploying again picks another.
+
+A dashboard already running is reused on its own port, and `canyonos deploy` warns
+when that isn't this project's `dashboard_port`.
 
 ## Using environment variables
 
@@ -263,7 +279,7 @@ otel:
   destinations:
     - name: local
       protocol: http
-      endpoint: http://host.docker.internal:3000
+      endpoint: http://canyonos-dashboard-api:3000
       headers: {}
 ```
 
@@ -274,8 +290,9 @@ and `/v1/logs` itself, so give the base URL. An endpoint that already ends in
 `/v1/traces` passes validation and then posts to `/v1/traces/v1/traces`.
 gRPC endpoints are used as written.
 
-The local dashboard's API listens on port 3000 on the host, which is what
-`host.docker.internal:3000` reaches from inside the controller container.
+`http://canyonos-dashboard-api:3000` is how a config names the local dashboard's API:
+the dashboard joins each project's Docker network, so the address works whatever host
+port the API is on.
 
 #### Example
 
@@ -322,7 +339,7 @@ otel:
   destinations:
     - name: local
       protocol: http
-      endpoint: http://host.docker.internal:3000
+      endpoint: http://canyonos-dashboard-api:3000
       headers: {}
 ```
 

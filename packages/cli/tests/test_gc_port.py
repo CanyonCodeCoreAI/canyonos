@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from canyonos import init as init_cmd, project
+from canyonos import init as init_cmd, ports, project
 
 
 @pytest.fixture
@@ -32,7 +32,9 @@ def init(monkeypatch, tmp_path):
     monkeypatch.setattr(init_cmd, "endpoint_api_port", lambda _path: 8080)
     monkeypatch.setattr(init_cmd, "port_in_use", lambda _port: False)
     monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: 6379)
-    monkeypatch.setattr(init_cmd, "_existing_dashboard_port", lambda: None)
+    # Nothing else of CanyonOS holds a port but the dashboard, unless a test says so.
+    seen["claims"] = {8081: ports.DASHBOARD}
+    monkeypatch.setattr(ports, "claimed", lambda _path: dict(seen["claims"]))
     return seen
 
 
@@ -85,7 +87,7 @@ def unset_ports(init, monkeypatch):
     monkeypatch.setattr(init_cmd, "endpoint_api_port", lambda _path: None)
     monkeypatch.setattr(init_cmd, "local_redis_port", lambda _path: None)
     monkeypatch.setattr(
-        init_cmd,
+        ports,
         "find_free_port",
         lambda port, skip=frozenset(): next(
             free
@@ -120,6 +122,44 @@ def test_a_moved_redis_port_names_the_port_it_wanted(unset_ports, capsys):
 
     output = " ".join(capsys.readouterr().err.split())
     assert "Port 6390 is taken, so Redis is on 6391" in output
+
+
+def test_ports_another_project_claimed_are_skipped(unset_ports, capsys):
+    unset_ports["claims"].update({6379: "project other", 8080: "project other"})
+
+    init_cmd.run_init(banner=False)
+
+    assert (unset_ports["redis_port"], unset_ports["api_port"]) == (6380, 8082)
+    output = " ".join(capsys.readouterr().err.split())
+    assert "Port 6379 is taken, so Redis is on 6380" in output
+    assert "Port 8080 is taken, so the endpoint is on 8082" in output
+
+
+def test_the_endpoint_does_not_take_the_dashboards_port(unset_ports, capsys):
+    init_cmd._save_state("old", 8003, None, 6379, 8081)
+
+    init_cmd.run_init(banner=False)
+
+    assert unset_ports["api_port"] == 8082
+    output = " ".join(capsys.readouterr().err.split())
+    assert "Port 8081 is the dashboard's, so the endpoint is on 8082" in output
+
+
+def test_a_set_api_port_another_project_claimed_is_refused(init):
+    init["claims"][8080] = "project other"
+
+    with pytest.raises(RuntimeError, match="Port 8080 is already in use"):
+        init_cmd.run_init(banner=False)
+
+    assert "port" not in init
+
+
+def test_the_controller_is_told_every_port_it_must_not_move_to(unset_ports):
+    unset_ports["claims"][8090] = "the port-forward endpoint-ns-app"
+
+    init_cmd.run_init(banner=False)
+
+    assert unset_ports["reserved"] == {8081, 8090, 6379, 8080}
 
 
 def test_the_endpoints_port_is_recorded_beside_the_rest(init):
