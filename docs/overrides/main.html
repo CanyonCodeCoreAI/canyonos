@@ -1,0 +1,28 @@
+{#
+SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+SPDX-License-Identifier: AGPL-3.0-only
+
+The readthedocs theme gives only the home page a description and no page a preview
+image, so links to the docs show a bare title. This adds both, for every page.
+#}
+{% extends "base.html" %}
+
+{%- block site_meta %}
+  {{ super() }}
+  {%- if page and not page.is_homepage %}
+    <meta name="description" content="{{ config.site_description }}" />
+  {%- endif %}
+  {%- set title %}{% if page and page.title and not page.is_homepage %}{{ page.title }} - {% endif %}{{ config.site_name }}{% endset %}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="{{ config.site_name }}" />
+    <meta property="og:title" content="{{ title }}" />
+    <meta property="og:description" content="{{ config.site_description }}" />
+    <meta property="og:image" content="{{ config.extra.social_image }}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="{{ config.site_name }}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{{ title }}" />
+    <meta name="twitter:description" content="{{ config.site_description }}" />
+    <meta name="twitter:image" content="{{ config.extra.social_image }}" />
+{%- endblock %}

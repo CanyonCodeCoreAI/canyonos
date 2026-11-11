@@ -2,13 +2,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 site_name: CanyonOS
+# canyonos.ai's headline, for search results and link previews.
+site_description: The One Platform for Scaling your Multi-Agent Apps
 repo_url: https://github.com/CanyonCodeCoreAI/canyonos
 edit_uri: blob/main/docs/
 docs_dir: docs
 exclude_docs: |
   /README.md
+  /overrides/
 theme:
   name: readthedocs
+  # Adds the description and preview image to every page (overrides/main.html).
+  custom_dir: docs/overrides
   # On, the sidebar scrolls along with the page and jumps when a link moves the page.
   sticky_navigation: false
 extra_css:
@@ -16,6 +21,10 @@ extra_css:
 extra_javascript:
   - javascripts/sidebar.js
   - javascripts/tabs.js
+
+extra:
+  # The preview image link previews show, the same as canyonos.ai's.
+  social_image: https://canyonos.ai/opengraph-image.png
 
 nav:
   - Home: index.md
