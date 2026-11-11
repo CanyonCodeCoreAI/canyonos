@@ -247,6 +247,8 @@ origin Future                                      executor LocalController
 
 dependency Future arg ──▶ SADD future:<id>:consumers
                                   └─ _fan_out_to_consumers ──▶ WriteResult
+                                        (a value this Redis already held wakes
+                                         local waiters and is not sent again)
 
 future:<id>:children ──▶ Future._children_key
                      └─▶ _cleanup_request EXPIRE
@@ -337,3 +339,43 @@ proto/global_controller.proto: service GlobalController
   Execute(JsonResponse) returns (JsonResponse) ──▶ declaration only
   message JsonResponse ──▶ string response
 ```
+
+## Lazy values
+
+Agent code never calls `.value()`: it uses an agent call's result as if the call had
+returned it (see [Runtime contract](../guides/RUNTIME_CONTRACT.md#results-of-agent-calls)).
+
+```text
+LocalController._load_agent
+  └─ lazy_values.install(/app) ──▶ sys.meta_path finder for the project's own files
+       ├─ calls_agents(file): imports a stub, directly or through a project file?
+       │    └─ no ──▶ loaded as written
+       └─ yes: each import ──▶ parse ──▶ _Rewriter ──▶ compile (no __pycache__)
+            ├─ a use: a + b, if a, a[k], f"{a}"        ──▶ use(a) ──▶ Future.resolved()
+            ├─ an attribute: a.m                       ──▶ use_attribute(a, "m")
+            ├─ unpacking: x, (y, z) = a; for x, y in a ──▶ unpack(a, shape), unpack_each
+            ├─ a call: f(a)                            ──▶ call(f, a)
+            │    ├─ stub method, rewritten project code,
+            │    │  list.append, asyncio.gather and the like ──▶ a as it is
+            │    └─ anything else, project code loaded       ──▶ results, at any depth,
+            │       as written too                               and in project objects
+            └─ passing along: x = a, [a], return a      ──▶ unchanged
+
+await a ──▶ Future.__await__ ──▶ Future.resolved() on a worker thread
+
+Future(args=…) ──▶ future_refs: each Future, at any depth, as {path, returns}
+  └─ executor _resolve_future_args ──▶ wait_for_result ──▶ convert_result(returns)
+```
+
+`Future.resolved()` caches the result read back as the function's declared `returns`
+type (`convert_result`); `Future.value()` still returns the stored text. Stubs carry
+`# canyonos: no-rewrite` and `__canyon_stub__`, so they hand Futures on unchanged.
+`a.m` reads `.value`, `.resolved` and `.is_available` on the Future, and anything else
+on the result, or on the Future when the result has no `m`. A library handed an
+object of a project class gets the Futures in its `__dict__` replaced in place.
+
+`calls_agents` reads each file's imports once and follows them through the project's
+files; a file is a stub when it carries `__canyon_stub__ = True`. The entrypoint goes
+through the same check in `loader_for`, so an agent that calls no other loads as
+written. Before walking a list or dict for a library, `_replace_futures` gathers the
+types of its items and skips one where none can be or hold a Future.

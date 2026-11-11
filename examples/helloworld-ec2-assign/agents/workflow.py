@@ -15,4 +15,4 @@ class Workflow(object):
     def main(self, query: str = "World"):
         agent = HelloAgent()
         greeting = agent.hello(name=query)
-        return {"greeting": greeting.value()}
+        return {"greeting": greeting}

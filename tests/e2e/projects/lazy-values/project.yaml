@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# helloworld with a PairAgent and a Workflow that use agent call results without
+# `.value()` in the ways the rewrite has to cover beyond operators: unpacking,
+# `await` and `asyncio.gather`, a Future kept on a project object a library reads,
+# the Future's own `.id` next to its result, and results handed to a project module
+# that calls no agent and so loads as written.
+source: examples/helloworld
+overlay:
+  config/workflow_config.yaml: workflow_config.yaml
+  config/policy.yaml: policy.yaml
+  agents/helpers.py: helpers.py
+  agents/pair_agent.py: pair_agent.py
+  agents/workflow.py: workflow.py
+query: World
+calls: {Workflow.main: 1, PairAgent.split: 5, HelloAgent.hello: 6}
+traits: [quick, text-query]
+timeout: 180

@@ -3,6 +3,8 @@
 
 """The Future that every agent function call returns in place of its result."""
 
+import ast
+import asyncio
 import time
 import json
 import secrets
@@ -10,6 +12,7 @@ import sys
 import os
 import logging
 import threading
+import weakref
 
 import grpc
 
@@ -54,6 +57,79 @@ def notify_result(future_id):
 
 class AgentCallError(RuntimeError):
     """Raised when a called agent failed; the text is that agent's own error."""
+
+
+# Declared types whose stored text is JSON (the executor JSON-encodes a dict or list).
+_JSON_TYPES = frozenset({"dict", "list"})
+# Declared types whose stored text is `str(value)`, which a Python literal reads back.
+_LITERAL_TYPES = frozenset({"tuple", "set", "frozenset", "bytes", "complex"})
+
+
+def _type_names(declared):
+    """The builtin names a declared return type allows, outermost first: `dict` for
+    `dict[str, int]`, `int` and `None` for `int | None`. Empty when it can't be read."""
+    try:
+        node = ast.parse(declared, mode="eval").body
+    except (SyntaxError, ValueError, RecursionError):
+        return []
+    names, pending = [], [node]
+    while pending:
+        node = pending.pop(0)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            pending[:0] = [node.left, node.right]
+        elif isinstance(node, ast.Subscript):
+            pending.insert(0, node.value)
+        elif isinstance(node, ast.Name):
+            names.append(node.id)
+        elif isinstance(node, ast.Constant) and node.value is None:
+            names.append("None")
+    return names
+
+
+def _as_type(text, name):
+    """`text` read back as the builtin type `name`; raises ValueError when it isn't."""
+    if name == "None":
+        if text == "None":
+            return None
+        raise ValueError(text)
+    if name == "str":
+        return text
+    if name == "bool":
+        if text in ("True", "False"):
+            return text == "True"
+        raise ValueError(text)
+    if name == "int":
+        return int(text)
+    if name == "float":
+        return float(text)
+    if name in _JSON_TYPES:
+        value = json.loads(text)
+        if isinstance(value, dict if name == "dict" else list):
+            return value
+        raise ValueError(text)
+    if name in _LITERAL_TYPES:
+        value = ast.literal_eval(text)
+        if type(value).__name__ == name:
+            return value
+        raise ValueError(text)
+    raise ValueError(text)
+
+
+def convert_result(text, declared):
+    """Turn a stored result back into the value its function returned, going by the
+    `returns` type declared in `workflow_config.yaml`: `dict` and `list` from JSON,
+    numbers and `bool` from their text. The text itself when no type is declared, the
+    type is `str` or `object`, or the text doesn't read as that type."""
+    if text is None or not declared:
+        return text
+    for name in _type_names(declared):
+        if name == "object":
+            return text
+        try:
+            return _as_type(text, name)
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            continue
+    return text
 
 
 def wait_for_result(redis_client, future_id, timeout=None):
@@ -110,6 +186,46 @@ logger = logging.getLogger(__name__)
 # Agent images don't ship canyonos_core.endpoint, whose ENDPOINT_AGENT_NAME this matches.
 ENDPOINT_AGENT_NAME = "endpoint"
 
+# Every Future this process holds. While it is empty, rewritten agent code skips
+# looking through call arguments for Futures (see lazy_values).
+LIVE_FUTURES = weakref.WeakSet()
+
+_NOT_RESOLVED = object()
+
+
+def future_refs(args, is_future):
+    """Find every Future in a call's arguments, at any depth of dicts, lists and
+    tuples. Return the arguments as JSON can carry them, with each Future replaced by
+    its id, and one entry per Future: its path from the argument name down and its
+    declared return type."""
+    refs = []
+
+    def encode(value, path):
+        if is_future(value):
+            refs.append({"path": path, "returns": value.returns})
+            return value.id
+        if isinstance(value, dict):
+            # JSON turns every key into a string, so the path names it the same way.
+            return {
+                k: encode(v, path + [k if isinstance(k, str) else _json_key(k)])
+                for k, v in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [encode(v, path + [i]) for i, v in enumerate(value)]
+        return value
+
+    encoded = {key: encode(value, [key]) for key, value in args.items()}
+    return encoded, refs
+
+
+def _json_key(key):
+    """The string JSON writes for a dict key that isn't one: `1` -> "1", `True` ->
+    "true". The key itself when JSON can't write it, which then fails the call."""
+    try:
+        return next(iter(json.loads(json.dumps({key: 0}))))
+    except (TypeError, ValueError):
+        return key
+
 
 # defines the future object which will be returned by each function call
 class Future(object):
@@ -120,6 +236,10 @@ class Future(object):
         host=os.environ.get("CANYONOS_REDIS_HOST", "localhost"),
         port=int(os.environ.get("CANYONOS_REDIS_PORT", 6379)),
     )
+
+    # Defaults for a Future rebuilt without __init__, such as by a test.
+    returns = None
+    _typed = _NOT_RESOLVED
 
     # Single local controller connection, shared across all futures
     _lc_host = os.environ.get("CANYONOS_LC_HOST", "localhost")
@@ -137,17 +257,20 @@ class Future(object):
             logger.info("Connected to local controller at %s", address)
         return cls._stub
 
-    def __init__(self, parent, agent_name, method, args=None):
+    def __init__(self, parent, agent_name, method, args=None, returns=None):
         """
         parent: parent future
         agent_name: agent to be called
         method: method to be called on that agent
         args: arguments to be passed to the method
+        returns: the method's declared return type, such as "dict", which the
+            result is turned back into when it's used (see `resolved`)
         """
 
         # 64-bit because this id doubles as the OTel span_id, which is defined as
         # 64-bit, so there's no 128-bit uuid4 to truncate later.
         self.id = secrets.token_hex(8)
+        LIVE_FUTURES.add(self)
 
         # Grab the request_id from the thread-local context (set by the endpoint)
         self.request_id = canyonos_context.get_request_id()
@@ -159,24 +282,27 @@ class Future(object):
         self.parent = canyonos_context.get_current_future_id()
         self.agent_name = agent_name
         self.method = method
+        self.returns = returns
+        self._typed = _NOT_RESOLVED
         args = args or {}
-        # Send Future args as their ids, listing which arg names are Futures for the controller to resolve.
-        self.future_args = [k for k, v in args.items() if isinstance(v, Future)]
-        self.args = {k: v.id if isinstance(v, Future) else v for k, v in args.items()}
+        # Send each Future arg, at any depth, as its id, with where it sits for the
+        # controller to put its result back. future_args keeps the top-level names.
+        self.args, self.future_refs = future_refs(args, lambda v: isinstance(v, Future))
+        self.future_args = [
+            ref["path"][0] for ref in self.future_refs if len(ref["path"]) == 1
+        ]
         try:
             args_json = json.dumps(self.args)
-        except TypeError:
+        except (TypeError, ValueError):
             # Only on failure: find the argument that can't be sent, to name it.
             for key, value in self.args.items():
                 try:
                     json.dumps(value)
-                except TypeError as error:
-                    reason = f"{error}."
-                    if "of type Future " in reason:
-                        reason = f"it holds a Future inside a {type(value).__name__}. Pass a Future as its own argument, or call .value() on it first."
+                except (TypeError, ValueError) as error:
                     raise TypeError(
-                        f"Argument '{key}' of {agent_name}.{method} can't be sent: {reason}"
+                        f"Argument '{key}' of {agent_name}.{method} can't be sent: {error}."
                     ) from None
+            raise
         self.children = []
         self.consumers = []
         # For simplicity I am making a decision here, the future value only be sent back to the parent
@@ -214,6 +340,7 @@ class Future(object):
         request_data["function"] = request_data.pop("method")
         request_data["args"] = self.args
         request_data["future_args"] = self.future_args
+        request_data["future_refs"] = self.future_refs
 
         request = local_controller_pb2.JsonResponse(response=json.dumps(request_data))
         try:
@@ -315,6 +442,25 @@ class Future(object):
         # result-write time (see LocalController._fan_out_to_consumers). value()
         # is now purely a top-level pull for whoever holds the root future.
         return self.result
+
+    def resolved(self, timeout=None):
+        """Wait like `value()`, but return the result as its declared type: a `dict`
+        for a function declared to return `dict`, not its JSON text. Agent code reaches
+        this without calling it: CanyonOS rewrites agent modules so any line that uses
+        a Future uses this instead (see lazy_values)."""
+        if self._typed is _NOT_RESOLVED:
+            self._typed = convert_result(self.value(timeout=timeout), self.returns)
+        return self._typed
+
+    def __await__(self):
+        """`await future`: wait like `resolved()` on a worker thread, so the event loop
+        goes on running other tasks, and give the result as its declared type."""
+        loop = asyncio.get_running_loop()
+        return loop.run_in_executor(None, self.resolved).__await__()
+
+    def __repr__(self):
+        call = f"{getattr(self, 'agent_name', '?')}.{getattr(self, 'method', '?')}"
+        return f"<Future {call} {getattr(self, 'id', '?')}>"
 
     # def __call__(self, timeout=None):
     #     """Allow calling the future directly to get the value, e.g. future()."""

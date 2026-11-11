@@ -84,8 +84,11 @@ So:
 - Construction takes no arguments.
 - Declared methods take the `functions` argument names as keywords. Arguments
   travel as JSON, so an `int` stays an `int`. A `Future` passed as an
-  argument is replaced by its result, which is always text. The declared `type`
-  is never used to convert anything.
+  argument, on its own or anywhere inside a dict, list or tuple, is replaced by
+  its result, read back as the type the called function declares under
+  `returns`: a `dict` stays a `dict`. With no declared return type it is the
+  stored text. An argument's own declared `type` is never used to convert
+  anything.
 - Methods are called synchronously. An `async def` is not awaited, and its
   coroutine's `repr` is what lands in Redis. `canyonos validate` reports
   `CANYON-ADAPTER-ASYNC`.
@@ -118,15 +121,14 @@ The endpoint serves an agent method over HTTP. A typical target is an agent that
 takes the request and calls the others:
 
 ```python
-import json
 from pkg.agent import Agent
 
 
 class Workflow:
     def main(self, query: str):
         agent = Agent()
-        futures = [agent.work(item=item) for item in query.split(",")]
-        return [json.loads(f.value()) for f in futures]
+        results = [agent.work(item=item) for item in query.split(",")]
+        return [r for r in results if r["ok"]]
 ```
 
 ```yaml
@@ -174,20 +176,64 @@ are busy. `GET /status/<request_id>` reads that future: `pending` until it
 finishes, then `done` with the result or `error` with the message, and
 `input_required` with the question while an agent waits for the person. A
 `Future` left in the returned value, at any depth of a dict, list or tuple,
-is resolved before serialising. CanyonOS waits up to 65 minutes for the result
+is replaced by its result, as the type its function declares under `returns`,
+before serialising. CanyonOS waits up to 65 minutes for the result
 of a `Future` passed as an argument or left in the returned value, so a call
 whose result is lost, for example because its replica died, fails after 65
-minutes. Only the
-`Future` object itself is resolved: `str(f)`, an f-string or
-`json.dumps(...)` inside the method turns it into its `repr` first, so call
-`.value()` on anything you format or parse. A result that is
+minutes. A result that is
 not a dict is wrapped as `{"value": result}`. A result that cannot be
 serialised as JSON fails the request with `... is not JSON serializable`.
 
-Each stub method returns a `Future` immediately and `.value()` blocks. The
-value is the text the agent stored, so a dict comes back as a JSON string.
-Dispatching and resolving inside one comprehension serialises the calls
-without any error; dispatch everything first, then resolve.
+### Results of agent calls
+
+Agent code uses another agent's result as if the call had returned it. Each stub
+method returns a `Future` at once, and CanyonOS waits for its result only at the
+line that first needs it:
+
+```python
+draft = Writer().run(query=query)       # sent, nothing waits
+stats = Counter().count(text=draft)     # passed on: Counter's replica waits for it
+if stats["words"] > 100:                # waits here, and stats is a dict
+    draft = Writer().run(query=f"Shorten: {draft}")
+return {"draft": draft, "stats": stats} # passed on: the endpoint waits for it
+```
+
+The Local Controller rewrites the project's modules that call an agent as it
+loads them: those that import an agent's class, directly or through another of
+the project's modules. Every other module, such as a helper module or an agent
+that calls no other, is loaded as written and runs at full speed, and so are the
+standard library, installed packages and the generated stubs. In the rewritten
+code:
+
+- A line that uses a value, such as an operator, a comparison, `if`, `for`, an
+  index, a method or attribute, an f-string, or unpacking (`x, y = a`,
+  `for k, v in a`), gets the result as the type the function declares under
+  `returns`. With no declared type it gets the stored text.
+- `await a` waits for the result without blocking the event loop, and
+  `asyncio.gather` and `asyncio.wait_for` take `Future`s as they would any
+  awaitable.
+- A line that only passes a value along, such as assigning it, putting it in a
+  list or dict, or returning it, keeps the `Future`, so nothing waits.
+- A call to another agent, or to a function, method or class of a rewritten
+  module, gets the `Future`s as they are. Anything else, such as a library,
+  `print`, `json.dumps` or a project module that is loaded as written, gets
+  their results, inside dicts, lists, tuples, sets and generators too. An
+  object of one of the project's own classes is handed over as it is, with the
+  `Future`s in its attributes replaced by their results.
+- `.value()` still waits and returns the stored text, so code written that way
+  keeps working. `.value`, `.resolved` and `.is_available` always mean the
+  `Future`'s own; any other attribute is the result's, such as `a.id` for a
+  result that has an `id`.
+
+A call that fails raises at the line that uses its result. A list built in a
+comprehension or with `.append` sends every call before the first wait. A
+generator such as `sum(agent.count(x=x) for x in items)` waits for each result
+before it sends the next call. A module that imports no agent but calls one it
+is handed, such as `def run(agent): return agent.ask(q=q).upper()`, is loaded as
+written, so it calls `.value()` on the result. A file with a
+`# canyonos: no-rewrite` line is loaded as written, and `CANYONOS_LAZY_VALUES=0`
+in the project's `.env` (see [Credentials](#credentials)) turns the rewrite off
+for every agent.
 
 ### Asking the person
 

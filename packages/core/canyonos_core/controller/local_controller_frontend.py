@@ -42,6 +42,15 @@ EXECUTE_DEDUP_TTL_SECONDS = 3600
 RESULT_TTL_SECONDS = 24 * 3600
 
 
+def _already_holds(redis, future_id, result, failed):
+    """True when this Redis already has the outcome a WriteResult brings: the same
+    result, or a failure for a failure."""
+    record = redis.hgetall(f"future:{future_id}") or {}
+    if failed:
+        return str(record.get("failed")) == "1"
+    return result is not None and record.get("result") == result
+
+
 class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer):
     """gRPC servicer that accepts requests and pushes them into a queue."""
 
@@ -146,6 +155,10 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
                 )
 
             if future_id:
+                # Replicas sharing a Redis share each future's consumers, so a value
+                # this Redis already holds has been sent to all of them. Relaying it
+                # again would bounce it between two consumers of the same future.
+                repeat = _already_holds(self.redis, future_id, result, failed)
                 if data:
                     self.redis.hset_multiple(f"future:{future_id}", data)
                 if failed:
@@ -165,6 +178,7 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
                         result=result,
                         failed=failed,
                         error_message=error_message,
+                        **({"relay": False} if repeat else {}),
                     )
                 if not data.get("parent") and data.get("request_id"):
                     # On its own thread, so the sender never waits on the request's end.

@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+target: docker
+provider: local
+
+agents:
+  - name: HelloAgent
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/hello_agent.py
+    functions:
+      - name: hello
+        arguments:
+          - name: name
+            type: str
+        returns:
+          type: str
+
+  - name: PairAgent
+    resources:
+      cpu: 1
+      memory: 512
+    entrypoint: agents/pair_agent.py
+    functions:
+      - name: split
+        arguments:
+          - name: name
+            type: str
+        returns:
+          type: list
+
+  - name: Workflow
+    entrypoint: agents/workflow.py
+    functions:
+      - name: main
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: dict
+
+endpoint:
+  agent: Workflow
+  method: main
+
+logs: false

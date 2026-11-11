@@ -79,6 +79,7 @@ allowed-unresolved-imports = [
     "redis_client",
     "canyonos_context",
     "canyonos_health",
+    "canyonos_lazy",
     "deploy",
     "future",
     "human_input",

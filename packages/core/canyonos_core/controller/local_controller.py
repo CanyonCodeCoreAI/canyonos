@@ -70,18 +70,22 @@ try:
         ENDPOINT_AGENT_NAME,
         AgentCallError,
         Future,
+        convert_result,
         notify_result,
         wait_for_result,
     )
+    from canyonos_core.controller import lazy_values
     from canyonos_core.controller.utils import human_input
 except ImportError:
     from future import (
         ENDPOINT_AGENT_NAME,
         AgentCallError,
         Future,
+        convert_result,
         notify_result,
         wait_for_result,
     )
+    import canyonos_lazy as lazy_values
     import human_input
 
 human_input.install()
@@ -100,6 +104,7 @@ CANYONOS_FILES = {
     canyonos_context.__file__,
     gateway_headers.__file__,
     human_input.__file__,
+    lazy_values.__file__,
     sys.modules[Future.__module__].__file__,
 }
 
@@ -135,11 +140,33 @@ def log_source_name(agent_name):
     return agent_name or ENDPOINT_LOG_SOURCE
 
 
+def _future_refs(data):
+    """The Futures among a request's arguments, each as its path from the argument
+    name down and its declared return type. A request from a caller that predates
+    nested Futures lists only top-level argument names, with no type."""
+    refs = data.get("future_refs")
+    if refs is None:
+        refs = [{"path": [key]} for key in data.get("future_args", [])]
+    return refs
+
+
+def _at_path(value, path):
+    """The value at `path` inside the arguments: a name, then keys and indexes."""
+    for step in path:
+        value = value[step]
+    return value
+
+
+def _arg_label(path):
+    """An argument's place as a person reads it: `tests`, or `pr['tests'][0]`."""
+    return str(path[0]) + "".join(f"[{step!r}]" for step in path[1:])
+
+
 def _resolved(value):
     """Wait on every Future in `value`, at any depth of dicts, lists and tuples, and
-    return a copy with each one replaced by its result."""
+    return a copy with each one replaced by its result, as its declared type."""
     if isinstance(value, Future):
-        return value.value(timeout=FUTURE_RESULT_TIMEOUT_SECONDS)
+        return value.resolved(timeout=FUTURE_RESULT_TIMEOUT_SECONDS)
     if isinstance(value, dict):
         return {k: _resolved(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -617,7 +644,14 @@ class LocalController(object):
             return None
 
         try:
-            spec = importlib.util.spec_from_file_location(agent_module_name, agent_path)
+            # Agent code is rewritten as it loads so a Future waits only where a line
+            # uses its value; see lazy_values.
+            lazy_values.install(os.path.dirname(agent_path))
+            spec = importlib.util.spec_from_file_location(
+                agent_module_name,
+                agent_path,
+                loader=lazy_values.loader_for(agent_module_name, agent_path),
+            )
             if spec is None or getattr(spec, "loader", None) is None:
                 logger.error(
                     f"Cannot find spec or loader for module {agent_module_name} at {agent_path}"
@@ -942,7 +976,11 @@ class LocalController(object):
                 )
                 return
 
-        future_args = {key: args[key] for key in data.get("future_args", [])}
+        future_refs = _future_refs(data)
+        # Each Future argument's id, by where it sits: `tests`, or `pr['tests']` inside one.
+        future_args = {
+            _arg_label(ref["path"]): _at_path(args, ref["path"]) for ref in future_refs
+        }
         # Only the first hop's Redis holds the producer's record; later hops trust this check.
         if not route_to:
             for key, arg_future_id in future_args.items():
@@ -1003,7 +1041,7 @@ class LocalController(object):
                 submitted_at,
                 parent,
                 created_at,
-                future_args,
+                future_refs,
             )
             with self._executor_futures_lock:
                 self._executor_futures[executor_future] = (
@@ -1069,34 +1107,41 @@ class LocalController(object):
         self, args, future_args, timeout=FUTURE_RESULT_TIMEOUT_SECONDS
     ):
         """
-        Replace each arg named in future_args (its value is a Future id) with
-        that Future's result, waiting for it (wait_for_result). Other args
-        pass through unchanged.
+        Replace each Future in the args with its result, waiting for it
+        (wait_for_result), as the type its function declares. `future_args` lists
+        each one as a top-level argument name or as a reference from _future_refs,
+        whose value at that path is the Future's id. Other args pass through.
         """
-        resolved = {}
-        for key, value in args.items():
-            if key in future_args:
-                logger.info(
-                    "Arg '%s' is Future %s, waiting for result...",
-                    key,
-                    value,
+        resolved = dict(args)
+        copied = set()
+        for ref in future_args:
+            if isinstance(ref, str):
+                ref = {"path": [ref]}
+            path, label = ref["path"], _arg_label(ref["path"])
+            # Copy an argument before changing a Future inside it, never the caller's.
+            if len(path) > 1 and path[0] not in copied:
+                resolved[path[0]] = json.loads(json.dumps(resolved[path[0]]))
+                copied.add(path[0])
+            holder = _at_path(resolved, path[:-1])
+            future_id = holder[path[-1]]
+            logger.info(
+                "Arg '%s' is Future %s, waiting for result...", label, future_id
+            )
+            try:
+                text = wait_for_result(self.redis, future_id, timeout)
+            except TimeoutError:
+                # Another machine's Redis has no record of a producer that ran elsewhere.
+                producer = self.redis.hgetall(f"future:{future_id}")
+                source = (
+                    f" from {producer['service']}.{producer['method']}"
+                    if producer
+                    else ""
                 )
-                try:
-                    resolved[key] = wait_for_result(self.redis, value, timeout)
-                except TimeoutError:
-                    # Another machine's Redis has no record of a producer that ran elsewhere.
-                    producer = self.redis.hgetall(f"future:{value}")
-                    source = (
-                        f" from {producer['service']}.{producer['method']}"
-                        if producer
-                        else ""
-                    )
-                    raise TimeoutError(
-                        f"Timed out after {timeout}s waiting for argument '{key}'{source}."
-                    ) from None
-                logger.info("Future %s resolved for arg '%s'", value, key)
-            else:
-                resolved[key] = value
+                raise TimeoutError(
+                    f"Timed out after {timeout}s waiting for argument '{label}'{source}."
+                ) from None
+            holder[path[-1]] = convert_result(text, ref.get("returns"))
+            logger.info("Future %s resolved for arg '%s'", future_id, label)
         return resolved
 
     def _execute_locally(
@@ -1498,7 +1543,9 @@ class LocalController(object):
                     error_name="ReplicaRemovedError",
                 )
 
-    def _fan_out_to_consumers(self, future_id, result=None, failed=0, error_message=""):
+    def _fan_out_to_consumers(
+        self, future_id, result=None, failed=0, error_message="", relay=True
+    ):
         """Push a completed future (result or failure) to every address registered
         as a consumer on THIS machine's Redis.
 
@@ -1509,9 +1556,10 @@ class LocalController(object):
         always either the producer or the origin, so one of those sites fires; the
         value then re-fans-out at each machine it lands on, walking the graph.
 
-        Delivery is intentionally not deduped: a consumer's WriteResult just
-        re-writes the same value, so a redundant push (e.g. racing the immediate
-        push in _process_request) is idempotent and harmless.
+        A redundant push (e.g. racing the immediate push in _process_request) just
+        re-writes the same value. WriteResult passes `relay=False` for a value this
+        machine's Redis already held: it wakes this process's waiters but is not sent
+        on again, since every consumer in that Redis was sent it when it arrived.
         """
         if not future_id:
             return
@@ -1519,6 +1567,8 @@ class LocalController(object):
         notify_result(future_id)
         self._forwarded.pop(future_id, None)
         self._taken.discard(future_id)
+        if not relay:
+            return
         for address in self.redis.smembers(f"future:{future_id}:consumers"):
             if address and address != self._my_address:
                 self._send_result_callback(

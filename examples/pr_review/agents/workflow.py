@@ -31,9 +31,7 @@ class Workflow(object):
             pr = {"title": title, "diff": diff.strip("\n")}
 
         # Each call returns a Future at once and the next takes it as an argument,
-        # so all three are dispatched before any result. Each Future feeds one
-        # agent only: two agents waiting on the same one keep pushing its result
-        # to each other.
+        # so all three are dispatched before any result.
         tests = TestRunnerAgent().run(pr=pr)
         review = ReviewAgent().review(pr=pr, tests=tests)
         merge = MergeAgent().merge(pr=pr, review=review)
