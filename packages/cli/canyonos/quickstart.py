@@ -81,6 +81,9 @@ SKIPPED = object()
 # Seconds held between stages, so one that finishes instantly is still readable.
 STEP_PAUSE = 1.0
 
+# Shown once the run completes, for building a workflow of your own.
+FROM_SCRATCH_URL = "https://canyonos.readthedocs.io/en/latest/guides/FROM_SCRATCH/"
+
 # Where the bundled workflows sit inside the package. scripts/bundle-starters.ts
 # fills it from examples/; the wheel and the binary both carry it.
 STARTERS_DIR = "starters"
@@ -668,4 +671,7 @@ def _quickstart():
 
     ui.blank()
     ui.ok("CanyonOS quickstart completed.")
+    ui.blank()
+    ui.say("Do you want to build your own workflow?")
+    ui.hint(f"  CHECK OUT:{FROM_SCRATCH_URL}")
     return True
