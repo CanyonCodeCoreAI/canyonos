@@ -1,48 +1,53 @@
-# Guides
+# All guides
 
-## Building a workflow
+## Getting started
 
-- [Workflow design](WORKFLOW_DESIGN.md): how to think about a workflow, and how to
-  start one from scratch or convert an existing one.
-- [Limitations](LIMITATIONS.md): what CanyonOS doesn't support yet, and what your
-  app needs before porting.
-- [Prompt management](PROMPTS.md): viewing and editing agent prompts from the
+- [Installation](../INSTALLATION.md): install the CLI and check your machine.
+- [How it works](../HOW_IT_WORKS.md): what runs where when you deploy.
+- [What CanyonOS offers](COMPARISONS.md): what CanyonOS covers, and related tools.
+
+## Build a workflow
+
+- [Start from scratch](FROM_SCRATCH.md): create a workflow in plain Python, configure
+  it and deploy it, step by step.
+- [Configure your workflow](CONFIGURE.md): every file in `config`, how a change applies,
+  and the common changes.
+- [Convert an existing workflow](CONVERT_WORKFLOW.md): for an app built with another
+  framework; convert it with `canyonos convert`, then test, deploy and send requests.
+
+## Deploy
+
+- [Local](LOCAL.md): everything on this machine, with Docker.
+- [EC2](EC2.md): agents on EC2 machines, with `provider: ec2-pool` or `ec2-assign`.
+- [Kubernetes](KUBERNETES.md): the whole workflow on a Kubernetes cluster, run by the
+  CanyonOS operator.
+- [Dashboard](DASHBOARD.md): how to open the local dashboard, find a run, and read each
+  page.
+
+## Reference
+
+- [CLI reference](CLI.md): every `canyonos` command and its options.
+- [Workflow config](WORKFLOW_CONFIG.md): `config/workflow_config.yaml`, every key,
+  with defaults.
+- [LLM Gateway](LLM_GATEWAY.md): the models agents may use and what a call may cost, set
+  in `llms.yaml`, how OpenAI, Anthropic and Bedrock calls reach the gateway, and its
+  network limits.
+- [Prompt management](PROMPTS.md): agent prompts, and how to view and edit them on the
   dashboard.
-- [Autoscaling](SCALING.md): adding and removing agent replicas based on load.
-- [Dashboard](DASHBOARD.md): opening the local dashboard, finding a run, and what
-  each page shows.
-- [CLI reference](CLI.md): every `canyonos` command and what it does.
-- [Kubernetes deployment](KUBERNETES.md): the operator, `canyonos target kubernetes`
-  and the `kubernetes:` block.
+- [Autoscaling](SCALING.md): the policy that adds and removes agent replicas under load.
+- [Runtime contract](RUNTIME_CONTRACT.md): how agents are loaded, called, stubbed and
+  torn down.
+- [Images and dependencies](IMAGES_AND_DEPENDENCIES.md): what Python can import from
+  `/app`, what gets installed, and what the build leaves out.
+- [Troubleshooting](TROUBLESHOOTING.md): symptoms and their likely causes, by deployment
+  phase.
 
-## Contract reference
+## In depth
 
-These pages describe the contract CanyonOS Core enforces when it builds and
-runs a project: the directory shape, the manifest keys,
-how containers load and execute your code, what goes into each image, how
-model calls are proxied, what EC2 needs, and how to read a failure.
-
-Everything here is traced from the code in `packages/core` and `packages/cli`.
-If a page and the code disagree, the code is right. Open an issue or a PR
-against the page.
-
-The `converting-to-canyonos` skill in `skills/` is the procedure
-`canyonos convert` follows to turn an application into a `.canyon`. It works
-against this contract but is not part of it.
-
-### Pages
-
-- [Project layout](BUILD_ARTIFACT.md): which folder is the project root, what
-  becomes `/app` in the containers, and the names the platform uses.
-- [`workflow_config.yaml`](WORKFLOW_CONFIG.md): how to write the deploy file,
-  and every key in it, with defaults.
-- [Runtime contract](RUNTIME_CONTRACT.md): how agents are
-  loaded, called, stubbed and torn down.
-- [Images and dependencies](IMAGES_AND_DEPENDENCIES.md): what Python can
-  import from `/app`, what gets installed, and what the build leaves out.
-- [LLM gateway](LLM_GATEWAY.md): how OpenAI, Anthropic and Bedrock calls are
-  routed through the in-container gateway.
-- [EC2 deployment](EC2.md): configuration, networking and cleanup for
-  `provider: ec2-pool`.
-- [Troubleshooting](TROUBLESHOOTING.md): symptoms and their likely causes,
-  by deployment phase.
+- [Workflow design](WORKFLOW_DESIGN.md): how we think about workflows, and when to split
+  work into agents.
+- [Workflow layout](BUILD_ARTIFACT.md): which folder is the workflow root, what becomes
+  `/app` in the containers, and the names the platform uses.
+- [What a workflow needs](WORKFLOW_REQUIREMENTS.md): what an existing app has to meet
+  before you convert it.
+- [Architecture](../architecture/README.md): how each component works inside.

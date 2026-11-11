@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" font-family="Lato, 'Helvetica Neue', Arial, sans-serif" role="img" aria-labelledby="title">
+  <!-- SPDX-FileCopyrightText: 2026 Canyon Code, Inc. -->
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <title id="title">canyonos deploy starts the Global Controller, which builds and starts your workflow's agent replicas, sends telemetry to the Dashboard and keeps shared state in Redis. Your app sends a request to the Endpoint, which routes it to Agent A; Agent A calls Agent B, and each agent's LLM Gateway sends its model calls to the model providers.</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+    </marker>
+    <style>
+      .zone { fill: none; stroke: #b9c4cc; stroke-width: 1; stroke-dasharray: 5 4; }
+      .zone-label { font-size: 13px; font-weight: 700; fill: #6b7b88; }
+      .box { fill: #f4f7f9; stroke: #8a99a6; stroke-width: 1.2; }
+      .outside { fill: #ffffff; stroke: #8a99a6; stroke-width: 1.2; }
+      .part { fill: #ffffff; stroke: #c3cdd5; stroke-width: 1; }
+      .line { fill: none; stroke: #666; stroke-width: 1.3; }
+      .dashed { stroke-dasharray: 4 3; }
+      .arrow { marker-end: url(#arrow); }
+      .label { font-size: 15px; font-weight: 700; fill: #2c3e50; text-anchor: middle; }
+      .caption { font-size: 12px; fill: #5a6a77; text-anchor: middle; }
+      .small { font-size: 13px; fill: #404040; text-anchor: middle; dominant-baseline: central; }
+      .edge { font-size: 12px; fill: #777; text-anchor: middle; }
+      .edge-start { font-size: 12px; fill: #777; }
+    </style>
+  </defs>
+
+  <!-- You -->
+  <rect class="outside" x="20" y="50" width="180" height="70" rx="4"/>
+  <text class="label" x="110" y="80">canyonos deploy</text>
+  <text class="caption" x="110" y="101">the CLI, on your machine</text>
+
+  <rect class="outside" x="20" y="330" width="180" height="70" rx="4"/>
+  <text class="label" x="110" y="360">Your app</text>
+  <text class="caption" x="110" y="381">or curl</text>
+
+  <!-- Control plane -->
+  <rect class="zone" x="240" y="16" width="560" height="128" rx="6"/>
+  <text class="zone-label" x="252" y="36">Control plane</text>
+
+  <rect class="box" x="260" y="50" width="180" height="70" rx="4"/>
+  <text class="label" x="350" y="76">Global Controller</text>
+  <text class="caption" x="350" y="95">builds images, starts, heals</text>
+  <text class="caption" x="350" y="110">and scales your agents</text>
+
+  <rect class="box" x="500" y="50" width="130" height="70" rx="4"/>
+  <text class="label" x="565" y="76">Dashboard</text>
+  <text class="caption" x="565" y="95">traces, logs,</text>
+  <text class="caption" x="565" y="110">metrics and spend</text>
+
+  <rect class="box" x="650" y="50" width="130" height="70" rx="4"/>
+  <text class="label" x="715" y="76">Redis</text>
+  <text class="caption" x="715" y="95">replica addresses,</text>
+  <text class="caption" x="715" y="110">results, live config</text>
+
+  <path class="line arrow" d="M200,85 H258"/>
+  <text class="edge" x="229" y="77">deploy</text>
+  <path class="line arrow" d="M440,85 H498"/>
+  <text class="edge" x="469" y="77">telemetry</text>
+
+  <!-- Your workflow -->
+  <rect class="zone" x="240" y="250" width="705" height="215" rx="6"/>
+  <text class="zone-label" x="252" y="270">Your workflow: each replica is a container</text>
+
+  <rect class="box" x="260" y="330" width="140" height="70" rx="4"/>
+  <text class="label" x="330" y="360">Endpoint</text>
+  <text class="caption" x="330" y="381">your HTTP API</text>
+
+  <rect class="box" x="450" y="285" width="220" height="160" rx="4"/>
+  <text class="label" x="560" y="306">Agent A replica</text>
+  <rect class="part" x="470" y="318" width="180" height="30" rx="3"/>
+  <text class="small" x="560" y="333">your code</text>
+  <rect class="part" x="470" y="356" width="180" height="30" rx="3"/>
+  <text class="small" x="560" y="371">Local Controller: calls</text>
+  <rect class="part" x="470" y="394" width="180" height="30" rx="3"/>
+  <text class="small" x="560" y="409">LLM Gateway: model calls</text>
+
+  <rect class="box" x="710" y="285" width="220" height="160" rx="4"/>
+  <text class="label" x="820" y="306">Agent B replica</text>
+  <rect class="part" x="730" y="318" width="180" height="30" rx="3"/>
+  <text class="small" x="820" y="333">your code</text>
+  <rect class="part" x="730" y="356" width="180" height="30" rx="3"/>
+  <text class="small" x="820" y="371">Local Controller: calls</text>
+  <rect class="part" x="730" y="394" width="180" height="30" rx="3"/>
+  <text class="small" x="820" y="409">LLM Gateway: model calls</text>
+
+  <!-- Model providers -->
+  <rect class="outside" x="990" y="370" width="190" height="78" rx="4"/>
+  <text class="label" x="1085" y="394">Model providers</text>
+  <text class="caption" x="1085" y="415">OpenAI-format APIs,</text>
+  <text class="caption" x="1085" y="431">Anthropic, AWS Bedrock</text>
+
+  <!-- Request path -->
+  <path class="line arrow" d="M200,365 H258"/>
+  <text class="edge" x="229" y="357">request</text>
+  <path class="line arrow" d="M400,365 H448"/>
+  <text class="edge" x="424" y="357">routes</text>
+  <path class="line arrow" d="M650,333 H728"/>
+  <text class="edge" x="689" y="325">calls</text>
+  <path class="line arrow" d="M910,409 H988"/>
+  <text class="edge" x="967" y="401">models</text>
+
+  <!-- Control plane to the workflow -->
+  <path class="line arrow" d="M350,120 V248"/>
+  <text class="edge-start" x="358" y="190">starts and replaces replicas</text>
+  <path class="line dashed" d="M715,120 V250"/>
+  <text class="edge-start" x="723" y="190">shared state</text>
+</svg>

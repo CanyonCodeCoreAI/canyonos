@@ -2,15 +2,18 @@
 
 Work we plan to do next. Nothing here is promised for a specific release.
 
+## Design philosophy
 
-## Design Philosophy
-
-We greatly advocate for simplicity in the workflows you build, and we strive for that too. We will be folding in and consolidating pieces of CanyonCode that you currently have to manually configure for runtime, for the eventual code of being able to run pure plain python code on CanyonOS.
+We strongly advocate simplicity in the workflows you build, and we strive for it too.
+We will fold in and consolidate the pieces of CanyonOS that you currently have to
+configure by hand for the runtime, with the eventual goal of running plain Python code
+on CanyonOS.
 
 Things we will address:
-- Everything needs to be in a Class
-- Needing to add .value() when you want to call the result of a function
-Note: All of these problems are handled by our skill file, try it out!
+
+- Everything needs to be in a class.
+
+Note: Our skill file handles all of these problems, so try it out!
 
 ## Stale future detection
 

@@ -1,99 +1,114 @@
 # Images and dependencies
 
-How the built image resolves imports, what gets installed, and what the copy
-of the project root leaves out.
+How CanyonOS builds each agent's image: what it copies and installs, how imports resolve
+inside it, and what `canyonos validate` checks first. Read it when an agent fails at
+start with an import error or a missing file.
 
 ## What `/app` can import
 
-The image copies the build context into `/app`, sets it as the working
-directory, and the controller adds `/app` and its `grpc_stubs` to `sys.path`.
-Nothing sets `PYTHONPATH` and nothing is installed from the source tree.
-Python resolves names rooted at `/app`:
+Each image is built on `python:3.11-slim`, copies its build context into `/app`, and
+starts there. The agent's controller puts `/app` and `/app/grpc_stubs` on `sys.path`.
+Nothing sets `PYTHONPATH` and nothing is installed from your source tree, so every
+import resolves from `/app`:
 
-- `/app/tools.py` as `import tools`
-- `/app/pkg/__init__.py` as `import pkg`
-- `/app/src/agents/` as `import src.agents`, including namespace directories
-  without `__init__.py`
+| File in the image      | Imports as                                                    |
+| ---------------------- | ------------------------------------------------------------- |
+| `/app/tools.py`        | `import tools`                                                |
+| `/app/pkg/__init__.py` | `import pkg`                                                  |
+| `/app/src/agents/`     | `import src.agents`, including a folder without `__init__.py` |
+| `/app/source/pkg/`     | `import source.pkg`, never `import pkg`                       |
 
-`/app/source/pkg` is not `import pkg`. There is exactly one import root, and
-it is the project root. If the application imports `tools` from a `src/`
-directory, the root has to be a copy of `src/`, not of the repository, and
-`entrypoint` is then relative to that. If the source
-imports both `tools` and `src.tools`, no single root serves both.
+The workflow root is the only import root. If your app imports `tools` from a `src/`
+folder, make the workflow root a copy of `src/`, not of the repository; each
+`entrypoint` is then relative to it. Code that imports both `tools` and `src.tools`
+has no single root that serves both.
 
-## Packaging metadata is not installed
+## What gets installed
 
-No image runs `pip install -e .` and none reads `pyproject.toml` or the
-application's `requirements.txt`. Both files are swept into the image as
-plain files and do nothing there. A `pyproject.toml` added to the copy does
-not put a package on `sys.path`.
+Each image installs the platform's base list plus that agent entry's `requirements`,
+and nothing else. [Per-image requirements](WORKFLOW_CONFIG.md#per-image-requirements)
+lists the base packages, the version caps and the floors the build enforces.
 
-Each image installs the platform base list plus that entry's `requirements`
-from the manifest. See [Per-image
-requirements](WORKFLOW_CONFIG.md#per-image-requirements) for the base list,
-the version caps and the floors the build enforces.
+- No image runs `pip install -e .` or reads `pyproject.toml` or your app's
+  `requirements.txt`. A `pyproject.toml` in the copy is a plain file and puts nothing
+  on `sys.path`.
+- After the install, the build runs `uv pip check` and prints a note when packages
+  conflict. The build doesn't fail on it.
+- The generated `*_pb2.py` modules check the `protobuf` floor when imported, so the
+  build forces that floor even past a requirement that asks for less.
+- The LLM Gateway runs from its own Python 3.12 environment in the image, so its pins
+  never meet yours. It gets `boto3` only when your code can import it.
 
-## What the sweep copies
+A wrong PyPI name or a missing distribution fails the image build inside
+`canyonos deploy`. `canyonos validate` installs nothing, so it can't catch either.
 
-The build context starts as a copy of everything under the project root at its
-relative path, Python or not: prompt templates, JSON schemas, PDFs,
-certificates, framework yaml files. Because the container starts at `/app`,
-a path derived from the original repository root or from the process working
-directory has to still land inside the copy.
+## What the copy includes
 
-The sweep leaves out:
+The build context starts as a copy of everything under the workflow root, at its
+relative path, Python or not: prompt templates, JSON schemas, PDFs, certificates,
+framework YAML files. The container starts at `/app`, so a path your code builds from
+the repository root or the working directory still has to land inside the copy.
 
-- hidden files and directories (anything starting with `.`, so `.env` and
-  `.streamlit/` never reach an image)
-- symlinks, which are not followed
-- `__pycache__`, `.pyc`, `.pyo`, `.pyd`
-- `node_modules`, `venv`, `site-packages`, `*.egg-info`
-- PEM private keys and `.p12`, `.pfx`, `.jks` files, wherever they are
-- at the root of the copy only: `Dockerfile`, `requirements.txt`,
-  `stubs/`, `grpc_stubs/`, `docker_container/`
+The copy leaves out:
 
-The build prints one `Note:` per category for hidden paths and symlinks with
-up to five examples, and one `Warning:` per private key and per reserved name.
-Bytecode, the generated directories and common hidden names like `.git` and
-`.venv` are dropped silently. A context above 100 MB gets a size warning.
+| Left out                                                                               | Where         | Reported as                                                                                                            |
+| -------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Hidden files and folders, such as `.streamlit/`                                        | Anywhere      | One `Note:` listing up to 5. Nothing for common names such as `.git`, `.venv`, `.env`, `.vscode` and `*_cache` folders |
+| Symlinks, which are never followed                                                     | Anywhere      | One `Note:` listing up to 5                                                                                            |
+| `node_modules`, `venv`, `site-packages`, `*.egg-info`                                  | Anywhere      | One `Note:` listing up to 5                                                                                            |
+| PEM private keys, found by their `PRIVATE KEY` block, and `.p12`, `.pfx`, `.jks` files | Anywhere      | One `Warning:` per file                                                                                                |
+| `Dockerfile`, `requirements.txt`                                                       | Workflow root | One `Warning:` per file                                                                                                |
+| `config/`, `stubs/`, `grpc_stubs/`, `docker_container/`                                | Workflow root | Nothing                                                                                                                |
+| `__pycache__`, `.pyc`, `.pyo`, `.pyd`                                                  | Anywhere      | Nothing                                                                                                                |
 
-An asset behind one of those rules never reaches the image. Move it out of the
-dotted path or symlink, or copy the target in.
+A copy over 100 MB gets a warning naming its largest file.
 
-After the sweep the build writes on top of it, and later writes win:
+A file behind one of these rules never reaches the image. Move it out of the hidden
+path or `config/`, or copy a symlink's target in. Your code can't read `config/` at run
+time; agents get what they need from it through CanyonOS.
 
-- the platform's runtime modules at the context root (`future.py`,
-  `canyonos_context.py`, `canyonos_governance.py`, `canyonos_health.py`,
-  `gateway_headers.py`, `local_controller.py`, `local_controller_frontend.py`,
-  `redis_client.py`, `grpc_options.py`, `log_entry.py`, `gpu_metrics.py`,
-  `log_handler.py`, `human_input.py`)
-- the generated `*_pb2.py` and `*_pb2_grpc.py` modules
-- `canyonos_core/`, holding only the LLM gateway and an `__init__.py` that sets
-  `__version__`
-- every agent's stub, at its entrypoint path and at the root under its
-  basename
-- the agent's own entrypoint, at the root
+A file in the image isn't always one your framework finds. A framework that falls back
+to an empty configuration when a YAML file is missing fails later, when the first agent
+or task is used, not at import.
 
-A module of your own at the root of the copy with one of those names is
-overwritten. `canyonos validate` reports it as `CANYON-FLAT-COLLISION`.
+## What the build writes on top
 
-Copying a file into the image does not mean the framework finds it.
-Frameworks that fall back to an empty configuration when a yaml is missing
-fail later, when the first agent or task is used, not at import.
+After the copy, the build writes these into the context, in this order; later writes
+win:
+
+1. The platform's runtime modules, at the root: `future.py`, `canyonos_context.py`,
+   `canyonos_governance.py`, `canyonos_health.py`, `gateway_headers.py`,
+   `local_controller.py`, `local_controller_frontend.py`, `redis_client.py`,
+   `grpc_options.py`, `log_entry.py`, `gpu_metrics.py`, `log_handler.py`,
+   `human_input.py` and `canyonos_lazy.py`.
+2. Every agent's stub, at its `entrypoint` path and at the root under its basename;
+   see [Agent functions and stubs](RUNTIME_CONTRACT.md#agent-functions-and-stubs).
+3. The generated `*_pb2.py` and `*_pb2_grpc.py` modules, at the root.
+4. `canyonos_core/`, holding only the LLM Gateway and an `__init__.py` that sets
+   `__version__`.
+5. The agent's own entrypoint, at the root.
+
+A module of yours at the workflow root with one of those names is replaced.
+`canyonos validate` reports it as `CANYON-FLAT-COLLISION`.
 
 ## What `canyonos validate` checks
 
-`canyonos validate` never builds an image, installs a
-package or serves a request. It checks the schema of the manifest and
-that every entrypoint exists (`CANYON-SCHEMA`), that the entrypoint has
-a module-level class named after the entry with a no-argument constructor and
-synchronous methods matching its `functions` (`CANYON-ADAPTER-CLASS`,
-`CANYON-ADAPTER-INIT`, `CANYON-ADAPTER-SIGNATURE`, `CANYON-ADAPTER-ASYNC`), that a
-package `__init__.py` does not re-export from a stubbed entrypoint
-(`CANYON-PACKAGE-REEXPORT`), and the root-name collision above
-(`CANYON-FLAT-COLLISION`). Exit code 0 means nothing found, 1 means findings,
-2 means the check could not run. `canyonos deploy` runs the same checks first,
-and stops before building anything if they find a problem or cannot run.
+`canyonos validate` reads your code and the workflow config. It never builds an image,
+installs a package or serves a request. `canyonos deploy` runs the same checks first,
+and stops before building anything if they find a problem or can't run.
 
-Packaging errors, a wrong PyPI name, a missing distribution: those surface in
-the image build inside `canyonos deploy`, not here.
+| Code                       | What it checks                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------- |
+| `CANYON-SCHEMA`            | The workflow config's schema, and that every `entrypoint` exists                      |
+| `CANYON-ADAPTER-CLASS`     | The entrypoint parses and has a module-level class named after the entry              |
+| `CANYON-ADAPTER-INIT`      | The class can be built with no arguments                                              |
+| `CANYON-ADAPTER-SIGNATURE` | The class has a method for each of its `functions`, taking the declared arguments     |
+| `CANYON-ADAPTER-ASYNC`     | Those methods are not `async def`                                                     |
+| `CANYON-PACKAGE-REEXPORT`  | No package `__init__.py` re-exports from an entrypoint that is a stub in other images |
+| `CANYON-FLAT-COLLISION`    | No module at the workflow root has the name of a runtime module                       |
+
+| Exit code | Meaning                  |
+| --------- | ------------------------ |
+| `0`       | No findings              |
+| `1`       | Findings, listed above   |
+| `2`       | The checks could not run |

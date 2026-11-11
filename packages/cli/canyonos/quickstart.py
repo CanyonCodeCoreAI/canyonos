@@ -633,7 +633,7 @@ def _quickstart():
     passed = _typed(
         "canyonos doctor",
         run_doctor,
-        "check Docker and everything else a deploy needs",
+        "check that Docker is installed and running, with Docker Compose",
     )
     if passed is None:
         return False

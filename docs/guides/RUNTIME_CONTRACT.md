@@ -1,77 +1,33 @@
 # Runtime contract
 
-How CanyonOS Core finds your code, wraps it in containers, calls it, and
-tears it down. Nothing here is optional or environment dependent; the same
-rules apply under every provider.
+The rules CanyonOS applies to your code once it runs: how it loads each agent, how
+agents call each other, what the endpoint accepts and answers, and which calls policy
+refuses. Read it when you write agent code by hand, or when a deploy comes up but
+behaves differently from your app.
 
 ## Discovery
 
-`canyonos deploy` reads everything from the [project root](BUILD_ARTIFACT.md).
+`canyonos deploy` reads everything from the [workflow root](BUILD_ARTIFACT.md):
 
-| Input | Where |
-|---|---|
-| manifest | `config/workflow_config.yaml` |
-| agent functions | `functions` on an agent entry |
-| entrypoint | `entrypoint` on an agent entry, relative to the project root |
-| endpoint | `endpoint:` in the manifest, naming the agent method served over HTTP |
-| policy | `policy.yaml` next to the manifest |
-| generated files | `stubs/`, `grpc_stubs/`, `docker_container/` in the project root |
+| Input            | Where it comes from                                                   |
+| ---------------- | --------------------------------------------------------------------- |
+| Workflow config  | `config/workflow_config.yaml`                                         |
+| Agent class      | `entrypoint` on an agent entry, relative to the workflow root         |
+| Agent functions  | `functions` on an agent entry                                         |
+| Endpoint         | The `endpoint:` block, naming the agent method served over HTTP       |
+| Policy           | `config/policy.yaml`                                                  |
+| Governance rules | `config/governance.yaml`                                              |
+| Generated files  | `stubs/`, `grpc_stubs/` and `docker_container/`, written by the build |
 
-Two names have to agree for every agent:
+An agent entry's `name` must equal the name of a module-level class in its
+`entrypoint` file. `canyonos deploy` runs the [`canyonos validate`
+checks](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks) first, so a missing
+entrypoint, a schema error or a class it can't find stops the deploy before anything
+is built.
 
-```text
-manifest entry name == class name in the entrypoint
-```
+## Agent class
 
-A missing entrypoint file or a schema error stops the
-deploy before anything is built. A class name that does not match is only
-found when the container starts: the agent fails to load, the replica reports
-`failed`, and `canyonos deploy` prints that container's log and fails.
-
-## Agent functions and stubs
-
-Each agent entry produces one Python stub: a class with the entry's name and
-one method per function in its `functions`. Each method takes the declared
-arguments as keywords, with no defaults, and returns a `Future` right away.
-The stub imports nothing from your code, which is why argument and return
-types are limited to builtins (see [Manifest reference](WORKFLOW_CONFIG.md#agent-functions)).
-
-The stub is written into every build context, including the agent's own, in
-two places: at the agent's `entrypoint` path, and at the context root under
-that path's basename. The build then copies the real entrypoint module to the
-context root last, in that agent's own context only. So for
-`entrypoint: pkg/agent.py`:
-
-| Image | `/app/pkg/agent.py` | `/app/agent.py` |
-|---|---|---|
-| any peer | stub | stub |
-| the agent's own | stub | real module |
-
-The agent container loads `/app/agent.py`. Anything else in that image that
-imports `pkg.agent` gets the stub, even inside the agent's own container.
-An entrypoint at the root of the copy has one file, and the real module wins
-there.
-
-What the stub replaces is one module. Everything around it is real:
-
-- The package `__init__.py` runs before the stub. If it re-exports a name
-  from the stubbed module, every peer image raises `ImportError` at start.
-  `canyonos validate` reports this as `CANYON-PACKAGE-REEXPORT`.
-- Sibling modules are present, but only this entry's `requirements` are
-  installed. Add what those siblings import to the entry that ships them.
-- The stub defines the declared class and nothing else. Module constants,
-  helper functions and other classes the original module exported do not
-  exist in a peer image.
-
-Two agents cannot share an entrypoint, because the second stub overwrites
-the first. Two entrypoints in different directories with the same basename
-collide at the context root the same way. Nothing checks either case up
-front.
-
-## Adapter shape
-
-The entrypoint holds a module-level class named exactly like the manifest
-entry. The controller does, in effect:
+In effect, the agent's container does this at start and on each call:
 
 ```python
 module = load(entrypoint)
@@ -79,46 +35,110 @@ agent = getattr(module, configured_name)()
 result = getattr(agent, method_name)(**args)
 ```
 
-So:
+| Rule              | What it means for your code                                                                                                                                                                                                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Construction      | The class takes no constructor arguments (`CANYON-ADAPTER-INIT`)                                                                                                                                                                                                                                         |
+| Arguments         | Keyword arguments named as in `functions`, sent as JSON, so an `int` stays an `int`. An argument's declared `type` converts nothing. A `Future` argument, alone or inside a `dict`, `list` or `tuple`, arrives as its result: the type the called function declares under `returns`, or text without one |
+| Synchronous calls | Methods are called synchronously. An `async def` is not awaited, and its coroutine's `repr` becomes the result (`CANYON-ADAPTER-ASYNC`)                                                                                                                                                                  |
+| Concurrency       | Calls run on a pool of 16 threads against one instance (`CANYONOS_MAX_AGENT_INSTANCES`), and wait in line when all are busy. Keep state on `self` safe for that, or use `replicas: 1` and `stateful: true`                                                                                               |
+| Results           | A `dict` or `list` result is JSON-encoded. Anything else becomes `str(result)`                                                                                                                                                                                                                           |
+| Module loading    | The entrypoint is loaded from `/app/<basename>.py` as a top-level module, so its module-level code runs at container start, before any request                                                                                                                                                           |
+| Relative imports  | A relative import in the entrypoint fails with `attempted relative import with no known parent package`. Modules it imports absolutely keep theirs                                                                                                                                                       |
+| File names        | A segment that isn't a Python identifier, such as `06_agent.py`, loads, but a caller's `from steps.06_agent import X` is a `SyntaxError`                                                                                                                                                                 |
 
-- Construction takes no arguments.
-- Declared methods take the `functions` argument names as keywords. Arguments
-  travel as JSON, so an `int` stays an `int`. A `Future` passed as an
-  argument, on its own or anywhere inside a dict, list or tuple, is replaced by
-  its result, read back as the type the called function declares under
-  `returns`: a `dict` stays a `dict`. With no declared return type it is the
-  stored text. An argument's own declared `type` is never used to convert
-  anything.
-- Methods are called synchronously. An `async def` is not awaited, and its
-  coroutine's `repr` is what lands in Redis. `canyonos validate` reports
-  `CANYON-ADAPTER-ASYNC`.
-- Calls run on a thread pool of 16 workers against one instance, so the
-  instance is shared between concurrent requests. State on `self` needs to
-  be safe for that, or the entry needs `replicas: 1` and `stateful: true`.
-- A `dict` or `list` result is JSON-encoded before it enters Redis. Anything
-  else becomes `str(result)`.
+Readiness is published only after the agent has loaded. If the import or the
+constructor raises, the replica reports `failed`, stops serving and exits.
+`canyonos deploy` then prints the last lines of the container's log between
+`--- begin container log` and `--- end container log`, and fails.
 
-The module is loaded from `/app/<basename>.py` as a top-level module. It runs
-as a normal import, so module-level code executes at container start, before
-any request. Relative imports in the entrypoint itself fail with `attempted
-relative import with no known parent package`, because the module has no
-parent package. Modules it imports absolutely keep their own relative
-imports.
+## Agent functions and stubs
 
-An entrypoint path segment that is not a Python identifier (`06_agent.py`,
-`travel-planner.py`) loads fine, since the controller loads by file path,
-but a calling agent's `from steps.06_agent import X` is a `SyntaxError`.
+Agents call each other through stubs. Each agent entry produces one Python stub: a
+class with the entry's name and one method per entry in its `functions`. A stub method
+takes the declared arguments, with no defaults, and returns a `Future` right away, which
+your code uses as the result; see [Results of agent calls](#results-of-agent-calls).
+The stub imports nothing from your code, so argument and return types are limited to
+builtins; see [Agent functions](WORKFLOW_CONFIG.md#agent-functions).
 
-If the import or the constructor raises, the controller marks the replica
-`failed`, stops its gRPC server, kills the gateway, and exits. Readiness is
-published only after the agent has loaded. Under `canyonos deploy` you see
-the last lines of the container log between `--- begin container log` and
-`--- end container log`.
+Every image gets every agent's stub at two paths: the agent's `entrypoint` path, and the
+image root under that path's basename. The agent's own image then copies the real
+module to the root. For `entrypoint: pkg/agent.py`:
+
+| Image             | `/app/pkg/agent.py` | `/app/agent.py` |
+| ----------------- | ------------------- | --------------- |
+| Any other agent's | stub                | stub            |
+| The agent's own   | stub                | real module     |
+
+The agent's container loads `/app/agent.py`; anything else in its image that imports
+`pkg.agent` gets the stub. An entrypoint at the workflow root has only one copy, and
+the real module wins there.
+
+The stub replaces one module. Everything around it is real:
+
+| Situation                                                           | Result                                                                                              |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| The package `__init__.py` re-exports a name from the stubbed module | Every other agent's image raises `ImportError` at start (`CANYON-PACKAGE-REEXPORT`)                 |
+| A sibling module imports a package                                  | Only this entry's `requirements` are installed; add the package to the entry that ships the sibling |
+| Code uses a constant, helper or other class from the stubbed module | It doesn't exist in other agents' images: the stub defines only the declared class                  |
+| Two agents share an entrypoint                                      | The second stub overwrites the first. Nothing checks this up front                                  |
+| Two entrypoints in different folders share a basename               | They collide at the image root the same way. Nothing checks this up front                           |
+
+The stubs and `ask_human` are the only parts of CanyonOS your code imports. The
+`canyonos_core` package in an image holds only the LLM Gateway, so importing anything
+else from it raises `ImportError` at start.
+
+### Results of agent calls
+
+Agent code uses another agent's result as if the call had returned it. CanyonOS waits
+for the result only at the line that first needs it:
+
+```python
+draft = Writer().run(query=query)       # sent, nothing waits
+stats = Counter().count(text=draft)     # passed on: Counter's replica waits for it
+if stats["words"] > 100:                # waits here, and stats is a dict
+    draft = Writer().run(query=f"Shorten: {draft}")
+return {"draft": draft, "stats": stats} # passed on: the endpoint waits for it
+```
+
+The Local Controller rewrites the workflow's modules that call an agent as it loads
+them: those that import an agent's class, directly or through another of the
+workflow's modules. Every other module, such as a helper module or an agent that calls
+no other, loads as written and runs at full speed. So do the standard library,
+installed packages and the stubs. In the rewritten code:
+
+| Code                                                                                                                        | What it gets                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A line that uses the value: an operator, a comparison, `if`, `for`, an index, a method or attribute, an f-string, unpacking | The result, as the type the function declares under `returns`, or the stored text without one                                                                           |
+| `await a`                                                                                                                   | The result, without blocking the event loop. `asyncio.gather` and `asyncio.wait_for` take a `Future` like any awaitable                                                 |
+| A line that only passes the value on: assigning it, putting it in a list or dict, returning it                              | The `Future`, so nothing waits                                                                                                                                          |
+| A call to another agent, or to a function, method or class of a rewritten module                                            | The `Future`                                                                                                                                                            |
+| Any other call: a library, `print`, `json.dumps`, a module loaded as written                                                | The results, also inside dicts, lists, tuples, sets and generators, and in the attributes of the workflow's own objects                                                 |
+| `.value()`                                                                                                                  | Waits and returns the stored text, so code written that way keeps working. `.value`, `.resolved` and `.is_available` are always read on the `Future`, not on its result |
+
+A call that fails raises at the line that uses its result. Calls run at the same time
+until something uses their results, so a list built in a comprehension or with
+`.append` sends every call before the first wait:
+
+```python
+results = [agent.work(item=item) for item in items]   # all sent at once
+done = [r for r in results if r["ok"]]                # waits here
+```
+
+A generator, such as `sum(agent.count(x=x) for x in items)`, waits for each result
+before it sends the next call.
+
+These load as written, so their code gets the `Future` and has to call `.value()`:
+
+- A module that imports no agent but calls one it is handed, such as
+  `def run(agent): return agent.ask(q=q).upper()`.
+- A file with a `# canyonos: no-rewrite` line.
+- Every agent's modules, when `.env` sets `CANYONOS_LAZY_VALUES=0`.
 
 ## Endpoint
 
-The endpoint serves an agent method over HTTP. A typical target is an agent that
-takes the request and calls the others:
+The endpoint serves one agent method over HTTP, chosen in the `endpoint:` block of the
+workflow config. CanyonOS runs it in its own container; you write no server code. A
+typical target is an agent that takes the request and calls the others:
 
 ```python
 from pkg.agent import Agent
@@ -132,235 +152,195 @@ class Workflow:
 ```
 
 ```yaml
-agents:
-  - name: Workflow
-    entrypoint: workflow.py
-    functions:
-      - name: main
-        arguments:
-          - name: query
-            type: str
-        returns:
-          type: list
-```
-
-The top-level `endpoint:` block in the manifest picks the method served
-over HTTP:
-
-```yaml
 endpoint:
-  api_port: 8080
   agent: Workflow
   method: main
 ```
 
-CanyonOS runs the endpoint itself, in its own container on the machine that
-runs `canyonos deploy`, and publishes it on `api_port` (default 8080, else the next free port).
-[Endpoint](../architecture/ENDPOINT.md) shows how a request travels through it.
-The agents' stubs and `ask_human` are the target agent's only imports of the platform.
-`canyonos_core` inside the image holds the LLM gateway only, so importing
-anything else from it raises `ImportError` at start.
+List `main` in `Workflow`'s `functions`, with its arguments. The port and the other
+endpoint settings are in [Workflow config](WORKFLOW_CONFIG.md#top-level-keys).
+[Endpoint internals](../architecture/ENDPOINT.md) shows how a request travels.
 
-Requests arrive as `POST /<method>` (`POST /main` above)
-with a JSON object body. Every key becomes a keyword argument; `_context` is
-popped first and used for policy. An empty body is a call with no
-arguments. A body that is not a JSON object is a `400`. `canyonos test`, the
-curl example `canyonos deploy` prints, and the dashboard take the argument
-names from that method's `functions[].arguments`, not from its signature.
+### Requests
 
-Each request runs the method as a future on a replica of the target agent, at
-most once per delivery the replica accepts. A replica that dies mid-run loses
-the request. The method takes one of that replica's
-`CANYONOS_MAX_AGENT_INSTANCES` slots (default 16) and waits in line when all
-are busy. `GET /status/<request_id>` reads that future: `pending` until it
-finishes, then `done` with the result or `error` with the message, and
-`input_required` with the question while an agent waits for the person. A
-`Future` left in the returned value, at any depth of a dict, list or tuple,
-is replaced by its result, as the type its function declares under `returns`,
-before serialising. CanyonOS waits up to 65 minutes for the result
-of a `Future` passed as an argument or left in the returned value, so a call
-whose result is lost, for example because its replica died, fails after 65
-minutes. A result that is
-not a dict is wrapped as `{"value": result}`. A result that cannot be
-serialised as JSON fails the request with `... is not JSON serializable`.
+| Request                     | Body                                       | Answer                                                                                   |
+| --------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `POST /<method>`            | A JSON object with every declared argument | `202` with `{"request_id"}`; `403` if [policy](#policy) refuses it; `400` for a bad body |
+| `GET /status/<request_id>`  | None                                       | `200` with the status below; `404` for an unknown request                                |
+| `POST /answer/<request_id>` | A JSON object with the answer's keys       | `202` once passed on; `409` when nothing is waiting; `400` for a bad body                |
 
-### Results of agent calls
+In `POST /<method>`, each key becomes a keyword argument. `_context` is taken out first
+and used for [policy](#policy); it must be a JSON object. A bad body is one that isn't
+valid JSON or a JSON object, or that lacks a declared argument, so an empty body works
+only for a method with no arguments. `canyonos test`, the `curl` example
+`canyonos deploy` prints, and the dashboard take the argument names from the method's
+`functions` entry, not from its signature.
 
-Agent code uses another agent's result as if the call had returned it. Each stub
-method returns a `Future` at once, and CanyonOS waits for its result only at the
-line that first needs it:
+`GET /status/<request_id>` answers with a `status`:
 
-```python
-draft = Writer().run(query=query)       # sent, nothing waits
-stats = Counter().count(text=draft)     # passed on: Counter's replica waits for it
-if stats["words"] > 100:                # waits here, and stats is a dict
-    draft = Writer().run(query=f"Shorten: {draft}")
-return {"draft": draft, "stats": stats} # passed on: the endpoint waits for it
-```
+| `status`         | Meaning                                     | Other fields                                            |
+| ---------------- | ------------------------------------------- | ------------------------------------------------------- |
+| `pending`        | Still running                               | None                                                    |
+| `done`           | Finished                                    | `result`                                                |
+| `error`          | Failed or refused                           | `error`                                                 |
+| `input_required` | An agent is waiting for the person's answer | `question`; see [Asking the person](#asking-the-person) |
 
-The Local Controller rewrites the project's modules that call an agent as it
-loads them: those that import an agent's class, directly or through another of
-the project's modules. Every other module, such as a helper module or an agent
-that calls no other, is loaded as written and runs at full speed, and so are the
-standard library, installed packages and the generated stubs. In the rewritten
-code:
+### Results
 
-- A line that uses a value, such as an operator, a comparison, `if`, `for`, an
-  index, a method or attribute, an f-string, or unpacking (`x, y = a`,
-  `for k, v in a`), gets the result as the type the function declares under
-  `returns`. With no declared type it gets the stored text.
-- `await a` waits for the result without blocking the event loop, and
-  `asyncio.gather` and `asyncio.wait_for` take `Future`s as they would any
-  awaitable.
-- A line that only passes a value along, such as assigning it, putting it in a
-  list or dict, or returning it, keeps the `Future`, so nothing waits.
-- A call to another agent, or to a function, method or class of a rewritten
-  module, gets the `Future`s as they are. Anything else, such as a library,
-  `print`, `json.dumps` or a project module that is loaded as written, gets
-  their results, inside dicts, lists, tuples, sets and generators too. An
-  object of one of the project's own classes is handed over as it is, with the
-  `Future`s in its attributes replaced by their results.
-- `.value()` still waits and returns the stored text, so code written that way
-  keeps working. `.value`, `.resolved` and `.is_available` always mean the
-  `Future`'s own; any other attribute is the result's, such as `a.id` for a
-  result that has an `id`.
-
-A call that fails raises at the line that uses its result. A list built in a
-comprehension or with `.append` sends every call before the first wait. A
-generator such as `sum(agent.count(x=x) for x in items)` waits for each result
-before it sends the next call. A module that imports no agent but calls one it
-is handed, such as `def run(agent): return agent.ask(q=q).upper()`, is loaded as
-written, so it calls `.value()` on the result. A file with a
-`# canyonos: no-rewrite` line is loaded as written, and `CANYONOS_LAZY_VALUES=0`
-in the project's `.env` (see [Credentials](#credentials)) turns the rewrite off
-for every agent.
+- The method's result is sent as JSON. A result that isn't a `dict` is wrapped as
+  `{"value": result}`. One that can't be converted fails the request with
+  `its return value can't be converted to JSON`.
+- A `Future` left in the result, at any depth of a `dict`, `list` or `tuple`, is
+  replaced by its result, as the type its function declares under `returns`.
+- CanyonOS waits up to 65 minutes for a `Future` passed as an argument or left in the
+  result, and fails the call if no result comes by then.
+- Each request runs at most once, on the replica that accepts it. It is not retried
+  elsewhere: if that replica dies mid-run, the call fails with `ReplicaRemovedError`.
 
 ### Asking the person
 
-Agent code asks the person who sent the request a question the way it already
-does, with no changes. During a request each of these waits for the person's reply:
+Agent code asks the person who sent the request a question with the calls it already
+uses, unchanged. During a request, each of these waits for the person's answer:
 
-| Code | `input_schema` | What it gets back |
-|---|---|---|
-| `input(prompt)` | `{"input": "str"}` | the reply's `input`, as JSON text when it isn't a string |
-| LangGraph `interrupt(value)` | `{"input": "any"}` | the reply's `input`; no checkpointer or `Command(resume=...)` needed |
-| LangGraph `interrupt(value, response_schema=bool)`, or any other type that isn't a model | `{"input": "bool"}` | the reply's `input`, checked as that type |
-| LangGraph `interrupt(value, response_schema=Review)` with a pydantic model, TypedDict or dataclass, and LangChain's human-in-the-loop middleware (`HITLResponse`) | each field's type, such as `{"approved": "bool", "draft": "str \| None"}` | the reply built into the model |
-| OpenAI Agents SDK 0.12.1 or later: `Runner.run` / `Runner.run_sync` with tools that need approval | `{"approve": "bool", "message": "str \| None"}` | a finished run: each pending tool call is asked about, `{"approve": true}` approves it, `{"approve": false}` rejects it with the reply's `message`, or the SDK's own message when there is none |
-| `ask_human(question, input_schema)` from `human_input` | `input_schema` | the whole reply as a dict, unchecked |
+| Code                                                                                                                                                              | `input_schema`                                                            | What it gets back                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input(prompt)`                                                                                                                                                   | `{"input": "str"}`                                                        | The answer's `input`, as JSON text when it isn't a string                                                                                                                                            |
+| LangGraph `interrupt(value)`                                                                                                                                      | `{"input": "any"}`                                                        | The answer's `input`; no checkpointer or `Command(resume=...)` needed                                                                                                                                |
+| LangGraph `interrupt(value, response_schema=bool)`, or any other type that isn't a model                                                                          | `{"input": "bool"}`                                                       | The answer's `input`, checked as that type                                                                                                                                                           |
+| LangGraph `interrupt(value, response_schema=Review)` with a pydantic model, TypedDict or dataclass, and LangChain's human-in-the-loop middleware (`HITLResponse`) | Each field's type, such as `{"approved": "bool", "draft": "str \| None"}` | The answer built into the model                                                                                                                                                                      |
+| OpenAI Agents SDK 0.12.1 or later: `Runner.run` / `Runner.run_sync` with tools that need approval                                                                 | `{"approve": "bool", "message": "str \| None"}`                           | A finished run. Each pending tool call is asked about: `{"approve": true}` approves it, and `{"approve": false}` rejects it with the answer's `message`, or the SDK's own message when there is none |
+| `ask_human(question, input_schema)` from `human_input`                                                                                                            | `input_schema`                                                            | The whole answer as a dict, unchecked                                                                                                                                                                |
 
-Each of these but `ask_human` asks again when a reply is missing a key or has a
-value that doesn't fit its type. Types show as a Python developer writes them;
-unions, `Literal`s and nested models can show less precisely, and the agent still
-checks the reply. A JSON Schema `response_schema` shows its `properties`, or `input`
-when it has none, and the reply isn't checked against it. The agent images run
-Python 3.11, so a TypedDict schema needs `typing_extensions.TypedDict`, not
-`typing.TypedDict`; LangGraph itself requires this.
+Outside a request, `input()`, `interrupt()` and `Runner` behave as they normally do,
+and `ask_human` raises `RuntimeError`.
 
-While it waits, `GET /status/<request_id>` answers `input_required`, with
-`{"question": ..., "input_schema": ...}` in its `question` field: the question, and
-each key the answer takes with its type. The person answers with a JSON object of
-those keys at `POST /answer/<request_id>`, such as `{"input": "1042"}`; the agent gets
-that body, and the request carries on. The endpoint answers `202` once it passes the
-answer on, `409` when nothing is waiting, and `400` when the body isn't a JSON object.
-Questions waiting in the same request are answered oldest first. If the request
-finishes or fails before a question is answered, that question fails and the waiting
-call raises. A question with no answer after an hour makes the waiting call raise
-`TimeoutError`. CanyonOS waits at most 65 minutes for a `Future` passed as an argument
-or left in the returned value, so a call that runs longer, for example by asking two
-questions that each take 40 minutes, makes that wait raise `TimeoutError`. The asking
-agent, and every call waiting on it, keep their slots until the answer comes. A
-replica that dies meanwhile loses the request, and an answer sent to it is lost too.
-A scale-down that drains the asking replica fails the request once the drain's
-180 s limit passes.
+While an agent waits, `GET /status/<request_id>` answers `input_required`, with
+`{"question": ..., "input_schema": ...}` in its `question` field: the question, and each
+key the answer takes with its type. For an Agents SDK approval, the question is
+`{"agent", "tool", "arguments"}`. The person answers with a JSON object of those keys at
+`POST /answer/<request_id>`, such as `{"input": "1042"}`, and the request carries on.
 
-## Build context
+| Rule                | Detail                                                                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Checking the answer | Each of these except `ask_human` asks again when the answer lacks a key or has a value of the wrong type                                               |
+| Types shown         | Written the way a Python developer writes them. Unions, `Literal`s and nested models can show less precisely, and the answer is still checked          |
+| JSON Schema         | A JSON Schema `response_schema` shows its `properties`, or `input` when it has none, and the answer isn't checked against it                           |
+| TypedDict           | The images run Python 3.11, so use `typing_extensions.TypedDict`, as LangGraph itself requires                                                         |
+| Order               | Questions waiting in one request are answered oldest first                                                                                             |
+| Request ends first  | If the request finishes or fails before a question is answered, the waiting call raises                                                                |
+| No answer           | After an hour, the waiting call raises `TimeoutError`                                                                                                  |
+| Long waits          | The 65-minute wait for a `Future` still applies, so a call that asks two questions taking 40 minutes each makes its caller's wait raise `TimeoutError` |
+| Slots               | The asking agent, and every call waiting on it, keep their thread slots until the answer comes                                                         |
+| Replica loss        | If the asking replica dies while it waits, its call fails with `ReplicaRemovedError` and an answer sent afterwards is lost                             |
+| Scale-down          | A scale-down that drains the asking replica fails the request once the drain's 180-second limit passes                                                 |
 
-Each build context starts as a copy of the project root with relative paths kept,
-minus what the sweep excludes, and then gets the platform's runtime modules,
-the generated gRPC modules, `canyonos_core/llm_gateway`, every stub, and the
-agent's own entrypoint written on top. [Images and
-dependencies](IMAGES_AND_DEPENDENCIES.md) lists the exclusions and the file
-names that get overwritten.
+## Environment variables
 
-## Dependencies and protobuf
+On Docker, each agent replica gets the workflow's `.env` with `--env-file`; the
+endpoint's container does not. An unreadable `.env` fails the deploy.
+[What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for) says where the file lives and
+what else reads it. On Kubernetes, `.env` becomes a Secret; see
+[Kubernetes deployment](KUBERNETES.md).
 
-Each image installs `grpcio>=1.76.0`, `protobuf>=6.31.1`, `redis>=3.5`,
-plus the entry's own `requirements`.
-The `*_pb2.py` modules are generated by the controller image's `protoc` and
-copied into every image. They check the protobuf floor at import, so the
-build forces `protobuf>=6.31.1` and fails early if a requirement pins below
-it. `uv pip check` runs after install and prints a note on conflicts.
+CanyonOS also sets these on each replica with `-e`, and they win over `.env`:
 
-A `requirements` entry that is not a single PEP 508 requirement is a schema
-error and the deploy is rejected. Requirements above the tested major of a
-base package only warn.
+| Variable                                               | What it is                                                 |
+| ------------------------------------------------------ | ---------------------------------------------------------- |
+| `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`           | The workflow's Redis                                       |
+| `CANYONOS_REDIS_PASSWORD`                              | The password the workflow's Redis requires                 |
+| `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`           | Where this replica serves calls                            |
+| `CANYONOS_REPLICA_ID`                                  | This replica's ID                                          |
+| `CANYONOS_POLL_INTERVAL`                               | `poll_interval` from the workflow config                   |
+| `CANYONOS_LOGS_ENABLED`                                | `logs` from the workflow config                            |
+| `CANYONOS_SHUTDOWN_GRACE_SECONDS`                      | How long a draining replica has to finish                  |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`                | Send model calls through the [LLM Gateway](LLM_GATEWAY.md) |
+| `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` | Trust the gateway's certificates                           |
+| `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`                     | Send boto3 Bedrock calls to the gateway                    |
 
-## Credentials
-
-`.env` in the project folder, when there is one, is passed to each agent
-replica as `--env-file`; the endpoint does not get it. [Project
-layout](BUILD_ARTIFACT.md#what-env-is-for) says where it lives and what else
-reads it. An unreadable file fails the deploy first. Hidden files never reach
-an image, so `.env` itself stays out of the copy.
-
-The runtime also sets `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`,
-`CANYONOS_REDIS_PASSWORD`, `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`,
-`CANYONOS_POLL_INTERVAL`, `CANYONOS_LOGS_ENABLED` and the six LLM gateway
-variables with `-e`, which win over the file. A Redis client in your code that
-defaults to `localhost` connects to the container's own loopback, not to the
-platform's Redis; build it from `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT` and
-`CANYONOS_REDIS_PASSWORD` instead.
+A Redis client in your code that defaults to `localhost` reaches the container's own
+loopback, not the workflow's Redis. Build it from `CANYONOS_REDIS_HOST`,
+`CANYONOS_REDIS_PORT` and `CANYONOS_REDIS_PASSWORD`.
 
 ## Policy
 
-No `policy.yaml` means every caller may reach every agent. With a file,
-`rules` is a list of `{match: {...}, access: [...] | all}`. The controller
-sorts rules by how many keys `match` has, most specific first, and takes the
-first rule whose keys all equal the request's `_context`. `access: all`
-allows everything; otherwise the agent has to be listed. Calls to
-`endpoint`, which `ask_human` makes, are always allowed. No matching rule
-denies. A denied call never runs: it fails with
-`PolicyDenied: Policy denied the call to <Agent>.<method>`.
+`config/policy.yaml` decides which agents a request may reach, from the `_context`
+object in the request body, such as `{"query": "...", "_context": {"tenant": "acme"}}`:
 
-The file is not schema-checked. An empty file, or `rules:` that is not a list
-of mappings, fails the deploy with an error naming the file.
+```yaml
+rules:
+  - match: {tenant: acme}
+    access: [Workflow, PriceAgent]
+  - match: {}
+    access: all
+```
 
-`config/governance.yaml` adds two per-agent rules, which the dashboard edits
-afterwards. `requires: [OtherAgent]` refuses calls to the agent while
-`OtherAgent` has no healthy replica, with `error_name` `DependencyDown`.
-`spend.rules` lists `{above_usd, action}` thresholds on the agent's spend since
-`spend.since` (the deploy, when the file leaves it out); the highest threshold
-passed wins. `action: {kind: deny}` refuses calls with `SpendLimit`;
-`{kind: switch_model, model: <id>}` sends the agent's LLM calls to that model.
-A policy refusal has `error_name` `PolicyDenied`.
+| Rule             | Detail                                                                                                                           |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| No file          | Every request may reach every agent. So may an empty `rules: []`                                                                 |
+| Rule order       | Rules with more `match` keys are tried first; the first rule whose keys all equal the request's `_context` decides               |
+| `access`         | `all` allows every agent; otherwise the agent must be listed                                                                     |
+| No matching rule | The call is denied                                                                                                               |
+| Questions        | Calls to `endpoint`, which asking the person makes, are always allowed                                                           |
+| Bad file         | An empty file, or `rules` that isn't a list of mappings, fails the deploy with an error naming the file. Nothing else is checked |
 
-Every refusal is decided once, by the controller on the machine that makes the
-call, from rules it re-reads each poll. A refused call is never queued and its
-error text starts with its `error_name`; the agent that made it gets that error
-from `.value()`. A refused root call is answered `403` with
-`{"request_id", "error", "error_name"}` instead of `202`, and its `/status`
-reports the same error. The governance file seeds only agents the
-stored rules lack, so dashboard edits survive a redeploy; an invalid file fails
-the deploy.
+### Governance rules
 
-## Stopping and cleaning
+`config/governance.yaml` adds two rules per agent, which you can then change on the
+dashboard's **Governance** page:
 
-`canyonos deploy` tails the controller log until the workflow is up, then
-prints the summary and stops tailing. From then on Ctrl+C only stops the
-tail; `canyonos logs` reattaches. Ctrl+C while still syncing or starting, or
-a failed deploy, tears the deployment down.
+```yaml
+agents:
+  PriceAgent:
+    requires: [MarketData]
+    spend:
+      since: '2026-11-01T00:00:00Z'
+      rules:
+        - above_usd: 5
+          action: {kind: switch_model, model: us.anthropic.claude-haiku-4-5-20251001-v1:0}
+        - above_usd: 20
+          action: {kind: deny}
+```
 
-`canyonos stop` asks the controller to remove every replica it
-recorded. A hard kill of the controller can leave containers behind; the
-next `canyonos deploy` removes stale Redis and metrics containers and
-recreates orphaned agent containers, but an endpoint `api_port` you set, a database
-`db_port` or a `redis.port` you set, still in use, is a hard error.
+| Key           | What it does                                                                         |
+| ------------- | ------------------------------------------------------------------------------------ |
+| `requires`    | Refuse calls to the agent while one of these agents has no healthy replica           |
+| `spend.since` | Count the agent's spend from this time. Default: when the file is first published    |
+| `spend.rules` | Thresholds in US dollars, each above 0. The highest one the spend has passed decides |
+| `action.kind` | `deny` refuses calls; `switch_model` sends the agent's model calls to `action.model` |
 
-`canyonos clean` stops the project if it is deployed, then deletes its
-`.canyon` directory, if there is one, removes the skill `canyonos convert`
-installed in the project (a global install is kept), removes its agents'
-local Docker images (`canyonos-<project>-<agent>`), and deletes its records in
-`~/.canyonos/projects/<project>/`, its Redis password among them. Other projects'
-images stay.
-It never touches `.env`.
+The file only adds rules for agents that have none stored yet, so changes made on the
+dashboard are kept when the file is published again. An invalid file fails the deploy.
+[Switching model on spend](LLM_GATEWAY.md#switching-model-on-spend) covers which
+models a switch can reach.
+
+### Refusals
+
+| `error_name`     | Cause                                                     |
+| ---------------- | --------------------------------------------------------- |
+| `PolicyDenied`   | No rule in `policy.yaml` allows the call for this request |
+| `DependencyDown` | An agent in `requires` has no healthy replica             |
+| `SpendLimit`     | The agent's spend passed a `deny` threshold               |
+
+The controller on the machine that makes a call decides, from rules it reloads each
+poll. A refused call never runs or queues. Its error text starts with its `error_name`:
+
+```text
+PolicyDenied: Policy denied the call to PriceAgent.get_price: no rule in policy.yaml allows it for this request.
+```
+
+The calling agent gets that error at the line that uses the call's result. A refused
+request is answered `403` with `{"request_id", "error", "error_name"}`, and its
+`GET /status` reports the same error.
+
+## Deploy and stop
+
+`canyonos deploy` follows the controller's log until the workflow is up, prints the
+summary, and stops following. While it follows the log, Ctrl+C only stops the output,
+and `canyonos logs` follows the log again. Ctrl+C before the Global Controller is up,
+or a deploy that fails before the workflow is up, takes the deploy down.
+
+`canyonos stop` asks the controller to remove every replica it recorded. A hard kill of
+the controller can leave containers behind. The next `canyonos deploy` removes stopped
+Redis and metrics containers and recreates leftover agent containers. A port you set
+that is still in use is an error: an endpoint `api_port`, a `redis.port` or a database
+`db_port`. [CLI](CLI.md#stop-and-clean-up) lists what `stop` and `clean` remove.

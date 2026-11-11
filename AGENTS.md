@@ -73,7 +73,8 @@ canyonos feedback --yes "<what you ran, what you expected, what happened>"
 
 - Style and docstrings: [docs/contributing/STYLE.md](docs/contributing/STYLE.md)
 - Local development: [docs/contributing/DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md)
-- Known limitations: [docs/guides/LIMITATIONS.md](docs/guides/LIMITATIONS.md)
+- What a workflow needs before converting: [docs/guides/WORKFLOW_REQUIREMENTS.md](docs/guides/WORKFLOW_REQUIREMENTS.md)
+- Network limits of the LLM gateway: [docs/guides/LLM_GATEWAY.md](docs/guides/LLM_GATEWAY.md#network-limits)
 - All docs: [docs/README.md](docs/README.md)
 
 ## Pull requests

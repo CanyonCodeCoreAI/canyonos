@@ -1,110 +1,161 @@
 # Troubleshooting
 
-Find the symptom, check the cause against your project, then read the linked
-page for the mechanism. `canyonos validate` catches most of the first two
-tables before a deploy; its codes are listed in [Images and
-dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
+Problems you may hit with a workflow, in the order they show up: installing, deploying,
+starting, serving requests and stopping. Find the message or symptom in the table for
+that step; each row gives the likely cause and the fix.
 
-## The deploy is rejected before anything is built
+## First checks
 
-| Symptom | Likely cause |
-|---|---|
-| ``No <root>/config/workflow_config.yaml here. Run `canyonos convert` first, or rerun from your project folder.`` | The project root has no manifest, or the command ran from the wrong directory. See [Project layout](BUILD_ARTIFACT.md) |
-| `duplicate agent name ... (names are lowercased into one image tag)` | Two entries differ only in case |
-| `is required because provider is 'ec2-pool'` | `provider: ec2-pool` with no `ec2-pool:` block |
-| `is required because provider is 'ec2-assign'` | `provider: ec2-assign` with no `ec2-assign:` block |
-| `must give every agent a value` | `ec2-assign.machine_type` leaves out an agent |
-| `expected an integer >= 1` on `replicas` | `replicas` is a string or zero |
-| `is not a single PEP 508 requirement` | A `requirements` item has several packages or a stray flag |
-| `is not built from builtin types` on an argument or `returns` `type` | A typing name like `List[str]`; use `list[str]` |
-| `would shadow the builtin type` on a function `name` | The function is named after a builtin type such as `list`; rename it |
-| `is reserved for Python` on a function `name` | A dunder name such as `__init__`; rename it |
-| `is already a function of this agent` | Two functions of one agent share a name |
-| `database: is no longer used` | The retired top-level `database` key is still in the manifest |
-| `currently requires protobuf<...` during the build | A requirement pins a base package below the platform floor |
-| `Deploy failed: generated grpc_stubs are missing or not importable` | The generated `*_pb2.py` modules do not import in the controller, usually a protobuf runtime mismatch |
-| `Port ... already in use` | The endpoint `api_port`, a database `db_port` or the Redis port is taken by something else, often a previous deployment that was killed |
-| `Redis is still running, but its password file ... is gone` | `~/.canyonos/projects/<project>/redis_password` was deleted while the project's Redis kept running, and a new password would not open it. Remove the old Redis as the message says, with `canyonos stop <project>` or `docker rm`, then deploy again |
-| `refuses this project's password` in the deploy output or `canyonos logs` | `~/.canyonos/projects/<project>/redis_password` no longer matches the Redis the Global Controller found running, often one a crashed deploy left. Run `canyonos stop <project>` to remove the old Redis, then deploy again |
+These commands narrow most problems down:
 
-## A container exits or serves nothing
+```bash
+canyonos doctor          # can this machine deploy, and is every part of the deploy up?
+canyonos validate        # does the code follow the runtime contract?
+canyonos status          # how many replicas of each agent are running
+canyonos logs            # the Global Controller's log
+canyonos logs MyAgent    # one agent's log
+```
 
-| Symptom | Likely cause |
-|---|---|
-| Deploy fails and prints `--- begin container log` | The agent's import or constructor raised. Read the lines between the markers. |
-| `AttributeError: module ... has no attribute '<Name>'` in that log | The class in the entrypoint is not named like the manifest entry |
-| `ModuleNotFoundError` for a module of the application | The project root is not the import root, so the import does not resolve from `/app`. See [Images and dependencies](IMAGES_AND_DEPENDENCIES.md) |
-| `ModuleNotFoundError` for a third-party module | The distribution is missing from this entry's `requirements`. The application's own `requirements.txt` is never installed |
-| `ModuleNotFoundError` for a distribution this entry's code never imports | The entrypoint's package `__init__.py` or a sibling module imports it. It ships in this image, so its dependency has to be declared here |
-| `ImportError` in a peer container for a name from another agent's module | That agent's package `__init__.py` re-exports from its entrypoint, which is a stub here. `CANYON-PACKAGE-REEXPORT` |
-| `attempted relative import with no known parent package` | The entrypoint uses relative imports. It is loaded as a top-level module. Make its own imports absolute |
-| `SyntaxError` on an import of an agent | An entrypoint path segment is not a Python identifier |
-| A model call runs at container start, before any request | Module-level code in the entrypoint performs a real run |
-| An agent runs inside the caller's process instead of its container | The caller imported the class from a module that is not the agent's `entrypoint` path or its basename at the root |
-| Calls meant for one agent reach another | Two entries share an `entrypoint`, or two entrypoints share a basename, so one stub overwrote the other |
-| A module of the application vanished or changed | Its name at the root of the copy matches a platform runtime module (`future.py`, `local_controller.py`, ...) and was overwritten. `CANYON-FLAT-COLLISION` |
-| A file of the application is missing from the image | It is hidden, a symlink, private key material, or one of the reserved root names. The build printed a note or warning about it |
-| `import local_controller` fails on a protobuf version check | The image resolved a protobuf below what the generated modules need. Check the requirement that dragged it down |
-| Missing credentials while the agent loads | There is no `.env` in the project folder, or the code reads a different variable name |
-| Connection refused to `localhost` for Redis, Postgres or another backing service | The client kept the source's `localhost` default. Inside a container that is its own loopback. Use `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT`, or the database entry's address |
-| `NOAUTH Authentication required` from Redis | The client connects without the project's password. Pass it `CANYONOS_REDIS_PASSWORD` |
-| `ModuleNotFoundError` for a submodule that used to exist | An unpinned requirement resolved to a newer major than the source was written for |
-| `unexpected keyword argument` inside an SDK call | The installed distribution is newer than the source expects |
+`canyonos validate` reports problems as codes such as `CANYON-ADAPTER-CLASS`.
+[Images and dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks)
+lists them.
 
-## The request is accepted, then fails
+## Installing and `canyonos doctor`
 
-| Symptom | Likely cause |
-|---|---|
-| `unexpected keyword argument` in the agent | The argument name in `functions` differs from the method's parameter name |
-| `missing ... required positional argument` | `functions` does not declare a parameter the method requires, or the caller did not send it |
-| `PolicyDenied: Policy denied the call to` | The first matching policy rule, or no rule at all, excludes that agent |
-| `.value()` returns text that looks like a dict | Expected. Results travel as strings; `json.loads` it |
-| `is not JSON serializable` | The agent returned framework objects. Convert to plain types first |
-| The response holds `<...Future object at 0x...>` | `main` formatted a `Future` (`str`, f-string, `json.dumps`) before resolving it. Call `.value()` first |
-| Redis holds a coroutine `repr` instead of a result | The agent method is `async def`. `CANYON-ADAPTER-ASYNC` |
-| Fan-out is no faster than sequential | Dispatch and `.value()` were fused in one comprehension |
-| `Lock is bound to a different event loop` on the second request | The agent runs `asyncio.run` per call while the instance holds loop-bound state. Use one persistent loop |
-| Wrong results under load | Concurrent calls share one instance; state on `self` is not thread-safe |
-| A model call reaches the provider directly | The call is not OpenAI-format, Anthropic or Bedrock (such as Gemini's or Cohere's own SDK), it goes over HTTPS to a host the gateway doesn't know, or the client ignores the proxy variables (such as `aiohttp` without `trust_env=True`). See [LLM gateway](LLM_GATEWAY.md) |
+| Symptom                                                                          | Likely cause                                              | Fix                                                                                                        |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `canyonos: command not found`                                                    | The CLI's install folder isn't on `PATH` in this terminal | Open a new terminal. If it persists, [install](../INSTALLATION.md) again                                   |
+| `Cannot connect to the Docker daemon`, or `doctor` fails `Docker daemon running` | Docker isn't running                                      | Run the command `canyonos doctor` prints, or start Docker Desktop; on Linux, `sudo systemctl start docker` |
+| `doctor` fails `Docker Compose available`                                        | Docker is too old to include Compose v2                   | Update Docker, then run `canyonos doctor` again                                                            |
+| `doctor` passes but `deploy` can't reach Docker                                  | The terminals use different Docker contexts               | Run `docker context show` in both, switch with `docker context use <name>`, then deploy again              |
 
-## Endpoint
+## `canyonos deploy` stops before building
 
-| Symptom | Likely cause |
-|---|---|
-| `404` while the deploy is up | The route is `/<method>`, with `method` from the `endpoint` block; the caller posted to a different path |
-| `400 Invalid JSON in request body` or `Request body must be a JSON object` | The body is not a JSON object |
-| Method argument missing | The body did not carry it |
+The deploy checks the workflow config and your code first and stops on the first
+problem, before any image is built.
 
-## Dashboard
+| Message                                                                | Likely cause                                                      | Fix                                                                                             |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| ``No <path>/workflow_config.yaml here. Run `canyonos convert` first``  | The command ran outside the workflow folder                       | `cd` to the folder that holds `config/` or `.canyon/`; see [Workflow layout](BUILD_ARTIFACT.md) |
+| ``Deploy stopped: fix the project errors `canyonos validate` reports`` | The code breaks the runtime contract                              | Fix each `CANYON-*` finding printed above it, then run `canyonos validate` until it passes      |
+| `... already claims it (names are lowercased into one image tag)`      | Two agent names differ only in case                               | Rename one                                                                                      |
+| `is required because provider is 'ec2-pool'` (or `'ec2-assign'`)       | The provider's settings block is missing                          | Add it; see [EC2 deployment](EC2.md)                                                            |
+| `must give every agent a value`                                        | `ec2-assign.machine_type` leaves out an agent                     | Add a machine type for every agent                                                              |
+| `expected an integer >= 1` on `replicas`                               | `replicas` is text or zero                                        | Use a whole number, 1 or more                                                                   |
+| `is not a single PEP 508 requirement`                                  | A `requirements` item holds several packages or a pip flag        | Put one package per item, such as `pandas==2.2.3`                                               |
+| `is not built from builtin types`                                      | An argument or `returns` type uses a typing name like `List[str]` | Use builtins: `list[str]`, `int \| None`                                                        |
+| `would shadow the builtin type`                                        | A function is named after a builtin type, such as `list`          | Rename the function and the method                                                              |
+| `is reserved for Python`                                               | A function has a dunder name, such as `__init__`                  | Rename the function and the method                                                              |
+| `is already a function of this agent`                                  | Two functions of one agent share a name                           | Remove or rename one                                                                            |
+| `database: is no longer used`                                          | The retired top-level `database` key is still there               | Remove it; telemetry is set under `otel:`                                                       |
 
-| Symptom | Likely cause |
-|---|---|
-| The dashboard shows `canyonos.redis_auth_failed` for a project | The Redis password the dashboard holds for the project no longer matches its Redis. Redeploy the project so it registers again |
+[Workflow config](WORKFLOW_CONFIG.md) lists every setting the schema accepts.
+
+## The deploy fails while building or starting
+
+| Symptom                                                                   | Likely cause                                                                                                       | Fix                                                                                                        |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `<Agent> currently requires protobuf<5, but CanyonOS only supports ...`   | A requirement pins a base package below the platform's floor                                                       | Raise or remove the pin; see [Per-image requirements](WORKFLOW_CONFIG.md#per-image-requirements)           |
+| `... was not found in the package registry` in the image build            | A `requirements` item uses the import name, not the PyPI name                                                      | Use the PyPI name: `PyYAML` for `import yaml`, `opencv-python` for `import cv2`                            |
+| `Deploy failed: generated grpc_stubs are missing or not importable`       | The generated modules don't import in the controller                                                               | Run `canyonos deploy` again                                                                                |
+| ``config/policy.yaml must be a mapping with a `rules:` list of mappings`` | `policy.yaml` is empty or malformed                                                                                | Fix it, or delete it to allow everything; see [Policy](RUNTIME_CONTRACT.md#policy)                         |
+| `Port ... is already in use`                                              | The endpoint's `api_port`, `redis.port` or a database's `db_port` is taken, often by a deploy that was killed      | Run `canyonos stop`, or `canyonos stop --all` for every workflow; otherwise free the port or change it     |
+| `Redis is still running, but its password file ... is gone`               | `~/.canyonos/projects/<project>/redis_password` was deleted while the workflow's Redis kept running                | Remove the old Redis as the message says, with `canyonos stop <project>` or `docker rm`, then deploy again |
+| `refuses this project's password` in the deploy output or `canyonos logs` | The password file no longer matches the Redis the Global Controller found running, often one a crashed deploy left | Run `canyonos stop <project>` to remove the old Redis, then deploy again                                   |
+| Deploy fails and prints `--- begin container log`                         | An agent's import or constructor raised                                                                            | Read the lines between the markers, then find the error in the next section                                |
+
+## An agent fails to start
+
+These show in the container log `canyonos deploy` prints, or in `canyonos logs <agent>`.
+
+| Symptom                                                                  | Likely cause                                                                                                            | Fix                                                                                                                                      |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ModuleNotFoundError` for a module of your app                           | The workflow root isn't the import root, so the import doesn't resolve from `/app`                                      | Make the workflow root the folder your imports start from; see [Images and dependencies](IMAGES_AND_DEPENDENCIES.md#what-app-can-import) |
+| `ModuleNotFoundError` for a third-party package                          | It is missing from this entry's `requirements`. Your app's `requirements.txt` is never installed                        | Add it to the entry's `requirements`                                                                                                     |
+| `ModuleNotFoundError` for a package this agent's code never imports      | The entrypoint's package `__init__.py` or a sibling module imports it, and ships in this image                          | Add it to this entry's `requirements` too                                                                                                |
+| `ModuleNotFoundError` for a submodule that used to exist                 | An unpinned requirement resolved to a newer major version than your code was written for                                | Pin the version your app uses                                                                                                            |
+| `ImportError` for a name from another agent's module                     | That agent's package `__init__.py` re-exports from its entrypoint, which is a stub here (`CANYON-PACKAGE-REEXPORT`)     | Remove the re-export from that `__init__.py` and import the name from its own module                                                     |
+| `attempted relative import with no known parent package`                 | The entrypoint is loaded as a top-level module                                                                          | Make the entrypoint's own imports absolute                                                                                               |
+| `SyntaxError` on an import of an agent                                   | An entrypoint path segment isn't a Python identifier, such as `06_agent.py`                                             | Rename the file or folder                                                                                                                |
+| A file of your app is missing                                            | It is hidden, a symlink, private key material, under `config/`, or a reserved name; the build printed a note or warning | Move it; see [What the copy includes](IMAGES_AND_DEPENDENCIES.md#what-the-copy-includes)                                                 |
+| A module of your app vanished or changed                                 | It has the name of a runtime module, such as `future.py`, and was replaced (`CANYON-FLAT-COLLISION`)                    | Rename it or move it into a package                                                                                                      |
+| Missing credentials while the agent loads                                | There is no `.env` beside the workflow, or the code reads another variable name                                         | Add the key to `.env`; see [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for)                                                       |
+| Connection refused to `localhost` for Redis, Postgres or another service | Inside a container, `localhost` is the container itself                                                                 | Use `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT` and `CANYONOS_REDIS_PASSWORD`, or the database entry's address                          |
+| `NOAUTH Authentication required` from Redis                              | The client connects without the workflow's Redis password                                                               | Pass it `CANYONOS_REDIS_PASSWORD`                                                                                                        |
+| A model call runs at container start, before any request                 | Module-level code in the entrypoint does real work                                                                      | Move it into a method                                                                                                                    |
 
 ## `canyonos test` fails
 
-If the test passes, everything is shut down. If it fails, the containers stay up so
-you can check `canyonos logs`, or one agent's logs with `docker logs canyonos-<project>-<agent>-<id>`
-(e.g. `canyonos-portfolio-3f9a1c2e-intentagent-1a2b3c4d`). `docker ps --filter label=com.docker.compose.project=canyonos-<project>`
-lists the project's containers. Run `canyonos stop` to remove them.
+When `canyonos test` fails, it prints the end of the Global Controller's log and leaves
+the deploy running so you can look at it. Find the failing agent and its error, then
+look the error up in the tables on this page:
+
+```bash
+canyonos status          # which agents are up
+canyonos logs MyAgent    # the failing agent's log
+canyonos stop            # take the deploy down when you're done
+```
+
+A passing test takes everything down itself. On Kubernetes, `canyonos test` queries the
+workflow already deployed there and deploys nothing.
+
+## The endpoint rejects the request
+
+| Answer                                                                     | Likely cause                                      | Fix                                                             |
+| -------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------- |
+| `404 Not found; this endpoint serves POST /<method>`                       | The request went to another path                  | Post to `/<method>`, the `method` in the `endpoint:` block      |
+| `405 Method not allowed`                                                   | The request used `GET` or another method          | Use `POST`                                                      |
+| `400 Invalid JSON in request body` or `Request body must be a JSON object` | The body isn't a JSON object                      | Send a JSON object with `Content-Type: application/json`        |
+| `400 Missing argument(s) ...`                                              | The body leaves out a declared argument           | Send every argument the message lists                           |
+| `400 _context must be a JSON object`                                       | `_context` is text or a list                      | Send it as an object, such as `{"tenant": "acme"}`              |
+| `403` with an `error_name`                                                 | Policy or a governance rule refused the request   | See [Refusals](RUNTIME_CONTRACT.md#refusals)                    |
+| `409 Request ... is not waiting for input`                                 | `POST /answer` came when no question was waiting  | Check that `GET /status` says `input_required` before answering |
+| `404 Request not found` from `GET /status`                                 | The `request_id` is wrong, or from another deploy | Use the `request_id` the `POST` returned                        |
+
+## The request fails or returns the wrong result
+
+| Symptom                                                         | Likely cause                                                                                                                                                    | Fix                                                                                                                                         |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unexpected keyword argument` in the agent                      | An argument name in `functions` differs from the method's parameter name                                                                                        | Make the names match, then run `canyonos validate`                                                                                          |
+| `unexpected keyword argument` inside an SDK call                | The installed package is newer than your code expects                                                                                                           | Pin the version your app uses                                                                                                               |
+| `missing ... required positional argument`                      | `functions` doesn't declare a parameter the method requires                                                                                                     | Declare it in `functions`, or give the parameter a default                                                                                  |
+| `PolicyDenied: Policy denied the call to ...`                   | No `policy.yaml` rule allows that agent for this request's `_context`                                                                                           | Add the agent to the matching rule's `access`; see [Policy](RUNTIME_CONTRACT.md#policy)                                                     |
+| `DependencyDown` or `SpendLimit`                                | A governance rule refused the call                                                                                                                              | Check the agent on the dashboard's **Governance** page; see [Refusals](RUNTIME_CONTRACT.md#refusals)                                        |
+| `its return value can't be converted to JSON`                   | The method returned framework objects                                                                                                                           | Convert the result to plain types first                                                                                                     |
+| The result holds `<...Future object at 0x...>`                  | The code that used it isn't rewritten: a module that imports no agent but calls one it was handed, a `# canyonos: no-rewrite` file, or `CANYONOS_LAZY_VALUES=0` | Call `.value()` there, or import the agent's class in that module; see [Results of agent calls](RUNTIME_CONTRACT.md#results-of-agent-calls) |
+| A result is text that looks like a dict                         | `.value()` always returns the stored text, and so does a function with no `returns` type                                                                        | Use the result without `.value()`, and declare `returns` in `functions`                                                                     |
+| The result is a coroutine's `repr`                              | The agent method is `async def` (`CANYON-ADAPTER-ASYNC`)                                                                                                        | Make it synchronous, and run any async code inside it                                                                                       |
+| Fan-out is no faster than calling one at a time                 | Each call's result is used before the next call is made, as in a generator such as `sum(agent.count(x=x) for x in items)`                                       | Make every call first, in a list, then use the results; see [Results of agent calls](RUNTIME_CONTRACT.md#results-of-agent-calls)            |
+| `Lock is bound to a different event loop` on the second request | The agent runs `asyncio.run` per call while the instance holds loop-bound state                                                                                 | Keep one event loop for the instance                                                                                                        |
+| Wrong results under load                                        | Concurrent calls share one instance, and state on `self` isn't thread-safe                                                                                      | Make it thread-safe, or set `replicas: 1` and `stateful: true`                                                                              |
+| An agent runs inside the caller's process                       | The caller imported the class from a module that is neither the agent's `entrypoint` path nor its basename                                                      | Import it by its `entrypoint` path                                                                                                          |
+| Calls meant for one agent reach another                         | Two entries share an `entrypoint`, or two entrypoints share a basename, so one stub replaced the other                                                          | Give each agent its own file name                                                                                                           |
+| A model call reaches the provider directly                      | The call isn't OpenAI-format, Anthropic or Bedrock, goes over HTTPS to a host the gateway doesn't know, or the client ignores the proxy variables               | See [Code that bypasses the gateway](LLM_GATEWAY.md#code-that-bypasses-the-gateway)                                                         |
+| `TimeoutError` while an agent waits for an answer               | Nobody answered the question within an hour                                                                                                                     | Answer at `POST /answer/<request_id>` sooner; see [Asking the person](RUNTIME_CONTRACT.md#asking-the-person)                                |
+
+## Dashboard
+
+| Symptom                                                         | Likely cause                                                                        | Fix                                              |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------ |
+| The dashboard shows `canyonos.redis_auth_failed` for a workflow | The Redis password the dashboard holds for the workflow no longer matches its Redis | Deploy the workflow again, so it registers again |
 
 ## Stopping and cleaning
 
-| Symptom | Likely cause |
-|---|---|
-| Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
-| `canyonos clean` deleted `.canyon` | That is what it does: it stops the project, then removes the whole `.canyon`, its agents' images and its records in `~/.canyonos/projects/<project>/` |
-| `canyonos clean` left `~/.canyonos/projects/<project>/` | The stop failed or was refused, so nothing of the project was cleaned. Fix what the stop reported, or name the project to force it, and run `clean` again |
-| EC2 machines remain after `canyonos stop` | The stop waited 4 minutes and moved on. See [EC2 deployment](EC2.md) |
-| Images remain after `canyonos clean` | Docker was unreachable, or the images live on a different Docker context than the one the deploy used |
-| Containers, volumes or images remain after uninstalling the CLI | `canyonos clean --all` was not run first. See below |
+| Symptom                                                         | Likely cause                                                                                                             | Fix                                                                                          |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Ctrl+C left the deploy running                                  | Once the deploy is up, Ctrl+C only stops the log output                                                                  | Run `canyonos stop`                                                                          |
+| `canyonos clean` deleted `.canyon`                              | That is what `clean` does, along with the agents' images and the workflow's records in `~/.canyonos/projects/<project>/` | Run `canyonos convert` again. To keep a converted workflow, commit `.canyon` before cleaning |
+| `canyonos clean` left `~/.canyonos/projects/<project>/`         | The stop failed or was refused, so nothing was cleaned                                                                   | Fix what the stop reported, or name the workflow to force it, and run `clean` again          |
+| EC2 machines remain after `canyonos stop`                       | The stop waits up to four minutes for them, then moves on                                                                | See [EC2 deployment](EC2.md)                                                                 |
+| Images remain after `canyonos clean`                            | Docker was unreachable, or the images are in another Docker context than the one the deploy used                         | List them with `docker images 'canyonos-*'` and remove them with `docker image rm`           |
+| Containers, volumes or images remain after uninstalling the CLI | `canyonos clean --all` wasn't run first                                                                                  | Remove them by hand, below                                                                   |
 
 ### Cleaning up after the CLI is already uninstalled
 
-`canyonos clean --all` removes everything CanyonOS put on the machine; run it before
+`canyonos clean --all` removes everything CanyonOS put on the machine, so run it before
 uninstalling. Without the CLI, do the same by hand. `~/.canyonos/projects` has a folder
-for each project CanyonOS deployed, and each project's containers, volumes and network
-carry the label `com.docker.compose.project=canyonos-<project>`.
+for each workflow CanyonOS deployed, and each workflow's containers, volumes and
+network carry the label `com.docker.compose.project=canyonos-<project>`.
 
 First list what will be removed:
 
@@ -116,18 +167,17 @@ for p in $(ls ~/.canyonos/projects); do
 done
 ```
 
-Then remove it, with the dashboard, the networks and CanyonOS's records:
+Then remove them, along with the dashboard, the networks and CanyonOS's records:
 
 ```bash
 for p in $(ls ~/.canyonos/projects); do
-  docker ps -aq --filter "label=com.docker.compose.project=canyonos-$p" | xargs docker rm -f -v
-  docker volume ls -q --filter "label=com.docker.compose.project=canyonos-$p" | xargs docker volume rm
+  label="label=com.docker.compose.project=canyonos-$p"
+  docker ps -aq --filter "$label" | xargs docker rm -f -v
+  docker volume ls -q --filter "$label" | xargs docker volume rm
+  docker network ls -q --filter "$label" | xargs docker network rm
 done
 docker compose -p canyonos-dashboard down --volumes
-for p in $(ls ~/.canyonos/projects); do
-  docker network ls -q --filter "label=com.docker.compose.project=canyonos-$p" | xargs docker network rm
-done
-docker network rm canyonos-local   # shared by every project before each got its own
+docker network rm canyonos-local   # shared by every workflow before each got its own
 rm -rf ~/.canyonos
 docker images 'canyonos-*'   # then `docker image rm` the ones CanyonOS built or pulled
 ```

@@ -1,11 +1,44 @@
 # Style
 
+Rules for code and docs. CI checks the formatting with the tools below; the rest is for
+review.
+
+## What the checks enforce
+
+| Files             | Tool                                                    | Rules                                                                           |
+| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Python            | Ruff (`pyproject.toml`)                                 | `ruff format`, with lines of 88 characters; lint rules `E4`, `E7`, `E9` and `F` |
+| Python, Core only | ty (`pyproject.toml`)                                   | Type checks of `packages/core/canyonos_core`                                    |
+| TypeScript        | Prettier (`.prettierrc.mjs`), oxlint (`.oxlintrc.json`) | Lines of 100 characters, single quotes, sorted imports; lint warnings fail      |
+| Go                | `go fmt`, `go vet`, golangci-lint                       | Run by `make fmt vet lint` in `packages/operator`                               |
+| Every source file | `reuse lint`                                            | The SPDX header below                                                           |
+
+`bun run check` runs all of them but the Go checks, which run in the operator's own CI
+job. `bun run format` fixes what Ruff and Prettier can. `.editorconfig` sets UTF-8, LF
+line endings, a final newline and no trailing spaces for every file.
+
+Every new source file starts with this two-line SPDX header, in the file's comment style
+(shown with `#`; use `//` in TypeScript and Protobuf, `--` in SQL):
+
+```text
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+```
+
+Markdown, JSON and the other files listed in `REUSE.toml` get their license from there
+instead.
+
 ## Names
 
-- **CanyonOS** in prose. `canyonos` only for the command, package, or image name, in code
-  formatting: `canyonos deploy`, `canyonos-core`.
+- **CanyonOS** in prose. `canyonos` only for the command, package, or image name, in
+  code formatting: `canyonos deploy`, `canyonos-core`.
 - **Canyon Code** for the company. Never "CanyonCode" or "Canyon OS".
-- Components are capitalized: Global Controller, Local Controller, LLM Gateway, Reconciler.
+- Components are capitalized: Global Controller, Local Controller, LLM Gateway,
+  Reconciler.
+- One word per thing, in code, comments, logs and docs: _machine_ (never "instance" or
+  "node"), _agent_ (never "service"), _replica_ (never "instance"), _container_ and
+  _orchestrator_. What each one means, and the older names that stay, are in
+  [AGENTS.md](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/AGENTS.md#rules).
 
 ## Files and folders
 
@@ -13,34 +46,50 @@
 - Folders: lowercase (`docs/guides/`, not `docs/GUIDES/`).
 - Architecture docs: `docs/architecture/<COMPONENT>.md`.
 - Every folder a reader browses to has a `README.md`.
-- Every new source file starts with this two-line SPDX header, in the file's comment style
-  (shown with `#`; use `//` in TypeScript and Protobuf, `--` in SQL). `reuse lint` enforces it:
 
-  ```text
-  # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
-  # SPDX-License-Identifier: AGPL-3.0-only
-  ```
+## Docs
 
-## Commands, paths, and values
-
-- Commands, flags, file names, config keys, and ports go in code formatting: `canyonos test`,
-  `--json`, `workflow_config.yaml`, `replicas`, `8080`.
+- Describe what the code does now. A feature that is not merged yet is documented in
+  its own pull request.
+- Say each fact once, on the page that owns it, and link to it from the others.
+- Commands, flags, file names, config keys, and ports go in code formatting:
+  `canyonos test`, `--json`, `workflow_config.yaml`, `replicas`, `8080`.
 - Commands and requests a reader will run go in fenced blocks with a language tag
   (`bash`, `yaml`, `python`).
 - Use the real default ports and paths, the same in every doc.
+- Use a table for content with the same fields per row, and pad its columns.
+- Wrap prose at 88 characters.
+- Write the docs in `docs/` by hand; see the [AI policy](AI_POLICY.md).
+- Build them with `mkdocs build --strict` before a pull request; see
+  [Preview the docs](DEVELOPMENT.md#preview-the-docs).
 
 ## Docstrings
 
-Every module, class, and public function gets a docstring. Write it for someone who has never seen the code and has no patience for filler.
+Every module, class, and public function gets a docstring. Write it for someone who has
+never seen the code and has no patience for filler.
 
-- **Add what the name can't say.** Say where it's used (the command or process it serves), what it returns, and what it changes. `"""Table of the configured agents."""` on `_agents_table` says nothing new.
-- **Stay high level.** Describe the whole ("each agent's settings"), not its fields, columns, keys, or options. For a command dispatcher, say it runs the given command; don't list what each command does.
-- **Say where output ends up.** "shows in the terminal", "writes a file under `~/.canyonos`", "logs". Not "prints". Spell out flows in words ("when you choose View in `canyonos config`"), not shorthand like "config → View".
-- **Use the product's words, not the code's.** "one section of the config", not "a flat-ish dict". Don't use internal names like "sync manifest"; say what the thing is, and name files by their real names (`workflow_config.yaml`).
-- **Write a sentence with a verb.** "Find the config file…; if it doesn't exist, show an error in the terminal and return None." Not "Resolved config path, or None after reporting that it's missing."
-- **Entry points say what they do,** not just who runs them. A process's `main` says what the process does while it runs.
-- **When something is kept, left, or skipped, say what it is and why.** "leave CanyonOS's own container and files in place for the next deploy", not "keeping the Global Controller container".
-- **Format:** one line when it fits, two when needed. Lines stay within 88 columns, and a wrapped docstring shouldn't leave one word or a lone `"""` on its last line.
+- **Add what the name can't say.** Say where it's used (the command or process it
+  serves), what it returns, and what it changes. `"""Table of the configured agents."""`
+  on `_agents_table` says nothing new.
+- **Stay high level.** Describe the whole ("each agent's settings"), not its fields,
+  columns, keys, or options. For a command dispatcher, say it runs the given command;
+  don't list what each command does.
+- **Say where output ends up.** "shows in the terminal", "writes a file under
+  `~/.canyonos`", "logs". Not "prints". Spell out flows in words ("when you choose View
+  in `canyonos config`"), not shorthand like "config → View".
+- **Use the product's words, not the code's.** "one section of the config", not "a
+  flat-ish dict". Don't use internal names like "sync manifest"; say what the thing is,
+  and name files by their real names (`workflow_config.yaml`).
+- **Write a sentence with a verb.** "Find the config file…; if it doesn't exist, show an
+  error in the terminal and return None." Not "Resolved config path, or None after
+  reporting that it's missing."
+- **Entry points say what they do,** not just who runs them. A process's `main` says
+  what the process does while it runs.
+- **When something is kept, left, or skipped, say what it is and why.** "leave
+  CanyonOS's own container and files in place for the next deploy", not "keeping the
+  Global Controller container".
+- **Format:** one line when it fits, two when needed. Lines stay within 88 columns, and
+  a wrapped docstring shouldn't leave one word or a lone `"""` on its last line.
 
 Examples:
 

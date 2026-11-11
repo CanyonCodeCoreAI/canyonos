@@ -9,136 +9,104 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
 </p>
 
-[CanyonOS](https://canyonos.ai) is a control plane that takes your agentic workflow and deploys it, providing observability and managing distributed deployment.  Maintained by [Canyon Code](https://canyoncode.ai/).
+[CanyonOS](https://canyonos.ai) is a control plane that takes your agentic workflow and deploys it,
+providing observability and managing distributed deployment. Maintained by
+[Canyon Code](https://canyoncode.ai/).
 
 ## Why CanyonOS
 
-| | Without CanyonOS | With CanyonOS |
-|---|---|---|
-| Orchestration | Set up Kubernetes or Docker Compose | `canyonos deploy` |
-| Observability | Add Langfuse or Arize Phoenix | Built in, exports OTel anywhere |
-| Async execution | Add Ray or KubeRay | Built in, no code changes |
+|                 | Without CanyonOS             | With CanyonOS          |
+| --------------- | ---------------------------- | ---------------------- |
+| Orchestration   | Docker Compose or Kubernetes | `canyonos deploy`      |
+| Observability   | Langfuse or Arize Phoenix    | Built in, exports OTel |
+| Async execution | Ray or KubeRay               | Built in               |
 
 Three systems replaced by one install.
 
-## Core Features
-- **Easy deployment**: Developers write agents in python as if writing completely localized code. CanyonOS takes care of distributed deployment of agents and workflows.
-- **Complete Observability**: All metrics, logs, and traces from your runtime are collected and displayed, with OTel-compatability allowing connection to any OTel-compatable frontend
-- **Fully Asynchronous**: Asynchronous execution built in, without any user workflow modification.
-- **Non-invasive**: None of your existing code is changed, a new folder (.canyon) is created when building on top of a existing workflow
+## Core features
 
----
+**A workflow is a program that delivers an outcome, and each agent is a specialist it
+trusts with one step.**
 
-## Requirements
-- [Docker](https://docs.docker.com/desktop/) with Compose v2 — used to manage everything
-- Optional: A coding agent in terminal (used only by canyonos convert to convert workflow to canyonos compatible format) — Claude Code, Codex, Gemini CLI, OpenCode, Pi, GitHub Copilot CLI, Cursor CLI, Factory Droid, Grok Build, Devin, Mastra Code, Deep Agents, Mistral Vibe or Cline
+Write agents in plain Python and call them as though they are local code.
+CanyonOS keeps the code focused on what the application does and uses
+configuration to decide how it runs. Split agents when a job needs different
+resources, credentials, or scale. Split only when it buys you something. Pieces
+for their own sake are just more to manage.
 
-## Installation
+When you convert an existing workflow, CanyonOS writes its generated files under
+`.canyon/` and leaves your application source untouched.
 
-Use any of the following package managers to install the canyonos CLI (curl, brew, uv, pip):
+## Install
+
+You need Docker with Compose v2. Install the CLI with the macOS/Linux installer
+or uv:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/packages/cli/install.sh | sh
-# OR
+# or
 uv tool install canyonos
-```
 
-On Windows, install with `uv tool install canyonos` or `pip install canyonos`: the install script and the standalone binary are for Linux and macOS.
-
-To check the prerequisites on their own at any time:
-
-```bash
 canyonos doctor
 ```
 
-Run the guided first run, which checks your machine, sets up a starter project,
-deploys it and sends the first request:
+On Windows, use `uv tool install canyonos` or `pip install canyonos`.
+
+## Start a workflow
+
+Run the guided first deployment:
 
 ```bash
 canyonos quickstart
 ```
 
-## Uninstall
+For an existing workflow, run `canyonos convert` in its folder, then test and deploy.
+Converting needs a coding agent in your terminal, such as Claude Code, Codex, Gemini CLI
+or Cursor CLI; [Convert your own workflow](docs/guides/CONVERT_WORKFLOW.md) lists them
+all.
 
 ```bash
-canyonos clean --all          # everything CanyonOS put on this machine
-uv tool uninstall canyonos    # or whichever package manager you installed with
-rm ~/.local/bin/canyonos      # if you used the install script
+cd your-workflow
+canyonos convert
+canyonos test "your query"
+canyonos deploy
 ```
 
----
+The complete path, including credentials, requests, and cleanup, is in the
+[CanyonOS documentation](https://canyonos.readthedocs.io/en/latest/). Start with
+[Installation](docs/INSTALLATION.md) or [Start from scratch](docs/guides/FROM_SCRATCH.md).
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `deploy` | Build images, launch the workflow, start the dashboard |
-| `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
+`canyonos deploy` builds and starts a workflow, then starts the dashboard.
+`canyonos convert` prepares an existing workflow with a coding agent. See the
+[CLI reference](docs/guides/CLI.md) for every command and option.
 
-See the [CLI reference](docs/guides/CLI.md) for every command.
+## Documentation
 
----
+- [How it works](docs/HOW_IT_WORKS.md)
+- [All guides](docs/guides/README.md)
+- [Architecture](docs/architecture/README.md)
+- [Contributing](CONTRIBUTING.md)
+- [Roadmap](docs/ROADMAP.md)
 
-## Quickstart
+## Security and license
 
-See [docs/QUICKSTART.md](docs/QUICKSTART.md).
-
-## FAQ
-
-<details>
-<summary><b>How is this different from LangGraph Platform, Ray, or Temporal?</b></summary>
-
-CanyonOS runs plain Python agents from any framework. LangGraph Platform runs LangGraph apps.  Ray is general-purpose distributed compute, but CanyonOS scales and traces agents specifically. Temporal makes long workflows durable but CanyonOS deploys, scales, and observes agent workflows.
-
-</details>
-
-<details>
-<summary><b>Why not just use Kubernetes?</b></summary>
-
-Kubernetes manages containers. CanyonOS runs agents in addition to containers. It performs the same actions as K8s, traces every call across agents, and provides prompt. It needs only Docker, not a cluster.
-
-</details>
-
-<details>
-<summary><b>What problem does it solve that I can't solve today?</b></summary>
-
-Today, taking a multi-agent workflow to production means wiring up orchestration, async execution, and observability yourself. CanyonOS does all three from one `canyonos deploy`, without changing your agent code.
-
-</details>
-
-<details>
-<summary><b>Who is it for, and when do I need it?</b></summary>
-
-Teams whose agent workflow works on a laptop and now needs to run across machines, scale under load, and be observable, without building that platform themselves.
-
-</details>
-
-## Roadmap
-
-See [ROADMAP.md](docs/ROADMAP.md) for the work we plan to do next.
-
-## Contributing
-
-We would love to support you if you wanted to contribute to this repo! For help getting started, go to [CONTRIBUTING.md](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/CONTRIBUTING.md).
-
-## Security
-
-If you have found an issue pertaining to the security of CanyonOS, please look at our [SECURITY.md](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/SECURITY.md) page for more info.
+Report security issues as described in [SECURITY.md](SECURITY.md). CanyonOS is
+licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 ## Citation
+
 If you find CanyonOS (Nalar) useful for your research, please cite our paper:
+
 ```bibtex
 @misc{laju2026nalar,
-      title={Nalar: An agent serving framework}, 
+      title={Nalar: An agent serving framework},
       author={Marco Laju and Donghyun Son and Saurabh Agarwal and Nitin Kedia and Myungjin Lee and Jayanth Srinivasa and Aditya Akella},
       year={2026},
       eprint={2601.05109},
       archivePrefix={arXiv},
       primaryClass={cs.DC},
-      url={https://arxiv.org/abs/2601.05109}, 
+      url={https://arxiv.org/abs/2601.05109},
 }
 ```
-
-## License
-
-This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/LICENSE) file for details.

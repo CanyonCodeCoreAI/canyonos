@@ -3,48 +3,77 @@
 
 site_name: CanyonOS
 repo_url: https://github.com/CanyonCodeCoreAI/canyonos
+edit_uri: edit/main/docs/
 docs_dir: docs
 exclude_docs: |
   /README.md
-theme: readthedocs
+theme:
+  name: readthedocs
+  # On, the sidebar scrolls along with the page and jumps when a link moves the page.
+  sticky_navigation: false
+extra_css:
+  - stylesheets/extra.css
+extra_javascript:
+  - javascripts/sidebar.js
+  - javascripts/tabs.js
 
 nav:
   - Home: index.md
-  - Quickstart: QUICKSTART.md
-  - Guides:
-      - Overview: guides/README.md
-      - Workflow design: guides/WORKFLOW_DESIGN.md
+  - Getting started:
+      - Installation: INSTALLATION.md
+      - How it works: HOW_IT_WORKS.md
+      - What CanyonOS offers: guides/COMPARISONS.md
+      - All guides: guides/README.md
+  - Build a workflow:
+      - Start from scratch: guides/FROM_SCRATCH.md
+      - Configure your workflow: guides/CONFIGURE.md
+      - Convert an existing workflow: guides/CONVERT_WORKFLOW.md
+  - Deploy:
+      - Local: guides/LOCAL.md
+      - EC2: guides/EC2.md
+      - Kubernetes: guides/KUBERNETES.md
+      - Dashboard: guides/DASHBOARD.md
+  - Reference:
+      - CLI reference: guides/CLI.md
+      - Workflow config: guides/WORKFLOW_CONFIG.md
+      - LLM Gateway: guides/LLM_GATEWAY.md
       - Prompt management: guides/PROMPTS.md
       - Autoscaling: guides/SCALING.md
-      - Dashboard: guides/DASHBOARD.md
-      - CLI reference: guides/CLI.md
-      - The .canyon artifact: guides/BUILD_ARTIFACT.md
-      - workflow_config.yaml: guides/WORKFLOW_CONFIG.md
       - Runtime contract: guides/RUNTIME_CONTRACT.md
       - Images and dependencies: guides/IMAGES_AND_DEPENDENCIES.md
-      - LLM gateway: guides/LLM_GATEWAY.md
-      - EC2 deployment: guides/EC2.md
-      - Kubernetes deployment: guides/KUBERNETES.md
-      - Limitations: guides/LIMITATIONS.md
       - Troubleshooting: guides/TROUBLESHOOTING.md
+  - Releases:
+      - Release notes: https://github.com/CanyonCodeCoreAI/canyonos/releases
+      - Upgrading: UPGRADING.md
   - Architecture:
       - Overview: architecture/README.md
+      - Workflow design: guides/WORKFLOW_DESIGN.md
+      - Workflow layout: guides/BUILD_ARTIFACT.md
+      - What a workflow needs: guides/WORKFLOW_REQUIREMENTS.md
       - CLI: architecture/CLI.md
       - Controller: architecture/CONTROLLER.md
       - Endpoint: architecture/ENDPOINT.md
-      - LLM gateway: architecture/LLM_GATEWAY.md
+      - LLM Gateway: architecture/LLM_GATEWAY.md
       - Machine metrics poller: architecture/MACHINE_METRICS_POLLER.md
       - Operator: architecture/OPERATOR.md
       - OTLP exporter: architecture/OTLP_EXPORTER.md
       - Reconciler: architecture/RECONCILER.md
   - Contributing:
+      - Overview: contributing/README.md
       - Development: contributing/DEVELOPMENT.md
       - Style: contributing/STYLE.md
-      - Config: contributing/CONFIG.md
+      - Configuration internals: contributing/CONFIG.md
       - AI policy: contributing/AI_POLICY.md
   - Roadmap: ROADMAP.md
+
+markdown_extensions:
+  # Lets a page wrap Markdown in a <div class="..." markdown> for styling.
+  - md_in_html
 
 plugins:
   - search
   - include-markdown
-  - mermaid2
+  - mermaid2:
+      arguments:
+        # One plain grey look for every diagram, matching images/how-it-works.svg.
+        theme: neutral

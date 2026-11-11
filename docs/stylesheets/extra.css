@@ -1,0 +1,226 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+/* The theme caps the page at 800px, which leaves most wide screens empty
+   and squeezes the tables and code blocks. */
+.wy-nav-content {
+  max-width: 1100px;
+}
+
+/* The theme indents quotes, so notes like "Converting an existing workflow?" sit off
+   the text's left edge. Line them up and mark them with a bar instead. */
+.rst-content blockquote {
+  margin-left: 0;
+  padding-left: 16px;
+  border-left: 4px solid #e1e4e5;
+}
+
+/* The theme keeps every table cell on one line and scrolls the table sideways. Wrap
+   the text instead, so a table fits the page. */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+  white-space: normal;
+}
+
+/* The theme puts as much space under a heading as between paragraphs, so a heading
+   floats between sections. Halve it to keep the heading with its own text. */
+.rst-content h1,
+.rst-content h2,
+.rst-content h3,
+.rst-content h4,
+.rst-content h5,
+.rst-content h6 {
+  margin-bottom: 12px;
+}
+
+/* Keep a nested list tight against the item that introduces it. */
+.rst-content .section ul li > ul,
+.rst-content .section ul li > ol,
+.rst-content .section ol li > ul,
+.rst-content .section ol li > ol {
+  margin-top: 0;
+}
+
+/* Green instead of the theme's blue. The main green keeps white text and links on the
+   page readable (contrast above 4.5:1). */
+:root {
+  --canyonos-green: #1b7a43;
+  --canyonos-green-dark: #145c32;
+}
+
+.wy-side-nav-search,
+.wy-nav-top,
+.wy-menu-vertical a:active {
+  background-color: var(--canyonos-green);
+}
+
+.wy-side-nav-search input[type="text"] {
+  border-color: var(--canyonos-green-dark);
+}
+
+/* Only links in the page itself: green on the dark sidebar is hard to read, so the
+   sidebar keeps the theme's white and grey. */
+.wy-nav-content a,
+.wy-nav-content a:visited,
+.rst-content a code {
+  color: var(--canyonos-green);
+}
+
+.wy-nav-content a:hover {
+  color: var(--canyonos-green-dark);
+}
+
+/* Section headings in the sidebar: the logo's green, lightened to read on the dark
+   background. */
+.wy-menu-vertical header,
+.wy-menu-vertical p.caption,
+.wy-nav .wy-menu-vertical header {
+  color: #3dbb73;
+}
+
+/* The With/Without table on the home page: centered, as a card, with the CanyonOS
+   column in green and no zebra stripes. */
+.rst-content .compare-table .wy-table-responsive {
+  overflow: visible;
+}
+
+.rst-content .compare-table table.docutils:not(.field-list) {
+  display: table;
+  width: auto;
+  margin: 8px auto 24px;
+  border: 1px solid #d5e5da;
+  border-collapse: separate;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.rst-content .compare-table table.docutils:not(.field-list) th {
+  background-color: #eaf5ee;
+  border: none;
+  padding: 12px 20px;
+}
+
+.rst-content .compare-table table.docutils:not(.field-list) tr td {
+  background-color: #ffffff;
+  border: none;
+  border-top: 1px solid #e6eee9;
+  padding: 12px 20px;
+}
+
+.rst-content .compare-table table.docutils:not(.field-list) tr td:first-child {
+  font-weight: 700;
+}
+
+.rst-content .compare-table table.docutils:not(.field-list) tr td:nth-child(2) {
+  color: var(--canyonos-green-dark);
+}
+
+/* Mermaid diagrams: centered, with room below them. */
+.rst-content .mermaid {
+  overflow-x: auto;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+/* Tabs made by tabs.js: a row of buttons over one panel at a time. */
+.rst-content .tabs-ready {
+  margin-bottom: 24px;
+}
+
+.rst-content .tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid #d5e5da;
+}
+
+.rst-content .tab-bar button {
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: #404040;
+  cursor: pointer;
+  font: inherit;
+  margin-bottom: -1px;
+  padding: 8px 16px;
+}
+
+.rst-content .tab-bar button:hover {
+  color: var(--canyonos-green);
+}
+
+.rst-content .tab-bar button[aria-selected="true"] {
+  background: #fcfcfc;
+  border-color: #d5e5da;
+  color: var(--canyonos-green);
+  font-weight: 700;
+}
+
+.rst-content .tabs-ready .tab {
+  border: 1px solid #d5e5da;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  padding: 16px 16px 0;
+}
+
+/* The open page in the sidebar: shades of the sidebar's own dark grey instead of the
+   theme's white and light grey, so it doesn't glare against the rest. */
+.wy-menu-vertical li.current {
+  background: #4a4545;
+}
+
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.current > a:hover,
+.wy-menu-vertical li.on a,
+.wy-menu-vertical li.on a:hover {
+  background: #585252;
+  color: #ffffff;
+}
+
+.wy-menu-vertical li.toctree-l1.current > a {
+  border-color: #585252;
+}
+
+.wy-menu-vertical li.current a,
+.wy-menu-vertical li.toctree-l2.current > a,
+.wy-menu-vertical li.toctree-l2.current li.toctree-l3 > a,
+.wy-menu-vertical li.toctree-l3.current > a,
+.wy-menu-vertical li.toctree-l3.current li.toctree-l4 > a {
+  color: #d9d9d9;
+  border-right: none;
+}
+
+.wy-menu-vertical li.toctree-l2.current > a,
+.wy-menu-vertical li.toctree-l2.current li.toctree-l3 > a,
+.wy-menu-vertical li.toctree-l3.current > a,
+.wy-menu-vertical li.toctree-l3.current li.toctree-l4 > a {
+  background: #4a4545;
+}
+
+.wy-menu-vertical li.current a:hover,
+.wy-menu-vertical li.toctree-l2.current li.toctree-l3 > a:hover {
+  background: #625c5c;
+}
+
+.wy-menu-vertical li.current > a button.toctree-expand,
+.wy-menu-vertical li.current > a:hover button.toctree-expand,
+.wy-menu-vertical li.on a button.toctree-expand {
+  color: #d9d9d9;
+}
+
+/* Fade between pages instead of flashing, where the browser supports it. */
+@view-transition {
+  navigation: auto;
+}
+
+/* ASCII diagrams and folder trees. Each of these fonts has the box-drawing characters
+   and the arrows ► ◄ ▲ ▼ at full width, so borders line up; lines sit close enough
+   that vertical borders join. */
+.rst-content pre code.language-text {
+  font-family: Consolas, Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  line-height: 1.2;
+  font-variant-ligatures: none;
+}
