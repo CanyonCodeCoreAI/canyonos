@@ -33,7 +33,8 @@ async function run_controller(project_name: string): Promise<string> {
   return project_id;
 }
 
-const register = (redis_port: number) => api.canyonos.projects.post({ redis_port });
+const register = (redis_port: number) =>
+  api.canyonos.projects.post({ redis_port, redis_password: '' });
 
 describe('POST /canyonos/projects', () => {
   beforeEach(reset_controller);
@@ -71,6 +72,7 @@ describe('POST /canyonos/projects', () => {
     const res = await api.canyonos.projects.post({
       redis_host: CONTAINER_REDIS_HOST,
       redis_port: config.canyonos.redisPort,
+      redis_password: '',
     });
 
     expect(res.error).toBeNull();
@@ -80,7 +82,11 @@ describe('POST /canyonos/projects', () => {
 
   test('a host other than a CanyonOS Redis container is rejected before any connection', async () => {
     for (const redis_host of ['10.0.0.5', 'example.com', 'canyonos-a-redis-localhost.evil.com']) {
-      const res = await api.canyonos.projects.post({ redis_host, redis_port: 6379 });
+      const res = await api.canyonos.projects.post({
+        redis_host,
+        redis_port: 6379,
+        redis_password: '',
+      });
 
       expect(res.error?.status as number).toBe(422);
       expect(error_code(res)).toBe('validation_error');

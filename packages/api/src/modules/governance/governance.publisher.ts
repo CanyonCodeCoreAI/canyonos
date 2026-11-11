@@ -28,7 +28,8 @@ export async function publish_spend(redis: RedisClient, project_id: string): Pro
 
 /** A project whose controller is not the one on its Redis is skipped: it is not running. On
  * Kubernetes its Redis is the one the operator lists, with its password, and a project the
- * operator no longer lists is skipped too; on Docker it is the Redis the project registered. */
+ * operator no longer lists is skipped too; on Docker it is the Redis the project registered,
+ * with its password too. */
 async function publish_project_spend(project_id: string): Promise<void> {
   if (config.canyonos.projectsFile && !registered_projects().has(project_id)) return;
   await with_redis(project_id, async (redis: RedisClient) => {

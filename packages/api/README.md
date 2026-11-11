@@ -9,4 +9,8 @@ without sign-in. With `password`, the API needs `JWT_SECRET`, `/auth/register` c
 first account, and every project route asks for a bearer token. `GET /auth/status` reports
 the mode.
 
+The API stores each project's Redis password encrypted with `REDIS_PASSWORD_ENCRYPTION_KEY`.
+Outside development and test it refuses to start without that key, at least 32 characters;
+`canyonos serve` and the Helm chart make one and keep it.
+
 To run it locally, see [DEVELOPMENT.md](../../docs/contributing/DEVELOPMENT.md).

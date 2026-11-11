@@ -3,7 +3,8 @@
 
 """Two projects side by side on one machine with the shared dashboard: helloworld and
 portfolio deploy at the same time, each on its own ports, and the dashboard lists
-both and reads each one's Redis. helloworld has no `otel:` block, so its traces reach
+both and reads each one's Redis. Each Redis takes only its own project's password, and
+no container's command shows one. helloworld has no `otel:` block, so its traces reach
 the dashboard by the default destination; portfolio and the helloworld cases keep
 theirs. `canyonos test` in another folder named helloworld tests that folder, not
 the running one. Then one project is stopped and the other keeps running; the
@@ -49,6 +50,7 @@ from ..harness import (
     stage,
     stop_project,
 )
+from ..fleet import redis_reply
 from ..projects import load_project
 
 pytestmark = pytest.mark.steps
@@ -197,6 +199,19 @@ def _reads_own_redis(recorder, fleet: Fleet, name: str) -> None:
     assert {prompt["name"] for prompt in prompts} == _prompt_names(directory), prompts
 
 
+def _redis_password_file(recorder, directory: Path) -> tuple[str, int]:
+    """The password the CLI keeps for the project's Redis and its file's mode."""
+    path = Path(
+        cli_value(
+            recorder,
+            directory,
+            "os.path.join(state_dir(), 'redis_password')",
+            "import os; from canyonos.project import state_dir",
+        )
+    )
+    return path.read_text(), path.stat().st_mode & 0o777
+
+
 def _greets(recorder, directory: Path, name: str, greeting: str = "Hello"):
     endpoint = deployed_endpoint(recorder, directory)
     _, result = result_of(recorder, endpoint, name, timeout=60)
@@ -322,6 +337,38 @@ def test_dashboard_reads_each_projects_own_redis(recorder, fleet):
         poll(all_replicas_up, timeout=120, what=f"every agent of {name} running")
 
 
+def test_each_projects_redis_takes_only_its_own_password(recorder, fleet):
+    passwords = {}
+    for name in PROJECTS:
+        password, mode = _redis_password_file(recorder, fleet.dirs[name])
+        assert re.fullmatch(r"[0-9a-f]{64}", password), f"{name}'s password file"
+        assert mode == 0o600, (name, oct(mode))
+        passwords[name] = password
+    assert passwords["helloworld"] != passwords["portfolio"]
+    for name, other in zip(PROJECTS, reversed(PROJECTS)):
+        port = redis_port(recorder, fleet.dirs[name])
+        unsigned = redis_reply(port, "PING")
+        assert unsigned.startswith("-NOAUTH "), (name, unsigned)
+        crossed = redis_reply(port, "AUTH", passwords[other])
+        assert crossed.startswith("-WRONGPASS "), (name, other, crossed)
+        assert redis_reply(port, "AUTH", passwords[name]) == "+OK", name
+    containers = [
+        container
+        for name in PROJECTS
+        for container in project_containers(recorder, fleet.groups[name], every=True)
+    ]
+    commands = docker(
+        recorder,
+        ["inspect", "-f", "{{.Name}} {{json .Path}} {{json .Args}}", *containers],
+    ).output.splitlines()
+    leaked = [
+        command.split()[0]
+        for command in commands
+        if any(password in command for password in passwords.values())
+    ]
+    assert not leaked, f"a Redis password is in the command of {leaked}"
+
+
 def test_helloworld_without_an_otel_block_sends_traces_to_the_dashboard(
     recorder, fleet
 ):
@@ -425,6 +472,9 @@ def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fle
                 [
                     "exec",
                     container,
+                    "sh",
+                    "-c",
+                    'REDISCLI_AUTH="$CANYONOS_REDIS_PASSWORD" exec redis-cli "$@"',
                     "redis-cli",
                     "-p",
                     str(own_redis),

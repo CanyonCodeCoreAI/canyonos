@@ -40,6 +40,9 @@ COMPOSE_PROJECT = "canyonos-dashboard"
 API_IMAGE = env.api_image
 WEB_IMAGE = env.web_image
 LOCK_WAIT_MESSAGE = "waiting for another canyonos command to finish with the dashboard"
+# Made once per machine and kept in the stack's `.env`: the API signs sign-in tokens with the
+# first and encrypts each project's Redis password in its database with the second.
+SECRET_KEYS = ("CANYONOS_JWT_SECRET", "CANYONOS_REDIS_PASSWORD_ENCRYPTION_KEY")
 # The services the dashboard publishes on the host, each with the port it listens on
 # in its container, the host port it starts from, and its name in a warning: the web
 # app (none, as the CLI prints its address itself) and the API, which the CLI reaches.
@@ -82,7 +85,7 @@ class DashboardStack:
     @property
     def env_path(self) -> Path:
         """Path to the machine's dashboard `.env`, where `canyonos serve` writes the
-        stack's settings and JWT secret, shared by every project."""
+        stack's settings and secrets, shared by every project."""
         return self.state_dir / ".env"
 
 
@@ -112,7 +115,7 @@ def _dashboard_lock(on_wait: Callable[[], None] | None = None) -> Iterator[None]
 
     Every command that starts, stops, or removes the shared stack takes it, so
     two project folders never interleave their compose calls, port choice, or
-    JWT secret. Blocks until the lock is free, calling `on_wait` first when
+    secrets. Blocks until the lock is free, calling `on_wait` first when
     another command holds it. Raises PhaseFailure("validate", ...) when the
     lock file cannot be opened or locked.
     """
@@ -374,17 +377,27 @@ def _env_value(value: str) -> str:
     return value
 
 
-def _read_existing_secret(env_path: Path) -> str | None:
+def _read_existing_secret(env_path: Path, key: str) -> str | None:
+    """The value `key` already has in the stack's `.env`, so a secret made once stays the
+    same across `canyonos serve` runs; None when the file or the value is missing."""
     try:
         lines = env_path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
 
     for line in lines:
-        key, separator, value = line.partition("=")
-        if separator and key == "CANYONOS_JWT_SECRET" and _env_value(value):
+        name, separator, value = line.partition("=")
+        if separator and name == key and _env_value(value):
             return _env_value(value)
     return None
+
+
+def _stack_secrets(env_path: Path) -> dict[str, str]:
+    """Each of the stack's secrets: the one its `.env` already holds, or a new random one."""
+    return {
+        key: _read_existing_secret(env_path, key) or secrets.token_urlsafe(32)
+        for key in SECRET_KEYS
+    }
 
 
 def _env_line(key: str, value: str) -> str:
@@ -397,8 +410,7 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
     try:
         make_private_dir(stack.state_dir)
         managed_env = {
-            "CANYONOS_JWT_SECRET": _read_existing_secret(stack.env_path)
-            or secrets.token_urlsafe(32),
+            **_stack_secrets(stack.env_path),
             "CANYONOS_API_IMAGE": API_IMAGE,
             "CANYONOS_WEB_IMAGE": WEB_IMAGE,
             **{
@@ -438,7 +450,7 @@ def _command_failure_message(
     )
     if detail is None:
         return message
-    return f"{message}: {_redact_logs(detail, managed_env['CANYONOS_JWT_SECRET'])}"
+    return f"{message}: {_redact_logs(detail, *_secret_values(managed_env))}"
 
 
 def _start_failure_message(
@@ -571,8 +583,14 @@ def _verify(port: int) -> str:
     )
 
 
-def _redact_logs(logs: str, jwt_secret: str) -> str:
-    redacted = logs.replace(jwt_secret, "[redacted]")
+def _secret_values(managed_env: dict[str, str]) -> list[str]:
+    return [managed_env[key] for key in SECRET_KEYS]
+
+
+def _redact_logs(logs: str, *secret_values: str) -> str:
+    redacted = logs
+    for secret in secret_values:
+        redacted = redacted.replace(secret, "[redacted]")
     return re.sub(r"://[^/\s@]+@", "://[redacted]@", redacted)
 
 
@@ -594,7 +612,7 @@ def _capture_failure_logs(
     log_path = log_dir / f"serve-{timestamp}.log"
     write_private_file(
         log_path,
-        _redact_logs(logs, managed_env["CANYONOS_JWT_SECRET"]),
+        _redact_logs(logs, *_secret_values(managed_env)),
     )
     return log_path
 

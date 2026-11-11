@@ -42,6 +42,7 @@ services:
       CANYONOS_REDIS_PORT: '6379'
       # Fixed for the smoke run only. A real stack gets a random per-stack value from the CLI.
       JWT_SECRET: canyonos-smoke-secret-not-for-production-0123456789
+      REDIS_PASSWORD_ENCRYPTION_KEY: canyonos-smoke-redis-password-key-not-for-production
       LOG_LEVEL: info
     ports:
       - '127.0.0.1:${SMOKE_API_PORT:-53000}:3000'

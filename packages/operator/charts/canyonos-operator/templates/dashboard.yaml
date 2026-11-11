@@ -38,9 +38,12 @@ data:
   {{- if $existing }}
   db-password: {{ index $existing.data "db-password" }}
   jwt-secret: {{ index $existing.data "jwt-secret" }}
+  {{- /* Added after the first releases: a Secret made before it gets one on upgrade. */}}
+  redis-password-key: {{ index $existing.data "redis-password-key" | default (randAlphaNum 48 | b64enc) }}
   {{- else }}
   db-password: {{ randAlphaNum 32 | b64enc }}
   jwt-secret: {{ randAlphaNum 48 | b64enc }}
+  redis-password-key: {{ randAlphaNum 48 | b64enc }}
   {{- end }}
 ---
 {{- end }}
@@ -172,6 +175,10 @@ spec:
             - {name: DATABASE_URL, value: "postgresql://canyonos:$(DB_PASSWORD)@canyonos-dashboard-db:5432/canyonos"}
             - name: JWT_SECRET
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: jwt-secret}}
+            # Encrypts a Redis password the API stores; projects the operator lists keep
+            # theirs in its list, but the API refuses to start without the key.
+            - name: REDIS_PASSWORD_ENCRYPTION_KEY
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: redis-password-key}}
             # Sign-in always: every project's global controller may reach this API (for
             # telemetry), and with AUTH_MODE=none any pod labelled as one could read and
             # change every project.

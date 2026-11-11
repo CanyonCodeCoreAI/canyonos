@@ -20,7 +20,7 @@ from ..harness import (
     finished,
     http,
     poll,
-    redis_port,
+    project_redis,
     stage,
     stop_project,
     submit,
@@ -63,11 +63,7 @@ def human_input_deploy(recorder, images, tmp_path_factory):
         yield HumanInputDeploy(
             directory=directory,
             endpoint=deployed_endpoint(recorder, directory),
-            store=redis.Redis(
-                host="127.0.0.1",
-                port=redis_port(recorder, directory),
-                decode_responses=True,
-            ),
+            store=project_redis(recorder, directory),
         )
     finally:
         stop = stop_project(recorder, directory)

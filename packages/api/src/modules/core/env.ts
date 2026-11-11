@@ -55,9 +55,36 @@ export function assertJwtSecret(secret: string | undefined, environment: AppEnvi
 
 if (authMode === 'password') assertJwtSecret(env.JWT_SECRET, environment);
 
+const DEVELOPMENT_REDIS_PASSWORD_KEY = 'canyonos-local-development-only-redis-password-key';
+const MIN_REDIS_PASSWORD_KEY_LENGTH = 32;
+
+/** The key the API encrypts each project's Redis password with before storing it. Development
+ * and test fall back to a fixed key; anywhere else a missing, committed, or short key refuses
+ * the start. */
+export function resolveRedisPasswordKey(
+  key: string | undefined,
+  environment: AppEnvironment
+): string {
+  if (environment === 'development' || environment === 'test') {
+    return key || DEVELOPMENT_REDIS_PASSWORD_KEY;
+  }
+  if (!key || key === DEVELOPMENT_REDIS_PASSWORD_KEY) {
+    throw new Error(
+      'REDIS_PASSWORD_ENCRYPTION_KEY must be set outside development and test. Generate one with `openssl rand -base64 32`.'
+    );
+  }
+  if (key.length < MIN_REDIS_PASSWORD_KEY_LENGTH) {
+    throw new Error(
+      `REDIS_PASSWORD_ENCRYPTION_KEY must be at least ${MIN_REDIS_PASSWORD_KEY_LENGTH} characters. Generate one with \`openssl rand -base64 32\`.`
+    );
+  }
+  return key;
+}
+
 const canyonos = {
   redisHost: env.CANYONOS_REDIS_HOST ?? 'host.docker.internal',
   redisPort: parseInteger(env.CANYONOS_REDIS_PORT, 6379),
+  redisPasswordKey: resolveRedisPasswordKey(env.REDIS_PASSWORD_ENCRYPTION_KEY, environment),
   // Kubernetes: the projects (and their Redis) the operator lists for this dashboard.
   projectsFile: env.CANYONOS_PROJECTS_FILE ?? null,
 };

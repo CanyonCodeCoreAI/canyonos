@@ -55,9 +55,10 @@ dashboard:
   pullPolicy: IfNotPresent
   storage: 1Gi
   storageClassName: ""
-  # A Secret of your own with db-password and jwt-secret (at least 32 characters);
-  # empty: the chart makes one on install. Set it when the chart is rendered without the
-  # cluster (helm template, Argo CD), which cannot keep a generated password.
+  # A Secret of your own with db-password, jwt-secret and redis-password-key (the last two
+  # at least 32 characters each); empty: the chart makes one on install. Set it when the
+  # chart is rendered without the cluster (helm template, Argo CD), which cannot keep a
+  # generated password.
   existingSecret: ""
   # Run its images as their own users (postgres 70, bun and caddy 1000). Turn off on
   # OpenShift, which assigns each namespace its own range of user IDs.

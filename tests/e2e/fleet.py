@@ -11,23 +11,31 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 from dataclasses import dataclass
 from typing import cast
 
 import redis
 
-from .harness import canyonos, project_containers, redis_port
+from .harness import canyonos, project_containers, project_redis
 
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 
 
 def store(recorder, deployed) -> redis.Redis:
     """The deployed project's Redis, on the host port the CLI recorded for it."""
-    return redis.Redis(
-        host="127.0.0.1",
-        port=redis_port(recorder, deployed.dir),
-        decode_responses=True,
+    return project_redis(recorder, deployed.dir)
+
+
+def redis_reply(port: int, *command: str) -> str:
+    """The first line Redis on 127.0.0.1:`port` answers `command` with, sent over a
+    raw RESP connection, so no client signs in first or rewrites the error."""
+    request = f"*{len(command)}\r\n" + "".join(
+        f"${len(part.encode())}\r\n{part}\r\n" for part in command
     )
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        connection.sendall(request.encode())
+        return connection.makefile("rb").readline().decode().rstrip("\r\n")
 
 
 def _hash(redis_client: redis.Redis, key: str) -> dict[str, str]:

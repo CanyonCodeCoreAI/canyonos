@@ -262,6 +262,7 @@ def gateway_pids():
 REDIS = redis.Redis(
     host=os.environ["CANYONOS_REDIS_HOST"],
     port=int(os.environ["CANYONOS_REDIS_PORT"]),
+    password=os.environ.get("CANYONOS_REDIS_PASSWORD"),
     decode_responses=True,
 )
 
@@ -339,7 +340,8 @@ def main():
             "-c",
             "import json, os, redis; from canyonos_core.llm_gateway import pricing; "
             "r = redis.Redis(host=os.environ['CANYONOS_REDIS_HOST'], "
-            "port=int(os.environ['CANYONOS_REDIS_PORT']), decode_responses=True); "
+            "port=int(os.environ['CANYONOS_REDIS_PORT']), "
+            "password=os.environ.get('CANYONOS_REDIS_PASSWORD'), decode_responses=True); "
             "published = json.loads(r.get(pricing.LLM_PRICES_KEY) or '{}'); "
             "prefixes = set(pricing.LLM_HOSTS.values()); "
             "key = next(k for k in published if k.split('/', 1)[0] in prefixes); "

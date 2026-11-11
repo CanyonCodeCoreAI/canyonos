@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Tell the local dashboard api which Redis a project's controller uses: its container
-and port, on the project's network the dashboard joins first.
+and port, on the project's network the dashboard joins first, and its password.
 
 Temporary: applied now so multi-project dashboards work without blocking the flow;
 revisit with the project-key design in CAN-521 (the api should not hold
@@ -66,8 +66,8 @@ def _api_port() -> int:
 
 def register_project(redis_port: int, api_port: int | None = None) -> dict:
     """Connect the dashboard api to the project's network, then register the project
-    with its Redis container's name and `redis_port`, with the dashboard's API on
-    `api_port`, or where it is when that is None.
+    with its Redis container's name, `redis_port` and the project's Redis password, with
+    the dashboard's API on `api_port`, or where it is when that is None.
 
     Returns the api's `{project_id, name}`. Connection failures and 5xx answers
     are retried, up to ATTEMPTS in all; a 4xx answer is final. Raises
@@ -79,7 +79,11 @@ def register_project(redis_port: int, api_port: int | None = None) -> dict:
     if joined is not None:
         raise RegistrationError(joined)
     payload = json.dumps(
-        {"redis_host": project.redis_container_name(), "redis_port": redis_port}
+        {
+            "redis_host": project.redis_container_name(),
+            "redis_port": redis_port,
+            "redis_password": project.redis_password(),
+        }
     ).encode()
     failure = "the dashboard api did not answer"
     for attempt in range(ATTEMPTS):

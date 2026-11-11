@@ -7,7 +7,8 @@ Two kinds of machine are involved:
   Controller, the endpoint, and the dashboard, so keep it running for as long as
   the deployment is live.
 - **Agent machines** are the EC2 machines CanyonOS launches when you deploy. Each
-  runs its own Redis. The top-level `provider` picks how they are chosen:
+  runs its own Redis, which requires the project's Redis password. The top-level
+  `provider` picks how they are chosen:
   - `ec2-assign`: one machine per replica, of the type the `ec2-assign:` section gives
     its agent. A replica never shares its machine.
   - `ec2-pool`: a pool, as many of each machine type as `ec2-pool.machine_type` lists. Each

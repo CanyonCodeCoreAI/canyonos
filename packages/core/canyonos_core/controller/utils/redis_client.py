@@ -8,19 +8,21 @@ import socket
 
 import redis
 
+PASSWORD_ENV = "CANYONOS_REDIS_PASSWORD"
 _ENABLED = {"1", "true", "yes", "on"}
 
 
 def connection_options(environ=None):
     """Password, username and TLS for a Redis that requires them (such as one the
     Kubernetes operator runs, or a managed one), from the CANYONOS_REDIS_* variables.
-    None set means a plain connection, as Docker and EC2 use; timeouts and retries stay
-    redis-py's defaults. The LLM gateway (llm_gateway/hooks.py) uses the same rules.
+    Docker and EC2 set only the password, from the project's; none set means a plain
+    connection. Timeouts and retries stay redis-py's defaults. The LLM gateway
+    (llm_gateway/hooks.py) uses the same rules.
     """
     env = os.environ if environ is None else environ
     options = {}
-    if env.get("CANYONOS_REDIS_PASSWORD"):
-        options["password"] = env["CANYONOS_REDIS_PASSWORD"]
+    if env.get(PASSWORD_ENV):
+        options["password"] = env[PASSWORD_ENV]
     if env.get("CANYONOS_REDIS_USERNAME"):
         options["username"] = env["CANYONOS_REDIS_USERNAME"]
     if env.get("CANYONOS_REDIS_TLS", "").strip().lower() in _ENABLED:
@@ -28,6 +30,39 @@ def connection_options(environ=None):
         if env.get("CANYONOS_REDIS_CA_FILE"):
             options["ssl_ca_certs"] = env["CANYONOS_REDIS_CA_FILE"]
     return options
+
+
+def password_env_args(local=True):
+    """The `docker run` args that give a container the project's Redis password. A local
+    `docker` copies it from this process's environment, which keeps it off the command
+    line; one run over SSH needs the value."""
+    password = os.environ.get(PASSWORD_ENV)
+    if not password:
+        return []
+    return ["-e", PASSWORD_ENV if local else f"{PASSWORD_ENV}={password}"]
+
+
+def redis_server_command(port, local=True):
+    """The command a Redis container runs on `port`, requiring the project's password. A
+    local one reads it from the environment `password_env_args` gives the container, and
+    goes through the image's entrypoint, which starts Redis as its own user, not root."""
+    password = os.environ.get(PASSWORD_ENV)
+    command = ["redis-server", "--port", str(port)]
+    if not password:
+        return command
+    if not local:
+        return [*command, "--requirepass", password]
+    return [
+        "sh",
+        "-c",
+        f'exec docker-entrypoint.sh {" ".join(command)} --requirepass "${PASSWORD_ENV}"',
+    ]
+
+
+def hide_password(text):
+    """Return `text` with the project's Redis password masked."""
+    password = os.environ.get(PASSWORD_ENV)
+    return text.replace(password, "***") if password else text
 
 
 class RedisClient(object):

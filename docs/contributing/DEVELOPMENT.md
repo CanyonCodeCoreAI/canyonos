@@ -149,10 +149,12 @@ send their traces to the host API, and the Vite dashboard shows them.
 
 ### A few quirks
 
-- The API registers the project it finds on the default Redis during startup.
-  After a new deploy, restart `bun run dashboard:dev`, or register the project
-  while it runs with `curl -X POST http://localhost:3000/canyonos/projects
--H 'Content-Type: application/json' -d '{"redis_port":6379}'`.
+- The API registers the project it finds on the default Redis during startup,
+  when that Redis has no password. A deployed project's Redis has one, so after a
+  deploy register the project while the API runs with `curl -X POST http://localhost:3000/canyonos/projects
+-H 'Content-Type: application/json' -d "{\"redis_port\":6379,\"redis_password\":\"$(cat
+~/.canyonos/projects/<project>/redis_password)\"}"`. The API stores that password
+  encrypted with a fixed development key unless `REDIS_PASSWORD_ENCRYPTION_KEY` is set.
 - API and web edits reload while the command is running. Core edits need
   `bun run canyonos:dev` again and a workflow redeploy.
 - The default ports are API `3000`, web `5173`, Postgres `5432`, endpoint

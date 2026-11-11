@@ -24,7 +24,8 @@ ENDPOINT = "http://127.0.0.1:8090"
 POOL = {"t3.micro": 2, "t3.small": 1}
 CAPACITY = {"t3.micro": ("2", "1024"), "t3.small": ("2", "2048")}
 
-controller_redis = redis.Redis(port=6390, decode_responses=True)
+PASSWORD = os.environ.get("CANYONOS_REDIS_PASSWORD")
+controller_redis = redis.Redis(port=6390, password=PASSWORD, decode_responses=True)
 ec2 = boto3.client("ec2", region_name=os.environ["EC2_REGION"])
 
 
@@ -98,9 +99,9 @@ def check_placement():
         if record["agent_name"] == "endpoint":
             continue
         machine = pool[record["machine"]]
-        price = redis.Redis(host=record["private_host"], decode_responses=True).get(
-            f"agent:{replica_id}:hourly_cost"
-        )
+        price = redis.Redis(
+            host=record["private_host"], password=PASSWORD, decode_responses=True
+        ).get(f"agent:{replica_id}:hourly_cost")
         share = float(record["cpu"]) / float(machine["cpu"])
         expected = machine_hourly_cost(machine["machine_type"]) * share
         check(
@@ -259,7 +260,10 @@ def drain_overlap(agent_name, timeout):
     replacement starts while it still drains, instead of after its drain ends."""
     ((old, record),) = replicas_of(agent_name).items()
     machine_redis = redis.Redis(
-        host=record["private_host"], port=record["redis_port"], decode_responses=True
+        host=record["private_host"],
+        port=record["redis_port"],
+        password=PASSWORD,
+        decode_responses=True,
     )
 
     def busy():

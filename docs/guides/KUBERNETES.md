@@ -228,7 +228,7 @@ its telemetry to the dashboard.
 | `dashboard.apiImage`, `webImage` | this release's `canyonos-api` and `canyonos-web` |
 | `dashboard.dbImage` | `postgres:16-alpine` |
 | `dashboard.storage`, `storageClassName` | `1Gi`, the cluster's default |
-| `dashboard.existingSecret` | none: the chart makes the database password and JWT secret on install and keeps them. Give your own Secret (`db-password`, `jwt-secret` of 32 characters or more) when the chart is rendered without the cluster (`helm template`, Argo CD), which cannot keep a generated password. |
+| `dashboard.existingSecret` | none: the chart makes the database password, JWT secret and Redis password key on install and keeps them. Give your own Secret (`db-password`, plus `jwt-secret` and `redis-password-key` of 32 characters or more each) when the chart is rendered without the cluster (`helm template`, Argo CD), which cannot keep a generated password. |
 | `dashboard.fixedUsers` | `true`; set `false` on OpenShift, which assigns user IDs itself |
 | `dashboard.metricsRawRetentionDays`, `metricsRollupRetentionDays` | `3` days of raw five-second metric ticks (ranges of 30 minutes or less), `120` days of five-minute rollups (longer ranges) |
 

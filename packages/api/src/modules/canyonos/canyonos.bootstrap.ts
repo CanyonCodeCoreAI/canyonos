@@ -29,11 +29,12 @@ async function read_identity(redis: RedisClient): Promise<ControllerIdentity> {
   };
 }
 
-/** Stores the identity's project, or gives an existing one the new Redis. */
+/** Stores the identity's project, or gives an existing one the new Redis and its password. */
 export async function save_controller_project(
   { project_id, project_name }: ControllerIdentity,
   redis_host: string,
-  redis_port: number
+  redis_port: number,
+  redis_password: string
 ): Promise<RegisteredProject> {
   if (project_id === null || !UUID_RE.test(project_id)) {
     throw unprocessable(
@@ -47,17 +48,25 @@ export async function save_controller_project(
     name: project_name || DEFAULT_PROJECT_NAME,
     redis_host,
     redis_port,
+    redis_password,
   });
 }
 
-/** Registers the project whose controller publishes its identity on redis_host:redis_port.
- * The project keeps redis_host as sent, even when the api reaches it on loopback. */
+/** Registers the project whose controller publishes its identity on redis_host:redis_port,
+ * signing in with redis_password. The project keeps redis_host as sent, even when the api
+ * reaches it on loopback. */
 export async function register_project_at(
   redis_host: string,
-  redis_port: number
+  redis_port: number,
+  redis_password: string
 ): Promise<RegisteredProject> {
-  const identity = await with_redis_at(reachable_redis_host(redis_host), redis_port, read_identity);
-  const project = await save_controller_project(identity, redis_host, redis_port);
+  const identity = await with_redis_at(
+    reachable_redis_host(redis_host),
+    redis_port,
+    redis_password,
+    read_identity
+  );
+  const project = await save_controller_project(identity, redis_host, redis_port, redis_password);
   // A failed prompt load must not fail the registration: the prompts listing stores them later.
   await load_prompts(project.project_id).catch((error: unknown) =>
     canyonos_logger.warn('Could not load stored prompts', { error })
@@ -67,7 +76,7 @@ export async function register_project_at(
 
 export async function bootstrap_canyonos(): Promise<void> {
   // Without a reachable controller the dashboard still starts; the CLI registers projects later.
-  await register_project_at(config.canyonos.redisHost, config.canyonos.redisPort).catch(
+  await register_project_at(config.canyonos.redisHost, config.canyonos.redisPort, '').catch(
     (error: unknown) =>
       canyonos_logger.warn('Could not register the configured controller project', { error })
   );

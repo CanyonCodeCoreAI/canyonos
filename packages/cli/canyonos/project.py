@@ -22,11 +22,14 @@ two in step.
 
 import os
 import re
+import secrets
+from pathlib import Path
 
 import yaml
 
 from canyonos.constants import default_config_path, read_config
 from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
+from canyonos.os_support import make_private_dir, write_private_file
 
 DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
 PROJECT_LABEL = "com.docker.compose.project"
@@ -172,6 +175,23 @@ def state_path(name=None):
     """Return the file that records the Global Controller container and port of
     project `name`, by default this folder's."""
     return os.path.join(state_dir(name), "state.json")
+
+
+def redis_password_path(name=None):
+    """Return the file that holds the Redis password of project `name`, by default this
+    folder's."""
+    return os.path.join(state_dir(name), "redis_password")
+
+
+def redis_password(name=None):
+    """Return the Redis password of project `name`, by default this folder's, made on
+    its first use and kept after."""
+    path = redis_password_path(name)
+    if not os.path.isfile(path):
+        make_private_dir(Path(state_dir(name)))
+        write_private_file(path, secrets.token_hex(32))
+    with open(path, encoding="utf-8") as f:
+        return f.read()
 
 
 def sync_manifest_path():

@@ -175,7 +175,9 @@ explicit, at two depths:
   project. Every `deploy` quietly does this to the project's previous controller,
   refusing the same way, so each deploy starts clean.
 - **`clean`** — `stop`, then the project's build output: `.canyon`, the skill
-  `convert` installed, and the agent images.
+  `convert` installed, and the agent images; and its records in
+  `~/.canyonos/projects/<project>/`, its Redis password among them. When the stop
+  fails or is refused, nothing is removed.
 
 Both act on the projects named by name, folder name or ID, from any folder.
 Without names they act on the only deployed project, or ask which in a menu, and

@@ -23,6 +23,8 @@ The dashboard API reads `AUTH_MODE`:
 
 The dashboard that `canyonos deploy` and `canyonos serve` start always runs with `none`; `canyonos` has no setting to change it.
 
+The API also stores each project's Redis password, encrypted with `REDIS_PASSWORD_ENCRYPTION_KEY`, and refuses to start without that key (32 characters or more). `canyonos serve` makes both secrets once and keeps them in `~/.canyonos/dashboard/.env`.
+
 ## Metric retention
 
 The API keeps raw five-second metric ticks for `METRICS_RAW_RETENTION_DAYS` (default 3) and five-minute rollups for `METRICS_ROLLUP_RETENTION_DAYS` (default 120). Ranges of 30 minutes or less read the raw ticks; longer ranges read the rollups. Set them in the shell before `canyonos deploy` or `canyonos serve`:

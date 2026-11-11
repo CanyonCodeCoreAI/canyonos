@@ -49,6 +49,7 @@ from canyonos.constants import (
     sends_to_dashboard,
     write_config,
 )
+from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
 from canyonos.dashboard_stack import (
     _dashboard_lock,
     _existing_dashboard_port,
@@ -385,6 +386,26 @@ def _stop_on_project_errors():
         )
 
 
+def _redis_outlived_its_password():
+    """True when this project's Redis container still runs on the active Docker engine
+    but its password file under `~/.canyonos/projects/` is gone, so a new password
+    would not open it."""
+    if os.path.isfile(project.redis_password_path()):
+        return False
+    inspect = run_docker(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
+            project.redis_container_name(),
+        ],
+        timeout=DOCKER_QUICK_TIMEOUT,
+        action="Looking for this project's Redis container",
+    )
+    return inspect.returncode == 0 and inspect.stdout.strip() == "true"
+
+
 def run_deploy(
     serve=True,
     verbose=False,
@@ -399,6 +420,20 @@ def run_deploy(
     _warn_unset_example_keys()
     # Before the project check, which runs in the core image when core isn't installed.
     _ensure_docker_running()
+    if _redis_outlived_its_password():
+        name = project.project_name()
+        # `canyonos stop` finds a project by its state file.
+        removal = (
+            f"Run `canyonos stop {name}` to remove the old Redis"
+            if os.path.isfile(project.state_path())
+            else f"Remove the old Redis with `docker rm -f -v "
+            f"{project.redis_container_name()}`"
+        )
+        raise RuntimeError(
+            f"{name}'s Redis is still running, but its password file "
+            f"{project.redis_password_path()} is gone, so a new password would not "
+            f"open it. {removal}, then deploy again."
+        )
     _stop_on_project_errors()
 
     # `canyonos test` (quiet) deploys the config as-is, without the picker.

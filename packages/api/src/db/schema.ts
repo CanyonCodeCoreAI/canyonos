@@ -61,6 +61,7 @@ export const projects = pgTable('projects', {
   // with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
   redis_host: text('redis_host'),
   redis_port: integer('redis_port'),
+  redis_password: text('redis_password'),
   created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
     .notNull()
     .defaultNow(),

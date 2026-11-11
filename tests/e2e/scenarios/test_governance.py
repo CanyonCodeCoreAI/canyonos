@@ -39,8 +39,8 @@ from ..harness import (
     http,
     manifest,
     poll,
+    project_redis,
     project_root,
-    redis_port,
     stage,
     submit,
     stop_project,
@@ -256,11 +256,7 @@ def governed(recorder, images, tmp_path_factory):
             cwd=directory,
             timeout=DEPLOY_TIMEOUT,
         )
-        store = redis.Redis(
-            host="127.0.0.1",
-            port=redis_port(recorder, directory),
-            decode_responses=True,
-        )
+        store = project_redis(recorder, directory)
         poll(
             lambda: agents <= store.smembers(UP_KEY),
             timeout=UP_TIMEOUT,

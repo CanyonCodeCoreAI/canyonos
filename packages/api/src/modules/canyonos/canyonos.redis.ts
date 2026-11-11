@@ -5,6 +5,7 @@ import { RedisClient } from 'bun';
 
 import { config } from '@core/env';
 import { badGateway, notFound } from '@core/errors';
+import type { AppError } from '@core/errors';
 
 import { registered_projects } from './canyonos.registry';
 import { canyonos_repo } from './canyonos.repo';
@@ -48,40 +49,117 @@ export function redis_url({
 /** Bun's RedisClient ignores connectionTimeout while the TCP connect is pending, so a Redis
  * whose address stopped answering would hold the request until the server's idle timeout. */
 const CONNECT_TIMEOUT_MS = 3000;
+/** How long the sign-in check waits for an answer from a Redis that closed Bun's connection. */
+const SIGN_IN_CHECK_TIMEOUT_MS = 1000;
+/** The errors Redis answers a refused sign-in with. */
+const SIGN_IN_REFUSED = /^-(NOAUTH|WRONGPASS|ERR invalid password)/;
 
-async function connect(redis: RedisClient): Promise<void> {
+class ConnectTimedOut extends Error {}
+
+async function connect_within_timeout(redis: RedisClient): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timed_out = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('Redis connect timed out')), CONNECT_TIMEOUT_MS);
+    timer = setTimeout(
+      () => reject(new ConnectTimedOut('Redis connect timed out')),
+      CONNECT_TIMEOUT_MS
+    );
   });
   try {
     await Promise.race([redis.connect(), timed_out]);
-  } catch (error) {
-    throw badGateway(
-      'canyonos.controller_unreachable',
-      'The running controller could not be reached',
-      { cause: error }
-    );
   } finally {
     clearTimeout(timer);
   }
 }
 
-/** Runs operation against the Redis on redis_host:redis_port, then closes the connection. */
+function resp_command(args: readonly string[]): string {
+  const parts = args.map((arg) => `$${Buffer.byteLength(arg)}\r\n${arg}\r\n`);
+  return `*${args.length}\r\n${parts.join('')}`;
+}
+
+/** Redis's first answer to command over a new connection to target, or '' when it does not
+ * answer within SIGN_IN_CHECK_TIMEOUT_MS. */
+async function first_answer(
+  { host, port, tls = false }: RedisTarget,
+  command: readonly string[]
+): Promise<string> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const timer = setTimeout(() => resolve(''), SIGN_IN_CHECK_TIMEOUT_MS);
+  const socket = Bun.connect({
+    hostname: host,
+    port,
+    tls,
+    socket: {
+      open: (opened) => void opened.write(resp_command(command)),
+      data: (_, data) => resolve(data.toString()),
+      close: () => resolve(''),
+      error: () => resolve(''),
+    },
+  }).catch(() => {
+    resolve('');
+    return null;
+  });
+  try {
+    return await promise;
+  } finally {
+    clearTimeout(timer);
+    void socket.then((opened) => opened?.end());
+  }
+}
+
+/** Whether target's Redis refuses its credentials. Bun's RedisClient reports a refused sign-in
+ * only as the connection closing, as it does a Redis that is down, so this signs in once over a
+ * plain connection (or pings, without a password) and reads Redis's answer. */
+async function refuses_sign_in(target: RedisTarget): Promise<boolean> {
+  const { username = '', password = '' } = target;
+  const command = password ? ['AUTH', ...(username ? [username] : []), password] : ['PING'];
+  return SIGN_IN_REFUSED.test(await first_answer(target, command));
+}
+
+/** The error for a failed connect: the project's Redis refused its password, or it could not be
+ * reached. A connect that timed out is not asked again, since its address does not answer. */
+async function connect_failure(error: unknown, target: RedisTarget): Promise<AppError> {
+  if (!(error instanceof ConnectTimedOut) && (await refuses_sign_in(target))) {
+    return badGateway(
+      'canyonos.redis_auth_failed',
+      "This project's Redis refused the password the dashboard holds for it. Deploy the project again with `canyonos deploy` from its folder to register its current password.",
+      { cause: error }
+    );
+  }
+  return badGateway(
+    'canyonos.controller_unreachable',
+    'The running controller could not be reached',
+    { cause: error }
+  );
+}
+
+async function connect(redis: RedisClient, target: RedisTarget): Promise<void> {
+  try {
+    await connect_within_timeout(redis);
+  } catch (error) {
+    throw await connect_failure(error, target);
+  }
+}
+
+/** Runs operation against the Redis on redis_host:redis_port, signing in with redis_password
+ * when there is one, then closes the connection. */
 export async function with_redis_at<T>(
   redis_host: string,
   redis_port: number,
+  redis_password: string,
   operation: (redis: RedisClient) => Promise<T>
 ): Promise<T> {
-  return with_redis_url(redis_url({ host: redis_host, port: redis_port }), operation);
+  return with_redis_target(
+    { host: redis_host, port: redis_port, password: redis_password },
+    operation
+  );
 }
 
-/** Runs operation against the Redis at url, then closes the connection. */
-async function with_redis_url<T>(
-  url: string,
+/** Runs operation against target's Redis, then closes the connection. */
+async function with_redis_target<T>(
+  target: RedisTarget,
   operation: (redis: RedisClient) => Promise<T>
 ): Promise<T> {
-  const redis = new RedisClient(url, {
+  const redis = new RedisClient(redis_url(target), {
     autoReconnect: false,
     maxRetries: 0,
     enableOfflineQueue: false,
@@ -89,7 +167,7 @@ async function with_redis_url<T>(
   });
 
   try {
-    await connect(redis);
+    await connect(redis, target);
     return await operation(redis);
   } finally {
     redis.close();
@@ -105,7 +183,7 @@ export async function with_redis<T>(
   operation: (redis: RedisClient) => Promise<T>
 ): Promise<T> {
   const listed = registered_projects().get(project_id);
-  if (listed) return with_redis_url(redis_url(listed.redis), operation);
+  if (listed) return with_redis_target(listed.redis, operation);
   if (config.canyonos.projectsFile) {
     // Deleted from the cluster, or not ready: there is no Redis of it to fall back to.
     throw notFound(
@@ -117,6 +195,7 @@ export async function with_redis<T>(
   return with_redis_at(
     reachable_redis_host(project?.redis_host ?? null),
     project?.redis_port ?? config.canyonos.redisPort,
+    project?.redis_password ?? '',
     operation
   );
 }

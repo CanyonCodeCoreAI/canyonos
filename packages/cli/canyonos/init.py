@@ -373,6 +373,7 @@ def _run_container(
         )
     host_private_ip = private_ip()
     host_public_ip = public_ip()
+    gc_env = {**os.environ, "CANYONOS_REDIS_PASSWORD": project.redis_password()}
     _create_workspace_volume()
     for _ in range(max_attempts):
         _free_container_name()
@@ -401,6 +402,8 @@ def _run_container(
             "--add-host=host.docker.internal:host-gateway",
             "-e",
             f"CANYONOS_REDIS_HOST={project.redis_container_name()}",
+            "-e",
+            "CANYONOS_REDIS_PASSWORD",
             "-e",
             f"CANYONOS_REDIS_PORT={redis_port}",
             *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),
@@ -435,6 +438,7 @@ def _run_container(
             cmd,
             timeout=DOCKER_RUN_TIMEOUT,
             action="Starting the Global Controller container",
+            env=gc_env,
         )
         if result.returncode == 0:
             container_id = result.stdout.strip()

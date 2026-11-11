@@ -259,11 +259,12 @@ reads it. An unreadable file fails the deploy first. Hidden files never reach
 an image, so `.env` itself stays out of the copy.
 
 The runtime also sets `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`,
-`CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`, `CANYONOS_POLL_INTERVAL`,
-`CANYONOS_LOGS_ENABLED` and the six LLM gateway variables with `-e`, which win
-over the file. A Redis client in your code that defaults to `localhost`
-connects to the container's own loopback, not to the platform's Redis; build
-it from `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT` instead.
+`CANYONOS_REDIS_PASSWORD`, `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`,
+`CANYONOS_POLL_INTERVAL`, `CANYONOS_LOGS_ENABLED` and the six LLM gateway
+variables with `-e`, which win over the file. A Redis client in your code that
+defaults to `localhost` connects to the container's own loopback, not to the
+platform's Redis; build it from `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT` and
+`CANYONOS_REDIS_PASSWORD` instead.
 
 ## Policy
 
@@ -312,6 +313,8 @@ recreates orphaned agent containers, but an endpoint `api_port` you set, a datab
 
 `canyonos clean` stops the project if it is deployed, then deletes its
 `.canyon` directory, if there is one, removes the skill `canyonos convert`
-installed in the project (a global install is kept), and removes its agents'
-local Docker images (`canyonos-<project>-<agent>`). Other projects' images stay.
+installed in the project (a global install is kept), removes its agents'
+local Docker images (`canyonos-<project>-<agent>`), and deletes its records in
+`~/.canyonos/projects/<project>/`, its Redis password among them. Other projects'
+images stay.
 It never touches `.env`.

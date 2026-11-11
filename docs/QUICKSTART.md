@@ -170,11 +170,11 @@ canyonos stop helloworld     # stop a project by name, folder name or ID (or its
 canyonos stop --all          # stop every project on this machine
 ```
 
-With more than one project deployed, `canyonos stop` lists them: tick the ones to stop with space, then press enter. Without a terminal it names them and stops none, so pass the names. A name two projects share is refused; use the ID instead. `stop --all` also finds projects whose folder was deleted before `canyonos stop`, whose containers keep holding their ports. `stop` leaves your project folder (including `.canyon/` and `.env`) and the built images in place, so the next deploy is quick. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images and the installed skill; it never touches `.env`. The project id lives in `workflow_config.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
+With more than one project deployed, `canyonos stop` lists them: tick the ones to stop with space, then press enter. Without a terminal it names them and stops none, so pass the names. A name two projects share is refused; use the ID instead. `stop --all` also finds projects whose folder was deleted before `canyonos stop`, whose containers keep holding their ports. `stop` leaves your project folder (including `.canyon/` and `.env`) and the built images in place, so the next deploy is quick. A redeploy leaves the dashboard running. Use `canyonos clean` for `.canyon/`, the images, the installed skill and the project's records in `~/.canyonos/projects/<project>/`; it never touches `.env`. The project id lives in `workflow_config.yaml`; when that file is under `.canyon/`, `clean` removes it too, and the next deploy shows up as a new project on the dashboard.
 
 ### Clean generated files
 
-Stops the project if it is deployed, then removes its `.canyon` folder, the CanyonOS skill `canyonos convert` installed in its folder, and its agents' Docker images. Other projects' images stay, and `.env` is never touched. `clean` picks projects as `stop` does, from the deployed ones and this folder's; it lists them when there is more than one.
+Stops the project if it is deployed, then removes its `.canyon` folder, the CanyonOS skill `canyonos convert` installed in its folder, its agents' Docker images, and its records in `~/.canyonos/projects/<project>/`, its Redis password among them, so the next deploy makes a new one. When the stop fails or is refused, nothing is removed. Other projects' images stay, and `.env` is never touched. `clean` picks projects as `stop` does, from the deployed ones and this folder's; it lists them when there is more than one.
 
 ```bash
 canyonos clean

@@ -9,6 +9,7 @@ export const RegisterProjectBody = z.object({
     .regex(/^canyonos-[a-z0-9_-]+-redis-localhost$/)
     .optional(),
   redis_port: z.number().int().min(1).max(65535),
+  redis_password: z.string().default(''),
 });
 
 export const RegisteredProjectSchema = z.object({

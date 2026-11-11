@@ -14,6 +14,7 @@ import {
   bootstrap_canyonos,
   save_controller_project,
 } from '@api/modules/canyonos/canyonos.bootstrap';
+import { canyonos_repo } from '@api/modules/canyonos/canyonos.repo';
 import { sync_registered_projects } from '@api/modules/canyonos/canyonos.sync';
 import { config } from '@core/env';
 
@@ -25,6 +26,7 @@ setupE2ETests();
 
 const REDIS_HOST = 'canyonos-billing-redis-localhost';
 const REDIS_PORT = 6380;
+const REDIS_PASSWORD = 's3cret';
 const NOW_NANOS = BigInt(Date.now()) * 1_000_000n;
 const MINUTE_NANOS = 60_000_000_000n;
 
@@ -51,7 +53,7 @@ async function seed_user_project(label: string): Promise<string> {
 }
 
 const save_project = (project_id: string | null, project_name: string | null = null) =>
-  save_controller_project({ project_id, project_name }, REDIS_HOST, REDIS_PORT);
+  save_controller_project({ project_id, project_name }, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD);
 
 const rejection = (promise: Promise<unknown>) =>
   promise.then(
@@ -190,7 +192,7 @@ describe('canyonos reads', () => {
     expect(requests.data?.items.map((item) => item.session_id)).toEqual(['canyonos-user-trace']);
   });
 
-  test('an existing project only takes the Redis: name, creator, timestamps stay', async () => {
+  test('an existing project only takes the Redis and its password, encrypted: name, creator, timestamps stay', async () => {
     const project_id = await seed_user_project('kept-owner');
     const before = await read_project(project_id);
 
@@ -200,6 +202,8 @@ describe('canyonos reads', () => {
       ...before!,
       redis_host: REDIS_HOST,
       redis_port: REDIS_PORT,
+      redis_password: expect.not.stringContaining(REDIS_PASSWORD),
     });
+    expect((await canyonos_repo.find_redis(project_id))?.redis_password).toBe(REDIS_PASSWORD);
   });
 });

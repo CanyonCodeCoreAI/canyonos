@@ -40,6 +40,7 @@ class MyAgent:
         routes = redis.Redis(
             host=os.environ["CANYONOS_REDIS_HOST"],
             port=int(os.environ["CANYONOS_REDIS_PORT"]),
+            password=os.environ.get("CANYONOS_REDIS_PASSWORD"),
             decode_responses=True,
         )
         address = json.loads(routes.hget("routing_table:addresses", "StateDB"))[0]

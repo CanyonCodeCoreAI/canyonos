@@ -139,6 +139,8 @@ canyonos stop || true
 
 step "canyonos deploy starts every machine of the pool"
 canyonos deploy --serve false </dev/null
+CANYONOS_REDIS_PASSWORD="$(uv run --project "$REPO_ROOT" python -c 'from canyonos import project; print(project.redis_password())')"
+export CANYONOS_REDIS_PASSWORD
 pool check-pool
 pool instances "$START" 3 running
 

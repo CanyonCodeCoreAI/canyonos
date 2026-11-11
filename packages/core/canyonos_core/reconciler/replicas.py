@@ -33,6 +33,10 @@ from canyonos_core.controller.utils.port_utils import (
     next_port,
     reserved_ports,
 )
+from canyonos_core.controller.utils.redis_client import (
+    password_env_args,
+    redis_server_command,
+)
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.endpoint import (
     ENDPOINT_PORT,
@@ -215,6 +219,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             f"CANYONOS_REDIS_HOST={redis_host}",
             "-e",
             f"CANYONOS_REDIS_PORT={redis_port}",
+            *password_env_args(is_local),
             "-e",
             f"CANYONOS_POLL_INTERVAL={controller.config.get('poll_interval', 5)}",
             # Route the agent's LLM SDK calls through the in-container gateway for telemetry.
@@ -332,9 +337,7 @@ def start_redis(controller, host, user):
             "-p",
             f"{redis_port}:{redis_port}",
             "redis:alpine",
-            "redis-server",
-            "--port",
-            str(redis_port),
+            *redis_server_command(redis_port, local=False),
         ],
         host,
         user,
@@ -386,6 +389,7 @@ def start_metrics_collector(controller, host, user, image, redis_port, wants_gpu
             "CANYONOS_REDIS_HOST=localhost",
             "-e",
             f"CANYONOS_REDIS_PORT={redis_port}",
+            *password_env_args(_is_local_host(host)),
             "-e",
             f"CANYONOS_METRICS_KEY={machine_metrics_key(host)}",
             "-e",

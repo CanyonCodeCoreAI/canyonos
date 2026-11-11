@@ -24,6 +24,8 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `currently requires protobuf<...` during the build | A requirement pins a base package below the platform floor |
 | `Deploy failed: generated grpc_stubs are missing or not importable` | The generated `*_pb2.py` modules do not import in the controller, usually a protobuf runtime mismatch |
 | `Port ... already in use` | The endpoint `api_port`, a database `db_port` or the Redis port is taken by something else, often a previous deployment that was killed |
+| `Redis is still running, but its password file ... is gone` | `~/.canyonos/projects/<project>/redis_password` was deleted while the project's Redis kept running, and a new password would not open it. Remove the old Redis as the message says, with `canyonos stop <project>` or `docker rm`, then deploy again |
+| `refuses this project's password` in the deploy output or `canyonos logs` | `~/.canyonos/projects/<project>/redis_password` no longer matches the Redis the Global Controller found running, often one a crashed deploy left. Run `canyonos stop <project>` to remove the old Redis, then deploy again |
 
 ## A container exits or serves nothing
 
@@ -45,6 +47,7 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `import local_controller` fails on a protobuf version check | The image resolved a protobuf below what the generated modules need. Check the requirement that dragged it down |
 | Missing credentials while the agent loads | There is no `.env` in the project folder, or the code reads a different variable name |
 | Connection refused to `localhost` for Redis, Postgres or another backing service | The client kept the source's `localhost` default. Inside a container that is its own loopback. Use `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT`, or the database entry's address |
+| `NOAUTH Authentication required` from Redis | The client connects without the project's password. Pass it `CANYONOS_REDIS_PASSWORD` |
 | `ModuleNotFoundError` for a submodule that used to exist | An unpinned requirement resolved to a newer major than the source was written for |
 | `unexpected keyword argument` inside an SDK call | The installed distribution is newer than the source expects |
 
@@ -72,6 +75,12 @@ dependencies](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks).
 | `400 Invalid JSON in request body` or `Request body must be a JSON object` | The body is not a JSON object |
 | Method argument missing | The body did not carry it |
 
+## Dashboard
+
+| Symptom | Likely cause |
+|---|---|
+| The dashboard shows `canyonos.redis_auth_failed` for a project | The Redis password the dashboard holds for the project no longer matches its Redis. Redeploy the project so it registers again |
+
 ## `canyonos test` fails
 
 If the test passes, everything is shut down. If it fails, the containers stay up so
@@ -84,7 +93,8 @@ lists the project's containers. Run `canyonos stop` to remove them.
 | Symptom | Likely cause |
 |---|---|
 | Ctrl+C left the deployment running | Once `canyonos deploy` is tailing logs, Ctrl+C only stops the tail. Use `canyonos stop` |
-| `canyonos clean` deleted `.canyon` | That is what it does: it stops the project, then removes the whole `.canyon` and its agents' images |
+| `canyonos clean` deleted `.canyon` | That is what it does: it stops the project, then removes the whole `.canyon`, its agents' images and its records in `~/.canyonos/projects/<project>/` |
+| `canyonos clean` left `~/.canyonos/projects/<project>/` | The stop failed or was refused, so nothing of the project was cleaned. Fix what the stop reported, or name the project to force it, and run `clean` again |
 | EC2 machines remain after `canyonos stop` | The stop waited 4 minutes and moved on. See [EC2 deployment](EC2.md) |
 | Images remain after `canyonos clean` | Docker was unreachable, or the images live on a different Docker context than the one the deploy used |
 | Containers, volumes or images remain after uninstalling the CLI | `canyonos clean --all` was not run first. See below |

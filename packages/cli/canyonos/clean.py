@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Logic for canyonos clean: stop each project it is given or picks (see
-selection.py) if it is deployed, then remove its `.canyon`, CanyonOS skills and agent
-images; with --all, everything CanyonOS put on this machine."""
+selection.py) if it is deployed, then remove its `.canyon`, CanyonOS skills, records
+under `~/.canyonos/projects/` and agent images; with --all, everything CanyonOS put on
+this machine."""
 
 import os
 import shutil
 
-from canyonos import convert, selection, ui
+from canyonos import convert, project, selection, ui
 from canyonos.constants import CANYON_DIR, default_config_path
 from canyonos.stop import (
     agent_images,
@@ -60,9 +61,24 @@ def _remove_local_files(folder):
     return removed_all
 
 
+def _remove_records(name):
+    """Delete the folder under `~/.canyonos/projects/` that holds project `name`'s
+    records, its Redis password among them; False when it stayed."""
+    records = project.state_dir(name)
+    try:
+        shutil.rmtree(records)
+    except FileNotFoundError:
+        return True
+    except OSError as error:
+        ui.warn(f"Could not remove {records}: {error}")
+        return False
+    ui.ok(f"Removed {records}.")
+    return True
+
+
 def _clean_project(target, stop):
-    """Stop `target` with `stop` if it is deployed, then remove its local files and its
-    agents' images; False when any of it stayed."""
+    """Stop `target` with `stop` if it is deployed, then remove its local files, its
+    records under `~/.canyonos` and its agents' images; False when any of it stayed."""
     # Docker won't remove the image of a container that still runs.
     if target.state is not None and stop(target.state, target.name):
         ui.fail(f"{target.name} could not be stopped, so nothing of it was cleaned.")
@@ -73,12 +89,13 @@ def _clean_project(target, stop):
     else:
         ui.hint(
             f"{target.name}'s folder is not on this machine any more, so only its "
-            "deploy and images were removed."
+            "deploy, records and images were removed."
         )
+    records_removed = _remove_records(target.name)
     failures = remove_images([agent_images(target.name)])
     for failure in failures:
         ui.warn(failure)
-    return removed and not failures
+    return removed and records_removed and not failures
 
 
 def _candidates():
@@ -94,8 +111,8 @@ def _candidates():
 
 def run_clean(all_projects=False, yes=False, refs=()):
     """Run `canyonos clean` on the projects `refs` name or `selection.choose` picks:
-    stop each that is deployed, then remove its `.canyon`, CanyonOS skills and
-    agents' images. With `all_projects`, `stop_all(remove_everything=True)`, asked
+    stop each that is deployed, then remove its `.canyon`, CanyonOS skills, records
+    and agents' images. With `all_projects`, `stop_all(remove_everything=True)`, asked
     first unless `yes`. Returns False if a project wasn't found or any could not be
     removed."""
     if all_projects:

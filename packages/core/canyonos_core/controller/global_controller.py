@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property
 
 import yaml
+from redis.exceptions import AuthenticationError
 from canyonos_core.controller.controller_context import (
     DEFAULT_REDIS_PORT,
     ControllerContext,
@@ -40,6 +41,7 @@ from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import (
     CONTROLLER_IMAGE,
+    DOCKER_PROJECT_ENV,
     metrics_container_name,
     project_group,
     project_label_args,
@@ -62,7 +64,11 @@ from canyonos_core.controller.utils.redis_utils import _wait_for_redis
 from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
     resource_limit_args,
 )
-from canyonos_core.controller.utils.redis_client import RedisClient
+from canyonos_core.controller.utils.redis_client import (
+    RedisClient,
+    password_env_args,
+    redis_server_command,
+)
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
 from canyonos_core.schema import SchemaError, check_project, load_manifest
 from canyonos_core.schema.otel_destinations import (
@@ -90,6 +96,11 @@ STOP_TIMEOUT_SECONDS = 240
 # Docker Desktop's name for the host machine; it means nothing inside a cluster.
 DOCKER_HOST = "host.docker.internal"
 GLOBAL_CONTROLLER_LOG_SOURCE = "Global Controller"
+
+# How a Redis this Global Controller would adopt answers its probe (`_probe_redis`).
+REDIS_ANSWERS = "answers"
+REDIS_REFUSES_PASSWORD = "refuses the password"
+REDIS_SILENT = "silent"
 
 # How long a replica may stay short of "healthy" before the deploy is called dead; covers the slowest cold start.
 CONTROLLER_READY_TIMEOUT_SECONDS = 360
@@ -545,14 +556,18 @@ class GlobalController(ControllerContext):
         )
         return result.returncode == 0
 
-    def _redis_responds(self, host, connect_host, redis_port):
-        """Check whether a Redis on this machine is already up and answering."""
+    def _probe_redis(self, host, connect_host, redis_port):
+        """How a Redis already running on this machine answers the project's password
+        within 5 seconds: `REDIS_ANSWERS`, `REDIS_REFUSES_PASSWORD`, or `REDIS_SILENT`
+        when it never answers."""
         try:
             probe = RedisClient(host=connect_host, port=redis_port)
             _wait_for_redis(probe, host, redis_port, timeout=5, interval=1)
-            return True
-        except TimeoutError:
-            return False
+        except TimeoutError as e:
+            if isinstance(e.__cause__, AuthenticationError):
+                return REDIS_REFUSES_PASSWORD
+            return REDIS_SILENT
+        return REDIS_ANSWERS
 
     def _launch_redis_containers(self):
         """Launch this machine's Redis container, reusing one that's already healthy.
@@ -580,7 +595,21 @@ class GlobalController(ControllerContext):
             sys.exit(1)
 
         if running:
-            if not self._redis_responds(host, connect_host, redis_port):
+            answer = self._probe_redis(host, connect_host, redis_port)
+            if answer == REDIS_REFUSES_PASSWORD:
+                project = os.environ.get(DOCKER_PROJECT_ENV, "<project>")
+                logger.critical(
+                    "Redis container %s on %s refuses this project's password: the "
+                    "one in ~/.canyonos/projects/%s/redis_password no longer matches "
+                    "it. Run `canyonos stop %s` to remove the old Redis, then deploy "
+                    "again.",
+                    container_name,
+                    host,
+                    project,
+                    project,
+                )
+                sys.exit(1)
+            if answer == REDIS_SILENT:
                 logger.critical(
                     "Redis container %s on %s is running but not answering on "
                     "port %d. Remove it with `docker rm -f %s` and redeploy.",
@@ -610,10 +639,9 @@ class GlobalController(ControllerContext):
                 *resource_limit_args(),
                 "-p",
                 f"127.0.0.1:{redis_port}:{redis_port}",
+                *password_env_args(),
                 "redis:alpine",
-                "redis-server",
-                "--port",
-                str(redis_port),
+                *redis_server_command(redis_port),
             ]
             try:
                 result = self._run_cmd(cmd, host)

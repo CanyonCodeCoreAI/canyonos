@@ -25,7 +25,7 @@ import subprocess
 from canyonos_core.controller.utils import config_env
 from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.config_env import resolve_env_file
-from canyonos_core.controller.utils.redis_client import RedisClient
+from canyonos_core.controller.utils.redis_client import RedisClient, hide_password
 from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
 
@@ -84,7 +84,7 @@ def run_on_machine(config, cmd, host, user=None):
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(
-            f"Command timed out after 180s on {host}: {' '.join(cmd)}"
+            f"Command timed out after 180s on {host}: {hide_password(' '.join(cmd))}"
         ) from None
     except OSError as e:
         raise RuntimeError(f"Could not run command on {host}: {e}") from None

@@ -23,6 +23,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import redis
 import requests
 import yaml
 
@@ -645,6 +646,22 @@ def redis_port(recorder: Recorder, workspace: Path) -> int:
         workspace,
         "redis_port_of(load_state())",
         "from canyonos.init import load_state, redis_port_of",
+    )
+
+
+def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
+    """The deployed project's Redis, on the host port the CLI recorded for it, signed in
+    with the password the CLI keeps for that project."""
+    return redis.Redis(
+        host="127.0.0.1",
+        port=redis_port(recorder, workspace),
+        password=cli_value(
+            recorder,
+            workspace,
+            "redis_password()",
+            "from canyonos.project import redis_password",
+        ),
+        decode_responses=True,
     )
 
 

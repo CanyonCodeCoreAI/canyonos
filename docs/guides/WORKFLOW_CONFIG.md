@@ -241,7 +241,8 @@ Database entries add:
 A database entry needs no code. Other agents reach
 it through the routing table: the Redis hash `routing_table:addresses` maps
 the entry name to a JSON list of `host:port` strings, on the Redis every
-container reaches through `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT`.
+container reaches through `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT` and
+`CANYONOS_REDIS_PASSWORD`.
 
 Use one for state that must outlive a process, such as a framework's
 checkpointer or memory store. Build that client against the resolved address
@@ -256,7 +257,7 @@ instead of an in-process store, and the agent no longer needs
 | `poll_interval` | `5` | Seconds between Global Controller loop iterations. Also exported to containers as `CANYONOS_POLL_INTERVAL`. |
 | `cleanup_interval` | `10` | Seconds between cleanup passes. |
 | `project_id` | generated | Written back into the file on first deploy. Leave it out on a new project. |
-| `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379`, else the next free one / `0` | The controller's own Redis. |
+| `redis.host` / `redis.port` / `redis.db` | `localhost` / `6379`, else the next free one / `0` | The controller's own Redis. It requires a password, which the first deploy makes and keeps in `~/.canyonos/projects/<project>/redis_password`; `canyonos clean` deletes it, and the next deploy makes a new one. |
 | `logs` | `true` | Stream failure detail into each future. |
 | `otel.destinations` | the local dashboard | Where telemetry goes. See below. |
 | `target` | `docker` | `docker` or `kubernetes`, in any casing. Who runs the project; `kubernetes` needs the `kubernetes:` block. |

@@ -12,7 +12,6 @@ import json
 import uuid
 
 import pytest
-import redis
 
 from ..harness import (
     as_argument,
@@ -20,8 +19,8 @@ from ..harness import (
     finished,
     http,
     poll,
+    project_redis,
     project_root,
-    redis_port,
     submit,
 )
 
@@ -88,8 +87,7 @@ def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, 
 
 
 def test_status_answers_after_cleanup(recorder, deployed, query_result):
-    port = redis_port(recorder, deployed.dir)
-    store = redis.Redis(host="127.0.0.1", port=port, decode_responses=True)
+    store = project_redis(recorder, deployed.dir)
     request = f"request:{query_result.request_id}"
 
     def cleaned_up():

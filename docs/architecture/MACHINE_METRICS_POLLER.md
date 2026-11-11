@@ -56,6 +56,8 @@ _launch_metrics_collectors
            └─ docker run -d --restart unless-stopped
                  -e CANYONOS_REDIS_HOST=localhost
                  -e CANYONOS_REDIS_PORT=<redis_port>
+                 -e CANYONOS_REDIS_PASSWORD   (by name on this machine, from the GC's
+                                               environment; by value over SSH)
                  -e CANYONOS_METRICS_KEY=machine:<host>:metrics
                  -e CANYONOS_POLL_INTERVAL=<poll_interval>
 ```
