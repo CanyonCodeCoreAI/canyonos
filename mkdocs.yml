@@ -3,7 +3,7 @@
 
 site_name: CanyonOS
 repo_url: https://github.com/CanyonCodeCoreAI/canyonos
-edit_uri: edit/main/docs/
+edit_uri: blob/main/docs/
 docs_dir: docs
 exclude_docs: |
   /README.md
