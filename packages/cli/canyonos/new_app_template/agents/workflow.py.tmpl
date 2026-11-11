@@ -4,4 +4,4 @@ from agents.my_agent import MyAgent
 
 class Workflow:
     def main(self, query: str = "hello") -> dict:
-        return {"answer": MyAgent().run(query=query).value()}
+        return {"answer": MyAgent().run(query=query)}
