@@ -26,11 +26,11 @@ canyonos = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "ruff==0.16.10",
-    "ty==0.0.85",
+    "ruff==0.17.3",
+    "ty==0.0.97",
     "canyonos-core",
     "canyonos",
-    "reuse==6.2.0",
+    "reuse==6.3.0",
     "requests>=2.34.2",
     "pyyaml>=6.0.3",
 ]
