@@ -83,7 +83,7 @@ canyonos test
 
 It deploys the workflow locally, sends the query in `test_query.txt` and prints the
 result. To send your own query, run `canyonos test "your query"`. If it fails, see
-[Troubleshooting](TROUBLESHOOTING.md#canyonos-test-fails).
+[Troubleshooting](TROUBLESHOOTING.md).
 
 ## 5. Choose where it runs
 

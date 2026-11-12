@@ -39,8 +39,8 @@
   torn down.
 - [Images and dependencies](IMAGES_AND_DEPENDENCIES.md): what Python can import from
   `/app`, what gets installed, and what the build leaves out.
-- [Troubleshooting](TROUBLESHOOTING.md): symptoms and their likely causes, by deployment
-  phase.
+- [Troubleshooting](TROUBLESHOOTING.md): common problems, what causes them and how to
+  fix them.
 
 ## In depth
 

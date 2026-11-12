@@ -101,3 +101,6 @@ METRICS_RAW_RETENTION_DAYS=7 METRICS_ROLLUP_RETENTION_DAYS=365 canyonos serve
 The values are not saved. Each `canyonos serve`, and each `canyonos deploy` that starts
 the dashboard, uses the values its shell sets and the defaults for any it doesn't. A
 `canyonos deploy` while the dashboard is already running leaves it as it is.
+
+If the dashboard won't start or shows an error, see
+[Troubleshooting](TROUBLESHOOTING.md#dashboard).

@@ -377,3 +377,5 @@ and allow the host port mapped to the endpoint container's `50051`: for
   and the dashboard shows every machine by its private IP. Agent machines run the
   collector from the official image of your CLI's version, so changes to it in a
   development checkout don't reach them; `canyonos deploy` warns when that applies.
+
+If something goes wrong, see [Troubleshooting](TROUBLESHOOTING.md).

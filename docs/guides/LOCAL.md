@@ -42,46 +42,45 @@ From the workflow folder (for a converted workflow, the folder that holds `.cany
 canyonos deploy
 ```
 
-1. The deploy shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
+1. It checks the workflow: it warns about keys in `.env.example` that `.env` leaves
+   missing or empty, and stops on any problem `canyonos validate` finds.
+2. It shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
    **2. Configure an agent** to change them first.
-2. Wait for **Deploy is live**. It prints the dashboard address and `curl` commands to
-   send a request and get its result.
+3. It builds an image per agent and starts the Global Controller, Redis, the agents'
+   replicas, the endpoint and, if it isn't running yet, the [dashboard](DASHBOARD.md).
+4. At **Deploy is live** it prints the dashboard address and `curl` commands to send a
+   request and get its result. [Endpoint](RUNTIME_CONTRACT.md#endpoint) covers the
+   requests it takes.
 
-Before it builds anything, the deploy warns about keys in `.env.example` that are
-missing or empty in `.env`, and stops on any problem `canyonos validate` finds. Then it
-builds an image per agent and starts the Global Controller, Redis, a container per
-replica and the endpoint. It also starts the [dashboard](DASHBOARD.md) if it isn't
-running yet.
-
-Run `canyonos deploy` again at any time: it replaces this workflow's previous deploy.
-If a deploy fails before the workflow is up, it removes what it started. Ctrl+C while
-it pulls or starts the Global Controller does the same. Once it is building images or
-starting agents, Ctrl+C only stops watching: the deploy carries on, and `canyonos logs`
-follows it.
-
-The endpoint's requests and responses are described in
-[Runtime contract](RUNTIME_CONTRACT.md#endpoint).
+| If                                                  | What happens                                                                                                 |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| You run `canyonos deploy` again                     | It replaces this workflow's previous deploy                                                                  |
+| The deploy fails before the workflow is up          | It removes what it started                                                                                   |
+| You press Ctrl+C before the Global Controller is up | The same: it removes what it started                                                                         |
+| You press Ctrl+C after that                         | It only stops watching. The deploy carries on; `canyonos logs` follows it again and `canyonos stop` stops it |
 
 ## Ports
 
-The endpoint opens on `8080`, Redis on `6379` and the dashboard on `8081`. When one of
-those is taken and you didn't set it in the workflow config, the deploy uses the next
-free port. It warns when the endpoint or Redis moves, and its summary shows the
-dashboard's address. A redeploy keeps the ports the last deploy got.
+| What      | Port   | When it's taken                                                  |
+| --------- | ------ | ---------------------------------------------------------------- |
+| Endpoint  | `8080` | The next free port                                               |
+| Redis     | `6379` | The next free port, on `127.0.0.1` only                          |
+| Dashboard | `8081` | The next free port                                               |
+| Agents    | none   | The Global Controller reaches them over a private Docker network |
 
-Agents publish no ports: the Global Controller reaches them over a private Docker
-network. [Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens) lists every
-port, the setting that fixes it, and what happens when a port you set is taken.
+A port you set in the workflow config is never moved: if it's taken, the deploy stops,
+or for `dashboard_port`, only the dashboard doesn't start. The deploy says when a port
+moved, and a redeploy tries the last deploy's ports first.
+[Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens) lists every port and the
+setting that fixes it.
 
 ## Run several workflows
 
 Each workflow folder deploys on its own, with its own containers, Redis and endpoint, so
-several can run at once. They share one dashboard.
-
-Containers and images are named `canyonos-<project>-...`, where `<project>` is the
-folder name and the first 8 characters of the workflow's `project_id`, for example
-`canyonos-my-workflow-1a2b3c4d-global-controller`. The first deploy writes
-`project_id` into the workflow config.
+several can run at once and share one dashboard. Their containers and images are named
+`canyonos-<folder>-<id>-...`, such as `canyonos-my-workflow-1a2b3c4d-global-controller`,
+where `<id>` is the start of the `project_id` the first deploy writes into the workflow
+config.
 
 ## Check it
 
@@ -96,9 +95,8 @@ The [dashboard](DASHBOARD.md) shows each request, its traces, logs, errors and c
 
 ## Change it
 
-The Global Controller works on a copy of the workflow, so editing a file changes
-nothing until you apply it. `canyonos sync` applies changes in `config/` to the running
-deploy; code and `.env` changes need `canyonos deploy`. See
+The deploy runs from a copy of the workflow, so an edit changes nothing until you apply
+it: `canyonos sync` for files in `config/`, `canyonos deploy` for code and `.env`. See
 [Apply a change](CONFIGURE.md#apply-a-change).
 
 ## Stop

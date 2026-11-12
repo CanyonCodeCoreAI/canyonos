@@ -398,7 +398,8 @@ takes.
 
 Start with `canyonos doctor`. It checks `kubectl`, the cluster, the operator and its
 release, then the deployed workflow, its agents, endpoint and dashboard, and gives a fix
-for each failure.
+for each failure. [Troubleshooting](TROUBLESHOOTING.md#kubernetes) has more for a local
+cluster.
 
 | Problem                                                  | What to do                                                                                                                                                                                                                                    |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

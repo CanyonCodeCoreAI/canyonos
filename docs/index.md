@@ -70,3 +70,5 @@ the tests and how pull requests are reviewed. CanyonOS is maintained by
 - [EC2](guides/EC2.md) and [Kubernetes](guides/KUBERNETES.md) cover deploying beyond
   this machine.
 - [Upgrading](UPGRADING.md) lists what to change when you move to a new release.
+- [Troubleshooting](guides/TROUBLESHOOTING.md) covers common problems and how to fix
+  them.
