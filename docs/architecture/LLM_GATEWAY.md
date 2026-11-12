@@ -280,7 +280,7 @@ What the gateway reads from its environment:
 ## Changing the gateway
 
 - The end-to-end projects with model calls, and the governance scenario, exercise the
-  gateway; see [Development](../contributing/DEVELOPMENT.md#tests).
+  gateway; see [Testing](../contributing/TESTING.md#end-to-end-tests).
 - The gateway runs in its own venv, so a new dependency goes into
   `GATEWAY_REQUIREMENTS`, not the agent's requirements.
 - A new provider needs an entry in `build_registry`, its LLM paths in

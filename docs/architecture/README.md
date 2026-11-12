@@ -95,6 +95,9 @@ These pages cover what CanyonOS builds from a workflow and what it expects of on
   writes into its files.
 - [What a workflow needs](../guides/WORKFLOW_REQUIREMENTS.md): the requirements an app
   must meet before it is converted, and who owns what.
+- [Configuration](CONFIG.md): how the workflow config gets from the files a user edits
+  to the running system, and how to add a setting.
 
-To set up a checkout, run the tests and try a change, see
-[Development](../contributing/DEVELOPMENT.md).
+To set up a checkout and try a change, see
+[Development](../contributing/DEVELOPMENT.md); to run the checks and tests, see
+[Testing](../contributing/TESTING.md).

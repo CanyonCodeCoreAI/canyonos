@@ -1,55 +1,47 @@
 # Development
 
-How to run the CLI, Core and dashboard from a checkout, build their images, and run the
-tests, on Docker, an EC2 machine or a local Kubernetes cluster. The repository layout
-and the checks a pull request must pass are in
-[CONTRIBUTING.md](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/CONTRIBUTING.md).
+How to run CanyonOS from a checkout: the CLI, Core and dashboard, on Docker, an EC2
+machine or a local Kubernetes cluster. The checks and tests are in
+[Testing](TESTING.md), and the repository layout in
+[How to contribute](README.md#repository-layout).
 
 ## Prerequisites
 
-| Tool                                                                                                                     | Version          | Needed for                                                     |
-| ------------------------------------------------------------------------------------------------------------------------ | ---------------- | -------------------------------------------------------------- |
-| [uv](https://docs.astral.sh/uv/)                                                                                         | 0.12.15 or later | The Python workspace (Core and CLI)                            |
-| [Bun](https://bun.sh/)                                                                                                   | 1.3.1 or later   | The TypeScript workspace and the scripts                       |
-| Docker, running                                                                                                          | any              | Building images and every deploy                               |
-| [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [kubectl](https://kubernetes.io/docs/tasks/tools/) | any              | [Kubernetes on kind](#kubernetes-on-kind)                      |
-| `rsync`, `ssh`                                                                                                           | any              | [Running a checkout on EC2](#run-a-checkout-on-an-ec2-machine) |
-| Git Bash (Windows)                                                                                                       | any              | The shell scripts in `scripts/` and `tests/`                   |
+| Tool                                                                                                                     | Version                                    | Needed for                                                     |
+| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ | -------------------------------------------------------------- |
+| [uv](https://docs.astral.sh/uv/)                                                                                         | 0.12.15 or later                           | The Python workspace (Core and CLI)                            |
+| [Bun](https://bun.sh/)                                                                                                   | 1.3.1 or later                             | The TypeScript workspace and the scripts                       |
+| Docker, running                                                                                                          | any                                        | Building images and every deploy                               |
+| Go                                                                                                                       | 1.26 or later (`go.mod`); CI uses 1.27.0   | Changing the operator; see [Testing](TESTING.md#operator)      |
+| [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [kubectl](https://kubernetes.io/docs/tasks/tools/) | any                                        | [Kubernetes on kind](#kubernetes-on-kind)                      |
+| `rsync`, `ssh`                                                                                                           | any                                        | [Running a checkout on EC2](#run-a-checkout-on-an-ec2-machine) |
 
 ## Set up your environment
 
-1. Clone the repository and install both workspaces:
+```bash
+git clone https://github.com/<you>/canyonos.git     # your fork
+cd canyonos
+git remote add upstream https://github.com/CanyonCodeCoreAI/canyonos.git
+uv sync && bun install   # the Python and TypeScript workspaces
+bun run canyonos:dev     # build the images from this checkout and open the dev shell
+canyonos -v              # in the dev shell: prints "canyonos development"
+```
 
-   ```bash
-   git clone https://github.com/CanyonCodeCoreAI/canyonos.git
-   cd canyonos
-   uv sync
-   bun install
-   ```
+The dev shell:
 
-2. Open the dev shell:
+- builds the `canyonos-core:dev`, `canyonos-api:dev` and `canyonos-web:dev` images from
+  this checkout;
+- creates `packages/cli/.env` from `packages/cli/.env.example` if it is missing, runs
+  `uv sync` and bundles the starter workflows;
+- updates CanyonOS on the [kind cluster](#kubernetes-on-kind), if it exists;
+- opens a shell with the workspace `.venv` active, where `canyonos` is the CLI from this
+  checkout. `exit` leaves it.
 
-   ```bash
-   bun run canyonos:dev
-   ```
+Run `bun run canyonos:dev` again after changing Core or the dashboard (API, UI, web), so
+the images match the code.
 
-   It builds the Core, API and web images from this checkout, creates
-   `packages/cli/.env` from `packages/cli/.env.example` if it is missing, runs
-   `uv sync`, bundles the starter workflows, and opens a shell with the workspace
-   `.venv` active. When the [kind cluster](#kubernetes-on-kind) exists, it updates
-   CanyonOS there too.
-
-3. Check that `canyonos` is the CLI from this checkout:
-
-   ```bash
-   canyonos -v   # prints "canyonos development" instead of a version number
-   ```
-
-Type `exit` to leave the shell. Run `bun run canyonos:dev` again after changing any code
-in Core or the dashboard (API, UI, web), so the images match the code.
-
-The commands are the same in development and in a released CLI. What differs is where
-the CLI runs from and what it deploys:
+The commands are the same as in a released CLI. What differs is where the CLI runs from
+and what it deploys:
 
 |             | Development                                                        | Released CLI                                            |
 | ----------- | ------------------------------------------------------------------ | ------------------------------------------------------- |
@@ -62,7 +54,7 @@ the CLI runs from and what it deploys:
 ## Run the CLI from a checkout
 
 In the dev shell, `canyonos` works from any folder. Deploy a copy of an example, since a
-deploy writes a `project_id` and default resources into the project's
+deploy writes a `project_id` and default resources into its
 `config/workflow_config.yaml`:
 
 ```bash
@@ -72,51 +64,42 @@ canyonos deploy
 canyonos test "hi"
 ```
 
-The CLI always reads its `.env` from `packages/cli/`, next to its own code, not from
-the folder you run it in. A `.env` in the project folder belongs to the project: it
-does not switch the CLI's environment. A variable already set in your shell wins over
-the file, so `export CANYONOS_CORE_IMAGE=prod` deploys the production image even in
+The CLI reads its own `.env` from `packages/cli/`, never from the folder you run it in;
+a project's `.env` belongs to the project. A variable set in your shell wins over the
+file, so `export CANYONOS_CORE_IMAGE=prod` deploys the released image even in
 development.
 
 ### Environment variables
 
-`packages/cli/canyonos/env.py` is the only module that reads the environment. It
-resolves each setting once, and everything else imports the result.
+Only `packages/cli/canyonos/env.py` reads them, once, and the rest of the CLI imports
+the result. `CANYONOS_ENV` sets the environment, and any other value stops the CLI:
 
-`CANYONOS_ENV` selects the environment:
-
-| Value                        | Meaning                                                  |
+| `CANYONOS_ENV`               | Meaning                                                  |
 | ---------------------------- | -------------------------------------------------------- |
 | unset or empty, `production` | What a released CLI runs; no overrides allowed           |
 | `development`                | Overrides allowed; `packages/cli/.env.example` sets this |
 | `test`                       | As `development`; the CLI end-to-end tests set it        |
 
-Anything else fails at startup. Each artifact variable takes the same three forms:
+Each artifact has a variable of its own, so "Core from this checkout, skill from `main`"
+works:
 
-| Value           | Meaning                                                                |
-| --------------- | ---------------------------------------------------------------------- |
-| unset or `prod` | The production artifact, exactly what a released CLI uses              |
-| `local`         | The artifact from this checkout                                        |
-| anything else   | Taken literally: an image tag, a directory, or a git ref for the skill |
+| Variable                | Unset or `prod`                                    | `local`                                          | Anything else       |
+| ----------------------- | -------------------------------------------------- | ------------------------------------------------ | ------------------- |
+| `CANYONOS_CORE_IMAGE`   | `ghcr.io/canyoncodecoreai/canyonos-core:<version>` | `canyonos-core:dev`                              | That image          |
+| `CANYONOS_API_IMAGE`    | `ghcr.io/canyoncodecoreai/canyonos-api:<version>`  | `canyonos-api:dev`                               | That image          |
+| `CANYONOS_WEB_IMAGE`    | `ghcr.io/canyoncodecoreai/canyonos-web:<version>`  | `canyonos-web:dev`                               | That image          |
+| `CANYONOS_SKILL_SOURCE` | The GitHub tag `v<version>`                        | `<workspace root>/skills/converting-to-canyonos` | A folder or git ref |
 
-| Variable                | `local` resolves to                              |
-| ----------------------- | ------------------------------------------------ |
-| `CANYONOS_CORE_IMAGE`   | `canyonos-core:dev`                              |
-| `CANYONOS_API_IMAGE`    | `canyonos-api:dev`                               |
-| `CANYONOS_WEB_IMAGE`    | `canyonos-web:dev`                               |
-| `CANYONOS_SKILL_SOURCE` | `<workspace root>/skills/converting-to-canyonos` |
+In `production`, any value but unset or `prod` stops the CLI, so a released CLI never
+uses a development artifact.
 
-Artifacts are independent, so "Core from my checkout, skill from `main`" and the
-reverse are both fine. In `production`, any value but unset or `prod` raises an error,
-so a released CLI can never be talked into a development artifact.
-
-Usage reporting goes to the production usage API only from a released CLI. In
-development, it goes nowhere unless `CANYONOS_USAGE_URL` names one: `bun run
-cli:usage:dev` runs the usage API locally and prints the value to export.
+Usage reports go to the production usage API only from a released CLI. In development
+they go nowhere unless `CANYONOS_USAGE_URL` names one; `bun run cli:usage:dev` runs the
+usage API locally and prints the value to export.
 
 ## Build the images
 
-`bun run canyonos:dev` builds all three images. To build one, run its command from the
+`bun run canyonos:dev` builds all three. To build one, run its command from the
 workspace root:
 
 ```bash
@@ -125,43 +108,49 @@ docker build -f packages/api/Dockerfile -t canyonos-api:dev .
 docker build -f packages/web/Dockerfile --target canyonos --build-arg VITE_API_URL=/api -t canyonos-web:dev .
 ```
 
-`local` expects an image the Docker daemon already has, so rebuild after changing the
-code behind it, such as anything under `packages/core/canyonos_core/`. A literal image
-tag is pulled if the daemon doesn't have it; `canyonos deploy` never builds CanyonOS's
-images.
-
-The production images are always pulled, exactly as a released CLI does. Every release
-publishes the Core, API and web images under the CLI's own version, and `env.py`
-derives their references from it. A checkout whose version was bumped but not released
-yet points at images that do not exist, so use `local` while developing.
+- `local` uses the image Docker already has, so rebuild after changing the code behind
+  it, such as anything under `packages/core/canyonos_core/`.
+- Any other tag is pulled when Docker doesn't have it. `canyonos deploy` never builds
+  CanyonOS's own images.
+- The released images are tagged with the CLI's version. A checkout whose version was
+  bumped but not released yet points at images that don't exist, so use `local` while
+  developing.
 
 ## Run the dashboard with hot reload
 
-To iterate on the API or web code without rebuilding images, run the dashboard on the
-host. Inside the dev shell, deploy without the image-based dashboard, then start the
-dashboard from the checkout:
+To change the API or web code without rebuilding images, run the dashboard on the host.
+In the dev shell:
 
 ```bash
-canyonos deploy --serve false
-bun run dashboard:dev
+canyonos deploy --serve false   # the workflow, without the dashboard's images
+bun run dashboard:dev           # Postgres, then the API on :3000 and Vite on :5173
 ```
 
-`dashboard:dev` makes sure local Postgres is running, then starts the API at
-`http://localhost:3000` and Vite at `http://localhost:5173`. API and web edits reload
-while it runs; Core edits need `bun run canyonos:dev` again and a redeploy.
+API and web edits reload while it runs. Core edits need `bun run canyonos:dev` and a
+redeploy. To check the dashboard as users run it, deploy with the dashboard's images
+instead.
 
-By default the Global Controller sends telemetry to the dashboard API's container,
-`http://canyonos-dashboard-api:3000`, which isn't running here. For the host API to
-get it, set the workflow's `otel.destinations` to `http://host.docker.internal:3000`
-(see [Workflow config](../guides/WORKFLOW_CONFIG.md#oteldestinations)).
+**Send the workflow's telemetry to the host.** By default the Global Controller sends
+it to the dashboard image's API, `http://canyonos-dashboard-api:3000`, which isn't
+running. Set the workflow's
+[`otel.destinations`](../guides/WORKFLOW_CONFIG.md#oteldestinations) to
+`http://host.docker.internal:3000`.
 
-The local defaults are in `scripts/dashboard-dev.ts`: no deploy worker, and
-`127.0.0.1:6379` as the default workflow Redis. A variable set in your shell wins over
-them, but they win over the same variables in `packages/api/.env` and
-`packages/web/.env`. Unlike the `bun run docker:*` commands, `dashboard:dev` does not
-require `.docker/.env`: without it, Compose uses its default ports and volume.
+**Register the project.** At start, the API registers only a project on the default
+Redis that has no password. A deployed project's Redis has one, so register it while the
+API runs, with the workflow's `redis.port`:
 
-Sign-in depends on `AUTH_MODE` in `packages/api/.env`:
+```bash
+curl -X POST http://localhost:3000/canyonos/projects \
+  -H 'Content-Type: application/json' \
+  -d "{\"redis_port\":6379,\"redis_password\":\"$(cat ~/.canyonos/projects/<project>/redis_password)\"}"
+```
+
+The API stores the password encrypted, with a fixed development key unless
+`REDIS_PASSWORD_ENCRYPTION_KEY` is set.
+
+**Sign in.** How depends on `AUTH_MODE`, which is `none` unless `packages/api/.env`
+sets it; copy that file from `packages/api/.env.example` to change it:
 
 | `AUTH_MODE`                      | Sign-in                                           |
 | -------------------------------- | ------------------------------------------------- |
@@ -169,73 +158,50 @@ Sign-in depends on `AUTH_MODE` in `packages/api/.env`:
 | `password`                       | Create the first account on an empty database     |
 | `password`, `SEED_DEV_DATA=true` | Also seeds `e2e@canyonos.test` / `e2e-password-1` |
 
-Query the workflow as usual, then poll `http://127.0.0.1:8080/status/<request_id>`:
+Good to know:
 
-```bash
-curl -X POST http://127.0.0.1:8080/main \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"your query"}'
-```
-
-Agent containers send their traces to the host API, and the Vite dashboard shows them.
-
-Things to know:
-
-- The API registers the project it finds on the default Redis when it starts, if that
-  Redis has no password. A deployed project's Redis has one, so after a deploy register
-  the project while the API runs:
-
-  ```bash
-  curl -X POST http://localhost:3000/canyonos/projects \
-    -H 'Content-Type: application/json' \
-    -d "{\"redis_port\":6379,\"redis_password\":\"$(cat ~/.canyonos/projects/<project>/redis_password)\"}"
-  ```
-
-  The API stores that password encrypted with a fixed development key unless
-  `REDIS_PASSWORD_ENCRYPTION_KEY` is set.
-
-- The default ports are API `3000`, web `5173`, Postgres `5432`, endpoint `8080` and
-  workflow Redis `6379`. Stop or reconfigure anything already using one of them.
-- The workflow ports are the `endpoint.api_port` and `redis.port` of its config. If it
-  declares another `redis.port`, register it with that port. `CANYONOS_REDIS_PORT` sets
-  only the default Redis: the one read at startup and for projects that never
-  registered.
-- To test container parity, use `canyonos deploy` with the image dashboard instead.
+- It uses the ports `3000` (API), `5173` (web) and `5432` (Postgres), next to the
+  workflow's `8080` and `6379`. Free them, or change them, first.
+- `scripts/dashboard-dev.ts` sets the local defaults: no deploy worker, and
+  `127.0.0.1:6379` as the default Redis, the one read at start and for projects that
+  never registered. A variable in your shell wins over them, and they win over
+  `packages/api/.env` and `packages/web/.env`.
+- Unlike `bun run docker:*`, it doesn't need `.docker/.env`: without it, Compose uses
+  its default ports and volume.
 
 ## Run a checkout on an EC2 machine
 
 From the dev shell, `canyonos provision` > **Provision AWS** asks whether the machine
-runs **this checkout** or the official release. Choosing the checkout:
+runs **this checkout** or the official release. With this checkout, it:
 
-1. Builds the Global Controller image here for `linux/amd64`, tagged
-   `canyonos-core:dev-amd64` so your own `canyonos-core:dev` is kept. This happens
-   before anything is created in AWS. On an Arm Mac, Docker emulates x86, so it takes a
-   while.
+1. Builds the Global Controller image here for `linux/amd64`, before anything is created
+   in AWS. It's tagged `canyonos-core:dev-amd64`, so your own `canyonos-core:dev` is
+   kept. On an Arm Mac, Docker emulates x86, so this takes a while.
 2. Launches the machine with uv and rsync instead of the released CLI.
-3. Once it has booted, copies the checkout to `~/canyonos` with rsync (without `.git`,
-   `.venv`, `node_modules` or build output), streams the image over SSH into the
-   machine's Docker, and tags it `canyonos-core:dev` there.
-4. Installs the CLI from the copy with `uv tool install --editable`, with a
+3. Once it has booted, copies the checkout to `~/canyonos` with rsync, without `.git`,
+   `.venv`, `node_modules` or build output, and streams the image over SSH into the
+   machine's Docker as `canyonos-core:dev`.
+4. Installs the CLI from that copy with `uv tool install --editable`, with a
    `packages/cli/.env` that sets `CANYONOS_ENV=development` and
    `CANYONOS_CORE_IMAGE=local`.
 
-Only the Global Controller image is shipped: the dashboard images and the skill are the
-ones this version pins, so they must be released. On the EC2 machine, `canyonos -v`
-prints `canyonos development`.
+Only the Global Controller image is shipped. The dashboard images and the skill are the
+ones this version pins, so they must be released. On the machine, `canyonos -v` prints
+`canyonos development`.
 
-Provisioning needs `docker`, `rsync` and `ssh` on this machine, Docker running, and the
-private key of the key pair you choose: a new one, `~/.ssh/<name>.pem`, or a path it
-asks for. To pick up later changes, rerun `canyonos provision` for a new machine, or
-repeat steps 1 and 3 by hand.
+It needs `docker`, `rsync` and `ssh` here, and the private key of the key pair you
+choose: a new one, `~/.ssh/<name>.pem`, or a path it asks for. To pick up later changes,
+provision a new machine, or repeat steps 1 and 3 by hand.
 
 ## Kubernetes on kind
 
-The same development setup runs CanyonOS on a local Kubernetes cluster that behaves like
-the ones customers run. On top of [Set up your environment](#set-up-your-environment),
-it needs `kind` and `kubectl` (macOS: `brew install kind kubectl`; Windows:
-`winget install Kubernetes.kind Kubernetes.kubectl`, and run the scripts in Git Bash),
-and Docker with at least 4 CPUs and 8 GB of memory (Docker Desktop: Settings >
-Resources). Helm runs in a container.
+The same setup runs CanyonOS on a local Kubernetes cluster that behaves like the ones
+customers run. On top of [Set up your environment](#set-up-your-environment), it needs:
+
+- `kind` and `kubectl`: `brew install kind kubectl` on macOS,
+  `winget install Kubernetes.kind Kubernetes.kubectl` on Windows;
+- Docker with at least 4 CPUs and 8 GB of memory (Docker Desktop: Settings >
+  Resources). Helm runs in a container.
 
 ```bash
 scripts/kind/up.sh       # once: the cluster, its registry, and CanyonOS on it
@@ -256,12 +222,10 @@ canyonos serve               # the dashboard, on http://127.0.0.1:8081
 canyonos clean               # when done
 ```
 
-`canyonos deploy` keeps the endpoint on `http://127.0.0.1:8080`, and `canyonos serve`
-keeps the dashboard on `8081`, each through a port-forward that a background `canyonos`
-process holds open until `canyonos stop`. `canyonos sync`, `stop --all` and
-`clean --all` work only on Docker: deploy again after a change. See
-[Kubernetes deployment](../guides/KUBERNETES.md) for the other settings of the
-`kubernetes:` section.
+The endpoint stays on `http://127.0.0.1:8080` and the dashboard on `8081`, through
+port-forwards a background `canyonos` process holds open until `canyonos stop`.
+`canyonos sync`, `stop --all` and `clean --all` work only on Docker, so deploy again
+after a change. [Kubernetes deployment](../guides/KUBERNETES.md) has the other settings.
 
 ### What `up.sh` makes
 
@@ -269,14 +233,12 @@ process holds open until `canyonos stop`. `canyonos sync`, `stop --all` and
 2. A kind cluster with one control plane and one worker, Calico so NetworkPolicy is
    enforced, metrics-server, and Pod Security `restricted` in every namespace, as
    OpenShift does.
-3. CanyonOS (`scripts/kind/operator.sh`): the `canyonos-core:dev`, `canyonos-api:dev`
-   and `canyonos-web:dev` images, and the operator's image built there, pushed to that
-   registry, then the chart with the in-cluster builder and the dashboard. If the
-   images are missing, `up.sh` builds them first. The cluster runs the same Core image
-   that `CANYONOS_CORE_IMAGE=local` deploys.
+3. CanyonOS, through `scripts/kind/operator.sh`: the three images from this checkout
+   and the operator's image, pushed to that registry, then the chart with the in-cluster
+   builder and the dashboard. `up.sh` builds the images first if they are missing.
 
-It is all safe to re-run. The API server's Pod Security file is kept in
-`~/.canyonos/kind`, so a branch switch never stops the cluster from starting.
+It's safe to re-run. The API server's Pod Security file is kept in `~/.canyonos/kind`,
+so switching branches never stops the cluster from starting.
 
 | Option                      | What it does                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------ |
@@ -290,93 +252,23 @@ It is all safe to re-run. The API server's Pod Security file is kept in
 
 ### Update the cluster
 
-After changing CanyonOS, run `bun run canyonos:dev` as usual. While the cluster exists,
-it runs `scripts/kind/operator.sh` too, so what changed rolls out there and nothing else
-restarts. Run `operator.sh` alone to update the cluster without opening the shell.
-Projects deployed to the cluster pick up a new Core image on their next deploy.
+`bun run canyonos:dev` updates the cluster too while it exists, so what changed rolls
+out there and nothing else restarts. `scripts/kind/operator.sh` alone does the same
+without opening the shell. Projects on the cluster pick up a new Core image on their
+next deploy.
 
-A released CLI makes the same cluster without a checkout: `canyonos cluster up` installs
-the CLI's own release on it (see
-[Set up the cluster](../guides/KUBERNETES.md#set-up-the-cluster)). It carries its own
-copy of `cluster.yaml`, `pod-security.yaml` and the versions pinned in
-`scripts/kind/`, so change both together.
+A released CLI makes the same cluster without a checkout: `canyonos cluster up`
+installs its own release on it; see
+[Set up the cluster](../guides/KUBERNETES.md#set-up-the-cluster). It carries its own
+copy of `cluster.yaml`, `pod-security.yaml` and the versions pinned in `scripts/kind/`,
+so change both together.
 
 ### When something is stuck
 
-When a deploy waits with "no node to run on", Docker has too little CPU or memory for
-it. To look inside:
+A deploy that waits with "no node to run on" needs more CPU or memory from Docker. To
+look inside:
 
 ```bash
 kubectl get pods -n my-project                                      # the project's pods
 kubectl -n canyonos-system logs deploy/canyonos-controller-manager  # the operator's log
 ```
-
-### Kubernetes tests
-
-```bash
-scripts/kind/e2e.sh
-```
-
-`e2e.sh` tests the whole path. CI runs it (`Kubernetes E2E`) on each pull request, and
-on `main`, for changes to Core, the CLI, the API, the operator (the chart included) or
-`scripts/kind`. It builds the images with `bun run canyonos:dev --images-only`, installs
-them (`operator.sh`), and deploys `examples/helloworld` with the real CLI as a user who
-may only edit one namespace. It then checks requests, the dashboard, a Redis password
-rotation, `stop` and `clean`. Everything but the image builds runs in a container on the
-kind network, so it runs the same on any OS.
-
-For the operator alone, run its unit and envtest suites in `packages/operator`, in the
-`golang:1.27.0` container, as CI does:
-
-```bash
-make manifests generate fmt vet test lint
-```
-
-## Tests
-
-The lint, type and format checks run from the workspace root through Turborepo:
-
-```bash
-bun run check
-```
-
-The tests are end to end; there are no unit suites. Add or update the E2E test at the
-boundary a change touches. The API and dashboard suites need the local env files
-first:
-
-```bash
-cp .docker/.env.example .docker/.env
-cp packages/api/.env.example packages/api/.env
-cp packages/api/.env.test.example packages/api/.env.test
-cp packages/web/.env.example packages/web/.env
-```
-
-| Suite                | Command                                                        | Needs                                                                                                                                                             |
-| -------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| API end-to-end       | `bun run api:test:e2e`                                         | Postgres (`bun run docker:up`); resets the `canyonos_test` database                                                                                               |
-| Dashboard end-to-end | `bun run ui:test:e2e`                                          | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite, or reuses running ones                                                          |
-| CLI end-to-end       | `bun run cli:test:e2e`                                         | Linux or macOS, and a Core image for the deploy case; see `packages/cli/tests/e2e/README.md`                                                                      |
-| Deploy               | `uv run pytest tests/e2e/cases --project=helloworld`           | Docker; builds the images from this checkout, deploys the project and runs the E2E cases against it                                                               |
-| Deploy scenarios     | `uv run pytest tests/e2e/scenarios`                            | Docker; checks `canyonos validate`, the `canyonos new-app` starter, two projects on one dashboard and the governance rules; the governance one needs the AWS keys |
-| EC2 pool             | `tests/e2e/ec2_pool.sh`                                        | AWS access to run machines; manual, no workflow runs it                                                                                                           |
-| Dashboard images     | `bun run canyonos:smoke`                                       | The images in `CANYONOS_API_IMAGE` and `CANYONOS_WEB_IMAGE` (default `canyonos-api:smoke`, `canyonos-web:smoke`)                                                  |
-| CLI usage API        | `bun run cli:usage:test:e2e`, `bun run cli:usage:test:cli-e2e` | Docker; each starts its own moto server                                                                                                                           |
-| Kubernetes           | `scripts/kind/e2e.sh`                                          | The kind cluster; see [Kubernetes tests](#kubernetes-tests)                                                                                                       |
-| Operator             | `make manifests generate fmt vet test lint`                    | The `golang:1.27.0` container, in `packages/operator`; runs its envtest integration suite                                                                         |
-
-[`tests/e2e/README.md`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/tests/e2e/README.md)
-lists the projects, their secrets and how to add a case.
-
-## Preview the docs
-
-The docs are built with MkDocs from `docs/`, as configured in `mkdocs.yml`, with the
-versions pinned in `docs/requirements.txt`. Read the Docs fails the build on any
-warning, so build with `--strict` before a docs change:
-
-```bash
-uv run --no-project --with-requirements docs/requirements.txt mkdocs build --strict
-uv run --no-project --with-requirements docs/requirements.txt mkdocs serve
-```
-
-`mkdocs serve` shows the site on `http://127.0.0.1:8000` and rebuilds it on each save.
-For how to write them, see [Style](STYLE.md).

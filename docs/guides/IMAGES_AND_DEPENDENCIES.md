@@ -97,6 +97,9 @@ A module of yours at the workflow root with one of those names is replaced.
 installs a package or serves a request. `canyonos deploy` runs the same checks first,
 and stops before building anything if they find a problem or can't run.
 
+Unless `canyonos-core` is installed on this machine, `canyonos validate` runs in the
+CanyonOS core image, so it needs Docker running here; without it, it exits `2`.
+
 | Code                       | What it checks                                                                        |
 | -------------------------- | ------------------------------------------------------------------------------------- |
 | `CANYON-SCHEMA`            | The workflow config's schema, and that every `entrypoint` exists                      |

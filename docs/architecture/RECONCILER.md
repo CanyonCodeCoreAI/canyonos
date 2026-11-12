@@ -372,6 +372,6 @@ every pass, so a reload needs no SIGHUP handler here.
 
 ## Changing it
 
-A change to the Redis records must keep the operator's writer in step: the key formats
-are pinned by the shared `internal/redisstate/testdata/contract.json` fixture (see
-[The Redis contract](OPERATOR.md#the-redis-contract)).
+A change to the Redis records must keep the operator's writer
+(`internal/redisstate/writer.go`) in step; see
+[The Redis contract](OPERATOR.md#the-redis-contract).

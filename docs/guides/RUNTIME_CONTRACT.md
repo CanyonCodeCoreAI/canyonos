@@ -9,21 +9,27 @@ behaves differently from your app.
 
 `canyonos deploy` reads everything from the [workflow root](BUILD_ARTIFACT.md):
 
-| Input            | Where it comes from                                                   |
-| ---------------- | --------------------------------------------------------------------- |
-| Workflow config  | `config/workflow_config.yaml`                                         |
-| Agent class      | `entrypoint` on an agent entry, relative to the workflow root         |
-| Agent functions  | `functions` on an agent entry                                         |
-| Endpoint         | The `endpoint:` block, naming the agent method served over HTTP       |
-| Policy           | `config/policy.yaml`                                                  |
-| Governance rules | `config/governance.yaml`                                              |
-| Generated files  | `stubs/`, `grpc_stubs/` and `docker_container/`, written by the build |
+| Input            | Where it comes from                                             |
+| ---------------- | --------------------------------------------------------------- |
+| Workflow config  | `config/workflow_config.yaml`                                   |
+| Agent class      | `entrypoint` on an agent entry, relative to the workflow root   |
+| Agent functions  | `functions` on an agent entry                                   |
+| Endpoint         | The `endpoint:` block, naming the agent method served over HTTP |
+| Policy           | `config/policy.yaml`                                            |
+| Governance rules | `config/governance.yaml`                                        |
+| Model limits     | `config/llms.yaml`; see [LLM Gateway](LLM_GATEWAY.md)           |
+| Prompts          | `config/prompts.yaml`; see [Prompt management](PROMPTS.md)      |
+| Scaling policy   | `config/scaling.yaml`; see [Autoscaling](SCALING.md)            |
 
 An agent entry's `name` must equal the name of a module-level class in its
 `entrypoint` file. `canyonos deploy` runs the [`canyonos validate`
 checks](IMAGES_AND_DEPENDENCIES.md#what-canyonos-validate-checks) first, so a missing
 entrypoint, a schema error or a class it can't find stops the deploy before anything
 is built.
+
+The build writes `stubs/`, `grpc_stubs/` and `docker_container/` inside the deploy, not
+in your folder. Folders of yours with those names at the workflow root aren't copied into
+images.
 
 ## Agent class
 
@@ -40,7 +46,7 @@ result = getattr(agent, method_name)(**args)
 | Construction      | The class takes no constructor arguments (`CANYON-ADAPTER-INIT`)                                                                                                                                                                                                                                         |
 | Arguments         | Keyword arguments named as in `functions`, sent as JSON, so an `int` stays an `int`. An argument's declared `type` converts nothing. A `Future` argument, alone or inside a `dict`, `list` or `tuple`, arrives as its result: the type the called function declares under `returns`, or text without one |
 | Synchronous calls | Methods are called synchronously. An `async def` is not awaited, and its coroutine's `repr` becomes the result (`CANYON-ADAPTER-ASYNC`)                                                                                                                                                                  |
-| Concurrency       | Calls run on a pool of 16 threads against one instance (`CANYONOS_MAX_AGENT_INSTANCES`), and wait in line when all are busy. Keep state on `self` safe for that, or use `replicas: 1` and `stateful: true`                                                                                               |
+| Concurrency       | Calls run on a pool of 16 threads against one instance (`CANYONOS_MAX_AGENT_INSTANCES`), and wait in line when all are busy. Keep state on `self` thread-safe, for example with a lock: `stateful: true` keeps a request's calls on one replica but doesn't run them one at a time                       |
 | Results           | A `dict` or `list` result is JSON-encoded. Anything else becomes `str(result)`                                                                                                                                                                                                                           |
 | Module loading    | The entrypoint is loaded from `/app/<basename>.py` as a top-level module, so its module-level code runs at container start, before any request                                                                                                                                                           |
 | Relative imports  | A relative import in the entrypoint fails with `attempted relative import with no known parent package`. Modules it imports absolutely keep theirs                                                                                                                                                       |
@@ -127,7 +133,8 @@ done = [r for r in results if r["ok"]]                # waits here
 A generator, such as `sum(agent.count(x=x) for x in items)`, waits for each result
 before it sends the next call.
 
-These load as written, so their code gets the `Future` and has to call `.value()`:
+These load as written, so their code gets the `Future` itself. Call `.resolved()` on it,
+or `await` it, for the result as its declared type; `.value()` gives the stored text:
 
 - A module that imports no agent but calls one it is handed, such as
   `def run(agent): return agent.ask(q=q).upper()`.
@@ -158,7 +165,7 @@ endpoint:
 ```
 
 List `main` in `Workflow`'s `functions`, with its arguments. The port and the other
-endpoint settings are in [Workflow config](WORKFLOW_CONFIG.md#top-level-keys).
+endpoint settings are in [Workflow config](WORKFLOW_CONFIG.md#endpoint).
 [Endpoint internals](../architecture/ENDPOINT.md) shows how a request travels.
 
 ### Requests
@@ -342,5 +349,5 @@ or a deploy that fails before the workflow is up, takes the deploy down.
 `canyonos stop` asks the controller to remove every replica it recorded. A hard kill of
 the controller can leave containers behind. The next `canyonos deploy` removes stopped
 Redis and metrics containers and recreates leftover agent containers. A port you set
-that is still in use is an error: an endpoint `api_port`, a `redis.port` or a database
-`db_port`. [CLI](CLI.md#stop-and-clean-up) lists what `stop` and `clean` remove.
+that is still in use stops the deploy; see
+[Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens). [CLI](CLI.md#stop-and-clean-up) lists what `stop` and `clean` remove.

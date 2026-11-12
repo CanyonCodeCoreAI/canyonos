@@ -6,15 +6,15 @@ runs. `canyonos new-app` creates it with `workflow_config.yaml`; `llms.yaml`,
 `policy.yaml` that lets every request reach every agent. After `canyonos convert`, the
 folder is `.canyon/config`.
 
-| File                    | What it sets                                                                                         | Details                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `workflow_config.yaml`  | The agents, their functions and packages, replicas, CPU, memory and GPU, the endpoint, where it runs | [Workflow config](WORKFLOW_CONFIG.md)                    |
-| `llms.yaml`             | Which models each agent may call, and the most one call may cost                                     | [LLM Gateway](LLM_GATEWAY.md)                            |
-| `prompts.yaml`          | The system prompt of each agent function, with versions                                              | [Prompt management](PROMPTS.md)                          |
-| `scaling.yaml`          | When to add and remove replicas                                                                      | [Autoscaling](SCALING.md)                                |
-| `policy.yaml`           | Which agents a request may reach                                                                     | [Policy](RUNTIME_CONTRACT.md#policy)                     |
-| `governance.yaml`       | Per agent: refuse calls while an agent it needs is down, and switch model or refuse past a spend     | [Governance rules](RUNTIME_CONTRACT.md#governance-rules) |
-| `.env`, beside `config` | API keys and other secrets                                                                           | [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for)  |
+| File                                                            | What it sets                                                                                         | Details                                                  |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `workflow_config.yaml`                                          | The agents, their functions and packages, replicas, CPU, memory and GPU, the endpoint, where it runs | [Workflow config](WORKFLOW_CONFIG.md)                    |
+| `llms.yaml`                                                     | Which models each agent may call, and the most one call may cost                                     | [LLM Gateway](LLM_GATEWAY.md)                            |
+| `prompts.yaml`                                                  | The system prompt of each agent function, with versions                                              | [Prompt management](PROMPTS.md)                          |
+| `scaling.yaml`                                                  | When to add and remove replicas                                                                      | [Autoscaling](SCALING.md)                                |
+| `policy.yaml`                                                   | Which agents a request may reach                                                                     | [Policy](RUNTIME_CONTRACT.md#policy)                     |
+| `governance.yaml`                                               | Per agent: refuse calls while an agent it needs is down, and switch model or refuse past a spend     | [Governance rules](RUNTIME_CONTRACT.md#governance-rules) |
+| `.env`, in the workflow folder (beside `.canyon` after convert) | API keys and other secrets                                                                           | [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for)  |
 
 ## Apply a change
 

@@ -11,14 +11,12 @@ both alike.
 
 - `api/v1alpha1/`: the CRD types (`canyonos.canyoncode.ai/v1alpha1`): CanyonProject,
   CanyonAgent and CanyonBuild. Core renders the first two in Python;
-  `testdata/rendered.json` is a sample core render, decoded by the Kubernetes
-  integration suite with unknown fields refused.
+  `testdata/rendered.json` is a sample core render, kept for reference.
 - `cmd/`: the manager and its flags.
 - `internal/controller/`: the reconcilers, and the dashboard's list of projects.
 - `internal/builders/`: the Kubernetes objects each resource becomes, as pure functions.
 - `internal/redisstate/`: the Redis records and routing table the operator writes.
-  Their format is recorded in `testdata/contract.json`, which the Kubernetes
-  integration suite checks.
+  Their format is recorded in `testdata/contract.json`, for reference.
 - `charts/canyonos-operator/`: the Helm chart. Its `crds/` and `files/` (the manager's
   RBAC role) are generated from the Go types and markers.
 

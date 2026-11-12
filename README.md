@@ -142,7 +142,6 @@ See the [full list of CLI commands](docs/guides/CLI.md).
 - [All guides](docs/guides/README.md)
 - [Architecture](docs/architecture/README.md)
 - [Contributing](CONTRIBUTING.md)
-- [Roadmap](docs/ROADMAP.md)
 
 ## Security and License
 

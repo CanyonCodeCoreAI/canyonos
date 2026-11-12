@@ -2,7 +2,9 @@
 
 Every model call an agent makes goes through the LLM Gateway inside the agent's
 container. With no setup, every agent can call every model, and the gateway records each
-call's tokens and cost on its request for the [dashboard](DASHBOARD.md). How the gateway
+call's tokens and cost on its request for the [dashboard](DASHBOARD.md). That record
+needs calls sent with httpx, as the OpenAI and Anthropic SDKs do, or boto3; see
+[Code that bypasses the gateway](#code-that-bypasses-the-gateway). How the gateway
 is built is in [LLM Gateway architecture](../architecture/LLM_GATEWAY.md).
 
 On each call, the gateway also applies these settings:
@@ -73,8 +75,8 @@ have been shorter.
 
 ## Change the limits while the workflow runs
 
-Edit `llms.yaml` and run `canyonos sync`. Each gateway picks up the changed file within
-5 seconds.
+Edit `llms.yaml` and run `canyonos sync` (on Kubernetes, `canyonos deploy`). Each
+gateway picks up the changed file within 5 seconds.
 
 ## Model prices
 
@@ -168,6 +170,12 @@ them:
 ```python
 aiohttp.ClientSession(trust_env=True)
 ```
+
+That call then goes through the gateway and its limits in `llms.yaml`, but its tokens
+and cost aren't recorded on the request, and it gets no prompt from `prompts.yaml`. Only
+calls sent with httpx (the OpenAI and Anthropic SDKs) or with boto3's default session,
+such as `boto3.client("bedrock-runtime")`, carry what ties them to a request. A client
+made from your own `boto3.Session()` doesn't.
 
 A client that pins certificates, sends a client certificate (mTLS) or uses its own CA
 bundle for an LLM host fails instead, since the proxy answers with its own certificate.

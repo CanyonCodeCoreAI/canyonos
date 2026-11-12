@@ -4,7 +4,7 @@
 
 - [Installation](../INSTALLATION.md): install the CLI and check your machine.
 - [How it works](../HOW_IT_WORKS.md): what runs where when you deploy.
-- [What CanyonOS offers](COMPARISONS.md): what CanyonOS covers, and related tools.
+- [What CanyonOS offers](COMPARISONS.md): what CanyonOS covers, and what it works with.
 
 ## Build a workflow
 

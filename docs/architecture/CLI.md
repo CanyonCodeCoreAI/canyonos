@@ -297,7 +297,7 @@ The command succeeds only when the agent exits with `0`, `.canyon` exists, and
 `canyonos sync` (`run_sync_and_reload`) copies the project into the running deploy's
 container, then calls `POST /reload`. The Global Controller rereads the workflow
 config and applies it without restarting the agents that stay; see
-[Reloading](../contributing/CONFIG.md#reloading). Only the config applies: changed
+[Reloading](CONFIG.md#reloading). Only the config applies: changed
 code is copied too but runs only after the next `canyonos deploy`, so `sync` updates
 just the `config` fingerprint in `deployed.json`. With no deploy running, `sync`
 copies nothing and says the change applies on the next deploy; when the recorded

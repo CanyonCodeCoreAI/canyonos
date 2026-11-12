@@ -83,11 +83,12 @@ its prompts. How the gateway gets the live versions is in
 - Once the dashboard has a prompt, later changes to it in `prompts.yaml`, including new
   versions, are ignored. Save a new version on the dashboard instead.
 - The dashboard cannot add or delete a prompt. To add one, put it in `prompts.yaml` and
-  run `canyonos sync` or `canyonos deploy`; it reaches agents once the dashboard has
+  run `canyonos sync` (Docker only) or `canyonos deploy`; it reaches agents once the dashboard has
   stored it, at the latest when you next open the Prompts page.
 - Prompts are set on OpenAI chat completions and responses, Anthropic messages, and AWS
   Bedrock calls. A call with no place for a system prompt, such as an embeddings call,
   is sent unchanged.
 - A call is matched to its function only when it is sent with httpx, which the OpenAI
-  and Anthropic SDKs use, or with boto3. A call made with another HTTP client gets no
+  and Anthropic SDKs use, or with boto3's default session (`boto3.client(...)`). A call
+  made with another HTTP client, or a client from your own `boto3.Session()`, gets no
   prompt. Calls from threads and executor tasks the function starts are matched.

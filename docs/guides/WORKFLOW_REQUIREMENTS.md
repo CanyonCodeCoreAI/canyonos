@@ -190,5 +190,5 @@ Then run at least one real request with a real model and the same data and tools
 production. A successful import alone is not enough.
 
 Last, rename any top-level folder named `config`, `stubs`, `grpc_stubs` or
-`docker_container`: `canyonos convert` stops at one. See
+`docker_container`: the conversion skill stops at one. See
 [Reserved names](WORKFLOW_DESIGN.md#reserved-names).

@@ -13,26 +13,26 @@ The [endpoint](ENDPOINT.md) runs a Local Controller too, with no agent.
 
 All paths are under `packages/core/canyonos_core/`.
 
-| Path                                      | What it holds                                                                                                   |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `server.py`                               | The Global Controller container's HTTP server on `8000`: `/deploy`, `/reload`, `/clean`, `/endpoint`, `/status` |
-| `cli.py`                                  | `python -m canyonos_core.cli deploy`: the build, then `GlobalController`                                        |
-| `controller/global_controller.py`         | `GlobalController`: config publishing, the poll loop, the cleanup loop, teardown                                |
-| `controller/controller_context.py`        | `ControllerContext`, shared with the Reconciler: config loading, Redis clients per machine, commands            |
-| `controller/orchestrator.py`              | `orchestrator_for`, `CanyonOrchestrator` (Docker and EC2)                                                       |
-| `kubernetes/orchestrator.py`              | `KubernetesOrchestrator`                                                                                        |
-| `kubernetes/run_gc.py`                    | `run-gc`: the Global Controller as a Kubernetes pod                                                             |
-| `controller/local_controller.py`          | `LocalController`: startup, routing, execution, forwarding, retries, drain                                      |
-| `controller/local_controller_frontend.py` | `LocalControllerServicer`: the gRPC server, admission, deduplication, `Cleanup`                                 |
-| `controller/future.py`                    | `Future`, `wait_for_result`, `AgentCallError`, `convert_result`                                                 |
-| `controller/lazy_values.py`               | The rewrite that lets agent code use a result without `.value()`; see [Lazy values](#lazy-values)               |
-| `controller/canyonos_context.py`          | The request ID, current future and function, carried into threads and pools the agent starts                    |
-| `controller/governance.py`                | `refuse_call` and `model_for`, from `policy.yaml` and `governance:config`                                       |
-| `controller/health.py`                    | `/startupz`, `/readyz` and `/livez` on `CANYONOS_HEALTH_PORT`, for Kubernetes probes                            |
-| `controller/utils/human_input.py`         | `ask_human`, and the `input()`, LangGraph and Agents SDK hooks that call it                                     |
-| `controller/utils/otel_writer.py`         | `send_telemetry`, `deliver_completed_requests`: Redis to the OTLP exporter's queue                              |
-| `controller/utils/process_supervisor.py`  | `ProcessSupervisor`: starts and restarts the Reconciler and `otel_exporter`                                     |
-| `controller/proto/`                       | `local_controller.proto`, `global_controller.proto`                                                             |
+| Path                                      | What it holds                                                                                                                                      |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.py`                               | The Global Controller container's HTTP server on `8000`: `/deploy`, `/reload`, `/clean`, `/endpoint`, `/status`, `/runtime_status`, `/logs/<name>` |
+| `cli.py`                                  | `python -m canyonos_core.cli deploy`: the build, then `GlobalController`                                                                           |
+| `controller/global_controller.py`         | `GlobalController`: config publishing, the poll loop, the cleanup loop, teardown                                                                   |
+| `controller/controller_context.py`        | `ControllerContext`, shared with the Reconciler: config loading, Redis clients per machine, commands                                               |
+| `controller/orchestrator.py`              | `orchestrator_for`, `CanyonOrchestrator` (Docker and EC2)                                                                                          |
+| `kubernetes/orchestrator.py`              | `KubernetesOrchestrator`                                                                                                                           |
+| `kubernetes/run_gc.py`                    | `run-gc`: the Global Controller as a Kubernetes pod                                                                                                |
+| `controller/local_controller.py`          | `LocalController`: startup, routing, execution, forwarding, retries, drain                                                                         |
+| `controller/local_controller_frontend.py` | `LocalControllerServicer`: the gRPC server, admission, deduplication, `Cleanup`                                                                    |
+| `controller/future.py`                    | `Future`, `wait_for_result`, `AgentCallError`, `convert_result`                                                                                    |
+| `controller/lazy_values.py`               | The rewrite that lets agent code use a result without `.value()`; see [Lazy values](#lazy-values)                                                  |
+| `controller/canyonos_context.py`          | The request ID, current future and function, carried into threads and pools the agent starts                                                       |
+| `controller/governance.py`                | `refuse_call` and `model_for`, from `policy.yaml` and `governance:config`                                                                          |
+| `controller/health.py`                    | `/startupz`, `/readyz` and `/livez` on `CANYONOS_HEALTH_PORT`, for Kubernetes probes                                                               |
+| `controller/utils/human_input.py`         | `ask_human`, and the `input()`, LangGraph and Agents SDK hooks that call it                                                                        |
+| `controller/utils/otel_writer.py`         | `send_telemetry`, `deliver_completed_requests`: Redis to the OTLP exporter's queue                                                                 |
+| `controller/utils/process_supervisor.py`  | `ProcessSupervisor`: starts and restarts the Reconciler and `otel_exporter`                                                                        |
+| `controller/proto/`                       | `local_controller.proto`, `global_controller.proto`                                                                                                |
 
 `controller/gateway_headers.py` belongs to the [LLM Gateway](LLM_GATEWAY.md), and
 `controller/scaling.py` to [Autoscaling](../guides/SCALING.md).
@@ -473,6 +473,10 @@ through the same check in `loader_for`, so an agent that calls no other loads as
 written. Before walking a list or dict for a library, `_replace_futures` gathers the
 types of its items and skips one where none can be or hold a Future.
 
+Two switches turn the rewrite off: a `# canyonos: no-rewrite` line loads that file as
+written, and `CANYONOS_LAZY_VALUES=0` in an agent's environment turns it off for every
+file.
+
 ## Redis keys
 
 The keys the controllers read and write. The Reconciler's own keys are in
@@ -533,11 +537,11 @@ method. Nothing implements or calls it.
 ## Changing the controllers
 
 - The end-to-end suites cover the controllers: a deploy, calls between agents, errors
-  and questions to a person. [Development](../contributing/DEVELOPMENT.md#tests) says
+  and questions to a person. [Testing](../contributing/TESTING.md#end-to-end-tests) says
   how to run them.
 - Agent images carry the files listed in `_AGENT_FLAT_SOURCES` (`stub_generator.py`)
-  as flat modules, `governance.py` as `canyonos_governance.py` and `health.py` as
-  `canyonos_health.py`, plus the `canyonos_core.llm_gateway` package, and nothing else
+  as flat modules, `governance.py` as `canyonos_governance.py`, `health.py` as
+  `canyonos_health.py` and `lazy_values.py` as `canyonos_lazy.py`, plus the `canyonos_core.llm_gateway` package, and nothing else
   from `canyonos_core`. Those files import from `canyonos_core` first and fall back to
   the flat name on `ImportError`; keep both, and give a new import a flat copy too.
 - A new orchestrator method needs both implementations, and any Redis key the Global

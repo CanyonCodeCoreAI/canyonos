@@ -20,7 +20,7 @@ canyonos stop            # take the deploy down, keeping its images
 | Command      | What it does                                                                    |
 | ------------ | ------------------------------------------------------------------------------- |
 | `quickstart` | Guided first run: picks a sample workflow, deploys it and sends a first request |
-| `new-app`    | Create a starter workflow with one agent in an empty folder                     |
+| `new-app`    | Create a starter workflow with two agents in an empty folder                    |
 | `convert`    | Convert an existing workflow to the CanyonOS format with your coding agent      |
 | `validate`   | Check the workflow root against the CanyonOS contract                           |
 | `doctor`     | Check that this machine can deploy and, once deployed, every part of the deploy |

@@ -61,10 +61,7 @@ that name in `agents/price_agent.py`, each with one CPU core and 256 MB of memor
 installs `yfinance` into its image. Other agents call it through `get_price`. The
 endpoint, on port `8080`, runs `Workflow.main` for each `POST /main`.
 
-CanyonOS reads the keys in any order. `canyonos new-app` and the examples put first what
-decides where everything runs: `target` and `provider` with their blocks, then `agents`,
-then `endpoint`, then any other key. `canyonos target kubernetes` puts the `kubernetes:`
-block right under `target`.
+The keys may come in any order.
 
 ## Agent entries
 
@@ -74,16 +71,16 @@ database image, such as `postgres:16-alpine`.
 
 Keys every entry takes:
 
-| Key                | Default  | What it does                                                                                                                              |
-| ------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`             | required | The agent's name. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one file are rejected. `endpoint` is reserved. |
-| `type`             | `agent`  | `agent` or `database`                                                                                                                     |
-| `replicas`         | `1`      | How many replicas run at once, at least 1. A database runs exactly 1.                                                                     |
-| `resources.cpu`    | `1`      | CPU cores per replica, passed to `docker run --cpus`                                                                                      |
-| `resources.memory` | `512`    | Memory per replica in MB, passed to `--memory`                                                                                            |
-| `resources.gpu`    | none     | GPUs per replica, passed to `--gpus`. `0` means none.                                                                                     |
-| `stateful`         | `false`  | Send every call within one request to the same replica, for an agent that keeps state in memory between calls                             |
-| `env`              | `{}`     | Extra environment variables. On Docker and EC2 only database entries get them; on Kubernetes every entry does.                            |
+| Key                | Default  | What it does                                                                                                                                              |
+| ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | required | The agent's name. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one file are rejected. `endpoint`, in any casing, is reserved. |
+| `type`             | `agent`  | `agent` or `database`                                                                                                                                     |
+| `replicas`         | `1`      | How many replicas run at once, at least 1. A database runs exactly 1.                                                                                     |
+| `resources.cpu`    | `1`      | CPU cores per replica, passed to `docker run --cpus`                                                                                                      |
+| `resources.memory` | `512`    | Memory per replica in MB, passed to `--memory`                                                                                                            |
+| `resources.gpu`    | none     | GPUs per replica, passed to `--gpus`. `0` means none.                                                                                                     |
+| `stateful`         | `false`  | Send every call within one request to the same replica, for an agent that keeps state in memory between calls                                             |
+| `env`              | `{}`     | Extra environment variables. On Docker and EC2 only database entries get them; on Kubernetes every entry does.                                            |
 
 `canyonos deploy` writes the default `resources` into every entry, databases included,
 so a database gets 1 CPU and 512 MB unless you set more.
@@ -98,11 +95,11 @@ Keys of `type: agent`:
 
 Keys of `type: database`:
 
-| Key           | Default  | What it does                                                               |
-| ------------- | -------- | -------------------------------------------------------------------------- |
-| `image`       | required | The Docker image to pull. Nothing is built for a database.                 |
-| `db_port`     | `5432`   | The port it listens on                                                     |
-| `volume_path` | none     | A folder inside it whose data survives a redeploy. Required on Kubernetes. |
+| Key           | Default  | What it does                                                                                                                        |
+| ------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `image`       | required | The Docker image to pull. Nothing is built for a database.                                                                          |
+| `db_port`     | `5432`   | On Docker, the host port, mapped to `5432` inside, so the image must listen on `5432`. On Kubernetes, the port the image listens on |
+| `volume_path` | none     | A folder inside it whose data survives a redeploy. Required on Kubernetes.                                                          |
 
 On Docker, `volume_path` is kept on the volume `canyonos-<folder>-<id>-<name>-data`: the
 workflow folder's name, the first 8 characters of `project_id`, and the entry's name in
@@ -144,7 +141,7 @@ agents:
 | `name`             | yes      | The method's name                          |
 | `arguments[].name` | yes      | An argument's name                         |
 | `arguments[].type` | no       | The argument's type, written into the stub |
-| `returns.type`     | no       | The return type, for the caller to read    |
+| `returns.type`     | no       | The type callers receive the result as     |
 
 Every name is written into the stub as Python source, so it must be a Python identifier
 that is not a keyword. Some names are also rejected:
@@ -162,9 +159,10 @@ builtins: `bool`, `bytearray`, `bytes`, `complex`, `dict`, `float`, `frozenset`,
 rejected. Stubs have no defaults, so every declared argument is required at the call
 site.
 
-At runtime, `returns.type` is only documentation. The runtime JSON-encodes a `dict` or
-`list` result and turns anything else into a string. A calling agent always receives
-text, so `dict` or `list` tells the caller to `json.loads` it.
+`returns.type` decides what callers get. The result travels as text: a `dict` or `list`
+JSON-encoded, anything else as a string. Callers get it back as the declared type: `dict`
+and `list` from JSON, numbers and `bool` from their text. Without `returns.type`, callers
+get the text; see [Results of agent calls](RUNTIME_CONTRACT.md#results-of-agent-calls).
 
 ## Per-image requirements
 
@@ -219,8 +217,7 @@ What a request looks like and what it returns is in
 
 ## Top-level keys
 
-Every key at the top of the file, in the order `canyonos new-app` writes them. Any
-other key is rejected.
+Every key at the top of the file. Any other key is rejected.
 
 Where it runs:
 

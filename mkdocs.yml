@@ -53,12 +53,12 @@ nav:
       - Troubleshooting: guides/TROUBLESHOOTING.md
   - Releases:
       - Release notes: https://github.com/CanyonCodeCoreAI/canyonos/releases
-      - Upgrading: UPGRADING.md
   - Architecture:
       - Overview: architecture/README.md
       - Workflow design: guides/WORKFLOW_DESIGN.md
       - Workflow layout: guides/BUILD_ARTIFACT.md
       - What a workflow needs: guides/WORKFLOW_REQUIREMENTS.md
+      - Configuration: architecture/CONFIG.md
       - CLI: architecture/CLI.md
       - Controller: architecture/CONTROLLER.md
       - Endpoint: architecture/ENDPOINT.md
@@ -68,12 +68,10 @@ nav:
       - OTLP exporter: architecture/OTLP_EXPORTER.md
       - Reconciler: architecture/RECONCILER.md
   - Contributing:
-      - Overview: contributing/README.md
+      - How to contribute: contributing/README.md
       - Development: contributing/DEVELOPMENT.md
+      - Testing: contributing/TESTING.md
       - Style: contributing/STYLE.md
-      - Configuration internals: contributing/CONFIG.md
-      - AI policy: contributing/AI_POLICY.md
-  - Roadmap: ROADMAP.md
 
 markdown_extensions:
   # Lets a page wrap Markdown in a <div class="..." markdown> for styling.

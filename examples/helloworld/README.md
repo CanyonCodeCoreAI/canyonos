@@ -2,13 +2,13 @@
 
 The starting point to creating your own workflows!
 
-The guides/QUICKSTART.md has more general information on running a workflow, but this doc is tailored specifically towards getting this Hello World workflow up and running.
+[Build a workflow from scratch](../../docs/guides/FROM_SCRATCH.md) has the general steps; this README covers running this Hello World workflow.
 
 This workflow does not use an LLM, so no money would be spent from this.
 
 The smallest CanyonOS workflow: a REST endpoint that calls one agent and returns a greeting. It needs no LLM and no API keys, so it's the quickest way to check your setup end to end.
 
-This walkthrough takes it from a fresh copy to a request you can see in the dashboard. For the general steps, see the [Quickstart](../../docs/QUICKSTART.md).
+This walkthrough takes it from a fresh copy to a request you can see in the dashboard. For the general steps, see [Build a workflow from scratch](../../docs/guides/FROM_SCRATCH.md).
 
 ## What's in it
 

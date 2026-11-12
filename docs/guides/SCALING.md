@@ -33,7 +33,7 @@ scaling:
 A workflow has one policy, and it applies to every agent separately: each agent is
 measured on its own load and gains or loses its own replicas. Database entries and the
 endpoint's container are never scaled. The policy takes effect on the next
-`canyonos sync` or `canyonos deploy`.
+`canyonos sync` (Docker only) or `canyonos deploy`.
 
 A policy that breaks the rules in the table is skipped with a warning in the Global
 Controller's log, and no agent is scaled. The
@@ -72,7 +72,7 @@ only while the workflow is running. If the stored policy is invalid, the page sa
 ## Limits
 
 - Dashboard edits are not written back to `scaling.yaml`. On the next reload, from
-  `canyonos sync` or a deploy, the Global Controller publishes the file again and
+  `canyonos sync` (Docker only) or a deploy, the Global Controller publishes the file again and
   dashboard edits are lost. Copy any change you want to keep into `scaling.yaml`.
 - On Docker and EC2, a reload or deploy also sets every agent back to the `replicas`
   count in the workflow config, and scaling starts again from there. On Kubernetes, a

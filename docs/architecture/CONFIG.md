@@ -1,4 +1,4 @@
-# Configuration internals
+# Configuration
 
 How a project's config gets from the files a user edits to the running system, and how
 to add a setting. For what each setting means, see
@@ -30,7 +30,7 @@ deploy.
 On Kubernetes, `canyonos deploy` uploads the project to the cluster instead. The
 in-cluster build renders the config folder as a ConfigMap, plus a CanyonProject and one
 CanyonAgent per agent (`kubernetes/manifests.py`). See
-[Operator](../architecture/OPERATOR.md).
+[Operator](OPERATOR.md).
 
 ## Loading
 
@@ -48,12 +48,14 @@ allows `${VAR}` only in string fields: a `replicas` of `"3"` would start one rep
 
 `schema/` checks a project before any stub is generated. `check_project` in
 `schema/__init__.py` returns the parsed manifest and every violation, and never raises.
-It runs in three places:
+It runs in four places:
 
 - the in-container deploy, before anything is built (`_validate_or_exit` in `cli.py`);
 - a reload, before anything changes (`POST /reload` in `server.py`, then
   `reload_config`);
-- `canyonos validate` (`validate.py`), which adds the checks the schema cannot make.
+- the in-cluster build on Kubernetes (`kubernetes/commands.py`);
+- `canyonos validate` (Core `validate.py`), which adds the checks the schema cannot
+  make.
 
 | Module                 | What it holds                                                                    |
 | ---------------------- | -------------------------------------------------------------------------------- |
@@ -108,11 +110,11 @@ the config to Redis:
 
 Each governed agent's USD spend since its `spend.since` (`governance:spend`) is not
 config: the dashboard API writes it, every minute by default. Every key is listed in
-[Redis keys](../architecture/CONTROLLER.md#redis-keys).
+[Redis keys](CONTROLLER.md#redis-keys).
 
 On Docker and EC2, the YAML always wins: every load overwrites replica counts changed at
 runtime, and the Reconciler converges running replicas onto the new desired counts (see
-[Reconciler](../architecture/RECONCILER.md)). On Kubernetes, the orchestrator leaves the
+[Reconciler](RECONCILER.md)). On Kubernetes, the orchestrator leaves the
 counts alone: each CanyonAgent already carries its configured count.
 
 ## Reloading
@@ -137,7 +139,7 @@ ignored.
 
 On Kubernetes, the Global Controller reloads the same way when the files of its
 ConfigMap change, which `canyonos deploy` updates. See
-[Config reload](../architecture/CONTROLLER.md#config-reload).
+[Config reload](CONTROLLER.md#config-reload).
 
 ## Adding a setting
 

@@ -4,8 +4,8 @@
 
 - **Must have:** [Docker](https://docs.docker.com/get-docker/) with Compose v2.
 - **Optional**, each only for its task:
-    - A coding agent (in Terminal), to convert an
-      existing workflow.
+    - A coding agent that runs in your terminal, such as Claude Code or Codex, to
+      [convert an existing workflow](guides/CONVERT_WORKFLOW.md).
     - An AWS account, to deploy on [EC2](guides/EC2.md).
     - `kubectl` set to a cluster running the CanyonOS operator, to deploy on
       [Kubernetes](guides/KUBERNETES.md). A local cluster also needs
@@ -78,7 +78,8 @@ check fails, it tells you how to fix it.
 
 Once `canyonos doctor` passes, [Start from scratch](guides/FROM_SCRATCH.md) builds and
 deploys your first workflow, step by step. To bring an app built with another
-framework, see [Convert an existing workflow](guides/CONVERT_WORKFLOW.md).
+framework, see [Convert an existing workflow](guides/CONVERT_WORKFLOW.md). For a guided
+first run with a ready-made workflow, run `canyonos quickstart`.
 
 ## Upgrade
 
@@ -86,7 +87,8 @@ framework, see [Convert an existing workflow](guides/CONVERT_WORKFLOW.md).
 canyonos upgrade      # if you installed with uv; otherwise it prints the command to run
 ```
 
-Read [Upgrading](UPGRADING.md) before you move to a new release.
+The [release notes](https://github.com/CanyonCodeCoreAI/canyonos/releases) list what
+changed in each release.
 
 ## Uninstall
 

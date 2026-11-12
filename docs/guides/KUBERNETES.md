@@ -15,7 +15,8 @@ and starts them. Nothing else on the cluster changes. How the operator works is 
 - The CanyonOS CLI, [installed](../INSTALLATION.md), and
   [`kubectl`](https://kubernetes.io/docs/tasks/tools/).
 - A cluster with the CanyonOS operator of the CLI's release on it. To try CanyonOS on
-  your own machine, `canyonos cluster up` makes one.
+  your own machine, `canyonos cluster up` makes one. On your own cluster, the admin
+  installs the operator with [Helm](https://helm.sh/docs/intro/install/) 3.
 - A container registry that the cluster's builder can push to and its nodes can pull
   from. A local cluster comes with one on `localhost:5001`.
 

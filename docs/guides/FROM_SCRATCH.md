@@ -1,8 +1,8 @@
 # Build a workflow from scratch
 
-A CanyonOS workflow has a fixed layout: your agents' code in `agents/`, and how they run
-in `config/`. `canyonos new-app` writes that layout with a template for every file, and
-this guide fills it in, step by step.
+`canyonos new-app` writes a starter workflow: your agents' code in `agents/`, and how
+they run in `config/`, with a template for every file. This guide fills it in, step by
+step.
 
 You need CanyonOS [installed](../INSTALLATION.md) and Docker running.
 
@@ -71,15 +71,42 @@ and CanyonOS waits for a result only at the first line that needs it; see
 
 ## 3. List your agents in the workflow config
 
-Every agent needs an entry in `config/workflow_config.yaml`. This one has three
-agents: `Workflow` takes the requests and calls `ResearchAgent` and `WriterAgent`. Copy
-it and use your own names:
+Every agent needs an entry in `config/workflow_config.yaml`. This is the template's,
+with one more agent added: `ResearchAgent`, in `agents/research_agent.py`, which needs
+the `openai` package, two replicas and more memory. Add an entry like it for each agent
+you write:
 
 ```yaml
 target: docker      # where it runs; step 6 changes these two
 provider: local
 
 agents:
+  - name: MyAgent
+    entrypoint: agents/my_agent.py
+    functions:
+      - name: run
+        arguments:
+          - name: query
+            type: str
+        returns:
+          type: str
+
+  - name: ResearchAgent
+    entrypoint: agents/research_agent.py
+    requirements:
+      - openai
+    replicas: 2
+    resources:
+      cpu: 2
+      memory: 1024
+    functions:
+      - name: research
+        arguments:
+          - name: topic
+            type: str
+        returns:
+          type: str
+
   - name: Workflow
     entrypoint: agents/workflow.py
     functions:
@@ -89,34 +116,6 @@ agents:
             type: str
         returns:
           type: dict
-
-  - name: ResearchAgent
-    entrypoint: agents/research_agent.py
-    requirements:
-      - openai
-    replicas: 2
-    functions:
-      - name: research
-        arguments:
-          - name: topic
-            type: str
-        returns:
-          type: str
-
-  - name: WriterAgent
-    entrypoint: agents/writer_agent.py
-    requirements:
-      - openai
-    resources:
-      cpu: 2
-      memory: 1024
-    functions:
-      - name: write
-        arguments:
-          - name: notes
-            type: str
-        returns:
-          type: str
 
 endpoint:
   agent: Workflow
@@ -135,16 +134,18 @@ What each setting does:
 | `resources`                         | `cpu` cores, `memory` in MB and `gpu` count for each copy              | `1`, `512`, none |
 | `endpoint.agent`, `endpoint.method` | The method a request runs: `POST /main` runs `Workflow.main`           | required         |
 
-The file keeps this order: `target` and `provider`, then `agents`, then `endpoint`.
-Every other setting has a default that suits most workflows;
+The keys can come in any order. Every other setting has a default that suits most
+workflows;
 [Workflow config](WORKFLOW_CONFIG.md) lists them all.
 
 ## 4. Turn on what you need (optional)
 
-Each of these files has a commented example. Uncomment the ones you want. Some can also
-be changed on the [dashboard](DASHBOARD.md) while the workflow runs:
+`llms.yaml`, `prompts.yaml` and `scaling.yaml` hold commented examples: uncomment what
+you want. `policy.yaml` starts by letting every request reach every agent; edit its rules
+to restrict that. Some can also be changed on the [dashboard](DASHBOARD.md) while the
+workflow runs:
 
-| File           | Uncomment it to                                            | On the dashboard                                                              | Details                              |
+| File           | Use it to                                                  | On the dashboard                                                              | Details                              |
 | -------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------ |
 | `llms.yaml`    | Limit which models an agent may call and what a call costs | No                                                                            | [LLM Gateway](LLM_GATEWAY.md)        |
 | `prompts.yaml` | Keep system prompts outside your code, with versions       | Edit them and make a new version live, once they're in the file               | [Prompt management](PROMPTS.md)      |
@@ -177,7 +178,8 @@ where it deploys. To run it somewhere else, set that up first:
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys) explains the `target` and
 `provider` settings behind these.
 
-The next steps are the same wherever it runs.
+The next steps are for Docker and EC2. On Kubernetes, run `canyonos deploy` first;
+`canyonos test` then queries the deployed workflow. See [Kubernetes](KUBERNETES.md).
 
 ## 7. Run it
 
@@ -187,8 +189,9 @@ canyonos test "your query"     # deploy locally and send one request
 canyonos deploy                # deploy and keep it running
 ```
 
-`canyonos deploy` first shows each agent's CPU, memory, GPU and replicas; choose default
-or edit the configurations. When it's up, send a request:
+`canyonos deploy` first shows each agent's CPU, memory, GPU and replicas. Choose
+**1. Deploy**, or **2. Configure an agent** to change them first. What it deploys with,
+defaults included, is saved in the workflow config. When it's up, send a request:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/main \

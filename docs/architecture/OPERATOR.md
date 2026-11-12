@@ -47,8 +47,7 @@ anything but letters, digits and hyphens turned into hyphens, at most 63 charact
 (`HelloAgent` becomes `helloagent`). The CLI and the Global Controller use the same
 rule. An agent with another name is not run and reports `NameMismatch`. Core renders
 CanyonProject and CanyonAgent objects in Python; `api/v1alpha1/testdata/rendered.json`
-holds what it renders for sample projects, and the Go tests decode it with unknown
-fields refused.
+is a sample of what it renders, kept for reference. No test reads it.
 
 ## Where it runs
 
@@ -219,8 +218,8 @@ its `controller:<address>:status` key, as the replica provisioner does on Docker
 
 The operator rewrites everything at least once a minute (`resyncPeriod`), in case
 Redis lost it, and sooner when a stopping pod is about to count as lost. The key
-formats come from the shared `internal/redisstate/testdata/contract.json` fixture,
-exercised by the operator's Kubernetes integration suite.
+formats are those core writes; `internal/redisstate/testdata/contract.json` records
+them for reference, and no test reads it.
 
 ## What a CanyonBuild becomes
 
@@ -263,14 +262,13 @@ finished build is left alone; the CLI deletes it, and what it owns goes with it.
 
 ## Developing
 
-Everything runs in the `golang:1.27.0` container: `make manifests generate fmt vet
-test lint` (envtest for the controllers, miniredis for the Redis writer). Tests sit
-next to the code they cover: `builders/*_test.go` for objects, `rollout_test.go` for
-the surge plan, `canyonagent_lost_test.go` for lost nodes, `redisstate/*_test.go`
-against the contract. For the whole path on a real cluster, see
+With Go 1.26 or later, or in the `golang:1.27.0` container CI uses, run `make manifests
+generate fmt vet test lint`. The tests are in `internal/controller/`: the reconcilers
+against envtest and miniredis, `rollout_test.go` for the surge plan and
+`canyonagent_lost_test.go` for lost nodes. For the whole path on a real cluster, see
 [Kubernetes on kind](../contributing/DEVELOPMENT.md#kubernetes-on-kind); the user guide
 is [Kubernetes deployment](../guides/KUBERNETES.md).
 
-When changing a CRD type, run `make generate manifests` and update core's renderer and
-`rendered.json` with it. When changing a Redis key, change core's side first and
-regenerate `contract.json`.
+When changing a CRD type, run `make generate manifests` and update core's renderer
+with it. When changing a Redis key, change core's side first, then the operator's
+writer (`internal/redisstate/writer.go`).

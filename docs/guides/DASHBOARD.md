@@ -30,8 +30,8 @@ Each deployed workflow is listed under **Projects**, named after its folder. Sel
 to open its **Status** page, then go to **Costs** and choose **Per-Query view** to see
 each request with its status, cost and latency.
 
-The `request_id` the endpoint returned is the request's trace id. Hover over a query id
-to see it in full and match it.
+Each request is listed by the `request_id` the endpoint returned. Hover over an ID to see
+it in full.
 
 Every page shows the last 7 days at first. Use the time window control to change that.
 
@@ -67,7 +67,8 @@ The last three pages change a workflow while it runs:
   [Autoscaling](SCALING.md#change-the-policy-while-the-workflow-runs).
 - **Governance**: open an agent to choose the agents it requires, set its spend rules
   (refuse calls, or switch model above a threshold), or stop and start it. Rules apply
-  on the controller's next poll. See [Policy](RUNTIME_CONTRACT.md#policy).
+  on the controller's next poll. See
+  [Governance rules](RUNTIME_CONTRACT.md#governance-rules).
 
 ## Who can open it
 

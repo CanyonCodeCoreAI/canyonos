@@ -73,6 +73,7 @@ canyonos feedback --yes "<what you ran, what you expected, what happened>"
 
 - Style and docstrings: [docs/contributing/STYLE.md](docs/contributing/STYLE.md)
 - Local development: [docs/contributing/DEVELOPMENT.md](docs/contributing/DEVELOPMENT.md)
+- Checks and tests: [docs/contributing/TESTING.md](docs/contributing/TESTING.md)
 - What a workflow needs before converting: [docs/guides/WORKFLOW_REQUIREMENTS.md](docs/guides/WORKFLOW_REQUIREMENTS.md)
 - Network limits of the LLM gateway: [docs/guides/LLM_GATEWAY.md](docs/guides/LLM_GATEWAY.md#network-limits)
 - All docs: [docs/README.md](docs/README.md)
@@ -81,7 +82,7 @@ canyonos feedback --yes "<what you ran, what you expected, what happened>"
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md) (Conventional Commits, review gates), the
 [PR template](.github/pull_request_template.md), and the
-[AI policy](docs/contributing/AI_POLICY.md).
+[AI policy](CONTRIBUTING.md#ai-policy).
 
 ## Skills
 

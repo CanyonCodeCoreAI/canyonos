@@ -46,7 +46,7 @@ rest stay at one. A few well-chosen agents are easier to run than many small one
 With CanyonOS [installed](INSTALLATION.md), run these in an empty folder:
 
 ```bash
-canyonos new-app     # writes a one-agent starter workflow
+canyonos new-app     # writes a starter workflow with two small agents
 canyonos deploy      # runs it
 ```
 
@@ -69,6 +69,5 @@ the tests and how pull requests are reviewed. CanyonOS is maintained by
   [Convert an existing workflow](guides/CONVERT_WORKFLOW.md).
 - [EC2](guides/EC2.md) and [Kubernetes](guides/KUBERNETES.md) cover deploying beyond
   this machine.
-- [Upgrading](UPGRADING.md) lists what to change when you move to a new release.
 - [Troubleshooting](guides/TROUBLESHOOTING.md) covers common problems and how to fix
   them.

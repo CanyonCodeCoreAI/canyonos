@@ -1,32 +1,7 @@
 # Style
 
-Rules for code and docs. CI checks the formatting with the tools below; the rest is for
-review.
-
-## What the checks enforce
-
-| Files             | Tool                                                    | Rules                                                                           |
-| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Python            | Ruff (`pyproject.toml`)                                 | `ruff format`, with lines of 88 characters; lint rules `E4`, `E7`, `E9` and `F` |
-| Python, Core only | ty (`pyproject.toml`)                                   | Type checks of `packages/core/canyonos_core`                                    |
-| TypeScript        | Prettier (`.prettierrc.mjs`), oxlint (`.oxlintrc.json`) | Lines of 100 characters, single quotes, sorted imports; lint warnings fail      |
-| Go                | `go fmt`, `go vet`, golangci-lint                       | Run by `make fmt vet lint` in `packages/operator`                               |
-| Every source file | `reuse lint`                                            | The SPDX header below                                                           |
-
-`bun run check` runs all of them but the Go checks, which run in the operator's own CI
-job. `bun run format` fixes what Ruff and Prettier can. `.editorconfig` sets UTF-8, LF
-line endings, a final newline and no trailing spaces for every file.
-
-Every new source file starts with this two-line SPDX header, in the file's comment style
-(shown with `#`; use `//` in TypeScript and Protobuf, `--` in SQL):
-
-```text
-# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
-# SPDX-License-Identifier: AGPL-3.0-only
-```
-
-Markdown, JSON and the other files listed in `REUSE.toml` get their license from there
-instead.
+Rules for code and docs that reviewers check. CI enforces the formatting and lint
+rules; see [Testing](TESTING.md#checks).
 
 ## Names
 
@@ -42,26 +17,11 @@ instead.
 
 ## Files and folders
 
-- Markdown files: `UPPER_SNAKE_CASE.md` (`LLM_GATEWAY.md`, `CONTRIBUTING.md`).
+- Markdown files: `UPPER_SNAKE_CASE.md` (`LLM_GATEWAY.md`, `CONTRIBUTING.md`), except
+  where a tool fixes the name: `docs/index.md`, `.github/pull_request_template.md`.
 - Folders: lowercase (`docs/guides/`, not `docs/GUIDES/`).
 - Architecture docs: `docs/architecture/<COMPONENT>.md`.
 - Every folder a reader browses to has a `README.md`.
-
-## Docs
-
-- Describe what the code does now. A feature that is not merged yet is documented in
-  its own pull request.
-- Say each fact once, on the page that owns it, and link to it from the others.
-- Commands, flags, file names, config keys, and ports go in code formatting:
-  `canyonos test`, `--json`, `workflow_config.yaml`, `replicas`, `8080`.
-- Commands and requests a reader will run go in fenced blocks with a language tag
-  (`bash`, `yaml`, `python`).
-- Use the real default ports and paths, the same in every doc.
-- Use a table for content with the same fields per row, and pad its columns.
-- Wrap prose at 88 characters.
-- Write the docs in `docs/` by hand; see the [AI policy](AI_POLICY.md).
-- Build them with `mkdocs build --strict` before a pull request; see
-  [Preview the docs](DEVELOPMENT.md#preview-the-docs).
 
 ## Docstrings
 
@@ -91,15 +51,47 @@ never seen the code and has no patience for filler.
 - **Format:** one line when it fits, two when needed. Lines stay within 88 columns, and
   a wrapped docstring shouldn't leave one word or a lone `"""` on its last line.
 
-Examples:
+Examples from the CLI:
 
 ```python
-def _require_config(config_path):
-    """Find the config file `canyonos config` opens: the given path, or the project's
-    default. If it doesn't exist, show an error in the terminal and return None."""
+def _agents_table(agent_specs):
+    """Build a read-only table of agent settings, shown in the terminal when you choose
+    View in `canyonos config`."""
 
-def run_stop():
-    """Run `canyonos stop`: remove the deploy's containers, and stop the dashboard if no
-    other project runs, keeping the images for a quick redeploy. `canyonos clean`
-    removes those too."""
+def _redis_outlived_its_password():
+    """True when this project's Redis container still runs on the active Docker engine
+    but its password file under `~/.canyonos/projects/` is gone, so a new password
+    would not open it."""
 ```
+
+## License header
+
+Every new source file starts with this two-line SPDX header, in the file's comment style
+(shown with `#`; use `//` in TypeScript and Protobuf, `--` in SQL):
+
+```text
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+```
+
+Markdown, JSON and the other files listed in `REUSE.toml` get their license from there
+instead.
+
+## Docs
+
+- Describe what the code does now. A feature that is not merged yet is documented in
+  its own pull request.
+- Say each fact once, on the page that owns it, and link to it from the others.
+- Commands, flags, file names, config keys, and ports go in code formatting:
+  `canyonos test`, `--json`, `workflow_config.yaml`, `replicas`, `8080`.
+- Commands and requests a reader will run go in fenced blocks with a language tag
+  (`bash`, `yaml`, `python`).
+- Keep fenced blocks out of lists. The docs site renders a block inside a list item
+  outside the list and breaks its numbering, so end the list, or write the steps as
+  paragraphs with the blocks between them.
+- Use the real default ports and paths, the same in every doc.
+- Use a table for content with the same fields per row, and pad its columns.
+- Wrap prose at 88 characters.
+- Write the docs in `docs/` by hand; see the [AI policy](README.md#ai-policy).
+- Build them with `mkdocs build --strict` before a pull request; see
+  [Testing](TESTING.md#docs).

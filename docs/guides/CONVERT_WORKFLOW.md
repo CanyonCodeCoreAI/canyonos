@@ -72,8 +72,8 @@ beside `.canyon`, not inside it:
 OPENAI_API_KEY=sk-...
 ```
 
-Every agent gets these as environment variables. `canyonos deploy` warns about any key
-that is missing.
+Every agent gets these as environment variables. On Docker, `canyonos deploy` warns
+about any key that is missing.
 
 ## 4. Test it
 
@@ -99,7 +99,9 @@ where it deploys. To run it somewhere else, set that up first:
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys) explains the `target` and
 `provider` settings behind these.
 
-The next steps are the same wherever it runs.
+The next steps are for Docker and EC2. On Kubernetes, `canyonos deploy` builds and
+starts it in the cluster without the resource step below; see
+[Kubernetes](KUBERNETES.md).
 
 ## 6. Deploy
 
@@ -107,8 +109,9 @@ The next steps are the same wherever it runs.
 canyonos deploy
 ```
 
-It first shows each agent's CPU, memory, GPU and replicas; choose default or edit the
-configurations. When it's up, it prints the endpoint and the dashboard address. Send a
+It first shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
+**2. Configure an agent** to change them first. What it deploys with, defaults included,
+is saved in the workflow config. When it's up, it prints the endpoint and the dashboard address. Send a
 request, with the arguments your workflow takes:
 
 ```bash

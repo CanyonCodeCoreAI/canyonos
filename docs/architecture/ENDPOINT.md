@@ -133,9 +133,10 @@ The worker finds the request's record in this order:
    keys exist.
 2. `request:<request_id>:result`: the outcome cleanup keeps for a day after it expires
    the request's keys (see [Futures and cleanup](CONTROLLER.md#futures-and-cleanup)).
-3. The request's root span in the local dashboard's Postgres
-   (`host.docker.internal:5432`, a 2-second connect timeout). That address only
-   resolves under Docker, so on Kubernetes this step finds nothing.
+3. The request's root span in the dashboard's Postgres container,
+   `canyonos-dashboard-db:5432` on the project's network (a 2-second connect timeout).
+   Only the local Docker dashboard has it, so on Kubernetes, or with
+   `bun run dashboard:dev`, this step finds nothing.
 
 With no record, it answers `404`. Otherwise it answers `200` with
 `{"request_id", "status"}` and one more field:
@@ -228,7 +229,7 @@ What the Global Controller reads to build the record: `CANYONOS_PUBLIC_IP`,
 ## Changing the endpoint
 
 - The end-to-end suites send requests through the endpoint; see
-  [Development](../contributing/DEVELOPMENT.md#tests).
+  [Testing](../contributing/TESTING.md#end-to-end-tests).
 - The record's fields are read by the CLI and the dashboard API
   (`packages/api/src/modules/monitoring/`); change them in all three.
 - The operator builds the same container on Kubernetes, so a new environment variable
