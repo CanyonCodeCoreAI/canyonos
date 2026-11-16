@@ -30,7 +30,7 @@ const error_code = (res: { error: { value?: unknown } | null }) =>
   (res.error?.value as { error?: string } | undefined)?.error;
 
 const stored = (n: number, updated_at: string, content = `system ${n}`) => ({
-  version: `intent-parse-0000000${n}-v${n}`,
+  version: `app-intent-parse-0000000${n}-v${n}`,
   content,
   updated_at,
 });
@@ -39,10 +39,13 @@ const stored = (n: number, updated_at: string, content = `system ${n}`) => ({
 // latest date.
 const CONFIG: PromptsConfig = {
   prompts: {
-    'intent.parse': [stored(3, '2026-09-20T00:00:00.000Z'), stored(2, '2026-09-25T00:00:00.000Z')],
-    summarize: [
+    'app.intent.parse': [
+      stored(3, '2026-09-20T00:00:00.000Z'),
+      stored(2, '2026-09-25T00:00:00.000Z'),
+    ],
+    'app.summarize': [
       {
-        version: 'summarize-abcdef01-v1',
+        version: 'app-summarize-abcdef01-v1',
         content: 'Summarize the input.',
         updated_at: '2026-09-01T00:00:00.000Z',
       },
@@ -50,7 +53,7 @@ const CONFIG: PromptsConfig = {
   },
 };
 const INTENT_V3 = stored(3, '2026-09-20T00:00:00.000Z');
-const SUMMARIZE_V1 = CONFIG.prompts.summarize![0]!;
+const SUMMARIZE_V1 = CONFIG.prompts['app.summarize']![0]!;
 
 const EDIT = { content: 'edited system' };
 
@@ -72,8 +75,8 @@ describe('project prompts', () => {
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual([
-      { name: 'intent.parse', live: INTENT_V3 },
-      { name: 'summarize', live: SUMMARIZE_V1 },
+      { name: 'app.intent.parse', live: INTENT_V3 },
+      { name: 'app.summarize', live: SUMMARIZE_V1 },
     ]);
   });
 
@@ -81,11 +84,13 @@ describe('project prompts', () => {
     const { token, project_id } = await running_project('prompts-get@canyonos.test');
     const headers = bearer(token);
 
-    const res = await api.projects[project_id]!.prompts['intent.parse']!.get({ $headers: headers });
+    const res = await api.projects[project_id]!.prompts['app.intent.parse']!.get({
+      $headers: headers,
+    });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      name: 'intent.parse',
+      name: 'app.intent.parse',
       live: INTENT_V3,
       versions: [INTENT_V3, stored(2, '2026-09-25T00:00:00.000Z')],
     });
@@ -98,14 +103,14 @@ describe('project prompts', () => {
   test('creating a version appends the next revision and keeps the live one live', async () => {
     const { token, project_id } = await running_project('prompts-save@canyonos.test');
     const headers = bearer(token);
-    const prompt = api.projects[project_id]!.prompts['intent.parse']!;
+    const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const created = await prompt.versions.post(EDIT, { headers });
 
     expect(created.error).toBeNull();
     expect(created.status).toBe(201);
     const newest = created.data!.version;
-    expect(newest).toMatch(/^intent-parse-[0-9a-f]{8}-v4$/);
+    expect(newest).toMatch(/^app-intent-parse-[0-9a-f]{8}-v4$/);
     expect(created.data).toMatchObject(EDIT);
     expect(Number.isNaN(Date.parse(created.data?.updated_at ?? ''))).toBe(false);
 
@@ -114,44 +119,44 @@ describe('project prompts', () => {
     expect(read.data?.versions[0]).toEqual(created.data!);
 
     expect(await read_prompts_config()).toEqual({
-      prompts: { 'intent.parse': INTENT_V3, summarize: SUMMARIZE_V1 },
+      prompts: { 'app.intent.parse': INTENT_V3, 'app.summarize': SUMMARIZE_V1 },
     });
     expect(await recorded(project_id)).toEqual([
-      ['intent.parse', 'intent-parse-00000002-v2', false],
-      ['intent.parse', 'intent-parse-00000003-v3', true],
-      ['intent.parse', newest, false],
-      ['summarize', 'summarize-abcdef01-v1', true],
+      ['app.intent.parse', 'app-intent-parse-00000002-v2', false],
+      ['app.intent.parse', 'app-intent-parse-00000003-v3', true],
+      ['app.intent.parse', newest, false],
+      ['app.summarize', 'app-summarize-abcdef01-v1', true],
     ]);
   });
 
   test('setting an older version live moves the live flag to it', async () => {
     const { token, project_id } = await running_project('prompts-live@canyonos.test');
     const headers = bearer(token);
-    const prompt = api.projects[project_id]!.prompts['intent.parse']!;
+    const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
-    const res = await prompt.live.put({ version: 'intent-parse-00000002-v2' }, { headers });
+    const res = await prompt.live.put({ version: 'app-intent-parse-00000002-v2' }, { headers });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      name: 'intent.parse',
+      name: 'app.intent.parse',
       live: stored(2, '2026-09-25T00:00:00.000Z'),
     });
     const config = await read_prompts_config();
-    expect(config?.prompts['intent.parse']?.version).toBe('intent-parse-00000002-v2');
+    expect(config?.prompts['app.intent.parse']?.version).toBe('app-intent-parse-00000002-v2');
     const listed = await api.projects[project_id]!.prompts.get({ $headers: headers });
-    expect(listed.data?.[0]?.live.version).toBe('intent-parse-00000002-v2');
+    expect(listed.data?.[0]?.live.version).toBe('app-intent-parse-00000002-v2');
 
-    const unknown = await prompt.live.put({ version: 'intent-parse-ffffffff-v9' }, { headers });
+    const unknown = await prompt.live.put({ version: 'app-intent-parse-ffffffff-v9' }, { headers });
     expect(unknown.error?.status as number).toBe(404);
     expect(error_code(unknown)).toBe('prompts.version_not_found');
 
     const newest = (await prompt.versions.post(EDIT, { headers })).data!.version;
     expect((await prompt.live.put({ version: newest }, { headers })).error).toBeNull();
     expect(await recorded(project_id)).toEqual([
-      ['intent.parse', 'intent-parse-00000002-v2', false],
-      ['intent.parse', 'intent-parse-00000003-v3', false],
-      ['intent.parse', newest, true],
-      ['summarize', 'summarize-abcdef01-v1', true],
+      ['app.intent.parse', 'app-intent-parse-00000002-v2', false],
+      ['app.intent.parse', 'app-intent-parse-00000003-v3', false],
+      ['app.intent.parse', newest, true],
+      ['app.summarize', 'app-summarize-abcdef01-v1', true],
     ]);
   });
 
@@ -175,12 +180,12 @@ describe('project prompts', () => {
     const { project_id: running_id } = await create_test_project(token, { name: 'Running' });
     await seed_running_project(running_id, CONFIG);
     const before = await read_prompts_config();
-    const prompt = api.projects[project_id]!.prompts['intent.parse']!;
+    const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const listed = await api.projects[project_id]!.prompts.get({ $headers: headers });
     const read = await prompt.get({ $headers: headers });
     const created = await prompt.versions.post(EDIT, { headers });
-    const live = await prompt.live.put({ version: 'intent-parse-00000003-v3' }, { headers });
+    const live = await prompt.live.put({ version: 'app-intent-parse-00000003-v3' }, { headers });
 
     for (const res of [listed, read, created, live]) {
       expect(res.error?.status as number).toBe(404);
@@ -192,7 +197,7 @@ describe('project prompts', () => {
   test('an empty system prompt is rejected before anything is stored', async () => {
     const { token, project_id } = await running_project('prompts-invalid@canyonos.test');
     const headers = bearer(token);
-    const prompt = api.projects[project_id]!.prompts['intent.parse']!;
+    const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const before = await read_prompts_config();
     const res = await prompt.versions.post({ content: '' }, { headers });
@@ -203,14 +208,14 @@ describe('project prompts', () => {
 
   test('a caller with no token is rejected on every route', async () => {
     const { project_id } = await running_project('prompts-anon@canyonos.test');
-    const prompt = api.projects[project_id]!.prompts['intent.parse']!;
+    const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const before = await read_prompts_config();
     const responses = [
       await api.projects[project_id]!.prompts.get(),
       await prompt.get(),
       await prompt.versions.post(EDIT),
-      await prompt.live.put({ version: 'intent-parse-00000002-v2' }),
+      await prompt.live.put({ version: 'app-intent-parse-00000002-v2' }),
     ];
 
     for (const res of responses) expect(res.error?.status as number).toBe(401);
@@ -233,39 +238,43 @@ describe('project prompts', () => {
   test('a redeploy keeps stored prompts over prompts.yaml and stores a prompt new to it', async () => {
     const { token, project_id } = await running_project('prompts-redeploy@canyonos.test');
     const headers = bearer(token);
-    const prompt = api.projects[project_id]!.prompts['intent.parse']!;
+    const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
     const newest = (await prompt.versions.post(EDIT, { headers })).data!.version;
-    const added = { version: 'advise-00000001-v1', content: 'Advise.', updated_at: null };
+    const added = { version: 'app-advise-00000001-v1', content: 'Advise.', updated_at: null };
 
     await seed_running_project(project_id, {
       prompts: {
         ...CONFIG.prompts,
-        'intent.parse': [stored(9, '2026-09-30T00:00:00.000Z')],
-        advise: [added],
+        'app.intent.parse': [stored(9, '2026-09-30T00:00:00.000Z')],
+        'app.advise': [added],
       },
     });
     await load_prompts(project_id);
 
     expect(await recorded(project_id)).toEqual([
-      ['advise', 'advise-00000001-v1', true],
-      ['intent.parse', 'intent-parse-00000002-v2', false],
-      ['intent.parse', 'intent-parse-00000003-v3', true],
-      ['intent.parse', newest, false],
-      ['summarize', 'summarize-abcdef01-v1', true],
+      ['app.advise', 'app-advise-00000001-v1', true],
+      ['app.intent.parse', 'app-intent-parse-00000002-v2', false],
+      ['app.intent.parse', 'app-intent-parse-00000003-v3', true],
+      ['app.intent.parse', newest, false],
+      ['app.summarize', 'app-summarize-abcdef01-v1', true],
     ]);
     const config = await read_prompts_config();
-    expect(Object.keys(config!.prompts).sort()).toEqual(['advise', 'intent.parse', 'summarize']);
+    expect(Object.keys(config!.prompts).sort()).toEqual([
+      'app.advise',
+      'app.intent.parse',
+      'app.summarize',
+    ]);
   });
 
   test('a prompt added to prompts.yaml after startup is stored and listed on the next read', async () => {
     const { token, project_id } = await running_project('prompts-added@canyonos.test');
     const headers = bearer(token);
-    const added = { version: 'advise-00000001-v1', content: 'Advise.', updated_at: null };
+    const added = { version: 'app-advise-00000001-v1', content: 'Advise.', updated_at: null };
     await seed_running_project(project_id, {
       prompts: {
         ...CONFIG.prompts,
-        'intent.parse': [stored(9, '2026-09-30T00:00:00.000Z')],
-        advise: [added],
+        'app.intent.parse': [stored(9, '2026-09-30T00:00:00.000Z')],
+        'app.advise': [added],
       },
     });
 
@@ -273,17 +282,17 @@ describe('project prompts', () => {
 
     expect(res.error).toBeNull();
     expect(res.data?.map(({ name, live }) => [name, live.version])).toEqual([
-      ['intent.parse', 'intent-parse-00000003-v3'],
-      ['summarize', 'summarize-abcdef01-v1'],
-      ['advise', 'advise-00000001-v1'],
+      ['app.intent.parse', 'app-intent-parse-00000003-v3'],
+      ['app.summarize', 'app-summarize-abcdef01-v1'],
+      ['app.advise', 'app-advise-00000001-v1'],
     ]);
     expect(await recorded(project_id)).toEqual([
-      ['advise', 'advise-00000001-v1', true],
-      ['intent.parse', 'intent-parse-00000002-v2', false],
-      ['intent.parse', 'intent-parse-00000003-v3', true],
-      ['summarize', 'summarize-abcdef01-v1', true],
+      ['app.advise', 'app-advise-00000001-v1', true],
+      ['app.intent.parse', 'app-intent-parse-00000002-v2', false],
+      ['app.intent.parse', 'app-intent-parse-00000003-v3', true],
+      ['app.summarize', 'app-summarize-abcdef01-v1', true],
     ]);
-    expect((await read_prompts_config())?.prompts.advise).toMatchObject({
+    expect((await read_prompts_config())?.prompts['app.advise']).toMatchObject({
       version: added.version,
       content: added.content,
     });
@@ -292,7 +301,7 @@ describe('project prompts', () => {
   test('two versions created at once get distinct consecutive revisions', async () => {
     const { token, project_id } = await running_project('prompts-concurrent@canyonos.test');
     const headers = bearer(token);
-    const prompt = api.projects[project_id]!.prompts['intent.parse']!;
+    const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const [first, second] = await Promise.all([
       prompt.versions.post({ content: 'first' }, { headers }),
@@ -302,7 +311,7 @@ describe('project prompts', () => {
     expect(first.error).toBeNull();
     expect(second.error).toBeNull();
     const versions = (await recorded(project_id))
-      .filter(([name]) => name === 'intent.parse')
+      .filter(([name]) => name === 'app.intent.parse')
       .map(([, version]) => version as string);
     const revisions = versions.map((version) => Number(/-v(\d+)$/.exec(version)?.[1]));
     expect(revisions.sort((a, b) => a - b)).toEqual([2, 3, 4, 5]);
@@ -322,7 +331,7 @@ describe('a prompt write whose publish to Redis fails', () => {
     const before = [await recorded(project_id), await read_prompts_config()];
 
     fail_publish();
-    const res = await api.projects[project_id]!.prompts['intent.parse']!.versions.post(EDIT, {
+    const res = await api.projects[project_id]!.prompts['app.intent.parse']!.versions.post(EDIT, {
       headers: bearer(token),
     });
 
@@ -335,8 +344,8 @@ describe('a prompt write whose publish to Redis fails', () => {
     const before = [await recorded(project_id), await read_prompts_config()];
 
     fail_publish();
-    const res = await api.projects[project_id]!.prompts['intent.parse']!.live.put(
-      { version: 'intent-parse-00000002-v2' },
+    const res = await api.projects[project_id]!.prompts['app.intent.parse']!.live.put(
+      { version: 'app-intent-parse-00000002-v2' },
       { headers: bearer(token) }
     );
 

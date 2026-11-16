@@ -78,20 +78,6 @@ spec:
               endpoint:
                 description: endpoint is the agent method served over HTTP.
                 properties:
-                  agent:
-                    description: |-
-                      agent is the name of the agent whose method the endpoint serves, as in the
-                      project's config (for example Workflow).
-                    minLength: 1
-                    type: string
-                  arguments:
-                    description: |-
-                      arguments are the method's argument names, which the endpoint reads from a
-                      request's JSON body.
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: atomic
                   ingress:
                     description: |-
                       ingress exposes the endpoint outside the cluster through an Ingress of the
@@ -123,10 +109,6 @@ spec:
                     required:
                     - host
                     type: object
-                  method:
-                    description: method is the agent function served at POST /<method>.
-                    minLength: 1
-                    type: string
                   resources:
                     description: |-
                       resources of the endpoint's pod; by default it requests 250m CPU and 256Mi
@@ -188,6 +170,39 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  routes:
+                    description: |-
+                      routes are the agent methods the endpoint serves, each at
+                      POST /<agent>/<method>.
+                    items:
+                      description: EndpointRoute is one agent method the endpoint
+                        serves.
+                      properties:
+                        agent:
+                          description: |-
+                            agent is the name of the agent whose method the route serves, as in the
+                            project's config (for example Workflow).
+                          minLength: 1
+                          type: string
+                        arguments:
+                          description: |-
+                            arguments are the method's argument names; a request without one of them is
+                            refused.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        method:
+                          description: method is the agent function served at POST
+                            /<agent>/<method>.
+                          minLength: 1
+                          type: string
+                      required:
+                      - agent
+                      - method
+                      type: object
+                    minItems: 1
+                    type: array
                   url:
                     description: |-
                       url is where callers reach the endpoint, when it is exposed some other way
@@ -197,8 +212,7 @@ spec:
                     pattern: ^https?://[^\s/?#]+(/[^\s?#]*)?$
                     type: string
                 required:
-                - agent
-                - method
+                - routes
                 type: object
               envSecretRef:
                 description: |-

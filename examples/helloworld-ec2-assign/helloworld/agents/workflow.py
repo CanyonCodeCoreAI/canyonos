@@ -4,8 +4,9 @@
 # Example Workflow
 # An agent that calls HelloAgent; the endpoint serves its `main` method.
 #
-# After `canyonos deploy`:
-#   curl -X POST http://localhost:8080/main -H 'Content-Type: application/json' -d '{"query": "World"}'
+# After `canyonos deploy helloworld` in examples/helloworld-ec2-assign (8080 unless it
+# was taken; the deploy prints the port):
+#   curl -X POST http://localhost:8080/helloworld/Workflow/main -H 'Content-Type: application/json' -d '{"query": "World"}'
 #   curl http://localhost:8080/status/<request_id>
 
 from agents.hello_agent import HelloAgent

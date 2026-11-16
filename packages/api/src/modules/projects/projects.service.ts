@@ -8,7 +8,7 @@ import { projects_repo } from './projects.repo';
 import type { ProjectDeleted, ProjectStats, ProjectSummary } from './projects.types';
 
 function project_not_found(project_id: string) {
-  return notFound('projects.not_found', `Project "${project_id}" was not found`);
+  return notFound('projects.not_found', `Deployment "${project_id}" was not found`);
 }
 
 export async function list_projects(): Promise<ProjectSummary[]> {
@@ -40,7 +40,7 @@ export async function delete_project(project_id: string): Promise<ProjectDeleted
   if (running) {
     throw conflict(
       'projects.running',
-      'This project is still running. Run `canyonos stop` in its folder, then delete it.'
+      'This deployment is still running. Run `canyonos stop` in its folder, then delete it.'
     );
   }
   await projects_repo.delete(project_id);

@@ -35,7 +35,7 @@ class Refusal:
 
 @dataclass(frozen=True)
 class Rules:
-    policy: list
+    policy: dict
     agents: dict
     spend: dict
     up: frozenset
@@ -199,7 +199,7 @@ def load(redis, previous=None):
     policy_raw, config_raw, spend_raw, up = pipe.execute()
 
     return Rules(
-        policy=json.loads(policy_raw) if policy_raw else [],
+        policy=json.loads(policy_raw) if policy_raw else {},
         agents=_agents(config_raw, previous),
         spend=_spend(spend_raw),
         up=frozenset(_text(agent) for agent in up),
@@ -207,11 +207,13 @@ def load(redis, previous=None):
 
 
 def _policy_allows(policy, agent, context):
-    """The first rule, most specific first, whose `match` the request context meets
-    decides; no rules allow everything, no matching rule denies."""
-    if agent == ENDPOINT_AGENT_NAME or not policy:
+    """Among the rules of the agent's project (`policy` holds each project's, by name),
+    the first, most specific first, whose `match` the request context meets decides; no
+    rules allow everything, no matching rule denies."""
+    rules = policy.get(agent.split(".", 1)[0]) if isinstance(policy, dict) else None
+    if agent == ENDPOINT_AGENT_NAME or not rules:
         return True
-    for rule in policy:
+    for rule in rules:
         if all(
             context.get(key) == value for key, value in rule.get("match", {}).items()
         ):

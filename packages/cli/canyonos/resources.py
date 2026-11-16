@@ -14,7 +14,7 @@ from rich.text import Text
 from ruamel.yaml.comments import CommentedMap
 
 from canyonos import ui
-from canyonos.constants import load_yaml, round_trip_yaml, write_config
+from canyonos.constants import load_yaml, read_config, round_trip_yaml, write_config
 from canyonos.os_support import is_terminal
 from canyonos.theme import GREEN, WHITE
 from utils.tui import input_line, select_menu
@@ -121,10 +121,18 @@ def _section_machine_types(data, provider):
     return by_key if isinstance(by_key, dict) else {}
 
 
-def _machine_types(data):
-    """Agent names to the machine type each of their replicas is deployed to, or None
-    when the config's provider is not ec2-assign."""
-    return _section_machine_types(data, EC2_ASSIGN)
+def _machine_types(data, project):
+    """The project's agent names to the machine type each of their replicas is
+    deployed to, from the deployment's ec2-assign section, which names agents
+    `<project>.<agent>`; None when the provider is not ec2-assign."""
+    assigned = _section_machine_types(data, EC2_ASSIGN)
+    if assigned is None:
+        return None
+    return {
+        name.split(".", 1)[1]: machine_type
+        for name, machine_type in assigned.items()
+        if name.split(".", 1)[0] == project and "." in name
+    }
 
 
 def _pool(data):
@@ -225,8 +233,9 @@ def _configure(agent_specs, status, machine_types=None):
         status = _edit_agent(agent_specs[choice], status)
 
 
-def _pick(agent_specs, machine_types=None, pool=None):
-    """Deploy menu. Returns True to deploy, False if the user cancelled."""
+def _pick(project, agent_specs, machine_types=None, pool=None):
+    """Deploy menu for one project's agents. Returns True to deploy, False if the user
+    cancelled."""
     status = ""
     ui.console.set_alt_screen(True)
     try:
@@ -242,7 +251,7 @@ def _pick(agent_specs, machine_types=None, pool=None):
                     ui.console.print(Text(f"  {line}"))
             ui.console.print(
                 Text(
-                    "Your workflow's agents and the max resources each replica can use",
+                    f"{project}'s agents and the max resources each replica can use",
                     style="bold",
                 )
             )
@@ -266,26 +275,31 @@ def _pick(agent_specs, machine_types=None, pool=None):
         ui.console.set_alt_screen(False)
 
 
-def configure_resources(config_path):
-    """Fill, let the user edit, and save every agent's resources. Returns False if cancelled."""
-    yaml_rt = round_trip_yaml()
-    data = load_yaml(config_path, yaml_rt.load)
+def configure_resources(project_configs, deployment_config):
+    """Fill, let the user edit, and save the resources of every project's agents, one
+    project at a time, beside the machines the deployment starts. `project_configs`
+    maps each project's name to its `config/project.yaml`. Returns False if cancelled."""
+    deployment = read_config(deployment_config)
+    pool = _pool(deployment)
+    for project, config_path in project_configs.items():
+        yaml_rt = round_trip_yaml()
+        data = load_yaml(config_path, yaml_rt.load)
 
-    agent_specs = data.get("agents") if isinstance(data, dict) else None
-    # Any other shape is left for the deploy's schema check to report.
-    if (
-        not agent_specs
-        or not isinstance(agent_specs, list)
-        or not all(isinstance(agent_spec, dict) for agent_spec in agent_specs)
-    ):
-        return True
-    for agent_spec in agent_specs:
-        _fill_defaults(agent_spec)
+        agent_specs = data.get("agents") if isinstance(data, dict) else None
+        # Any other shape is left for the deploy's schema check to report.
+        if (
+            not agent_specs
+            or not isinstance(agent_specs, list)
+            or not all(isinstance(agent_spec, dict) for agent_spec in agent_specs)
+        ):
+            continue
+        for agent_spec in agent_specs:
+            _fill_defaults(agent_spec)
 
-    if is_terminal(sys.stdin) and not _pick(
-        agent_specs, _machine_types(data), _pool(data)
-    ):
-        return False
+        if is_terminal(sys.stdin) and not _pick(
+            project, agent_specs, _machine_types(deployment, project), pool
+        ):
+            return False
 
-    write_config(config_path, data, yaml_rt)
+        write_config(config_path, data, yaml_rt)
     return True

@@ -204,7 +204,7 @@ class LocalController(object):
             logger.warning(
                 "Could not load the governance rules, admitting every call: %s", e
             )
-            self._rules = governance.Rules([], {}, {}, frozenset())
+            self._rules = governance.Rules({}, {}, {}, frozenset())
 
         # The server admits calls from here on, so what failing a refused one touches
         # (its failure entry, the fan-out to its consumers) exists before it starts;
@@ -664,7 +664,8 @@ class LocalController(object):
             sys.modules[agent_module_name] = module
             loader.exec_module(module)
 
-            agent_class = getattr(module, self.agent_name)
+            # The agent is named `<project>.<class>`; its module defines the class.
+            agent_class = getattr(module, self.agent_name.rsplit(".", 1)[-1])
             agent_instance = agent_class()
             logger.info(
                 f"Successfully loaded and instantiated agent: {self.agent_name}"

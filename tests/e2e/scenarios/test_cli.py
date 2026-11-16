@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos validate` before anything is deployed: it passes a clean port, refuses a
-broken manifest before any image is built, says it checked nothing when there is
+"""`canyonos validate` in a project folder before anything is deployed: it passes a
+clean port, refuses a broken manifest before any image is built, says it checked nothing when there is
 no manifest, and runs the same checks inside the core image when the CLI is
 installed without CanyonOS Core, as the published one is."""
 
@@ -10,7 +10,7 @@ import shutil
 
 import pytest
 
-from ..harness import REPO_ROOT, canyonos, cli_env, run
+from ..harness import REPO_ROOT, canyonos, cli_env, project_dir, run
 from .break_manifest import MODES, break_manifest, rewrite_manifest
 
 CORE_IMAGE_MODE = "rename"
@@ -46,14 +46,14 @@ def _broken_copy(staged_port, tmp_path, mode):
 
 
 def test_validate_passes_a_clean_port(recorder, staged):
-    portfolio = staged("portfolio")
+    portfolio = project_dir(staged("portfolio"))
     body = _validate(recorder, None, portfolio, 0)
     assert body["errors"] == 0 and body["findings"] == [], body
 
 
 @pytest.mark.parametrize("mode", sorted(MODES))
 def test_validate_rejects_a_broken_manifest(recorder, staged, tmp_path, mode):
-    portfolio = staged("portfolio")
+    portfolio = project_dir(staged("portfolio"))
     broken, expected = _broken_copy(portfolio, tmp_path, mode)
     findings = _validate(recorder, broken, portfolio, 1)["findings"]
     assert len(findings) == 1, findings
@@ -69,25 +69,27 @@ def test_validate_says_it_checked_nothing_without_a_manifest(recorder, tmp_path)
 
 
 def test_validate_expands_a_variable_from_the_project_env(recorder, staged):
-    """Deploy hands the Global Controller the `.env` of the folder canyonos runs
-    in, so validate has to expand `${VAR}` from that same file, not from the one
-    beside `.canyon/config`."""
-    portfolio = staged("portfolio")
+    """Deploy hands the Global Controller the `.env` of the project folder, so
+    validate has to expand `${VAR}` from that same file, not from one beside
+    `.canyon/config`."""
+    portfolio = project_dir(staged("portfolio"))
     with (portfolio / ".env").open("a") as env:
-        env.write("CANYONOS_E2E_SSH_KEY=/tmp/canyonos-e2e-key\n")
-    rewrite_manifest(
-        portfolio / ".canyon",
-        lambda manifest: manifest.update(
-            ssh_private_key_path="${CANYONOS_E2E_SSH_KEY}"
-        ),
-    )
+        env.write("CANYONOS_E2E_AGENTS=agents\n")
+
+    def edit(manifest):
+        agent = manifest["agents"][0]
+        directory, file = agent["entrypoint"].split("/", 1)
+        assert directory == "agents", agent
+        agent["entrypoint"] = "${CANYONOS_E2E_AGENTS}/" + file
+
+    rewrite_manifest(portfolio / ".canyon", edit)
     _validate(recorder, None, portfolio, 0)
 
 
 def test_validate_runs_in_the_core_image_without_core_installed(
     recorder, images, staged, tmp_path
 ):
-    portfolio = staged("portfolio")
+    portfolio = project_dir(staged("portfolio"))
     core = _published_cli(recorder, ["python", "-c", "import canyonos_core"], tmp_path)
     assert core.code != 0 and "No module named 'canyonos_core'" in core.output, (
         core.output

@@ -125,11 +125,17 @@ export const governance_repo = {
     );
   },
 
-  async scaling_policy_present(redis: RedisClient): Promise<boolean> {
+  /** The projects with a scaling policy stored, from `{projects: {<project>: <policy>}}`. */
+  async scaling_projects(redis: RedisClient): Promise<Set<string>> {
     const document = parse_json(await redis.get(SCALING_KEY));
-    return typeof document === 'object' && document !== null && 'scaling' in document
-      ? document.scaling != null
-      : false;
+    const projects =
+      typeof document === 'object' && document !== null && 'projects' in document
+        ? document.projects
+        : null;
+    if (typeof projects !== 'object' || projects === null) return new Set();
+    return new Set(
+      Object.entries(projects).flatMap(([project, policy]) => (policy == null ? [] : [project]))
+    );
   },
 
   /** The agents with a replica up, as the controller's governance reads them; any other is down. */

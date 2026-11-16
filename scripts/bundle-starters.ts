@@ -83,7 +83,8 @@ export const STARTERS = [
   },
 ] as const;
 
-/** Copy one workflow into the bundle, renaming its Python so Nuitka leaves it alone. */
+/** Copy one workflow's deployment folder, its `deployment.yaml` and its project of the
+ * same name, into the bundle, renaming its Python so Nuitka leaves it alone. */
 function bundleOne(starter: (typeof STARTERS)[number]): void {
   const source = join(repoRoot, 'examples', starter.name);
   if (!existsSync(source)) throw new Error(`examples/${starter.name} does not exist.`);
@@ -100,9 +101,10 @@ function bundleOne(starter: (typeof STARTERS)[number]): void {
   }
 
   // A `.env` the user may already have filled in locally is theirs, not ours.
-  rmSync(join(destination, '.env'), { force: true });
+  const env = join(destination, starter.name, '.env');
+  rmSync(env, { force: true });
   if (starter.env) {
-    writeFileSync(join(destination, '.env'), `${starter.env.join('\n')}\n`);
+    writeFileSync(env, `${starter.env.join('\n')}\n`);
   }
 }
 

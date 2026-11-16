@@ -65,7 +65,7 @@ export const canyonos_repo = {
         set: { redis_host, redis_port, redis_password: sealed_password },
       })
       .returning({ project_id: projects.id, name: projects.name });
-    if (!row) throw internalError('canyonos.registration_failed', 'Project was not registered');
+    if (!row) throw internalError('canyonos.registration_failed', 'Deployment was not registered');
     return row;
   },
 

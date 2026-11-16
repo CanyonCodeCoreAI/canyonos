@@ -21,7 +21,7 @@ from canyonos.kubernetes_target import (
     local_registry,
     resource_name,
 )
-from canyonos.project import configured_target, folder_name
+from canyonos.deployment import configured_target, folder_name
 
 DOCKER = "Docker on this machine"
 

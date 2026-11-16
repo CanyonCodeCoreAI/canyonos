@@ -20,7 +20,7 @@ export async function resolveProjectAccess({
 }): Promise<{ project_id: string }> {
   const project_id = params?.project_id;
   if (!project_id || !UUID_RE.test(project_id) || !(await projects_repo.exists(project_id))) {
-    throw notFound('projects.not_found', `Project "${project_id}" was not found`);
+    throw notFound('projects.not_found', `Deployment "${project_id}" was not found`);
   }
   return { project_id };
 }

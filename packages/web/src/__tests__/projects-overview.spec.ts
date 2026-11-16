@@ -82,7 +82,7 @@ test('projects overview empty state states the fact without offering an import',
   await page.goto('/projects');
 
   const empty = page.getByTestId('projects-overview-empty');
-  await expect(empty).toContainText('No projects on this machine yet.');
+  await expect(empty).toContainText('No deployments on this machine yet.');
   await expect(empty.getByRole('link')).toHaveCount(0);
 });
 

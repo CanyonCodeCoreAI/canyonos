@@ -4,13 +4,14 @@
 """Two projects side by side on one machine with the shared dashboard: helloworld and
 portfolio deploy at the same time, each on its own ports, and the dashboard lists
 both and reads each one's Redis. Each Redis takes only its own project's password, and
-no container's command shows one. helloworld has no `otel:` block, so its traces reach
-the dashboard by the default destination; portfolio and the helloworld cases keep
-theirs. `canyonos test` in another folder named helloworld tests that folder, not
-the running one. Then one project is stopped and the other keeps running; the
-stopped one, redeployed without `endpoint.api_port` or `redis.port`, moves past the
-other's ports, keeps its machine metrics in its own Redis, and is told the running
-dashboard ignores its `dashboard_port`. `canyonos serve` re-registers without
+no container's command shows one. helloworld's deployment.yaml has no `otel:` block,
+so its traces reach the dashboard by the default destination; portfolio keeps its
+own. `canyonos test` in another deployment folder named helloworld, with nothing
+deployed from it, refuses rather than test the running one. Then one project is
+stopped and the other keeps running; the stopped one, redeployed without
+`endpoint.api_port` or `redis.port`, moves past the other's ports, keeps its machine
+metrics in its own Redis, and is told the running dashboard ignores its
+`dashboard_port`. `canyonos serve` re-registers without
 recreating the api, a redeploy keeps the dashboard and the project's id, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
 refuses a taken `dashboard_port`, a deploy pinned to a taken `api_port` stops before
@@ -38,12 +39,15 @@ from ..harness import (
     dashboard_containers,
     deployed_endpoint,
     deployed_project_id,
+    deployment_group,
     docker,
+    docker_name,
     manifest,
     poll,
     project_containers,
-    project_group,
+    project_dir,
     project_root,
+    qualified,
     redis_port,
     result_of,
     sign_in,
@@ -67,15 +71,15 @@ HELLOWORLD_API_PORT = 8082
 HELLOWORLD_REDIS_PORT = 6380
 DASHBOARD_PORT = 8090
 TRACE_TIMEOUT = 60
-TWIN_GREETING = "Twin hello"
+HELLO_CALL = "helloworld.HelloAgent.hello"
 
 
 @dataclass
 class Fleet:
-    """The staged projects by name, their Docker groups and dashboard ids, the
-    signed-in dashboard, and the dashboard api's container as it was after the first
-    deploy finished: its id and start time, which must not change while a project is
-    left running."""
+    """The deployment folders of the staged projects by name, their Docker groups and
+    dashboard ids, the signed-in dashboard, and the dashboard api's container as it
+    was after the first deploy finished: its id and start time, which must not change
+    while a project is left running."""
 
     dirs: dict[str, Path]
     parent: Path
@@ -87,7 +91,12 @@ class Fleet:
 
 
 def _deploy(recorder, directory: Path, name: str) -> None:
-    call = canyonos(recorder, ["deploy"], cwd=directory, timeout=DEPLOY_TIMEOUT)
+    call = canyonos(
+        recorder,
+        ["deploy", str(project_dir(directory))],
+        cwd=directory,
+        timeout=DEPLOY_TIMEOUT,
+    )
     assert f"Registered {name} with the dashboard" in call.output, call.output[-3000:]
 
 
@@ -117,8 +126,13 @@ def _port_of(url: str) -> int:
     return port
 
 
-def _edit_manifest(directory: Path, edit) -> None:
-    path = project_root(directory) / "config" / "workflow_config.yaml"
+def _settings(directory: Path) -> dict:
+    """The deployment's parsed `deployment.yaml`."""
+    return yaml.safe_load((directory / "deployment.yaml").read_text())
+
+
+def _edit_settings(directory: Path, edit) -> None:
+    path = directory / "deployment.yaml"
     path.write_text(edit(path.read_text()))
 
 
@@ -129,38 +143,34 @@ def _without_otel(text: str) -> str:
 
 
 def _pinned(text: str) -> str:
-    """`text` with helloworld's api_port and Redis port fixed. The starter config has
-    no `redis:` block, so one is added; it keeps `host` so the block is still a
-    mapping once a later case removes the port."""
-    text = re.sub(
-        r"^endpoint:$",
-        f"endpoint:\n  api_port: {HELLOWORLD_API_PORT}",
-        text,
-        flags=re.M,
-    )
-    if re.search(r"^redis:$", text, flags=re.M):
-        return re.sub(
-            r"^redis:$", f"redis:\n  port: {HELLOWORLD_REDIS_PORT}", text, flags=re.M
-        )
+    """`text` with helloworld's api_port and Redis port fixed. Its deployment.yaml
+    sets neither, so both blocks are added; `endpoint:` stays once a later case
+    removes the api_port, for the next to put one back under it."""
+    assert not re.search(r"^(endpoint|redis):", text, flags=re.M), text
     return (
         text.rstrip("\n")
-        + f"\n\nredis:\n  host: localhost\n  port: {HELLOWORLD_REDIS_PORT}\n"
+        + f"\n\nendpoint:\n  api_port: {HELLOWORLD_API_PORT}\n"
+        + f"\nredis:\n  host: localhost\n  port: {HELLOWORLD_REDIS_PORT}\n"
     )
 
 
 def _agent_names(directory: Path) -> set[str]:
+    project = project_dir(directory)
     return {
-        agent["name"]
-        for agent in manifest(directory)["agents"]
+        qualified(project, agent["name"])
+        for agent in manifest(project)["agents"]
         if agent.get("type", "agent") == "agent"
     }
 
 
 def _prompt_names(directory: Path) -> set[str]:
-    path = project_root(directory) / "config" / "prompts.yaml"
+    project = project_dir(directory)
+    path = project_root(project) / "config" / "prompts.yaml"
     if not path.is_file():
         return set()
-    return set(yaml.safe_load(path.read_text())["prompts"])
+    return {
+        qualified(project, name) for name in yaml.safe_load(path.read_text())["prompts"]
+    }
 
 
 def _all_running(recorder, fleet: Fleet, name: str) -> None:
@@ -172,12 +182,12 @@ def _all_running(recorder, fleet: Fleet, name: str) -> None:
     assert not stopped, stopped
     for part in ("global-controller", "redis-localhost"):
         assert f"{group}-{part}" in containers, containers
-    for agent in manifest(fleet.dirs[name])["agents"]:
+    project = project_dir(fleet.dirs[name])
+    for agent in manifest(project)["agents"]:
         if agent.get("type", "agent") != "agent":
             continue
-        replica = re.compile(
-            rf"{re.escape(group)}-{agent['name'].lower()}-[0-9a-f]{{8}}"
-        )
+        agent_name = docker_name(qualified(project, agent["name"]))
+        replica = re.compile(rf"{re.escape(group)}-{agent_name}-[0-9a-f]{{8}}")
         replicas = [c for c in containers if replica.fullmatch(c)]
         assert len(replicas) == agent.get("replicas", 1), (agent["name"], containers)
 
@@ -190,11 +200,12 @@ def _reads_own_redis(recorder, fleet: Fleet, name: str) -> None:
     agents = fleet.api.get(f"{base}/scaling/agents").json()["agents"]
     assert {agent["name"] for agent in agents} == _agent_names(directory), agents
     endpoint = fleet.api.get(f"{base}/monitoring/endpoint").json()["endpoint"]
-    spec = manifest(directory)["endpoint"]
     assert endpoint is not None, f"{name} records no endpoint"
-    assert (endpoint["agent"], endpoint["method"]) == (spec["agent"], spec["method"])
+    served = [(route["agent"], route["method"]) for route in endpoint["routes"]]
+    routes = manifest(project_dir(directory))["endpoint"]["routes"]
+    assert served == [(route["agent"], route["method"]) for route in routes], endpoint
     running = deployed_endpoint(recorder, directory)
-    assert _port_of(endpoint["url"]) == _port_of(running.url), (endpoint, running)
+    assert _port_of(endpoint["routes"][0]["url"]) == _port_of(running.url), endpoint
     prompts = fleet.api.get(f"{base}/prompts").json()
     assert {prompt["name"] for prompt in prompts} == _prompt_names(directory), prompts
 
@@ -206,7 +217,7 @@ def _redis_password_file(recorder, directory: Path) -> tuple[str, int]:
             recorder,
             directory,
             "os.path.join(state_dir(), 'redis_password')",
-            "import os; from canyonos.project import state_dir",
+            "import os; from canyonos.deployment import state_dir",
         )
     )
     return path.read_text(), path.stat().st_mode & 0o777
@@ -276,8 +287,8 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
         project = load_project(name)
         secrets = {secret: f"not-a-real-{secret.lower()}" for secret in project.secrets}
         dirs[name] = stage(recorder, project, parent, secrets)
-    _edit_manifest(dirs["helloworld"], lambda text: _without_otel(_pinned(text)))
-    pinned = manifest(dirs["helloworld"])
+    _edit_settings(dirs["helloworld"], lambda text: _without_otel(_pinned(text)))
+    pinned = _settings(dirs["helloworld"])
     assert pinned["endpoint"]["api_port"] == HELLOWORLD_API_PORT, pinned
     assert pinned["redis"]["port"] == HELLOWORLD_REDIS_PORT, pinned
     api_after_first = ""
@@ -289,7 +300,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
             done.result()
             api_after_first = api_after_first or _api_container(recorder)
     for name in PROJECTS:
-        groups[name] = project_group(recorder, dirs[name])
+        groups[name] = deployment_group(recorder, dirs[name])
     api = Api(recorder, API_URL, sign_in(recorder, API_URL))
     return Fleet(
         dirs=dirs,
@@ -373,7 +384,7 @@ def test_helloworld_without_an_otel_block_sends_traces_to_the_dashboard(
     recorder, fleet
 ):
     directory = fleet.dirs["helloworld"]
-    assert "otel" not in manifest(directory), manifest(directory)
+    assert "otel" not in _settings(directory), _settings(directory)
     endpoint = deployed_endpoint(recorder, directory)
     request_id, result = result_of(recorder, endpoint, "no-otel", timeout=60)
     assert result == {"greeting": "Hello, no-otel! I'm the HelloAgent!"}, result
@@ -384,34 +395,25 @@ def test_helloworld_without_an_otel_block_sends_traces_to_the_dashboard(
             trace
             for trace in traces
             if trace["trace_id"] == request_id
-            and any(span["name"] == "HelloAgent.hello" for span in trace["spans"])
+            and any(span["name"] == HELLO_CALL for span in trace["spans"])
         ]
 
     poll(
         helloworld_trace,
         timeout=TRACE_TIMEOUT,
         interval=2,
-        what="the no-otel request's HelloAgent.hello span on the dashboard",
+        what=f"the no-otel request's {HELLO_CALL} span on the dashboard",
     )
 
 
-def test_test_in_another_folder_of_the_same_name_tests_that_folder(recorder, fleet):
+def test_test_in_another_folder_of_the_same_name_refuses(recorder, fleet):
     twin = stage(recorder, load_project("helloworld"), fleet.parent / "twin", {})
-    fleet.dirs["twin"] = twin
-    agent = twin / "agents" / "hello_agent.py"
-    original = agent.read_text()
-    agent.write_text(original.replace('f"Hello, ', f'f"{TWIN_GREETING}, '))
-    assert agent.read_text() != original, original
-    call = canyonos(recorder, ["test", "twin", "--json"], cwd=twin, timeout=900)
-    body = call.json()
-    assert body["against_existing_deploy"] is False, call.stdout
-    assert body["result"] == {
-        "greeting": f"{TWIN_GREETING}, twin! I'm the HelloAgent!"
-    }, call.stdout
-    fleet.groups["twin"] = project_group(recorder, twin)
-    assert fleet.groups["twin"] != fleet.groups["helloworld"]
-    left = project_containers(recorder, fleet.groups["twin"], every=True)
-    assert not left, left
+    assert twin.name == fleet.dirs["helloworld"].name, twin
+    call = canyonos(recorder, ["test", "twin", "--json"], cwd=twin, check=False)
+    assert call.code != 0, call.output
+    assert call.json()["error"].startswith(
+        "No deployment is running from this folder."
+    ), call.stdout
     _greets(recorder, fleet.dirs["helloworld"], "still-here")
 
 
@@ -422,7 +424,7 @@ def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
                 recorder,
                 fleet.dirs[name],
                 "state_path()",
-                "from canyonos.project import state_path",
+                "from canyonos.deployment import state_path",
             )
         )
         for name in PROJECTS
@@ -442,7 +444,7 @@ def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
 def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fleet):
     directory = fleet.dirs["helloworld"]
     portfolio = fleet.dirs["portfolio"]
-    _edit_manifest(
+    _edit_settings(
         directory,
         lambda text: (
             re.sub(
@@ -522,7 +524,7 @@ def test_last_stop_stops_the_dashboard_and_keeps_it(recorder, fleet):
 
 def test_serve_refuses_a_taken_dashboard_port(recorder, fleet):
     directory = fleet.dirs["helloworld"]
-    assert manifest(directory)["dashboard_port"] == DASHBOARD_PORT
+    assert _settings(directory)["dashboard_port"] == DASHBOARD_PORT
     with _held(DASHBOARD_PORT):
         call = canyonos(recorder, ["serve"], cwd=directory, timeout=600, check=False)
     assert call.code == 1, call.output
@@ -535,7 +537,7 @@ def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
     recorder, fleet
 ):
     directory = fleet.dirs["helloworld"]
-    _edit_manifest(
+    _edit_settings(
         directory,
         lambda text: re.sub(
             r"^endpoint:$", "endpoint:\n  api_port: 8080", text, flags=re.M
@@ -544,10 +546,14 @@ def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
     try:
         with _held(8080):
             call = canyonos(
-                recorder, ["deploy"], cwd=directory, timeout=DEPLOY_TIMEOUT, check=False
+                recorder,
+                ["deploy", str(project_dir(directory))],
+                cwd=directory,
+                timeout=DEPLOY_TIMEOUT,
+                check=False,
             )
     finally:
-        _edit_manifest(
+        _edit_settings(
             directory, lambda text: re.sub(r"^\s*api_port:.*\n", "", text, flags=re.M)
         )
     assert call.code == 1, call.output
@@ -563,7 +569,7 @@ def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
 
 def test_endpoint_and_a_starting_dashboard_get_their_own_ports(recorder, fleet):
     directory = fleet.dirs["helloworld"]
-    _edit_manifest(
+    _edit_settings(
         directory, lambda text: re.sub(r"^dashboard_port:.*\n", "", text, flags=re.M)
     )
     assert dashboard_containers(recorder) == [], (

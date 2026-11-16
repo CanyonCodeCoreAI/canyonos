@@ -45,8 +45,8 @@ def _handle_shutdown(signum, frame):
 class Reconciler(object):
     """Converges observed replicas onto the desired replica counts in Redis."""
 
-    def __init__(self, config_path, sweep_interval=None):
-        self.context = ControllerContext(config_path)
+    def __init__(self, workspace, sweep_interval=None):
+        self.context = ControllerContext(workspace)
         self.context.attach_local_machine_redis()
         self.machine_provisioner = MachineProvisioner(self.context)
         self.replica_provisioner = ReplicaProvisioner(self.context)
@@ -151,7 +151,7 @@ class Reconciler(object):
             logger.warning(
                 "Wake signal for unknown agent %s; it is not in %s",
                 agent_name,
-                self.context.config_path,
+                self.context.workspace,
             )
             return False
 
@@ -440,22 +440,22 @@ class Reconciler(object):
 
 
 def main(argv=None):
-    """Start the reconciler for the given config; it keeps each agent running its
-    desired number of replicas. Returns 1 if the config file is missing."""
+    """Start the reconciler for the given deployment; it keeps each agent running its
+    desired number of replicas. Returns 1 if the deployment's folder is missing."""
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 
     parser = argparse.ArgumentParser(description="CanyonOS reconciliation loop.")
     parser.add_argument(
-        "-c", "--config", required=True, help="Path to the YAML config file."
+        "-w", "--workspace", required=True, help="Path to the deployment's folder."
     )
     args = parser.parse_args(argv)
 
-    if not os.path.isfile(args.config):
-        logger.critical("Config file not found at %s", args.config)
+    if not os.path.isdir(args.workspace):
+        logger.critical("Deployment folder not found at %s", args.workspace)
         return 1
 
-    Reconciler(args.config).run()
+    Reconciler(args.workspace).run()
     return 0
 
 

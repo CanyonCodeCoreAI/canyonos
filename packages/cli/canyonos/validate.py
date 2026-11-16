@@ -25,7 +25,12 @@ import textwrap
 import uuid
 
 from canyonos import env, ui
-from canyonos.constants import CANYON_DIR, existing_config_path, project_root
+from canyonos.constants import (
+    CANYON_DIR,
+    project_config_path,
+    project_folder,
+    project_root,
+)
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
 from canyonos.init import docker_is_local, docker_running
 
@@ -225,8 +230,11 @@ def run_validate(root=None, as_json=False):
         root = project_root()
     try:
         try:
-            if checks_project:
-                existing_config_path()
+            if checks_project and not os.path.isfile(project_config_path(root)):
+                raise RuntimeError(
+                    f"No {project_config_path(root)} here. Run `canyonos convert` "
+                    "first, or rerun from your project folder."
+                )
             if not os.path.isdir(root):
                 # Checked before either path: `docker run -v` would create it.
                 raise RuntimeError(f"{root} is not a directory.")
@@ -268,3 +276,17 @@ def run_validate(root=None, as_json=False):
         return 1 if findings else 0
     finally:
         ui.set_quiet(False)
+
+
+def stop_on_project_errors(folder, command):
+    """Run `canyonos validate`'s checks on the project in `folder` and raise if it
+    breaks any, or if they can't run, so `command` changes nothing."""
+    root = project_folder(folder)
+    with ui.status("Checking the project..."):
+        findings = collect_findings(root)
+    if findings:
+        _print_findings(findings, root)
+        raise RuntimeError(
+            f"{command} stopped: fix the project errors `canyonos validate` reports, "
+            "then rerun."
+        )

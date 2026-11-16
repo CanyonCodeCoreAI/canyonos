@@ -1,9 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-target: docker
-provider: local
-
 agents:
   - name: HelloAgent
     resources:
@@ -42,7 +39,6 @@ agents:
           type: dict
 
 endpoint:
-  agent: Workflow
-  method: main
-
-logs: false
+  routes:
+    - agent: Workflow
+      method: main

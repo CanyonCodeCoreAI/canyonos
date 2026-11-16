@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from ..fleet import routed_replicas, store
-from ..harness import CallFailed, manifest, poll, project_root
+from ..harness import CallFailed, manifest, poll, project_root, qualified
 
 DATA_TIMEOUT = 90
 # Read when pytest collects the cases, before the deploy, so every request this run
@@ -55,8 +55,7 @@ def _wait_for(deployed, suffix, accept, what):
 
 
 def _endpoint_call(deployed):
-    endpoint = manifest(deployed.dir)["endpoint"]
-    return f"{endpoint['agent']}.{endpoint['method']}"
+    return deployed.endpoint.route.replace("/", ".")
 
 
 def _replica_id_pattern(deployed):
@@ -66,19 +65,28 @@ def _replica_id_pattern(deployed):
 
 
 def _declared_calls(deployed):
-    """Every `<Agent>.<function>` the manifest declares."""
+    """Every `<project>.<Agent>.<function>` the manifest declares."""
     return {
-        f"{spec['name']}.{function['name']}"
-        for spec in manifest(deployed.dir).get("agents", [])
+        qualified(deployed.project_dir, f"{spec['name']}.{function['name']}")
+        for spec in manifest(deployed.project_dir).get("agents", [])
         for function in spec.get("functions") or []
     }
+
+
+def _expected_calls(deployed):
+    """project.yaml's `calls`, each `<Agent>.<function>` named as the deployment
+    names it, or None when it lists none."""
+    calls = deployed.project.calls
+    if calls is None:
+        return None
+    return {qualified(deployed.project_dir, call): n for call, n in calls.items()}
 
 
 def _trace(deployed, request_id):
     """The query's trace once every call it made is recorded: as many as
     project.yaml's `calls` lists, else at least the endpoint's call."""
     path = _project_path(deployed, f"/requests/{request_id}")
-    expected = deployed.project.calls
+    expected = _expected_calls(deployed)
     endpoint_call = _endpoint_call(deployed)
 
     def recorded():
@@ -105,7 +113,7 @@ def _listed(deployed, request_id, window):
 def test_request_trace_names_each_call(deployed, query_result):
     body = _trace(deployed, query_result.request_id)
     labels = Counter(block["label"] for block in body["blocks"])
-    expected = deployed.project.calls
+    expected = _expected_calls(deployed)
     if expected is not None:
         assert labels == Counter(expected), body["blocks"]
     else:
@@ -305,24 +313,28 @@ def test_logs_come_from_agent_replicas(deployed, query_result):
 
 def test_endpoint(deployed):
     body = deployed.api.get(_project_path(deployed, "/monitoring/endpoint")).json()
-    endpoint = body["endpoint"]
-    assert endpoint, body
-    assert endpoint["agent"] == manifest(deployed.dir)["endpoint"]["agent"], body
-    assert endpoint["method"] == deployed.endpoint.route, body
-    assert endpoint["arguments"][0] == deployed.endpoint.argument, body
+    assert body["endpoint"], body
+    route = body["endpoint"]["routes"][0]
+    spec = manifest(deployed.project_dir)["endpoint"]["routes"][0]
+    assert (route["agent"], route["method"]) == (spec["agent"], spec["method"]), body
+    path = f"{deployed.project_dir.name}/{route['agent']}/{route['method']}"
+    assert path == deployed.endpoint.route, body
+    assert route["arguments"][0] == deployed.endpoint.argument, body
     port = deployed.endpoint.url.rsplit(":", 1)[-1]
-    assert endpoint["url"].endswith(f":{port}/{deployed.endpoint.route}"), body
+    assert route["url"].endswith(f":{port}/{deployed.endpoint.route}"), body
 
 
 def _shipped_policy(deployed):
-    path = project_root(deployed.dir) / "config" / "scaling.yaml"
+    path = project_root(deployed.project_dir) / "config" / "scaling.yaml"
     if not path.is_file():
         return None
     return (yaml.safe_load(path.read_text()) or {}).get("scaling")
 
 
 def test_scaling_read(deployed):
-    status = deployed.api.get(_project_path(deployed, "/scaling")).json()
+    projects = deployed.api.get(_project_path(deployed, "/scaling")).json()["projects"]
+    assert set(projects) == {deployed.project_dir.name}, projects
+    status = projects[deployed.project_dir.name]
     shipped = _shipped_policy(deployed)
     if shipped is None:
         assert status == {"status": "none"}, status

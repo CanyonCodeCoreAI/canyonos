@@ -121,7 +121,7 @@ async function connect_failure(error: unknown, target: RedisTarget): Promise<App
   if (!(error instanceof ConnectTimedOut) && (await refuses_sign_in(target))) {
     return badGateway(
       'canyonos.redis_auth_failed',
-      "This project's Redis refused the password the dashboard holds for it. Deploy the project again with `canyonos deploy` from its folder to register its current password.",
+      "This deployment's Redis refused the password the dashboard holds for it. Deploy it again with `canyonos deploy` from its folder to register its current password.",
       { cause: error }
     );
   }
@@ -188,7 +188,7 @@ export async function with_redis<T>(
     // Deleted from the cluster, or not ready: there is no Redis of it to fall back to.
     throw notFound(
       'canyonos.project_not_running',
-      "This project isn't running in the cluster. Deploy it again with `canyonos deploy --target kubernetes`."
+      "This deployment isn't running in the cluster. Deploy it again with `canyonos deploy --target kubernetes`."
     );
   }
   const project = await canyonos_repo.find_redis(project_id);
@@ -212,7 +212,7 @@ export async function assert_project_running(
   if (!(await project_running(redis, project_id))) {
     throw notFound(
       'canyonos.project_not_running',
-      "This project isn't running. Deploy it again with `canyonos deploy` from its folder."
+      "This deployment isn't running. Deploy it again with `canyonos deploy` from its folder."
     );
   }
 }

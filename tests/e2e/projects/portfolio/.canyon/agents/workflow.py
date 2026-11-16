@@ -1,4 +1,4 @@
-# Portfolio analysis workflow: an agent the endpoint serves at POST /main.
+# Portfolio analysis workflow: an agent the endpoint serves at POST /portfolio/Workflow/main.
 #
 # Fan-out / aggregate pipeline:
 #   0. IntentAgent   - parse the free-text request into holdings + lookback window
@@ -14,7 +14,7 @@
 # into Workflow.main() as kwargs by the endpoint.
 #
 # After `canyonos deploy`:
-#   curl -X POST http://localhost:8080/main \
+#   curl -X POST http://localhost:8080/portfolio/Workflow/main \
 #        -H 'Content-Type: application/json' \
 #        -d '{"query": "Analyze 40% Apple, 35% Microsoft and 25% Nvidia over the last 6 months"}'
 #   curl http://localhost:8080/status/<request_id>

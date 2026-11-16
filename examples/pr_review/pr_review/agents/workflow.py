@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Pull request review workflow: the agent the endpoint serves at POST /review.
+# Pull request review workflow: the agent the endpoint serves at POST /pr_review/Workflow/review.
 #
 #   1. TestRunnerAgent - checks the diff and returns a pass/fail summary
 #   2. ReviewAgent     - one Bedrock call that reviews the diff against that summary
@@ -10,8 +10,8 @@
 # config/governance.yaml makes MergeAgent require TestRunnerAgent and moves
 # ReviewAgent to another model once its spend passes a threshold.
 #
-# After `canyonos deploy`:
-#   curl -X POST http://localhost:8080/review \
+# After `canyonos deploy pr_review` in examples/pr_review:
+#   curl -X POST http://localhost:8080/pr_review/Workflow/review \
 #        -H 'Content-Type: application/json' \
 #        -d '{"pr": {"title": "Add retry", "diff": "+def retry(): ..."}}'
 #   curl http://localhost:8080/status/<request_id>

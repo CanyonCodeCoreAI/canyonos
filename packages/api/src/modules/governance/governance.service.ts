@@ -57,12 +57,12 @@ async function read_governance(
   redis: RedisClient,
   project_id: string
 ): Promise<GovernanceResponse> {
-  const [agents, config, up, llms, scaling_policy_present] = await Promise.all([
+  const [agents, config, up, llms, scaling_projects] = await Promise.all([
     read_agents(redis),
     governance_repo.read_config(redis),
     governance_repo.read_up_agents(redis),
     governance_repo.read_llms(redis),
-    governance_repo.scaling_policy_present(redis),
+    governance_repo.scaling_projects(redis),
   ]);
   const names = new Set(agents.map(({ name }) => name));
   const rules_by_name = new Map(agents.map(({ name }) => [name, rules_of(config.agents[name])]));
@@ -88,7 +88,8 @@ async function read_governance(
         models: llms === null ? null : models_for(llms, agent.name),
         rules,
         spend: spend_of(rules, spend.get(agent.name)),
-        scaling_policy_present,
+        // Agents are named `<project>.<agent>`; each project has its own policy.
+        scaling_policy_present: scaling_projects.has(agent.name.split('.')[0]!),
       };
     }),
     edges: edges.filter(({ source, target }) => names.has(source) && names.has(target)),
@@ -98,7 +99,7 @@ async function read_governance(
 function unknown_agent(name: string) {
   return unprocessable(
     'governance.unknown_agent',
-    `${name} is not an agent of the running project`
+    `${name} is not an agent of the running deployment`
   );
 }
 

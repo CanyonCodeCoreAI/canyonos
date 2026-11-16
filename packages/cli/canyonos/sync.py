@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos sync`: mirror the project root, plus the `.env` in the folder
-`canyonos` runs in, into the Global Controller container's /workspace volume via
-`docker cp`.
+Logic for `canyonos sync`: mirror a deployment into the Global Controller container's
+/workspace volume via `docker cp`: its `deployment.yaml` and the `.env` beside it, and
+each project's folder, with the `.env` in it, as `/workspace/<project>/`.
 
 Files live inside the container's named volume (see `init.py`), not on a live
 bind mount, so host-side edits don't reach a running build. A manifest records
@@ -13,16 +13,21 @@ only managed paths that disappeared from the host are removed; container-side
 build artifacts and other untracked workspace files are left alone.
 """
 
-import hashlib
 import json
 import os
 import tempfile
 
-from canyonos import project, ui
-from canyonos.constants import container_path, project_env_path, project_root
+from canyonos import deployment, ui
+from canyonos.constants import (
+    DEPLOYMENT_CONFIG,
+    container_path,
+    project_env_path,
+    project_folder,
+)
 from canyonos.docker_cmd import DOCKER_RUN_TIMEOUT, run_docker
 from canyonos.gc import GCError, deploy_status, post_reload, require_state
 from canyonos.init import GC_WORKSPACE_PATH, load_state
+from canyonos.validate import stop_on_project_errors
 
 
 _SYNC_STATE_VERSION = 1
@@ -78,8 +83,8 @@ ENV_NAME = ".env"
 
 
 def _project_entries(project_root, env_path):
-    """Return the relative paths and types a sync copies into `/workspace`: everything
-    under the project root, and `.env` when `env_path` is a file."""
+    """Return the relative paths and types a sync copies of one project: everything
+    under its root, and `.env` when `env_path` is a file."""
     entries = {}
     for directory, dirnames, filenames in os.walk(project_root, followlinks=False):
         for name in dirnames + filenames:
@@ -95,55 +100,21 @@ def _project_entries(project_root, env_path):
     return entries
 
 
-# Keep in step with the folders `_sweep_project_files` in canyonos_core/stub_generator.py skips.
-_UNBUILT_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
-
-
-def project_fingerprints():
-    """Return SHA-256 digests of the files that can change a deploy, split into `config`,
-    which `canyonos sync` applies live, and `code`, which needs a redeploy. Leaves out
-    the folders the image build skips, such as `.venv` and `node_modules`."""
-    root = os.path.abspath(project_root())
-    env_path = os.path.abspath(project_env_path())
-    files = {}
-    for directory, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            name
-            for name in dirnames
-            if not name.startswith(".")
-            and name not in _UNBUILT_DIRS
-            and not name.endswith(".egg-info")
-        ]
-        for name in filenames:
-            path = os.path.join(directory, name)
-            files[container_path(os.path.relpath(path, root))] = path
-    if os.path.isfile(env_path):
-        files[ENV_NAME] = env_path
-    digests = {"code": hashlib.sha256(), "config": hashlib.sha256()}
-    for relative, path in sorted(files.items()):
-        digest = digests["config" if relative.split("/")[0] == "config" else "code"]
-        digest.update(relative.encode() + b"\0")
-        if os.path.islink(path):
-            digest.update(os.readlink(path).encode())
-        else:
-            with open(path, "rb") as f:
-                for chunk in iter(lambda: f.read(1 << 20), b""):
-                    digest.update(chunk)
-    return {part: digest.hexdigest() for part, digest in digests.items()}
-
-
-def save_deployed_fingerprints(fingerprints):
-    """Record `fingerprints` as the files the running deploy holds."""
-    path = os.path.join(project.state_dir(), "deployed.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(fingerprints, f)
-
-
-def deployed_fingerprints():
-    """Return the fingerprints recorded for the running deploy."""
-    path = os.path.join(project.state_dir(), "deployed.json")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+def _deployment_entries(projects):
+    """Return the paths, relative to `/workspace`, and types a sync copies of the
+    deployment: `deployment.yaml`, the `.env` beside it, and each project's entries
+    under `<project>/`. `projects` maps each project's name to its folder."""
+    entries = {DEPLOYMENT_CONFIG: "entry"}
+    if os.path.isfile(ENV_NAME):
+        entries[ENV_NAME] = "entry"
+    for name, folder in projects.items():
+        entries[name] = "directory"
+        project_entries = _project_entries(
+            project_folder(folder), project_env_path(folder)
+        )
+        for relative, kind in project_entries.items():
+            entries[f"{name}/{relative}"] = kind
+    return entries
 
 
 # The manifest only records what the last sync copied, so discarding it costs
@@ -154,7 +125,7 @@ _MANIFEST_RECOVERY_HINT = "Move or remove that file, then run `canyonos deploy` 
 def _previous_entries(container_id):
     """Return the project files the last sync copied into this container, from the list
     saved under `~/.canyonos`; empty if it was never synced."""
-    manifest_path = project.sync_manifest_path()
+    manifest_path = deployment.sync_manifest_path()
     try:
         with open(manifest_path, encoding="utf-8") as manifest_file:
             manifest = json.load(manifest_file)
@@ -258,7 +229,7 @@ def _remove_stale_entries(container_id, stale_entries):
 def _save_sync_state(container_id, entries):
     """Save a list, in a file under `~/.canyonos`, of the project files just copied into
     the container, so the next sync can tell which ones you've deleted since."""
-    manifest_path = project.sync_manifest_path()
+    manifest_path = deployment.sync_manifest_path()
     os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
     temporary_path = None
     try:
@@ -308,38 +279,68 @@ def _copy(source, container_id, destination, action, follow_link=False):
         )
 
 
-def run_sync():
-    """Copy the project root, and the `.env` in the folder `canyonos` runs in, into
-    the Global Controller container. Returns True on success."""
+def run_sync(projects, keep_other_projects=False):
+    """Copy the deployment into the Global Controller container: `deployment.yaml` and
+    the `.env` beside it, and each of `projects` (name to folder) with the `.env` in
+    its folder. A project the container holds but `projects` leaves out is removed,
+    unless `keep_other_projects`. Returns True on success."""
     state = require_state()
     if state is None:
         return False
 
     container_id = state["container_id"]
-    root = os.path.abspath(project_root())
-    # Trailing "/." copies the *contents* of root into /workspace, rather than
-    # nesting it under /workspace/<dirname>.
-    src = os.path.join(root, ".")
-    label = f"Syncing {root} -> {container_id[:12]}:{GC_WORKSPACE_PATH}"
-
-    env_path = os.path.abspath(project_env_path())
-    copies_env = os.path.dirname(env_path) != root and os.path.isfile(env_path)
+    label = f"Syncing {', '.join(projects)} -> {container_id[:12]}:{GC_WORKSPACE_PATH}"
 
     with ui.status(f"{label}..."):
         # Captured so docker's own progress output doesn't clobber the spinner.
         try:
-            entries = _project_entries(root, env_path)
-            stale_entries = _stale_entries(_previous_entries(container_id), entries)
+            previous = _previous_entries(container_id)
+            entries = _deployment_entries(projects)
+            if keep_other_projects:
+                # Every path but the deployment's own files is under its project's name.
+                entries = {
+                    **{
+                        path: kind
+                        for path, kind in previous.items()
+                        if path not in (DEPLOYMENT_CONFIG, ENV_NAME)
+                        and path.split("/")[0] not in projects
+                    },
+                    **entries,
+                }
+            stale_entries = _stale_entries(previous, entries)
             _remove_stale_entries(container_id, stale_entries)
-            _copy(src, container_id, GC_WORKSPACE_PATH, "Syncing project files")
-            if copies_env:
+            _copy(
+                DEPLOYMENT_CONFIG,
+                container_id,
+                f"{GC_WORKSPACE_PATH}/{DEPLOYMENT_CONFIG}",
+                f"Syncing {DEPLOYMENT_CONFIG}",
+            )
+            if os.path.isfile(ENV_NAME):
                 _copy(
-                    env_path,
+                    ENV_NAME,
                     container_id,
                     f"{GC_WORKSPACE_PATH}/{ENV_NAME}",
-                    "Syncing the project's .env",
+                    "Syncing the deployment's .env",
                     follow_link=True,
                 )
+            for name, folder in projects.items():
+                root = os.path.abspath(project_folder(folder))
+                # Trailing "/." copies the *contents* of root into the project's folder.
+                _copy(
+                    os.path.join(root, "."),
+                    container_id,
+                    f"{GC_WORKSPACE_PATH}/{name}",
+                    f"Syncing {name}'s files",
+                )
+                env_path = os.path.abspath(project_env_path(folder))
+                if os.path.dirname(env_path) != root and os.path.isfile(env_path):
+                    _copy(
+                        env_path,
+                        container_id,
+                        f"{GC_WORKSPACE_PATH}/{name}/{ENV_NAME}",
+                        f"Syncing {name}'s .env",
+                        follow_link=True,
+                    )
         except (OSError, RuntimeError) as e:
             ui.fail(str(e))
             return False
@@ -348,7 +349,7 @@ def run_sync():
         _save_sync_state(container_id, entries)
     except OSError as e:
         ui.fail(
-            f"Could not save the sync manifest at {project.sync_manifest_path()}: {e}"
+            f"Could not save the sync manifest at {deployment.sync_manifest_path()}: {e}"
         )
         return False
 
@@ -356,9 +357,11 @@ def run_sync():
     return True
 
 
-def run_sync_and_reload():
-    """Run `canyonos sync`: copy the project into the container, then have the running
-    deploy reload its config. Returns True on success, or when no deploy is running."""
+def run_sync_and_reload(folders):
+    """Run `canyonos sync`: copy the projects in `folders` into the container, leaving
+    the deployment's other projects as they are, then have the running deploy reload
+    its config. Returns True on success, or when no deploy is
+    running."""
     try:
         state = load_state()
     except FileNotFoundError:
@@ -370,8 +373,12 @@ def run_sync_and_reload():
     if not status.get("running"):
         ui.say("No deploy running; changes apply on the next `canyonos deploy`.")
         return True
-    fingerprints = project_fingerprints()
-    if not run_sync():
+    projects = deployment.projects(folders)
+    # Copied in first and checked by the reload after, a broken file would stay in the
+    # deployment's workspace.
+    for folder in projects.values():
+        stop_on_project_errors(folder, "Sync")
+    if not run_sync(projects, keep_other_projects=True):
         return False
     try:
         post_reload(state["port"])
@@ -379,8 +386,5 @@ def run_sync_and_reload():
         ui.fail(e)
         return False
     # A reload applies the config; synced code waits for the next deploy.
-    save_deployed_fingerprints(
-        {**deployed_fingerprints(), "config": fingerprints["config"]}
-    )
     ui.ok("Controller received the reload; see `canyonos logs` for the result.")
     return True

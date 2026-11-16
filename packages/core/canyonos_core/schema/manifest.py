@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The manifest schema: every key `workflow_config.yaml` may carry.
+"""The manifest schema: every key `deployment.yaml` and a project's
+`config/workflow_config.yaml` may carry.
 
 Anything not declared here is rejected, so a typo fails the deploy with a line
 number instead of being silently ignored, and a wrong type fails here rather
@@ -9,19 +10,22 @@ than deep inside the provisioner once containers are already up.
 """
 
 import ntpath
+import os
 import posixpath
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import ClassVar
 
 import yaml
 from packaging.requirements import InvalidRequirement, Requirement
 
+from canyonos_core.controller.utils.container_names import docker_name
 from canyonos_core.controller.utils.config_env import (
     ENV_REF,
+    dotenv_applied,
     expand_env_value,
-    load_root_dotenv,
+    read_dotenv,
+    resolve_env_file,
 )
-from canyonos_core.endpoint import ENDPOINT_AGENT_NAME
 from canyonos_core.reconciler import providers
 from canyonos_core.schema._checks import (
     _counts,
@@ -76,14 +80,22 @@ _AGENT_KEYS_BY_TYPE = {
     "database": _DATABASE_KEYS,
 }
 
-_MANIFEST_KEYS = frozenset(
+# The deployment's settings, in the folder `canyonos deploy` runs from, and each
+# project folder's own config, relative to the folder.
+DEPLOYMENT_CONFIG = "deployment.yaml"
+CONFIG_PATH = os.path.join("config", "workflow_config.yaml")
+
+# What a folder runs and serves.
+_PROJECT_KEYS = frozenset({"agents", "endpoint"})
+_PROJECT_ENDPOINT_KEYS = frozenset({"routes"})
+# Where and how every folder of the deployment runs.
+_DEPLOYMENT_KEYS = frozenset(
     {
+        "deployment_id",
         "target",
         "provider",
-        "agents",
         "poll_interval",
         "cleanup_interval",
-        "project_id",
         "redis",
         "logs",
         "otel",
@@ -94,16 +106,22 @@ _MANIFEST_KEYS = frozenset(
         "kubernetes",
     }
 )
-# Who runs the project: Docker on the deploying machine (the default) or the Kubernetes
-# cluster. Keep in sync with the CLI's canyonos/target.py: the CLI and the core image
-# ship separately.
+# Who runs the deployment: Docker on the deploying machine (the default) or the
+# Kubernetes cluster. Keep in sync with the CLI's canyonos/target.py: the CLI and the
+# core image ship separately.
 TARGETS = ("docker", "kubernetes")
-_ENDPOINT_KEYS = frozenset({"api_port", "agent", "method"})
+_DEPLOYMENT_ENDPOINT_KEYS = frozenset({"api_port"})
+_MOVED_TO_DEPLOYMENT = (
+    "is a deployment setting, shared by every project: set it in deployment.yaml"
+)
+_ROUTE_KEYS = frozenset({"agent", "method"})
 _REDIS_KEYS = frozenset({"host", "port", "db"})
 # Keys that used to mean something and now do nothing, each with the message
 # that tells a user carrying one what to do instead.
 _RETIRED_KEYS = {
     "database": "is no longer used; telemetry is configured under otel: -- remove it",
+    "project_id": "is no longer used; the deployment's id is deployment_id in "
+    "deployment.yaml -- remove it",
     **{
         old: f"was renamed to {new}: -- rename it"
         for old, new in providers.RENAMED_SECTIONS.items()
@@ -158,11 +176,20 @@ class OtelSpec:
 
 
 @dataclass(frozen=True)
-class EndpointSpec:
-    """The managed HTTP endpoint configuration: the agent method it serves."""
+class RouteSpec:
+    """One agent method a project serves, at `POST /<project>/<agent>/<method>`. The
+    project is set when the project joins a deployment."""
 
     agent: str
     method: str
+    project: str = ""
+
+
+@dataclass(frozen=True)
+class EndpointSpec:
+    """The managed HTTP endpoint configuration: the agent methods it serves."""
+
+    routes: tuple
     api_port: int | None = None
 
 
@@ -175,6 +202,8 @@ class _Agent:
     resources: Resources = field(default_factory=Resources)
     stateful: bool = False
     env: dict = field(default_factory=dict)
+    # The project folder the agent comes from; set when the project joins a deployment.
+    project: str = ""
 
     type: ClassVar[str] = "agent"
 
@@ -203,15 +232,24 @@ class DatabaseAgent(_Agent):
 
 
 @dataclass(frozen=True)
+class Project:
+    """A project's `config/workflow_config.yaml`, checked and parsed by `load_project`."""
+
+    agents: tuple
+    routes: tuple = ()
+
+
+@dataclass(frozen=True)
 class Manifest:
-    """The project's `workflow_config.yaml`, checked and parsed by `load_manifest`."""
+    """A deployment, as `load_deployment` composes it: its `deployment.yaml` and the
+    agents and routes of every project in it, each agent named `<project>.<agent>`."""
 
     agents: tuple
     target: str = TARGETS[0]
     provider: str = providers.DEFAULT
     poll_interval: float = 5
     cleanup_interval: float = 10
-    project_id: str | None = None
+    deployment_id: str | None = None
     redis: RedisSpec = field(default_factory=RedisSpec)
     # Streams failure and log detail into each future; read as `config.get("logs", True)`, hence the default.
     logs: bool = True
@@ -459,9 +497,9 @@ def _check_agent_keys(collector, node, prefix, agent_type):
 
 
 def _agents(collector, node):
-    """Parse the `agents` list in `workflow_config.yaml`; two names that differ only
-    in case are a violation, since both would get the same image and container name,
-    and so is `endpoint`, the name of the HTTP endpoint's own replica."""
+    """Parse the `agents` list in `config/workflow_config.yaml`; two names that differ
+    only in case are a violation, since both would get the same image and container
+    name."""
     if "agents" not in node or node["agents"] is None:
         collector.add(node, "agents", "agents", "is required but missing")
         return ()
@@ -481,26 +519,18 @@ def _agents(collector, node):
         if agent_spec is not None:
             parsed.append((index, entry, agent_spec))
 
-    # Two agents whose names differ only in case collide: the image tag and
-    # the container name are both built from `name.lower()`.
+    # Two agents whose names Docker writes the same way collide on one image, container
+    # and data volume: names are lowercased, and a `.` is written `--`.
     seen = {}
     for index, entry, agent_spec in parsed:
-        key = agent_spec.name.lower()
-        if key == ENDPOINT_AGENT_NAME:
-            collector.add(
-                entry,
-                "name",
-                f"agents[{index}].name",
-                f"{agent_spec.name!r} is reserved for the HTTP endpoint container; "
-                "rename this agent",
-            )
-        elif key in seen:
+        key = docker_name(agent_spec.name)
+        if key in seen:
             collector.add(
                 entry,
                 "name",
                 f"agents[{index}].name",
                 f"duplicate agent name {agent_spec.name!r}: agents[{seen[key]}] "
-                "already claims it (names are lowercased into one image tag)",
+                f"already claims it (Docker names both {key!r})",
             )
         else:
             seen[key] = index
@@ -563,46 +593,69 @@ def _otel(collector, node):
     return OtelSpec(destinations=tuple(destinations))
 
 
-def _endpoint(collector, node, agent_specs):
-    """Parse the required `endpoint` section: the agent method served over HTTP."""
+def _routes(collector, node, agent_specs):
+    """Parse the project's required `endpoint.routes`: the agent methods it serves."""
     if "endpoint" not in node or node["endpoint"] is None:
         collector.add(
             node,
             "endpoint",
             "endpoint",
-            "is required but missing; add it with the `agent` and `method` to serve "
-            "over HTTP",
+            "is required but missing; add it with the `routes` to serve over HTTP",
         )
-        return None
-    block = _mapping(collector, node, "endpoint", "", _ENDPOINT_KEYS)
+        return ()
+    block = _mapping(
+        collector, node, "endpoint", "", _PROJECT_ENDPOINT_KEYS | {"api_port"}
+    )
     if block is None:
-        return None
-    agent = _string(collector, block, "agent", "endpoint", required=True)
-    method = _string(collector, block, "method", "endpoint", required=True)
+        return ()
+    if "api_port" in block:
+        collector.add(block, "api_port", "endpoint.api_port", _MOVED_TO_DEPLOYMENT)
+    raw = block.get("routes")
+    if not isinstance(raw, list) or not raw:
+        collector.add(
+            block,
+            "routes",
+            "endpoint.routes",
+            f"expected a list of `agent` and `method` entries, got {_describe(raw)}",
+        )
+        return ()
     functions = {
         agent_spec.name: {function.name for function in agent_spec.functions}
         for agent_spec in agent_specs
         if agent_spec.type == "agent"
     }
-    if agent is not None and agent not in functions:
-        collector.add(
-            block,
-            "agent",
-            "endpoint.agent",
-            f"{agent!r} is not an `agents:` entry of type 'agent'",
-        )
-    elif agent in functions and method is not None and method not in functions[agent]:
-        collector.add(
-            block,
-            "method",
-            "endpoint.method",
-            f"{method!r} is not a `functions:` entry of {agent!r}",
-        )
-    return EndpointSpec(
-        agent=agent,
-        method=method,
-        api_port=_port(collector, block, "api_port", "endpoint", None),
-    )
+    routes = []
+    for index, entry in enumerate(raw):
+        prefix = f"endpoint.routes[{index}]"
+        if not isinstance(entry, dict):
+            collector.add(
+                raw, index, prefix, f"expected a mapping, got {_describe(entry)}"
+            )
+            continue
+        _check_keys(collector, entry, prefix, _ROUTE_KEYS)
+        agent = _string(collector, entry, "agent", prefix, required=True)
+        method = _string(collector, entry, "method", prefix, required=True)
+        if agent is not None and agent not in functions:
+            collector.add(
+                entry,
+                "agent",
+                f"{prefix}.agent",
+                f"{agent!r} is not an `agents:` entry of type 'agent'",
+            )
+        elif (
+            agent in functions and method is not None and method not in functions[agent]
+        ):
+            collector.add(
+                entry,
+                "method",
+                f"{prefix}.method",
+                f"{method!r} is not a `functions:` entry of {agent!r}",
+            )
+        route = RouteSpec(agent=agent, method=method)
+        if route in routes:
+            collector.add(entry, "agent", prefix, f"{agent}.{method} is listed twice")
+        routes.append(route)
+    return tuple(routes)
 
 
 def _check_declared(
@@ -650,8 +703,8 @@ def _by_agent(collector, node, key, prefix, agent_names):
         )
 
 
-def _check_provider_sections(collector, node, provider, agent_specs):
-    """Check each provider's top-level section of `workflow_config.yaml`, such as
+def _check_provider_sections(collector, node, provider, agent_names):
+    """Check each provider's top-level section of `deployment.yaml`, such as
     `ec2-pool:`. Unknown and retired keys are always reported. The section's values are
     checked only for the deployment's `provider`, and the section itself is required
     then only if it has required keys."""
@@ -691,18 +744,16 @@ def _check_provider_sections(collector, node, provider, agent_specs):
             block,
             schema.SECTION,
             schema.SECTION_KEYS,
-            agent_names=[agent_spec.name for agent_spec in agent_specs],
+            agent_names=agent_names,
         )
 
 
-def load_manifest(path):
-    """Parse and check `workflow_config.yaml`, reporting every problem at once.
+def _read_document(path):
+    """`(collector, document)` for one config file, with its retired keys reported.
 
     Raises:
-        SchemaError: the manifest is unusable; `.violations` holds them all.
+        SchemaError: the file can't be read, isn't YAML, or isn't a mapping.
     """
-    load_root_dotenv(path)
-    collector = _Collector(path)
     try:
         document = load_yaml_lines(path)
     except OSError as exc:
@@ -725,39 +776,178 @@ def load_manifest(path):
                 )
             ]
         )
-
+    collector = _Collector(path)
     for key, message in _RETIRED_KEYS.items():
         if key in document:
             collector.add(document, key, key, message)
-    _check_keys(collector, document, "", _MANIFEST_KEYS | _RETIRED_KEYS.keys())
-    agent_specs = _agents(collector, document)
-    provider = _provider(collector, document, "")
-    manifest = Manifest(
-        agents=agent_specs,
-        target=_target(collector, document),
-        provider=provider,
-        poll_interval=_number(collector, document, "poll_interval", "", 5, 0),
-        cleanup_interval=_number(collector, document, "cleanup_interval", "", 10, 0),
-        project_id=_string(collector, document, "project_id", ""),
-        redis=_redis(collector, document),
-        logs=_boolean(collector, document, "logs", "", True),
-        otel=_otel(collector, document),
-        endpoint=_endpoint(collector, document, agent_specs),
-        dashboard_port=_port(collector, document, "dashboard_port", "", 8081),
-        kubernetes=parse_kubernetes(collector, document),
-        path=path,
-    )
-    _check_provider_sections(collector, document, provider, agent_specs)
-    if _unset_reference(_string(collector, document, "ssh_private_key_path", "")):
-        collector.add(
-            document,
-            "ssh_private_key_path",
-            "ssh_private_key_path",
-            _unset_message(document["ssh_private_key_path"]),
+    return collector, document
+
+
+def load_project(path):
+    """Parse and check a project's `config/workflow_config.yaml`, reading its `${VAR}`s
+    from the project's own `.env` and reporting every problem at once.
+
+    Raises:
+        SchemaError: the file is unusable; `.violations` holds them all.
+    """
+    # A port in `.canyon` reads the `.env` beside it, the one deploy ships.
+    with dotenv_applied(resolve_env_file(path) or ""):
+        collector, document = _read_document(path)
+        moved = document.keys() & (_DEPLOYMENT_KEYS - _PROJECT_KEYS)
+        for key in moved:
+            collector.add(document, key, key, _MOVED_TO_DEPLOYMENT)
+        _check_keys(
+            collector, document, "", _PROJECT_KEYS | moved | _RETIRED_KEYS.keys()
+        )
+        agent_specs = _agents(collector, document)
+        project = Project(
+            agents=agent_specs,
+            routes=_routes(collector, document, agent_specs),
         )
     if collector.violations:
         raise SchemaError(collector.violations)
+    return project
+
+
+def project_names(workspace):
+    """The projects of the deployment in `workspace`: its folders that hold a
+    `config/workflow_config.yaml`, by name."""
+    return sorted(
+        name
+        for name in os.listdir(workspace)
+        if os.path.isfile(os.path.join(workspace, name, CONFIG_PATH))
+    )
+
+
+def qualified_name(project, agent_name):
+    """An agent's name in a deployment: `<project>.<agent>`, unique across projects.
+    Project names never hold a `.`, so the project is the part before the first one."""
+    return f"{project}.{agent_name}"
+
+
+def load_deployment(workspace):
+    """Parse and check the deployment in `workspace`: its `deployment.yaml` and every
+    project's `config/workflow_config.yaml`, composed into one Manifest. Each agent is
+    named `<project>.<agent>` and records its project, and each route its project.
+
+    Raises:
+        SchemaError: the deployment is unusable; `.violations` holds the problems of
+            every file.
+    """
+    path = os.path.join(workspace, DEPLOYMENT_CONFIG)
+    violations = []
+    agent_specs = []
+    routes = []
+    names = project_names(workspace)
+    if not names:
+        violations.append(
+            SchemaViolation(workspace, 0, "", f"holds no folder with {CONFIG_PATH}")
+        )
+    for name in names:
+        try:
+            project = load_project(os.path.join(workspace, name, CONFIG_PATH))
+        except SchemaError as error:
+            violations.extend(error.violations)
+            continue
+        agent_specs += [
+            replace(
+                agent_spec,
+                name=qualified_name(name, agent_spec.name),
+                project=name,
+            )
+            for agent_spec in project.agents
+        ]
+        routes += [replace(route, project=name) for route in project.routes]
+
+    with dotenv_applied(os.path.join(workspace, ".env")):
+        try:
+            collector, document = _read_document(path)
+        except SchemaError as error:
+            raise SchemaError(violations + list(error.violations)) from None
+        _check_keys(collector, document, "", _DEPLOYMENT_KEYS | _RETIRED_KEYS.keys())
+        provider = _provider(collector, document, "")
+        endpoint = _mapping(
+            collector, document, "endpoint", "", _DEPLOYMENT_ENDPOINT_KEYS
+        )
+        manifest = Manifest(
+            agents=tuple(agent_specs),
+            target=_target(collector, document),
+            provider=provider,
+            poll_interval=_number(collector, document, "poll_interval", "", 5, 0),
+            cleanup_interval=_number(
+                collector, document, "cleanup_interval", "", 10, 0
+            ),
+            deployment_id=_string(collector, document, "deployment_id", ""),
+            redis=_redis(collector, document),
+            logs=_boolean(collector, document, "logs", "", True),
+            otel=_otel(collector, document),
+            endpoint=EndpointSpec(
+                routes=tuple(routes),
+                api_port=_port(collector, endpoint, "api_port", "endpoint", None)
+                if endpoint
+                else None,
+            ),
+            dashboard_port=_port(collector, document, "dashboard_port", "", 8081),
+            kubernetes=parse_kubernetes(collector, document),
+            path=path,
+        )
+        _check_provider_sections(
+            collector,
+            document,
+            provider,
+            [agent_spec.name for agent_spec in agent_specs],
+        )
+        if _unset_reference(_string(collector, document, "ssh_private_key_path", "")):
+            collector.add(
+                document,
+                "ssh_private_key_path",
+                "ssh_private_key_path",
+                _unset_message(document["ssh_private_key_path"]),
+            )
+    violations += collector.violations
+    if violations:
+        raise SchemaError(violations)
     return manifest
+
+
+def _expanded(path, env_path):
+    """The YAML at `path`, its `${VAR}`s expanded from the `.env` at `env_path`, the
+    environment's own values winning."""
+    with open(path, encoding="utf-8") as f:
+        return expand_env_value(
+            yaml.safe_load(f), {**read_dotenv(env_path), **os.environ}
+        )
+
+
+def load_deployment_config(workspace):
+    """The deployment in `workspace` as the raw config the Global Controller acts on,
+    composed the way `load_deployment` composes the Manifest: `deployment.yaml`, plus
+    every project's agents, named `<project>.<agent>` and given their `project`, and
+    its routes, given their `project`. Read once `load_deployment` has accepted it."""
+    config = _expanded(
+        os.path.join(workspace, DEPLOYMENT_CONFIG), os.path.join(workspace, ".env")
+    )
+    agent_specs = []
+    routes = []
+    for name in project_names(workspace):
+        project = _expanded(
+            os.path.join(workspace, name, CONFIG_PATH),
+            os.path.join(workspace, name, ".env"),
+        )
+        agent_specs += [
+            {
+                **agent_spec,
+                "name": qualified_name(name, agent_spec["name"]),
+                "project": name,
+            }
+            for agent_spec in project["agents"]
+        ]
+        routes += [
+            {**route, "project": name} for route in project["endpoint"]["routes"]
+        ]
+    config["agents"] = agent_specs
+    config["endpoint"] = {**(config.get("endpoint") or {}), "routes": routes}
+    return config
 
 
 def _redis(collector, node):

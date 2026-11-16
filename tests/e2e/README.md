@@ -14,7 +14,7 @@ setup error only point to that first trace.
 | `fleet.py` | What cases read from a running deploy: the project's Redis, the replicas the routing table sends calls to, a request's calls, and each replica's container. |
 | `projects/<name>/` | One project: a `project.yaml` and a `check.py` whose `problems(result, *, query=None, request_id=None)` says what is wrong with a workflow result for that query and request. |
 | `cases/` | Assertions against one deployed project, picked with `--project`. Modules run in name order, and `test_9_teardown.py` runs last. |
-| `scenarios/` | Checks that need no project or more than one deploy: `canyonos validate` refusing broken manifests, the `canyonos new-app` starter, two projects on one dashboard, and the governance rules on `pr_review`. |
+| `scenarios/` | Checks that need no project or more than one deploy: `canyonos validate` refusing broken manifests (`test_cli`), the `canyonos new-app` starter, two projects in one deployment (`test_two_projects`), two deployments on one dashboard, `stop` and `clean` picking among deployments (`test_stop_and_clean`), an endpoint waiting for a person's answer (`test_human_input`), and the governance rules on `pr_review`. |
 | `report.py` | Writes the run's `report.md` from every project's `junit.xml`, `collected.json` and traces. |
 | `gateway_check.py` | Copied into an agent replica by a case to check the LLM gateway from inside. |
 | `ec2_pool.sh`, `ec2_pool/` | The EC2 pool check. It is manual, needs AWS access to run machines, and no workflow runs it. |
@@ -51,16 +51,18 @@ or from Dependabot, which get no secrets.
 
 ## Add a project
 
-Create `projects/<name>/`. The dashboard names the project after the folder, so
+Create `projects/<name>/`. The run stages it as `<name>/<name>`, a project folder
+inside a deployment folder of the same name, and runs every command from the
+deployment folder. The dashboard names the deployment after that folder, so
 `<name>` is lowercase. It holds:
 
 - `project.yaml`:
-  - `source`: a folder of this repo (`examples/helloworld`), or `{repo, ref, path}` for a GitHub repo pinned to a full commit SHA.
+  - `source`: a project folder of this repo (`examples/helloworld/helloworld`), staged with the `deployment.yaml` of the deployment folder it sits in, or `{repo, ref, path}` for a GitHub repo pinned to a full commit SHA.
   - `port`: a `.canyon` folder next to it, copied over the source.
-  - `overlay`: files next to it that replace files of the source.
+  - `overlay`: files next to it that replace files of the source. A `deployment.yaml`, a cloned source's or an overlay's, moves up into the deployment folder.
   - `query`: the test query, a string or, for an argument of another type, YAML. Without it, the port's `config/test_query.txt` is used.
   - `cli_query`: the query as `canyonos test` passes it on the command line, for a workflow that reads command-line text in its own form (`pr_review`'s `title\ndiff`). Without it, the cases send `query`, as JSON when it is not a string.
-  - `secrets` and `env`: what goes in the staged `.env`.
+  - `secrets` and `env`: what goes in the staged project's `.env`.
   - `traits`, `timeout`, and `release_only`.
 - `check.py`: `problems(result, *, query=None, request_id=None)` yielding one line per thing wrong with the result. No lines means the result came from the real pipeline.
 
@@ -77,7 +79,7 @@ stops the run with a usage error:
 | `quick` | answers a query in seconds, so a query can be sent again |
 | `text-query` | its endpoint takes any text, and its `check.py` says what the result for it must be |
 | `failing-query` | has a `FAILING_QUERY` in its `check.py` whose error names the agent that failed |
-| `logs` | keeps `logs:` on in its manifest, so its replicas' logs reach the dashboard |
+| `logs` | keeps `logs:` on in its `deployment.yaml`, so its replicas' logs reach the dashboard |
 | `prompts` | has a `prompts.yaml` |
 | `context-propagation` | returns the request context each caller saw |
 

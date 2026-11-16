@@ -12,70 +12,69 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 
 ## What's in it
 
+This folder is the deployment folder: its `deployment.yaml` configures the deployment,
+and the project, `helloworld/`, holds the agent code.
+
 | File | What it does |
 |---|---|
-| `agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
-| `agents/workflow.py` | `Workflow.main(query)` calls `HelloAgent().hello(name=query)` and returns `{"greeting": ...}` with its result. |
-| `config/workflow_config.yaml` | What to run: the two agents, on this machine (`provider: local`), and the `endpoint` that serves `Workflow.main` at `POST /main`, automatically published on the host at `8080` or the next free port. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
-| `config/policy.yaml` | Which callers can reach which agents. |
+| `deployment.yaml` | Where the deployment runs: on this machine (`provider: local`). |
+| `helloworld/agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
+| `helloworld/agents/workflow.py` | `Workflow.main(query)` calls `HelloAgent().hello(name=query)` and returns `{"greeting": ...}` with its result. |
+| `helloworld/config/workflow_config.yaml` | What to run: the two agents, and the `endpoint` route that serves `Workflow.main` at `POST /helloworld/Workflow/main`, automatically published on the host at `8080` or the next free port. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
+| `helloworld/config/policy.yaml` | Which callers can reach which agents. |
 
 ## Before you start
 
 - Docker is running, and `canyonos doctor` passes.
 - This example is already in CanyonOS format, so skip `canyonos convert`. It needs no `.env`.
 - It runs on this machine (`provider: local`). To run it on EC2, use [helloworld-ec2-assign](../helloworld-ec2-assign/README.md).
-- Work on a copy. Deploying writes into the project folder: it fills default resources and a `project_id` into `config/workflow_config.yaml`.
+- Work on a copy. Deploying writes into this folder: it adds a `deployment_id` to `deployment.yaml` and fills default resources into `helloworld/config/workflow_config.yaml`.
+
+## 1. Deploy
+
+From this folder, deploy the `helloworld` project, then run the other commands from here too:
 
 ```bash
-cd helloworld
+canyonos deploy helloworld
 ```
 
-The dashboard names your project after this folder, `helloworld`.
+From anywhere else, name both folders: `canyonos deploy examples/helloworld/helloworld --folder examples/helloworld`.
+The dashboard names your deployment after the deployment folder, `helloworld`.
 
-## 1. Test it
-
-```bash
-canyonos test "World"
-```
-
-The first run takes about a minute while it builds the images. A pass ends with:
-
-```
-✓ deploy          Global Controller on port 8000
-✓ verify_runtime  2 agent(s) up
-✓ query           answered in 23.199s
-
-Output     {
-  "greeting": "Hello, World! I'm the HelloAgent!"
-}
-```
-
-A passing test tears everything down again, including the dashboard.
-
-## 2. Deploy
-
-```bash
-canyonos deploy
-```
-
-It ends with:
+The first run takes about a minute while it builds the images. It ends with:
 
 ```
 Deploy is live
 
 Dashboard  http://127.0.0.1:8081
 
-message           curl -X POST http://127.0.0.1:8080/main -H "Content-Type: application/json" -d '{"query": "your query"}'
+message           curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Content-Type: application/json" -d '{"query": "your query"}'
 respond to agent  curl -X POST http://127.0.0.1:8080/answer/<request_id> -H "Content-Type: application/json" -d '{"input": "your answer"}'
 check result      curl http://127.0.0.1:8080/status/<request_id>
 ```
 
 The endpoint starts at 8080 and the dashboard at 8081; each moves to the next free port if needed. Use the URLs printed by `canyonos deploy` or `canyonos status`, replacing 8080 in the requests below with the endpoint's actual port.
 
+## 2. Test it
+
+```bash
+canyonos test "World"
+```
+
+A pass ends with:
+
+```
+✓ query           1 workflow(s) answered in 0.512s
+
+Output     {
+  "greeting": "Hello, World! I'm the HelloAgent!"
+}
+```
+
 ## 3. Send a request
 
 ```bash
-curl -X POST http://127.0.0.1:8080/main \
+curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
   -H "Content-Type: application/json" \
   -d '{"query": "World"}'
 ```
@@ -95,16 +94,16 @@ curl http://127.0.0.1:8080/status/<request_id>
 ```
 
 - The JSON body is passed to `main` as arguments, so `{"query": "Ada"}` returns `Hello, Ada! ...`, and `{}` falls back to `World`.
-- The path is the method name. `POST /hello` returns `404`, since only the `endpoint` method is served.
+- The path is `/<project>/<agent>/<method>`, where the project is the project folder's name. `POST /helloworld/HelloAgent/hello` returns `404`, since only the `endpoint` routes are served.
 - A body that isn't JSON returns `{"error": "Invalid JSON in request body"}`.
 
 ## 4. Find it in the dashboard
 
-Open the dashboard URL, then **Projects** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see `Workflow` call `HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
+Open the dashboard URL, then **Deployments** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see `helloworld.Workflow` call `helloworld.HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
 
 ## 5. Try a policy rule
 
-Rules in `config/policy.yaml` decide which agents a request may reach, based on the `_context` you send with it. The rule with the most matching keys wins, and `match: {}` is the fallback. By default every agent is allowed.
+Rules in `helloworld/config/policy.yaml` decide which agents a request may reach, based on the `_context` you send with it. The rule with the most matching keys wins, and `match: {}` is the fallback. By default every agent is allowed.
 
 Remove `HelloAgent` from the fallback rule:
 
@@ -123,7 +122,7 @@ Redeploy, then send the same request. It now fails:
 A request that sends `_context` matching the admin rule still gets through:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/main \
+curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
   -H "Content-Type: application/json" \
   -d '{"query": "World", "_context": {"origin": "admin"}}'
 ```
@@ -133,11 +132,11 @@ curl -X POST http://127.0.0.1:8080/main \
 ## 6. Stop
 
 ```bash
-canyonos stop    # remove the deploy, and stop the dashboard if no other project is running
-canyonos clean   # also remove .canyon and the agents' images
+canyonos stop    # remove the deploy, and stop the dashboard if no other deployment is running
+canyonos clean   # also remove the agents' images
 ```
 
 ## If something goes wrong
 
-- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old deploy still holds the port, remove `api_port` under `endpoint` in `config/workflow_config.yaml` to restore automatic selection, or choose a free fixed port.
+- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old deploy still holds the port, remove `api_port` under `endpoint` in `deployment.yaml` to restore automatic selection, or choose a free fixed port.
 - More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

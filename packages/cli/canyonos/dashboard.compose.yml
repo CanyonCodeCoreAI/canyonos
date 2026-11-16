@@ -5,7 +5,7 @@ services:
   # Fast-path bundled DB, hardcoded creds -- fine for local dev, not for anything real.
   db:
     image: postgres:16-alpine
-    # Fixed names: a project's containers reach the api and db by them.
+    # Fixed names: a deployment's containers reach the api and db by them.
     container_name: canyonos-dashboard-db
     environment:
       POSTGRES_USER: canyonos

@@ -17,7 +17,7 @@ On each call, the gateway also applies these settings:
 
 ## Define the limits in a file
 
-Create `llms.yaml` in the workflow's `config` folder. Each entry names a model and the
+Create `llms.yaml` in the project's `config` folder. Each entry names a model and the
 agents allowed to use it:
 
 ```yaml
@@ -34,7 +34,7 @@ haiku:
 | entry name   | yes                     | Your own label for the model, such as `haiku`. It shows in refusal messages.                                                                                                                                                             |
 | `model_id`   | yes                     | The model ID your code sends to the provider. An entry without one is ignored.                                                                                                                                                           |
 | `max_tokens` | when an agent is capped | The output tokens to assume when a call doesn't set its own limit                                                                                                                                                                        |
-| `agents`     | no                      | The agents allowed to call this model, each with the most one call may cost, in US dollars. An empty value, like `AdvisorAgent` above, means no cap. Leave `agents` out to let every agent call the model; an empty `agents:` lets none. |
+| `agents`     | no                      | The agents allowed to call this model, each with the most one call may cost, in US dollars. An empty value, like `AdvisorAgent` above, means no cap. Leave `agents` out to let every agent of this project call the model; an empty `agents:` lets none. |
 
 `model_id` is matched without a Bedrock region prefix (`us.`, `eu.`, `apac.` and the
 like) or an ARN around it, so `us.anthropic.claude-haiku-4-5-20251001-v1:0` also matches
@@ -42,8 +42,9 @@ calls to `anthropic.claude-haiku-4-5-20251001-v1:0`.
 
 `canyonos deploy` fails when `llms.yaml` isn't valid YAML, when `agents` isn't a
 mapping, or when an entry with a cap has no numeric `max_tokens` or a cap that isn't a
-number. A typo in a `model_id` is not caught: real calls don't match the entry, so they
-run with no cap.
+number. It also fails when two projects of a deployment set an entry of the same name
+differently, or give one model two entry names. A typo in a `model_id` is not caught:
+real calls don't match the entry, so they run with no cap.
 
 ### What gets refused
 
@@ -51,7 +52,7 @@ For each call, the gateway looks up the model by its `model_id`:
 
 | Case                                                                                      | Result  |
 | ----------------------------------------------------------------------------------------- | ------- |
-| The model isn't in `llms.yaml`, or its entry has no `agents`                              | Allowed |
+| The model isn't in `llms.yaml`, or this project's entry has no `agents`                   | Allowed |
 | The agent isn't in the model's `agents`                                                   | Refused |
 | The agent has no cap on the model                                                         | Allowed |
 | The call could cost more than the agent's cap                                             | Refused |
@@ -75,8 +76,8 @@ have been shorter.
 
 ## Change the limits while the workflow runs
 
-Edit `llms.yaml` and run `canyonos sync` (on Kubernetes, `canyonos deploy`). Each
-gateway picks up the changed file within 5 seconds.
+Edit `llms.yaml` and run `canyonos sync <project folder>...` (on Kubernetes,
+`canyonos deploy`). Each gateway picks up the changed file within 5 seconds.
 
 ## Model prices
 
@@ -158,13 +159,13 @@ they arrive.
 | Calls                       | Credentials                                                                                                                                                                                                                                                                                                       |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | OpenAI-format and Anthropic | Your code's own key. The gateway passes `Authorization` and `x-api-key` through unchanged, so put the provider's key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `BASETEN_API_KEY`, ...) wherever your code reads it from.                                                                                            |
-| Bedrock                     | The gateway's: it uses the usual AWS credentials from the container environment, which reach the container through the workflow's `.env`. `botocore` signs requests even when the endpoint is overridden, so a caller may need placeholder AWS credentials; the gateway re-issues the call upstream with its own. |
+| Bedrock                     | The gateway's: it uses the usual AWS credentials from the container environment, which reach the container through the project's `.env`. `botocore` signs requests even when the endpoint is overridden, so a caller may need placeholder AWS credentials; the gateway re-issues the call upstream with its own.  |
 
 ## Code that bypasses the gateway
 
 A client that ignores the proxy variables, such as an `aiohttp.ClientSession` without
 `trust_env=True`, goes straight to the provider. Grep for `aiohttp` in the source to
-find those. In the code under the workflow root, the fix for aiohttp is to let it read
+find those. In the code under the project folder, the fix for aiohttp is to let it read
 them:
 
 ```python

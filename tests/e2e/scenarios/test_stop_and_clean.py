@@ -26,7 +26,7 @@ from ..harness import (
     dashboard_containers,
     docker,
     project_containers,
-    project_root,
+    project_dir,
     stage,
 )
 from ..projects import load_project
@@ -46,8 +46,8 @@ SKILL = Path(".claude/skills/converting-to-canyonos/SKILL.md")
 
 @dataclass
 class Fleet:
-    """Each copy's folder, project name (`helloworld-<id[:8]>`) and project_id, and an
-    empty folder to run commands from outside every project."""
+    """Each copy's deployment folder, deployment name (`helloworld-<id[:8]>`) and
+    deployment_id, and an empty folder to run commands from outside every project."""
 
     dirs: dict[str, Path]
     names: dict[str, str]
@@ -56,16 +56,15 @@ class Fleet:
 
 
 def _pin_ports(directory: Path) -> None:
-    """Give the copy fixed ports, so the two deploys can't race for the same ones."""
-    path = project_root(directory) / "config" / "workflow_config.yaml"
-    text = re.sub(
-        r"^endpoint:$",
-        f"endpoint:\n  api_port: {SECOND_API_PORT}",
-        path.read_text(),
-        flags=re.M,
-    )
+    """Give the copy fixed ports, so the two deploys can't race for the same ones.
+    helloworld's deployment.yaml sets neither, so both blocks are added."""
+    path = directory / "deployment.yaml"
+    text = path.read_text()
+    assert not re.search(r"^(endpoint|redis):", text, flags=re.M), text
     path.write_text(
-        re.sub(r"^redis:$", f"redis:\n  port: {SECOND_REDIS_PORT}", text, flags=re.M)
+        text.rstrip("\n")
+        + f"\n\nendpoint:\n  api_port: {SECOND_API_PORT}\n"
+        + f"\nredis:\n  port: {SECOND_REDIS_PORT}\n"
     )
 
 
@@ -86,8 +85,8 @@ def _running_projects(recorder) -> set[str]:
 
 def _records() -> list[str]:
     """The projects with a deploy record, in the order the CLI lists them."""
-    projects = Path.home() / ".canyonos" / "projects"
-    return sorted(path.parent.name for path in projects.glob("*/state.json"))
+    deployments = Path.home() / ".canyonos" / "deployments"
+    return sorted(path.parent.name for path in deployments.glob("*/state.json"))
 
 
 def _images(recorder, name: str) -> list[str]:
@@ -128,7 +127,11 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     with ThreadPoolExecutor(max_workers=len(COPIES)) as pool:
         deploys = [
             pool.submit(
-                canyonos, recorder, ["deploy"], cwd=dirs[copy], timeout=DEPLOY_TIMEOUT
+                canyonos,
+                recorder,
+                ["deploy", str(project_dir(dirs[copy]))],
+                cwd=dirs[copy],
+                timeout=DEPLOY_TIMEOUT,
             )
             for copy in COPIES
         ]
@@ -138,9 +141,9 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
         copy: cli_value(
             recorder,
             dirs[copy],
-            "[project_name(), read_config(default_config_path())['project_id']]",
-            "from canyonos.project import project_name; "
-            "from canyonos.constants import default_config_path, read_config",
+            "[deployment_name(), read_config(deployment_config_path())['deployment_id']]",
+            "from canyonos.deployment import deployment_name; "
+            "from canyonos.constants import deployment_config_path, read_config",
         )
         for copy in COPIES
     }
@@ -176,7 +179,7 @@ def test_the_shared_folder_name_is_refused_as_ambiguous(recorder, fleet):
     call = canyonos(recorder, ["stop", "helloworld"], cwd=fleet.outside, check=False)
 
     assert call.code == 1, call.output
-    assert "matches 2 projects" in call.output, call.output
+    assert "matches 2 deployments" in call.output, call.output
     for copy in COPIES:
         assert fleet.ids[copy] in call.output, call.output
     assert set(fleet.names.values()) <= _running_projects(recorder)
@@ -194,7 +197,7 @@ def test_clean_in_a_terminal_cleans_only_the_ticked_project(recorder, fleet):
         recorder,
         ["clean"],
         cwd=fleet.outside,
-        answers=[("Select the projects to clean", keys)],
+        answers=[("Select the deployments to clean", keys)],
     )
 
     for copy in COPIES:
@@ -245,5 +248,5 @@ def test_a_project_no_longer_deployed_is_found_only_in_its_folder(recorder, flee
     canyonos(recorder, ["clean", first_id], cwd=fleet.dirs["first"])
 
     assert missing.code == 1, missing.output
-    assert f"No project is named `{first_id}`" in missing.output, missing.output
+    assert f"No deployment is named `{first_id}`" in missing.output, missing.output
     assert not _images(recorder, fleet.names["first"])

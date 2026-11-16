@@ -3,8 +3,11 @@
 
 # examples/portfolio with the port committed next to this file: five agents, real
 # yfinance prices and two Bedrock calls through the LLM gateway.
-source: examples/portfolio
+source: examples/portfolio/portfolio
 port: .canyon
+# Its port's deployment settings: Redis on 6379, telemetry to the dashboard.
+overlay:
+  deployment.yaml: deployment.yaml
 calls:
   Workflow.main: 1
   IntentAgent.parse: 1

@@ -7,8 +7,6 @@
 # and Small then joins SlowAgent, since Big's machine has the least CPU in use but the
 # most memory.
 
-provider: ec2-pool
-
 agents:
   - name: Workflow
     resources:
@@ -57,25 +55,6 @@ agents:
           type: str
 
 endpoint:
-  api_port: 8090
-  agent: Workflow
-  method: main
-
-poll_interval: 5
-logs: true
-
-redis:
-  host: localhost
-  port: 6390
-  db: 0
-
-ec2-pool:
-  region: ${EC2_REGION}
-  machine_type:
-    t3.micro: 2
-    # A type named by a variable is filled in like any other ${...} value.
-    ${EC2_POOL_SMALL_TYPE}: 1
-  market_type: on-demand
-  subnet_id: ${EC2_SUBNET_ID}
-  security_group_ids:
-    - ${EC2_SECURITY_GROUP_ID}
+  routes:
+    - agent: Workflow
+      method: main

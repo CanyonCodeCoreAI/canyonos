@@ -26,6 +26,6 @@ export const canyonosRoutes = new Elysia({ prefix: '/canyonos', name: 'canyonos.
   {
     body: RegisterProjectBody,
     response: { 200: RegisteredProjectSchema },
-    detail: { tags: ['CanyonOS'], summary: 'Register the project a controller runs' },
+    detail: { tags: ['CanyonOS'], summary: 'Register the deployment a controller runs' },
   }
 );

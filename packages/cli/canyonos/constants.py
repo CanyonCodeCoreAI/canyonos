@@ -20,7 +20,8 @@ DEFAULT_API_PORT = 8080
 DEFAULT_REDIS_PORT = 6379
 DEFAULT_DASHBOARD_PORT = 8081
 DEFAULT_DASHBOARD_API_PORT = 3000
-# The dashboard's API by its container name, on the network each project shares with it.
+# The dashboard's API by its container name, on the network each deployment shares
+# with it.
 LOCAL_DASHBOARD_ENDPOINT = "http://canyonos-dashboard-api:3000"
 
 _EC2_TOKEN_URL = "http://169.254.169.254/latest/api/token"
@@ -31,34 +32,47 @@ _metadata_cache = {}
 
 
 CANYON_DIR = ".canyon"
+# A deployment's settings, in the folder `canyonos deploy` runs from.
+DEPLOYMENT_CONFIG = "deployment.yaml"
+
+
+def project_folder(folder="."):
+    """Find the folder every file of the project in `folder` is read from: its
+    `.canyon` when it has one, else `folder` itself."""
+    canyon = os.path.join(folder, CANYON_DIR)
+    return canyon if os.path.isdir(canyon) else folder
 
 
 def project_root():
-    """Find the folder every project file is read from: `.canyon` when it exists in
-    the current directory, else the current directory itself."""
-    return CANYON_DIR if os.path.isdir(CANYON_DIR) else "."
+    """`project_folder()` of the current directory."""
+    return project_folder()
 
 
-def default_config_path():
-    """Build the path of the project's `workflow_config.yaml` inside the project
-    root, whether or not the file is there."""
-    return os.path.join(project_root(), "config", "workflow_config.yaml")
+def project_config_path(root):
+    """Build the path of a project's `config/workflow_config.yaml` inside its root,
+    whether or not the file is there."""
+    return os.path.join(root, "config", "workflow_config.yaml")
 
 
-def project_env_path():
-    """Name the `.env` in the folder `canyonos` runs in; deploy passes its values to
-    the agent replicas."""
-    return ".env"
+def deployment_config_path():
+    """The deployment's `deployment.yaml`, in the folder `canyonos` runs from, whether
+    or not the file is there."""
+    return DEPLOYMENT_CONFIG
+
+
+def project_env_path(folder="."):
+    """Name the `.env` in a project's folder; deploy passes its values to the
+    project's agent replicas."""
+    return os.path.join(folder, ".env")
 
 
 def existing_config_path():
-    """`default_config_path()`, used by deploy and test; raises when the file is not
-    there."""
-    config_path = default_config_path()
+    """`deployment_config_path()`; raises when the file is not there."""
+    config_path = deployment_config_path()
     if not os.path.isfile(config_path):
         raise RuntimeError(
-            f"No {config_path} here. Run `canyonos convert` first, or rerun from your "
-            "project folder."
+            f"No {config_path} here. Run `canyonos deploy <project folder>...` from "
+            "the folder that holds the deployment."
         )
     return config_path
 

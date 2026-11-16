@@ -144,14 +144,13 @@ const EXAMPLE_ARGUMENT_VALUE = 'your query';
 
 function describe_endpoint(address: EndpointAddress): MonitoringEndpoint {
   return {
-    url: address.url,
     status_url: `http://${address.public_host}:${address.api_port}/status`,
-    agent: address.agent,
-    method: address.method,
-    arguments: address.arguments,
-    example_body: Object.fromEntries(
-      address.arguments.map((name) => [name, EXAMPLE_ARGUMENT_VALUE])
-    ),
+    routes: address.routes.map((route) => ({
+      ...route,
+      example_body: Object.fromEntries(
+        route.arguments.map((name) => [name, EXAMPLE_ARGUMENT_VALUE])
+      ),
+    })),
   };
 }
 

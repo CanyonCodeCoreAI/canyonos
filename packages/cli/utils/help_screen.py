@@ -17,17 +17,17 @@ from canyonos.theme import GREEN, WHITE
 # subparser through this table, so a command can't be added to one and missed
 # in the other.
 CORE_COMMANDS = (
-    ("deploy", "Build and launch the workflow, then open the dashboard"),
-    ("config", "Configure project settings"),
+    ("deploy", "Build and launch projects as one deployment, then open the dashboard"),
+    ("config", "Configure the deployment's settings in deployment.yaml"),
 )
 
 UTIL_COMMANDS = (
-    ("clean", "Stop the deploy, then delete .canyon, the skill and the agents' images"),
+    ("clean", "Stop the deployment, then delete its agents' images and its records"),
     ("cluster", "Make or delete a local Kubernetes cluster with CanyonOS (kind)"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
     ("doctor", "Check what deploying needs and, once deployed, every part of it"),
     ("logs", "Follow the running deploy's logs"),
-    ("new-app", "Create a starter CanyonOS project with one agent"),
+    ("new-app", "Create a starter CanyonOS project with two agents"),
     ("quickstart", "Guided first run, from a starter project to your first trace"),
     ("provision", "Provision or tear down a cloud machine (e.g. AWS) to deploy from"),
     ("serve", "Start local CanyonOS dashboard"),
@@ -37,8 +37,8 @@ UTIL_COMMANDS = (
         "sync",
         "Apply config changes to the running deploy; code changes need a redeploy",
     ),
-    ("target", "Show or choose where this project deploys: Docker or Kubernetes"),
-    ("test", "Deploy locally and run one prompt end to end"),
+    ("target", "Show or choose where this deployment runs: Docker or Kubernetes"),
+    ("test", "Send one prompt to every workflow of the running deployment"),
     ("upgrade", "Upgrade the canyonos CLI to the latest release"),
     ("validate", "Check the project against the CanyonOS contract"),
 )
@@ -89,8 +89,13 @@ def print_custom_help():
         "  [dim]Converting an existing workflow? Run canyonos convert in its folder "
         "first (opens coding agent).[/dim]"
     )
-    ui.console.print(f"  [dim]1.[/dim] cd [{GREEN}]into-your-workflow-root-dir[/]")
-    ui.console.print("  [dim]2.[/dim] canyonos deploy (UI automatically starts)")
+    ui.console.print(
+        f"  [dim]1.[/dim] cd [{GREEN}]into-the-folder-above-your-project[/]"
+    )
+    ui.console.print(
+        "  [dim]2.[/dim] canyonos deploy my-project --folder my-deployment "
+        "(UI automatically starts)"
+    )
 
     ui.console.print(
         f"[dim]For command-specific help: [{GREEN}]canyonos <command> --help[/][/dim]\n"

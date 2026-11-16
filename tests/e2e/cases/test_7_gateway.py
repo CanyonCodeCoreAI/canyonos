@@ -14,15 +14,18 @@ tokens the query's model calls record (test_3, `llm` trait)."""
 from pathlib import Path
 
 from ..fleet import routed_replicas, store
-from ..harness import docker, manifest
+from ..harness import docker, manifest, qualified
 
 GATEWAY_CHECK = Path(__file__).parent.parent / "gateway_check.py"
 IN_REPLICA = "/tmp/gateway_check.py"
 
 
 def test_gateway_inside_a_replica(recorder, deployed):
-    endpoint_agent = manifest(deployed.dir)["endpoint"]["agent"]
-    agent = next(name for name in deployed.agents if name != endpoint_agent)
+    served = {
+        qualified(deployed.project_dir, route["agent"])
+        for route in manifest(deployed.project_dir)["endpoint"]["routes"]
+    }
+    agent = next(name for name in deployed.agents if name not in served)
     routed = routed_replicas(store(recorder, deployed), agent)
     assert routed, f"{agent} has no routed replica"
     replica = routed[0].container

@@ -2,29 +2,23 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-The verification pass behind `canyonos test`.
+The agent readiness table behind `canyonos doctor`.
 
-`verify_runtime` checks a running local deploy against what the config declared
+It checks the running deployment's agents, as its Global Controller reports them,
 -- every image built, every replica up -- because the controller logs a warning
 and carries on when an agent never becomes healthy, so a workflow that answers
 is not on its own proof that the deploy is complete.
-
-This file will also need lots of iteration based on what is needed, will expect it to change alot
 """
 
-import re
 import subprocess
 
 from rich.table import Table
 
-from canyonos import project, ui
-from canyonos.constants import read_config
+from canyonos import deployment
 from canyonos.theme import GREEN
 
-
-# ------------------------------------------------------------------ #
-#  Runtime                                                            #
-# ------------------------------------------------------------------ #
+# The endpoint's replica, which runs the CanyonOS image rather than one the deploy builds.
+ENDPOINT_AGENT_NAME = "endpoint"
 
 
 def _built_images():
@@ -37,26 +31,9 @@ def _built_images():
     return set(result.stdout.split())
 
 
-def _running_containers():
-    result = subprocess.run(
-        [
-            "docker",
-            "ps",
-            "--filter",
-            f"label={project.PROJECT_LABEL}={project.project_group()}",
-            "--format",
-            "{{.Names}}",
-        ],
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    return result.stdout.split()
-
-
 def _runtime_table(rows):
     """Build a table of each agent's running state, shown in the terminal by `canyonos
-    doctor` and `canyonos test`, with failing agents in red."""
+    doctor`, with failing agents in red."""
     table = Table(
         border_style=GREEN, header_style=f"bold {GREEN}", title_style=f"bold {GREEN}"
     )
@@ -74,27 +51,19 @@ def _runtime_table(rows):
     return table
 
 
-def agent_rows(config_path):
-    """Per-agent readiness rows for the config's declared agents: image built,
-    replicas running. Pure data -- no printing, nothing raised, so
-    both `verify_runtime` and `canyonos doctor` can build on it.
-    """
-    config = read_config(config_path)
-
+def agent_rows(runtime):
+    """Per-agent readiness rows for the agents a running deployment's Global Controller
+    reports in `runtime` (its `/runtime_status`): image built, replicas running. Pure
+    data -- no printing, nothing raised."""
     images = _built_images()
-    containers = _running_containers()
-
     rows = []
-    for agent_spec in config.get("agents") or []:
-        name = agent_spec.get("name")
-        if not name:
+    for name, agent in runtime["agents"].items():
+        if name == ENDPOINT_AGENT_NAME:
             continue
-        image = project.image_name(name)
-        expected = int(agent_spec.get("replicas", 1) or 1)
-        pattern = project.replica_name_pattern(name)
-        running = sum(1 for container in containers if re.fullmatch(pattern, container))
+        image = deployment.image_name(name)
+        expected = agent["desired_replicas"] or 0
+        running = agent["running_replicas"]
         image_built = image in images
-
         rows.append(
             {
                 "name": name,
@@ -105,23 +74,4 @@ def agent_rows(config_path):
                 "ok": image_built and running >= expected,
             }
         )
-
     return rows
-
-
-def verify_runtime(config_path):
-    """Check the running deploy against the config. Raises RuntimeError on a gap."""
-    rows = agent_rows(config_path)
-
-    ui.panel(_runtime_table(rows))
-
-    problems = [
-        f"{row['name']}: image {row['image']} was never built"
-        if not row["image_built"]
-        else f"{row['name']}: {row['running']} of {row['expected']} replicas running"
-        for row in rows
-        if not row["ok"]
-    ]
-    if problems:
-        raise RuntimeError("The deploy is incomplete -- " + "; ".join(problems))
-    return {"agents": rows}

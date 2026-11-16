@@ -6,7 +6,7 @@
 Every place that creates, bootstraps, or cleans up a container, image, or volume
 derives the name from here, so replica launch and the controller's
 stale-container removal cannot drift apart. The `canyonos` CLI keeps a copy of
-the same scheme in `canyonos/project.py`, since it cannot import this package.
+the same scheme in `canyonos/deployment.py`, since it cannot import this package.
 
 The project comes from `CANYONOS_DOCKER_PROJECT`, which the CLI sets on the
 Global Controller container. It is read on every call, never at import, so a
@@ -54,10 +54,18 @@ def project_label_args():
     return ["--label", f"{PROJECT_LABEL}={project_group()}"]
 
 
+def docker_name(name):
+    """Return an agent name or replica ID as Docker names it: lowercase, and the `.`
+    of `<project>.<agent>` written `--`, since a container name is also a hostname.
+    The manifest refuses two agents of a project that this names the same."""
+    return name.lower().replace(".", "--")
+
+
 def container_name(replica_id):
     """Return the Docker container name for one agent replica,
-    `canyonos-<project>-<replica ID>` (e.g. `canyonos-portfolio-intentagent-1a2b3c4d`)."""
-    return f"{_prefix()}-{replica_id.lower()}"
+    `canyonos-<deployment>-<replica ID>` (e.g.
+    `canyonos-prod-portfolio--intentagent-1a2b3c4d`)."""
+    return f"{_prefix()}-{docker_name(replica_id)}"
 
 
 def redis_container_name(host):
@@ -77,10 +85,10 @@ def metrics_container_name(host):
 def image_name(agent_name):
     """Return the image tag a deploy builds for an agent and its replicas run, so a
     project's rebuild never replaces another project's image."""
-    return f"{_prefix()}-{agent_name.lower()}"
+    return f"{_prefix()}-{docker_name(agent_name)}"
 
 
 def data_volume_name(agent_name):
     """Return the Docker volume a database agent keeps its data in, which outlives
     its containers across redeploys."""
-    return f"{_prefix()}-{agent_name.lower()}-data"
+    return f"{_prefix()}-{docker_name(agent_name)}-data"

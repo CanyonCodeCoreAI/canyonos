@@ -83,5 +83,5 @@ site/
 evals/results/
 
 # Left behind by deploying or converting an example workflow where it sits.
-examples/*/uv.lock
-examples/*/.claude/
+examples/**/uv.lock
+examples/**/.claude/

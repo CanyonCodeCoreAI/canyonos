@@ -74,7 +74,7 @@ class CallFailed(AssertionError):
 
 @dataclass
 class Recorder:
-    """The calls made so far in this session, in order, and every project folder
+    """The calls made so far in this session, in order, and every deployment folder
     `stage` made, each with the number of calls made before it."""
 
     calls: list[Call] = field(default_factory=list)
@@ -85,7 +85,7 @@ class Recorder:
         return call
 
     def staged_since(self, start: int) -> list[Path]:
-        """The project folders staged once `start` calls had been made."""
+        """The deployment folders staged once `start` calls had been made."""
         return [path for index, path in self.staged if index >= start]
 
     def dump(self, path: Path, start: int = 0) -> None:
@@ -470,22 +470,47 @@ def collect_container_logs(
 
 
 def project_root(workspace: Path) -> Path:
-    """The folder `canyonos` reads the project from: `.canyon` when there is one,
-    else the project folder itself, the rule the CLI follows."""
+    """The folder `canyonos` reads the project in the project folder `workspace`
+    from: `.canyon` when there is one, else the project folder itself, the rule the
+    CLI follows."""
     canyon = workspace / ".canyon"
     return canyon if canyon.is_dir() else workspace
 
 
+def project_dir(deployment: Path) -> Path:
+    """The project folder `stage` put in the deployment folder `deployment`: the
+    folder of the same name inside it, so the project and the dashboard share it."""
+    return deployment / deployment.name
+
+
+def qualified(workspace: Path, name: str) -> str:
+    """`name`, an agent or `<agent>.<method>` of the project in the project folder
+    `workspace`, as the deployment names it: `<project>.<name>`. Staged folders
+    already have the names the CLI gives projects."""
+    return f"{workspace.name}.{name}"
+
+
+def docker_name(agent: str) -> str:
+    """An agent's name, `<project>.<agent>`, as its containers and image name it:
+    lowercase, with the `.` written `--`."""
+    return agent.lower().replace(".", "--")
+
+
 def stage(recorder: Recorder, project, parent: Path, secrets: dict[str, str]) -> Path:
-    """Copy `project` into `parent/<name>`, the folder name the dashboard names it
-    after, and note it on `recorder` for the traces. In order: its source from this
-    repo, without any `.car`, `.canyon` or `.env` at any depth, or cloned whole at
-    its pinned commit; then its committed port as `.canyon`; then its overlay
-    files; then the project's `env` and `secrets` added to the top-level `.env`."""
+    """Copy `project` into `parent/<name>/<name>` and return `parent/<name>`, the
+    deployment folder to run `canyonos` from, named as the dashboard names the
+    deployment, and note it on `recorder` for the traces. In order: its source from
+    this repo, without any `.car`, `.canyon` or `.env` at any depth, or cloned whole
+    at its pinned commit, with the `deployment.yaml` of the deployment folder a
+    source from this repo sits in; then its committed port as `.canyon`; then its
+    overlay files; then its `deployment.yaml`, if any, moved up into the deployment
+    folder; then the project's `env` and `secrets` added to the project folder's
+    `.env`."""
     from .projects import Git
 
-    staged = parent / project.name
-    recorder.staged.append((len(recorder.calls), staged))
+    deployment = parent / project.name
+    staged = project_dir(deployment)
+    recorder.staged.append((len(recorder.calls), deployment))
     if isinstance(project.source, Git):
         clone = parent / f"{project.name}-clone"
         git = ["git", "-c", "advice.detachedHead=false"]
@@ -499,12 +524,16 @@ def stage(recorder: Recorder, project, parent: Path, secrets: dict[str, str]) ->
         shutil.copytree(clone / project.source.path, staged, symlinks=True)
     else:
         shutil.copytree(project.source, staged, symlinks=True, ignore=_stale)
+        if (project.source.parent / "deployment.yaml").is_file():
+            shutil.copy(project.source.parent / "deployment.yaml", deployment)
     if project.port is not None:
         shutil.copytree(project.port, staged / ".canyon", dirs_exist_ok=True)
     for target, file in project.overlay.items():
         shutil.copy(file, staged / target)
+    if (staged / "deployment.yaml").is_file():
+        (staged / "deployment.yaml").rename(deployment / "deployment.yaml")
     _write_env(staged / ".env", {**project.env, **secrets})
-    return staged
+    return deployment
 
 
 def _stale(directory, names):
@@ -554,18 +583,21 @@ def manifest(workspace: Path) -> dict:
 
 @dataclass(frozen=True)
 class Endpoint:
-    """The deployed endpoint: its base URL, its route, the name of its first
-    argument (the one a query goes in) and the names of all its arguments."""
+    """The deployed endpoint: its base URL, its first route
+    (`<project>/<agent>/<method>`), the agent that route calls (`<project>.<agent>`),
+    the name of that method's first argument (the one a query goes in) and the names
+    of all its arguments."""
 
     url: str
     route: str
+    agent: str
     argument: str
     arguments: tuple[str, ...] = ()
 
 
 def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
-    """Run `script` with the checkout's CLI modules from the project folder, the way
-    the CLI itself would see the project. Python runs isolated (`-I`), so a project
+    """Run `script` with the checkout's CLI modules from the deployment folder, the
+    way the CLI itself would see the deployment. Python runs isolated (`-I`), so a project
     file such as `json.py` never shadows a module the script imports."""
     argv = [
         "uv",
@@ -588,28 +620,28 @@ def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str
     return _json.loads(output.strip().splitlines()[-1])
 
 
-def project_group(recorder: Recorder, workspace: Path) -> str:
-    """The Docker group of the deployed project in `workspace`, `canyonos-<folder>-`
-    and the start of its project_id, which every container name starts with."""
+def deployment_group(recorder: Recorder, workspace: Path) -> str:
+    """The Docker group of the deployment in `workspace`, `canyonos-<folder>-`
+    and the start of its deployment_id, which every container name starts with."""
     return cli_value(
         recorder,
         workspace,
-        "project_group()",
-        "from canyonos.project import project_group",
+        "deployment_group()",
+        "from canyonos.deployment import deployment_group",
     )
 
 
 def stop_project(
     recorder: Recorder, workspace: Path, *, timeout: int = 600
 ) -> Call | None:
-    """`canyonos stop <name>` for the project deployed from `workspace`, named so the
-    stop never has to ask which project when others are deployed too. None when the
+    """`canyonos stop <name>` for the deployment in `workspace`, named so the
+    stop never has to ask which deployment when others run too. None when the
     folder has no deploy record, so there is nothing to stop."""
     name = cli_value(
         recorder,
         workspace,
-        "project_name() if os.path.isfile(state_path()) else None",
-        "import os; from canyonos.project import project_name, state_path",
+        "deployment_name() if os.path.isfile(state_path()) else None",
+        "import os; from canyonos.deployment import deployment_name, state_path",
     )
     if name is None:
         return None
@@ -621,16 +653,16 @@ def stop_project(
 def deployed_project_id(
     recorder: Recorder, api: Api, workspace: Path, name: str
 ) -> str:
-    """The dashboard id of the project deployed from `workspace`: the `project_id`
-    `canyonos deploy` saved in its `workflow_config.yaml`, which the dashboard
-    registers it under. Fail unless the dashboard lists that id as `name`."""
+    """The dashboard id of the deployment in `workspace`: the `deployment_id`
+    `canyonos deploy` saved in its `deployment.yaml`, which the dashboard registers
+    it under. Fail unless the dashboard lists that id as `name`."""
     project_id = cli_value(
         recorder,
         workspace,
-        "read_config(default_config_path()).get('project_id')",
-        "from canyonos.constants import default_config_path, read_config",
+        "read_config(deployment_config_path()).get('deployment_id')",
+        "from canyonos.constants import deployment_config_path, read_config",
     )
-    assert project_id, f"no project_id in {workspace.name}'s workflow_config.yaml"
+    assert project_id, f"no deployment_id in {workspace.name}'s deployment.yaml"
     projects = api.get("/projects").json()
     names = {project["id"]: project["name"] for project in projects}
     assert names.get(project_id) == name, (
@@ -659,25 +691,27 @@ def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
             recorder,
             workspace,
             "redis_password()",
-            "from canyonos.project import redis_password",
+            "from canyonos.deployment import redis_password",
         ),
         decode_responses=True,
     )
 
 
 def deployed_endpoint(recorder: Recorder, workspace: Path) -> Endpoint:
-    """Ask the running Global Controller for the endpoint, from the project folder."""
+    """Ask the running Global Controller for the endpoint, from the deployment folder."""
     endpoint = cli_value(
         recorder,
         workspace,
         "deployed_endpoint(load_state()['port'])",
         "from canyonos.gc import deployed_endpoint; from canyonos.init import load_state",
     )
+    route = endpoint["routes"][0]
     return Endpoint(
         url=f"http://127.0.0.1:{endpoint['api_port']}",
-        route=endpoint["method"],
-        argument=endpoint["arguments"][0],
-        arguments=tuple(endpoint["arguments"]),
+        route=f"{route['project']}/{route['agent']}/{route['method']}",
+        agent=f"{route['project']}.{route['agent']}",
+        argument=route["arguments"][0],
+        arguments=tuple(route["arguments"]),
     )
 
 

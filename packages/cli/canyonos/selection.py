@@ -2,31 +2,31 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-The projects `canyonos stop` and `canyonos clean` act on, from any folder.
+The deployments `canyonos stop` and `canyonos clean` act on, from any folder.
 
-A deployed project is one with a record under `~/.canyonos/projects/<project>/`:
-`canyonos deploy` writes it and a stop removes it, so a deploy whose Global
-Controller died is still listed, and stopping it removes what is left. A command
-picks projects as Docker picks containers, by name or ID. Without names, it acts
-on its only candidate, or asks which ones in a menu.
+A deployment is listed when it has a record under
+`~/.canyonos/deployments/<deployment>/`: `canyonos deploy` writes it and a stop removes
+it, so a deploy whose Global Controller died is still listed, and stopping it removes
+what is left. A command picks deployments as Docker picks containers, by name or ID.
+Without names, it acts on its only candidate, or asks which ones in a menu.
 """
 
 import os
 from dataclasses import dataclass
 
-from canyonos import project, ui
-from canyonos.constants import default_config_path, read_config
+from canyonos import deployment, ui
+from canyonos.constants import deployment_config_path, read_config
 from canyonos.init import load_state
 from canyonos.usage.consent import is_interactive
 from utils.tui import multi_select_menu
 
 
 @dataclass(frozen=True)
-class Project:
-    """A project on this machine: its name (`<folder>-<id[:8]>`, which names its
-    Docker group and its records), its project_id, its folder, and its deploy record,
-    None when it isn't deployed. A record written before the CLI recorded the
-    project_id and folder has neither."""
+class Deployment:
+    """A deployment on this machine: its name (`<folder>-<id[:8]>`, which names its
+    Docker group and its records), its deployment_id, its folder, and its deploy
+    record, None when it isn't deployed. A record written before the CLI recorded the
+    id and folder has neither."""
 
     name: str
     id: str | None
@@ -40,46 +40,46 @@ class Project:
         return f"{self.name} · {where}{deployed}"
 
     def named(self, ref):
-        """True when `ref` is this project's full ID, name or folder name."""
+        """True when `ref` is this deployment's full ID, name or folder name."""
         folder = os.path.basename(self.folder) if self.folder else None
         return ref in (self.id, self.name, folder)
 
 
-def deployed_projects():
-    """Every project deployed on this machine, by name. An unreadable record raises
+def recorded_deployments():
+    """Every deployment recorded on this machine, by name. An unreadable record raises
     RuntimeError, naming the file to remove."""
     try:
-        names = sorted(os.listdir(project.projects_dir()))
+        names = sorted(os.listdir(deployment.deployments_dir()))
     except FileNotFoundError:
         return []
-    projects = []
+    deployments = []
     for name in names:
         try:
-            state = load_state(project.state_path(name))
+            state = load_state(deployment.state_path(name))
         except FileNotFoundError:
             continue
-        projects.append(
-            Project(name, state.get("project_id"), state.get("project_dir"), state)
+        deployments.append(
+            Deployment(name, state.get("project_id"), state.get("project_dir"), state)
         )
-    return projects
+    return deployments
 
 
 @dataclass(frozen=True)
 class Choice:
-    """The projects a command acts on. `confirmed` when the user named or ticked them,
-    rather than they being the only candidate; `ok` is False when a ref failed, the
-    choice was cancelled, or there was no terminal to ask in."""
+    """The deployments a command acts on. `confirmed` when the user named or ticked
+    them, rather than they being the only candidate; `ok` is False when a ref failed,
+    the choice was cancelled, or there was no terminal to ask in."""
 
-    projects: list[Project]
+    deployments: list[Deployment]
     confirmed: bool
     ok: bool
 
 
-def current_project():
-    """The project in the folder the command runs from, deployed or not."""
-    return Project(
-        project.project_name(),
-        read_config(default_config_path()).get("project_id"),
+def current_deployment():
+    """The deployment of the folder the command runs from, deployed or not."""
+    return Deployment(
+        deployment.deployment_name(),
+        read_config(deployment_config_path()).get("deployment_id"),
         os.getcwd(),
         None,
     )
@@ -100,10 +100,10 @@ def _resolve(refs, candidates):
             continue
         resolved = False
         if not matches:
-            ui.fail(f"No project is named `{ref}` or has an ID starting with it.")
+            ui.fail(f"No deployment is named `{ref}` or has an ID starting with it.")
         else:
             ui.fail(
-                f"`{ref}` matches {len(matches)} projects; name one by its ID:\n- "
+                f"`{ref}` matches {len(matches)} deployments; name one by its ID:\n- "
                 + "\n- ".join(f"{p.id or p.name} · {p.label}" for p in matches)
             )
     return chosen, resolved
@@ -111,7 +111,7 @@ def _resolve(refs, candidates):
 
 def choose(command, refs, candidates):
     """The `Choice` of candidates `canyonos <command>` acts on: those `refs` name, else
-    the only one, else those ticked in a menu, where the current folder's project
+    the only one, else those ticked in a menu, where the current folder's deployment
     starts ticked."""
     if refs:
         chosen, resolved = _resolve(refs, candidates)
@@ -120,7 +120,7 @@ def choose(command, refs, candidates):
         return Choice(candidates, False, True)
     if not is_interactive():
         ui.fail(
-            f"`canyonos {command}` can act on {len(candidates)} projects, and there "
+            f"`canyonos {command}` can act on {len(candidates)} deployments, and there "
             "is no terminal to ask which:\n- "
             + "\n- ".join(f"{p.id or p.name} · {p.label}" for p in candidates)
         )
@@ -129,10 +129,10 @@ def choose(command, refs, candidates):
     here = os.getcwd()
     chosen = multi_select_menu(
         [(p, p.label) for p in candidates],
-        title=f"Select the projects to {command}",
+        title=f"Select the deployments to {command}",
         selected=[p for p in candidates if p.folder == here],
     )
     if not chosen:
-        ui.say(f"No project selected, so `canyonos {command}` did nothing.")
+        ui.say(f"No deployment selected, so `canyonos {command}` did nothing.")
         return Choice([], False, False)
     return Choice(chosen, True, True)

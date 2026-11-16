@@ -27,7 +27,7 @@ export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
     response: { 200: z.array(PromptListItemSchema) },
     detail: {
       ...doc,
-      summary: 'List the running project prompts with the system prompt agents get',
+      summary: 'List the prompts of the running deployment with the system prompt agents get',
     },
   })
   .get('/:project_id/prompts/:name', ({ params }) => get_prompt(params.project_id, params.name), {

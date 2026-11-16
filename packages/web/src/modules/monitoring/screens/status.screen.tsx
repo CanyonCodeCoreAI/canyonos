@@ -67,10 +67,13 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
 
   const deployment = deploymentOf(endpoint);
   // Agent replicas also run calls, but each one serves an endpoint request already counted.
-  const endpoint_agent = endpoint.data?.endpoint?.agent;
+  // A replica's agent is named `<project>.<agent>`, as the deployment names it.
+  const route_agents = new Set(
+    endpoint.data?.endpoint?.routes.map((route) => `${route.project}.${route.agent}`)
+  );
   const endpoint_requests = readout(replicas_query, ({ replicas }) =>
     replicas
-      .filter((replica) => replica.agent === endpoint_agent)
+      .filter((replica) => route_agents.has(replica.agent))
       .reduce((total, replica) => total + (replica.active_requests ?? 0), 0)
   );
   const active_requests = deployment === 'checking' ? undefined : endpoint_requests;
@@ -178,13 +181,13 @@ function DeleteProjectButton({
           data-testid="status-delete-project"
         >
           <Trash2Icon aria-hidden />
-          Delete project
+          Delete deployment
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent data-testid="status-delete-dialog">
         <DeleteProjectDialog
           project_id={project_id}
-          name={name ?? 'this project'}
+          name={name ?? 'this deployment'}
           deployment={deployment}
         />
       </AlertDialogContent>
@@ -228,7 +231,7 @@ function DeleteProjectDialog({
   const destroy = () =>
     remove.mutate(undefined, {
       onSuccess: () => {
-        toast.success('Project deleted.', TOAST);
+        toast.success('Deployment deleted.', TOAST);
         void navigate({ to: '/' });
       },
     });
@@ -238,7 +241,7 @@ function DeleteProjectDialog({
       <AlertDialogHeader>
         <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
         <AlertDialogDescription>
-          This removes the project and all its telemetry from the dashboard. This can&apos;t be
+          This removes the deployment and all its telemetry from the dashboard. This can&apos;t be
           undone.
         </AlertDialogDescription>
         <DeleteError message={remove.error?.message} />
@@ -276,7 +279,7 @@ function DeleteError({ message }: { readonly message: string | undefined }) {
 const ENDPOINT_MESSAGES: Record<Deployment, string> = {
   checking: 'Looking up the endpoint…',
   running: 'No endpoint reported yet.',
-  not_running: 'Deploy the project to get an endpoint.',
+  not_running: 'Run canyonos deploy to get an endpoint.',
   unknown: 'Could not read the endpoint.',
 };
 
@@ -298,25 +301,29 @@ function EndpointCard({
     );
   }
 
-  const { url, status_url, example_body } = endpoint;
+  const { routes, status_url } = endpoint;
   return (
     <section className={CARD} data-testid="status-endpoint">
       <h2 className="text-foreground text-sm font-semibold">Endpoint</h2>
-      <p
-        className="text-foreground mt-3 font-mono text-sm select-all"
-        data-testid="status-endpoint-url"
-      >
-        {url}
-      </p>
-      <p className="text-muted-foreground mt-4 text-xs">Query the endpoint</p>
-      <pre
-        className="bg-muted/50 mt-1.5 overflow-x-auto rounded-lg p-3 font-mono text-xs"
-        data-testid="status-endpoint-curl"
-      >
-        {`curl -X POST ${url} \\
+      {routes.map(({ url, example_body }) => (
+        <div key={url}>
+          <p
+            className="text-foreground mt-3 font-mono text-sm select-all"
+            data-testid="status-endpoint-url"
+          >
+            {url}
+          </p>
+          <p className="text-muted-foreground mt-4 text-xs">Query the endpoint</p>
+          <pre
+            className="bg-muted/50 mt-1.5 overflow-x-auto rounded-lg p-3 font-mono text-xs"
+            data-testid="status-endpoint-curl"
+          >
+            {`curl -X POST ${url} \\
   -H "Content-Type: application/json" \\
   -d '${JSON.stringify(example_body)}'`}
-      </pre>
+          </pre>
+        </div>
+      ))}
       <p className="text-muted-foreground mt-4 text-xs">Check a request&apos;s result</p>
       <pre
         className="bg-muted/50 mt-1.5 overflow-x-auto rounded-lg p-3 font-mono text-xs"

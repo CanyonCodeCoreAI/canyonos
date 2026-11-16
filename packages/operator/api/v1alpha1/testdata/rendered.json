@@ -31,11 +31,15 @@
         "controllerImage": "registry.example.com/canyonos-core@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "displayName": "Demo_Project",
         "endpoint": {
-          "agent": "Workflow",
-          "arguments": [
-            "query"
+          "routes": [
+            {
+              "agent": "Workflow",
+              "arguments": [
+                "query"
+              ],
+              "method": "main"
+            }
           ],
-          "method": "main",
           "url": "https://agents.example.com"
         },
         "logs": false,
@@ -114,16 +118,27 @@
         "controllerImage": "registry.example.com/canyonos-core@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "displayName": "Demo_Project",
         "endpoint": {
-          "agent": "Workflow",
-          "arguments": [
-            "query"
-          ],
           "ingress": {
             "className": "nginx",
             "host": "agents.example.com",
             "tlsSecretName": "agents-tls"
           },
-          "method": "main"
+          "routes": [
+            {
+              "agent": "Workflow",
+              "arguments": [
+                "query"
+              ],
+              "method": "main"
+            },
+            {
+              "agent": "HelloAgent",
+              "arguments": [
+                "query"
+              ],
+              "method": "main"
+            }
+          ]
         },
         "envSecretRef": "demo-env",
         "imagePullSecrets": [

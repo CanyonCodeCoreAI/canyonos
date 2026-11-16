@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from canyonos import env, ports, project
+from canyonos import deployment, env, ports
 from canyonos.constants import (
     DEFAULT_DASHBOARD_API_PORT,
     DEFAULT_DASHBOARD_PORT,
@@ -50,7 +50,7 @@ SERVICE_PORTS = {
     "web": (8080, DEFAULT_DASHBOARD_PORT, None),
     "api": (3000, DEFAULT_DASHBOARD_API_PORT, "the dashboard's API"),
 }
-# The services a project's containers reach by container name on its network.
+# The services a deployment's containers reach by container name on its network.
 NETWORK_SERVICES = ("api", "db")
 
 
@@ -85,7 +85,7 @@ class DashboardStack:
     @property
     def env_path(self) -> Path:
         """Path to the machine's dashboard `.env`, where `canyonos serve` writes the
-        stack's settings and secrets, shared by every project."""
+        stack's settings and secrets, shared by every deployment."""
         return self.state_dir / ".env"
 
 
@@ -155,10 +155,11 @@ def _container_name(service: str) -> str:
     return f"{COMPOSE_PROJECT}-{service}"
 
 
-def join_project_network(network: str) -> str | None:
-    """Connect the dashboard's api and database to a project's network: the api reaches
-    that project's Redis by name, and the project's telemetry and endpoint reach them
-    by theirs. Returns why it couldn't, or None once connected, already or now."""
+def join_deployment_network(network: str) -> str | None:
+    """Connect the dashboard's api and database to a deployment's network: the api
+    reaches that deployment's Redis by name, and the deployment's telemetry and
+    endpoint reach them by theirs. Returns why it couldn't, or None once connected,
+    already or now."""
     for service in NETWORK_SERVICES:
         container = _container_name(service)
         result = _run(["docker", "network", "connect", network, container])
@@ -171,8 +172,8 @@ def join_project_network(network: str) -> str | None:
     return None
 
 
-def leave_project_network(network: str) -> None:
-    """Disconnect the dashboard's api and database from a project's network, so the
+def leave_deployment_network(network: str) -> None:
+    """Disconnect the dashboard's api and database from a deployment's network, so the
     network can go; one not connected, or a Docker that doesn't answer in time, is left
     to the network removal that follows to report."""
     for service in NETWORK_SERVICES:
@@ -192,15 +193,15 @@ def leave_project_network(network: str) -> None:
             pass
 
 
-def _project_networks() -> list[str]:
-    """The name of every project's network on this machine."""
+def _deployment_networks() -> list[str]:
+    """The name of every deployment's network on this machine."""
     listed = _run(
         [
             "docker",
             "network",
             "ls",
             "--filter",
-            f"label={project.ROLE_LABEL}={project.NETWORK_ROLE}",
+            f"label={deployment.ROLE_LABEL}={deployment.NETWORK_ROLE}",
             "--format",
             "{{.Name}}",
         ]
@@ -208,20 +209,20 @@ def _project_networks() -> list[str]:
     return listed.stdout.split()
 
 
-def _leave_project_networks() -> None:
-    """Disconnect a stopped dashboard from every project's network before it starts.
+def _leave_deployment_networks() -> None:
+    """Disconnect a stopped dashboard from every deployment's network before it starts.
     Docker Desktop publishes the api's port through one of the networks the container
     starts on, and loses it for the host once that network is disconnected, so the api
-    must start on its own network only and join the projects' afterwards."""
-    for network in _project_networks():
-        leave_project_network(network)
+    must start on its own network only and join the deployments' afterwards."""
+    for network in _deployment_networks():
+        leave_deployment_network(network)
 
 
-def _join_project_networks() -> None:
-    """Connect a just-started dashboard to every project's network, so projects
-    already running keep their dashboard when compose recreates it."""
-    for network in _project_networks():
-        join_project_network(network)
+def _join_deployment_networks() -> None:
+    """Connect a just-started dashboard to every deployment's network, so
+    deployments already running keep their dashboard when compose recreates it."""
+    for network in _deployment_networks():
+        join_deployment_network(network)
 
 
 def _existing_dashboard_port() -> int | None:
@@ -705,11 +706,11 @@ def run_dashboard(
 
             report(ServeResult(True, "pull", _pull(stack, manifest, managed_env)))
 
-            _leave_project_networks()
+            _leave_deployment_networks()
             stack, managed_env = _start(
                 stack, manifest, managed_env, movable=not configured_port
             )
-            _join_project_networks()
+            _join_deployment_networks()
             report(ServeResult(True, "start", "dashboard stack started"))
 
             url = _verify(stack.host_ports["web"])

@@ -1739,10 +1739,22 @@ describe('GET /projects/:project_id/monitoring/endpoint', () => {
   const RECORDED_ENDPOINT = {
     public_host: '203.0.113.7',
     api_port: '8080',
-    agent: 'Workflow',
-    method: 'main',
-    arguments: JSON.stringify(['query', 'language']),
-    url: 'http://203.0.113.7:8080/main',
+    routes: JSON.stringify([
+      {
+        project: 'app',
+        agent: 'Workflow',
+        method: 'main',
+        arguments: ['query', 'language'],
+        url: 'http://203.0.113.7:8080/app/Workflow/main',
+      },
+      {
+        project: 'ops',
+        agent: 'Support',
+        method: 'run',
+        arguments: [],
+        url: 'http://203.0.113.7:8080/ops/Support/run',
+      },
+    ]),
   };
 
   test('a project the controller is not running is 404 canyonos.project_not_running', async () => {
@@ -1756,7 +1768,7 @@ describe('GET /projects/:project_id/monitoring/endpoint', () => {
     expect((res.error?.value as { error?: string })?.error).toBe('canyonos.project_not_running');
   });
 
-  test('returns the endpoint the controller recorded, with its status url and an example body', async () => {
+  test('returns the endpoint the controller recorded, with its status url and an example body per route', async () => {
     const { project_id } = await create_project(token, 'Endpoint Project');
     await seed_running_project(project_id, { prompts: {} });
     await seed_endpoint(RECORDED_ENDPOINT);
@@ -1769,12 +1781,25 @@ describe('GET /projects/:project_id/monitoring/endpoint', () => {
     expect(res.data).toEqual({
       project_id,
       endpoint: {
-        url: 'http://203.0.113.7:8080/main',
         status_url: 'http://203.0.113.7:8080/status',
-        agent: 'Workflow',
-        method: 'main',
-        arguments: ['query', 'language'],
-        example_body: { query: 'your query', language: 'your query' },
+        routes: [
+          {
+            url: 'http://203.0.113.7:8080/app/Workflow/main',
+            project: 'app',
+            agent: 'Workflow',
+            method: 'main',
+            arguments: ['query', 'language'],
+            example_body: { query: 'your query', language: 'your query' },
+          },
+          {
+            url: 'http://203.0.113.7:8080/ops/Support/run',
+            project: 'ops',
+            agent: 'Support',
+            method: 'run',
+            arguments: [],
+            example_body: {},
+          },
+        ],
       },
     });
   });
@@ -1794,7 +1819,7 @@ describe('GET /projects/:project_id/monitoring/endpoint', () => {
   test('a partial or malformed endpoint record reads as no endpoint', async () => {
     const { project_id } = await create_project(token, 'Malformed Endpoint Project');
     await seed_running_project(project_id, { prompts: {} });
-    await seed_endpoint({ ...RECORDED_ENDPOINT, arguments: 'not json' });
+    await seed_endpoint({ ...RECORDED_ENDPOINT, routes: 'not json' });
 
     const malformed = await api.projects[project_id]!.monitoring.endpoint.get({
       $headers: bearer(token),

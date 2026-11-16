@@ -1,6 +1,3 @@
-# Where every replica runs: `local` (this machine), `ec2-pool` (machines from `ec2-pool:`) or `ec2-assign`.
-provider: local
-
 agents:
   - name: IntentAgent
     entrypoint: agents/intent_agent.py
@@ -103,20 +100,6 @@ agents:
           type: dict
 
 endpoint:
-  api_port: 8080
-  agent: Workflow
-  method: main
-
-poll_interval: 4
-
-redis:
-  host: localhost
-  port: 6379
-  db: 0
-
-otel:
-  destinations:
-    - name: local
-      protocol: http
-      endpoint: http://canyonos-dashboard-api:3000
-      headers: {}
+  routes:
+    - agent: Workflow
+      method: main

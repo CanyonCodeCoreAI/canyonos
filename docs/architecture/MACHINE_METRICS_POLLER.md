@@ -21,7 +21,7 @@ see [On Kubernetes](#on-kubernetes).
 
 ## Where it runs
 
-Each machine runs the poller in its own container, `canyonos-<project>-metrics-<host>`
+Each machine runs the poller in its own container, `canyonos-<deployment>-metrics-<host>`
 (`metrics_container_name`, dots in the host replaced by dashes). The container runs a
 CanyonOS core image with its entrypoint overridden to
 `python -m canyonos_core.machine_metrics_poller`.
@@ -94,9 +94,9 @@ defaults shown for a poller run by hand.
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | `CANYONOS_REDIS_HOST`     | `localhost`                                                                                                          | `localhost`                                  |
 | `CANYONOS_REDIS_PORT`     | the machine's Redis port                                                                                             | `6379`                                       |
-| `CANYONOS_REDIS_PASSWORD` | the project's Redis password: by name from the Global Controller's environment on its own machine, by value over SSH | none                                         |
+| `CANYONOS_REDIS_PASSWORD` | the deployment's Redis password: by name from the Global Controller's environment on its machine, by value over SSH  | none                                         |
 | `CANYONOS_METRICS_KEY`    | `machine:<host>:metrics`                                                                                             | `machine:<CANYONOS_AGENT_HOST>:metrics`      |
-| `CANYONOS_POLL_INTERVAL`  | workflow config `poll_interval`, default `5`                                                                         | `1.0` seconds                                |
+| `CANYONOS_POLL_INTERVAL`  | `deployment.yaml` `poll_interval`, default `5`                                                                       | `1.0` seconds                                |
 | `CANYONOS_AGENT_HOST`     | not set                                                                                                              | `localhost`; used only when the key is unset |
 
 The Global Controller's own machine uses the host name `localhost` in its key.

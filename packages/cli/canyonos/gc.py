@@ -11,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from canyonos import project, ui
+from canyonos import deployment, ui
 from canyonos.init import load_state
 
 REQUEST_TIMEOUT_SECONDS = 60
@@ -92,7 +92,7 @@ def existing_deploy():
 
 def post_deploy(port):
     """Start a deploy inside the container. Raises GCError on failure."""
-    payload = {"project_name": project.folder_name()}
+    payload = {"project_name": deployment.folder_name()}
     body = json.dumps(payload).encode()
     return _request(
         f"http://127.0.0.1:{port}/deploy", "Deploy", data=body, method="POST"
@@ -137,11 +137,21 @@ def deploy_status(port):
 
 def deployed_endpoint(port):
     """Return the endpoint record the running deploy published (`public_host`,
-    `api_port`, `url`, `agent`, `method`, `arguments`) from GET /endpoint; raise
-    GCError when the container can't say, including when no deploy is running."""
+    `api_port`, and `routes`, each with its `agent`, `method`, `arguments` and `url`)
+    from GET /endpoint; raise GCError when the container can't say, including when no
+    deploy is running."""
     return _request(f"http://127.0.0.1:{port}/endpoint", "Read endpoint", timeout=10)[
         "endpoint"
     ]
+
+
+def test_queries(port):
+    """Return the query each project of the running deploy ships in its
+    `config/test_query.txt`, by project, from GET /test_queries; raise GCError when the
+    container can't say."""
+    return _request(
+        f"http://127.0.0.1:{port}/test_queries", "Read test queries", timeout=10
+    )["queries"]
 
 
 def runtime_status(port):

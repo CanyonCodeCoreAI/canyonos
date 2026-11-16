@@ -207,7 +207,7 @@ def _ec2_config():
         own_machine = _deploying_machine()
         if own_machine is None:
             raise RuntimeError(
-                f"{_controller.config_path} does not set {section}: "
+                f"deployment.yaml does not set {section}: "
                 f"{', '.join(missing)}, "
                 "and this machine's own can't be read from EC2 metadata. Set them, "
                 "or deploy from an EC2 machine such as one made by `canyonos provision`."
@@ -231,9 +231,9 @@ def _ensure_key_pair_imported(cfg, key_path, client):
         text=True,
         check=True,
     ).stdout.encode()
-    project_id = _controller.config.get("project_id") or "default"
+    deployment_id = _controller.config.get("deployment_id") or "default"
     fingerprint = hashlib.sha256(public_key).hexdigest()[:8]
-    key_name = f"canyonos-ec2-{project_id}-{fingerprint}"
+    key_name = f"canyonos-ec2-{deployment_id}-{fingerprint}"
     from botocore.exceptions import ClientError
 
     imported = (cfg["region"], key_name)

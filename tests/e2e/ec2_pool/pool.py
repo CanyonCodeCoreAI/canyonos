@@ -20,6 +20,8 @@ import redis
 from canyonos_core.llm_gateway.pricing import machine_hourly_cost
 
 ENDPOINT = "http://127.0.0.1:8090"
+# The folder ec2_pool.sh stages the app in, which names its project.
+PROJECT = "ec2pool"
 # The fixture's pool and what AWS lists for each type.
 POOL = {"t3.micro": 2, "t3.small": 1}
 CAPACITY = {"t3.micro": ("2", "1024"), "t3.small": ("2", "2048")}
@@ -88,7 +90,10 @@ def check_pool():
 def check_placement():
     """Workflow alone, Small with SlowAgent because Big's machine has more memory in
     use, the endpoint on this machine, and each replica priced by its CPU share."""
-    on = {record["agent_name"]: record.get("machine") for record in replicas().values()}
+    on = {
+        record["agent_name"].removeprefix(f"{PROJECT}."): record.get("machine")
+        for record in replicas().values()
+    }
     check(list(on.values()).count(on["Workflow"]) == 1, f"Workflow shares: {on}")
     check(on["Small"] == on["SlowAgent"], f"Small is not with SlowAgent: {on}")
     check(on["Big"] not in (on["SlowAgent"], on["Workflow"]), on)
@@ -145,9 +150,7 @@ machine_type, count = sys.argv[1], int(sys.argv[2])
 for pid in filter(str.isdigit, os.listdir("/proc")):
     args = open(f"/proc/{pid}/cmdline").read().split("\\0")
     if args[1:4] == ["-m", "canyonos_core.cli", "deploy"]:
-        path = os.path.join(
-            os.readlink(f"/proc/{pid}/cwd"), "config", "workflow_config.yaml"
-        )
+        path = os.path.join(os.readlink(f"/proc/{pid}/cwd"), "deployment.yaml")
         config = yaml.safe_load(open(path))
         config["ec2-pool"]["machine_type"][machine_type] = count
         yaml.safe_dump(config, open(path, "w"), sort_keys=False)
@@ -196,7 +199,7 @@ def shrink(machine_type, timeout):
 
 def call(seconds):
     request = urllib.request.Request(
-        f"{ENDPOINT}/main",
+        f"{ENDPOINT}/{PROJECT}/Workflow/main",
         data=json.dumps({"seconds": seconds}).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",

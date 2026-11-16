@@ -231,8 +231,9 @@ the Local Controller, at dispatch.
 
 Prompts reach the gateway through Redis:
 
-1. On start or reload, the Global Controller stores `config/prompts.yaml` in its Redis
-   as `prompts:yaml`. It writes the live versions to `prompts:config` only if that key
+1. On start or reload, the Global Controller stores every project's
+   `config/prompts.yaml` in its Redis as `prompts:yaml`, each prompt keyed
+   `<project>.<agent>.<function>`. It writes the live versions to `prompts:config` only if that key
    is empty.
 2. When the dashboard API starts, it inserts into Postgres (`system_prompts`) every
    prompt that has no rows yet, keeping the YAML's live flags; a prompt added to the
@@ -259,7 +260,7 @@ text where that call takes its system prompt:
 Any other call, or a body that isn't a JSON object, is sent unchanged.
 `hooks.on_response` records `prompt_name` and `prompt_version` on `future:<id>`.
 
-A redeploy with the same `project_id` sets `prompts:yaml` again and leaves
+A redeploy with the same `deployment_id` sets `prompts:yaml` again and leaves
 `prompts:config` alone. The rules a user sees are in
 [Prompt management](../guides/PROMPTS.md).
 

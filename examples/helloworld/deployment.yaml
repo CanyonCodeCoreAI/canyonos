@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The settings every project of the deployment shares. Each project's agents and
+# routes are in its config/workflow_config.yaml.
+
+# Where the deployment runs: `docker` is Docker on this machine.
+target: docker
+
+# Where every replica runs: `local` (this machine), `ec2-pool` or `ec2-assign`.
+# examples/helloworld-ec2-assign is this example set up for `ec2-assign`.
+provider: local
+
+# Stream failure/log detail into each future's `logs` field; on by default, off here to save bandwidth.
+logs: false

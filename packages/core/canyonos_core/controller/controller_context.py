@@ -22,12 +22,16 @@ import os
 import re
 import subprocess
 
-from canyonos_core.controller.utils import config_env
+from canyonos_core.controller.utils.config_env import load_dotenv, resolve_env_file
 from canyonos_core.controller.utils.config_specs import read_config_specs
-from canyonos_core.controller.utils.config_env import resolve_env_file
 from canyonos_core.controller.utils.redis_client import RedisClient, hide_password
-from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_AGENT_NAME
+from canyonos_core.endpoint import (
+    ENDPOINT_CPUS,
+    ENDPOINT_AGENT_NAME,
+    endpoint_routes,
+)
 from canyonos_core.reconciler import providers
+from canyonos_core.schema import CONFIG_PATH, load_deployment_config
 
 logger = logging.getLogger(__name__)
 
@@ -119,12 +123,9 @@ def list_replicas(redis_client, agent_name=None):
 class ControllerContext(object):
     """Everything the provisioners and providers read off `controller`."""
 
-    def __init__(self, config_path):
-        self.config_path = config_path
-        self.config = self._load_config(config_path)
-        # Validate before launching anything: an agent that boots without its
-        # API keys fails deep inside a container, where it is expensive to debug.
-        self.env_file_path = resolve_env_file(self.config_path)
+    def __init__(self, workspace):
+        self.workspace = workspace
+        self.config = self._load_config(workspace)
 
         redis_cfg = self.config.get("redis", {})
         self.redis = RedisClient(
@@ -141,20 +142,21 @@ class ControllerContext(object):
         providers.bind(self)
 
     @staticmethod
-    def _load_config(config_path):
-        """Load the YAML config, importing root .env values and expanding ${VAR} refs,
-        and add the `endpoint:` block as one more replica spec after the agents.
-        Also gives each agent spec the deployment's `provider`, in the spelling replica
-        records use (`EC2-Pool` becomes `ec2-pool`); the endpoint stays on this machine.
-        A config without `project_id` is refused: `canyonos deploy` writes one before
-        syncing."""
-        config = config_env.load_config(config_path)
-        if not isinstance(config, dict):
-            raise RuntimeError(f"Config must contain a YAML mapping: {config_path}")
-        if not config.get("project_id"):
+    def _load_config(workspace):
+        """Load the deployment in `workspace` (see `load_deployment_config`), and add
+        the `endpoint:` block as one more replica spec after the agents. Also gives
+        each agent spec the deployment's `provider`, in the spelling replica records use
+        (`EC2-Pool` becomes `ec2-pool`); the endpoint stays on this machine. A
+        deployment without `deployment_id` is refused: `canyonos deploy` writes one
+        before syncing. The `.env` beside `deployment.yaml` is imported first, as the
+        provider's credentials, such as AWS keys, come from it."""
+        load_dotenv(os.path.join(workspace, ".env"))
+        config = load_deployment_config(workspace)
+        if not config.get("deployment_id"):
             raise RuntimeError(
-                f"{config_path} has no project_id. A current `canyonos deploy` writes one "
-                "before syncing; a config you supply yourself needs `project_id: <uuid>`."
+                f"{workspace}/deployment.yaml has no deployment_id. A current "
+                "`canyonos deploy` writes one before syncing; a deployment.yaml you "
+                "supply yourself needs `deployment_id: <uuid>`."
             )
         agent_specs = config["agents"]
         endpoint = config["endpoint"]
@@ -168,8 +170,7 @@ class ControllerContext(object):
                 "replicas": 1,
                 "resources": {"cpu": ENDPOINT_CPUS},
                 "api_port": endpoint.get("api_port"),
-                "agent": endpoint["agent"],
-                "method": endpoint["method"],
+                "routes": endpoint_routes(config),
                 "provider": providers.DEFAULT,
             }
         )
@@ -196,16 +197,25 @@ class ControllerContext(object):
         self._set_agent_specs(agent_specs)
         return True
 
+    def env_file_of(self, agent_spec):
+        """The `.env` of the agent's project, or None when it has none.
+
+        Raises:
+            ValueError: the file exists but is unreadable. Deploy fails here rather
+                than start an agent with no API keys.
+        """
+        return resolve_env_file(
+            os.path.join(self.workspace, agent_spec["project"], CONFIG_PATH)
+        )
+
     def refresh_config(self):
-        """Re-read the config and its env file path; keep the old ones if the new config
-        is unusable."""
+        """Re-read the config; keep the old one if the new config is unusable."""
         try:
-            config = self._load_config(self.config_path)
-            self.env_file_path = resolve_env_file(self.config_path)
+            config = self._load_config(self.workspace)
         except Exception as e:
             logger.warning(
                 "Keeping the current config; reloading %s failed: %s",
-                self.config_path,
+                self.workspace,
                 e,
             )
             return

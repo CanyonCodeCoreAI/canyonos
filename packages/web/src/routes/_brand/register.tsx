@@ -12,7 +12,7 @@ const REGISTER_BRAND: BrandCopy = {
   eyebrow: 'First run',
   title: 'Set up the first account.',
   description:
-    'Anyone with an account on this dashboard sees every project it runs. Registration closes once this account exists.',
+    'Anyone with an account on this dashboard sees every deployment it runs. Registration closes once this account exists.',
   footnote: 'Takes ten seconds.',
 };
 

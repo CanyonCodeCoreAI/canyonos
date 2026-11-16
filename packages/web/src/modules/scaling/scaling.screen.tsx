@@ -9,6 +9,7 @@ import type {
   ScalingAgent,
   ScalingAgentsResponse,
   ScalingMetric,
+  ScalingResponse,
   ScalingStatus,
 } from '@canyonos/api/scaling';
 
@@ -62,7 +63,7 @@ function ScalingBody({
   query,
 }: {
   readonly project_id: string;
-  readonly query: UseQueryResult<ScalingStatus, Error>;
+  readonly query: UseQueryResult<ScalingResponse, Error>;
 }) {
   if (query.isError && !query.isFetching) {
     return (
@@ -83,16 +84,36 @@ function ScalingBody({
       </div>
     );
   }
+  const projects = Object.entries(query.data.projects);
+  if (projects.length === 0) {
+    return (
+      <EmptyState size="section" test_id="scaling-empty">
+        The controller has not published any agents yet.
+      </EmptyState>
+    );
+  }
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex max-w-3xl flex-col gap-7">
-        {/* Keyed on the stored policy: a save or delete re-reads it and remounts the card closed. */}
-        <ScalingPolicyCard
-          key={JSON.stringify(query.data)}
-          project_id={project_id}
-          policy={query.data}
-        />
-        <ScalingAgents project_id={project_id} policy={query.data} />
+      <div className="flex max-w-3xl flex-col gap-10">
+        {projects.map(([project, policy]) => (
+          <section
+            key={project}
+            className="flex flex-col gap-7"
+            aria-label={project}
+            data-testid="scaling-project"
+            data-project={project}
+          >
+            <h2 className="text-foreground font-mono text-base font-semibold">{project}</h2>
+            {/* Keyed on the stored policy: a save or delete re-reads it and remounts the card closed. */}
+            <ScalingPolicyCard
+              key={JSON.stringify(policy)}
+              project_id={project_id}
+              project={project}
+              policy={policy}
+            />
+            <ScalingAgents project_id={project_id} project={project} policy={policy} />
+          </section>
+        ))}
       </div>
     </TooltipProvider>
   );
@@ -100,20 +121,26 @@ function ScalingBody({
 
 const POLL_SECONDS = DASHBOARD_POLL_INTERVAL_MS / 1000;
 
-function agentsState(state: ReadState, data: ScalingAgentsResponse | undefined) {
-  if (state !== 'ready' || data === undefined) return state;
-  return data.agents.length === 0 ? 'empty' : 'list';
+function agentsState(state: ReadState, agents: readonly ScalingAgent[] | undefined) {
+  if (state !== 'ready' || agents === undefined) return state;
+  return agents.length === 0 ? 'empty' : 'list';
 }
 
-/** What each agent is running right now, polled, so a saved policy can be seen taking effect. */
+/**
+ * What each agent of `project`, named `<project>.<agent>`, is running right now, polled, so a
+ * saved policy can be seen taking effect.
+ */
 function ScalingAgents({
   project_id,
+  project,
   policy,
 }: {
   readonly project_id: string;
+  readonly project: string;
   readonly policy: ScalingStatus;
 }) {
   const query = useQuery(scalingAgentsQueryOptions(project_id));
+  const agents = query.data?.agents.filter((agent) => agent.name.startsWith(`${project}.`));
   const state = readState(query);
   const metric = policy.status === 'applied' ? policy.policy.metric : null;
 
@@ -122,7 +149,7 @@ function ScalingAgents({
       className="flex flex-col gap-3"
       aria-label="Agents"
       data-testid="scaling-agents"
-      data-state={agentsState(state, query.data)}
+      data-state={agentsState(state, agents)}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="text-foreground text-sm font-semibold">Agents now</h2>
@@ -131,16 +158,18 @@ function ScalingAgents({
           seconds.
         </p>
       </div>
-      <ScalingAgentsBody query={query} metric={metric} />
+      <ScalingAgentsBody query={query} agents={agents} metric={metric} />
     </section>
   );
 }
 
 function ScalingAgentsBody({
   query,
+  agents,
   metric,
 }: {
   readonly query: UseQueryResult<ScalingAgentsResponse, Error>;
+  readonly agents: readonly ScalingAgent[] | undefined;
   readonly metric: ScalingMetric | null;
 }) {
   if (query.isError && !query.isFetching) {
@@ -153,7 +182,7 @@ function ScalingAgentsBody({
       />
     );
   }
-  if (query.data === undefined) {
+  if (agents === undefined) {
     return (
       <Skeleton
         className="h-32 w-full rounded-lg"
@@ -162,14 +191,14 @@ function ScalingAgentsBody({
       />
     );
   }
-  if (query.data.agents.length === 0) {
+  if (agents.length === 0) {
     return (
       <EmptyState size="section" test_id="scaling-agents-empty">
         The controller has not published any agents yet.
       </EmptyState>
     );
   }
-  return <AgentsTable agents={query.data.agents} metric={metric} />;
+  return <AgentsTable agents={agents} metric={metric} />;
 }
 
 const COLUMNS: readonly { readonly metric: ScalingMetric; readonly label: string }[] = [

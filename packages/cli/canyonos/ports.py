@@ -8,7 +8,7 @@ port) is used as it is, or refused when it is taken: what reads it back would
 otherwise look for it where it isn't. Any other port starts at the one it had last
 time, or its default, and moves to the next one that is free on every interface
 (`port_utils.is_port_free`) and claimed by nothing else of CanyonOS here: another
-deployed project's Global Controller, Redis or endpoint (its state.json), a running
+deployment's Global Controller, Redis or endpoint (its state.json), a running
 port-forward (its record), or the dashboard. The Global Controller skips the same
 ports when Docker makes it move one (`port_utils.RESERVED_PORTS_ENV`).
 
@@ -20,7 +20,7 @@ import contextlib
 import json
 import os
 
-from canyonos import project, ui
+from canyonos import deployment, ui
 from canyonos.os_support import file_lock
 from canyonos.port_utils import find_free_port
 
@@ -30,8 +30,8 @@ DASHBOARD = "the dashboard"
 @contextlib.contextmanager
 def held():
     """Hold the lock every command picks a port under, waiting for one that has it."""
-    # Beside `projects/`, not in it: every entry there is read as a project.
-    home = os.path.dirname(project.projects_dir())
+    # Beside `deployments/`, not in it: every entry there is read as a deployment.
+    home = os.path.dirname(deployment.deployments_dir())
     os.makedirs(home, exist_ok=True)
     lock = os.path.join(home, "ports.lock")
     with file_lock(lock, wait=True):
@@ -50,14 +50,14 @@ def claimed(dashboard_port=None, picking_dashboard=False):
 
     claims = {}
     with contextlib.suppress(OSError):
-        for name in os.listdir(project.projects_dir()):
+        for name in os.listdir(deployment.deployments_dir()):
             with contextlib.suppress(OSError, ValueError):
-                path = os.path.join(project.projects_dir(), name, "state.json")
+                path = os.path.join(deployment.deployments_dir(), name, "state.json")
                 with open(path, encoding="utf-8") as f:
                     state = json.load(f)
                 for key in ("port", "redis_port", "api_port"):
                     if isinstance(state.get(key), int):
-                        claims[state[key]] = f"project {name}"
+                        claims[state[key]] = f"deployment {name}"
     for name in running_forwards():
         claims[forward_port(name)] = f"the port-forward {name}"
     if not picking_dashboard or _existing_dashboard_port():

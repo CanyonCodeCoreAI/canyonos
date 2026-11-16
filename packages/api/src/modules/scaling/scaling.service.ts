@@ -13,6 +13,7 @@ import type {
   ScalingAgentsResponse,
   ScalingDeleteResponse,
   ScalingPolicy,
+  ScalingResponse,
   ScalingStatus,
 } from './scaling.types';
 
@@ -20,8 +21,11 @@ const CONFIG_KEY = 'scaling:config';
 const ACTIVE_AGENTS_KEY = 'agents:active';
 const SAVE_ATTEMPTS = 5;
 
-// config/scaling.yaml as the GC published it: other top-level keys are kept untouched on save.
-const ScalingConfigSchema = z.object({ scaling: z.unknown() }).passthrough();
+// Each project's config/scaling.yaml as the GC published it, by project name: other top-level
+// keys are kept untouched on save.
+const ScalingConfigSchema = z
+  .object({ projects: z.record(z.string(), z.unknown()).default({}) })
+  .passthrough();
 type ScalingConfig = z.infer<typeof ScalingConfigSchema>;
 
 // The entries the controller publishes for each agent; a database is never scaled.
@@ -103,32 +107,63 @@ async function update_config(
   );
 }
 
-export async function get_scaling(project_id: string): Promise<ScalingStatus> {
+/**
+ * The deployment's projects: those its active agents, named `<project>.<agent>`, belong to. The
+ * endpoint's own agent is in no project.
+ */
+async function project_names(redis: RedisClient): Promise<string[]> {
+  const agents = parse_names(await redis.get(ACTIVE_AGENTS_KEY)).filter((name) =>
+    name.includes('.')
+  );
+  return [...new Set(agents.map((name) => name.split('.')[0]!))].sort();
+}
+
+async function assert_project(redis: RedisClient, project: string): Promise<void> {
+  if (!(await project_names(redis)).includes(project)) {
+    throw notFound('scaling.project_not_found', `No project ${project} is deployed`);
+  }
+}
+
+export async function get_scaling(project_id: string): Promise<ScalingResponse> {
   return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
-    return status_of(parse_config(await redis.get(CONFIG_KEY)).scaling);
+    const { projects } = parse_config(await redis.get(CONFIG_KEY));
+    const names = await project_names(redis);
+    return {
+      projects: Object.fromEntries(names.map((name) => [name, status_of(projects[name])])),
+    };
   });
 }
 
 export async function save_scaling_policy(
   project_id: string,
+  project: string,
   policy: ScalingPolicy
 ): Promise<ScalingPolicy> {
   return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
-    await update_config(redis, (config) => ({ ...config, scaling: policy }));
+    await assert_project(redis, project);
+    await update_config(redis, (config) => ({
+      ...config,
+      projects: { ...config.projects, [project]: policy },
+    }));
     return policy;
   });
 }
 
-export async function delete_scaling_policy(project_id: string): Promise<ScalingDeleteResponse> {
+export async function delete_scaling_policy(
+  project_id: string,
+  project: string
+): Promise<ScalingDeleteResponse> {
   return with_redis(project_id, async (redis) => {
     await assert_project_running(redis, project_id);
+    await assert_project(redis, project);
     await update_config(redis, (config) => {
-      if (config.scaling == null) {
-        throw notFound('scaling.policy_not_found', 'No scaling policy is stored');
+      if (config.projects[project] == null) {
+        throw notFound('scaling.policy_not_found', `No scaling policy is stored for ${project}`);
       }
-      return { ...config, scaling: null };
+      const { [project]: _, ...projects } = config.projects;
+      return { ...config, projects };
     });
     return { status: 'none' };
   });

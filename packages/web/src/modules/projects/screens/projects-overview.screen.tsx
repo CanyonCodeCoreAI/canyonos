@@ -41,9 +41,9 @@ function firstNameFor(user: User | null): string | undefined {
 }
 
 function heroSummary(projectCount: number | undefined): string {
-  if (projectCount === undefined) return 'Every project on this machine.';
-  if (projectCount === 0) return 'No projects on this machine yet.';
-  return `${projectCount} ${projectCount === 1 ? 'project' : 'projects'} on this machine.`;
+  if (projectCount === undefined) return 'Every deployment on this machine.';
+  if (projectCount === 0) return 'No deployments on this machine yet.';
+  return `${projectCount} ${projectCount === 1 ? 'deployment' : 'deployments'} on this machine.`;
 }
 
 const RELATIVE_UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
@@ -100,7 +100,7 @@ export function ProjectsOverviewScreen() {
       </header>
 
       <section className={`${ENTER} flex min-h-0 flex-1 flex-col gap-3 [animation-delay:140ms]`}>
-        <SectionLabel>Your projects</SectionLabel>
+        <SectionLabel>Your deployments</SectionLabel>
         <ProjectsList projectsQuery={projectsQuery} spendByProject={spend_by_project} />
       </section>
     </main>
@@ -137,7 +137,7 @@ function ProjectsList({
     return (
       <QueryError
         test_id="projects-overview-error"
-        message="We couldn't load your projects."
+        message="We couldn't load your deployments."
         onRetry={() => void projectsQuery.refetch()}
       />
     );
@@ -234,7 +234,7 @@ function NoProjectsYet() {
   return (
     <div className="flex flex-1" data-testid="projects-overview-empty">
       <EmptyState>
-        <p>No projects on this machine yet.</p>
+        <p>No deployments on this machine yet.</p>
       </EmptyState>
     </div>
   );

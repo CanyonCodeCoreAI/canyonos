@@ -22,7 +22,7 @@ import urllib.request
 
 from canyonos import ui
 from canyonos.clean import run_clean
-from canyonos.constants import CANYON_DIR
+from canyonos.constants import CANYON_DIR, project_config_path, project_folder
 from canyonos.dashboard_registration import (
     RegistrationError,
     add_sample_data,
@@ -162,11 +162,9 @@ def _typed(command, run, what, optional=False):
 
 
 def _is_project(folder):
-    """True if `folder` holds a `workflow_config.yaml`, in either layout: under
-    a ported `CANYON_DIR`, or in a `config/` at its root."""
-    return os.path.isfile(
-        os.path.join(folder, CANYON_DIR, "config", "workflow_config.yaml")
-    ) or os.path.isfile(os.path.join(folder, "config", "workflow_config.yaml"))
+    """True if `folder` holds a `config/workflow_config.yaml`, in either layout: under
+    a ported `CANYON_DIR`, or at its root."""
+    return os.path.isfile(project_config_path(project_folder(folder)))
 
 
 def _bundled(name):
@@ -191,7 +189,8 @@ def _starter_files(name):
 
 
 def _fetch(name, into=None):
-    """Copy the bundled workflow `name` into a folder of its own under `into`
+    """Copy the bundled workflow `name`, a deployment folder holding its
+    `deployment.yaml` and the project `name`, into a folder of its own under `into`
     (the current directory by default) and return that folder.
 
     A folder already holding this workflow is returned untouched, so a second run
@@ -204,10 +203,10 @@ def _fetch(name, into=None):
     destination = os.path.join(into or os.getcwd(), name)
 
     if os.path.exists(destination):
-        if _is_project(destination):
+        if _is_project(os.path.join(destination, name)):
             return destination
         raise RuntimeError(
-            f"{destination} already exists and is not a CanyonOS project. "
+            f"{destination} already exists and does not hold the {name} workflow. "
             "Move it or run `canyonos quickstart` from another folder."
         )
 
@@ -223,7 +222,7 @@ def _fetch(name, into=None):
         target = os.path.join(destination, relative)
         os.makedirs(os.path.dirname(target) or destination, exist_ok=True)
         # The user's key goes in `.env`, so only they can read it.
-        if relative == ENV_FILENAME:
+        if relative == os.path.join(name, ENV_FILENAME):
             write_private_file(target, contents.decode("utf-8"))
         else:
             with open(target, "wb") as f:
@@ -256,7 +255,8 @@ def _get_starter():
         else:
             ui.fail("`canyonos quickstart` needs a terminal to ask what to deploy.")
             ui.hint(
-                "  -> run it directly, or use `canyonos deploy` in a workflow folder"
+                "  -> run it directly, or use `canyonos deploy <project>` in a "
+                "deployment folder"
             )
         return None
 
@@ -279,9 +279,10 @@ def _get_starter():
 # edit a file that is already there rather than to answer a prompt.
 
 
-def _ask_for_keys(names):
-    """Say which keys the workflow needs and where to put them. Nothing to say
-    for a workflow that needs none, which is the point of Hello World."""
+def _ask_for_keys(names, project):
+    """Say which keys the workflow needs and where to put them: the `.env` of its
+    project folder `project`. Nothing to say for a workflow that needs none, which
+    is the point of Hello World."""
     if not names:
         return
 
@@ -290,7 +291,7 @@ def _ask_for_keys(names):
     ui.blank()
     # The full path, so the command works from whatever folder that terminal
     # happens to be in -- this run's `cd` moved only this process.
-    ui.command(f"  vi {os.path.join(os.getcwd(), ENV_FILENAME)}")
+    ui.command(f"  vi {os.path.join(os.getcwd(), project, ENV_FILENAME)}")
     ui.blank()
     ui.say("Set your key in it, then carry on here:")
     ui.blank()
@@ -307,8 +308,8 @@ def _change_into(folder):
 
 
 def _prepare_project(folder):
-    """Finish stage 3: change into the workflow folder. Returns True when it is
-    ready to deploy.
+    """Finish stage 3: change into the workflow's deployment folder. Returns True
+    when it is ready to deploy.
 
     `cd` is typed rather than done quietly, because every command after it runs
     from in here, and a reader who missed that cannot repeat the run themselves.
@@ -321,19 +322,22 @@ def _prepare_project(folder):
         _typed(
             f"cd ./{os.path.basename(folder)}",
             lambda: _change_into(folder),
-            "move into the workflow folder, where the rest of the run happens",
+            "move into the workflow's deployment folder, where the rest of the run "
+            "happens",
         )
     )
 
 
-def _deploy():
-    """Run stage 4: deploy the workflow, then check it and show the dashboard
-    address. Returns True when it is up and healthy."""
+def _deploy(folder):
+    """Run stage 4: deploy the starter's project from its deployment folder `folder`,
+    the current one, then check it and show the dashboard address. Returns True
+    when it is up and healthy."""
     _step(4)
+    name = os.path.basename(folder)
     deployed = _typed(
-        "canyonos deploy",
-        lambda: run_deploy(banner=False),
-        "build each agent's image and deploy the workflow",
+        f"canyonos deploy {name}",
+        lambda: run_deploy([name], banner=False),
+        "deploy the workflow's project, building each agent's image",
     )
     if deployed is None:
         return False
@@ -416,13 +420,13 @@ def _offer_clean():
     return True
 
 
-def _sample_query():
-    """The workflow's own test query and the file it came from, looked for in
-    both the ported `CANYON_DIR` layout and a `config/` at the project root.
+def _sample_query(folder="."):
+    """The test query of the workflow in `folder` and the file it came from, looked
+    for in both the ported `CANYON_DIR` layout and a `config/` at the project root.
     `(None, None)` when the workflow ships none."""
     for path in (
-        os.path.join(CANYON_DIR, "config", "test_query.txt"),
-        os.path.join("config", "test_query.txt"),
+        os.path.join(folder, CANYON_DIR, "config", "test_query.txt"),
+        os.path.join(folder, "config", "test_query.txt"),
     ):
         try:
             with open(path, encoding="utf-8") as f:
@@ -468,7 +472,7 @@ def _await_result(endpoint, request_id, timeout=REQUEST_TIMEOUT):
     return {"status": "timeout"}
 
 
-def _curl_for(endpoint):
+def _curl_for(endpoint, project):
     """The `curl` stage 6 asks for, and the file its query came from.
 
     Built from what the deploy published -- the address and method from the
@@ -476,14 +480,14 @@ def _curl_for(endpoint):
     as shown rather than needing an edit. It is one line, and the query is
     flattened to single spaces, because it has to survive being typed.
     """
-    query, query_path = _sample_query()
+    query, query_path = _sample_query(project)
     if query:
         query = " ".join(query.split())
-    body = json.dumps({name: query or f"your {name}" for name in endpoint["arguments"]})
+    # The starter serves one route.
+    route = endpoint["routes"][0]
+    body = json.dumps({name: query or f"your {name}" for name in route["arguments"]})
     command = (
-        f"curl -X POST {endpoint['url']} "
-        f"-H 'Content-Type: application/json' "
-        f"-d '{body}'"
+        f"curl -X POST {route['url']} -H 'Content-Type: application/json' -d '{body}'"
     )
     return command, query_path
 
@@ -542,8 +546,9 @@ def _send_request(command, endpoint):
     return False
 
 
-def _first_request(workflow):
-    """Run stage 6: send the first request, fill the dashboard with `workflow`'s
+def _first_request(workflow, project):
+    """Run stage 6: send the first request to the starter in the folder `project`,
+    fill the dashboard with `workflow`'s
     recorded runs, then offer to take the deploy down. Returns True when the
     workflow answered.
 
@@ -552,7 +557,7 @@ def _first_request(workflow):
     either way, and it is the last thing anyone does here.
     """
     _step(6)
-    answered = _send_first_request()
+    answered = _send_first_request(project)
     # Whether or not the request landed. A workflow shipping a placeholder key
     # fails its first request until someone fills one in, and that is the run
     # that most needs a dashboard with something in it.
@@ -578,8 +583,9 @@ def _add_sample_data(workflow):
     ui.ok(f"Added example runs ({added['spans']} spans).")
 
 
-def _send_first_request():
-    """Show the `curl` for the deployed endpoint, wait for the user to type it,
+def _send_first_request(project):
+    """Show the `curl` for the deployed endpoint, with the query of the starter in
+    `project`, wait for the user to type it,
     send it and wait for the answer. True when the workflow answered."""
     try:
         endpoint = deployed_endpoint(load_state()["port"])
@@ -587,7 +593,7 @@ def _send_first_request():
         ui.warn("Could not read the endpoint -- `canyonos status` prints it.")
         return False
 
-    command, query_path = _curl_for(endpoint)
+    command, query_path = _curl_for(endpoint, project)
     if query_path:
         ui.hint(f"  query from {query_path}")
         ui.blank()
@@ -653,20 +659,19 @@ def _quickstart():
 
     name, folder = picked
 
-    # `canyonos deploy` reads the project out of the current directory, the
-    # sample query is found relative to it, and the deploy names its containers
-    # after it. So the run changes into it, the way a user would `cd`, rather
-    # than passing a path none of those commands would take.
+    # `canyonos deploy` runs from the deployment folder, which names the deployment
+    # and holds its `deployment.yaml`, and every command after it runs from there.
+    # So the run changes into it, the way a user would `cd`.
     if not _prepare_project(folder):
         return False
 
-    _ask_for_keys(STARTERS[name]["secrets"])
+    _ask_for_keys(STARTERS[name]["secrets"], name)
 
-    if not _deploy():
+    if not _deploy(folder):
         return False
 
     # Stage 6 makes the teardown offer itself, on its way out either way.
-    if not _first_request(name):
+    if not _first_request(name, os.path.join(folder, name)):
         return False
 
     ui.blank()

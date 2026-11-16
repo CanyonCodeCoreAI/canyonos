@@ -48,7 +48,7 @@ export async function get_agent_details(
   if (!details) {
     throw notFound(
       'metrics.agent_not_found',
-      `Agent "${agent_id}" has no telemetry data for this project in the selected range`
+      `Agent "${agent_id}" has no telemetry data for this deployment in the selected range`
     );
   }
   return details;

@@ -40,12 +40,12 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
   .delete('/:project_id', ({ params }) => delete_project(params.project_id), {
     params: ProjectIdParams,
     response: { 200: ProjectDeletedSchema },
-    detail: { ...doc, summary: 'Delete a project that is not running' },
+    detail: { ...doc, summary: 'Delete a deployment that is not running' },
   })
   .get('/:project_id/stats', ({ params }) => get_project_stats(params.project_id), {
     params: ProjectIdParams,
     response: { 200: ProjectStatsSchema },
-    detail: { ...doc, summary: 'Get project statistics' },
+    detail: { ...doc, summary: 'Get deployment statistics' },
   })
   .post(
     '/:project_id/sample-data',
@@ -56,12 +56,12 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
       response: { 200: SampleDataSchema },
       detail: {
         ...doc,
-        summary: 'Add the recorded example run to this project',
+        summary: 'Add the recorded example run to this deployment',
         description:
           'Replays a run of the named bundled workflow that this API ships, spread across the ' +
           'week ending now, so a first run opens a dashboard with history rather than one ' +
           'request. The body names a workflow, never data: the only rows it can write are its ' +
-          'own. Repeatable, and it never touches rows the project produced itself.',
+          'own. Repeatable, and it never touches rows the deployment produced itself.',
       },
     }
   )

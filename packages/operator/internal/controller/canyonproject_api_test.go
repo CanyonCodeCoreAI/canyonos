@@ -31,7 +31,9 @@ func validProject(name string) *canyonosv1alpha1.CanyonProject {
 		Spec: canyonosv1alpha1.CanyonProjectSpec{
 			ProjectID: testProjectID,
 			ConfigRef: "canyonos-config",
-			Endpoint:  canyonosv1alpha1.EndpointSpec{Agent: "Workflow", Method: "main"},
+			Endpoint: canyonosv1alpha1.EndpointSpec{Routes: []canyonosv1alpha1.EndpointRoute{
+				{Agent: "Workflow", Method: "main"},
+			}},
 		},
 	}
 }
@@ -97,9 +99,11 @@ var _ = Describe("CanyonProject API", func() {
 		Expect(k8sClient.Create(ctx, project)).NotTo(Succeed())
 	})
 
-	It("needs the endpoint's agent and method", func() {
+	It("needs the endpoint's routes, each with an agent and method", func() {
 		project := validProject(name)
-		project.Spec.Endpoint.Method = ""
+		project.Spec.Endpoint.Routes[0].Method = ""
+		Expect(k8sClient.Create(ctx, project)).NotTo(Succeed())
+		project.Spec.Endpoint.Routes = nil
 		Expect(k8sClient.Create(ctx, project)).NotTo(Succeed())
 	})
 

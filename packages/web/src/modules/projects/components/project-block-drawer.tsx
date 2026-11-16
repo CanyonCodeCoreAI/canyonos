@@ -330,7 +330,7 @@ function BlockOverview({ details }: { readonly details: MetricsAgentDetails }) {
         />
         <StatCard
           size="compact"
-          label="Per 1K project queries"
+          label="Per 1K deployment queries"
           value={costPer1kQueries(cost, project.request_count)}
           hint={`over ${formatCount(project.request_count)} queries`}
         />
@@ -359,7 +359,7 @@ function BlockOverview({ details }: { readonly details: MetricsAgentDetails }) {
         />
       </div>
       <p className="text-muted-foreground text-[0.8125rem] leading-relaxed text-pretty">
-        Ran in {formatCount(agent.request_count)} of the project&apos;s{' '}
+        Ran in {formatCount(agent.request_count)} of the deployment&apos;s{' '}
         {formatCount(project.request_count)} queries (
         {formatShare(agent.request_count, project.request_count)}).
       </p>

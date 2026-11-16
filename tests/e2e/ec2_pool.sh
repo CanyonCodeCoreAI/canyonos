@@ -41,7 +41,10 @@ export CANYONOS_ENV=development
 export CANYONOS_CORE_IMAGE=local
 ARTIFACTS_DIR="${E2E_ARTIFACTS_DIR:-$(mktemp -d)}"
 mkdir -p "$ARTIFACTS_DIR"
-PROJECT_DIR="$(mktemp -d)/ec2pool"
+# The pool app is the project `ec2pool`, deployed from a deployment folder beside it.
+STAGE_DIR="$(mktemp -d)"
+PROJECT_DIR="$STAGE_DIR/ec2pool"
+DEPLOYMENT_DIR="$STAGE_DIR/deployment"
 START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -53,7 +56,7 @@ finish() {
   for name in $(docker ps -a --filter name=canyonos --format '{{.Names}}'); do
     docker logs "$name" >"$ARTIFACTS_DIR/$name.log" 2>&1 || true
   done
-  (cd "$PROJECT_DIR" && canyonos stop) || true
+  (cd "$DEPLOYMENT_DIR" && canyonos stop) || true
   if [ "$status" -eq 0 ]; then
     step "PASS: ec2_pool"
   else
@@ -69,14 +72,16 @@ trap finish EXIT
 step "Staging the pool app in $PROJECT_DIR"
 cp -R "$FIXTURE_DIR" "$PROJECT_DIR"
 rm "$PROJECT_DIR/pool.py"
-# The controller reads the ec2: block's ${EC2_*} values, and keys when given, from the
-# app's .env; without keys it uses this machine's role.
+mkdir "$DEPLOYMENT_DIR"
+mv "$PROJECT_DIR/deployment.yaml" "$DEPLOYMENT_DIR/deployment.yaml"
+# The controller reads the ec2-pool: block's ${EC2_*} values, and keys when given, from
+# the deployment's .env; without keys it uses this machine's role.
 printf 'EC2_REGION=%s\nEC2_SUBNET_ID=%s\nEC2_SECURITY_GROUP_ID=%s\nEC2_POOL_SMALL_TYPE=t3.small\n' \
-  "$EC2_REGION" "$EC2_SUBNET_ID" "$EC2_SECURITY_GROUP_ID" >"$PROJECT_DIR/.env"
-chmod 600 "$PROJECT_DIR/.env"
+  "$EC2_REGION" "$EC2_SUBNET_ID" "$EC2_SECURITY_GROUP_ID" >"$DEPLOYMENT_DIR/.env"
+chmod 600 "$DEPLOYMENT_DIR/.env"
 if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
   printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
-    "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >>"$PROJECT_DIR/.env"
+    "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >>"$DEPLOYMENT_DIR/.env"
 fi
 
 step "Building canyonos-core:dev"
@@ -85,20 +90,26 @@ docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$
 # The deployment picks one provider, agents cannot pick their own, and machine_type maps
 # each type to how many machines of it to start.
 while IFS='|' read -r case expected; do
-  step "canyonos validate: $case"
-  # validate checks a project root: its code and its manifest in config/.
-  copy="$(mktemp -d)/project"
-  cp -R "$PROJECT_DIR" "$copy"
-  uv run --project "$REPO_ROOT" python - "$copy/config/workflow_config.yaml" "$case" <<'PY'
-import sys, yaml
-path, case = sys.argv[1:]
-config = yaml.safe_load(open(path))
-# Literal values, since the image validate runs in has no EC2_* variables.
+  step "Checking the deployment: $case"
+  # The deployment as the Global Controller's workspace holds it: deployment.yaml and
+  # a folder per project.
+  workspace="$(mktemp -d)"
+  cp "$DEPLOYMENT_DIR/deployment.yaml" "$workspace/deployment.yaml"
+  cp -R "$PROJECT_DIR" "$workspace/ec2pool"
+  out="$ARTIFACTS_DIR/check-${case// /-}.txt"
+  uv run --project "$REPO_ROOT" python - "$workspace" "$case" >"$out" <<'PY'
+import os, sys, yaml
+from canyonos_core.schema import CONFIG_PATH, check_deployment
+from canyonos_core.schema.errors import render_violation
+workspace, case = sys.argv[1:]
+paths = [os.path.join(workspace, "deployment.yaml"), os.path.join(workspace, "ec2pool", CONFIG_PATH)]
+config, project = (yaml.safe_load(open(path)) for path in paths)
+# Literal values, since the EC2_* variables are only in the deployment's .env.
 config["ec2-pool"].update(region="us-east-1", subnet_id="subnet-0", security_group_ids=["sg-0"])
 if case == "an agent sets provider":
-    config["agents"][0]["provider"] = "ec2-pool"
+    project["agents"][0]["provider"] = "ec2-pool"
 elif case == "an agent sets machine_type":
-    config["agents"][0]["machine_type"] = "t3.micro"
+    project["agents"][0]["machine_type"] = "t3.micro"
 elif case == "an unknown provider":
     config["provider"] = "aws"
 elif case == "ec2-pool without an ec2-pool block":
@@ -113,14 +124,15 @@ elif case == "provider left out":
     del config["provider"]
 elif case == "an ec2-pool block without machine_type":
     del config["ec2-pool"]["machine_type"]
-yaml.safe_dump(config, open(path, "w"), sort_keys=False)
+for path, document in zip(paths, (config, project)):
+    yaml.safe_dump(document, open(path, "w"), sort_keys=False)
+for violation in check_deployment(workspace)[1]:
+    print(render_violation(violation))
 PY
-  out="$ARTIFACTS_DIR/validate-${case// /-}.json"
-  canyonos validate "$copy" --json >"$out" </dev/null && status=0 || status=$?
   if [ -z "$expected" ]; then
-    [ "$status" -eq 0 ] || { cat "$out"; exit 1; }
+    [ ! -s "$out" ] || { cat "$out"; exit 1; }
   else
-    [ "$status" -eq 1 ] && grep -qF "$expected" "$out" || { cat "$out"; exit 1; }
+    grep -qF "$expected" "$out" || { cat "$out"; exit 1; }
   fi
 done <<'CASES'
 an agent sets provider|unknown key 'provider'
@@ -134,12 +146,12 @@ provider in lowercase|
 provider left out|
 CASES
 
-cd "$PROJECT_DIR"
+cd "$DEPLOYMENT_DIR"
 canyonos stop || true
 
 step "canyonos deploy starts every machine of the pool"
-canyonos deploy --serve false </dev/null
-CANYONOS_REDIS_PASSWORD="$(uv run --project "$REPO_ROOT" python -c 'from canyonos import project; print(project.redis_password())')"
+canyonos deploy ../ec2pool --serve false </dev/null
+CANYONOS_REDIS_PASSWORD="$(uv run --project "$REPO_ROOT" python -c 'from canyonos import deployment; print(deployment.redis_password())')"
 export CANYONOS_REDIS_PASSWORD
 pool check-pool
 pool instances "$START" 3 running
@@ -151,7 +163,7 @@ step "A call lost with its machine fails fast, and the machine is replaced"
 request="$(pool call 600)"
 # Long enough for SlowAgent to be running the call.
 sleep 15
-dead="$(pool kill SlowAgent)"
+dead="$(pool kill ec2pool.SlowAgent)"
 pool status "$request" 180 error
 pool replaced "$dead" 600
 pool instances "$START" 4 running shutting-down terminated
@@ -159,20 +171,20 @@ pool status "$(pool call 1)" 120 done
 
 step "A busy replica scaled away drains while its replacement starts"
 request="$(pool call 90)"
-pool drain-overlap SlowAgent 300
+pool drain-overlap ec2pool.SlowAgent 300
 pool status "$request" 120 done
 
 step "A reload with one t3.micro fewer terminates the newest and keeps every replica"
 pool shrink t3.micro 600
 
 step "A scale-up goes to the least loaded machine"
-pool scale-up Small 2 300
+pool scale-up ec2pool.Small 2 300
 
 step "A full pool is shared instead of refusing replicas"
-pool oversubscribe SlowAgent 6 600
+pool oversubscribe ec2pool.SlowAgent 6 600
 
 step "canyonos stop terminates every machine, even with one just gone"
-pool kill Big >/dev/null
+pool kill ec2pool.Big >/dev/null
 canyonos stop
 sleep 30
 # A pass between the kill and the stop may have started a replacement.

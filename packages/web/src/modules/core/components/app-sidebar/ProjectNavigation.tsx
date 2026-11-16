@@ -306,7 +306,7 @@ export function ProjectNavigation() {
   });
 
   return (
-    <section aria-label="Projects" className="app-sidebar-section">
+    <section aria-label="Deployments" className="app-sidebar-section">
       <div className="app-sidebar-hide-when-collapsed flex items-center gap-2 px-2.5 pt-1.75 pb-1.5">
         <span className="text-muted-foreground text-[0.6875rem] font-bold tracking-[0.07em] uppercase">
           Projects
@@ -323,12 +323,12 @@ export function ProjectNavigation() {
           className="app-sidebar-hide-when-collapsed text-muted-foreground px-2.5 py-2 text-[0.75rem]"
           data-testid="projects-loading"
         >
-          Loading projects…
+          Loading deployments…
         </span>
       ) : projects_query.error ? (
         <div className="app-sidebar-hide-when-collapsed px-1" data-testid="projects-error">
           <ChildQueryError
-            message="Projects unavailable"
+            message="Deployments unavailable"
             on_retry={() => void projects_query.refetch()}
           />
         </div>
@@ -347,7 +347,7 @@ function ProjectsEmpty() {
       className="app-sidebar-hide-when-collapsed text-muted-foreground px-2.5 py-2 text-[0.75rem]"
       data-testid="projects-empty"
     >
-      No projects on this machine yet.
+      No deployments on this machine yet.
     </span>
   );
 }

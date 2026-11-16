@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Hand the project's `.env` to agent containers.
+Hand an agent's project `.env` to its containers.
 
 Containers on this machine read it directly, remote ones get a short-lived 0600
 copy, and either way it reaches Docker as `--env-file`.
@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def env_file_args(controller, host, user, is_local):
+def env_file_args(controller, env_file_path, host, user, is_local):
     """
-    Yield the `docker run` flags that hand the user's env file to a container.
+    Yield the `docker run` flags that hand `env_file_path` to a container.
 
     A container on this machine reads the original file. A container on a
     remote host gets a 0600 copy, deleted as soon as the `with` body ends --
@@ -28,7 +28,6 @@ def env_file_args(controller, host, user, is_local):
 
     Yields an empty list when there is no env file.
     """
-    env_file_path = getattr(controller, "env_file_path", None)
     if not env_file_path:
         yield []
         return

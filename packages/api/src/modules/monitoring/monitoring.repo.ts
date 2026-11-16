@@ -76,26 +76,35 @@ const GROUP_LIMIT = 10;
 
 export const ENDPOINT_KEY = 'endpoint:address';
 
-const JsonArgumentNames = z
+const JsonRoutes = z
   .string()
   .transform((raw, ctx) => {
     try {
       return JSON.parse(raw) as unknown;
     } catch {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'arguments is not JSON' });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'routes is not JSON' });
       return z.NEVER;
     }
   })
-  .pipe(z.array(z.string()));
+  .pipe(
+    z
+      .array(
+        z.object({
+          project: z.string().min(1),
+          agent: z.string().min(1),
+          method: z.string().min(1),
+          arguments: z.array(z.string()),
+          url: z.string().url(),
+        })
+      )
+      .min(1)
+  );
 
 /** The endpoint:address hash as the GlobalController writes it while the endpoint runs. */
 const EndpointAddressSchema = z.object({
   public_host: z.string().min(1),
   api_port: z.string().regex(/^\d+$/),
-  agent: z.string().min(1),
-  method: z.string().min(1),
-  arguments: JsonArgumentNames,
-  url: z.string().url(),
+  routes: JsonRoutes,
 });
 
 export type EndpointAddress = z.infer<typeof EndpointAddressSchema>;

@@ -7,7 +7,7 @@ Logic for `canyonos logs`: re-subscribe to the running deploy's log stream.
 
 import subprocess
 
-from canyonos import project, ui
+from canyonos import deployment, ui
 from canyonos.gc import deploy_status, deployed_logs, require_state
 from canyonos.init import docker_env
 
@@ -46,7 +46,7 @@ def run_logs(follow=True, tail="200", agent=None):
                 *(["-f"] if follow else []),
                 "--tail",
                 tail,
-                project.gc_container_name(),
+                deployment.gc_container_name(),
             ],
             env=docker_env(state),
         )

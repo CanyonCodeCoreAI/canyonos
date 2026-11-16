@@ -8,7 +8,7 @@ CanyonOS is an open source platform for multi-agent applications written in plai
 Python. Your agents do the work, with no SDK, no decorators and no tracing code, and
 CanyonOS runs everything around them, locally or on your own infrastructure. You
 describe how your workflow runs in a [workflow config](guides/CONFIGURE.md) file and run
-`canyonos deploy`.
+`canyonos deploy` on its folder.
 
 ## Core features
 
@@ -31,7 +31,7 @@ with.
 **A workflow is a program that delivers an outcome, and each agent is a specialist it
 trusts with one step.**
 
-Your project folder is the workflow, and one lead agent receives each request and calls
+A project folder holds the workflow; one lead agent receives each request and calls
 the others. Each agent is a class in its own file, and one agent calls another as if it
 were a local function; CanyonOS carries the call to the other agent's container. Your
 code says what the application does, and the config says how it runs: how many
@@ -43,11 +43,13 @@ rest stay at one. A few well-chosen agents are easier to run than many small one
 
 ## Try it
 
-With CanyonOS [installed](INSTALLATION.md), run these in an empty folder:
+With CanyonOS [installed](INSTALLATION.md), run these:
 
 ```bash
-canyonos new-app     # writes a starter workflow with two small agents
-canyonos deploy      # runs it
+mkdir my-app && cd my-app
+canyonos new-app                                # writes a starter workflow with two small agents
+cd ..
+canyonos deploy my-app --folder my-deployment   # runs it
 ```
 
 [Start from scratch](guides/FROM_SCRATCH.md) takes it from there, step by step.

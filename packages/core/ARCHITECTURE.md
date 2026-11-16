@@ -20,16 +20,16 @@
 ┌──────────────────────── GC's host (localhost) ───────────────────────┐
 │                                                                      │
 │  ┌────────────────────────────────┐   clients                        │
-│  │ canyonos-<p>-endpoint-<id>     │◀─ POST /<method>                 │
-│  │  core image, gunicorn + Flask  │   GET  /status/<request_id>      │
-│  │  :api_port ─▶ 8080             │                                  │
+│  │ canyonos-<p>-endpoint-<id>     │◀─ POST                           │
+│  │  core image, gunicorn + Flask  │   /<project>/<agent>/<method>    │
+│  │  :api_port ─▶ 8080             │   GET  /status/<request_id>      │
 │  │  LocalController (routing only)│                                  │
 │  └───────────────┬────────────────┘                                  │
 │                  ▼                                                   │
 │  canyonos-<p>-redis-localhost (the endpoint's Redis: root futures)   │
 └──────────────────────────────────────────────────────────────────────┘
 ┌────────────────────────── machine (host) ────────────────────────────┐
-│  <p> = the project, the folder `canyonos deploy` ran from            │
+│  <p> = the deployment, the folder `canyonos deploy` ran from         │
 │  canyonos-<p>-redis-<host>    canyonos-<p>-metrics-<host>            │
 │         ▲  ▲  ▲                 (machine_metrics_poller)             │
 │         │  │  │                                                      │
@@ -102,7 +102,7 @@
 ```
  client                 canyonos-<p>-endpoint-<id>         target replica                  agents
  ──────                 ──────────────────────────         ──────────────                  ──────
- POST /<method>
+ POST /<project>/<agent>/<method>
    {body} ────────────▶ request_id = new
                         SET request:<id>:context
                         Future(<agent>.<method>, body,

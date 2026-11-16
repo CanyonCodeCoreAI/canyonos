@@ -4,10 +4,9 @@
 """A config change reaches the running deploy through `canyonos sync`, with no
 redeploy: one more replica of an agent starts while the Global Controller and every
 other replica keep running. An agent whose new replica cannot start is named in
-`canyonos status` with the reason, its last launch error.
-`canyonos test` queries the running deploy while it holds the project's current
-files, a sync included, and refuses it once the config or the code changed. Each
-case puts the config back as it was, comments and all, and syncs it."""
+`canyonos status` with the reason, its last launch error. `canyonos test` queries
+the deploy a sync changed. Each case puts the config back as it was, comments and
+all, and syncs it."""
 
 import contextlib
 import re
@@ -20,10 +19,12 @@ from ..harness import (
     as_argument,
     canyonos,
     docker,
+    docker_name,
     manifest,
     poll,
     project_containers,
     project_root,
+    qualified,
 )
 
 SYNC_TIMEOUT = 120
@@ -32,21 +33,26 @@ UNSCHEDULABLE_CPUS = 999
 
 
 def _config(deployed):
-    return project_root(deployed.dir) / "config" / "workflow_config.yaml"
+    return project_root(deployed.project_dir) / "config" / "workflow_config.yaml"
 
 
 def _scaled_agent(deployed):
-    """The agent the cases change: one the endpoint does not serve, so queries keep
-    flowing while it changes."""
-    endpoint_agent = manifest(deployed.dir)["endpoint"]["agent"]
-    return next(name for name in deployed.agents if name != endpoint_agent)
+    """The agent the cases change, `<project>.<agent>`: one no route of the endpoint
+    serves, so queries keep flowing while it changes."""
+    routes = manifest(deployed.project_dir)["endpoint"]["routes"]
+    served = {qualified(deployed.project_dir, route["agent"]) for route in routes}
+    return next(name for name in deployed.agents if name not in served)
 
 
-def _edit_agent(text, agent, *, replicas, cpu=None):
+def _edit_agent(deployed, text, agent, *, replicas, cpu=None):
     """`text` with `agent`'s `replicas:` set, and its `resources.cpu` too when `cpu`
     is given. Comments are lost; `_synced` writes the original text back."""
     config = yaml.safe_load(text)
-    spec = next(spec for spec in config["agents"] if spec["name"] == agent)
+    spec = next(
+        spec
+        for spec in config["agents"]
+        if qualified(deployed.project_dir, spec["name"]) == agent
+    )
     spec["replicas"] = replicas
     if cpu is not None:
         spec.setdefault("resources", {})["cpu"] = cpu
@@ -54,7 +60,9 @@ def _edit_agent(text, agent, *, replicas, cpu=None):
 
 
 def _sync(recorder, deployed):
-    canyonos(recorder, ["sync"], cwd=deployed.dir, timeout=300)
+    canyonos(
+        recorder, ["sync", str(deployed.project_dir)], cwd=deployed.dir, timeout=300
+    )
 
 
 @contextlib.contextmanager
@@ -112,7 +120,9 @@ def test_sync_scales_an_agent_without_redeploying(recorder, deployed):
     desired, _, _ = agent_status(recorder, deployed, agent)
     before = _container_identity(recorder, _running(recorder, deployed))
     assert f"{deployed.group}-global-controller" in before, before
-    edited = _edit_agent(_config(deployed).read_text(), agent, replicas=desired + 1)
+    edited = _edit_agent(
+        deployed, _config(deployed).read_text(), agent, replicas=desired + 1
+    )
     with _synced(recorder, deployed, edited):
         poll(
             lambda: (
@@ -128,7 +138,7 @@ def test_sync_scales_an_agent_without_redeploying(recorder, deployed):
         added = sorted(set(after) - set(before))
         assert len(added) == 1, added
         assert re.fullmatch(
-            rf"{re.escape(deployed.group)}-{agent.lower()}-[0-9a-f]{{8}}", added[0]
+            rf"{re.escape(deployed.group)}-{docker_name(agent)}-[0-9a-f]{{8}}", added[0]
         ), added
 
 
@@ -138,12 +148,13 @@ def test_status_names_an_agent_that_cannot_start(recorder, deployed):
     agent = _scaled_agent(deployed)
     desired, _, _ = agent_status(recorder, deployed, agent)
     edited = _edit_agent(
+        deployed,
         _config(deployed).read_text(),
         agent,
         replicas=desired + 1,
         cpu=UNSCHEDULABLE_CPUS,
     )
-    container = f"{deployed.group}-{agent.lower()}-"
+    container = f"{deployed.group}-{docker_name(agent)}-"
     with _synced(recorder, deployed, edited):
         _, running, error = poll(
             lambda: (
@@ -164,8 +175,7 @@ def test_status_names_an_agent_that_cannot_start(recorder, deployed):
 
 @pytest.mark.trait("quick")
 def test_canyonos_test_runs_on_a_synced_config(recorder, deployed, check):
-    """`canyonos test` runs on a deploy whose config changed once `canyonos sync`
-    applied it, because the sync records the new config."""
+    """`canyonos test` queries a deploy whose config `canyonos sync` changed."""
     edited = _config(deployed).read_text() + "# synced by the E2E check\n"
     query = deployed.project.cli_query or as_argument(deployed.endpoint, deployed.query)
     timeout = str(deployed.project.timeout)
@@ -177,34 +187,12 @@ def test_canyonos_test_runs_on_a_synced_config(recorder, deployed, check):
             timeout=deployed.project.timeout + 120,
         )
         report = call.json()
-        assert report["against_existing_deploy"] is True, call.stdout
         assert report["error"] is None, call.stdout
         problems = list(
             check.problems(
-                report["result"],
+                report["results"][0]["result"],
                 query=deployed.query,
                 request_id=report["request_id"],
             )
         )
         assert not problems, "\n".join(problems)
-
-
-def test_canyonos_test_refuses_a_deploy_older_than_the_files(recorder, deployed):
-    root = project_root(deployed.dir)
-    with (root / "config" / "workflow_config.yaml").open("a") as config:
-        config.write("# edited\n")
-    stale_config = canyonos(recorder, ["test", "--json"], cwd=deployed.dir, check=False)
-    assert stale_config.code != 0, stale_config.output
-    assert "Files in config/ changed" in stale_config.stdout, stale_config.stdout
-
-    endpoint_agent = manifest(deployed.dir)["endpoint"]["agent"]
-    entrypoint = next(
-        spec["entrypoint"]
-        for spec in manifest(deployed.dir)["agents"]
-        if spec["name"] == endpoint_agent
-    )
-    with (root / entrypoint).open("a") as code:
-        code.write("# edited\n")
-    stale_code = canyonos(recorder, ["test", "--json"], cwd=deployed.dir, check=False)
-    assert stale_code.code != 0, stale_code.output
-    assert "Files outside config/ changed" in stale_code.stdout, stale_code.stdout

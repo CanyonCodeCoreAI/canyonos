@@ -3,7 +3,7 @@
 
 """Queries through the deployed endpoint: the test query gives a result the
 project's own check accepts, through the REST API and through `canyonos test`,
-which sends the project's config/test_query.txt when given no query; a
+which sends its default query when given none in a deployment folder; a
 finished request stays readable after cleanup; a bad body and an unknown request
 are refused; a plain hex string is not taken for a Future on projects that take
 any text; and a failing agent is named in the error."""
@@ -52,9 +52,7 @@ def _canyonos_test(recorder, deployed, *query):
         cwd=deployed.dir,
         timeout=timeout + 120,
     )
-    report = call.json()
-    assert report["against_existing_deploy"] is True, call.stdout
-    return report
+    return call.json()
 
 
 def test_query_result_is_real(query_result, deployed, check):
@@ -72,17 +70,16 @@ def test_canyonos_test_reports_a_real_result(recorder, deployed, check):
     query = cli_query(deployed)
     report = _canyonos_test(recorder, deployed, query)
     assert report["query"] == query, report
-    problems = _problems(check, report["result"], query=query)
+    problems = _problems(check, report["results"][0]["result"], query=query)
     assert not problems, problems
 
 
-@pytest.mark.trait("quick")
 def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, check):
-    path = project_root(deployed.dir) / "config" / "test_query.txt"
+    path = project_root(deployed.project_dir) / "config" / "test_query.txt"
     report = _canyonos_test(recorder, deployed)
     query = path.read_text().strip()
-    assert report["query"] == query, report
-    problems = _problems(check, report["result"], query=query)
+    assert report["results"][0]["query"] == query, report
+    problems = _problems(check, report["results"][0]["result"], query=query)
     assert not problems, problems
 
 

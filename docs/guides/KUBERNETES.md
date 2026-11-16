@@ -10,6 +10,9 @@ the workflow, and the cluster builds the agents' images, pushes them to your reg
 and starts them. Nothing else on the cluster changes. How the operator works is in
 [Operator](../architecture/OPERATOR.md).
 
+Kubernetes deploys don't support multi-folder deployments yet: the deployment folder
+and project folders of a [Docker deploy](LOCAL.md) don't apply here.
+
 ## What you need
 
 - The CanyonOS CLI, [installed](../INSTALLATION.md), and
@@ -126,10 +129,10 @@ What CanyonOS asks of your cluster:
 ## Point a workflow at the cluster
 
 ```bash
-canyonos target kubernetes    # in the workflow folder, with kubectl pointing at the cluster
+canyonos target kubernetes    # in the deployment folder, with kubectl pointing at the cluster
 ```
 
-It writes `target: kubernetes` at the top of the workflow config and a `kubernetes:`
+It writes `target: kubernetes` at the top of `deployment.yaml` and a `kubernetes:`
 block under it, then checks that `kubectl` is installed, the cluster answers and the
 operator is installed. The block gets:
 
@@ -172,7 +175,7 @@ The CLI needs no Docker for this. `canyonos deploy`:
 5. Waits until the operator reports the workflow and every agent ready, then forwards
    the endpoint to this machine and opens the dashboard.
 
-The first deploy writes a `project_id` into the workflow config; commit it, so telemetry
+The first deploy writes a `deployment_id` into `deployment.yaml`; commit it, so telemetry
 stays under one project across deploys and targets. The workflow's CanyonProject is
 named after its folder and the start of that ID (`helloworld-4eeed6f3`), so two folders
 of the same name never share one in a namespace.

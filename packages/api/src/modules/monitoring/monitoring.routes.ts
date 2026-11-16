@@ -59,7 +59,7 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     response: { 200: MonitoringLogsResponseSchema },
     detail: {
       ...doc,
-      summary: 'Recent log records for the project, newest first',
+      summary: 'Recent log records for the deployment, newest first',
       description: 'Each log record is in the range by its own timestamp.',
     },
   })

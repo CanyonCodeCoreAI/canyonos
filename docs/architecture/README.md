@@ -1,15 +1,16 @@
 # Architecture
 
 How CanyonOS works inside, for contributors. A workflow is a set of agents, each a
-Python class, declared in the workflow config (`config/workflow_config.yaml`).
-`canyonos deploy` builds an image per agent and starts a Global Controller, which
-publishes the config and each agent's desired replica count to Redis. An orchestrator
-keeps that many replicas running: the Reconciler on Docker and EC2, the operator and
-Kubernetes on a cluster. Each replica runs a Local Controller beside the agent code,
-which carries calls between agents over gRPC, and an LLM Gateway, which carries the
-agent's model calls. Requests come in through the endpoint, an HTTP server that queues
-a call to one agent method and reports its result. Telemetry flows from Redis through
-the OTLP exporter to the dashboard and any other OpenTelemetry receiver.
+Python class, declared in a project's workflow config (`config/workflow_config.yaml`).
+`canyonos deploy` builds an image per agent of every project it is given and starts one
+Global Controller for the deployment, which publishes the config and each agent's
+desired replica count to Redis. An orchestrator keeps that many replicas running: the
+Reconciler on Docker and EC2, the operator and Kubernetes on a cluster. Each replica
+runs a Local Controller beside the agent code, which carries calls between agents over
+gRPC, and an LLM Gateway, which carries the agent's model calls. Requests come in
+through the endpoint, an HTTP server that queues a call to one of its routes, each an
+agent method, and reports its result. Telemetry flows from Redis through the OTLP
+exporter to the dashboard and any other OpenTelemetry receiver.
 
 For a user's view of the same parts, see [How it works](../HOW_IT_WORKS.md).
 
@@ -48,8 +49,9 @@ flowchart TB
 
 On Docker and EC2:
 
-1. `canyonos deploy` starts the Global Controller's container, copies the project into
-   its `/workspace`, and calls `POST /deploy` on the container's server.
+1. `canyonos deploy` starts the Global Controller's container, copies `deployment.yaml`
+   and each project into its `/workspace`, and calls `POST /deploy` on the container's
+   server.
 2. In the container, `python -m canyonos_core.cli deploy` generates the stubs, protos
    and Docker contexts and starts building the images, then creates the Global
    Controller.
@@ -65,13 +67,14 @@ On Kubernetes, `canyonos deploy --target kubernetes` uploads the project to a bu
 the operator runs. The pod builds and pushes the images and applies the project, and the
 operator runs Redis, the Global Controller (`run-gc`), the endpoint and one StatefulSet
 per agent. [Controller](CONTROLLER.md#global-controller) and [Operator](OPERATOR.md)
-have the details.
+have the details. Kubernetes deploys don't support multi-folder deployments yet.
 
 ## How a request flows
 
-1. A client sends `POST /<method>` to the endpoint, which creates the root `Future`,
-   hands the call to its own Local Controller, and answers `202` with a request ID.
-2. The Local Controller checks governance, picks a replica of the served agent from the
+1. A client sends `POST /<project>/<agent>/<method>` to the endpoint, which creates the
+   root `Future`, hands the call to its own Local Controller, and answers `202` with a
+   request ID.
+2. The Local Controller checks governance, picks a replica of the route's agent from the
    routing table, and forwards the call over gRPC.
 3. That replica's Local Controller runs the method. Each call the agent makes to another
    agent is a `Future` that takes the same path, and each model call goes through the
@@ -95,7 +98,7 @@ These pages cover what CanyonOS builds from a workflow and what it expects of on
   writes into its files.
 - [What a workflow needs](../guides/WORKFLOW_REQUIREMENTS.md): the requirements an app
   must meet before it is converted, and who owns what.
-- [Configuration](CONFIG.md): how the workflow config gets from the files a user edits
+- [Configuration](CONFIG.md): how the config gets from the files a user edits
   to the running system, and how to add a setting.
 
 To set up a checkout and try a change, see

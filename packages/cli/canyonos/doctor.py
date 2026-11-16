@@ -17,7 +17,6 @@ import urllib.request
 from canyonos import ui
 from canyonos.constants import (
     endpoint_answers,
-    existing_config_path,
     port_in_use,
 )
 from canyonos.dashboard_stack import (
@@ -28,7 +27,7 @@ from canyonos.dashboard_stack import (
 )
 from canyonos import env, kubernetes_target as k8s
 from canyonos.forwards import DASHBOARD, endpoint_forward, forward_port
-from canyonos.gc import deploy_status, deployed_endpoint
+from canyonos.gc import deploy_status, deployed_endpoint, runtime_status
 from canyonos.init import (
     docker_running,
     docker_start_command,
@@ -48,7 +47,7 @@ def _docker_daemon_fix():
     would run exactly that itself."""
     command = docker_start_command()
     if command:
-        return f"run `{' '.join(command)}` -- or just run `canyonos deploy`, which starts it for you"
+        return f"run `{' '.join(command)}` -- or just run `canyonos deploy <project folder>`, which starts it for you"
     return "start your Docker runtime (on Linux: `sudo systemctl start docker`)"
 
 
@@ -91,7 +90,7 @@ def _gc_check(state, status):
         "Global Controller",
         ok,
         f"container {state['container_id'][:12]} on 127.0.0.1:{state['port']}",
-        "GC container isn't answering -- run `canyonos deploy` again",
+        "GC container isn't answering -- run `canyonos deploy <project folder>...` again",
     )
 
 
@@ -107,18 +106,11 @@ def _redis_check(state):
     )
 
 
-def _agents_check():
-    """Prints the workflow-agent readiness table (reusing the same rows and
-    table `canyonos test` shows). True if there's nothing to check or every
-    agent is ready.
+def _agents_check(state):
+    """Prints the workflow-agent readiness table for the agents the running Global
+    Controller reports. True if there's nothing to check or every agent is ready.
     """
-    try:
-        config_path = existing_config_path()
-    except RuntimeError as e:
-        ui.hint(f"{e} Skipping the workflow agent checks.")
-        return True
-
-    rows = agent_rows(config_path)
+    rows = agent_rows(runtime_status(state["port"]))
     if not rows:
         return True
     ui.panel(_runtime_table(rows))
@@ -133,7 +125,7 @@ def _endpoint_check(state):
         "Endpoint",
         endpoint_answers(api_port),
         f"127.0.0.1:{api_port}",
-        f"nothing answers on {api_port} -- run `canyonos deploy` again, or check `canyonos logs`",
+        f"nothing answers on {api_port} -- run `canyonos deploy <project folder>...` again, or check `canyonos logs`",
     )
 
 
@@ -192,7 +184,7 @@ def _print_post_deploy(state, status):
     results = [
         _guard("Global Controller", lambda: _gc_check(state, status)),
         _guard("Redis", lambda: _redis_check(state)),
-        _guard("Workflow agents", _agents_check),
+        _guard("Workflow agents", lambda: _agents_check(state)),
         _guard("Endpoint", lambda: _endpoint_check(state)),
         _guard("Dashboard", _dashboard_checks),
     ]

@@ -356,11 +356,13 @@ describe('project governance', () => {
 
   test('reports whether a scaling policy is stored', async () => {
     const { headers, project_id } = await governed_project('gov-scaling@canyonos.test');
-    await seed_scaling(JSON.stringify({ scaling: { min_replicas: 1 } }));
+    await seed_scaling_agents([sampled('app.Workflow', 1), sampled('ops.Workflow', 1)]);
+    await seed_scaling(JSON.stringify({ projects: { app: { min_replicas: 1 } } }));
 
     const res = await api.projects[project_id]!.governance.get({ $headers: headers });
 
-    expect(by_name(res.data!.agents, 'Workflow').scaling_policy_present).toBe(true);
+    expect(by_name(res.data!.agents, 'app.Workflow').scaling_policy_present).toBe(true);
+    expect(by_name(res.data!.agents, 'ops.Workflow').scaling_policy_present).toBe(false);
   });
 
   test('a corrupt governance:config is 502 governance.config_invalid', async () => {

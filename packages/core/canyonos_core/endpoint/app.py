@@ -28,7 +28,8 @@ from canyonos_core.controller.local_controller import (
     LocalController,
     shutdown_grace_seconds,
 )
-from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT
+from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT, route_path
+from canyonos_core.schema import qualified_name
 
 import local_controller_pb2
 
@@ -63,30 +64,33 @@ def _record_from_dashboard(request_id):
     return {"result": output}
 
 
-def create_app(agent, method, arguments, redis_client):
-    """Build the Flask app that queues calls to the agent's method at `POST /<method>`,
-    refusing a body that lacks one of the method's declared `arguments`, and reports
-    their results at `GET /status/<request_id>`; `POST /answer/<request_id>` answers
-    that request's oldest waiting question."""
+def create_app(routes, redis_client):
+    """Build the Flask app that queues calls to each route's agent method at
+    `POST /<project>/<agent>/<method>`, refusing a body that lacks one of the method's
+    declared `arguments`, and reports their results at `GET /status/<request_id>`;
+    `POST /answer/<request_id>` answers that request's oldest waiting question."""
     app = Flask("canyonos-endpoint")
+    served = {route_path(route): route.get("arguments") or [] for route in routes}
+    paths = ", ".join(f"POST {path}" for path in served)
 
     @app.errorhandler(404)
     def not_found(_error):
-        """Answer an unknown route with a JSON error naming the served route."""
-        return jsonify(
-            {"error": f"Not found; this endpoint serves POST /{method}"}
-        ), 404
+        """Answer an unknown route with a JSON error naming the served routes."""
+        return jsonify({"error": f"Not found; this endpoint serves {paths}"}), 404
 
     @app.errorhandler(405)
     def method_not_allowed(_error):
         """Answer a known route called with the wrong HTTP method with a JSON error."""
         return jsonify(
-            {"error": f"Method not allowed; this endpoint serves POST /{method}"}
+            {"error": f"Method not allowed; this endpoint serves {paths}"}
         ), 405
 
-    @app.route(f"/{method}", methods=["POST"])
+    @app.route("/<project>/<agent>/<method>", methods=["POST"])
     @app.route("/answer/<request_id>", methods=["POST"])
-    def handle_request(request_id=None):
+    def handle_request(project=None, agent=None, method=None, request_id=None):
+        path = f"/{project}/{agent}/{method}"
+        if not request_id and path not in served:
+            return not_found(None)
         # Parsed with stdlib json because Flask replaces decode errors with a
         # generic "Bad Request".
         raw_body = request.get_data(cache=True)
@@ -126,12 +130,13 @@ def create_app(agent, method, arguments, redis_client):
         context = kwargs.pop("_context", {})
         if not isinstance(context, dict):
             return jsonify({"error": "_context must be a JSON object"}), 400
+        arguments = served[path]
         missing = [name for name in arguments if name not in kwargs]
         if missing:
             return jsonify(
                 {
                     "error": f"Missing argument(s) {', '.join(missing)}; "
-                    f"POST /{method} takes {', '.join(arguments)}"
+                    f"POST {path} takes {', '.join(arguments)}"
                 }
             ), 400
         request_id = uuid.uuid4().hex
@@ -139,6 +144,7 @@ def create_app(agent, method, arguments, redis_client):
             redis_client.set(f"request:{request_id}:context", json.dumps(context))
 
         canyonos_context.set_request_id(request_id)
+        agent = qualified_name(project, agent)
         future = Future(parent=None, agent_name=agent, method=method, args=kwargs)
         redis_client.set(f"request:{request_id}:future", future.id)
         if future.refusal:
@@ -199,12 +205,7 @@ def create_app(agent, method, arguments, redis_client):
 
 def worker_app():
     """Build the app each gunicorn worker serves from the container's env."""
-    return create_app(
-        os.environ["CANYONOS_ENDPOINT_AGENT"],
-        os.environ["CANYONOS_ENDPOINT_METHOD"],
-        [name for name in os.environ["CANYONOS_ENDPOINT_ARGUMENTS"].split(",") if name],
-        Future.redis,
-    )
+    return create_app(json.loads(os.environ["CANYONOS_ENDPOINT_ROUTES"]), Future.redis)
 
 
 def main():

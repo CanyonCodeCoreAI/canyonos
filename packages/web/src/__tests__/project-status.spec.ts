@@ -24,35 +24,35 @@ const apiOrigin = new URL(apiBaseUrl).origin;
 const PROJECT_PATH = `/projects/${PROJECT.id}`;
 const STATUS_PATH = `${PROJECT_PATH}/status`;
 const MONITORING_PATH = `/projects/${PROJECT.id}/monitoring`;
-const ENDPOINT_URL = 'http://203.0.113.7:8080/main';
+const ENDPOINT_URL = 'http://203.0.113.7:8080/fraud/fraud_workflow/main';
 const STATUS_URL = 'http://203.0.113.7:8080/status';
 const RANGE = { from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z' };
 
 const REPLICAS: MonitoringReplica[] = [
   {
-    agent: 'fraud_workflow',
-    replica: 'fraud_workflow-1',
+    agent: 'fraud.fraud_workflow',
+    replica: 'fraud.fraud_workflow-1',
     queue_length: 2,
     active_requests: 3,
     draining: false,
   },
   {
-    agent: 'ScoringAgent',
-    replica: 'ScoringAgent-1',
+    agent: 'fraud.ScoringAgent',
+    replica: 'fraud.ScoringAgent-1',
     queue_length: 4,
     active_requests: 5,
     draining: false,
   },
   {
-    agent: 'ScoringAgent',
-    replica: 'ScoringAgent-2',
+    agent: 'fraud.ScoringAgent',
+    replica: 'fraud.ScoringAgent-2',
     queue_length: null,
     active_requests: null,
     draining: false,
   },
   {
-    agent: 'ScoringAgent',
-    replica: 'ScoringAgent-3',
+    agent: 'fraud.ScoringAgent',
+    replica: 'fraud.ScoringAgent-3',
     queue_length: 1,
     active_requests: 1,
     draining: true,
@@ -62,12 +62,17 @@ const REPLICAS: MonitoringReplica[] = [
 const ENDPOINT: MonitoringEndpointResponse = {
   project_id: PROJECT.id,
   endpoint: {
-    url: ENDPOINT_URL,
     status_url: STATUS_URL,
-    agent: 'fraud_workflow',
-    method: 'main',
-    arguments: ['transaction'],
-    example_body: { transaction: 'your query' },
+    routes: [
+      {
+        url: ENDPOINT_URL,
+        project: 'fraud',
+        agent: 'fraud_workflow',
+        method: 'main',
+        arguments: ['transaction'],
+        example_body: { transaction: 'your query' },
+      },
+    ],
   },
 };
 
@@ -120,7 +125,7 @@ const notRunning: Handler = (route) =>
   );
 
 const STILL_RUNNING =
-  'This project is still running. Run `canyonos stop` in its folder, then delete it.';
+  'This deployment is still running. Run `canyonos stop` in its folder, then delete it.';
 
 /** Answers the project's DELETE and records each one; reads fall through to the page stubs. */
 async function stubDelete(page: Page, handler: Handler): Promise<string[]> {
@@ -163,16 +168,23 @@ test('a running project shows its endpoint, the summary tiles and the containers
   // A draining replica is shown, but only serving ones are counted.
   await expect(page.getByTestId('metrics-containers-count')).toHaveText('3');
   await expect(page.getByTestId('metrics-containers-draining')).toHaveText('1 draining');
-  const scoring = page.getByTestId('metrics-containers-agent-ScoringAgent');
-  await expect(scoring.getByTestId('metrics-containers-agent-count-ScoringAgent')).toHaveText('2');
-  await expect(scoring.getByTestId('metrics-containers-replica-ScoringAgent-1')).toHaveText('4');
-  await expect(scoring.getByTestId('metrics-containers-replica-ScoringAgent-2')).toHaveText('0');
-  await expect(scoring.getByTestId('metrics-containers-replica-ScoringAgent-3')).toHaveAttribute(
-    'data-state',
-    'draining'
+  const scoring = page.getByTestId('metrics-containers-agent-fraud.ScoringAgent');
+  await expect(scoring.getByTestId('metrics-containers-agent-count-fraud.ScoringAgent')).toHaveText(
+    '2'
   );
-  const workflow = page.getByTestId('metrics-containers-agent-fraud_workflow');
-  await expect(workflow.getByTestId('metrics-containers-replica-fraud_workflow-1')).toHaveText('2');
+  await expect(scoring.getByTestId('metrics-containers-replica-fraud.ScoringAgent-1')).toHaveText(
+    '4'
+  );
+  await expect(scoring.getByTestId('metrics-containers-replica-fraud.ScoringAgent-2')).toHaveText(
+    '0'
+  );
+  await expect(
+    scoring.getByTestId('metrics-containers-replica-fraud.ScoringAgent-3')
+  ).toHaveAttribute('data-state', 'draining');
+  const workflow = page.getByTestId('metrics-containers-agent-fraud.fraud_workflow');
+  await expect(
+    workflow.getByTestId('metrics-containers-replica-fraud.fraud_workflow-1')
+  ).toHaveText('2');
 });
 
 test('a project with no running controller says so and still counts what reports up', async ({
@@ -182,7 +194,7 @@ test('a project with no running controller says so and still counts what reports
 
   await expect(page.getByTestId('status-badge')).toHaveText('Not running');
   await expect(page.getByTestId('status-endpoint-message')).toHaveText(
-    'Deploy the project to get an endpoint.'
+    'Run canyonos deploy to get an endpoint.'
   );
   await expect(page.getByTestId('status-endpoint-url')).toHaveCount(0);
   await expect(page.getByTestId('status-tile-replicas-value')).toHaveText('3');
@@ -249,7 +261,7 @@ test('deleting a stopped project removes it and returns to the projects list', a
   await expect(page.getByTestId('status-delete-dialog')).toContainText(`Delete ${PROJECT.name}?`);
   await page.getByTestId('status-delete-confirm').click();
 
-  await expect(page.getByTestId('app-toast')).toContainText('Project deleted.');
+  await expect(page.getByTestId('app-toast')).toContainText('Deployment deleted.');
   await expectPath(page, '/projects');
   expect(deletes).toHaveLength(1);
 });

@@ -10,9 +10,11 @@ import re
 from ..harness import (
     canyonos,
     dashboard_containers,
+    docker_name,
     manifest,
     poll,
     project_containers,
+    qualified,
 )
 
 DASHBOARD = [
@@ -64,8 +66,8 @@ def test_containers_up(recorder, deployed):
     group = deployed.group
     containers = project_containers(recorder, group, every=True)
     replicas = {
-        agent["name"]: agent.get("replicas", 1)
-        for agent in manifest(deployed.dir)["agents"]
+        qualified(deployed.project_dir, agent["name"]): agent.get("replicas", 1)
+        for agent in manifest(deployed.project_dir)["agents"]
     }
     expected = {
         f"{group}-global-controller": 1,
@@ -73,7 +75,7 @@ def test_containers_up(recorder, deployed):
         f"{group}-metrics-localhost": 1,
         f"{group}-endpoint{REPLICA_SUFFIX}": 1,
         **{
-            f"{group}-{name.lower()}{REPLICA_SUFFIX}": count
+            f"{group}-{docker_name(name)}{REPLICA_SUFFIX}": count
             for name, count in replicas.items()
         },
     }

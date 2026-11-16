@@ -1,11 +1,3 @@
-# Where the project deploys: `docker` is Docker on this machine.
-# `canyonos target kubernetes` switches it to a cluster, with the settings a cluster needs.
-target: docker
-
-# Where every agent runs: `local` is this machine; `ec2-pool` and `ec2-assign` run
-# them on Amazon EC2.
-provider: local
-
 # The agents CanyonOS runs for this project.
 agents:
   - name: MyAgent
@@ -28,7 +20,9 @@ agents:
         returns:
           type: dict
 
-# `POST /main` runs `Workflow.main`, on port 8080 or the next free one.
+# `POST /<this folder's name>/Workflow/main` runs `Workflow.main`, on port 8080 or the
+# next free one.
 endpoint:
-  agent: Workflow
-  method: main
+  routes:
+    - agent: Workflow
+      method: main

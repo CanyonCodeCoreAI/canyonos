@@ -4,15 +4,17 @@ Every `canyonos` command and its options. `canyonos -h` lists the commands, and
 `canyonos <command> --help` shows one command's options. How the CLI works inside is in
 [CLI architecture](../architecture/CLI.md).
 
-Run the commands from the workflow root, the folder that holds `config/` or `.canyon/`.
-A typical session:
+Run `new-app`, `convert` and `validate` from the project folder, the folder that holds
+`config/` or `.canyon/`. Run `deploy` from the folder above it; `--folder` names the deployment's own folder, which
+holds `deployment.yaml`; run the others from there. A typical session:
 
 ```bash
-canyonos doctor          # can this machine deploy?
-canyonos deploy          # build the images, start the workflow, open the dashboard
-canyonos test "hello"    # send one query end to end
-canyonos logs MyAgent    # print one agent's logs
-canyonos stop            # take the deploy down, keeping its images
+canyonos doctor                       # can this machine deploy?
+canyonos deploy my-project --folder my-deployment   # build the images, start the workflow, open the dashboard
+cd my-deployment
+canyonos test "hello"                 # send one query end to end
+canyonos logs my-project.MyAgent      # print one agent's logs
+canyonos stop                         # take the deploy down, keeping its images
 ```
 
 ## Start a workflow
@@ -20,9 +22,9 @@ canyonos stop            # take the deploy down, keeping its images
 | Command      | What it does                                                                    |
 | ------------ | ------------------------------------------------------------------------------- |
 | `quickstart` | Guided first run: picks a sample workflow, deploys it and sends a first request |
-| `new-app`    | Create a starter workflow with two agents in an empty folder                    |
+| `new-app`    | Create a starter project with two agents in an empty folder                     |
 | `convert`    | Convert an existing workflow to the CanyonOS format with your coding agent      |
-| `validate`   | Check the workflow root against the CanyonOS contract                           |
+| `validate`   | Check the project folder against the CanyonOS contract                          |
 | `doctor`     | Check that this machine can deploy and, once deployed, every part of the deploy |
 
 - `convert --agent <name>` picks the coding agent instead of asking: `claude`, `codex`,
@@ -44,61 +46,65 @@ canyonos stop            # take the deploy down, keeping its images
 | `test`   | Send one query end to end and show the answer                        |
 | `status` | Show whether a deploy is running, its endpoint, and how to query it  |
 | `logs`   | Stream the Global Controller's logs until Ctrl-C                     |
-| `config` | View or edit the workflow config; changes apply to a running deploy  |
+| `config` | View or edit `deployment.yaml`; `sync` applies the changes           |
 | `sync`   | Apply changes you made by hand in `config/` to the running deploy    |
 | `serve`  | Start the local dashboard on its own                                 |
 
+- `deploy <folder>... --folder PATH` deploys the project folders it names as one
+  deployment, named after the deployment folder `PATH`, made when missing. It writes
+  `deployment.yaml` there when there is none. To redeploy from inside the deployment
+  folder, leave out `--folder`: `canyonos deploy ../my-project`. It refuses to run
+  from inside a project folder.
 - `deploy --serve false` doesn't open the dashboard. On Docker, `-v` streams the full
   build and deploy logs instead of a progress summary.
-- `test "your query"` sends that query, else `config/test_query.txt`, else `hello`.
-- `test` with a deploy running queries it as it stands, but refuses if your files
-  changed since: run `deploy` for code changes or `sync` for `config/` changes, then
-  test again.
-- `test` with none running deploys locally with `provider: local`, queries it, and stops
-  it if the test passes. A failed deploy stays running, with the end of its log printed.
-- `test` on Kubernetes never deploys; it queries the workflow already deployed there.
+- `test "your query"` sends that query to every route. Without one, each route gets its
+  project's `config/test_query.txt`, else `hello`.
+- `test` queries every route of the deployment running from this folder. It never
+  deploys, and fails when none runs.
+- `test` on Kubernetes queries the workflow already deployed there.
 - `test --timeout SECONDS` sets the wait (default 300), which restarts after each answer
   you give. `--json` prints one JSON result, for CI.
 - `status --json` prints one JSON object with each agent's replica counts.
-- `logs <agent>` prints that agent's logs instead of the Global Controller's. A replica
-  ID prints one replica: `MyAgent-1a2b3c4d` on Docker, `MyAgent-0` on Kubernetes. An
-  agent's logs print once on Docker and stream on Kubernetes.
+- `logs <agent>` prints that agent's logs instead of the Global Controller's, the agent
+  named `<project>.<agent>` on Docker. A replica ID prints one replica:
+  `my-project.MyAgent-1a2b3c4d` on Docker, `MyAgent-0` on Kubernetes. An agent's logs
+  print once on Docker and stream on Kubernetes.
 - `logs --tail N` shows the last N lines (default 200, or `all`); `--no-follow` prints
   them and exits.
-- `sync` copies the workflow root and its `.env` into the running deploy and has it
-  reload the workflow config; code changes need `deploy`. `sync` and `config` change a
-  deploy on Docker only; on Kubernetes, run `deploy` again. See
+- `sync <folder>...` copies those project folders and their `.env`, and
+  `deployment.yaml` and the `.env` beside it, into the running deploy and has it reload
+  the config; code changes need `deploy`. `sync` and `config` change a deploy on Docker
+  only; on Kubernetes, run `deploy` again. See
   [Configure your workflow](CONFIGURE.md#apply-a-change) for which command applies what.
 
 ## Stop and clean up
 
 ```bash
-canyonos stop                # the only deployed workflow, or pick from a list
-canyonos stop helloworld     # a workflow by name, folder name or ID, from any folder
-canyonos stop --all          # every workflow on this machine
+canyonos stop                  # the only deployment, or pick from a list
+canyonos stop my-deployment    # a deployment by name, folder name or ID, from any folder
+canyonos stop --all            # every deployment on this machine
 ```
 
 | Command | What it does                                                                                                                     |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `stop`  | Remove the deploy's containers, workspace and network, keeping its images and `.canyon`                                          |
-| `clean` | Stop the deploy, then remove `.canyon`, the CanyonOS skill in the workflow folder, the agents' images and the workflow's records |
+| `clean` | Stop the deployment, then remove the agents' images and the deployment's records; each project's `.canyon` stays                 |
 
-- Both work from any folder. Name workflows by name, folder name, ID or the start of an
-  ID; a name two workflows share is refused, so use the ID. Names and `--all` don't mix.
-- Without a name, they act on the only deployed workflow. With more than one, they list
-  them: tick the ones you want with space, then press enter. Without a terminal they
-  list them and act on none, so pass the names. `clean` also offers this folder's
-  workflow.
-- `stop` also stops the dashboard, keeping its history, when no other workflow runs.
-- `clean` removes the workflow's records in `~/.canyonos/projects/<project>/`, its Redis
-  password among them, and the `project_id` when the workflow config lives in
-  `.canyon`. It leaves a skill that `convert --scope global` installed. When the stop
-  fails or is refused, `clean` removes nothing.
-- `stop --all` stops every workflow on this machine, even one whose folder is deleted.
+- Both work from any folder. Name deployments by name, folder name, ID or the start of
+  an ID; a name two deployments share is refused, so use the ID. Names and `--all` don't
+  mix.
+- Without a name, they act on the only deployment. With more than one, they list them:
+  tick the ones you want with space, then press enter. Without a terminal they list them
+  and act on none, so pass the names. `clean` also offers this folder's deployment.
+- `stop` also stops the dashboard, keeping its history, when no other deployment runs.
+- `clean` removes the deployment's records in `~/.canyonos/deployments/<deployment>/`,
+  its Redis password among them. It leaves a skill that `convert --scope global`
+  installed. When the stop fails or is refused, `clean` removes nothing.
+- `stop --all` stops every deployment on this machine, even one whose folder is deleted.
 - `clean --all` removes everything CanyonOS put on this machine, for before you
-  uninstall: every workflow, the dashboard and its data, CanyonOS's images and
+  uninstall: every deployment, the dashboard and its data, CanyonOS's images and
   `~/.canyonos`. It asks first; `-y` skips the question.
-- `--all` and workflow names act on this machine's Docker only, so they are refused
+- `--all` and deployment names act on this machine's Docker only, so they are refused
   with `--target kubernetes`. On Kubernetes, `stop` and `clean` act on this folder's
   workflow in the cluster; see [Kubernetes deployment](KUBERNETES.md).
 
@@ -106,21 +112,21 @@ canyonos stop --all          # every workflow on this machine
 
 | Command     | What it does                                                                     |
 | ----------- | -------------------------------------------------------------------------------- |
-| `target`    | Show or choose where this workflow deploys: Docker on this machine or Kubernetes |
+| `target`    | Show or choose where this deployment runs: Docker on this machine or Kubernetes  |
 | `cluster`   | Make (`up`) or delete (`down`) a local Kubernetes cluster with CanyonOS, on kind |
 | `provision` | Set up or tear down an AWS machine to deploy from                                |
 
-- `target` alone shows where the workflow deploys and checks this machine can reach it.
-- `target kubernetes` makes the cluster `kubectl` points at this workflow's default.
+- `target` alone shows where the deployment runs and checks this machine can reach it.
+- `target kubernetes` makes the cluster `kubectl` points at this deployment's default.
   `--namespace` sets its namespace (default: the folder's name), and `--registry` where
   images are pushed (default: the local registry the cluster advertises, else it asks).
   `target docker` switches back.
 - `cluster up --workers N` sets a new cluster's worker count (default 1). `cluster up`
   again keeps the cluster and upgrades CanyonOS on it to the CLI's release.
   `cluster down --all` also removes the local registry and its images.
-- `--target docker` or `--target kubernetes` overrides the workflow's target for one
+- `--target docker` or `--target kubernetes` overrides the deployment's target for one
   run of `deploy`, `status`, `test`, `logs`, `serve`, `doctor`, `stop` or `clean`.
-  Without it, they use the workflow config's `target`, else `docker`. See
+  Without it, they use the `target` in `deployment.yaml`, else `docker`. See
   [Kubernetes deployment](KUBERNETES.md) and [EC2 deployment](EC2.md).
 
 ## Other commands

@@ -56,7 +56,7 @@ from canyonos_core.reconciler.replicas import (
 from canyonos_core.controller.utils.config_specs import write_config_specs
 from canyonos_core.controller.utils.config_env import (
     expand_env_value,
-    resolve_env_file,
+    read_dotenv,
 )
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
 from canyonos_core.controller.utils.port_utils import is_port_conflict
@@ -70,7 +70,13 @@ from canyonos_core.controller.utils.redis_client import (
     redis_server_command,
 )
 from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
-from canyonos_core.schema import SchemaError, check_project, load_manifest
+from canyonos_core.schema import (
+    SchemaError,
+    check_deployment,
+    load_deployment,
+    project_names,
+    qualified_name,
+)
 from canyonos_core.schema.otel_destinations import (
     LOCAL_DASHBOARD_DESTINATION,
     LOCAL_DASHBOARD_ENDPOINT,
@@ -138,6 +144,66 @@ def _live_prompts(document, path):
     return live
 
 
+def _read_config_file(config_dir, name):
+    """`(document, path)` for the project config file `<name>.yaml` in `config_dir`,
+    or `(None, path)` when the project has none. Raises RuntimeError naming the file
+    when it is not UTF-8, not valid YAML, or not a mapping."""
+    path = os.path.relpath(os.path.join(config_dir, f"{name}.yaml"))
+    if not os.path.isfile(path):
+        return None, path
+    try:
+        with open(path, encoding="utf-8") as f:
+            document = yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        line, detail = parse_failure(exc)
+        raise RuntimeError(f"{path}:{line}: is not valid YAML: {detail}") from exc
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{path} is not UTF-8 text; save it as UTF-8.") from exc
+    if not isinstance(document, dict):
+        raise RuntimeError(f"{path} must be a mapping of keys to values.")
+    return document, path
+
+
+def _policy_rules(document, path, qualify):
+    """A project's policy.yaml rules, most specific first so the first that matches a
+    request decides, with each `access` list naming agents as `qualify` does."""
+    rules = document.get("rules", []) if isinstance(document, dict) else None
+    if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
+        raise RuntimeError(
+            f"{path} must be a mapping with a `rules:` list of mappings."
+        )
+    for rule in rules:
+        if isinstance(rule.get("access"), list):
+            rule["access"] = [qualify(agent) for agent in rule["access"]]
+    rules.sort(key=lambda rule: len(rule.get("match", {})), reverse=True)
+    return rules
+
+
+def _merge_llm_entry(entries, name, entry, qualify, path, project_agents):
+    """Add a project's llms.yaml `entry` to `entries`, its agents named as `qualify`
+    does. Without `agents:`, every one of `project_agents` may call the model,
+    uncapped. Two projects may share an entry only when they set it the same way,
+    since the gateway prices and caps every call by the one entry."""
+    if not isinstance(entry, dict):
+        raise RuntimeError(f"{path}: entry {name} must be a mapping.")
+    agents = entry.get("agents")
+    if agents is None:
+        agents = dict.fromkeys(project_agents)
+    if not isinstance(agents, dict):
+        raise RuntimeError(
+            f"{path}: entry {name}: agents must map each agent name to its cap, "
+            "like `IntentAgent: 0.01`"
+        )
+    settings = {key: value for key, value in entry.items() if key != "agents"}
+    merged = entries.setdefault(name, {**settings, "agents": {}})
+    if {key: value for key, value in merged.items() if key != "agents"} != settings:
+        raise RuntimeError(
+            f"{path}: entry {name} is set differently by another project; give one "
+            "of them another name."
+        )
+    merged["agents"].update({qualify(agent): cap for agent, cap in agents.items()})
+
+
 class GlobalController(ControllerContext):
     """
     Daemon that manages a routing table across the local controllers of multiple replicas.
@@ -150,13 +216,14 @@ class GlobalController(ControllerContext):
     """
 
     POLICY_RULES_KEY = "policy:rules"
-    IDENTITY_KEY = "controller:identity"  # has the controller's current project_id
+    # The deployment as the dashboard knows it: its id and name, as one project.
+    IDENTITY_KEY = "controller:identity"
     OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
     # Redis keys of the config files last published, so a removed file's key is cleared.
     CONFIG_FILES_KEY = "config:files"
 
-    def __init__(self, config_path):
-        super().__init__(config_path)
+    def __init__(self, workspace):
+        super().__init__(workspace)
 
         redis_cfg = self.config.get("redis", {})
         # Kept in step with self.redis, including the reassignment in
@@ -183,7 +250,7 @@ class GlobalController(ControllerContext):
             self.llm_prices = pricing_refresh.litellm_prices()
             pricing.add_prices(self.llm_prices)
             self._apply_config(
-                self._read_config_folder(), load_manifest(self.config_path)
+                self._read_config_folder(), load_deployment(self.workspace)
             )
             # A stop killed midway leaves the flag set; clear it or the fleet stays at zero.
             state.clear_stopping(self.redis)
@@ -232,7 +299,7 @@ class GlobalController(ControllerContext):
             if self.config.get("logs", True):
                 logging.getLogger().addHandler(
                     otel_writer.ProcessLogHandler(
-                        GLOBAL_CONTROLLER_LOG_SOURCE, self.config.get("project_id")
+                        GLOBAL_CONTROLLER_LOG_SOURCE, self.config.get("deployment_id")
                     )
                 )
             self.orchestrator.register_background_processes(self.process_supervisor)
@@ -340,14 +407,13 @@ class GlobalController(ControllerContext):
     def reload_config(self):
         """Re-read the config, republish the spec, and let the reconciler converge.
         Raises SchemaError, changing nothing, when the edited config is invalid."""
-        logger.info("Reloading config from %s", self.config_path)
-        manifest, violations = check_project(self.config_path)
+        logger.info("Reloading the deployment in %s", self.workspace)
+        manifest, violations = check_deployment(self.workspace)
         if violations:
             raise SchemaError(violations)
         # Parse every file before writing anything, so a broken one leaves Redis untouched.
         config_files = self._read_config_folder()
-        self.config = self._load_config(self.config_path)
-        self.env_file_path = resolve_env_file(self.config_path)
+        self.config = self._load_config(self.workspace)
         previous = set(self.agent_specs_by_name)
         self._set_agent_specs(self.config.get("agents", []))
         self.poll_interval = self.config.get("poll_interval", 5)
@@ -383,87 +449,98 @@ class GlobalController(ControllerContext):
             else int(os.environ.get("CANYONOS_LAST_API_PORT") or ENDPOINT_PORT),
         )
         self.redis.hset_multiple(
-            ADDRESS_KEY, {**record, "arguments": json.dumps(record["arguments"])}
+            ADDRESS_KEY, {**record, "routes": json.dumps(record["routes"])}
         )
-
-    def _load_policy_rules(self):
-        """Load policy rules from config/policy.yaml."""
-        config_dir = os.path.dirname(os.path.abspath(self.config_path))
-        policy_path = os.path.join(config_dir, "policy.yaml")
-
-        if not os.path.isfile(policy_path):
-            logger.info(
-                "No policy file found at %s, skipping policy setup.", policy_path
-            )
-            return []
-
-        with open(policy_path, "r") as f:
-            policy_config = yaml.safe_load(f)
-
-        rules = (
-            policy_config.get("rules", []) if isinstance(policy_config, dict) else None
-        )
-        if not isinstance(rules, list) or not all(
-            isinstance(rule, dict) for rule in rules
-        ):
-            raise RuntimeError(
-                f"{os.path.relpath(policy_path)} must be a mapping with a `rules:` list of mappings."
-            )
-
-        # Sort rules by specificity: most match keys first
-        # This way the local controller can iterate and use the first matching rule.
-        rules.sort(key=lambda r: len(r.get("match", {})), reverse=True)
-        return rules
 
     def _read_config_folder(self):
-        """Parse every YAML file in the config folder and the policy rules; returns
-        (rules, payloads by Redis key, prompts.yaml's live versions or None,
-        governance.yaml's rules or None). A file that is not UTF-8, not valid YAML, or
-        not the expected shape raises a RuntimeError that names it."""
-        config_dir = os.path.dirname(os.path.abspath(self.config_path))
-        payloads = {}
-        live_prompts = None
+        """Parse every project's config files into what the deployment publishes:
+        returns (policy rules by project, payloads by Redis key, prompts.yaml's live
+        versions or None, governance.yaml's rules or None). Agent names in the files
+        become `<project>.<agent>`, as in the agent specs. A file that is not UTF-8, not
+        valid YAML, or not the expected shape raises a RuntimeError that names it."""
+        rules = {}
+        scaling_policies = {}
+        llm_entries = {}
+        prompts = None
         governance_seed = None
-        for filename in sorted(os.listdir(config_dir)):
-            name, extension = os.path.splitext(filename)
-            # Hidden files include the binary `._name.yaml` copies macOS writes.
-            if extension in (".yaml", ".yml") and not filename.startswith("."):
-                # Project-relative, so an error names the file as the user knows it.
-                path = os.path.relpath(os.path.join(config_dir, filename))
-                with open(path, "r") as f:
-                    # prompts.yaml only seeds the prompts the dashboard API stores and publishes.
-                    key = "prompts:yaml" if name == "prompts" else f"{name}:config"
-                    try:
-                        payloads[key] = json.dumps(yaml.safe_load(f) or {}, default=str)
-                    except yaml.YAMLError as exc:
-                        line, detail = parse_failure(exc)
-                        raise RuntimeError(
-                            f"{path}:{line}: is not valid YAML: {detail}"
-                        ) from exc
-                    except UnicodeDecodeError as exc:
-                        raise RuntimeError(
-                            f"{path} is not UTF-8 text; save it as UTF-8."
-                        ) from exc
-                if name == "prompts":
-                    live_prompts = _live_prompts(json.loads(payloads[key]), path)
-                if name == "governance":
-                    # Seeds governance:config per agent; the generic SET would overwrite dashboard edits.
-                    document = expand_env_value(json.loads(payloads.pop(key)))
-                    try:
-                        governance_seed = {"agents": governance.parse(document)}
-                    except ValueError as exc:
-                        raise RuntimeError(str(exc)) from exc
-                if name == "llms":
-                    # The gateway would refuse every LLM call over this; fail the deploy instead.
-                    try:
-                        llms.index_llms(json.loads(payloads[key]))
-                    except ValueError as exc:
-                        raise RuntimeError(str(exc)) from exc
-        # After the loop, which reports a syntax error in policy.yaml with its line.
-        return self._load_policy_rules(), payloads, live_prompts, governance_seed
+        for project in project_names(self.workspace):
+
+            def qualify(name, project=project):
+                return qualified_name(project, name)
+
+            config_dir = os.path.join(self.workspace, project, "config")
+            policy, path = _read_config_file(config_dir, "policy")
+            if policy is not None:
+                rules[project] = _policy_rules(policy, path, qualify)
+            scaling, _ = _read_config_file(config_dir, "scaling")
+            if scaling and scaling.get("scaling") is not None:
+                scaling_policies[project] = scaling["scaling"]
+            entries, path = _read_config_file(config_dir, "llms")
+            workflow, _ = _read_config_file(config_dir, "workflow_config")
+            agents = [
+                spec["name"]
+                for spec in workflow.get("agents") or []
+                if spec.get("type", "agent") == "agent"
+            ]
+            for name, entry in (entries or {}).items():
+                _merge_llm_entry(llm_entries, name, entry, qualify, path, agents)
+            document, path = _read_config_file(config_dir, "prompts")
+            if document is not None:
+                _live_prompts(document, path)
+                prompts = prompts or {"prompts": {}}
+                for name, versions in (document.get("prompts") or {}).items():
+                    prompts["prompts"][qualify(name)] = versions
+            document, path = _read_config_file(config_dir, "governance")
+            if document is not None:
+                # Seeds governance:config per agent; a SET would overwrite dashboard edits.
+                env = {
+                    **read_dotenv(os.path.join(self.workspace, project, ".env")),
+                    **os.environ,
+                }
+                try:
+                    agents = governance.parse(expand_env_value(document, env))
+                except ValueError as exc:
+                    raise RuntimeError(f"{path}: {exc}") from exc
+                governance_seed = governance_seed or {"agents": {}}
+                for name, agent_rules in agents.items():
+                    if "requires" in agent_rules:
+                        agent_rules["requires"] = [
+                            qualify(agent) for agent in agent_rules["requires"]
+                        ]
+                    governance_seed["agents"][qualify(name)] = agent_rules
+        # The gateway prices and caps a call by its model's one entry, so a second name
+        # for the same model, in this project or another, would be silently dropped.
+        names_by_model = {}
+        for name, entry in llm_entries.items():
+            if not entry.get("model_id"):
+                continue
+            other = names_by_model.setdefault(
+                llms.normalize_model_id(entry["model_id"]), name
+            )
+            if other != name:
+                raise RuntimeError(
+                    f"llms.yaml entries {other} and {name} name the same model, "
+                    f"{entry['model_id']}; use one name for it in every project."
+                )
+        # The gateway would refuse every LLM call over a malformed one; fail the deploy.
+        try:
+            llms.index_llms(llm_entries)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        payloads = {
+            "scaling:config": json.dumps({"projects": scaling_policies}, default=str),
+            "llms:config": json.dumps(llm_entries, default=str),
+        }
+        live_prompts = None
+        if prompts is not None:
+            # prompts.yaml only seeds the prompts the dashboard API stores and publishes.
+            payloads["prompts:yaml"] = json.dumps(prompts, default=str)
+            live_prompts = _live_prompts(prompts, "prompts.yaml")
+        return rules, payloads, live_prompts, governance_seed
 
     def _write_policies(self, rules, payloads, live_prompts, governance_seed):
-        """Publish policy rules, LiteLLM's prices, and each config file under its key, to every host Redis."""
+        """Publish each project's policy rules, LiteLLM's prices, and each config file
+        under its key, to every host Redis."""
         targets = list(self.machine_redis.values()) or [self.redis]
         rules_json = json.dumps(rules)
         prices_json = json.dumps(self.llm_prices)
@@ -488,7 +565,8 @@ class GlobalController(ControllerContext):
             self._seed_governance(governance_seed)
 
         logger.info(
-            "Policy rules and %d config file(s) written to %d Redis instance(s): %d rule(s)",
+            "Policy rules and %d config file(s) written to %d Redis instance(s): rules "
+            "for %d project(s)",
             len(payloads),
             len(targets),
             len(rules),
@@ -514,9 +592,10 @@ class GlobalController(ControllerContext):
 
     # Only relevant for demo purposes
     def _write_identity(self):
-        """Publish the current project identity to every machine's Redis."""
+        """Publish the deployment's identity, as the dashboard knows it, to every
+        machine's Redis."""
         payload = {
-            "project_id": str(self.config.get("project_id")),
+            "project_id": str(self.config.get("deployment_id")),
             "project_name": os.environ.get("CANYONOS_PROJECT_NAME", ""),
         }
         targets = list(self.machine_redis.values()) or [self.redis]
@@ -597,16 +676,16 @@ class GlobalController(ControllerContext):
         if running:
             answer = self._probe_redis(host, connect_host, redis_port)
             if answer == REDIS_REFUSES_PASSWORD:
-                project = os.environ.get(DOCKER_PROJECT_ENV, "<project>")
+                deployment = os.environ.get(DOCKER_PROJECT_ENV, "<deployment>")
                 logger.critical(
-                    "Redis container %s on %s refuses this project's password: the "
-                    "one in ~/.canyonos/projects/%s/redis_password no longer matches "
+                    "Redis container %s on %s refuses this deployment's password: the "
+                    "one in ~/.canyonos/deployments/%s/redis_password no longer matches "
                     "it. Run `canyonos stop %s` to remove the old Redis, then deploy "
                     "again.",
                     container_name,
                     host,
-                    project,
-                    project,
+                    deployment,
+                    deployment,
                 )
                 sys.exit(1)
             if answer == REDIS_SILENT:
@@ -814,7 +893,7 @@ class GlobalController(ControllerContext):
             logger.critical(
                 "No agent declares an integer replica count; nothing will be "
                 "provisioned. Check `replicas` in %s.",
-                self.config_path,
+                self.workspace,
             )
             return
 
@@ -1027,7 +1106,7 @@ class GlobalController(ControllerContext):
             try:
                 send_telemetry(
                     hosts[host],
-                    self.config.get("project_id"),
+                    self.config.get("deployment_id"),
                     finished=finished[host],
                 )
             except Exception as e:
@@ -1074,7 +1153,7 @@ class GlobalController(ControllerContext):
                     {
                         "kind": "machine",
                         "host": host,
-                        "project_id": self.config.get("project_id"),
+                        "project_id": self.config.get("deployment_id"),
                         "metrics": metrics,
                     }
                 )
@@ -1117,7 +1196,7 @@ class GlobalController(ControllerContext):
                                 "agent_name": name,
                                 "host": host,
                                 "port": port,
-                                "project_id": self.config.get("project_id"),
+                                "project_id": self.config.get("deployment_id"),
                                 "metrics": metrics,
                             }
                         ]
@@ -1364,7 +1443,7 @@ class GlobalController(ControllerContext):
         delivered, gone = otel_writer.deliver_completed_requests(
             redis_clients,
             all_completed,
-            getattr(self, "config", {}).get("project_id"),
+            getattr(self, "config", {}).get("deployment_id"),
         )
         # A request leaves "request:completed" only once its futures are gone on every
         # machine. A Cleanup that fails or never arrives leaves them in place, so the

@@ -103,13 +103,20 @@ class Workflow:
         return {"answer": MyAgent().run(query=query)}
 ```
 
+Deploy it, giving the deployment a folder of its own beside it:
+
+```bash
+cd ..
+canyonos deploy my-proj --folder my-deployment
+```
+
 For details on new projects, read: [building a new project](docs/guides/FROM_SCRATCH.md).
 
 For configuration, read: [workflow configuration](docs/guides/WORKFLOW_CONFIG.md).
 
 ---
 ### To convert an existing non-CanyonOS workflow:
-For an existing non-cayonOS workflow, run `canyonos convert` in its folder, then test and deploy.
+For an existing non-cayonOS workflow, run `canyonos convert` in its folder, then deploy it and test it.
 Converting needs a coding agent in your terminal, such as Claude Code, Codex, Gemini CLI
 or Cursor CLI; [Convert your own workflow](docs/guides/CONVERT_WORKFLOW.md) lists them
 all.
@@ -117,8 +124,10 @@ all.
 ```bash
 cd your-workflow
 canyonos convert
+cd ..
+canyonos deploy your-workflow --folder my-deployment
+cd my-deployment
 canyonos test "your query"
-canyonos deploy
 ```
 
 The complete path, including credentials, requests, and cleanup, is in the

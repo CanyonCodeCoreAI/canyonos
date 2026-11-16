@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from canyonos import dashboard_stack, forwards, ports, project
+from canyonos import dashboard_stack, deployment, forwards, ports
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def home(monkeypatch, tmp_path):
 
 
 def _state(name, **state):
-    path = os.path.join(project.projects_dir(), name, "state.json")
+    path = os.path.join(deployment.deployments_dir(), name, "state.json")
     os.makedirs(os.path.dirname(path))
     with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f)
@@ -34,14 +34,14 @@ def _forward(name, port, fresh=True):
         os.utime(path, (0, 0))
 
 
-def test_every_deployed_projects_ports_are_claimed(home):
+def test_every_deployments_ports_are_claimed(home):
     _state("a-1", container_id="x", port=8000, redis_port=6379, api_port=8080)
     _state("b-2", container_id="y", port=8001)
 
     claims = ports.claimed()
 
-    assert {claims[port] for port in (8000, 6379, 8080)} == {"project a-1"}
-    assert claims[8001] == "project b-2"
+    assert {claims[port] for port in (8000, 6379, 8080)} == {"deployment a-1"}
+    assert claims[8001] == "deployment b-2"
 
 
 def test_running_forwards_are_claimed_and_stale_ones_are_not(home):
@@ -87,8 +87,8 @@ def test_picking_a_dashboards_port_holds_only_a_running_dashboard_against_it(
 
 
 def test_an_unreadable_state_file_claims_nothing(home):
-    os.makedirs(os.path.join(project.projects_dir(), "broken"))
-    path = os.path.join(project.projects_dir(), "broken", "state.json")
+    os.makedirs(os.path.join(deployment.deployments_dir(), "broken"))
+    path = os.path.join(deployment.deployments_dir(), "broken", "state.json")
     with open(path, "w", encoding="utf-8") as f:
         f.write("{not json")
 

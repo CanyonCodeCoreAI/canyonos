@@ -54,7 +54,7 @@ One agent receives the requests and calls the others. In the template that is
 `agents/workflow.py`:
 
 ```python
-# The agent the endpoint serves: `POST /main` runs `Workflow.main`.
+# The agent the endpoint serves: `POST /<project>/Workflow/main` runs `Workflow.main`.
 from agents.my_agent import MyAgent
 
 
@@ -77,9 +77,6 @@ the `openai` package, two replicas and more memory. Add an entry like it for eac
 you write:
 
 ```yaml
-target: docker      # where it runs; step 6 changes these two
-provider: local
-
 agents:
   - name: MyAgent
     entrypoint: agents/my_agent.py
@@ -118,21 +115,22 @@ agents:
           type: dict
 
 endpoint:
-  agent: Workflow
-  method: main
+  routes:
+    - agent: Workflow
+      method: main
 ```
 
 What each setting does:
 
-| Setting                             | What it does                                                           | Default          |
-| ----------------------------------- | ---------------------------------------------------------------------- | ---------------- |
-| `name`                              | The agent's name; must equal the class name in its file                | required         |
-| `entrypoint`                        | The file that holds the class                                          | required         |
-| `functions`                         | The methods others may call, with each argument's type                 | none             |
-| `requirements`                      | The Python packages this agent needs, like `openai` or `pandas==2.2.3` | none             |
-| `replicas`                          | How many copies of the agent run at once                               | `1`              |
-| `resources`                         | `cpu` cores, `memory` in MB and `gpu` count for each copy              | `1`, `512`, none |
-| `endpoint.agent`, `endpoint.method` | The method a request runs: `POST /main` runs `Workflow.main`           | required         |
+| Setting           | What it does                                                                                | Default          |
+| ----------------- | ------------------------------------------------------------------------------------------- | ---------------- |
+| `name`            | The agent's name; must equal the class name in its file                                     | required         |
+| `entrypoint`      | The file that holds the class                                                               | required         |
+| `functions`       | The methods others may call, with each argument's type                                      | none             |
+| `requirements`    | The Python packages this agent needs, like `openai` or `pandas==2.2.3`                      | none             |
+| `replicas`        | How many copies of the agent run at once                                                    | `1`              |
+| `resources`       | `cpu` cores, `memory` in MB and `gpu` count for each copy                                   | `1`, `512`, none |
+| `endpoint.routes` | The methods a request runs: `POST /my-workflow/Workflow/main` runs `Workflow.main`          | required         |
 
 The keys can come in any order. Every other setting has a default that suits most
 workflows;
@@ -166,35 +164,38 @@ gets them as environment variables.
 
 ## 6. Choose where it runs
 
-By default the workflow runs locally, on Docker on your machine. `canyonos target` shows
-where it deploys. To run it somewhere else, set that up first:
+By default the workflow runs locally, on Docker on your machine. `canyonos target`, in
+the deployment folder of step 7, shows where it deploys. To run it somewhere else, set that up first:
 
 | Where                | What to do                                                                                                                             | Details                     |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
 | Locally, with Docker | Nothing; it's the default. If you switched to Kubernetes, `canyonos target docker` switches back                                       | [Local](LOCAL.md)           |
-| EC2                  | Run `canyonos provision` to create a machine on AWS to deploy from, copy the workflow there, and set `provider` in the workflow config | [EC2](EC2.md)               |
+| EC2                  | Run `canyonos provision` to create a machine on AWS to deploy from, copy the workflow there, and set `provider` in `deployment.yaml`   | [EC2](EC2.md)               |
 | Kubernetes           | Run `canyonos target kubernetes` to point the workflow at your cluster; `canyonos cluster up` makes a local one to try it              | [Kubernetes](KUBERNETES.md) |
 
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys) explains the `target` and
 `provider` settings behind these.
 
-The next steps are for Docker and EC2. On Kubernetes, run `canyonos deploy` first;
-`canyonos test` then queries the deployed workflow. See [Kubernetes](KUBERNETES.md).
+The next steps are for Docker and EC2. On Kubernetes, see [Kubernetes](KUBERNETES.md);
+Kubernetes deploys don't support multi-folder deployments yet.
 
 ## 7. Run it
 
 ```bash
-canyonos validate              # check the layout and the workflow config
-canyonos test "your query"     # deploy locally and send one request
-canyonos deploy                # deploy and keep it running
+canyonos validate                         # check the layout and the workflow config
+cd ..
+canyonos deploy my-workflow --folder my-deployment   # deploy from a folder of its own and keep it running
+cd my-deployment
+canyonos test "your query"                # send one request
 ```
 
-`canyonos deploy` first shows each agent's CPU, memory, GPU and replicas. Choose
+`canyonos deploy` writes `deployment.yaml` in `my-deployment` when there is none. It
+first shows each agent's CPU, memory, GPU and replicas. Choose
 **1. Deploy**, or **2. Configure an agent** to change them first. What it deploys with,
 defaults included, is saved in the workflow config. When it's up, send a request:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/main \
+curl -X POST http://127.0.0.1:8080/my-workflow/Workflow/main \
   -H "Content-Type: application/json" \
   -d '{"query": "your query"}'
 ```

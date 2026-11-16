@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
 import type { GovernanceAgent, GovernanceResponse } from '@canyonos/api/governance';
-import type { ScalingPolicy, ScalingStatus } from '@canyonos/api/scaling';
+import type { ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, fulfillJson } from './helpers/projects';
@@ -22,7 +22,7 @@ const GOVERNANCE_PATH = `/projects/${PROJECT.id}/governance`;
 const AGENTS_PATH = `${GOVERNANCE_PATH}/agents/`;
 const SAVED_TOAST = "Governance rules saved. They apply on the controller's next poll.";
 const NOT_RUNNING =
-  'This project is not running, so its governance rules cannot be read. Deploy it, then retry.';
+  'This deployment is not running, so its governance rules cannot be read. Deploy it, then retry.';
 
 const SINCE = '2026-10-20T12:00:00.000Z';
 
@@ -141,22 +141,29 @@ const QUEUE_POLICY_DEFAULTS: ScalingPolicy = {
 };
 
 interface ScalingStub {
-  policy: ScalingStatus;
-  writes: unknown[];
+  projects: ScalingResponse['projects'];
+  writes: { project: string; policy: ScalingPolicy }[];
 }
 
-// A PUT stores the policy, so the re-read after a save answers what was sent.
-async function stubScaling(page: Page, policy: ScalingStatus): Promise<ScalingStub> {
-  const stub: ScalingStub = { policy, writes: [] };
+// A PUT stores the project's policy, so the re-read after a save answers what was sent.
+async function stubScaling(
+  page: Page,
+  projects: ScalingResponse['projects']
+): Promise<ScalingStub> {
+  const stub: ScalingStub = { projects: structuredClone(projects), writes: [] };
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === SCALING_PATH,
+    (url) => url.origin === apiOrigin && url.pathname.startsWith(SCALING_PATH),
     async (route) => {
       const request = route.request();
-      if (request.method() === 'GET') return fulfillJson(route, stub.policy);
+      const path = new URL(request.url()).pathname;
+      if (request.method() === 'GET' && path === SCALING_PATH) {
+        return fulfillJson(route, { projects: stub.projects } satisfies ScalingResponse);
+      }
       if (request.method() !== 'PUT') return route.continue();
+      const project = decodeURIComponent(path.slice(`${SCALING_PATH}/`.length));
       const sent = request.postDataJSON() as ScalingPolicy;
-      stub.writes.push(sent);
-      stub.policy = { status: 'applied', policy: sent };
+      stub.writes.push({ project, policy: sent });
+      stub.projects[project] = { status: 'applied', policy: sent };
       return fulfillJson(route, sent);
     }
   );
@@ -168,7 +175,7 @@ async function openSession(page: Page): Promise<void> {
   await stubProjectsList(page, [PROJECT]);
   await stubProjectDashboard(page, PROJECT);
   await stubFleetSpend(page);
-  await stubScaling(page, { status: 'none' });
+  await stubScaling(page, { app: { status: 'none' } });
 }
 
 async function openGovernance(
@@ -595,7 +602,7 @@ test('a 422 on save shows the API message in the drawer', async ({ page }) => {
       route,
       {
         error: 'governance.unknown_agent',
-        message: 'MergeAgent is not an agent of the running project',
+        message: 'MergeAgent is not an agent of the running deployment',
       },
       422
     );
@@ -603,7 +610,7 @@ test('a 422 on save shows the API message in the drawer', async ({ page }) => {
   await drawer(page).getByRole('button', { name: 'Save rules' }).click();
 
   await expect(drawer(page).getByTestId('governance-form-error')).toHaveText(
-    'MergeAgent is not an agent of the running project'
+    'MergeAgent is not an agent of the running deployment'
   );
   await expect(toast(page)).toHaveCount(0);
 });
@@ -711,20 +718,40 @@ const policySheet = (page: Page) => page.getByTestId('governance-policy-sheet');
 
 test('the toolbar says the stored scaling policy in one line', async ({ page }) => {
   await openSession(page);
-  await stubScaling(page, { status: 'applied', policy: QUEUE_POLICY });
+  await stubScaling(page, { app: { status: 'applied', policy: QUEUE_POLICY } });
   await stubGovernance(page);
   await page.goto(GOVERNANCE_PATH);
 
-  await expect(policyLine(page)).toHaveText('queue · up > 6 · down < 2 · 1–3 replicas');
+  await expect(policyLine(page)).toHaveText('app: queue · up > 6 · down < 2 · 1–3 replicas');
+  await expect(policyLine(page)).toHaveAttribute('data-state', 'ready');
+});
+
+test("the toolbar and the sheet say each project's policy", async ({ page }) => {
+  await openSession(page);
+  await stubScaling(page, {
+    app: { status: 'applied', policy: QUEUE_POLICY },
+    ops: { status: 'none' },
+  });
+  await stubGovernance(page);
+  await page.goto(`${GOVERNANCE_PATH}?panel=policy`);
+
+  await expect(policyLine(page)).toHaveText(
+    'app: queue · up > 6 · down < 2 · 1–3 replicas / ops: No scaling policy'
+  );
+  const project = (name: string) =>
+    policySheet(page).locator(`[data-testid="governance-policy-project"][data-project="${name}"]`);
+  await expect(policySheet(page).getByTestId('governance-policy-project')).toHaveCount(2);
+  await expect(project('app').getByTestId('scaling-policy-applied')).toBeVisible();
+  await expect(project('ops').getByTestId('scaling-policy-none')).toBeVisible();
 });
 
 test('the toolbar says when there is no policy and when it is invalid', async ({ page }) => {
   await openGovernance(page);
-  await expect(policyLine(page)).toHaveText('No scaling policy');
+  await expect(policyLine(page)).toHaveText('app: No scaling policy');
 
-  await stubScaling(page, { status: 'invalid', reason: 'max_replicas: too low' });
+  await stubScaling(page, { app: { status: 'invalid', reason: 'max_replicas: too low' } });
   await page.reload();
-  await expect(policyLine(page)).toHaveText('Policy invalid');
+  await expect(policyLine(page)).toHaveText('app: Policy invalid');
 });
 
 test('Scaling policy opens the policy form over the canvas, through the URL', async ({ page }) => {
@@ -734,7 +761,7 @@ test('Scaling policy opens the policy form over the canvas, through the URL', as
 
   await expect.poll(() => new URL(page.url()).searchParams.get('panel')).toBe('policy');
   await expect(
-    drawer(page).getByRole('heading', { name: 'Scaling policy', exact: true })
+    drawer(page).getByRole('heading', { name: 'Scaling policies', exact: true })
   ).toBeVisible();
   await expect(policySheet(page).getByTestId('scaling-policy-none')).toBeVisible();
   const box = await canvas(page).boundingBox();
@@ -748,7 +775,7 @@ test('Scaling policy opens the policy form over the canvas, through the URL', as
 
 test('saving the policy in the sheet goes through PUT and updates the line', async ({ page }) => {
   await openSession(page);
-  const scaling = await stubScaling(page, { status: 'none' });
+  const scaling = await stubScaling(page, { app: { status: 'none' } });
   await stubGovernance(page);
   await page.goto(`${GOVERNANCE_PATH}?panel=policy`);
   const sheet = policySheet(page);
@@ -760,8 +787,8 @@ test('saving the policy in the sheet goes through PUT and updates the line', asy
   await sheet.getByTestId('policy-save').click();
 
   await expect(toast(page)).toContainText(SCALING_SAVED_TOAST);
-  expect(scaling.writes).toEqual([QUEUE_POLICY_DEFAULTS]);
-  await expect(policyLine(page)).toHaveText('queue · up > 3 · down < 1 · 1–3 replicas');
+  expect(scaling.writes).toEqual([{ project: 'app', policy: QUEUE_POLICY_DEFAULTS }]);
+  await expect(policyLine(page)).toHaveText('app: queue · up > 3 · down < 1 · 1–3 replicas');
   await expect(sheet.getByTestId('scaling-policy-applied')).toBeVisible();
 });
 

@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Schema for the files a CanyonOS project declares itself with.
+"""Schema for the files a CanyonOS deployment declares itself with: its
+`deployment.yaml` and each project folder's `config/workflow_config.yaml`.
 
-`validate_project` is what the in-container deploy calls before it generates a
+`check_deployment` is what the in-container deploy calls before it generates a
 single stub: a manifest key that does not exist, a port written as a string or
 an argument annotated with a type the stub cannot import is a failure with a
 file and a line, not a warning followed by a build.
@@ -19,18 +20,26 @@ from canyonos_core.schema.errors import (
 )
 from canyonos_core.schema.functions import BUILTIN_TYPE_NAMES
 from canyonos_core.schema.manifest import (
+    DEPLOYMENT_CONFIG,
+    CONFIG_PATH,
     CodeAgent,
     DatabaseAgent,
     EndpointSpec,
     Manifest,
     OtelDestination,
     OtelSpec,
+    Project,
     RedisSpec,
     Resources,
-    load_manifest,
+    load_deployment,
+    load_deployment_config,
+    load_project,
+    project_names,
+    qualified_name,
 )
 
 __all__ = [
+    "DEPLOYMENT_CONFIG",
     "CONFIG_PATH",
     "CodeAgent",
     "BUILTIN_TYPE_NAMES",
@@ -40,26 +49,28 @@ __all__ = [
     "Manifest",
     "OtelDestination",
     "OtelSpec",
+    "Project",
     "RedisSpec",
     "Resources",
     "SchemaError",
     "SchemaViolation",
+    "check_deployment",
     "check_project",
-    "load_manifest",
+    "load_deployment",
+    "load_deployment_config",
+    "load_project",
+    "project_names",
+    "qualified_name",
     "render_violation",
-    "validate_project",
 ]
-
-# The manifest, relative to the project root.
-CONFIG_PATH = os.path.join("config", "workflow_config.yaml")
 
 
 def _as_typed(path):
     """A path as the reader would write it: relative to where the build runs.
 
-    The build runs from the project root, so that is the form the manifest and
-    the rest of these violations are written in. A path outside it has no
-    shorter honest form and is left absolute.
+    The build runs from the deployment's folder, so that is the form the config files
+    and the rest of these violations are written in. A path outside it has no shorter
+    honest form and is left absolute.
     """
     try:
         relative = os.path.relpath(path)
@@ -68,26 +79,16 @@ def _as_typed(path):
     return path if relative.startswith(os.pardir) else relative
 
 
-def _missing_sources(manifest, manifest_path, root):
-    """Violations for the code a manifest points at but the project does not hold.
+def _missing_sources(agent_specs, path, root):
+    """Violations for the code a project's agents point at but its folder `root` does
+    not hold.
 
     The build used to log a line and carry on, leaving a deploy that exited 0
     with the agent quietly absent from it.
     """
-    if not os.path.isdir(root):
-        return [
-            SchemaViolation(
-                manifest_path,
-                0,
-                "agents",
-                f"the project folder {_as_typed(root)} does not "
-                "exist, so no agent's code can be found",
-            )
-        ]
-
     violations = []
     real_root = os.path.realpath(root)
-    for index, agent_spec in enumerate(manifest.agents):
+    for index, agent_spec in enumerate(agent_specs):
         if agent_spec.type != "agent":
             continue
         source = os.path.join(root, agent_spec.entrypoint)
@@ -98,36 +99,38 @@ def _missing_sources(manifest, manifest_path, root):
         else:
             continue
         violations.append(
-            SchemaViolation(manifest_path, 0, f"agents[{index}].entrypoint", problem)
+            SchemaViolation(path, 0, f"agents[{index}].entrypoint", problem)
         )
     return violations
 
 
-def check_project(manifest_path, root=None):
-    """`(manifest, violations)` for a project's manifest.
-
-    Never raises: the caller decides how to report. The manifest is None when
-    it did not parse.
-
-    `root` is the project root the manifest's paths are relative to.
-    Given one, the entrypoint each agent declares must
-    exist under it; left out, nothing on disk is checked.
-    """
-    manifest = None
-    violations = []
+def check_project(root):
+    """`(project, violations)` for the project folder `root`: its `config/workflow_config.yaml`
+    and the code its agents point at. Never raises; the project is None when its config
+    did not parse."""
+    path = os.path.join(root, CONFIG_PATH)
     try:
-        manifest = load_manifest(manifest_path)
+        project = load_project(path)
     except SchemaError as error:
-        violations.extend(error.violations)
+        return None, tuple(error.violations)
+    return project, tuple(_missing_sources(project.agents, path, root))
 
-    if manifest is None:
-        return None, tuple(violations)
 
-    if root is not None:
-        violations.extend(_missing_sources(manifest, manifest_path, root))
+def check_deployment(workspace):
+    """`(manifest, violations)` for the deployment in `workspace`: its config files and
+    the code every project's agents point at. Never raises; the manifest is None when
+    the config files did not parse."""
+    try:
+        manifest = load_deployment(workspace)
+    except SchemaError as error:
+        return None, tuple(error.violations)
+    violations = []
+    for name in project_names(workspace):
+        root = os.path.join(workspace, name)
+        project_agents = [
+            agent_spec for agent_spec in manifest.agents if agent_spec.project == name
+        ]
+        violations += _missing_sources(
+            project_agents, os.path.join(root, CONFIG_PATH), root
+        )
     return manifest, tuple(violations)
-
-
-def validate_project(manifest_path, root=None):
-    """Every violation in a project's manifest."""
-    return check_project(manifest_path, root)[1]

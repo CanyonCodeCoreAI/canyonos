@@ -59,9 +59,9 @@ def _agents_table(agent_specs):
     View in `canyonos config`."""
 
 def _redis_outlived_its_password():
-    """True when this project's Redis container still runs on the active Docker engine
-    but its password file under `~/.canyonos/projects/` is gone, so a new password
-    would not open it."""
+    """True when this deployment's Redis container still runs on the active Docker
+    engine but its password file under `~/.canyonos/deployments/` is gone, so a new
+    password would not open it."""
 ```
 
 ## License header

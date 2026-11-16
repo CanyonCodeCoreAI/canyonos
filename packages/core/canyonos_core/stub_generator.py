@@ -223,7 +223,8 @@ def _build_stub_class(agent_spec):
                 pass
             ...stub methods...
     """
-    class_name = agent_spec.name
+    # The agent's own class name; its calls name the agent `<project>.<agent>`.
+    class_name = agent_spec.name.rsplit(".", 1)[-1]
     functions = agent_spec.functions
 
     # __init__ method: simple pass, no gRPC setup needed.
@@ -745,7 +746,8 @@ def generate_docker(
     source files needed to run the agent with its own local controller.
 
     Args:
-        agent_name:        The agent's class name, as its manifest entry names it.
+        agent_name:        The agent's name in the deployment, `<project>.<agent>`;
+                           the part after the `.` is its class name.
         agent_file:        Path to the original Python agent implementation.
         output_dir:        Optional output directory (default: docker_container/<AgentName>/).
         grpc_stubs_dir:    Optional path to compiled gRPC stubs (default: <repo_root>/grpc_stubs).

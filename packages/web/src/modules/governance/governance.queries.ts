@@ -13,7 +13,7 @@ const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
 
 const ERROR_MESSAGES: Record<string, string> = {
   'canyonos.project_not_running':
-    'This project is not running, so its governance rules cannot be read. Deploy it, then retry.',
+    'This deployment is not running, so its governance rules cannot be read. Deploy it, then retry.',
   'canyonos.controller_unreachable':
     'The running controller could not be reached. Check that it is up, then retry.',
   'governance.config_invalid':

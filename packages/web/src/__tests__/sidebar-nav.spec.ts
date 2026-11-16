@@ -55,7 +55,9 @@ test('project navigation distinguishes loading, error, retry, and empty states',
   releaseProjects();
   await expect(page.getByTestId('projects-error')).toBeVisible();
   await page.getByTestId('projects-error').getByRole('button', { name: 'Retry' }).click();
-  await expect(page.getByTestId('projects-empty')).toHaveText('No projects on this machine yet.');
+  await expect(page.getByTestId('projects-empty')).toHaveText(
+    'No deployments on this machine yet.'
+  );
   expect(attempts).toBe(2);
 });
 

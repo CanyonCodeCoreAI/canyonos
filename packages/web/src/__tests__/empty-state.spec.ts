@@ -34,7 +34,7 @@ test('a pending project read shows the shimmering logo until the project arrives
 
   const empty = page.getByTestId('empty-state');
   try {
-    await expect(empty).toContainText('Loading project…');
+    await expect(empty).toContainText('Loading deployment…');
     await expect(empty.getByTestId('empty-state-logo')).toHaveAttribute('data-loading', 'true');
   } finally {
     releaseProject();

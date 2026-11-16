@@ -1994,7 +1994,7 @@ test.describe('block metrics drawer', () => {
       ['Share of spend', '80.9%', 'of $84.95'],
       ['Tokens', '27.4M', '214K / block'],
       // 68.706719 / 95 * 1000.
-      ['Per 1K project queries', '$723.23', 'over 95 queries'],
+      ['Per 1K deployment queries', '$723.23', 'over 95 queries'],
       ['p95 latency', '1.5 min', 'per block'],
       ['Retry rate', '17.9%', '3.6% failed'],
       ['Cache hit', '42%', null],
@@ -2006,7 +2006,7 @@ test.describe('block metrics drawer', () => {
     }
 
     await expect(page.getByTestId(DRAWER)).toContainText(
-      "Ran in 88 of the project's 95 queries (92.6%)"
+      "Ran in 88 of the deployment's 95 queries (92.6%)"
     );
   });
 

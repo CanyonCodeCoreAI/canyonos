@@ -4,7 +4,12 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page, Route } from '@playwright/test';
 
-import type { ScalingAgent, ScalingPolicy, ScalingStatus } from '@canyonos/api/scaling';
+import type {
+  ScalingAgent,
+  ScalingPolicy,
+  ScalingResponse,
+  ScalingStatus,
+} from '@canyonos/api/scaling';
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/projects';
@@ -19,6 +24,8 @@ import {
 const apiOrigin = new URL(apiBaseUrl).origin;
 const SCALING_PATH = `/projects/${PROJECT.id}/scaling`;
 const AGENTS_PATH = `${SCALING_PATH}/agents`;
+// The deployment's one project in most tests: its agents are named `app.<agent>`.
+const APP = 'app';
 const UNREACHABLE = 'The running controller could not be reached';
 const SAVED_TOAST = "Scaling policy saved. Agents pick it up on the controller's next poll.";
 const DELETED_TOAST =
@@ -49,7 +56,7 @@ const INVALID: ScalingStatus = {
 
 const AGENTS: ScalingAgent[] = [
   {
-    name: 'PriceAgent',
+    name: 'app.PriceAgent',
     replicas_expected: 2,
     replicas_running: 1,
     load: {
@@ -58,7 +65,7 @@ const AGENTS: ScalingAgent[] = [
       observed_at: '2026-10-06T12:00:00.000Z',
     },
   },
-  { name: 'RiskAgent', replicas_expected: 1, replicas_running: 1, load: null },
+  { name: 'app.RiskAgent', replicas_expected: 1, replicas_running: 1, load: null },
 ];
 
 type Respond = (route: Route) => Promise<void>;
@@ -76,7 +83,7 @@ function deferred() {
 // next call answers mid-flow.
 interface ScalingStub {
   reads: number;
-  policy: ScalingStatus;
+  projects: ScalingResponse['projects'];
   read_hold: Promise<void> | null;
   read_failure: Respond | null;
   writes: WriteRequest[];
@@ -89,17 +96,22 @@ interface ScalingStub {
 
 interface WriteRequest {
   readonly method: string;
+  readonly project: string;
   readonly body: unknown;
 }
 
+const isStatus = (policy: ScalingStatus | ScalingResponse['projects']): policy is ScalingStatus =>
+  typeof policy.status === 'string';
+
+/** `policy` is project app's; a record stubs each project of the deployment by name. */
 async function stubScaling(
   page: Page,
-  policy: ScalingStatus,
+  policy: ScalingStatus | ScalingResponse['projects'],
   agents: ScalingAgent[] = AGENTS
 ): Promise<ScalingStub> {
   const stub: ScalingStub = {
     reads: 0,
-    policy: structuredClone(policy),
+    projects: structuredClone(isStatus(policy) ? { [APP]: policy } : policy),
     read_hold: null,
     read_failure: null,
     writes: [],
@@ -118,27 +130,35 @@ async function stubScaling(
       return fulfillJson(route, { agents: stub.agents });
     }
   );
-  // Writes behave like the controller config: a PUT stores the policy, a DELETE drops it.
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname === SCALING_PATH,
     async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      stub.reads += 1;
+      if (stub.read_hold) await stub.read_hold;
+      if (stub.read_failure) return stub.read_failure(route);
+      return fulfillJson(route, { projects: stub.projects } satisfies ScalingResponse);
+    }
+  );
+  // Writes behave like the controller config: a PUT stores the project's policy, a DELETE drops it.
+  await page.route(
+    (url) =>
+      url.origin === apiOrigin &&
+      url.pathname.startsWith(`${SCALING_PATH}/`) &&
+      url.pathname !== AGENTS_PATH,
+    async (route) => {
       const request = route.request();
-      if (request.method() === 'GET') {
-        stub.reads += 1;
-        if (stub.read_hold) await stub.read_hold;
-        if (stub.read_failure) return stub.read_failure(route);
-        return fulfillJson(route, stub.policy);
-      }
       if (request.method() !== 'PUT' && request.method() !== 'DELETE') return route.continue();
-      stub.writes.push({ method: request.method(), body: request.postDataJSON() });
+      const project = decodeURIComponent(new URL(request.url()).pathname.split('/').pop()!);
+      stub.writes.push({ method: request.method(), project, body: request.postDataJSON() });
       if (stub.write_hold) await stub.write_hold;
       if (stub.write_failure) return stub.write_failure(route);
       if (request.method() === 'DELETE') {
-        stub.policy = NONE;
+        stub.projects[project] = NONE;
         return fulfillJson(route, NONE);
       }
       const policy = request.postDataJSON() as ScalingPolicy;
-      stub.policy = { status: 'applied', policy };
+      stub.projects[project] = { status: 'applied', policy };
       return fulfillJson(route, policy);
     }
   );
@@ -154,7 +174,7 @@ async function openSession(page: Page): Promise<void> {
 
 async function openScaling(
   page: Page,
-  policy: ScalingStatus,
+  policy: ScalingStatus | ScalingResponse['projects'],
   agents: ScalingAgent[] = AGENTS
 ): Promise<ScalingStub> {
   await openSession(page);
@@ -275,7 +295,7 @@ test.describe('screen states', () => {
     {
       status: 404,
       code: 'canyonos.project_not_running',
-      message: 'This project is not running, so its scaling policy cannot be read.',
+      message: 'This deployment is not running, so its scaling policy cannot be read.',
     },
     { status: 502, code: 'canyonos.controller_unreachable', message: UNREACHABLE },
     { status: 500, code: 'test.failure', message: 'Controlled test failure' },
@@ -349,9 +369,7 @@ test.describe('screen states', () => {
       await expectAppliedValues(card, policy);
       await expect(card.getByTestId('policy-edit')).toBeEnabled();
       await expect(card.getByTestId('policy-delete')).toBeEnabled();
-      await expect(page.getByTestId('scaling-scope')).toContainText(
-        'One policy for the whole project'
-      );
+      await expect(page.getByTestId('scaling-scope')).toContainText('One policy for each project');
     });
   }
 
@@ -462,6 +480,7 @@ test.describe('adding a policy', () => {
     expect(stub.writes).toEqual([
       {
         method: 'PUT',
+        project: APP,
         body: {
           min_replicas: 2,
           max_replicas: 6,
@@ -500,6 +519,7 @@ test.describe('adding a policy', () => {
     expect(stub.writes).toEqual([
       {
         method: 'PUT',
+        project: APP,
         body: {
           min_replicas: 1,
           max_replicas: 5,
@@ -587,6 +607,7 @@ test.describe('editing the applied policy', () => {
     expect(stub.writes).toEqual([
       {
         method: 'PUT',
+        project: APP,
         body: {
           min_replicas: 1,
           max_replicas: 7,
@@ -624,7 +645,7 @@ test.describe('editing the applied policy', () => {
     }
 
     await expect(toast(page)).toContainText(DELETED_TOAST);
-    expect(stub.writes).toEqual([{ method: 'DELETE', body: null }]);
+    expect(stub.writes).toEqual([{ method: 'DELETE', project: APP, body: null }]);
     await expect.poll(() => stub.reads).toBe(2);
     await expect(appliedCard(page)).toHaveCount(0);
     await expect(noneCard(page)).toBeVisible();
@@ -659,7 +680,7 @@ test.describe('invalid policy', () => {
     await invalidCard(page).getByTestId('policy-delete').click();
 
     await expect(toast(page)).toContainText(DELETED_TOAST);
-    expect(stub.writes).toEqual([{ method: 'DELETE', body: null }]);
+    expect(stub.writes).toEqual([{ method: 'DELETE', project: APP, body: null }]);
     await expect(invalidCard(page)).toHaveCount(0);
     await expect(noneCard(page)).toBeVisible();
   });
@@ -690,6 +711,7 @@ test.describe('invalid policy', () => {
     expect(stub.writes).toEqual([
       {
         method: 'PUT',
+        project: APP,
         body: {
           min_replicas: 1,
           max_replicas: 5,
@@ -915,6 +937,14 @@ test.describe('agents', () => {
     );
   });
 
+  test('empty: a deployment with no projects yet shows no policy card', async ({ page }) => {
+    await openScaling(page, {}, []);
+
+    await expect(page.getByTestId('scaling-empty')).toContainText('has not published any agents');
+    await expect(policyCard(page)).toHaveCount(0);
+    await expect(agentsPanel(page)).toHaveCount(0);
+  });
+
   test('error -> Retry: a failed agents read shows its own error and retries alone', async ({
     page,
   }) => {
@@ -933,6 +963,41 @@ test.describe('agents', () => {
 
     await expect(agentsPanel(page)).toHaveAttribute('data-state', 'list');
     expect(stub.reads).toBe(policy_reads);
+  });
+});
+
+test.describe('projects', () => {
+  const GAMMA: ScalingAgent = {
+    name: 'ops.Gamma',
+    replicas_expected: 1,
+    replicas_running: 1,
+    load: null,
+  };
+  const section = (page: Page, project: string) =>
+    page.locator(`[data-testid="scaling-project"][data-project="${project}"]`);
+
+  test("each project shows its own policy and only its agents, and a save writes only that project's", async ({
+    page,
+  }) => {
+    const stub = await openScaling(page, { app: APPLIED, ops: NONE }, [...AGENTS, GAMMA]);
+    const app = section(page, 'app');
+    const ops = section(page, 'ops');
+
+    await expect(page.getByTestId('scaling-project')).toHaveCount(2);
+    await expect(app.getByRole('heading', { name: 'app', exact: true })).toBeVisible();
+    await expect(app.getByTestId('scaling-policy-applied')).toBeVisible();
+    await expect(app.getByTestId('scaling-agent')).toHaveCount(2);
+    await expect(ops.getByTestId('scaling-policy-none')).toBeVisible();
+    await expect(ops.getByTestId('scaling-agent')).toHaveCount(1);
+    await expect(ops.getByTestId('scaling-agent')).toContainText('ops.Gamma');
+
+    await ops.getByTestId('policy-add').click();
+    await ops.getByTestId('policy-save').click();
+
+    await expect(toast(page)).toContainText(SAVED_TOAST);
+    expect(stub.writes).toEqual([{ method: 'PUT', project: 'ops', body: expect.any(Object) }]);
+    await expect(ops.getByTestId('scaling-policy-applied')).toBeVisible();
+    await expectAppliedValues(app.getByTestId('scaling-policy-applied'), THROUGHPUT_POLICY);
   });
 });
 

@@ -14,7 +14,7 @@ import { apiCall, forgeAuthApi } from '@/api';
 import { projectQueryKeys } from '@/modules/projects/projects.query-cache';
 
 const ERROR_MESSAGES: Record<string, string> = {
-  'canyonos.project_not_running': 'This project is not running, so its prompts cannot be read.',
+  'canyonos.project_not_running': 'This deployment is not running, so its prompts cannot be read.',
   'canyonos.controller_unreachable': 'The running controller could not be reached.',
 };
 

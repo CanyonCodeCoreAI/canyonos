@@ -6,9 +6,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 package builders
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -216,15 +216,14 @@ func EndpointStatefulSet(p *canyonosv1alpha1.CanyonProject, image string) *appsv
 // address and the health and drain opt-ins. No LLM gateway variables: it runs no
 // agent.
 func endpointEnv(p *canyonosv1alpha1.CanyonProject) []corev1.EnvVar {
+	routes, _ := json.Marshal(p.Spec.Endpoint.Routes)
 	return append([]corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
 		}},
 		{Name: "CANYONOS_AGENT_HOST", Value: "$(POD_NAME)." + EndpointWorkload + "." + p.Namespace + ".svc"},
 		{Name: "CANYONOS_AGENT_PORT", Value: strconv.Itoa(AgentPort)},
-		{Name: "CANYONOS_ENDPOINT_AGENT", Value: p.Spec.Endpoint.Agent},
-		{Name: "CANYONOS_ENDPOINT_METHOD", Value: p.Spec.Endpoint.Method},
-		{Name: "CANYONOS_ENDPOINT_ARGUMENTS", Value: strings.Join(p.Spec.Endpoint.Arguments, ",")},
+		{Name: "CANYONOS_ENDPOINT_ROUTES", Value: string(routes)},
 		pollIntervalEnv(p),
 		logsEnabledEnv(p),
 		{Name: envHealthPort, Value: strconv.Itoa(HealthPort)},

@@ -13,6 +13,8 @@ replica rather than three.
 
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # The project root of a converted project, inside the folder `canyonos` runs in.
@@ -49,9 +51,26 @@ def load_dotenv(path):
         os.environ.setdefault(key, value)
 
 
-def expand_env_value(value, env=os.environ):
+_dotenv = ContextVar("dotenv", default={})
+
+
+@contextmanager
+def dotenv_applied(env_path):
+    """Have `expand_env_value` read the `.env` at `env_path` for the `with` body, the
+    environment's own values winning: each file of a deployment reads its `${VAR}`s
+    from its own folder's `.env` only. Other threads never see these values."""
+    token = _dotenv.set(read_dotenv(env_path))
+    try:
+        yield
+    finally:
+        _dotenv.reset(token)
+
+
+def expand_env_value(value, env=None):
     """Substitute `${VAR}` refs from `env` throughout a parsed config, leaving unset ones
-    alone."""
+    alone. Without `env`, from the environment over the `.env` `dotenv_applied` set."""
+    if env is None:
+        env = {**_dotenv.get(), **os.environ}
     if isinstance(value, str):
         return ENV_REF.sub(lambda m: env.get(m.group(1), m.group(0)), value)
     if isinstance(value, dict):
@@ -66,10 +85,9 @@ def expand_env_value(value, env=os.environ):
 
 def resolve_env_file(config_path):
     """
-    Return the absolute path of the project's `.env`, the one deploy ships to the
-    Global Controller as `/workspace/.env`, or None when there is none. That is the
-    `.env` of the folder `canyonos` runs in, beside a `.canyon` root, else the root's
-    own: the root is the folder above `config_path`'s.
+    Return the absolute path of the `.env` of the project whose config is at
+    `config_path`, or None when there is none: the one beside a `.canyon` root, else
+    the root's own. The root is the folder above `config_path`'s.
 
     Raises:
         ValueError: the file exists but is unreadable. Deploy should fail here
@@ -85,13 +103,6 @@ def resolve_env_file(config_path):
     if not os.access(path, os.R_OK):
         raise ValueError(f".env is not readable: {path}")
     return path
-
-
-def read_root_dotenv(config_path):
-    """Return the entries of the project's `.env`, or {} when there is none, without
-    importing them."""
-    env_path = resolve_env_file(config_path)
-    return read_dotenv(env_path) if env_path else {}
 
 
 def load_root_dotenv(config_path):

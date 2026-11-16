@@ -4,6 +4,7 @@
 """Start, check and remove the Docker container one replica runs in. Every machine runs
 containers the same way: this one directly, any other over SSH."""
 
+import json
 import logging
 import os
 import socket
@@ -20,6 +21,7 @@ from canyonos_core.controller.utils.container_names import (
     ForeignContainerError,
     container_name,
     data_volume_name,
+    docker_name,
     image_name,
     metrics_container_name,
     project_group,
@@ -133,6 +135,9 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
     host = machine["private_host"]
     user = machine.get("user")
     container = container_name(replica_id)
+    # What the deployment's network calls the replica: its container name, which
+    # carries the deployment too, can pass DNS's 63-character limit.
+    network_name = docker_name(replica_id)
     is_local = _is_local_host(host)
     # A remote machine has no project network, so reach its Redis via the host.
     redis_host = redis_container_name(host) if is_local else HOST_GATEWAY
@@ -181,7 +186,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
         # Other machines can't resolve container names, so they reach a replica on its
         # published port: a remote one at its host, the endpoint at the private IP.
         if is_local and not callback_host:
-            agent_host, agent_port = container, container_port
+            agent_host, agent_port = network_name, container_port
         else:
             agent_host, agent_port = callback_host or host, host_port
         address = f"{agent_host}:{agent_port}"
@@ -194,7 +199,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             "-d",
             *project_label_args(),
             *(
-                ["--network", project_group()]
+                ["--network", project_group(), "--network-alias", network_name]
                 if is_local
                 else ["--restart", "unless-stopped"]
             ),
@@ -464,8 +469,8 @@ def _image_args(controller, agent_spec, image, host, user, api_port):
     """Yield the `docker run` args that end the command and pick what runs.
 
     The endpoint runs the controller image as `python -m canyonos_core.endpoint`,
-    publishing its HTTP port on `api_port` and serving one agent method. Any other
-    agent runs its own image with the project's `.env`; explicit -e flags before
+    publishing its HTTP port on `api_port` and serving the deployment's routes. Any other
+    agent runs its own image with its project's `.env`; explicit -e flags before
     it still win, so a stray CANYONOS_* line in someone's .env cannot break agent
     wiring.
     """
@@ -475,22 +480,11 @@ def _image_args(controller, agent_spec, image, host, user, api_port):
                 "CANYONOS_CONTROLLER_IMAGE is unset, so the endpoint has no image to "
                 "run. Redeploy with `canyonos deploy`."
             )
-        served = controller.agent_specs_by_name[agent_spec["agent"]]
-        function = next(
-            function
-            for function in served["functions"]
-            if function["name"] == agent_spec["method"]
-        )
-        arguments = [argument["name"] for argument in function.get("arguments") or []]
         yield [
             "-p",
             f"{api_port}:{ENDPOINT_PORT}",
             "-e",
-            f"CANYONOS_ENDPOINT_AGENT={agent_spec['agent']}",
-            "-e",
-            f"CANYONOS_ENDPOINT_METHOD={agent_spec['method']}",
-            "-e",
-            f"CANYONOS_ENDPOINT_ARGUMENTS={','.join(arguments)}",
+            f"CANYONOS_ENDPOINT_ROUTES={json.dumps(agent_spec['routes'])}",
             "--entrypoint",
             "python",
             CONTROLLER_IMAGE,
@@ -498,7 +492,13 @@ def _image_args(controller, agent_spec, image, host, user, api_port):
             "canyonos_core.endpoint",
         ]
         return
-    with env_file_args(controller, host, user, _is_local_host(host)) as args:
+    with env_file_args(
+        controller,
+        controller.env_file_of(agent_spec),
+        host,
+        user,
+        _is_local_host(host),
+    ) as args:
         yield [*args, image]
 
 

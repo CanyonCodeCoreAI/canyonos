@@ -9,7 +9,7 @@ const project_route = getRouteApi('/_authenticated/projects/$project_id');
 
 export function ProjectBreadcrumbs() {
   const project = project_route.useLoaderData();
-  return <BreadcrumbTrail segments={[{ id: 'project', label: project?.name ?? 'Project' }]} />;
+  return <BreadcrumbTrail segments={[{ id: 'project', label: project?.name ?? 'Deployment' }]} />;
 }
 
 export function ProjectDeployBreadcrumbs() {
@@ -17,7 +17,7 @@ export function ProjectDeployBreadcrumbs() {
   return (
     <BreadcrumbTrail
       segments={[
-        { id: 'project', label: project?.name ?? 'Project' },
+        { id: 'project', label: project?.name ?? 'Deployment' },
         { id: 'deploy', label: 'Scaling Policy' },
       ]}
     />
@@ -29,7 +29,7 @@ function ProjectSectionBreadcrumbs({ id, label }: { readonly id: string; readonl
   return (
     <BreadcrumbTrail
       segments={[
-        { id: 'project', label: project?.name ?? 'Project' },
+        { id: 'project', label: project?.name ?? 'Deployment' },
         { id, label },
       ]}
     />
@@ -57,7 +57,7 @@ export function ProjectDeploymentConfigBreadcrumbs() {
   return (
     <BreadcrumbTrail
       segments={[
-        { id: 'project', label: project?.name ?? 'Project' },
+        { id: 'project', label: project?.name ?? 'Deployment' },
         { id: 'deployment-config', label: 'Deployment Config' },
       ]}
     />
@@ -69,7 +69,7 @@ export function ProjectDeployPerformanceBreadcrumbs() {
   return (
     <BreadcrumbTrail
       segments={[
-        { id: 'project', label: project?.name ?? 'Project' },
+        { id: 'project', label: project?.name ?? 'Deployment' },
         { id: 'deploy', label: 'Scaling Policy' },
         { id: 'performance', label: 'Emulate' },
       ]}
@@ -82,7 +82,7 @@ export function ProjectWorkflowDesignBreadcrumbs() {
   return (
     <BreadcrumbTrail
       segments={[
-        { id: 'project', label: project?.name ?? 'Project' },
+        { id: 'project', label: project?.name ?? 'Deployment' },
         { id: 'workflows', label: 'Workflows' },
         { id: 'design', label: 'Design' },
       ]}

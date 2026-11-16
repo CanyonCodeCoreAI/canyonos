@@ -85,7 +85,7 @@ EOF
   [ "$(as_deployer kubectl auth can-i get crds 2>/dev/null)" = "no" ] || fail "the deployer may read CRDs"
 
   log "canyonos target kubernetes, then canyonos deploy (as the deployer)"
-  cp -r /w/examples/helloworld /hw
+  cp -r /w/examples/helloworld/helloworld /hw
   printf 'EXAMPLE=1\n' > /hw/.env
   # Development mode (no usage events, no upgrade check) naming the release image,
   # so the build runs the canyonos-core image the operator was installed with.
@@ -107,7 +107,7 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
   }
 
   log "canyonos target with no options takes the folder's name and the cluster's registry"
-  cp -r /w/examples/helloworld /tmp/Target_Check
+  cp -r /w/examples/helloworld/helloworld /tmp/Target_Check
   canyonos_in "${ADMIN}" /tmp/Target_Check target kubernetes || fail "target with no options"
   [ "$(config_value /tmp/Target_Check target)" = kubernetes ] \
     && [ "$(config_value /tmp/Target_Check kubernetes.namespace)" = target-check ] \
@@ -121,7 +121,7 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
     || fail "target does not show where the project deploys: ${shown}"
 
   log "canyonos target fills an empty kubernetes: block, and validate refuses one"
-  cp -r /w/examples/helloworld /tmp/Empty_Block
+  cp -r /w/examples/helloworld/helloworld /tmp/Empty_Block
   sed -i 's/^target: docker$/target: kubernetes/' /tmp/Empty_Block/config/workflow_config.yaml
   printf 'kubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/config/workflow_config.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Empty_Block validate 2>&1)" && fail "validate passed an empty kubernetes: block"
@@ -132,7 +132,7 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
     || fail "target left the kubernetes: block empty: $(cat /tmp/Empty_Block/config/workflow_config.yaml)"
 
   log "a config that is not valid YAML is refused, not taken for a Docker project"
-  cp -r /w/examples/helloworld /tmp/Bad_Yaml
+  cp -r /w/examples/helloworld/helloworld /tmp/Bad_Yaml
   sed -i 's/^target: docker$/target: kubernetes/' /tmp/Bad_Yaml/config/workflow_config.yaml
   printf 'kubernetes: [\n' >> /tmp/Bad_Yaml/config/workflow_config.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Bad_Yaml stop 2>&1)" && fail "stop passed with a config that is not YAML: ${said}"
@@ -141,7 +141,7 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
   log "canyonos target with no terminal and no --registry does not wait on a prompt"
   # The deployer may edit one namespace only, so it may not be able to read kube-public,
   # where the cluster advertises its registry: it then has to name it, not be asked.
-  cp -r /w/examples/helloworld /tmp/hw-deployer
+  cp -r /w/examples/helloworld/helloworld /tmp/hw-deployer
   rc=0
   said="$(canyonos_in "${DEPLOYER}" /tmp/hw-deployer target kubernetes --namespace "${NS}" 2>&1)" || rc=$?
   echo "exit ${rc}: ${said}"
@@ -150,7 +150,7 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
     0) [ "$(config_value /tmp/hw-deployer kubernetes.registry)" = "${REGISTRY}" ] \
          || fail "target wrote another registry: $(cat /tmp/hw-deployer/config/workflow_config.yaml)" ;;
     *) echo "${said}" | grep -q -- "--registry" || fail "target failed without naming --registry"
-       cmp -s /w/examples/helloworld/config/workflow_config.yaml /tmp/hw-deployer/config/workflow_config.yaml \
+       cmp -s /w/examples/helloworld/helloworld/config/workflow_config.yaml /tmp/hw-deployer/config/workflow_config.yaml \
          || fail "a failed target still wrote the config: $(cat /tmp/hw-deployer/config/workflow_config.yaml)" ;;
   esac
 
@@ -191,7 +191,7 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
     local forward=$! ok=0 id
     for _ in $(seq 30); do curl -s -m 5 -o /dev/null http://127.0.0.1:18080/ && break; sleep 2; done
     for n in 1 2 3 4 5; do
-      id="$(curl -s -m 10 -X POST http://127.0.0.1:18080/main -H 'Content-Type: application/json' \
+      id="$(curl -s -m 10 -X POST http://127.0.0.1:18080/Workflow/main -H 'Content-Type: application/json' \
         -d "{\"query\": \"e2e ${n}\"}" | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])' 2>/dev/null || true)"
       for _ in $(seq 60); do
         case "$(curl -s -m 5 "http://127.0.0.1:18080/status/${id}")" in *'"done"'*) ok=$((ok + 1)); break ;; esac

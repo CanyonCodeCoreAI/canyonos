@@ -16,15 +16,17 @@ CONFIG_KEY = "scaling:config"
 METRICS = ("queue_length_total", "requests_per_minute_per_replica")
 
 
-def read_policy(redis_client):
-    """The workflow's scaling policy, or None when the document is missing or has none."""
+def read_policies(redis_client):
+    """Each project's scaling policy, from its scaling.yaml, by project name; empty when
+    the document is missing or holds none."""
     raw = redis_client.get(CONFIG_KEY) or "{}"
     try:
         document = json.loads(raw)
     except ValueError as e:
         logger.warning("Ignoring %s: not valid JSON (%s)", CONFIG_KEY, e)
-        return None
-    return document.get("scaling") if isinstance(document, dict) else document
+        return {}
+    projects = document.get("projects") if isinstance(document, dict) else None
+    return projects if isinstance(projects, dict) else {}
 
 
 def policy_error(policy):
@@ -49,22 +51,23 @@ def policy_error(policy):
 
 
 def scale(controller):
-    """List (agent_name, delta) pairs; one policy applies to every agent, each scaled on its own load."""
-    policy = read_policy(controller.redis)
-    if policy is None:
-        return []
-    error = policy_error(policy)
-    if error:
-        logger.warning("Skipping invalid scaling policy: %s", error)
-        return []
-    policy = {
-        **policy,
-        "min_replicas": int(policy["min_replicas"]),
-        "max_replicas": int(policy["max_replicas"]),
-    }
+    """List (agent_name, delta) pairs; each project's policy applies to every agent of
+    the project, each scaled on its own load."""
+    policies = {}
+    for project, policy in read_policies(controller.redis).items():
+        error = policy_error(policy)
+        if error:
+            logger.warning("Skipping %s's invalid scaling policy: %s", project, error)
+            continue
+        policies[project] = {
+            **policy,
+            "min_replicas": int(policy["min_replicas"]),
+            "max_replicas": int(policy["max_replicas"]),
+        }
     decisions = []
     for agent_name, agent_spec in controller.agent_specs_by_name.items():
-        if agent_spec.get("type", "agent") != "agent":
+        policy = policies.get(agent_spec.get("project"))
+        if agent_spec.get("type", "agent") != "agent" or policy is None:
             continue
         samples = contract.read(controller.redis, contract.agent_key(agent_name))
         if not samples:

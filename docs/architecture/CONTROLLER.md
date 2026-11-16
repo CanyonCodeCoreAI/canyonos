@@ -64,23 +64,25 @@ canyonos CLI
 └────────────────────────────────────────────────────────────┘
 ```
 
-Container names: `canyonos-<project>-global-controller`,
-`canyonos-<project>-redis-<host>`, `canyonos-<project>-<replica id>`,
-`canyonos-<project>-endpoint-<id>` and `canyonos-<project>-metrics-<host>`. A replica's gRPC port is published only when
-callers on other machines need it.
+Container names: `canyonos-<deployment>-global-controller`,
+`canyonos-<deployment>-redis-<host>`, `canyonos-<deployment>-<replica id>`,
+`canyonos-<deployment>-endpoint-<id>` and `canyonos-<deployment>-metrics-<host>`, with
+the `.` of `<project>.<agent>` in a replica ID written `--`. A replica's gRPC port is
+published only when callers on other machines need it.
 
 The Global Controller container listens on `8000`, published on the last deploy's port,
 else `8000` or the next free one. The CLI calls its server: `POST /deploy` starts
 `python -m canyonos_core.cli deploy` in `/workspace`, `POST /reload` sends it SIGHUP,
-`POST /clean` sends it SIGTERM, and `GET /endpoint` reads
-[the endpoint record](ENDPOINT.md#where-callers-find-it).
+`POST /clean` sends it SIGTERM, `GET /endpoint` reads
+[the endpoint record](ENDPOINT.md#where-callers-find-it), and `GET /test_queries` reads
+each project's `config/test_query.txt` for `canyonos test`.
 
 Each machine has its own Redis, and each replica reports to its machine's. A replica's
 `address`, the one other controllers call, depends on where it runs:
 
 | Replica                                 | `address`                                          | Port published on the machine |
 | --------------------------------------- | -------------------------------------------------- | ----------------------------- |
-| On the Global Controller's machine      | `<container_name>:50051`, on the project's network | none                          |
+| On the Global Controller's machine      | `<replica id>:50051`, on the deployment's network  | none                          |
 | On another machine (EC2)                | `<private_host>:<host_port>`                       | `<host_port>`                 |
 | The endpoint, in a deploy with machines | `<CANYONOS_PRIVATE_IP>:<host_port>`                | `<host_port>`, on that IP     |
 
@@ -99,8 +101,10 @@ replica reports to the one project Redis. See [Operator](OPERATOR.md).
    that the generated gRPC stubs import, and the provider runs its `preflight`.
 2. Builds the images on a builder thread, with `docker buildx bake`, or one
    `docker build` at a time when buildx is missing. The rest goes ahead meanwhile.
-3. Creates the `GlobalController`. `ControllerContext._load_config` loads `.env` and the
-   workflow config and appends the endpoint as one more agent spec, then:
+3. Creates the `GlobalController`. `ControllerContext._load_config` loads
+   `deployment.yaml` and every project's workflow config, each agent named
+   `<project>.<agent>` (see [Loading](CONFIG.md#loading)), and appends the endpoint as
+   one more agent spec, then:
     1. `orchestrator.remove_stale_containers()`, then
        `orchestrator.start_support_services()`: one Redis and one metrics collector
        per machine.
@@ -149,7 +153,7 @@ seconds (default 10) on its own. See [Futures and cleanup](#futures-and-cleanup)
 ### Config reload
 
 `reload_config` runs on SIGHUP (from `POST /reload`) or, on Kubernetes, when the
-ConfigMap changes. It validates the project first and raises `SchemaError`, changing
+ConfigMap changes. It validates the deployment first and raises `SchemaError`, changing
 nothing, when the edited config is invalid. Every config file is parsed before anything
 is written. It then publishes the new config as at startup, which resets every agent to
 its configured replica count, and `orchestrator.forget_removed_agents` drops the agents

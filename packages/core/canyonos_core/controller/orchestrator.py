@@ -69,8 +69,8 @@ class CanyonOrchestrator:
                 sys.executable,
                 "-m",
                 "canyonos_core.reconciler",
-                "--config",
-                os.path.abspath(self.gc.config_path),
+                "--workspace",
+                os.path.abspath(self.gc.workspace),
             ],
         )
 

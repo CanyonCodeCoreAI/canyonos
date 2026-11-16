@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Logic for canyonos clean: stop each project it is given or picks (see
+"""Logic for canyonos clean: stop each deployment it is given or picks (see
 selection.py) if it is deployed, then remove its `.canyon`, CanyonOS skills, records
-under `~/.canyonos/projects/` and agent images; with --all, everything CanyonOS put on
-this machine."""
+under `~/.canyonos/deployments/` and agent images; with --all, everything CanyonOS put
+on this machine."""
 
 import os
 import shutil
 
-from canyonos import convert, project, selection, ui
-from canyonos.constants import CANYON_DIR, default_config_path
+from canyonos import convert, deployment, selection, ui
+from canyonos.constants import CANYON_DIR, deployment_config_path
 from canyonos.stop import (
     agent_images,
     confirm_clean_all,
@@ -62,9 +62,9 @@ def _remove_local_files(folder):
 
 
 def _remove_records(name):
-    """Delete the folder under `~/.canyonos/projects/` that holds project `name`'s
+    """Delete the folder under `~/.canyonos/deployments/` that holds deployment `name`'s
     records, its Redis password among them; False when it stayed."""
-    records = project.state_dir(name)
+    records = deployment.state_dir(name)
     try:
         shutil.rmtree(records)
     except FileNotFoundError:
@@ -76,7 +76,7 @@ def _remove_records(name):
     return True
 
 
-def _clean_project(target, stop):
+def _clean_deployment(target, stop):
     """Stop `target` with `stop` if it is deployed, then remove its local files, its
     records under `~/.canyonos` and its agents' images; False when any of it stayed."""
     # Docker won't remove the image of a container that still runs.
@@ -99,37 +99,37 @@ def _clean_project(target, stop):
 
 
 def _candidates():
-    """Every deployed project, and the current folder's when it holds something to
+    """Every recorded deployment, and the current folder's when it holds something to
     clean and isn't deployed."""
-    deployed = selection.deployed_projects()
-    here = selection.current_project()
-    holds_files = _local_files(here.folder) or os.path.isfile(default_config_path())
+    deployed = selection.recorded_deployments()
+    here = selection.current_deployment()
+    holds_files = _local_files(here.folder) or os.path.isfile(deployment_config_path())
     if holds_files and here.name not in {p.name for p in deployed}:
         return [*deployed, here]
     return deployed
 
 
-def run_clean(all_projects=False, yes=False, refs=()):
-    """Run `canyonos clean` on the projects `refs` name or `selection.choose` picks:
+def run_clean(all_deployments=False, yes=False, refs=()):
+    """Run `canyonos clean` on the deployments `refs` name or `selection.choose` picks:
     stop each that is deployed, then remove its `.canyon`, CanyonOS skills, records
-    and agents' images. With `all_projects`, `stop_all(remove_everything=True)`, asked
-    first unless `yes`. Returns False if a project wasn't found or any could not be
-    removed."""
-    if all_projects:
+    and agents' images. With `all_deployments`, `stop_all(remove_everything=True)`,
+    asked first unless `yes`. Returns False if a deployment wasn't found or any could
+    not be removed."""
+    if all_deployments:
         if not yes and not confirm_clean_all():
             return False
         return stop_all(remove_everything=True)
     choice = selection.choose("clean", refs, _candidates())
-    if not choice.projects:
+    if not choice.deployments:
         if choice.ok:
             ui.say(
-                "Nothing to clean: no project is deployed, and this folder holds no "
+                "Nothing to clean: there is no deployment, and this folder holds no "
                 "CanyonOS project."
             )
         return choice.ok
     stop = stopper(choice)
-    cleaned = [_clean_project(target, stop) for target in choice.projects]
-    deployed = [target for target in choice.projects if target.state is not None]
+    cleaned = [_clean_deployment(target, stop) for target in choice.deployments]
+    deployed = [target for target in choice.deployments if target.state is not None]
     if deployed and not stop_unused_dashboard(deployed):
         cleaned.append(False)
     if not all(cleaned):

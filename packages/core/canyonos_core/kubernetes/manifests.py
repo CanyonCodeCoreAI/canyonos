@@ -12,6 +12,7 @@ defaults, from schema/kubernetes_block.py.
 
 import os
 
+from canyonos_core.endpoint import endpoint_routes
 from canyonos_core.kubernetes.api import (
     API_GROUP,
     API_VERSION,
@@ -76,24 +77,6 @@ def _placement(spec):
     return {"nodeSelector": {str(k): str(v) for k, v in spec.node_selector.items()}}
 
 
-def _endpoint_arguments(config):
-    """The argument names of the method the endpoint serves, which it reads from a
-    request's JSON body; Docker passes the same list (reconciler/replicas.py)."""
-    served = config["endpoint"]
-    for agent_spec in config.get("agents") or []:
-        if agent_spec["name"] != served["agent"]:
-            continue
-        for function in agent_spec.get("functions") or []:
-            if function["name"] == served["method"]:
-                return [
-                    argument["name"] for argument in function.get("arguments") or []
-                ]
-    raise RuntimeError(
-        f"The endpoint serves {served['agent']}.{served['method']}, which the config "
-        "does not define"
-    )
-
-
 def _project_spec(
     config, spec, project_id, config_map, env_secret, controller_image, name
 ):
@@ -112,11 +95,7 @@ def _project_spec(
         if redis.storage_class:
             redis_spec["storageClassName"] = redis.storage_class
 
-    endpoint = {
-        "agent": config["endpoint"]["agent"],
-        "method": config["endpoint"]["method"],
-        "arguments": _endpoint_arguments(config),
-    }
+    endpoint = {"routes": endpoint_routes(config)}
     exposure = spec.endpoint
     if exposure.host:
         ingress = {"host": exposure.host}

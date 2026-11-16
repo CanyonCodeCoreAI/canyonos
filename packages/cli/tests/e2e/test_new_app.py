@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos new-app` through the installed command: the starter it writes and the
-folder it refuses."""
+"""`canyonos new-app` through the installed command: the starter project it writes,
+with no deployment.yaml, and the folder it refuses."""
 
 from __future__ import annotations
 
-from canyonos_core.schema import validate_project
+from canyonos_core.schema import check_project
 
 from canyonos.new_app import template_files
 
@@ -26,9 +26,11 @@ def test_new_app_writes_a_starter_that_passes_the_manifest_schema(cli_case: CliC
 
     assert result.returncode == 0, result.stderr
     assert "Created new CanyonOS project" in result.stdout
+    assert "cd .. && canyonos deploy " in result.stdout
     assert written_files(cli_case) == sorted(path for path, _ in template_files())
-    manifest = cli_case.cwd / "config" / "workflow_config.yaml"
-    assert validate_project(str(manifest), str(cli_case.cwd)) == ()
+    assert "deployment.yaml" not in written_files(cli_case)
+    project, violations = check_project(str(cli_case.cwd))
+    assert project is not None and violations == (), violations
 
 
 def test_new_app_leaves_a_non_empty_folder_untouched(cli_case: CliCase):

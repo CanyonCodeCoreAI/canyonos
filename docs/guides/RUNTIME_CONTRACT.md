@@ -7,14 +7,14 @@ behaves differently from your app.
 
 ## Discovery
 
-`canyonos deploy` reads everything from the [workflow root](BUILD_ARTIFACT.md):
+`canyonos deploy` reads everything from each project's [root](BUILD_ARTIFACT.md):
 
 | Input            | Where it comes from                                             |
 | ---------------- | --------------------------------------------------------------- |
 | Workflow config  | `config/workflow_config.yaml`                                   |
-| Agent class      | `entrypoint` on an agent entry, relative to the workflow root   |
+| Agent class      | `entrypoint` on an agent entry, relative to the project root    |
 | Agent functions  | `functions` on an agent entry                                   |
-| Endpoint         | The `endpoint:` block, naming the agent method served over HTTP |
+| Endpoint         | The `endpoint:` block, naming the agent methods served on HTTP  |
 | Policy           | `config/policy.yaml`                                            |
 | Governance rules | `config/governance.yaml`                                        |
 | Model limits     | `config/llms.yaml`; see [LLM Gateway](LLM_GATEWAY.md)           |
@@ -28,7 +28,7 @@ entrypoint, a schema error or a class it can't find stops the deploy before anyt
 is built.
 
 The build writes `stubs/`, `grpc_stubs/` and `docker_container/` inside the deploy, not
-in your folder. Folders of yours with those names at the workflow root aren't copied into
+in your folder. Folders of yours with those names at the project root aren't copied into
 images.
 
 ## Agent class
@@ -143,9 +143,10 @@ or `await` it, for the result as its declared type; `.value()` gives the stored 
 
 ## Endpoint
 
-The endpoint serves one agent method over HTTP, chosen in the `endpoint:` block of the
-workflow config. CanyonOS runs it in its own container; you write no server code. A
-typical target is an agent that takes the request and calls the others:
+The endpoint serves agent methods over HTTP, each a route in the `endpoint:` block of
+its project's workflow config, at `POST /<project>/<agent>/<method>`. CanyonOS runs it
+in its own container; you write no server code. A typical target is an agent that takes
+the request and calls the others:
 
 ```python
 from pkg.agent import Agent
@@ -160,8 +161,9 @@ class Workflow:
 
 ```yaml
 endpoint:
-  agent: Workflow
-  method: main
+  routes:
+    - agent: Workflow
+      method: main
 ```
 
 List `main` in `Workflow`'s `functions`, with its arguments. The port and the other
@@ -170,18 +172,18 @@ endpoint settings are in [Workflow config](WORKFLOW_CONFIG.md#endpoint).
 
 ### Requests
 
-| Request                     | Body                                       | Answer                                                                                   |
-| --------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `POST /<method>`            | A JSON object with every declared argument | `202` with `{"request_id"}`; `403` if [policy](#policy) refuses it; `400` for a bad body |
-| `GET /status/<request_id>`  | None                                       | `200` with the status below; `404` for an unknown request                                |
-| `POST /answer/<request_id>` | A JSON object with the answer's keys       | `202` once passed on; `409` when nothing is waiting; `400` for a bad body                |
+| Request                            | Body                                       | Answer                                                                                   |
+| ---------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `POST /<project>/<agent>/<method>` | A JSON object with every declared argument | `202` with `{"request_id"}`; `403` if [policy](#policy) refuses it; `400` for a bad body |
+| `GET /status/<request_id>`         | None                                       | `200` with the status below; `404` for an unknown request                                |
+| `POST /answer/<request_id>`        | A JSON object with the answer's keys       | `202` once passed on; `409` when nothing is waiting; `400` for a bad body                |
 
-In `POST /<method>`, each key becomes a keyword argument. `_context` is taken out first
-and used for [policy](#policy); it must be a JSON object. A bad body is one that isn't
-valid JSON or a JSON object, or that lacks a declared argument, so an empty body works
-only for a method with no arguments. `canyonos test`, the `curl` example
-`canyonos deploy` prints, and the dashboard take the argument names from the method's
-`functions` entry, not from its signature.
+In `POST /<project>/<agent>/<method>`, each key becomes a keyword argument. `_context`
+is taken out first and used for [policy](#policy); it must be a JSON object. A bad body
+is one that isn't valid JSON or a JSON object, or that lacks a declared argument, so an
+empty body works only for a method with no arguments. `canyonos test`, the `curl`
+example `canyonos deploy` prints, and the dashboard take the argument names from the
+method's `functions` entry, not from its signature.
 
 `GET /status/<request_id>` answers with a `status`:
 
@@ -243,7 +245,7 @@ key the answer takes with its type. For an Agents SDK approval, the question is
 
 ## Environment variables
 
-On Docker, each agent replica gets the workflow's `.env` with `--env-file`; the
+On Docker, each agent replica gets its project's `.env` with `--env-file`; the
 endpoint's container does not. An unreadable `.env` fails the deploy.
 [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for) says where the file lives and
 what else reads it. On Kubernetes, `.env` becomes a Secret; see
@@ -253,19 +255,19 @@ CanyonOS also sets these on each replica with `-e`, and they win over `.env`:
 
 | Variable                                               | What it is                                                 |
 | ------------------------------------------------------ | ---------------------------------------------------------- |
-| `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`           | The workflow's Redis                                       |
-| `CANYONOS_REDIS_PASSWORD`                              | The password the workflow's Redis requires                 |
+| `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`           | The deployment's Redis                                     |
+| `CANYONOS_REDIS_PASSWORD`                              | The password the deployment's Redis requires               |
 | `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`           | Where this replica serves calls                            |
 | `CANYONOS_REPLICA_ID`                                  | This replica's ID                                          |
-| `CANYONOS_POLL_INTERVAL`                               | `poll_interval` from the workflow config                   |
-| `CANYONOS_LOGS_ENABLED`                                | `logs` from the workflow config                            |
+| `CANYONOS_POLL_INTERVAL`                               | `poll_interval` from `deployment.yaml`                     |
+| `CANYONOS_LOGS_ENABLED`                                | `logs` from `deployment.yaml`                              |
 | `CANYONOS_SHUTDOWN_GRACE_SECONDS`                      | How long a draining replica has to finish                  |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`                | Send model calls through the [LLM Gateway](LLM_GATEWAY.md) |
 | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` | Trust the gateway's certificates                           |
 | `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`                     | Send boto3 Bedrock calls to the gateway                    |
 
 A Redis client in your code that defaults to `localhost` reaches the container's own
-loopback, not the workflow's Redis. Build it from `CANYONOS_REDIS_HOST`,
+loopback, not the deployment's Redis. Build it from `CANYONOS_REDIS_HOST`,
 `CANYONOS_REDIS_PORT` and `CANYONOS_REDIS_PASSWORD`.
 
 ## Policy
@@ -332,7 +334,7 @@ The controller on the machine that makes a call decides, from rules it reloads e
 poll. A refused call never runs or queues. Its error text starts with its `error_name`:
 
 ```text
-PolicyDenied: Policy denied the call to PriceAgent.get_price: no rule in policy.yaml allows it for this request.
+PolicyDenied: Policy denied the call to portfolio.PriceAgent.get_price: no rule in policy.yaml allows it for this request.
 ```
 
 The calling agent gets that error at the line that uses the call's result. A refused

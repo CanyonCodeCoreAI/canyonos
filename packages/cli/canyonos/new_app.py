@@ -10,6 +10,7 @@ import importlib.resources
 import os
 
 from canyonos import ui
+from canyonos.constants import DEPLOYMENT_CONFIG
 
 TEMPLATE_DIR = "new_app_template"
 
@@ -30,6 +31,15 @@ def template_files():
                 yield relative.removesuffix(PYTHON_TEMPLATE_SUFFIX), f.read()
 
 
+def deployment_template():
+    """Return the `deployment.yaml` `canyonos deploy` writes when a deployment has none."""
+    return (
+        importlib.resources.files("canyonos")
+        .joinpath(DEPLOYMENT_CONFIG)
+        .read_text(encoding="utf-8")
+    )
+
+
 def run_new_app():
     """Run `canyonos new-app`: write a one-agent starter project into the current
     directory, which must be empty. Returns False when nothing was written."""
@@ -42,6 +52,9 @@ def run_new_app():
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
 
+    name = os.path.basename(os.getcwd())
     ui.ok("Created new CanyonOS project.")
-    ui.hint("Run `canyonos deploy` to start it.")
+    ui.hint(
+        f"Deploy it with `cd .. && canyonos deploy {name} --folder {name}-deployment`."
+    )
     return True

@@ -32,7 +32,7 @@ import type {
   GovernanceEdge,
   GovernanceResponse,
 } from '@canyonos/api/governance';
-import type { ScalingStatus } from '@canyonos/api/scaling';
+import type { ScalingResponse } from '@canyonos/api/scaling';
 
 import { FlowCanvas } from '@repo/ui/components/flow';
 import { Button } from '@repo/ui/shadcn/button';
@@ -511,10 +511,14 @@ function RefreshError({ query }: { readonly query: UseQueryResult<GovernanceResp
   );
 }
 
-type ScalingRead = UseQueryResult<ScalingStatus, Error>;
+type ScalingRead = UseQueryResult<ScalingResponse, Error>;
 
 function policyLine(query: ScalingRead): string {
-  if (query.data !== undefined) return policySummary(query.data);
+  if (query.data !== undefined) {
+    return Object.entries(query.data.projects)
+      .map(([project, policy]) => `${project}: ${policySummary(policy)}`)
+      .join(' / ');
+  }
   if (query.isError && !query.isFetching) return 'Policy unavailable';
   return 'Reading policy…';
 }
@@ -526,14 +530,14 @@ function PolicyLine({ project_id }: { readonly project_id: string }) {
     <span
       className="text-muted-foreground px-2 text-xs whitespace-nowrap tabular-nums"
       data-testid="governance-policy-line"
-      data-policy={query.data?.status ?? readState(query)}
+      data-state={readState(query)}
     >
       {policyLine(query)}
     </span>
   );
 }
 
-/** The project's one scaling policy, edited in the same sheet the agents open in. */
+/** Each project's scaling policy, edited in the same sheet the agents open in. */
 function PolicySheet({
   project_id,
   open,
@@ -566,7 +570,7 @@ function PolicySheet({
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <SheetTitle className="text-base font-semibold tracking-tight">
-              Scaling policy
+              Scaling policies
             </SheetTitle>
             <SheetDescription className="max-w-prose text-xs text-pretty">
               {SCALING_SCOPE}
@@ -599,12 +603,26 @@ function PolicyBody({ project_id }: { readonly project_id: string }) {
   }
   return (
     <TooltipProvider delayDuration={300}>
-      {/* Keyed on the stored policy: a save or delete re-reads it and remounts the card closed. */}
-      <ScalingPolicyCard
-        key={JSON.stringify(query.data)}
-        project_id={project_id}
-        policy={query.data}
-      />
+      <div className="flex flex-col gap-6">
+        {Object.entries(query.data.projects).map(([project, policy]) => (
+          <section
+            key={project}
+            className="flex flex-col gap-3"
+            aria-label={project}
+            data-testid="governance-policy-project"
+            data-project={project}
+          >
+            <h3 className="text-foreground font-mono text-sm font-semibold">{project}</h3>
+            {/* Keyed on the stored policy: a save or delete re-reads it and remounts the card closed. */}
+            <ScalingPolicyCard
+              key={JSON.stringify(policy)}
+              project_id={project_id}
+              project={project}
+              policy={policy}
+            />
+          </section>
+        ))}
+      </div>
     </TooltipProvider>
   );
 }

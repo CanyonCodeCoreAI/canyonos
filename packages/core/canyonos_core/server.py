@@ -23,25 +23,30 @@ from canyonos_core.controller.controller_context import (
     list_replicas,
     run_on_machine,
 )
-from canyonos_core.controller.utils import config_env
+from canyonos_core.controller.utils.config_env import expand_env_value, read_dotenv
 from canyonos_core.controller.utils.config_specs import read_config_specs
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.endpoint import read_endpoint_record
 from canyonos_core.reconciler import replicas, state
 from canyonos_core.reconciler.parallel import run_in_parallel
-from canyonos_core.schema import CONFIG_PATH, SchemaError, check_project
+from canyonos_core.schema import (
+    DEPLOYMENT_CONFIG,
+    SchemaError,
+    check_deployment,
+    project_names,
+)
 
 app = Flask("canyonos-server")
 
-# The project files are copied here (into a named volume) by `canyonos sync` /
-# `canyonos deploy`. Deploy builds and launches against this path.
+# The deployment is copied here (into a named volume) by `canyonos deploy`: its
+# deployment.yaml and a folder per project. Deploy builds and launches against it.
 WORKSPACE_DIR = "/workspace"
 
 # Longer than the Global Controller's own teardown wait, so a stop that drains finishes.
 CLEAN_TIMEOUT_SECONDS = 255
 
 _gc_process = None
-_config_path = None
+_workspace = None
 _gc_lock = threading.Lock()
 
 
@@ -51,22 +56,22 @@ def _gc_running():
 
 @app.route("/deploy", methods=["POST"])
 def deploy():
-    """Start building and deploying the project synced into `/workspace` in a background
-    process; 409 if a deploy is already running."""
-    global _gc_process, _config_path
+    """Start building and deploying the deployment synced into `/workspace` in a
+    background process; 409 if a deploy is already running."""
+    global _gc_process, _workspace
 
     data = request.get_json(force=True, silent=True) or {}
-    # realpath, not normpath: /workspace holds a copy of the user's project, which may symlink out.
+    # realpath, not normpath: /workspace holds a copy of the user's files, which may symlink out.
     workspace_root = os.path.realpath(WORKSPACE_DIR)
-    full_path = os.path.realpath(os.path.join(workspace_root, CONFIG_PATH))
+    full_path = os.path.realpath(os.path.join(workspace_root, DEPLOYMENT_CONFIG))
     if not full_path.startswith(workspace_root + os.sep):
-        return jsonify({"error": "the config must stay inside the workspace"}), 400
+        return jsonify({"error": "deployment.yaml must stay inside the workspace"}), 400
 
     if not os.path.isfile(full_path):
-        return jsonify({"error": f"config file not found: {full_path}"}), 400
+        return jsonify({"error": f"deployment.yaml not found: {full_path}"}), 400
 
     # Build then launch the Global Controller, with cwd as the workspace so build
-    # outputs land beside the project files. Output streams to the container logs, which
+    # outputs land beside the projects. Output streams to the container logs, which
     # `canyonos deploy` tails.
     project_name = data.get("project_name", "")
     if not isinstance(project_name, str):
@@ -75,7 +80,7 @@ def deploy():
     with _gc_lock:
         if _gc_running():
             return jsonify({"error": "already running"}), 409
-        _config_path = full_path
+        _workspace = workspace_root
         _gc_process = subprocess.Popen(
             [sys.executable, "-m", "canyonos_core.cli", "deploy"],
             cwd=WORKSPACE_DIR,
@@ -124,7 +129,7 @@ def reload():
         process = _gc_process
         if process is None or process.poll() is not None:
             return jsonify({"error": "not running"}), 409
-        _, violations = check_project(_config_path)
+        _, violations = check_deployment(_workspace)
         if violations:
             return jsonify({"error": str(SchemaError(violations))}), 400
         process.send_signal(signal.SIGHUP)
@@ -137,15 +142,15 @@ def status():
     return jsonify({"running": _gc_running()}), 200
 
 
-def _deploy_config(config_path):
-    """Return the running deploy's config with its `${VAR}`s expanded from the project's
-    `.env` and this process's environment, as the Global Controller reads it."""
-    # Not load_config: importing the project's .env here would leak into the next
-    # deploy's environment.
-    with open(config_path) as f:
+def _deploy_config(workspace):
+    """Return the running deploy's `deployment.yaml` with its `${VAR}`s expanded from
+    the `.env` beside it and this process's environment, without importing either.
+    The projects' files aren't read: a `canyonos sync` copies them in before the
+    reload checks them, so one can be broken while the deploy runs."""
+    with open(os.path.join(workspace, DEPLOYMENT_CONFIG), encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
-    env = {**config_env.read_root_dotenv(config_path), **os.environ}
-    return config_env.expand_env_value(config, env)
+    env = {**read_dotenv(os.path.join(workspace, ".env")), **os.environ}
+    return expand_env_value(config, env)
 
 
 def _deploy_redis(config):
@@ -160,11 +165,11 @@ def endpoint():
     """Return the endpoint record the running deploy's Global Controller published, so
     the CLI can find it from any directory; 409 if no deploy is running, 503 while it is
     not published yet or Redis cannot be read."""
-    config_path = _config_path
-    if config_path is None or not _gc_running():
+    workspace = _workspace
+    if workspace is None or not _gc_running():
         return jsonify({"error": "not running"}), 409
     try:
-        record = read_endpoint_record(_deploy_redis(_deploy_config(config_path)))
+        record = read_endpoint_record(_deploy_redis(_deploy_config(workspace)))
     except (OSError, yaml.YAMLError, redis.RedisError) as e:
         return jsonify({"error": f"Could not read the endpoint record: {e}"}), 503
     if record is None:
@@ -172,16 +177,37 @@ def endpoint():
     return jsonify({"endpoint": record}), 200
 
 
+@app.route("/test_queries", methods=["GET"])
+def test_queries():
+    """Return the query each project of the running deploy ships in its
+    `config/test_query.txt`, by project, leaving out a project with none; 409 if no
+    deploy is running."""
+    workspace = _workspace
+    if workspace is None or not _gc_running():
+        return jsonify({"error": "not running"}), 409
+    queries = {}
+    for project in project_names(workspace):
+        path = os.path.join(workspace, project, "config", "test_query.txt")
+        try:
+            with open(path, encoding="utf-8") as f:
+                query = f.read().strip()
+        except OSError:
+            continue
+        if query:
+            queries[project] = query
+    return jsonify({"queries": queries}), 200
+
+
 @app.route("/runtime_status", methods=["GET"])
 def runtime_status():
     """Return each agent's desired and running replica counts and why its last launch
     failed, if it did, and why each machine type's last machine failed to start; 409 if
     no deploy is running, 503 when Redis cannot be read."""
-    config_path = _config_path
-    if config_path is None or not _gc_running():
+    workspace = _workspace
+    if workspace is None or not _gc_running():
         return jsonify({"error": "not running"}), 409
     try:
-        redis_client = _deploy_redis(_deploy_config(config_path))
+        redis_client = _deploy_redis(_deploy_config(workspace))
         launch_errors = redis_client.hgetall(state.LAUNCH_ERRORS_KEY)
         machine_errors = redis_client.hgetall(state.MACHINE_ERRORS_KEY)
         agents = {}
@@ -202,15 +228,15 @@ def logs(name):
     """Return the last `tail` lines of each running replica of agent `name`, or of the
     one replica whose ID is `name`, read on its machine; 409 if no deploy is running,
     404 naming the agents when `name` is neither, 503 when Redis cannot be read."""
-    config_path = _config_path
-    if config_path is None or not _gc_running():
+    workspace = _workspace
+    if workspace is None or not _gc_running():
         return jsonify({"error": "not running"}), 409
     tail = request.args.get("tail", "all")
     # It ends up in a shell command on a remote machine.
     if tail != "all" and not tail.isdigit():
         return jsonify({"error": "tail must be a number or `all`"}), 400
     try:
-        config = _deploy_config(config_path)
+        config = _deploy_config(workspace)
         redis_client = _deploy_redis(config)
         names = [spec["name"] for spec in read_config_specs(redis_client) or []]
         matching = [

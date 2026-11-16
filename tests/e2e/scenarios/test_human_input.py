@@ -20,6 +20,7 @@ from ..harness import (
     finished,
     http,
     poll,
+    project_dir,
     project_redis,
     stage,
     stop_project,
@@ -57,9 +58,12 @@ def human_input_deploy(recorder, images, tmp_path_factory):
         tmp_path_factory.mktemp("human-input"),
         {},
     )
-    (directory / "agents" / "workflow.py").write_text(WORKFLOW)
+    project = project_dir(directory)
+    (project / "agents" / "workflow.py").write_text(WORKFLOW)
     try:
-        canyonos(recorder, ["deploy"], cwd=directory, timeout=DEPLOY_TIMEOUT)
+        canyonos(
+            recorder, ["deploy", str(project)], cwd=directory, timeout=DEPLOY_TIMEOUT
+        )
         yield HumanInputDeploy(
             directory=directory,
             endpoint=deployed_endpoint(recorder, directory),

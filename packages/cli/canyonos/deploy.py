@@ -35,15 +35,16 @@ from dotenv import dotenv_values
 from rich.panel import Panel
 from rich.text import Text
 
-from canyonos import env, project, ui
+from canyonos import deployment, env, ui
 from canyonos.constants import (
     DEFAULT_API_PORT,
     dashboard_port,
+    deployment_config_path,
     endpoint_api_port,
-    existing_config_path,
     load_yaml,
+    project_config_path,
     project_env_path,
-    project_root,
+    project_folder,
     read_config,
     round_trip_yaml,
     sends_to_dashboard,
@@ -65,6 +66,7 @@ from canyonos.init import (
     remember_api_port,
     run_init,
 )
+from canyonos.new_app import deployment_template
 from canyonos.os_support import is_terminal
 from canyonos.resources import configure_resources
 from canyonos.serve import (
@@ -73,8 +75,8 @@ from canyonos.serve import (
     serve_dashboard,
 )
 from canyonos.stop import stop_if_safe
-from canyonos.sync import project_fingerprints, run_sync, save_deployed_fingerprints
-from canyonos.validate import _print_findings, collect_findings
+from canyonos.sync import run_sync
+from canyonos.validate import stop_on_project_errors
 
 # Test seams: a failed-build test monkeypatches both down so it doesn't have to
 # wait out the real poll/grace windows.
@@ -326,16 +328,26 @@ class PhaseTracker:
         return f"{ready} agent(s) ready", True
 
 
-def save_project_id(config_path):
-    """Add a project_id to the config when it has none, before the sync, so the
-    container's copy carries it and every later deploy keeps the same dashboard
-    project. A config that is not a mapping is left for the schema check to report."""
+def _save_id(config_path, key):
+    """Add `key`, a new id, to the config when it has none, before the sync, so the
+    container's copy carries it and every later deploy keeps the same id. A config that
+    is not a mapping is left for the schema check to report."""
     yaml_rt = round_trip_yaml()
     data = load_yaml(config_path, yaml_rt.load)
-    if not isinstance(data, dict) or data.get("project_id"):
+    if not isinstance(data, dict) or data.get(key):
         return
-    data["project_id"] = str(uuid.uuid4())
+    data[key] = str(uuid.uuid4())
     write_config(config_path, data, yaml_rt)
+
+
+def save_deployment_config(config_path):
+    """Give the deployment a `deployment.yaml` when it has none, the starter's, which
+    sends telemetry to the local dashboard, and give it its `deployment_id`, the
+    dashboard's id for the deployment."""
+    if not os.path.isfile(config_path):
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(deployment_template())
+    _save_id(config_path, "deployment_id")
 
 
 # Providers whose agents run on machines other than this one.
@@ -359,38 +371,24 @@ def _warn_about_the_collector_image(config_file):
         )
 
 
-def _warn_unset_example_keys():
-    """Warn about keys `.env.example` lists that `.env` leaves out or empty, since
-    `.env` is the only file the agents get their keys from."""
-    values = dotenv_values(project_env_path())
-    example = dotenv_values(os.path.join(project_root(), ".env.example"))
+def _warn_unset_example_keys(folder):
+    """Warn about keys a project's `.env.example` lists that its `.env` leaves out or
+    empty, since `.env` is the only file its agents get their keys from."""
+    values = dotenv_values(project_env_path(folder))
+    example = dotenv_values(os.path.join(project_folder(folder), ".env.example"))
     unset = [key for key in example if not values.get(key)]
     if unset:
         ui.warn(
-            f"Missing or empty in .env: {', '.join(unset)}. "
+            f"Missing or empty in {project_env_path(folder)}: {', '.join(unset)}. "
             "Agents that need them will fail."
         )
 
 
-def _stop_on_project_errors():
-    """Run `canyonos validate`'s checks on the project and raise if it breaks any, or
-    if they can't run, so nothing is built."""
-    root = project_root()
-    with ui.status("Checking the project..."):
-        findings = collect_findings(root)
-    if findings:
-        _print_findings(findings, root)
-        raise RuntimeError(
-            "Deploy stopped: fix the project errors `canyonos validate` reports, "
-            "then rerun."
-        )
-
-
 def _redis_outlived_its_password():
-    """True when this project's Redis container still runs on the active Docker engine
-    but its password file under `~/.canyonos/projects/` is gone, so a new password
-    would not open it."""
-    if os.path.isfile(project.redis_password_path()):
+    """True when this deployment's Redis container still runs on the active Docker
+    engine but its password file under `~/.canyonos/deployments/` is gone, so a new
+    password would not open it."""
+    if os.path.isfile(deployment.redis_password_path()):
         return False
     inspect = run_docker(
         [
@@ -398,55 +396,57 @@ def _redis_outlived_its_password():
             "inspect",
             "--format",
             "{{.State.Running}}",
-            project.redis_container_name(),
+            deployment.redis_container_name(),
         ],
         timeout=DOCKER_QUICK_TIMEOUT,
-        action="Looking for this project's Redis container",
+        action="Looking for this deployment's Redis container",
     )
     return inspect.returncode == 0 and inspect.stdout.strip() == "true"
 
 
 def run_deploy(
+    folders,
     serve=True,
     verbose=False,
-    quiet=False,
     banner=True,
 ):
-    """`quiet` skips the log-tail/dashboard UI and returns the GC state right
-    after the deploy is triggered -- for a caller (`canyonos test`) that wants
-    its own readiness check instead of this command's own output.
-    """
-    config_path = existing_config_path()
-    _warn_unset_example_keys()
+    """Deploy the projects in `folders` as one deployment, named after the folder this
+    runs from and configured by its `deployment.yaml`."""
+    projects = deployment.projects(folders)
+    config_path = deployment_config_path()
+    for folder in projects.values():
+        _warn_unset_example_keys(folder)
     # Before the project check, which runs in the core image when core isn't installed.
     _ensure_docker_running()
     if _redis_outlived_its_password():
-        name = project.project_name()
-        # `canyonos stop` finds a project by its state file.
+        name = deployment.deployment_name()
+        # `canyonos stop` finds a deployment by its state file.
         removal = (
             f"Run `canyonos stop {name}` to remove the old Redis"
-            if os.path.isfile(project.state_path())
+            if os.path.isfile(deployment.state_path())
             else f"Remove the old Redis with `docker rm -f -v "
-            f"{project.redis_container_name()}`"
+            f"{deployment.redis_container_name()}`"
         )
         raise RuntimeError(
             f"{name}'s Redis is still running, but its password file "
-            f"{project.redis_password_path()} is gone, so a new password would not "
+            f"{deployment.redis_password_path()} is gone, so a new password would not "
             f"open it. {removal}, then deploy again."
         )
-    _stop_on_project_errors()
+    for folder in projects.values():
+        stop_on_project_errors(folder, "Deploy")
 
-    # `canyonos test` (quiet) deploys the config as-is, without the picker.
-    if not quiet and not configure_resources(config_path):
+    save_deployment_config(config_path)
+    project_configs = {
+        name: project_config_path(project_folder(folder))
+        for name, folder in projects.items()
+    }
+    if not configure_resources(project_configs, config_path):
         ui.say("Deploy cancelled.")
         return None
-    if not quiet:
-        _warn_about_the_collector_image(config_path)
+    _warn_about_the_collector_image(config_path)
 
-    # Before run_init, which names the containers after the id.
-    save_project_id(config_path)
     run_init(banner=banner)
-    if serve and not quiet and _existing_dashboard_port() is None:
+    if serve and _existing_dashboard_port() is None:
         # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
         threading.Thread(
             target=run_dashboard,
@@ -457,11 +457,9 @@ def run_deploy(
     # Non-empty once the workflow has reported ready; see the handler below.
     ready = []
     try:
-        fingerprints = project_fingerprints()
-        # Copy the current project into the container before building/deploying.
-        if not run_sync():
-            raise RuntimeError("Could not sync the project into the container.")
-        save_deployed_fingerprints(fingerprints)
+        # Copy the deployment into the container before building/deploying.
+        if not run_sync(projects):
+            raise RuntimeError("Could not sync the deployment into the container.")
 
         state = load_state()
 
@@ -469,11 +467,6 @@ def run_deploy(
             post_deploy(state["port"])
         except GCError as e:
             raise RuntimeError(str(e)) from None
-
-        if quiet:
-            if serve:
-                _start_dashboard(report_failure=False)
-            return state
 
         _stream_logs_and_autoserve(
             state,
@@ -513,7 +506,7 @@ def summary_body(dashboard_url, endpoint):
     answer the endpoint described by its published record, when there is one."""
     body = Text()
     body.append("Dashboard  ", "dim")
-    to_dashboard = sends_to_dashboard(existing_config_path())
+    to_dashboard = sends_to_dashboard(deployment_config_path())
     no_telemetry = (
         "No telemetry configured -- add the `local` entry to your `otel:` block"
     )
@@ -532,9 +525,12 @@ def summary_body(dashboard_url, endpoint):
     if endpoint:
         host, api_port = endpoint["public_host"], endpoint["api_port"]
         base = f"http://{host}:{api_port}"
-        example = {name: "your query" for name in endpoint["arguments"]}
         body.append("\n\nmessage           ", "dim")
-        body.append(_curl_example(endpoint["url"], example), WHITE)
+        for index, route in enumerate(endpoint["routes"]):
+            if index:
+                body.append("\n                  ")
+            example = {name: "your query" for name in route["arguments"]}
+            body.append(_curl_example(route["url"], example), WHITE)
         body.append("\nrespond to agent  ", "dim")
         body.append(
             _curl_example(f"{base}/answer/<request_id>", {"input": "your answer"}),
@@ -565,7 +561,7 @@ def _print_deploy_summary(dashboard_url, endpoint):
     ui.blank()
 
 
-def _start_dashboard(report_failure=True):
+def _start_dashboard():
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy."""
     try:
         # Waits out a background start, so a half-started dashboard is not registered.
@@ -575,16 +571,11 @@ def _start_dashboard(report_failure=True):
             _warn_if_dashboard_port_ignored()
             _register_running_project()
             return dashboard_url(port)
-        result = serve_dashboard(report_failure=report_failure)
+        result = serve_dashboard()
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")
         ui.hint("Run `canyonos serve` manually to view it.")
         return None
-    if not result.ok and not report_failure:
-        log = f" Log: {result.log_path}" if result.log_path else ""
-        ui.warn(
-            f"Dashboard didn't start ({result.message}); continuing without it.{log}"
-        )
     return result.url
 
 
@@ -602,7 +593,7 @@ def _deploy_summary(state, serve, on_ready):
             "Could not read the running deploy's endpoint. Run `canyonos logs` to see why."
         )
         endpoint = None
-    if endpoint and endpoint_api_port(existing_config_path()) is None:
+    if endpoint and endpoint_api_port(deployment_config_path()) is None:
         preferred = state.get("api_port") or DEFAULT_API_PORT
         if endpoint["api_port"] != preferred:
             ui.warn(
@@ -877,7 +868,7 @@ def follow_gc_log(state):
         # By name, not the id in `state`: a concurrent redeploy/stop can replace
         # the container behind the same name/port before this line runs. The
         # explicit env pins it to the engine that container actually lives on.
-        ["docker", "logs", "-f", project.gc_container_name()],
+        ["docker", "logs", "-f", deployment.gc_container_name()],
         env=docker_env(state),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

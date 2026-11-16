@@ -1,13 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Where the project deploys: `docker` is Docker on this machine.
-target: docker
-
-# Where every replica runs: `local` (this machine), `ec2-pool` or `ec2-assign`.
-# examples/helloworld-ec2-assign is this example set up for `ec2-assign`.
-provider: local
-
 # The agents CanyonOS runs.
 agents:
   - name: HelloAgent
@@ -34,8 +27,6 @@ agents:
           type: dict
 
 endpoint:
-  agent: Workflow
-  method: main
-
-# Stream failure/log detail into each future's `logs` field; on by default, off here to save bandwidth.
-logs: false
+  routes:
+    - agent: Workflow
+      method: main

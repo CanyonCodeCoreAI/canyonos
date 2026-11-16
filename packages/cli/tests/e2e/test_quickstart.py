@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """The bundled Hello World, copied out of the package the way `canyonos quickstart`
-does it and then deployed for real.
+does it and then deployed for real, from its own deployment folder as the
+quickstart types it.
 
 The unit tests check that `_fetch` writes the right filenames. They cannot catch a
 bundling bug that keeps the files and breaks the workflow -- a truncated copy, a
@@ -24,6 +25,7 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -47,7 +49,7 @@ POLL_INTERVAL = 2
 
 # The endpoint address out of `canyonos deploy`'s own summary. The port is picked
 # at deploy time, so it is read back rather than assumed.
-ENDPOINT = re.compile(r"http://[\d.]+:\d+/main")
+ENDPOINT = re.compile(rf"http://[\d.]+:\d+/{STARTER}/Workflow/main")
 
 
 def _real_docker_config() -> tuple[str, str]:
@@ -128,7 +130,8 @@ needs_a_runtime = pytest.mark.skipif(
 
 @pytest.fixture
 def deployed_workflow(cli_case: CliCase) -> Iterator[tuple[CliCase, Path]]:
-    """The bundled workflow on disk, torn down after the test either way.
+    """The bundled workflow's deployment folder on disk, as the quickstart copies it,
+    torn down after the test either way.
 
     The teardown is checked rather than attempted: containers and images this
     case leaves behind carry the fixed Docker names, so they would reach every
@@ -164,7 +167,8 @@ def _answer(endpoint: str, query: str) -> dict:
     with urllib.request.urlopen(submitted, timeout=30) as reply:
         request_id = json.loads(reply.read())["request_id"]
 
-    status = endpoint.rsplit("/", 1)[0] + f"/status/{request_id}"
+    status = urllib.parse.urlsplit(endpoint)._replace(path=f"/status/{request_id}")
+    status = status.geturl()
     deadline = time.time() + REQUEST_TIMEOUT
     while time.time() < deadline:
         try:
@@ -184,11 +188,12 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     endpoint it publishes answers with the agent's greeting."""
     case, folder = deployed_workflow
 
-    # The dashboard is shared across every project on the machine, so this case
+    # The dashboard is shared across every deployment on the machine, so this case
     # does not start one; `tests/e2e/scenarios/test_shared_dashboard.py` is where
     # it belongs.
+    # As the quickstart types it: from the deployment folder, naming its project.
     deployed = case.run_cli(
-        ["deploy", "--serve", "false"],
+        ["deploy", STARTER, "--serve", "false"],
         timeout=DEPLOY_TIMEOUT,
         env=_runtime_environment(),
         cwd=folder,

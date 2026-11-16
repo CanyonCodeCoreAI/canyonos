@@ -3,7 +3,7 @@
 
 """Contracts a project has to keep that the schema alone cannot see.
 
-`validate_project` reads the manifest. What it cannot read is the Python
+`check_project` reads the project's config. What it cannot read is the Python
 beside it: a class the controller loads by name, or a method the executor calls
 without awaiting. Each of those survives a green build and fails inside a
 container, or on its first request, so they are checked here against the same
@@ -502,14 +502,13 @@ def validate_root(root):
     are all there is -- the rest of the checks have no model to run over.
     """
     root = os.path.abspath(root)
-    config_path = os.path.join(root, CONFIG_PATH)
-    if not os.path.isfile(config_path):
+    if not os.path.isfile(os.path.join(root, CONFIG_PATH)):
         raise ManifestNotFound(
             f"{CONFIG_PATH} not found in {root}, so nothing was checked."
         )
 
     report = _Report(root)
-    manifest, violations = check_project(config_path, root)
+    manifest, violations = check_project(root)
     for violation in violations:
         report.add(
             "CANYON-SCHEMA",

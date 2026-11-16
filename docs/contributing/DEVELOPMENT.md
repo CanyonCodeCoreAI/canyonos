@@ -54,13 +54,13 @@ and what it deploys:
 ## Run the CLI from a checkout
 
 In the dev shell, `canyonos` works from any folder. Deploy a copy of an example, since a
-deploy writes a `project_id` and default resources into its
-`config/workflow_config.yaml`:
+deploy writes a `deployment_id` into its `deployment.yaml` and default resources into
+its project's `config/workflow_config.yaml`:
 
 ```bash
 cp -R examples/helloworld ../helloworld   # needs no LLM and no API keys
 cd ../helloworld
-canyonos deploy
+canyonos deploy helloworld
 canyonos test "hi"
 ```
 
@@ -122,8 +122,8 @@ To change the API or web code without rebuilding images, run the dashboard on th
 In the dev shell:
 
 ```bash
-canyonos deploy --serve false   # the workflow, without the dashboard's images
-bun run dashboard:dev           # Postgres, then the API on :3000 and Vite on :5173
+canyonos deploy helloworld --serve false   # the workflow, without the dashboard's images
+bun run dashboard:dev                      # Postgres, then the API on :3000 and Vite on :5173
 ```
 
 API and web edits reload while it runs. Core edits need `bun run canyonos:dev` and a
@@ -132,18 +132,18 @@ instead.
 
 **Send the workflow's telemetry to the host.** By default the Global Controller sends
 it to the dashboard image's API, `http://canyonos-dashboard-api:3000`, which isn't
-running. Set the workflow's
+running. Set the deployment's
 [`otel.destinations`](../guides/WORKFLOW_CONFIG.md#oteldestinations) to
 `http://host.docker.internal:3000`.
 
-**Register the project.** At start, the API registers only a project on the default
-Redis that has no password. A deployed project's Redis has one, so register it while the
-API runs, with the workflow's `redis.port`:
+**Register the deployment.** At start, the API registers only a project on the default
+Redis that has no password. A deployment's Redis has one, so register it while the API
+runs, with the deployment's `redis.port`:
 
 ```bash
 curl -X POST http://localhost:3000/canyonos/projects \
   -H 'Content-Type: application/json' \
-  -d "{\"redis_port\":6379,\"redis_password\":\"$(cat ~/.canyonos/projects/<project>/redis_password)\"}"
+  -d "{\"redis_port\":6379,\"redis_password\":\"$(cat ~/.canyonos/deployments/<deployment>/redis_password)\"}"
 ```
 
 The API stores the password encrypted, with a fixed development key unless
@@ -226,6 +226,7 @@ The endpoint stays on `http://127.0.0.1:8080` and the dashboard on `8081`, throu
 port-forwards a background `canyonos` process holds open until `canyonos stop`.
 `canyonos sync`, `stop --all` and `clean --all` work only on Docker, so deploy again
 after a change. [Kubernetes deployment](../guides/KUBERNETES.md) has the other settings.
+Kubernetes deploys don't support multi-folder deployments yet.
 
 ### What `up.sh` makes
 

@@ -8,7 +8,7 @@ Automatically gets created when deploy runs unless --serve flag is set to false.
 """
 
 from canyonos import ui
-from canyonos.constants import dashboard_port, default_config_path
+from canyonos.constants import dashboard_port, deployment_config_path
 from canyonos.gc import deploy_status
 from canyonos.init import load_state, redis_port_of
 from .dashboard_registration import RegistrationError, register_project
@@ -45,7 +45,7 @@ def _register_running_project() -> None:
 def _warn_if_dashboard_port_ignored() -> None:
     """Warn when the dashboard already runs on another port than this project's
     `dashboard_port`, which is then ignored."""
-    configured_port = dashboard_port(default_config_path())
+    configured_port = dashboard_port(deployment_config_path())
     running_port = _existing_dashboard_port()
     if configured_port and running_port not in (None, configured_port):
         ui.warn(
@@ -61,7 +61,7 @@ def serve_dashboard(report_failure: bool = True) -> ServeResult:
     only printed when something fails and the user needs to see how far it got.
     """
     trace = []
-    configured_port = dashboard_port(default_config_path())
+    configured_port = dashboard_port(deployment_config_path())
     _warn_if_dashboard_port_ignored()
 
     with ui.status("Starting the dashboard...") as spinner:

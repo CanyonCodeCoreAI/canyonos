@@ -4,9 +4,8 @@
 """Ways to break a copied port's manifest so `canyonos validate` has to reject it.
 
 Each mode names a method the agent does not have, so no stub can be generated,
-names an agent the way the manifest forbids, sets a retired key, or points
-ssh_private_key_path at an unset variable, and returns the text one finding's
-summary has to contain.
+sets a retired key, sets a key that belongs in deployment.yaml, or points the
+agent's entrypoint at an unset variable, and returns the text one finding's summary has to contain.
 """
 
 from pathlib import Path
@@ -19,26 +18,25 @@ def rename(manifest, agent, function):
     return f"`{agent['name']}` has no method `{function['name']}`"
 
 
-def endpoint_name(manifest, agent, function):
-    if manifest["endpoint"]["agent"] == agent["name"]:
-        manifest["endpoint"]["agent"] = "endpoint"
-    agent["name"] = "endpoint"
-    return "'endpoint' is reserved for the HTTP endpoint container"
-
-
 def env_file(manifest, agent, function):
     manifest["env_file"] = ".env"
     return "env_file: is no longer used"
 
 
-def ssh_key_env(manifest, agent, function):
-    manifest["ssh_private_key_path"] = "${CANYONOS_E2E_UNSET_SSH_KEY}"
+def deployment_key(manifest, agent, function):
+    manifest["poll_interval"] = 4
     return (
-        "'${CANYONOS_E2E_UNSET_SSH_KEY}' names an environment variable that is not set"
+        "poll_interval: is a deployment setting, shared by every project: set it in "
+        "deployment.yaml"
     )
 
 
-MODES = {f.__name__: f for f in (rename, endpoint_name, env_file, ssh_key_env)}
+def entrypoint_env(manifest, agent, function):
+    agent["entrypoint"] = "${CANYONOS_E2E_UNSET_AGENTS}/" + agent["entrypoint"]
+    return f"{agent['entrypoint']!r} names an environment variable that is not set"
+
+
+MODES = {f.__name__: f for f in (rename, env_file, deployment_key, entrypoint_env)}
 
 
 def rewrite_manifest(canyon: Path, edit) -> None:

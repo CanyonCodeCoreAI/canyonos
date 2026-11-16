@@ -28,16 +28,20 @@ const POLICY: ScalingPolicy = {
   scale_down_below: 1,
 };
 
-// The GC publishes config/scaling.yaml as-is, so the document can carry keys besides `scaling`.
-const CONFIG = { scaling: POLICY, owner: 'platform' };
+// The GC publishes each project's config/scaling.yaml by project name, so the document can carry
+// keys besides `projects`.
+const CONFIG = { projects: { app: POLICY }, owner: 'platform' };
 
+/** A running deployment of one project, `app`, whose agents are named `app.<agent>`. */
 async function running_project(
   email: string,
-  scaling_config: string | null = JSON.stringify(CONFIG)
+  scaling_config: string | null = JSON.stringify(CONFIG),
+  agents: readonly string[] = ['app.Alpha']
 ): Promise<{ token: string; project_id: string }> {
   const token = await authenticate(email);
   const { project_id } = await create_test_project(token, { name: 'Scaling Project' });
   await seed_running_project(project_id, { prompts: {} });
+  await seed_active_agents(JSON.stringify(agents));
   if (scaling_config !== null) await seed_scaling(scaling_config);
   return { token, project_id };
 }
@@ -51,7 +55,7 @@ describe('project scaling policy', () => {
     const res = await api.projects[project_id]!.scaling.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
-    expect(res.data).toEqual({ status: 'applied', policy: POLICY });
+    expect(res.data).toEqual({ projects: { app: { status: 'applied', policy: POLICY } } });
   });
 
   test('a controller with no scaling config has no policy, and the first save creates it', async () => {
@@ -60,12 +64,12 @@ describe('project scaling policy', () => {
 
     const listed = await api.projects[project_id]!.scaling.get({ $headers: headers });
     expect(listed.error).toBeNull();
-    expect(listed.data).toEqual({ status: 'none' });
+    expect(listed.data).toEqual({ projects: { app: { status: 'none' } } });
 
-    const saved = await api.projects[project_id]!.scaling.put(POLICY, { headers });
+    const saved = await api.projects[project_id]!.scaling.app!.put(POLICY, { headers });
     expect(saved.error).toBeNull();
     expect(saved.data).toEqual(POLICY);
-    expect(await read_scaling_config()).toEqual({ scaling: POLICY });
+    expect(await read_scaling_config()).toEqual({ projects: { app: POLICY } });
   });
 
   test('saving over the stored policy replaces it and keeps the other keys', async () => {
@@ -73,25 +77,25 @@ describe('project scaling policy', () => {
     const headers = bearer(token);
     const edited: ScalingPolicy = { ...POLICY, max_replicas: 3, scale_up_above: 20 };
 
-    const saved = await api.projects[project_id]!.scaling.put(edited, { headers });
+    const saved = await api.projects[project_id]!.scaling.app!.put(edited, { headers });
 
     expect(saved.error).toBeNull();
     expect(saved.data).toEqual(edited);
-    expect(await read_scaling_config()).toEqual({ ...CONFIG, scaling: edited });
+    expect(await read_scaling_config()).toEqual({ ...CONFIG, projects: { app: edited } });
     const listed = await api.projects[project_id]!.scaling.get({ $headers: headers });
-    expect(listed.data).toEqual({ status: 'applied', policy: edited });
+    expect(listed.data).toEqual({ projects: { app: { status: 'applied', policy: edited } } });
   });
 
   test('a save strips fields the policy does not have', async () => {
     const { token, project_id } = await running_project('scaling-strip@canyonos.test', null);
 
-    const saved = await api.projects[project_id]!.scaling.put(
-      { ...POLICY, agent_name: 'PriceAgent' } as ScalingPolicy,
+    const saved = await api.projects[project_id]!.scaling.app!.put(
+      { ...POLICY, agent_name: 'app.PriceAgent' } as ScalingPolicy,
       { headers: bearer(token) }
     );
 
     expect(saved.error).toBeNull();
-    expect(await read_scaling_config()).toEqual({ scaling: POLICY });
+    expect(await read_scaling_config()).toEqual({ projects: { app: POLICY } });
   });
 
   test('an invalid policy is 422 and nothing is stored', async () => {
@@ -112,7 +116,7 @@ describe('project scaling policy', () => {
 
     const responses = await Promise.all(
       invalid.map((body) =>
-        api.projects[project_id]!.scaling.put(body as ScalingPolicy, { headers })
+        api.projects[project_id]!.scaling.app!.put(body as ScalingPolicy, { headers })
       )
     );
 
@@ -133,8 +137,8 @@ describe('project scaling policy', () => {
 
     const responses = await Promise.all([
       scaling.get({ $headers: headers }),
-      scaling.put(POLICY, { headers }),
-      scaling.delete(undefined, { headers }),
+      scaling.app!.put(POLICY, { headers }),
+      scaling.app!.delete(undefined, { headers }),
       scaling.agents.get({ $headers: headers }),
     ]);
 
@@ -151,8 +155,8 @@ describe('project scaling policy', () => {
 
     const responses = await Promise.all([
       scaling.get(),
-      scaling.put(POLICY),
-      scaling.delete(),
+      scaling.app!.put(POLICY),
+      scaling.app!.delete(),
       scaling.agents.get(),
     ]);
 
@@ -169,8 +173,8 @@ describe('project scaling policy', () => {
 
     const responses = await Promise.all([
       scaling.get({ $headers: headers }),
-      scaling.put(POLICY, { headers }),
-      scaling.delete(undefined, { headers }),
+      scaling.app!.put(POLICY, { headers }),
+      scaling.app!.delete(undefined, { headers }),
       scaling.agents.get({ $headers: headers }),
     ]);
 
@@ -187,16 +191,16 @@ describe('project scaling policy', () => {
     const headers = bearer(other);
 
     const listed = await api.projects[project_id]!.scaling.get({ $headers: headers });
-    const saved = await api.projects[project_id]!.scaling.put(
+    const saved = await api.projects[project_id]!.scaling.app!.put(
       { ...POLICY, max_replicas: 2 },
       { headers }
     );
 
-    expect(listed.data).toEqual({ status: 'applied', policy: POLICY });
+    expect(listed.data).toEqual({ projects: { app: { status: 'applied', policy: POLICY } } });
     expect(saved.error).toBeNull();
     expect(await read_scaling_config()).toEqual({
       ...CONFIG,
-      scaling: { ...POLICY, max_replicas: 2 },
+      projects: { app: { ...POLICY, max_replicas: 2 } },
     });
   });
 
@@ -210,7 +214,7 @@ describe('project scaling policy', () => {
     }));
 
     const responses = await Promise.all(
-      policies.map((policy) => api.projects[project_id]!.scaling.put(policy, { headers }))
+      policies.map((policy) => api.projects[project_id]!.scaling.app!.put(policy, { headers }))
     );
 
     const stored = policies.filter((_, index) => responses[index]!.error === null);
@@ -219,8 +223,8 @@ describe('project scaling policy', () => {
       expect(error_code(res)).toBe('scaling.save_conflict');
     }
     expect(stored.length).toBeGreaterThan(0);
-    const final = (await read_scaling_config()) as { scaling: ScalingPolicy };
-    expect(stored).toContainEqual(final.scaling);
+    const final = (await read_scaling_config()) as { projects: Record<string, ScalingPolicy> };
+    expect(stored).toContainEqual(final.projects.app!);
   });
 
   test('a save racing a delete ends with the policy stored or gone, never half-written', async () => {
@@ -229,15 +233,15 @@ describe('project scaling policy', () => {
     const scaling = api.projects[project_id]!.scaling;
 
     const [saved, deleted] = await Promise.all([
-      scaling.put({ ...POLICY, max_replicas: 2 }, { headers }),
-      scaling.delete(undefined, { headers }),
+      scaling.app!.put({ ...POLICY, max_replicas: 2 }, { headers }),
+      scaling.app!.delete(undefined, { headers }),
     ]);
 
     for (const res of [saved, deleted]) {
       if (res.error) expect(res.error.status as number).toBe(409);
     }
-    const final = (await read_scaling_config()) as { scaling: ScalingPolicy | null };
-    expect([null, { ...POLICY, max_replicas: 2 }]).toContainEqual(final.scaling);
+    const final = (await read_scaling_config()) as { projects: Record<string, ScalingPolicy> };
+    expect([null, { ...POLICY, max_replicas: 2 }]).toContainEqual(final.projects.app ?? null);
   });
 
   // A corrupt scaling:config is the controller's fault, reported as 502 like prompts.config_invalid.
@@ -251,8 +255,8 @@ describe('project scaling policy', () => {
 
     const responses = await Promise.all([
       scaling.get({ $headers: headers }),
-      scaling.put(POLICY, { headers }),
-      scaling.delete(undefined, { headers }),
+      scaling.app!.put(POLICY, { headers }),
+      scaling.app!.delete(undefined, { headers }),
     ]);
 
     for (const res of responses) {
@@ -274,16 +278,16 @@ describe('project scaling policy', () => {
           "metric: Invalid enum value. Expected 'queue_length_total' | 'requests_per_minute_per_replica', received 'cpu'",
       },
       {
-        scaling: { PriceAgent: POLICY, MetricsAgent: POLICY },
+        scaling: { 'app.PriceAgent': POLICY, 'app.MetricsAgent': POLICY },
         reason:
-          "the policy is keyed by agent name (PriceAgent, MetricsAgent); scaling.yaml now holds one policy for the whole project, so move one agent's fields up to the top level",
+          "the policy is keyed by agent name (app.PriceAgent, app.MetricsAgent); scaling.yaml now holds one policy for the whole project, so move one agent's fields up to the top level",
       },
       { scaling: {}, reason: 'min_replicas: Required' },
-      { scaling: ['PriceAgent'], reason: 'Expected object, received array' },
+      { scaling: ['app.PriceAgent'], reason: 'Expected object, received array' },
     ];
     for (const [index, { scaling, reason }] of cases.entries()) {
       await reset_controller();
-      const config = { scaling, owner: 'platform' };
+      const config = { projects: { app: scaling }, owner: 'platform' };
       const { token, project_id } = await running_project(
         `scaling-invalid-stored-${index}@canyonos.test`,
         JSON.stringify(config)
@@ -292,7 +296,7 @@ describe('project scaling policy', () => {
       const res = await api.projects[project_id]!.scaling.get({ $headers: bearer(token) });
 
       expect(res.error).toBeNull();
-      expect(res.data).toEqual({ status: 'invalid', reason });
+      expect(res.data).toEqual({ projects: { app: { status: 'invalid', reason } } });
       expect(await read_scaling_config()).toEqual(config);
     }
   });
@@ -301,39 +305,74 @@ describe('project scaling policy', () => {
     const { token, project_id } = await running_project('scaling-delete@canyonos.test');
     const headers = bearer(token);
 
-    const deleted = await api.projects[project_id]!.scaling.delete(undefined, { headers });
+    const deleted = await api.projects[project_id]!.scaling.app!.delete(undefined, { headers });
 
     expect(deleted.error).toBeNull();
     expect(deleted.data).toEqual({ status: 'none' });
-    expect(await read_scaling_config()).toEqual({ ...CONFIG, scaling: null });
+    expect(await read_scaling_config()).toEqual({ ...CONFIG, projects: {} });
     const listed = await api.projects[project_id]!.scaling.get({ $headers: headers });
-    expect(listed.data).toEqual({ status: 'none' });
+    expect(listed.data).toEqual({ projects: { app: { status: 'none' } } });
   });
 
   test('an invalid stored policy can be deleted', async () => {
     const { token, project_id } = await running_project(
       'scaling-delete-invalid@canyonos.test',
-      JSON.stringify({ scaling: { ...POLICY, min_replicas: 0 } })
+      JSON.stringify({ projects: { app: { ...POLICY, min_replicas: 0 } } })
     );
 
-    const res = await api.projects[project_id]!.scaling.delete(undefined, {
+    const res = await api.projects[project_id]!.scaling.app!.delete(undefined, {
       headers: bearer(token),
     });
 
     expect(res.error).toBeNull();
-    expect(await read_scaling_config()).toEqual({ scaling: null });
+    expect(await read_scaling_config()).toEqual({ projects: {} });
   });
 
   test('deleting when no policy is stored is 404 scaling.policy_not_found and creates nothing', async () => {
     const { token, project_id } = await running_project('scaling-delete-bare@canyonos.test', null);
 
-    const res = await api.projects[project_id]!.scaling.delete(undefined, {
+    const res = await api.projects[project_id]!.scaling.app!.delete(undefined, {
       headers: bearer(token),
     });
 
     expect(res.error?.status as number).toBe(404);
     expect(error_code(res)).toBe('scaling.policy_not_found');
     expect(await read_scaling_config()).toBeNull();
+  });
+
+  // Each project of the deployment has its own policy, keyed by the folder its agents come from.
+  test('two projects have independent policies: saving one leaves the other with none', async () => {
+    const { token, project_id } = await running_project('scaling-two@canyonos.test', null, [
+      'app.Alpha',
+      'app.Beta',
+      'ops.Gamma',
+    ]);
+    const headers = bearer(token);
+    const scaling = api.projects[project_id]!.scaling;
+
+    const saved = await scaling.app!.put(POLICY, { headers });
+    const listed = await scaling.get({ $headers: headers });
+    const deleted = await scaling.ops!.delete(undefined, { headers });
+
+    expect(saved.error).toBeNull();
+    expect(listed.data).toEqual({
+      projects: { app: { status: 'applied', policy: POLICY }, ops: { status: 'none' } },
+    });
+    expect(deleted.error?.status as number).toBe(404);
+    expect(error_code(deleted)).toBe('scaling.policy_not_found');
+    expect(await read_scaling_config()).toEqual({ projects: { app: POLICY } });
+  });
+
+  test('saving for a project the deployment runs no agents of is 404 scaling.project_not_found', async () => {
+    const { token, project_id } = await running_project('scaling-unknown@canyonos.test');
+
+    const res = await api.projects[project_id]!.scaling.ghost!.put(POLICY, {
+      headers: bearer(token),
+    });
+
+    expect(res.error?.status as number).toBe(404);
+    expect(error_code(res)).toBe('scaling.project_not_found');
+    expect(await read_scaling_config()).toEqual(CONFIG);
   });
 });
 
@@ -351,9 +390,9 @@ describe('project scaling agents', () => {
   test('lists the agents the policy applies to, in controller order, with their newest load', async () => {
     const { token, project_id } = await running_project('scaling-agents@canyonos.test');
     await seed_scaling_agents([
-      { name: 'PriceAgent', replicas: 1, desired: 2, sample: SAMPLE },
-      { name: 'IntentAgent', replicas: 1 },
-      { name: 'StateDB', type: 'database' },
+      { name: 'app.PriceAgent', replicas: 1, desired: 2, sample: SAMPLE },
+      { name: 'app.IntentAgent', replicas: 1 },
+      { name: 'app.StateDB', type: 'database' },
     ]);
 
     const res = await api.projects[project_id]!.scaling.agents.get({ $headers: bearer(token) });
@@ -362,7 +401,7 @@ describe('project scaling agents', () => {
     expect(res.data).toEqual({
       agents: [
         {
-          name: 'PriceAgent',
+          name: 'app.PriceAgent',
           replicas_expected: 2,
           replicas_running: 2,
           load: {
@@ -371,24 +410,28 @@ describe('project scaling agents', () => {
             observed_at: '2027-01-15T08:00:00.250Z',
           },
         },
-        { name: 'IntentAgent', replicas_expected: 1, replicas_running: 0, load: null },
+        { name: 'app.IntentAgent', replicas_expected: 1, replicas_running: 0, load: null },
       ],
     });
   });
 
   test('an agent with no desired count yet reports its configured replicas', async () => {
     const { token, project_id } = await running_project('scaling-agents-config@canyonos.test');
-    await seed_scaling_agents([{ name: 'PriceAgent', replicas: 3 }]);
+    await seed_scaling_agents([{ name: 'app.PriceAgent', replicas: 3 }]);
 
     const res = await api.projects[project_id]!.scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.data).toEqual({
-      agents: [{ name: 'PriceAgent', replicas_expected: 3, replicas_running: 0, load: null }],
+      agents: [{ name: 'app.PriceAgent', replicas_expected: 3, replicas_running: 0, load: null }],
     });
   });
 
   test('a controller that has published no agents lists none', async () => {
-    const { token, project_id } = await running_project('scaling-agents-none@canyonos.test');
+    const { token, project_id } = await running_project(
+      'scaling-agents-none@canyonos.test',
+      JSON.stringify(CONFIG),
+      []
+    );
 
     const res = await api.projects[project_id]!.scaling.agents.get({ $headers: bearer(token) });
 
@@ -399,10 +442,10 @@ describe('project scaling agents', () => {
   test('a corrupt spec hides that agent, a corrupt sample hides its load, a bad count falls back', async () => {
     const { token, project_id } = await running_project('scaling-agents-bad@canyonos.test');
     await seed_scaling_agents([
-      { name: 'PriceAgent', replicas: 1.5, desired: 2, sample: SAMPLE },
-      { name: 'RiskAgent', replicas: 2, desired: 'two' as unknown as number },
-      { name: 'IntentAgent', raw_spec: '{oops' },
-      { name: 'MetricsAgent', raw_sample: '{oops' },
+      { name: 'app.PriceAgent', replicas: 1.5, desired: 2, sample: SAMPLE },
+      { name: 'app.RiskAgent', replicas: 2, desired: 'two' as unknown as number },
+      { name: 'app.IntentAgent', raw_spec: '{oops' },
+      { name: 'app.MetricsAgent', raw_sample: '{oops' },
     ]);
 
     const res = await api.projects[project_id]!.scaling.agents.get({ $headers: bearer(token) });
@@ -410,22 +453,33 @@ describe('project scaling agents', () => {
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       agents: [
-        { name: 'PriceAgent', replicas_expected: 2, replicas_running: 2, load: expect.any(Object) },
-        { name: 'RiskAgent', replicas_expected: 2, replicas_running: 0, load: null },
-        { name: 'MetricsAgent', replicas_expected: 1, replicas_running: 0, load: null },
+        {
+          name: 'app.PriceAgent',
+          replicas_expected: 2,
+          replicas_running: 2,
+          load: expect.any(Object),
+        },
+        { name: 'app.RiskAgent', replicas_expected: 2, replicas_running: 0, load: null },
+        { name: 'app.MetricsAgent', replicas_expected: 1, replicas_running: 0, load: null },
       ],
     });
   });
 
-  test('a corrupt agents:active is 502 scaling.config_invalid', async () => {
+  test('a corrupt agents:active is 502 scaling.config_invalid on the agents and policy reads', async () => {
     const { token, project_id } = await running_project('scaling-agents-list-bad@canyonos.test');
-    await seed_scaling_agents([{ name: 'PriceAgent' }]);
+    await seed_scaling_agents([{ name: 'app.PriceAgent' }]);
     await seed_active_agents('{oops');
+    const headers = bearer(token);
 
-    const res = await api.projects[project_id]!.scaling.agents.get({ $headers: bearer(token) });
+    const responses = await Promise.all([
+      api.projects[project_id]!.scaling.agents.get({ $headers: headers }),
+      api.projects[project_id]!.scaling.get({ $headers: headers }),
+    ]);
 
-    expect(res.error?.status as number).toBe(502);
-    expect(error_code(res)).toBe('scaling.config_invalid');
+    for (const res of responses) {
+      expect(res.error?.status as number).toBe(502);
+      expect(error_code(res)).toBe('scaling.config_invalid');
+    }
   });
 
   test('a corrupt scaling config does not stop the agents from being listed', async () => {
@@ -433,11 +487,11 @@ describe('project scaling agents', () => {
       'scaling-agents-corrupt@canyonos.test',
       '{oops'
     );
-    await seed_scaling_agents([{ name: 'PriceAgent' }]);
+    await seed_scaling_agents([{ name: 'app.PriceAgent' }]);
 
     const res = await api.projects[project_id]!.scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
-    expect(res.data?.agents.map((agent) => agent.name)).toEqual(['PriceAgent']);
+    expect(res.data?.agents.map((agent) => agent.name)).toEqual(['app.PriceAgent']);
   });
 });

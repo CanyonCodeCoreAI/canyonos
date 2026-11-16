@@ -39,8 +39,10 @@ from ..harness import (
     http,
     manifest,
     poll,
+    project_dir,
     project_redis,
     project_root,
+    qualified,
     stage,
     submit,
     stop_project,
@@ -67,7 +69,13 @@ CLOCK_SKEW = 5
 QUERY = {"title": "Add retry", "diff": "+def retry(): ..."}
 TEXT_QUERY = f"{QUERY['title']}\n{QUERY['diff']}"
 SINCE_FORMAT = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
-RUNNER = "TestRunnerAgent"
+# The staged project's folder; the deployment names its agents `pr_review.<agent>`,
+# in Redis, the stored rules and every refusal.
+PROJECT = "pr_review"
+RUNNER = f"{PROJECT}.TestRunnerAgent"
+REVIEWER = f"{PROJECT}.ReviewAgent"
+MERGER = f"{PROJECT}.MergeAgent"
+WORKFLOW = f"{PROJECT}.Workflow"
 CONFIG_KEY = "governance:config"
 SPEND_KEY = "governance:spend"
 UP_KEY = "routing_table:up"
@@ -82,10 +90,11 @@ SPEND_OVER_DENY = 8
 
 @dataclass
 class Governed:
-    """The deployed pr_review project, its Redis, the rules the deploy seeded, and
-    what the cases learn from each other."""
+    """The deployed pr_review project, its deployment and project folders, its
+    Redis, the rules the deploy seeded, and what the cases learn from each other."""
 
     dir: Path
+    project_dir: Path
     endpoint: Endpoint
     store: redis.Redis
     switch_model: str
@@ -207,7 +216,7 @@ def _error_name(store, request_id: str, agent: str, method: str) -> str:
 def _review_model(store, request_id: str) -> str:
     """The model the gateway sent ReviewAgent.review's LLM call to, as its future
     records it."""
-    future = _future(store, request_id, "ReviewAgent", "review")
+    future = _future(store, request_id, REVIEWER, "review")
     return store.hget(f"future:{future}", "model") or ""
 
 
@@ -246,13 +255,14 @@ def governed(recorder, images, tmp_path_factory):
         tmp_path_factory.mktemp("governance"),
         {**secrets_of(project), "BEDROCK_SWITCH_MODEL_ID": switch_model},
     )
-    config = manifest(directory)
-    agents = {spec["name"] for spec in config["agents"]}
+    folder = project_dir(directory)
+    agents = {qualified(folder, spec["name"]) for spec in manifest(folder)["agents"]}
+    settings = yaml.safe_load((directory / "deployment.yaml").read_text())
     deployed_at = time.time()
     try:
         canyonos(
             recorder,
-            ["deploy", "--serve", "false"],
+            ["deploy", str(folder), "--serve", "false"],
             cwd=directory,
             timeout=DEPLOY_TIMEOUT,
         )
@@ -266,10 +276,11 @@ def governed(recorder, images, tmp_path_factory):
         seed_raw = store.get(CONFIG_KEY)
         yield Governed(
             dir=directory,
+            project_dir=folder,
             endpoint=deployed_endpoint(recorder, directory),
             store=store,
             switch_model=switch_model,
-            poll_interval=float(config.get("poll_interval", 5)),
+            poll_interval=float(settings.get("poll_interval", 5)),
             deployed_at=deployed_at,
             seed_raw=seed_raw,
             seed=_parse_rules(seed_raw),
@@ -293,32 +304,35 @@ def test_the_query_passes_with_every_requirement_up(recorder, governed, check):
         check=False,
     )
     report = call.json()
-    assert report["against_existing_deploy"] is True, call.stdout
     assert not (report["error"] or "").startswith("DependencyDown"), (
         "refused although every agent is in routing_table:up: a Local Controller "
         f"still holds the snapshot from before the deploy finished\n{call.stdout}"
     )
     assert call.code == 0 and report["error"] is None, call.output[-3000:]
-    problems = list(check.problems(report["result"]))
+    problems = list(check.problems(report["results"][0]["result"]))
     assert not problems, problems
-    assert report["result"]["tests"]["passed"] is True, report["result"]["tests"]
+    assert report["results"][0]["result"]["tests"]["passed"] is True, report["results"][
+        0
+    ]["result"]["tests"]
 
 
 def test_deploy_seeds_the_rules_from_governance_yaml(governed):
     """Every rule of the staged governance.yaml, as written, with its placeholder
-    expanded from the project's .env and ReviewAgent's spend counted since the deploy."""
+    expanded from the project's .env, every agent named as the deployment names it,
+    and ReviewAgent's spend counted since the deploy."""
     agents = _seeded(governed)
-    path = project_root(governed.dir) / "config" / "governance.yaml"
+    path = project_root(governed.project_dir) / "config" / "governance.yaml"
     from_yaml = yaml.safe_load(path.read_text())["agents"]
-    assert set(agents) == set(from_yaml), agents
-    assert agents["MergeAgent"] == from_yaml["MergeAgent"], agents["MergeAgent"]
+    assert set(agents) == {f"{PROJECT}.{name}" for name in from_yaml}, agents
+    requires = [f"{PROJECT}.{name}" for name in from_yaml["MergeAgent"]["requires"]]
+    assert agents[MERGER] == {"requires": requires}, agents[MERGER]
     rule = from_yaml["ReviewAgent"]["spend"]["rules"][0]
     assert rule["action"]["model"] == "${BEDROCK_SWITCH_MODEL_ID}", rule
     expected = {
         "above_usd": rule["above_usd"],
         "action": {"kind": "switch_model", "model": governed.switch_model},
     }
-    spend = agents["ReviewAgent"]["spend"]
+    spend = agents[REVIEWER]["spend"]
     assert spend["rules"] == [expected], spend
     since = spend.get("since")
     assert isinstance(since, str) and re.fullmatch(SINCE_FORMAT, since), spend
@@ -334,11 +348,8 @@ def test_a_stopped_requirement_refuses_its_dependent(recorder, governed):
     _stop_runner(governed)
     request_id, status = _send(recorder, governed)
     _expect_refusal(status, "DependencyDown")
-    assert f"MergeAgent requires {RUNNER}" in status["error"], status
-    assert (
-        _error_name(governed.store, request_id, "MergeAgent", "merge")
-        == "DependencyDown"
-    )
+    assert f"{MERGER} requires {RUNNER}" in status["error"], status
+    assert _error_name(governed.store, request_id, MERGER, "merge") == "DependencyDown"
 
 
 def test_a_root_call_whose_requirement_is_down_gets_a_403(recorder, governed):
@@ -346,7 +357,7 @@ def test_a_root_call_whose_requirement_is_down_gets_a_403(recorder, governed):
     never queued, POST answers 403 with the request id and the refusal, and GET
     /status for that id reports the same error."""
     agents = _seeded(governed)
-    agents["Workflow"] = {"requires": [RUNNER]}
+    agents[WORKFLOW] = {"requires": [RUNNER]}
     _write_rules(governed.store, agents)
     _settle(governed)
     url = f"{governed.endpoint.url}/{governed.endpoint.route}"
@@ -361,7 +372,7 @@ def test_a_root_call_whose_requirement_is_down_gets_a_403(recorder, governed):
     refusal = call.json()
     assert refusal.get("error_name") == "DependencyDown", call.output
     assert refusal.get("error", "").startswith(
-        f"DependencyDown: Workflow requires {RUNNER}"
+        f"DependencyDown: {WORKFLOW} requires {RUNNER}"
     ), call.output
     status_url = f"{governed.endpoint.url}/status/{refusal['request_id']}"
     status = http(recorder, "GET", status_url).json()
@@ -377,7 +388,6 @@ def test_a_root_call_whose_requirement_is_down_gets_a_403(recorder, governed):
     )
     report = cli.json()
     assert cli.code != 0, cli.output[-3000:]
-    assert report["against_existing_deploy"] is True, cli.stdout
     assert report["error"] == (
         f"Workflow query was refused: {refusal['error']}. "
         "Run `canyonos status` to check the deploy."
@@ -416,14 +426,14 @@ def test_spend_over_the_threshold_switches_the_model(recorder, governed, check):
         f"BEDROCK_MODEL_ID and BEDROCK_SWITCH_MODEL_ID are both "
         f"{governed.switch_model}: a switch would not show"
     )
-    store.set(SPEND_KEY, json.dumps({"ReviewAgent": SPEND_UNDER}))
+    store.set(SPEND_KEY, json.dumps({REVIEWER: SPEND_UNDER}))
     _settle(governed)
     request_id, status = _send(recorder, governed)
     _expect_real_review(check, status)
     model = _review_model(store, request_id)
     assert model == governed.baseline_model, f"{model} under the threshold"
 
-    store.set(SPEND_KEY, json.dumps({"ReviewAgent": SPEND_OVER}))
+    store.set(SPEND_KEY, json.dumps({REVIEWER: SPEND_OVER}))
     _settle(governed)
     request_id, status = _send(recorder, governed)
     _expect_real_review(check, status)
@@ -436,14 +446,14 @@ def test_spend_over_a_deny_threshold_refuses_the_agent(recorder, governed):
     refused instead of switched, and the refusal reaches the root call."""
     store = governed.store
     agents = _seeded(governed)
-    agents["ReviewAgent"]["spend"]["rules"].append(DENY_RULE)
+    agents[REVIEWER]["spend"]["rules"].append(DENY_RULE)
     _write_rules(store, agents)
-    store.set(SPEND_KEY, json.dumps({"ReviewAgent": SPEND_OVER_DENY}))
+    store.set(SPEND_KEY, json.dumps({REVIEWER: SPEND_OVER_DENY}))
     _settle(governed)
     request_id, status = _send(recorder, governed)
     _expect_refusal(status, "SpendLimit")
-    assert f"ReviewAgent is over its ${DENY_RULE['above_usd']} cap" in status["error"]
-    assert _error_name(store, request_id, "ReviewAgent", "review") == "SpendLimit"
+    assert f"{REVIEWER} is over its ${DENY_RULE['above_usd']} cap" in status["error"]
+    assert _error_name(store, request_id, REVIEWER, "review") == "SpendLimit"
 
 
 def test_a_reload_keeps_the_rules_edited_in_redis(recorder, governed):
@@ -453,27 +463,32 @@ def test_a_reload_keeps_the_rules_edited_in_redis(recorder, governed):
     ReviewAgent keeps the deny rule written to Redis. The new agent appearing is
     what shows the reload ran at all."""
     store = governed.store
-    path = project_root(governed.dir) / "config" / "governance.yaml"
+    path = project_root(governed.project_dir) / "config" / "governance.yaml"
     original = path.read_text()
     document = yaml.safe_load(original)
-    document["agents"]["MergeAgent"]["requires"] = [RUNNER, "ReviewAgent"]
+    document["agents"]["MergeAgent"]["requires"] = ["TestRunnerAgent", "ReviewAgent"]
     document["agents"]["Workflow"] = {"requires": ["ReviewAgent"]}
     path.write_text(yaml.safe_dump(document, sort_keys=False))
     try:
-        canyonos(recorder, ["sync"], cwd=governed.dir, timeout=SYNC_TIMEOUT)
+        canyonos(
+            recorder,
+            ["sync", str(governed.project_dir)],
+            cwd=governed.dir,
+            timeout=SYNC_TIMEOUT,
+        )
         agents = poll(
-            lambda: _rules_naming(store, "Workflow"),
+            lambda: _rules_naming(store, WORKFLOW),
             timeout=RELOAD_TIMEOUT,
             interval=2,
             what=f"the reload to seed Workflow's rule into {CONFIG_KEY}",
         )
     finally:
         path.write_text(original)
-    assert agents["Workflow"] == {"requires": ["ReviewAgent"]}, agents
+    assert agents[WORKFLOW] == {"requires": [REVIEWER]}, agents
     seeded = _seeded(governed)
-    assert agents["MergeAgent"] == seeded["MergeAgent"], agents
-    expected_rules = [*seeded["ReviewAgent"]["spend"]["rules"], DENY_RULE]
-    assert agents["ReviewAgent"]["spend"]["rules"] == expected_rules, agents
+    assert agents[MERGER] == seeded[MERGER], agents
+    expected_rules = [*seeded[REVIEWER]["spend"]["rules"], DENY_RULE]
+    assert agents[REVIEWER]["spend"]["rules"] == expected_rules, agents
 
 
 def test_a_crash_looping_requirement_counts_as_down(recorder, governed):
@@ -486,11 +501,16 @@ def test_a_crash_looping_requirement_counts_as_down(recorder, governed):
     _write_rules(store, _seeded(governed))
     store.set(SPEND_KEY, json.dumps({}))
     _stop_runner(governed)
-    env_path = governed.dir / ".env"
+    env_path = governed.project_dir / ".env"
     original = env_path.read_text()
     env_path.write_text(f"{original.rstrip()}\nTESTRUNNER_BROKEN=1\n")
     try:
-        canyonos(recorder, ["sync"], cwd=governed.dir, timeout=SYNC_TIMEOUT)
+        canyonos(
+            recorder,
+            ["sync", str(governed.project_dir)],
+            cwd=governed.dir,
+            timeout=SYNC_TIMEOUT,
+        )
         poll(
             lambda: store.get(DESIRED_KEY) == "1",
             timeout=RELOAD_TIMEOUT,
@@ -514,4 +534,4 @@ def test_a_crash_looping_requirement_counts_as_down(recorder, governed):
     finally:
         env_path.write_text(original)
     _expect_refusal(status, "DependencyDown")
-    assert _error_name(store, request_id, "MergeAgent", "merge") == "DependencyDown"
+    assert _error_name(store, request_id, MERGER, "merge") == "DependencyDown"

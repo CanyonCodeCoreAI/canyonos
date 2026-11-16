@@ -40,7 +40,7 @@ export function ProjectScreen({ project_id, range }: ProjectScreenProps) {
   if (project_query.error) {
     return (
       <QueryError
-        message="Could not load the project summary."
+        message="Could not load the deployment summary."
         onRetry={() => void project_query.refetch()}
         className="m-7"
         test_id="project-summary-error"

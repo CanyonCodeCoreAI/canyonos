@@ -16,17 +16,17 @@ machine's public IP. To start the dashboard without deploying:
 canyonos serve
 ```
 
-To use another port, set `dashboard_port` at the top level of the workflow config. One
-dashboard serves every workflow on the machine, so a dashboard that is already running
-keeps its port. [Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens) says
+To use another port, set `dashboard_port` in `deployment.yaml`. One dashboard serves
+every deployment on the machine, so a dashboard that is already running keeps its port.
+[Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens) says
 what happens when the port you set is taken.
 
-`canyonos stop` stops the dashboard when no other workflow is running, and keeps its
+`canyonos stop` stops the dashboard when no other deployment is running, and keeps its
 history for the next start. `canyonos clean --all` removes it and its data.
 
 ## Find a request
 
-Each deployed workflow is listed under **Projects**, named after its folder. Select it
+Each deployment is listed under **Deployments**, named after its folder. Select it
 to open its **Status** page, then go to **Costs** and choose **Per-Query view** to see
 each request with its status, cost and latency.
 
@@ -37,22 +37,22 @@ Every page shows the last 7 days at first. Use the time window control to change
 
 ## What each page shows
 
-The pages are in the order the sidebar lists them under each workflow.
+The pages are in the order the sidebar lists them under each deployment.
 
 | Page       | What it shows                                                                                                                                                     |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status     | Whether the workflow is running, its endpoint, replicas, agents, active requests and errors in the last 24 hours, and a button to delete a stopped workflow       |
+| Status     | Whether the deployment is running, its routes, replicas, agents, active requests and errors in the last 24 hours, and a button to delete a stopped deployment     |
 | Costs      | Query count, spend, tokens and cost per query, in a **Per-Agent view** and a **Per-Query view**                                                                   |
 | Traces     | Traffic, p95 latency, and one row per request with its LLM calls, cost and duration. **LLM calls** lists every model call; expand one to see its input and output |
 | Errors     | Errors grouped by type and by agent, and the full list                                                                                                            |
 | Metrics    | CPU and other resource use for each machine and each agent                                                                                                        |
 | Logs       | Log lines, which you can filter by agent and by replica                                                                                                           |
-| Prompts    | Each agent function's prompt and its versions                                                                                                                     |
-| Scaling    | The workflow's scaling policy, and each agent's replicas and load                                                                                                 |
+| Prompts    | Each agent function's prompt and its versions, named `<project>.<agent>.<function>`                                                                               |
+| Scaling    | Each project's scaling policy, and each of its agents' replicas and load                                                                                          |
 | Governance | Each agent, the agents it calls, whether it is up, and its spend against its caps                                                                                 |
 
-Deleting a stopped workflow on **Status** removes it and its telemetry from the
-dashboard, and can't be undone. It doesn't touch the workflow itself.
+Deleting a stopped deployment on **Status** removes it and its telemetry from the
+dashboard, and can't be undone. It doesn't touch its folders.
 
 ## Change a running workflow
 
@@ -74,10 +74,10 @@ The last three pages change a workflow while it runs:
 
 The dashboard that `canyonos deploy` and `canyonos serve` start has no sign-in, and the
 CLI has no setting to add one. Anyone who can reach its port, or the dashboard API on
-port `3000`, can read and change every workflow on it. Both listen on every interface,
+port `3000`, can read and change every deployment on it. Both listen on every interface,
 so keep them closed to anyone you don't trust.
 
-The dashboard API also keeps each workflow's Redis password, encrypted with
+The dashboard API also keeps each deployment's Redis password, encrypted with
 `REDIS_PASSWORD_ENCRYPTION_KEY`, and won't start without that key (32 characters or
 more). `canyonos serve` makes the key, and the secret the API signs sign-in tokens
 with, once, and keeps them in `~/.canyonos/dashboard/.env`.

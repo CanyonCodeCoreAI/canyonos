@@ -1322,11 +1322,14 @@ class _AwsProvision:
         ui.command(f"scp -i {key} -r <project folder> {SSH_USER}@{address}:~/")
         ui.say("Then sign in, wait for the install, and deploy:")
         ui.command(f"ssh -i {key} {SSH_USER}@{address}")
-        ui.command("cloud-init status --wait && cd <project folder> && canyonos deploy")
+        ui.command(
+            "cloud-init status --wait && "
+            "canyonos deploy <project folder> --folder deployment"
+        )
         ui.blank()
         ui.hint(
             "To run agents on EC2, set `provider: ec2-assign` and give each agent a "
-            "machine type under `ec2-assign: machine_type:` in workflow_config.yaml, "
+            "machine type under `ec2-assign: machine_type:` in deployment.yaml, "
             "or `provider: ec2-pool` with a pool under `ec2-pool: machine_type:`. They launch "
             "into this machine's subnet and security group."
         )

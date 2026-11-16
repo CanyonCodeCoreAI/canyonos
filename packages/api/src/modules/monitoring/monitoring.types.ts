@@ -176,13 +176,18 @@ export const MonitoringReplicasResponseSchema = MonitoringScopeSchema.pick({
   replicas: z.array(MonitoringReplicaSchema),
 });
 
-export const MonitoringEndpointSchema = z.object({
+export const MonitoringRouteSchema = z.object({
   url: z.string(),
-  status_url: z.string(),
+  project: z.string(),
   agent: z.string(),
   method: z.string(),
   arguments: z.array(z.string()),
   example_body: z.record(z.string(), z.string()),
+});
+
+export const MonitoringEndpointSchema = z.object({
+  status_url: z.string(),
+  routes: z.array(MonitoringRouteSchema),
 });
 
 export const MonitoringEndpointResponseSchema = MonitoringScopeSchema.pick({

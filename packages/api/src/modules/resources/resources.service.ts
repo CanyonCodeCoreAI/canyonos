@@ -114,7 +114,7 @@ export function build_overview(rows: readonly FleetProjectRow[], range: TimeRang
     },
     {
       id: 'active_projects',
-      label: 'Active projects',
+      label: 'Active deployments',
       value: String(active_projects),
       sub_label: `${projects.length} total`,
       tone: active_projects > 0 ? 'positive' : 'neutral',

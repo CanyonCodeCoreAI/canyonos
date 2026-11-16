@@ -4,7 +4,7 @@
 # helloworld with a Workflow that calls HelloAgent from threads, asyncio, and
 # reused thread, process and multiprocessing pools, and returns the request
 # context each call saw.
-source: examples/helloworld
+source: examples/helloworld/helloworld
 overlay:
   agents/workflow.py: workflow.py
 query: World

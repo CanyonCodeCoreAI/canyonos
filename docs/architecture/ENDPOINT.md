@@ -1,11 +1,11 @@
 # Endpoint
 
-The endpoint is the HTTP door into a deployment. It serves one agent method, named by
-the top-level `endpoint:` block in the workflow config, at `POST /<method>`, and answers
-with a request ID at once, because a workflow can finish long after the HTTP response.
-`GET /status/<request_id>` reports the result, and `POST /answer/<request_id>` answers
-a question the workflow asked. The endpoint runs no agent code: it queues the call and
-its own Local Controller forwards it to a replica of the agent it serves.
+The endpoint is the HTTP door into a deployment. It serves each route of each project's
+workflow config, an agent method named in its `endpoint: routes:`, at
+`POST /<project>/<agent>/<method>`, and answers with a request ID at once, because a
+workflow can finish long after the HTTP response. `GET /status/<request_id>` reports
+the result, and `POST /answer/<request_id>` answers a question the workflow asked. The endpoint runs no agent code: it queues the call and
+its own Local Controller forwards it to a replica of the route's agent.
 
 ```mermaid
 sequenceDiagram
@@ -16,7 +16,7 @@ sequenceDiagram
     participant R as Redis
     participant A as Agent replica
 
-    C->>E: POST /{method}<br/>{"query": "..."}
+    C->>E: POST /{project}/{agent}/{method}<br/>{"query": "..."}
     E->>R: SET request:{id}:context<br/>(when _context is sent)
     E->>R: HSET future:{future_id}<br/>(Future(agent, method, kwargs))
     E->>LC: gRPC Execute<br/>(localhost:50051)
@@ -51,7 +51,7 @@ it like any other replica. The name `endpoint` is reserved for it.
 
 |           |                                                                                                                                                                                                   |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Container | `canyonos-<project>-endpoint-<id>`, one replica, 2 CPUs, always on the Local provider, so on the Global Controller's machine                                                                      |
+| Container | `canyonos-<deployment>-endpoint-<id>`, one replica, 2 CPUs, always on the Local provider, so on the Global Controller's machine                                                                   |
 | Image     | the Global Controller's image (`CANYONOS_CONTROLLER_IMAGE`), started as `python -m canyonos_core.endpoint`                                                                                        |
 | HTTP      | gunicorn on `8080` inside the container, 2 workers (`gthread`) × 16 threads, published on [`api_port`](#the-port)                                                                                 |
 | gRPC      | a Local Controller with no agent, on `50051`; published on `CANYONOS_PRIVATE_IP` only when the deployment's provider has machines of its own (EC2) and that is set, for agents there to call back |
@@ -69,9 +69,8 @@ and a Service (plus an Ingress or Route when the project asks for one).
   other but loads no agent and starts no LLM Gateway. It reports the endpoint healthy
   (`mark_ready`) once `8080` accepts connections.
 - gunicorn, as a child process. Each worker builds its app with `worker_app()`, from
-  `CANYONOS_ENDPOINT_AGENT`, `CANYONOS_ENDPOINT_METHOD` and
-  `CANYONOS_ENDPOINT_ARGUMENTS`, which the Reconciler (or the operator) sets on the
-  container from the `endpoint:` block and the method's `functions` entry.
+  `CANYONOS_ENDPOINT_ROUTES`, which the Reconciler (or the operator) sets on the
+  container from the projects' `endpoint: routes:` and each method's `functions` entry.
 
 When gunicorn exits on its own, the Local Controller marks the replica `failed` and the
 process exits with gunicorn's code. SIGTERM reaches only the main process, so it stops
@@ -81,21 +80,21 @@ queues its call. The Local Controller then drains as any replica does, for
 
 ## Requests
 
-The `endpoint:` block names the agent and method:
+Each project's `endpoint:` block names its routes, each an agent and a method:
 
 ```yaml
 endpoint:
-  agent: Workflow
-  method: main
-  api_port: 8080
+  routes:
+    - agent: Workflow
+      method: main
 ```
 
-`agent` must be an entry of type `agent`, and `method` must be listed in that agent's
-`functions`. `canyonos test`, the deploy summary and the dashboard take the argument
-names from that function's `arguments`. See
-[Workflow config](../guides/WORKFLOW_CONFIG.md).
+`agent` must be an entry of type `agent` in the same project, and `method` must be
+listed in that agent's `functions`. `api_port` goes in `endpoint:` in `deployment.yaml`.
+`canyonos test`, the deploy summary and the dashboard take the argument names from that
+function's `arguments`. See [Workflow config](../guides/WORKFLOW_CONFIG.md).
 
-### `POST /<method>`
+### `POST /<project>/<agent>/<method>`
 
 The body must be a JSON object, or anything else is a `400`. Each key becomes a keyword
 argument, and `_context` is taken out first and kept for policy; a `_context` that isn't
@@ -114,7 +113,7 @@ For a valid body, the worker sets a new request ID (`uuid4().hex`), stores `_con
 | `202`  | `{"request_id"}`                        | the call is queued                                                   |
 | `400`  | `{"error"}`                             | invalid JSON, not an object, a bad `_context`, or a missing argument |
 | `403`  | `{"request_id", "error", "error_name"}` | governance refused the root call                                     |
-| `404`  | `{"error"}`                             | any other path; the error names the served route                     |
+| `404`  | `{"error"}`                             | any other path; the error names the served routes                    |
 | `405`  | `{"error"}`                             | a known path with the wrong HTTP method                              |
 
 Governance refuses the root call when a required agent is down, a spend rule denies it,
@@ -134,7 +133,7 @@ The worker finds the request's record in this order:
 2. `request:<request_id>:result`: the outcome cleanup keeps for a day after it expires
    the request's keys (see [Futures and cleanup](CONTROLLER.md#futures-and-cleanup)).
 3. The request's root span in the dashboard's Postgres container,
-   `canyonos-dashboard-db:5432` on the project's network (a 2-second connect timeout).
+   `canyonos-dashboard-db:5432` on the deployment's network (a 2-second connect timeout).
    Only the local Docker dashboard has it, so on Kubernetes, or with
    `bun run dashboard:dev`, this step finds nothing.
 
@@ -159,11 +158,11 @@ waits, `GET /status` answers `input_required` with `{"question": ..., "input_sch
 ...}` in `question`. `input_schema` maps each key the answer takes to its Python type
 name, such as `{"input": "str"}`.
 
-`POST /answer/<request_id>` starts no call. It parses the body as `POST /<method>`
-does, pops the request's oldest question (`RPOP`), and sends the body to the endpoint's
-Local Controller as the question's result, in a `WriteResult`. That writes
-`future:<future_id>` and passes the result to the asking replica as to any consumer. It
-answers `202` with `{"request_id"}`, or `409` when no question is waiting.
+`POST /answer/<request_id>` starts no call. It parses the body as
+`POST /<project>/<agent>/<method>` does, pops the request's oldest question (`RPOP`),
+and sends the body to the endpoint's Local Controller as the question's result, in a
+`WriteResult`. That writes `future:<future_id>` and passes the result to the asking
+replica as to any consumer. It answers `202` with `{"request_id"}`, or `409` when no question is waiting.
 
 `ask_human` returns the body unchecked. The `input()`, `interrupt()` and approval hooks
 check it against `input_schema` and ask again when a key is missing or has the wrong
@@ -176,18 +175,18 @@ each asking call raises.
 The Global Controller writes the Redis hash `endpoint:address` (`endpoint_record`) when
 it applies the config, and deletes it once teardown has removed every replica:
 
-| Field             | Value                                                           |
-| ----------------- | --------------------------------------------------------------- |
-| `public_host`     | `CANYONOS_PUBLIC_IP`, or `127.0.0.1`                            |
-| `api_port`        | `endpoint.api_port`, else the port the endpoint's container got |
-| `agent`, `method` | the served method                                               |
-| `arguments`       | JSON list of the method's argument names, from `functions`      |
-| `url`             | `http://<public_host>:<api_port>/<method>`                      |
+| Field         | Value                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| `public_host` | `CANYONOS_PUBLIC_IP`, or `127.0.0.1`                                                       |
+| `api_port`    | `endpoint.api_port`, else the port the endpoint's container got                            |
+| `routes`      | JSON list of the routes, each with its `project`, `agent`, `method`, `arguments` and `url` |
 
-When `CANYONOS_ENDPOINT_URL` is set (on Kubernetes, the operator sets it to the
-endpoint's Route, Ingress or in-cluster Service), `url` is
-`<CANYONOS_ENDPOINT_URL>/<method>`, and `public_host` and `api_port` come from that URL,
-with `443` or `80` when it names no port.
+A route's `arguments` are its method's argument names, from `functions`, and its `url`
+is `http://<public_host>:<api_port>/<project>/<agent>/<method>`. When
+`CANYONOS_ENDPOINT_URL` is set (on Kubernetes, the operator sets it to the endpoint's
+Route, Ingress or in-cluster Service), `url` is
+`<CANYONOS_ENDPOINT_URL>/<project>/<agent>/<method>`, and `public_host` and `api_port`
+come from that URL, with `443` or `80` when it names no port.
 
 ### The port
 
@@ -195,8 +194,8 @@ Without `endpoint.api_port`, the endpoint keeps the port it had: a reload reuses
 one in `endpoint:address`, and a deploy starts from `CANYONOS_LAST_API_PORT`, the port
 of the last deploy, which the CLI passes in, else `8080`. When Docker finds that port
 taken, the Reconciler tries the next one, and once the container runs it rewrites
-`api_port` and `url` (`publish_endpoint_port`). A configured `api_port` that is taken
-fails the launch with a message that names it.
+`api_port` and each route's `url` (`publish_endpoint_port`). A configured `api_port`
+that is taken fails the launch with a message that names it.
 
 ### Readers
 
@@ -204,7 +203,7 @@ fails the launch with a message that names it.
   `{"endpoint": <record>}`, which the CLI uses for `canyonos test` and the deploy
   summary. It answers `409` when no deploy runs and `503` while nothing is published.
 - The dashboard API answers `GET /projects/:project_id/monitoring/endpoint` with
-  `{project_id, endpoint: {url, status_url, agent, method, arguments, example_body}}`,
+  `{project_id, endpoint: {status_url, routes}}`, each route with its `example_body`,
   or `endpoint: null` when the hash is missing.
 - The Reconciler reads `api_port` before it launches the endpoint.
 
@@ -214,9 +213,7 @@ What the endpoint's container reads:
 
 | Variable                                     | Set by               | Meaning                                                |
 | -------------------------------------------- | -------------------- | ------------------------------------------------------ |
-| `CANYONOS_ENDPOINT_AGENT`                    | Reconciler, operator | the agent served                                       |
-| `CANYONOS_ENDPOINT_METHOD`                   | Reconciler, operator | the method served, and the route                       |
-| `CANYONOS_ENDPOINT_ARGUMENTS`                | Reconciler, operator | comma-separated argument names, each required          |
+| `CANYONOS_ENDPOINT_ROUTES`                   | Reconciler, operator | JSON list of the routes, each with its argument names  |
 | `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT` | Reconciler, operator | the machine's Redis, or the project's on Kubernetes    |
 | `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT` | Reconciler, operator | the Local Controller's address in the routing table    |
 | `CANYONOS_SHUTDOWN_GRACE_SECONDS`            | Reconciler, operator | how long the drain after SIGTERM may take (default 10) |

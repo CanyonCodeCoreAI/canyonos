@@ -17,7 +17,7 @@ from typing import cast
 
 import redis
 
-from .harness import canyonos, project_containers, project_redis
+from .harness import canyonos, docker_name, project_containers, project_redis
 
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 
@@ -71,9 +71,9 @@ def routed_replicas(redis_client: redis.Redis, agent: str) -> list[Replica]:
 
 @dataclass(frozen=True)
 class Call:
-    """One call a request made: its `<Agent>.<function>`, the replica that ran it
-    (None until that replica finished it) and the prompt version the LLM gateway
-    sent with it, if any."""
+    """One call a request made: its `<project>.<Agent>.<function>`, the replica that
+    ran it (None until that replica finished it) and the prompt version the LLM
+    gateway sent with it, if any."""
 
     future_id: str
     label: str
@@ -118,7 +118,9 @@ def agent_status(recorder, deployed, agent: str) -> tuple[int, int, str | None]:
 
 def replica_containers(recorder, deployed, agent: str) -> dict[str, str]:
     """`agent`'s replica containers by name with their state, stopped ones too."""
-    pattern = re.compile(rf"{re.escape(deployed.group)}-{agent.lower()}-[0-9a-f]{{8}}")
+    pattern = re.compile(
+        rf"{re.escape(deployed.group)}-{docker_name(agent)}-[0-9a-f]{{8}}"
+    )
     return {
         name: state
         for name, state in project_containers(

@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos stop` removes the project's containers, its workspace volume and its
+"""`canyonos stop` removes the deployment's containers, its workspace volume and its
 records under `~/.canyonos`; a second stop is a no-op and `canyonos status` then
-reports nothing running. `canyonos clean` removes the agents' images and, for a
-port, `.canyon`. This runs last; the container logs are collected first, because
+reports nothing running. `canyonos clean` removes the agents' images and keeps a
+port, the project's `.canyon`: it cleans the deployment, not its projects. This runs last; the container logs are collected first, because
 stop removes them. What stop does to the shared dashboard is
 scenarios/test_shared_dashboard.py's.
 
-Each run stages the project under a new project id, so its images get new names;
+Each run stages the project under a new deployment id, so its images get new names;
 the clean here is the run's final teardown and keeps them from piling up."""
 
 from pathlib import Path
@@ -18,8 +18,10 @@ from ..harness import (
     cli_value,
     collect_container_logs,
     docker,
+    docker_name,
     manifest,
     project_containers,
+    qualified,
     stop_project,
 )
 
@@ -34,9 +36,9 @@ def test_stop_removes_the_project_and_its_records(recorder, deployed, artifacts_
         recorder,
         deployed.dir,
         "[state_path(), workspace_volume()]",
-        "from canyonos.project import state_path, workspace_volume",
+        "from canyonos.deployment import state_path, workspace_volume",
     )
-    records = [Path(state), Path(state).parent / "deployed.json"]
+    records = [Path(state)]
     assert all(path.is_file() for path in records), records
     assert _volume_exists(recorder, volume), f"no workspace volume {volume}"
 
@@ -59,15 +61,15 @@ def _images(recorder):
     return set(listing.split())
 
 
-def test_clean_removes_the_agent_images_and_the_port(recorder, deployed):
+def test_clean_removes_the_agent_images_and_keeps_the_port(recorder, deployed):
     built = {
-        f"{deployed.group}-{spec['name'].lower()}"
-        for spec in manifest(deployed.dir).get("agents", [])
+        f"{deployed.group}-{docker_name(qualified(deployed.project_dir, spec['name']))}"
+        for spec in manifest(deployed.project_dir).get("agents", [])
         if spec.get("type", "agent") != "database"
     }
     missing = sorted(built - _images(recorder))
     assert not missing, f"never built: {missing}"
-    canyon = deployed.dir / ".canyon"
+    canyon = deployed.project_dir / ".canyon"
     if deployed.project.port is not None:
         assert canyon.is_dir(), canyon
 
@@ -76,4 +78,4 @@ def test_clean_removes_the_agent_images_and_the_port(recorder, deployed):
     left = sorted(built & _images(recorder))
     assert not left, left
     if deployed.project.port is not None:
-        assert not canyon.exists(), canyon
+        assert canyon.is_dir(), canyon

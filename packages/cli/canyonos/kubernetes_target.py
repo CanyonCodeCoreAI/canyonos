@@ -35,13 +35,13 @@ from rich.text import Text
 
 from canyonos import env, ui
 from canyonos.constants import (
-    default_config_path,
+    deployment_config_path,
     existing_config_path,
     project_env_path,
     project_root,
     read_config,
 )
-from canyonos.deploy import save_project_id
+from canyonos.deploy import save_deployment_config
 from canyonos.forwards import (
     DASHBOARD,
     close_forward,
@@ -50,7 +50,7 @@ from canyonos.forwards import (
     open_forward,
     running_forwards,
 )
-from canyonos.project import kubernetes_command, project_name
+from canyonos.deployment import deployment_name, kubernetes_command
 
 GROUP = "canyonos.canyoncode.ai"
 API_VERSION = f"{GROUP}/v1alpha1"
@@ -679,17 +679,25 @@ def _env_secret(k8s, project, env_values):
     return k8s.get("env_secret") or (f"{project}-env" if env_values else None)
 
 
-def _endpoint_arguments(config):
-    """The endpoint's method and the names of its arguments, from the config."""
-    endpoint = config.get("endpoint") or {}
-    method = endpoint.get("method", "")
-    for agent_spec in config.get("agents") or []:
-        if agent_spec.get("name") == endpoint.get("agent"):
-            for function in agent_spec.get("functions") or []:
-                if function.get("name") == method:
-                    arguments = function.get("arguments") or []
-                    return method, [a.get("name") for a in arguments]
-    return method, []
+def _endpoint_routes(config):
+    """The endpoint's routes, each with its method's argument names, from the config."""
+    functions = {
+        (agent_spec.get("name"), function.get("name")): function
+        for agent_spec in config.get("agents") or []
+        for function in agent_spec.get("functions") or []
+    }
+    routes = []
+    for route in (config.get("endpoint") or {}).get("routes") or []:
+        function = functions.get((route.get("agent"), route.get("method"))) or {}
+        arguments = function.get("arguments") or []
+        routes.append(
+            {
+                "agent": route.get("agent"),
+                "method": route.get("method"),
+                "arguments": [a.get("name") for a in arguments],
+            }
+        )
+    return routes
 
 
 def _in_cluster_only(url):
@@ -722,9 +730,7 @@ def _forward_endpoint(namespace, project, config):
 
 
 def _summary(namespace, project_obj, config, local_url=None, dashboard_url=None):
-    method, arguments = _endpoint_arguments(config)
     url = project_obj.get("status", {}).get("endpointURL", "")
-    body = json.dumps({name: "your query" for name in arguments})
     lines = [
         Text.assemble(
             ("Dashboard  ", "bold"),
@@ -754,12 +760,15 @@ def _summary(namespace, project_obj, config, local_url=None, dashboard_url=None)
         url = "http://127.0.0.1:8080"
     else:
         lines.append(Text.assemble(("Endpoint   ", "bold"), url))
-    lines.append(
-        Text.assemble(
-            ("Call       ", "bold"),
-            f"curl -X POST {url}/{method} -H \"Content-Type: application/json\" -d '{body}'",
+    for route in _endpoint_routes(config):
+        path = f"{route['agent']}/{route['method']}"
+        body = json.dumps({name: "your query" for name in route["arguments"]})
+        lines.append(
+            Text.assemble(
+                ("Call       ", "bold"),
+                f"curl -X POST {url}/{path} -H \"Content-Type: application/json\" -d '{body}'",
+            )
         )
-    )
     lines.append(
         Text.assemble(("Poll       ", "bold"), f"curl {url}/status/<request_id>")
     )
@@ -787,12 +796,14 @@ def run_kubernetes_deploy(config_path=None, timeout=READY_TIMEOUT_SECONDS, serve
     ensure_namespace(namespace)
     # Before naming the project: its name ends with the start of its project_id, as on
     # Docker, so two folders of the same name never share one in a namespace.
-    save_project_id(config_path)
-    project = resource_name(project_name())
+    save_deployment_config(config_path)
+    project = resource_name(deployment_name())
     env_secret = _env_secret(k8s, project, env_values)
     if env_values and not k8s.get("env_secret"):
         apply([dotenv_secret(namespace, env_secret, project, env_values)])
-    images = build_in_cluster(config_path, namespace, project_name(), k8s, env_secret)
+    images = build_in_cluster(
+        config_path, namespace, deployment_name(), k8s, env_secret
+    )
     ui.ok(f"Built {len(images)} image(s) in the cluster and applied the project")
     project_obj, agents = wait_until_ready(namespace, project, timeout=timeout)
     ui.ok(f"{len(agents)} agent(s) ready on Kubernetes")
@@ -815,7 +826,7 @@ def run_kubernetes_deploy(config_path=None, timeout=READY_TIMEOUT_SECONDS, serve
 
 def _namespace_and_project(config_path):
     config = load_config(resolve_config(config_path), read_dotenv())
-    return config["kubernetes"]["namespace"], resource_name(project_name())
+    return config["kubernetes"]["namespace"], resource_name(deployment_name())
 
 
 def run_kubernetes_status(as_json=False, config_path=None):
@@ -995,7 +1006,7 @@ def _open_dashboard(port=None):
             f"({found.stderr.strip()})"
         )
     if port is None:
-        port = read_config(default_config_path()).get("dashboard_port")
+        port = read_config(deployment_config_path()).get("dashboard_port")
     return open_forward(
         DASHBOARD,
         DASHBOARD_NAMESPACE,
@@ -1091,8 +1102,8 @@ class PortForward:
 @contextlib.contextmanager
 def kubernetes_endpoint(config_path=None):
     """The deployed project's endpoint, reached here through a port-forward while in
-    use, in the fields `canyonos test` reads on Docker: `url` (to POST a query to),
-    `public_host`, `api_port` and the method's `arguments`."""
+    use, in the fields `canyonos test` reads on Docker: `public_host`, `api_port` and
+    `routes`, each with the `url` to POST a query to and its method's `arguments`."""
     namespace, project = _namespace_and_project(config_path)
     found = kubectl(
         ["get", "canyonproject", project, "-n", namespace, "-o", "json"], check=False
@@ -1108,16 +1119,17 @@ def kubernetes_endpoint(config_path=None):
             f"{project} in {namespace} is not ready ({ready.get('message') or 'starting'}): "
             f"see {kubernetes_command('status')}"
         )
-    method, arguments = _endpoint_arguments(
-        load_config(resolve_config(config_path), read_dotenv())
-    )
+    routes = _endpoint_routes(load_config(resolve_config(config_path), read_dotenv()))
     forward = PortForward(namespace)
+    base_url = f"http://127.0.0.1:{forward.port}"
     try:
         yield {
-            "url": f"http://127.0.0.1:{forward.port}/{method}",
             "public_host": "127.0.0.1",
             "api_port": forward.port,
-            "arguments": arguments,
+            "routes": [
+                {**route, "url": f"{base_url}/{route['agent']}/{route['method']}"}
+                for route in routes
+            ],
         }
     finally:
         forward.close()

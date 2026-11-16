@@ -8,6 +8,7 @@ Commands like doctor and new_app will not though
 
 import argparse
 import importlib.metadata
+import os
 import signal
 import sys
 
@@ -36,7 +37,7 @@ from canyonos.provision import run_provision
 from canyonos.status import run_status
 from canyonos.stop import run_stop
 from canyonos.sync import run_sync_and_reload
-from canyonos.project import TARGETS, resolve_target
+from canyonos.deployment import TARGETS, resolve_target
 from canyonos.target import run_target
 from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
 from canyonos.upgrade import notify_if_outdated, run_upgrade
@@ -87,6 +88,15 @@ def main():
     except KeyboardInterrupt:
         ui.say("Cancelled.")
         sys.exit(130)
+
+
+def _enter_deployment_folder(args):
+    """Deploy from the deployment's folder `args.folder`, made when it is missing, as
+    if the command were typed there; the project folders it names stay relative to
+    where it was typed."""
+    args.folders = [os.path.abspath(folder) for folder in args.folders]
+    os.makedirs(args.folder, exist_ok=True)
+    os.chdir(args.folder)
 
 
 def _run_command(settings_at_start):
@@ -146,8 +156,8 @@ def _run_command(settings_at_start):
         command.add_argument(
             "--target",
             choices=TARGETS,
-            help="Where the project runs: Docker on this machine or the Kubernetes "
-            "cluster kubectl points at (default: the project's `target`, else docker)",
+            help="Where the deployment runs: Docker on this machine or the Kubernetes "
+            "cluster kubectl points at (default: deployment.yaml's `target`, else docker)",
         )
         return command
 
@@ -162,12 +172,27 @@ def _run_command(settings_at_start):
                 if (
                     kubernetes_target.run_kubernetes_deploy(serve=args.serve)
                     if on_kubernetes(args)
-                    else run_deploy(serve=args.serve, verbose=args.verbose)
+                    else run_deploy(
+                        args.folders, serve=args.serve, verbose=args.verbose
+                    )
                 )
                 is not None
                 else 1
             ),
         )
+    )
+    deploy.add_argument(
+        "--folder",
+        metavar="PATH",
+        help="The deployment's folder, which holds its deployment.yaml, made when "
+        "missing (default: the current folder)",
+    )
+    deploy.add_argument(
+        "folders",
+        nargs="+",
+        metavar="folder",
+        help="A project folder to deploy, with its config/workflow_config.yaml; the deployment "
+        "is named after its own folder (--folder) and set by its deployment.yaml",
     )
     deploy.add_argument(
         "--serve",
@@ -184,20 +209,21 @@ def _run_command(settings_at_start):
     )
 
     def this_machine_or_cluster(local, cluster):
-        """Run `local(args)`, or `cluster()` on Kubernetes: the project in this folder
-        only. --all and project names mean projects on this machine, so they always
-        run `local`, whatever this folder's target, and are refused with --target
-        kubernetes."""
+        """Run `local(args)`, or `cluster()` on Kubernetes: the deployment of this
+        folder only. --all and deployment names mean deployments on this machine, so
+        they always run `local`, whatever this folder's target, and are refused with
+        --target kubernetes."""
 
         def run(args):
-            if args.all and args.projects:
-                ui.fail("Name projects or pass --all, not both")
+            if args.all and args.deployments:
+                ui.fail("Name deployments or pass --all, not both")
                 return False
-            if args.all or args.projects:
+            if args.all or args.deployments:
                 if args.target == "kubernetes":
                     ui.fail(
-                        "--all and project names cover the projects on this machine, "
-                        "not a cluster's; run the command from each project's folder"
+                        "--all and deployment names cover the deployments on this "
+                        "machine, not a cluster's; run the command from each deployment's "
+                        "folder"
                     )
                     return False
                 return local(args)
@@ -210,25 +236,25 @@ def _run_command(settings_at_start):
             "clean",
             this_machine_or_cluster(
                 lambda args: run_clean(
-                    all_projects=args.all, yes=args.yes, refs=args.projects
+                    all_deployments=args.all, yes=args.yes, refs=args.deployments
                 ),
                 kubernetes_target.run_kubernetes_clean,
             ),
         )
     )
     clean.add_argument(
-        "projects",
+        "deployments",
         nargs="*",
-        metavar="PROJECT",
-        help="The name, folder name or ID (or its start) of a project to clean. "
-        "Without one, cleans the only deployed project or this folder's, or asks "
+        metavar="DEPLOYMENT",
+        help="The name, folder name or ID (or its start) of a deployment to clean. "
+        "Without one, cleans the only deployment or this folder's, or asks "
         "which",
     )
     clean.add_argument(
         "--all",
         action="store_true",
         help="Remove everything CanyonOS put on this machine before uninstalling the "
-        "CLI: every project, the dashboard and its data, CanyonOS's images and "
+        "CLI: every deployment, the dashboard and its data, CanyonOS's images and "
         "~/.canyonos",
     )
     clean.add_argument(
@@ -238,25 +264,33 @@ def _run_command(settings_at_start):
         add(
             "stop",
             this_machine_or_cluster(
-                lambda args: run_stop(all_projects=args.all, refs=args.projects),
+                lambda args: run_stop(all_deployments=args.all, refs=args.deployments),
                 kubernetes_target.run_kubernetes_stop,
             ),
         )
     )
     stop.add_argument(
-        "projects",
+        "deployments",
         nargs="*",
-        metavar="PROJECT",
-        help="The name, folder name or ID (or its start) of a deployed project to "
-        "stop. Without one, stops the only deployed project, or asks which",
+        metavar="DEPLOYMENT",
+        help="The name, folder name or ID (or its start) of a deployment to stop. "
+        "Without one, stops the only deployment, or asks which",
     )
     stop.add_argument(
         "--all",
         action="store_true",
-        help="Stop every CanyonOS project on this machine, from any folder, "
-        "including projects whose folder is gone",
+        help="Stop every CanyonOS deployment on this machine, from any folder, "
+        "including deployments whose folder is gone",
     )
-    add("sync", lambda args: sys.exit(0 if run_sync_and_reload() else 1))
+    sync = add(
+        "sync", lambda args: sys.exit(0 if run_sync_and_reload(args.folders) else 1)
+    )
+    sync.add_argument(
+        "folders",
+        nargs="+",
+        metavar="folder",
+        help="A project folder of the running deployment to copy in again",
+    )
 
     logs = add_target(
         add(
@@ -275,8 +309,8 @@ def _run_command(settings_at_start):
     logs.add_argument(
         "agent",
         nargs="?",
-        help="An agent, or one replica such as IntentAgent-1, whose logs to print "
-        "instead of the Global Controller's",
+        help="An agent, or one replica such as portfolio.IntentAgent-1a2b3c4d, whose logs "
+        "to print instead of the Global Controller's",
     )
     logs.add_argument(
         "--no-follow",
@@ -425,8 +459,8 @@ def _run_command(settings_at_start):
     test.add_argument(
         "prompt",
         nargs="?",
-        help="Prompt sent to the workflow (default: the project's test_query.txt, "
-        f"else {DEFAULT_QUERY!r})",
+        help="Prompt sent to every workflow (default: each project's "
+        f"config/test_query.txt, else {DEFAULT_QUERY!r})",
     )
     test.add_argument(
         "--json",
@@ -469,6 +503,8 @@ def _run_command(settings_at_start):
         notify_if_outdated()
 
     try:
+        if getattr(args, "folder", None):
+            _enter_deployment_folder(args)
         with recording_usage(args.command):
             args.func(args)
     except RuntimeError as e:

@@ -3,12 +3,6 @@
 
 # Workflow config — pull request review pipeline
 
-# Where the project deploys: `docker` is Docker on this machine.
-target: docker
-
-# Where every replica runs: `local` (this machine), `ec2-pool` or `ec2-assign`.
-provider: local
-
 # The agents CanyonOS runs, and below them the one the endpoint serves.
 agents:
   - name: TestRunnerAgent
@@ -71,8 +65,6 @@ agents:
           type: dict
 
 endpoint:
-  agent: Workflow
-  method: review
-
-# Polling interval in seconds
-poll_interval: 4
+  routes:
+    - agent: Workflow
+      method: review

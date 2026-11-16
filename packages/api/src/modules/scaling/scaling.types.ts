@@ -37,7 +37,7 @@ export const ScalingPolicySchema = z
   });
 
 /**
- * The project's one policy as the controller sees it. `applied` is what the controller enforces
+ * A project's one policy as the controller sees it. `applied` is what the controller enforces
  * on every agent; `invalid` is a stored policy it skips, with the first rule it breaks.
  */
 export const ScalingStatusSchema = z.discriminatedUnion('status', [
@@ -45,6 +45,11 @@ export const ScalingStatusSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('applied'), policy: ScalingPolicySchema }),
   z.object({ status: z.literal('invalid'), reason: z.string() }),
 ]);
+
+/** Each project's policy, by project name: every project the deployment runs agents of. */
+export const ScalingResponseSchema = z.object({
+  projects: z.record(z.string(), ScalingStatusSchema),
+});
 
 export const ScalingDeleteResponseSchema = z.object({ status: z.literal('none') });
 
@@ -69,6 +74,7 @@ export const ScalingAgentsResponseSchema = z.object({ agents: z.array(ScalingAge
 export type ScalingMetric = z.infer<typeof ScalingMetricSchema>;
 export type ScalingPolicy = z.infer<typeof ScalingPolicySchema>;
 export type ScalingStatus = z.infer<typeof ScalingStatusSchema>;
+export type ScalingResponse = z.infer<typeof ScalingResponseSchema>;
 export type ScalingDeleteResponse = z.infer<typeof ScalingDeleteResponseSchema>;
 export type ScalingAgentLoad = z.infer<typeof ScalingAgentLoadSchema>;
 export type ScalingAgent = z.infer<typeof ScalingAgentSchema>;

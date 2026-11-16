@@ -60,7 +60,7 @@ Open the workflow config and check the agents, their `requirements`, `replicas` 
 `resources`. [From scratch](FROM_SCRATCH.md#3-list-your-agents-in-the-workflow-config)
 explains each setting.
 
-From now on, every `canyonos` command runs from `my-app/` and uses `.canyon`.
+From now on, every `canyonos` command you give `my-app/` uses `.canyon`.
 
 ## 3. Add your keys
 
@@ -75,17 +75,7 @@ OPENAI_API_KEY=sk-...
 Every agent gets these as environment variables. On Docker, `canyonos deploy` warns
 about any key that is missing.
 
-## 4. Test it
-
-```bash
-canyonos test
-```
-
-It deploys the workflow locally, sends the query in `test_query.txt` and prints the
-result. To send your own query, run `canyonos test "your query"`. If it fails, see
-[Troubleshooting](TROUBLESHOOTING.md).
-
-## 5. Choose where it runs
+## 4. Choose where it runs
 
 By default the workflow runs locally, on Docker on your machine. `canyonos target` shows
 where it deploys. To run it somewhere else, set that up first:
@@ -93,7 +83,7 @@ where it deploys. To run it somewhere else, set that up first:
 | Where                | What to do                                                                                                                             | Details                     |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
 | Locally, with Docker | Nothing; it's the default. If you switched to Kubernetes, `canyonos target docker` switches back                                       | [Local](LOCAL.md)           |
-| EC2                  | Run `canyonos provision` to create a machine on AWS to deploy from, copy the workflow there, and set `provider` in the workflow config | [EC2](EC2.md)               |
+| EC2                  | Run `canyonos provision` to create a machine on AWS to deploy from, copy the project there, and set `provider` in `deployment.yaml`    | [EC2](EC2.md)               |
 | Kubernetes           | Run `canyonos target kubernetes` to point the workflow at your cluster; `canyonos cluster up` makes a local one to try it              | [Kubernetes](KUBERNETES.md) |
 
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys) explains the `target` and
@@ -101,21 +91,34 @@ where it deploys. To run it somewhere else, set that up first:
 
 The next steps are for Docker and EC2. On Kubernetes, `canyonos deploy` builds and
 starts it in the cluster without the resource step below; see
-[Kubernetes](KUBERNETES.md).
+[Kubernetes](KUBERNETES.md). Kubernetes deploys don't support multi-folder deployments
+yet.
 
-## 6. Deploy
+## 5. Deploy
+
+From the folder above `my-app/`, deploy it as a deployment of its own, in a folder beside it:
 
 ```bash
-canyonos deploy
+cd ..
+canyonos deploy my-app --folder my-app-deployment
+cd my-app-deployment
 ```
 
 It first shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
 **2. Configure an agent** to change them first. What it deploys with, defaults included,
-is saved in the workflow config. When it's up, it prints the endpoint and the dashboard address. Send a
-request, with the arguments your workflow takes:
+is saved in the workflow config. When it's up, it prints the endpoint and the dashboard
+address. Then send it the query in `test_query.txt`:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/main \
+canyonos test
+```
+
+It prints the result. To send your own query, run `canyonos test "your query"`. If it
+fails, see [Troubleshooting](TROUBLESHOOTING.md). Or send a request yourself, with the
+arguments your workflow takes:
+
+```bash
+curl -X POST http://127.0.0.1:8080/my-app/<agent>/<method> \
   -H "Content-Type: application/json" \
   -d '{"query": "your query"}'
 ```
@@ -139,16 +142,15 @@ dashboard isn't running, start it on its own:
 canyonos serve
 ```
 
-## 7. Stop
+## 6. Stop
 
 ```bash
 canyonos stop     # remove the containers, keep everything else
-canyonos clean    # also delete .canyon, the skill and the agents' images
+canyonos clean    # also delete the agents' images and the deployment's records
 ```
 
-`canyonos clean` deletes the converted workflow. `convert` normally adds `.canyon/` to
-`.gitignore`, so git won't keep a copy: remove that line and commit `.canyon` if you
-want to keep it.
+`convert` normally adds `.canyon/` to `.gitignore`, so git won't keep a copy: remove
+that line and commit `.canyon` if you want to keep it.
 
 ## Next
 

@@ -32,8 +32,10 @@ from .harness import (
     collect_container_logs,
     deployed_endpoint,
     deployed_project_id,
+    deployment_group,
     manifest,
-    project_group,
+    project_dir,
+    qualified,
     query_for,
     result_of,
     sign_in,
@@ -193,7 +195,7 @@ def images(recorder) -> None:
 
 @pytest.fixture(scope="session")
 def workspace(request, project, recorder, tmp_path_factory) -> Path:
-    """The project staged in a folder named after it."""
+    """The deployment folder the project is staged in, both named after it."""
     staged = stage(
         recorder, project, tmp_path_factory.mktemp("workspace"), secrets_of(project)
     )
@@ -204,11 +206,14 @@ def workspace(request, project, recorder, tmp_path_factory) -> Path:
 @dataclass(frozen=True)
 class Deployed:
     """A project that `canyonos deploy` brought up, with the handles cases need.
-    `agents` names every agent in the manifest; a `type: database` agent runs
-    replicas named the same way, from its stock image."""
+    `dir` is the deployment folder every command runs from and `project_dir` the
+    project folder in it. `agents` names every agent in the manifest as the
+    deployment does, `<project>.<agent>`; a `type: database` agent runs replicas
+    named the same way, from its stock image."""
 
     project: Project
     dir: Path
+    project_dir: Path
     group: str
     endpoint: Endpoint
     api: Api
@@ -234,8 +239,15 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[De
     failing stop fails the run, unless the deploy had already failed: that failure
     is the one reported."""
     succeeded = False
+    folder = project_dir(workspace)
     try:
-        deploy = canyonos(recorder, ["deploy"], cwd=workspace, timeout=DEPLOY_TIMEOUT)
+        # From the project folder, naming the deployment's folder, as a user would.
+        deploy = canyonos(
+            recorder,
+            ["deploy", ".", "--folder", str(workspace)],
+            cwd=folder,
+            timeout=DEPLOY_TIMEOUT,
+        )
         assert f"Registered {project.name} with the dashboard" in deploy.output, (
             deploy.output[-3000:]
         )
@@ -243,12 +255,16 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[De
         yield Deployed(
             project=project,
             dir=workspace,
-            group=project_group(recorder, workspace),
+            project_dir=folder,
+            group=deployment_group(recorder, workspace),
             endpoint=deployed_endpoint(recorder, workspace),
             api=api,
             project_id=deployed_project_id(recorder, api, workspace, project.name),
-            agents=[agent["name"] for agent in manifest(workspace).get("agents", [])],
-            query=query_for(project, workspace),
+            agents=[
+                qualified(folder, agent["name"])
+                for agent in manifest(folder).get("agents", [])
+            ],
+            query=query_for(project, folder),
             deploy_output=deploy.output,
         )
         succeeded = True
@@ -285,8 +301,8 @@ def pytest_runtest_setup(item):
 
 
 def _projects_of(item, start: int) -> list[Path]:
-    """The project folders a failing case's doctor runs in: those staged since its
-    calls started, else the session's staged project (cases only). A scenario
+    """The deployment folders a failing case's doctor runs in: those staged since
+    its calls started, else the session's staged project (cases only). A scenario
     whose project an earlier scenario's fixture staged gets none."""
     staged = session_recorder(item.session).staged_since(start)
     workspace = getattr(item.session, "e2e_workspace", None)
@@ -295,7 +311,7 @@ def _projects_of(item, start: int) -> list[Path]:
 
 def _write_trace(item, report, slug: str, start: int) -> None:
     """Write the calls from `start` on, the failure, `canyonos doctor` output from
-    each project folder `_projects_of` names and container logs under
+    each deployment folder `_projects_of` names and container logs under
     traces/<slug>; leave an existing trace as it is. A failing doctor or log step
     goes to trace_error.txt so the case's own failure still shows."""
     recorder = session_recorder(item.session)

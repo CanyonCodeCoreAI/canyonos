@@ -6,7 +6,7 @@ runs the `replicas` count set in the workflow config.
 
 ## Define the policy in a file
 
-Create `scaling.yaml` in the workflow's `config` folder:
+Create `scaling.yaml` in the project's `config` folder:
 
 ```yaml
 scaling:
@@ -30,19 +30,19 @@ scaling:
 | `requests_per_minute_per_replica` | Throughput     | Requests the agent completed per minute, divided by running replicas |
 | `queue_length_total`              | Queue length   | Requests waiting, across all of the agent's replicas                 |
 
-A workflow has one policy, and it applies to every agent separately: each agent is
+Each project has one policy, and it applies to each of its agents separately: each is
 measured on its own load and gains or loses its own replicas. Database entries and the
 endpoint's container are never scaled. The policy takes effect on the next
 `canyonos sync` (Docker only) or `canyonos deploy`.
 
 A policy that breaks the rules in the table is skipped with a warning in the Global
-Controller's log, and no agent is scaled. The
-[portfolio example](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/examples/portfolio/config/scaling.yaml)
+Controller's log, and none of the project's agents is scaled. The
+[portfolio example](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/examples/portfolio/portfolio/config/scaling.yaml)
 has a full `scaling.yaml`.
 
 ### How scaling decides
 
-Each poll (`poll_interval` in the workflow config, 5 seconds by default), the Global
+Each poll (`poll_interval` in `deployment.yaml`, 5 seconds by default), the Global
 Controller measures every agent's load and keeps the last 4 measurements. Then, for each
 agent:
 
@@ -59,14 +59,15 @@ from when its last change is fully running.
 
 ## Change the policy while the workflow runs
 
-Open the workflow on the [dashboard](DASHBOARD.md) and go to **Scaling**. The page works
-only while the workflow is running. If the stored policy is invalid, the page says why.
+Open the deployment on the [dashboard](DASHBOARD.md) and go to **Scaling**, which has
+each project's policy. The page works only while the deployment is running. If a
+stored policy is invalid, the page says why.
 
 | Control                       | What it does                                                                                                                                 |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Add policy**                | Creates a policy when there is none                                                                                                          |
 | **Edit policy** (pencil icon) | Edits the current policy; **Save policy** applies it on the next poll                                                                        |
-| **Delete policy**             | Removes the policy. Every agent then keeps its current replica count until the next reload, and the count in the workflow config after that. |
+| **Delete policy**             | Removes the policy. Its agents then keep their current replica count until the next reload, and the count in the workflow config after that. |
 | **Agents now**                | Shows each agent's replicas and its current Throughput and Queue, updated every 5 seconds, so you can watch a change take effect             |
 
 ## Limits

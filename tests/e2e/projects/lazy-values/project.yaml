@@ -6,7 +6,7 @@
 # `await` and `asyncio.gather`, a Future kept on a project object a library reads,
 # the Future's own `.id` next to its result, and results handed to a project module
 # that calls no agent and so loads as written.
-source: examples/helloworld
+source: examples/helloworld/helloworld
 overlay:
   config/workflow_config.yaml: workflow_config.yaml
   config/policy.yaml: policy.yaml

@@ -148,9 +148,9 @@ rely on:
 
 `GlobalController._otel_destinations` resolves the list:
 
-1. `otel.destinations` from the workflow config, with `${VAR}` expanded. Without the
+1. `otel.destinations` from `deployment.yaml`, with `${VAR}` expanded. Without the
    block it is `[LOCAL_DASHBOARD_DESTINATION]`, the dashboard API by its container
-   name, `http://canyonos-dashboard-api:3000`, on the project's Docker network.
+   name, `http://canyonos-dashboard-api:3000`, on the deployment's Docker network.
 2. On Kubernetes (`CANYONOS_TARGET=kubernetes`), every destination on
    `host.docker.internal` or on the local dashboard is skipped with a log line, since
    a cluster has no way back to the laptop.

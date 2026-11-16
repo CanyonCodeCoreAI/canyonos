@@ -22,7 +22,7 @@ import type {
   ScalingAgentsResponse,
   ScalingDeleteResponse,
   ScalingPolicy,
-  ScalingStatus,
+  ScalingResponse,
 } from '@canyonos/api/scaling';
 
 import { load_prompts } from '../modules/prompts/prompts.service';
@@ -156,9 +156,9 @@ describe('SDK contract', () => {
     const { project_id } = await create_test_project(token, { name: 'SDK Prompts' });
     await seed_running_project(project_id, {
       prompts: {
-        summarize: [
+        'app.summarize': [
           {
-            version: 'summarize-abcdef01-v1',
+            version: 'app-summarize-abcdef01-v1',
             content: 'Summarize the input.',
             updated_at: '2026-09-01T00:00:00.000Z',
           },
@@ -168,7 +168,7 @@ describe('SDK contract', () => {
     await load_prompts(project_id);
 
     const v1: SystemPrompt = {
-      version: 'summarize-abcdef01-v1',
+      version: 'app-summarize-abcdef01-v1',
       content: 'Summarize the input.',
       updated_at: '2026-09-01T00:00:00.000Z',
     };
@@ -176,27 +176,27 @@ describe('SDK contract', () => {
       await api.projects[project_id]!.prompts.get({ $headers: headers })
     ).data!;
     const created: SystemPrompt = (
-      await api.projects[project_id]!.prompts.summarize!.versions.post(
+      await api.projects[project_id]!.prompts['app.summarize']!.versions.post(
         { content: 'Summarize briefly.' },
         { headers }
       )
     ).data!;
     const prompt: Prompt = (
-      await api.projects[project_id]!.prompts.summarize!.get({ $headers: headers })
+      await api.projects[project_id]!.prompts['app.summarize']!.get({ $headers: headers })
     ).data!;
     const live: PromptListItem = (
-      await api.projects[project_id]!.prompts.summarize!.live.put(
+      await api.projects[project_id]!.prompts['app.summarize']!.live.put(
         { version: created.version },
         { headers }
       )
     ).data!;
 
-    expect(prompts).toEqual([{ name: 'summarize', live: v1 }]);
-    expect(created.version).toMatch(/^summarize-[0-9a-f]{8}-v2$/);
+    expect(prompts).toEqual([{ name: 'app.summarize', live: v1 }]);
+    expect(created.version).toMatch(/^app-summarize-[0-9a-f]{8}-v2$/);
     expect(created).toMatchObject({ content: 'Summarize briefly.' });
     expect(typeof created.updated_at).toBe('string');
-    expect(prompt).toEqual({ name: 'summarize', live: v1, versions: [created, v1] });
-    expect(live).toEqual({ name: 'summarize', live: created });
+    expect(prompt).toEqual({ name: 'app.summarize', live: v1, versions: [created, v1] });
+    expect(live).toEqual({ name: 'app.summarize', live: created });
   });
 
   test('scaling endpoints are typed at runtime', async () => {
@@ -211,30 +211,30 @@ describe('SDK contract', () => {
       scale_down_below: 1,
     };
     await seed_running_project(project_id, { prompts: {} });
-    await seed_scaling(JSON.stringify({ scaling: policy }));
-    await seed_scaling_agents([{ name: 'PriceAgent', replicas: 1 }]);
+    await seed_scaling(JSON.stringify({ projects: { app: policy } }));
+    await seed_scaling_agents([{ name: 'app.PriceAgent', replicas: 1 }]);
 
-    const scaling: ScalingStatus = (
+    const scaling: ScalingResponse = (
       await api.projects[project_id]!.scaling.get({ $headers: headers })
     ).data!;
     const agents: ScalingAgentsResponse = (
       await api.projects[project_id]!.scaling.agents.get({ $headers: headers })
     ).data!;
     const saved: ScalingPolicy = (
-      await api.projects[project_id]!.scaling.put(
+      await api.projects[project_id]!.scaling.app!.put(
         { ...policy, metric: 'requests_per_minute_per_replica' },
         { headers }
       )
     ).data!;
 
-    expect(scaling).toEqual({ status: 'applied', policy });
+    expect(scaling).toEqual({ projects: { app: { status: 'applied', policy } } });
     expect(agents).toEqual({
-      agents: [{ name: 'PriceAgent', replicas_expected: 1, replicas_running: 0, load: null }],
+      agents: [{ name: 'app.PriceAgent', replicas_expected: 1, replicas_running: 0, load: null }],
     });
     expect(saved).toEqual({ ...policy, metric: 'requests_per_minute_per_replica' });
 
     const deleted: ScalingDeleteResponse = (
-      await api.projects[project_id]!.scaling.delete(undefined, { headers })
+      await api.projects[project_id]!.scaling.app!.delete(undefined, { headers })
     ).data!;
     expect(deleted).toEqual({ status: 'none' });
   });

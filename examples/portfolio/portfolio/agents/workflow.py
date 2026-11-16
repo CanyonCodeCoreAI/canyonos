@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Portfolio analysis workflow: an agent the endpoint serves at POST /main.
+# Portfolio analysis workflow: an agent the endpoint serves at POST /portfolio/Workflow/main.
 #
 # Fan-out / aggregate pipeline:
 #   0. IntentAgent   - parse the free-text request into holdings + lookback window
@@ -16,8 +16,8 @@
 # lookback window before the fan-out begins. The whole JSON body is splatted
 # into Workflow.main() as kwargs by the endpoint.
 #
-# After `canyonos deploy`:
-#   curl -X POST http://localhost:8080/main \
+# After `canyonos deploy portfolio` in examples/portfolio:
+#   curl -X POST http://localhost:8080/portfolio/Workflow/main \
 #        -H 'Content-Type: application/json' \
 #        -d '{"query": "Analyze 40% Apple, 35% Microsoft and 25% Nvidia over the last 6 months"}'
 #   curl http://localhost:8080/status/<request_id>

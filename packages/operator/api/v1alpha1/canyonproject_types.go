@@ -54,24 +54,13 @@ type RedisSpec struct {
 	PasswordSecretRef string `json:"passwordSecretRef,omitempty"`
 }
 
-// EndpointSpec is the agent method the project serves over HTTP.
+// EndpointSpec is the agent methods the project serves over HTTP.
 type EndpointSpec struct {
-	// agent is the name of the agent whose method the endpoint serves, as in the
-	// project's config (for example Workflow).
-	// +kubebuilder:validation:MinLength=1
+	// routes are the agent methods the endpoint serves, each at
+	// POST /<agent>/<method>.
+	// +kubebuilder:validation:MinItems=1
 	// +required
-	Agent string `json:"agent"`
-
-	// method is the agent function served at POST /<method>.
-	// +kubebuilder:validation:MinLength=1
-	// +required
-	Method string `json:"method"`
-
-	// arguments are the method's argument names, which the endpoint reads from a
-	// request's JSON body.
-	// +listType=atomic
-	// +optional
-	Arguments []string `json:"arguments,omitempty"`
+	Routes []EndpointRoute `json:"routes"`
 
 	// resources of the endpoint's pod; by default it requests 250m CPU and 256Mi
 	// and may use up to 1Gi of memory.
@@ -91,6 +80,26 @@ type EndpointSpec struct {
 	// +kubebuilder:validation:Pattern=`^https?://[^\s/?#]+(/[^\s?#]*)?$`
 	// +optional
 	URL string `json:"url,omitempty"`
+}
+
+// EndpointRoute is one agent method the endpoint serves.
+type EndpointRoute struct {
+	// agent is the name of the agent whose method the route serves, as in the
+	// project's config (for example Workflow).
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Agent string `json:"agent"`
+
+	// method is the agent function served at POST /<agent>/<method>.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Method string `json:"method"`
+
+	// arguments are the method's argument names; a request without one of them is
+	// refused.
+	// +listType=atomic
+	// +optional
+	Arguments []string `json:"arguments,omitempty"`
 }
 
 // EndpointIngress is the Ingress the operator creates for the endpoint, served at

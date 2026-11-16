@@ -7,13 +7,13 @@ what to include.
 
 ## Health check
 
-Run these from your project root, the folder that contains `config/`:
+Run these from your deployment folder, the folder that holds `deployment.yaml`:
 
 - `canyonos --version` shows which version you have installed.
 - `docker info` confirms Docker is running.
 - `canyonos doctor` checks that this machine can deploy and that every part of the
   deploy is up.
-- `canyonos status` shows whether the project is running, its endpoint and dashboard
+- `canyonos status` shows whether the deployment is running, its endpoint and dashboard
   URLs, and any agent that couldn't start. Use these URLs rather than the default
   ports, which change when they're already taken.
 - `canyonos logs --no-follow --tail 50` shows recent errors, including some that other
@@ -21,25 +21,24 @@ Run these from your project root, the folder that contains `config/`:
 
 ## Install and CLI
 
-### Commands say no deploy is running, but the project is up
+### Commands say no deploy is running, but the deployment is up
 
 `! No deploy is running.`
 
 **Cause:** CanyonOS commands only look in the folder you run them from. If you're in a
-sub-folder (such as `my-app/agents`), or you renamed, moved or deleted the project
-folder after deploying, they can't find the deploy. In that case `stop` stops nothing
-but still exits as if it succeeded, so watch out in scripts.
+project folder or a sub-folder, or you renamed, moved or deleted the deployment folder
+after deploying, they can't find the deploy.
 
-**Solution:** go to the project root and run the command again:
+**Solution:** go to the deployment folder and run the command again:
 
 ```bash
-cd <project root>
+cd <deployment folder>
 canyonos status    # ✓ Deploy is running.
 ```
 
 - **Renamed or moved the folder?** Move it back, run `canyonos stop`, then move it again.
-- **Deleted the folder?** Run `canyonos stop --all`. **Warning:** this stops every
-  project on the machine.
+- **Deleted the folder?** Run `canyonos stop <deployment>` from any folder, or
+  `canyonos stop --all`. **Warning:** `--all` stops every deployment on the machine.
 
 ### `new-app` won't run in a folder that looks empty
 
@@ -66,8 +65,8 @@ To add CanyonOS to an existing repository, create the project in a sub-folder:
 
 **Cause:** older versions used `canyonos quit`, which has been replaced.
 
-**Solution:** use `canyonos stop` to stop a project (its images are kept), or
-`canyonos clean` to also delete its images and `.canyon`. `canyonos stop --all`
+**Solution:** use `canyonos stop` to stop a deployment (its images are kept), or
+`canyonos clean` to also delete its images and records. `canyonos stop --all`
 replaces `quit --all`.
 
 ### `quickstart` or `provision` stops right away in a script
@@ -78,7 +77,8 @@ replaces `quit --all`.
 terminal, nobody can answer, so they stop.
 
 **Solution:** run them yourself in a terminal window. In scripts and CI, use
-`canyonos new-app` followed by `canyonos deploy`, which don't ask questions.
+`canyonos new-app` followed by `cd ..` and `canyonos deploy <name> --folder <name>-deployment`, which
+don't ask questions.
 
 ## Configuration
 
@@ -86,15 +86,15 @@ terminal, nobody can answer, so they stop.
 
 `✓ Sync complete.`
 
-**Cause:** `sync` copies your files and asks the running project to reload them. Errors
-in `workflow_config.yaml` are printed, but errors in other files, such as
+**Cause:** `sync` copies your files and asks the running deployment to reload them.
+Errors in `workflow_config.yaml` are printed, but errors in other files, such as
 `scaling.yaml`, only appear in the logs, and `canyonos validate` doesn't check those
 files.
 
 **Solution:** check the logs after every `sync`:
 
 ```bash
-canyonos sync
+canyonos sync <project folder>
 canyonos logs --no-follow --tail 10
 ```
 
@@ -107,7 +107,7 @@ changes to `resources:` such as `memory:`.
 ### Deploy fails because a config file is badly formatted
 
 `CANYON-SCHEMA config/workflow_config.yaml:<line>`
-`invalid env file (/workspace/.env): variable '...' contains whitespaces`
+`invalid env file (/workspace/<project>/.env): variable '...' contains whitespaces`
 
 **Cause:** a typo or wrong format in one of your project's config files. Nothing is
 started.
@@ -121,7 +121,7 @@ started.
 **Solution:**
 
 - **For `workflow_config.yaml`:** fix the line the message names, then run
-  `canyonos validate` until it prints `✓ .: clean.`
+  `canyonos validate <project folder>` until it prints `✓ <project folder>: clean.`
 - **For `.env`:** use plain lines, with comments on their own line:
 
   ```
@@ -129,8 +129,9 @@ started.
   # a comment on its own line
   ```
 
-Then run `canyonos deploy`. `sync` doesn't apply `.env` changes. Paths starting with
-`/workspace/` in the messages are the same files as in your project.
+Then run `canyonos deploy <project folder>...`. `sync` doesn't apply `.env` changes.
+Paths starting with `/workspace/<project>/` in the messages are the same files as in
+that project's folder.
 
 ### Prompt edits in `prompts.yaml` don't apply
 
@@ -148,7 +149,7 @@ new text back into `prompts.yaml`.
 `Redis container … is not serving port 6380`
 
 **Cause:** an earlier deploy failed because an agent couldn't load (often
-`ModuleNotFoundError`, followed by `✗ Teardown incomplete`). It left the project's
+`ModuleNotFoundError`, followed by `✗ Teardown incomplete`). It left the deployment's
 Redis and metrics containers running, and `stop` doesn't remove them.
 `canyonos validate` doesn't catch a missing package.
 
@@ -170,10 +171,10 @@ Redis and metrics containers running, and `stop` doesn't remove them.
    docker ps -a --filter name=canyonos-<folder name>-
    docker rm -f canyonos-<folder>-<id>-redis-localhost canyonos-<folder>-<id>-metrics-localhost
    canyonos stop
-   canyonos deploy
+   canyonos deploy <project folder>...
    ```
 
-If no other project is running, `canyonos stop --all` removes the leftovers in one step.
+If no other deployment runs, `canyonos stop --all` removes the leftovers in one step.
 
 ### Deploy fails with a long build log
 
@@ -188,7 +189,7 @@ without deleting its data, and deploy again:
 
 ```bash
 docker compose -p canyonos-dashboard stop
-canyonos deploy
+canyonos deploy <project folder>...
 ```
 
 **Warning:** use `stop`, not `down`. `down` deletes the dashboard's data.
@@ -198,8 +199,8 @@ canyonos deploy
 `Stopped monitoring log stream.`
 
 **Cause:** once the deploy has started (after `✓ Global Controller running`), Ctrl-C
-only stops the progress output. The deploy keeps running and the project starts anyway,
-without the dashboard.
+only stops the progress output. The deploy keeps running and the deployment starts
+anyway, without the dashboard.
 
 **Solution:** decide what you meant to do:
 
@@ -212,7 +213,7 @@ without the dashboard.
 
 `Port 8080 is taken, so the endpoint is on 8081.`
 
-**Cause:** another project or program is using a default port, so CanyonOS picks the
+**Cause:** another deployment or program is using a default port, so CanyonOS picks the
 next free one: Redis 6379 → 6380, controller 8000 → 8001, endpoint 8080 → 8081,
 dashboard 8081 → 8082, dashboard API 3000 → 3001. This is expected.
 
@@ -221,24 +222,24 @@ dashboard 8081 → 8082, dashboard API 3000 → 3001. This is expected.
 
 ### Deploy stops because Redis's password file is gone
 
-`<project>'s Redis is still running, but its password file ... is gone`
+`<deployment>'s Redis is still running, but its password file ... is gone`
 
-**Cause:** each project's Redis has its own password, kept in
-`~/.canyonos/projects/<project>/redis_password`. That file was deleted while the
-project's Redis kept running, so a new password wouldn't open it.
+**Cause:** each deployment's Redis has its own password, kept in
+`~/.canyonos/deployments/<deployment>/redis_password`. That file was deleted while the
+deployment's Redis kept running, so a new password wouldn't open it.
 
-**Solution:** remove the old Redis as the message says, with `canyonos stop <project>`
-or `docker rm -f -v <container>`, then deploy again.
+**Solution:** remove the old Redis as the message says, with
+`canyonos stop <deployment>` or `docker rm -f -v <container>`, then deploy again.
 
-### Deploy fails because Redis refuses the project's password
+### Deploy fails because Redis refuses the deployment's password
 
-`refuses this project's password`, in the deploy output or `canyonos logs`
+`refuses this deployment's password`, in the deploy output or `canyonos logs`
 
-**Cause:** the password in `~/.canyonos/projects/<project>/redis_password` no longer
-matches the Redis the Global Controller found running, often one a crashed deploy left
-behind.
+**Cause:** the password in `~/.canyonos/deployments/<deployment>/redis_password` no
+longer matches the Redis the Global Controller found running, often one a crashed deploy
+left behind.
 
-**Solution:** run `canyonos stop <project>` to remove the old Redis, then deploy again.
+**Solution:** run `canyonos stop <deployment>` to remove the old Redis, then redeploy.
 
 ## Agents and model calls
 
@@ -249,16 +250,16 @@ call through its gateway and records usage, but doesn't add keys of its own.
 
 `You didn't provide an API key.` or `Incorrect API key provided`
 
-**Cause:** there's no `.env` in the project root, the key line is commented out, or the
-key has quotes around it. Agents read `.env` only when they start, and keys exported in
-your shell aren't passed to them.
+**Cause:** there's no `.env` in the project folder, the key line is commented out, or
+the key has quotes around it. Agents read `.env` only when they start, and keys exported
+in your shell aren't passed to them.
 
 **Solution:** put the key in `.env` as a plain line, then **deploy**:
 
 ```bash
 cp .env.example .env
 # edit .env: OPENAI_API_KEY=sk-...   (no quotes, no export)
-canyonos deploy
+canyonos deploy <project folder>...    # from the deployment folder
 canyonos test "replace_with_your_query"
 ```
 
@@ -275,10 +276,11 @@ canyonos test "replace_with_your_query"
   request fails; the agent keeps running.
 
 **Solution:** read the traceback in the agent's log, fix the line it names, then run
-`canyonos deploy`. Code changes need a full deploy; `sync` only applies `config/`.
+`canyonos deploy <project folder>...`. Code changes need a full deploy; `sync` only
+applies `config/`.
 
 ```bash
-canyonos logs MyAgent --no-follow --tail 50
+canyonos logs <project>.MyAgent --no-follow --tail 50
 ```
 
 ### Requests fail because the agent stopped
@@ -297,7 +299,8 @@ docker events --since 10m --until 0s --filter event=oom --format '{{.Time}} {{.A
 ```
 
 If the agent is listed, raise `memory:` (in MB) in its `resources:` block in
-`config/workflow_config.yaml`, for example `memory: 2048`, and run `canyonos deploy`.
+`config/workflow_config.yaml`, for example `memory: 2048`, and run
+`canyonos deploy <project folder>...`.
 
 ### Model calls are blocked by policy (HTTP 403)
 
@@ -308,12 +311,13 @@ agents, each with a maximum cost per call. The cost is estimated from the reques
 `max_tokens`. The call never reaches the provider.
 
 **Solution:** add the agent to the model's `agents:` list with a high enough cap, or
-lower `max_tokens`. Run `canyonos sync`, then **wait about 5 seconds** before testing;
+lower `max_tokens`. Run `canyonos sync <project folder>`, then **wait about 5 seconds**
+before testing;
 the gateway reloads the policy every 5 seconds.
 
 ### Your code gets `NOAUTH Authentication required` from Redis
 
-**Cause:** the project's Redis needs a password, and your client connects without it.
+**Cause:** the deployment's Redis needs a password, and your client connects without it.
 
 **Solution:** connect with the variables CanyonOS sets in every agent:
 `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT` and `CANYONOS_REDIS_PASSWORD`. Inside a
@@ -330,13 +334,13 @@ still uses model tokens, and it can't be cancelled.
 includes its ID:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/main -H "Content-Type: application/json" -d '{"query": "..."}'
+curl -s -X POST http://127.0.0.1:8080/<project>/<agent>/<method> -H "Content-Type: application/json" -d '{"query": "..."}'
 curl -s http://127.0.0.1:8080/status/<request_id>
 ```
 
 ### The logs show `database is locked` or `failed to export`
 
-**Cause:** the dashboard isn't running, so the project can't send it monitoring data.
+**Cause:** the dashboard isn't running, so the deployment can't send it monitoring data.
 Requests aren't affected.
 
 **Solution:** start the dashboard with `canyonos serve`, or ignore these lines.
@@ -385,7 +389,7 @@ The dashboard keeps its data in a Docker volume that survives `canyonos stop` an
 
 `Port <n> is taken. Change dashboard_port, or remove it so CanyonOS picks a free port.`
 
-**Cause:** you set `dashboard_port` in `config/workflow_config.yaml`, and another
+**Cause:** you set `dashboard_port` in `deployment.yaml`, and another
 program holds that port. A port you set is never moved; without the setting, the
 dashboard moves to the next free port on its own.
 
@@ -399,8 +403,8 @@ canyonos serve
 ### The dashboard keeps running after `stop`
 
 **Cause:** you started the dashboard on its own with `canyonos serve`. `stop` only stops
-the dashboard as part of stopping a project, so it prints `! No deploy is running.` and
-leaves it up.
+the dashboard as part of stopping a deployment, so it prints `! No deploy is running.`
+and leaves it up.
 
 **Solution:** stop it directly. Its data is kept, and `canyonos serve` starts it again
 later:
@@ -412,30 +416,32 @@ docker compose -p canyonos-dashboard stop
 **Warning:** use `stop`, never `down`. `down` deletes the dashboard's data, so the next
 `serve` starts empty.
 
-### A copied project doesn't get its own dashboard entry
+### A copied deployment folder doesn't get its own dashboard entry
 
-`Registered <another project> with the dashboard`
+`Registered <another deployment> with the dashboard`
 
-**Cause:** the first deploy writes a `project_id:` line into
-`config/workflow_config.yaml`, and the dashboard identifies projects by it. A copied
-folder, or a clone of a repo where that file was committed after a deploy, has the same
-ID, so both projects' data is mixed.
+**Cause:** the first deploy writes a `deployment_id:` line into `deployment.yaml`, and
+the dashboard identifies deployments by it. A copied folder, or a clone of a repo where
+that file was committed after a deploy, has the same ID, so both deployments' data is
+mixed.
 
-**Solution:** in the copy, delete the `project_id:` line from
-`config/workflow_config.yaml` and run `canyonos deploy`. The copy gets a new ID and
-shows up as its own project.
+**Solution:** in the copy, delete the `deployment_id:` line from `deployment.yaml` and
+run `canyonos deploy <project folder>...`. The copy gets a new ID and shows up as its
+own deployment.
 
-### The dashboard shows `canyonos.redis_auth_failed` for a project
+### The dashboard shows `canyonos.redis_auth_failed` for a deployment
 
-`This project's Redis refused the password the dashboard holds for it.`
+`This deployment's Redis refused the password the dashboard holds for it.`
 
-**Cause:** the password the dashboard holds for the project no longer matches the
-project's Redis.
+**Cause:** the password the dashboard holds for the deployment no longer matches the
+deployment's Redis.
 
-**Solution:** run `canyonos deploy` from the project's folder. The deploy registers the
-current password with the dashboard.
+**Solution:** run `canyonos deploy <project folder>...` from the deployment's folder.
+The deploy registers the current password with the dashboard.
 
 ## Kubernetes
+
+Kubernetes deploys don't support multi-folder deployments yet.
 
 ### Deploy times out because the cluster runs out of memory
 
@@ -462,7 +468,7 @@ registry there to receive the images. `canyonos target kubernetes --registry` sa
 address without checking it.
 
 **Solution:** check that the address and port in the `registry:` line of
-`config/workflow_config.yaml` are right, then deploy. With `canyonos cluster up`, the
+`deployment.yaml` are right, then deploy. With `canyonos cluster up`, the
 registry is `localhost:5001`:
 
 ```bash
@@ -495,40 +501,40 @@ canyonos stop
 **Cause:** the database agent's image is another name for a shared public image such as
 `postgres:16-alpine`, which other containers also use, and `clean` tries to delete it.
 
-**Solution:** remove only the project's name for the image, then run `clean` again:
+**Solution:** remove only the deployment's name for the image, then run `clean` again:
 
 ```bash
 docker images | grep canyonos-<folder>-
-docker rmi canyonos-<folder>-<id>-<database agent name>:latest
+docker rmi canyonos-<folder>-<id>-<project>--<database agent name>:latest
 canyonos clean
 ```
 
-### `clean` leaves `~/.canyonos/projects/<project>/`
+### `clean` leaves `~/.canyonos/deployments/<deployment>/`
 
-**Cause:** `clean` stops the project first. When that stop fails or is refused, `clean`
-removes nothing.
+**Cause:** `clean` stops the deployment first. When that stop fails or is refused,
+`clean` removes nothing.
 
-**Solution:** fix what the stop reported, or name the project, as in
-`canyonos clean <project>`, to force it, then run `clean` again.
+**Solution:** fix what the stop reported, or name the deployment, as in
+`canyonos clean <deployment>`, to force it, then run `clean` again.
 
 ### Reset options: try these in order
 
 Start at step 1 and stop at the first step that fixes your problem.
 
 1. **Retry** after checking that `docker info` works.
-2. **Stop the project:** `canyonos stop` in its project root. Images and dashboard data
-   are kept.
+2. **Stop the deployment:** `canyonos stop` in its deployment folder. Images and
+   dashboard data are kept.
 3. **Stop the dashboard:** `docker compose -p canyonos-dashboard stop`, if `stop` left
    it running. Its data is kept.
-4. **Remove a failed deploy's leftovers:** `docker rm -f` the project's
+4. **Remove a failed deploy's leftovers:** `docker rm -f` the deployment's
    `-redis-localhost` and `-metrics-localhost` containers, then `canyonos stop`. Find
    them with `docker ps -a --filter name=canyonos-<folder name>-`.
-5. **Stop everything:** `canyonos stop --all` stops every project on the machine,
+5. **Stop everything:** `canyonos stop --all` stops every deployment on the machine,
    including ones whose folder is gone, and the dashboard.
-6. **Remove one project:** `canyonos clean` in its project root also deletes its images
-   and `.canyon`.
+6. **Remove one deployment:** `canyonos clean` in its deployment folder also deletes its
+   images and records.
 7. **Remove CanyonOS completely:** `canyonos clean --all`. **Warning:** this deletes
-   every project, the dashboard and its data, all CanyonOS images, and `~/.canyonos`.
+   every deployment, the dashboard and its data, all CanyonOS images, and `~/.canyonos`.
    Use it only before uninstalling.
 
 ## Report a bug

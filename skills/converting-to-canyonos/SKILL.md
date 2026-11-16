@@ -64,24 +64,30 @@ external stores and concurrency controls; follow the
   call, with argument and return types built from builtins), paths and
   requirements from the source. Write configuration using the
   [Manifest reference](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md).
-- Declare the top-level `endpoint: {agent, method}` block naming the agent the
-  endpoint serves and its entry method. That method must be listed in the
-  agent's `functions`, with the arguments the request body carries.
+- Declare the top-level `endpoint: routes:` list with one `{agent, method}` entry
+  naming the agent the endpoint serves and its entry method. That method must be
+  listed in the agent's `functions`, with the arguments the request body carries.
   Preserve existing choices; batch unresolved deployment questions and use
   schema defaults when unanswered or unattended. Leave `resources` at schema
-  defaults without asking, and leave `endpoint.api_port`, `redis.port` and
-  `dashboard_port` unset, so CanyonOS picks free ports, unless the source fixes one.
+  defaults without asking.
+- Write only `agents:` and `endpoint: routes:` to the workflow config. `target`,
+  `provider`, provider sections, `endpoint.api_port`, `redis`, `dashboard_port`,
+  `logs` and `otel` are deployment settings: they belong in the `deployment.yaml`
+  of the folder the project is deployed from, and the workflow config rejects them.
+  Report any the source needs instead of writing them.
 - Check each image's dependency set with `uv pip compile`, using the target
   Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.
-- Local dashboard tracing needs no config. Add an [`otel:` block](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#oteldestinations)
-  only when another destination was chosen, keeping its `local` entry.
+- Local dashboard tracing needs no config. Report another chosen destination as an
+  [`otel:` block](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#oteldestinations)
+  for `deployment.yaml`, keeping its `local` entry.
 - For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
-- For EC2, follow [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
-  using developer-supplied identifiers. If unavailable, leave the top-level
-  `provider: local` and report that EC2 is not configured.
-- Leave `target` and the `kubernetes:` block out. To deploy to Kubernetes, the
-  developer runs `canyonos target kubernetes`, which writes both; say so in the report.
+- For EC2, report the [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
+  for `deployment.yaml`, using developer-supplied identifiers. If unavailable,
+  report that EC2 is not configured.
+- To deploy to Kubernetes, the developer runs `canyonos target kubernetes` in the
+  deployment folder, which writes `target` and the `kubernetes:` block to
+  `deployment.yaml`; say so in the report.
 
 ## 4. Validate and stop
 
@@ -94,27 +100,35 @@ until exit 0, or report the blocker. Check changes against the allowed scope.
 
 Report the validation result, blockers, chosen defaults and required credential
 names in the developer's language. Link to [Commands](https://canyonos.readthedocs.io/en/latest/#commands)
-for next steps, including `canyonos test "$(cat .canyon/config/test_query.txt)"`.
+for next steps, including deploying with a deployment folder beside the project,
+`cd .. && canyonos deploy <project> --folder <project>-deployment`, then `canyonos test` from that
+folder, which sends `.canyon/config/test_query.txt`.
 Claim success only after validation exits 0 with no open blocker.
 
 ## After the conversion: run the deploy
 
-Only once the conversion is reported and you are asked to run it. From the
-project folder, with no terminal attached:
+Only once the conversion is reported and you are asked to run it, with no terminal
+attached. Deploy from the folder above the project; run the other commands from the
+deployment folder, `<project>-deployment`:
 
-- `canyonos deploy --serve false`: build and start it without the dashboard, using
-  default resources instead of asking. It replaces this project's earlier deploy.
+- `canyonos deploy <project> --folder <project>-deployment --serve false`: build and start
+  it without the dashboard, using default resources instead of asking. It makes the
+  deployment folder and its `deployment.yaml` when there are none, and replaces this
+  deployment's earlier deploy.
 - `canyonos status --json`: `running`, `endpoint`, `dashboard_url`, per agent the
   desired and running replicas and last launch error, each machine type's last
   start error, and `errors` for any part it could not read. Exits 1 if nothing runs.
-- `canyonos test --json "$(cat .canyon/config/test_query.txt)"`: send one query.
+- `canyonos test --json`: send each route its project's `config/test_query.txt`, else
+  `hello`.
 - `canyonos logs --no-follow`: print the last 200 log lines and exit.
-- `canyonos logs <agent>`: print the last 200 lines of each of that agent's replicas,
-  or of one replica such as `IntentAgent-1`; `--tail N` or `--tail all` for more.
-- Any change, config or code, takes effect only after another `canyonos deploy`.
-- `canyonos validate --json`: recheck `.canyon` after an edit.
-- `canyonos stop` removes the deploy. `canyonos clean` also removes `.canyon` and the
-  images on Docker; with `target: kubernetes` it removes only the project's ConfigMap
+- `canyonos logs <project>.<agent>`: print the last 200 lines of each of that agent's
+  replicas, or of one replica such as `<project>.IntentAgent-1a2b3c4d`; `--tail N` or
+  `--tail all` for more.
+- Any change, config or code, takes effect only after another
+  `canyonos deploy ../<project>`.
+- `canyonos validate --json ../<project>`: recheck `.canyon` after an edit.
+- `canyonos stop` removes the deploy. `canyonos clean` also removes the images on
+  Docker, and leaves `.canyon`; with `target: kubernetes` it removes only the project's ConfigMap
   and Secret in the cluster, and `.canyon` and the images stay.
 
 Every command exits non-zero on failure.

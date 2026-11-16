@@ -4,7 +4,7 @@
 # examples/pr_review as it is: four agents, a Bedrock review and the governance
 # rules in config/governance.yaml. scenarios/test_governance.py drives those rules
 # on every pull request; the cases run on it before a release.
-source: examples/pr_review
+source: examples/pr_review/pr_review
 query:
   title: Add retry
   diff: "+def retry(): ..."

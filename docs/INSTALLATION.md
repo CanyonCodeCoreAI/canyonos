@@ -93,7 +93,7 @@ changed in each release.
 ## Uninstall
 
 ```bash
-canyonos clean --all          # remove every project and everything CanyonOS added
+canyonos clean --all          # remove every deployment and everything CanyonOS added
 uv tool uninstall canyonos    # or pip uninstall, brew uninstall
 rm ~/.local/bin/canyonos      # if you used the install script
 ```

@@ -20,7 +20,7 @@ import tarfile
 import tempfile
 import urllib.request
 
-from canyonos import env, project, ui
+from canyonos import deployment, env, ui
 from canyonos.constants import CANYON_DIR
 from canyonos.os_support import is_terminal
 from canyonos.validate import UNCHECKED, run_validate
@@ -506,7 +506,7 @@ def run_convert(
 
     # The agent's TUI needs stdin and stdout; without both, or with -y, run unattended.
     attended = not yes and is_terminal(sys.stdin) and is_terminal(sys.stdout)
-    log_path = None if attended else os.path.join(project.state_dir(), "convert.log")
+    log_path = None if attended else os.path.join(deployment.state_dir(), "convert.log")
     ui.say(f"Launching {spec['label']}...")
     status = _launch_agent(agent, CONVERT_PROMPT, log_path)
     if status is None:

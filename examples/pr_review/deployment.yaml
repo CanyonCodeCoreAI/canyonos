@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The settings every project of the deployment shares. Each project's agents and
+# routes are in its config/workflow_config.yaml.
+
+# Where the deployment runs: `docker` is Docker on this machine.
+target: docker
+
+# Where every replica runs: `local` (this machine), `ec2-pool` or `ec2-assign`.
+provider: local
+
+# Polling interval in seconds
+poll_interval: 4

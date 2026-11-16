@@ -7,7 +7,7 @@ import type {
   ScalingAgentsResponse,
   ScalingDeleteResponse,
   ScalingPolicy,
-  ScalingStatus,
+  ScalingResponse,
 } from '@canyonos/api/scaling';
 
 import { toast } from '@repo/ui/shadcn/sonner';
@@ -18,7 +18,7 @@ const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
 
 const ERROR_MESSAGES: Record<string, string> = {
   'canyonos.project_not_running':
-    'This project is not running, so its scaling policy cannot be read. Deploy it, then retry.',
+    'This deployment is not running, so its scaling policy cannot be read. Deploy it, then retry.',
   'canyonos.controller_unreachable':
     'The running controller could not be reached. Check that it is up, then retry.',
   'scaling.config_invalid':
@@ -36,7 +36,7 @@ export function scalingErrorMessage(
 export const scalingQueryOptions = (project_id: string) =>
   queryOptions({
     queryKey: projectQueryKeys.scaling(project_id),
-    queryFn: () => apiCall<ScalingStatus>(() => forgeAuthApi.projects[project_id]!.scaling.get()),
+    queryFn: () => apiCall<ScalingResponse>(() => forgeAuthApi.projects[project_id]!.scaling.get()),
     retry: false,
   });
 
@@ -56,11 +56,13 @@ function useInvalidateScaling(project_id: string) {
   return () => query_client.invalidateQueries({ queryKey: projectQueryKeys.scaling(project_id) });
 }
 
-export function useSaveScalingPolicy(project_id: string) {
+export function useSaveScalingPolicy(project_id: string, project: string) {
   const invalidate = useInvalidateScaling(project_id);
   return useMutation({
     mutationFn: (policy: ScalingPolicy) =>
-      apiCall<ScalingPolicy>(() => forgeAuthApi.projects[project_id]!.scaling.put(policy)),
+      apiCall<ScalingPolicy>(() =>
+        forgeAuthApi.projects[project_id]!.scaling[project]!.put(policy)
+      ),
     // Toasted here: the re-read remounts the card, so a callback on the call site never runs.
     onSuccess: () => {
       toast.success(
@@ -72,11 +74,13 @@ export function useSaveScalingPolicy(project_id: string) {
   });
 }
 
-export function useDeleteScalingPolicy(project_id: string) {
+export function useDeleteScalingPolicy(project_id: string, project: string) {
   const invalidate = useInvalidateScaling(project_id);
   return useMutation({
     mutationFn: () =>
-      apiCall<ScalingDeleteResponse>(() => forgeAuthApi.projects[project_id]!.scaling.delete()),
+      apiCall<ScalingDeleteResponse>(() =>
+        forgeAuthApi.projects[project_id]!.scaling[project]!.delete()
+      ),
     onSuccess: () => {
       toast.success(
         'Scaling policy deleted. Agents keep their current replicas until the next reload.',

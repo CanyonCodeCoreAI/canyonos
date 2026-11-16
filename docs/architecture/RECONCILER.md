@@ -190,7 +190,7 @@ duplicate fleet and never converges.
 shutdown, which never runs when a container is killed, runs out of memory or hangs. The
 key has no TTL, so a dead replica reads `healthy` forever. `_is_healthy` therefore
 needs two independent positives: a TCP connect to the record's `address` (the one the
-Global Controller calls; a local replica is reached by name on its project's Docker
+Global Controller calls; a local replica is reached by name on its deployment's Docker
 network, since it publishes no port) and a metrics hash whose `observed_at` is at most
 `3 * poll_interval` old. Neither is enough alone: a gRPC server can accept connections
 while the agent behind it is wedged, and a stale hash can't tell "wedged" from "never
@@ -334,8 +334,9 @@ is reused, which an unconditional sweep would remove.
 
 ## Config and spec handoff
 
-`ControllerContext._load_config` resolves the config for both processes: load
-`<project>/.env`, `yaml.safe_load`, expand `${VAR}`. If either skipped it, they would
+`ControllerContext._load_config` resolves the config for both processes:
+`yaml.safe_load` each file, expand `${VAR}` from the `.env` beside it
+(`load_deployment_config`). If either skipped it, they would
 disagree about the same file, and the unexpanded copy is the one that reaches the
 providers: an `ec2-pool:` block written with `${EC2_AMI_ID}` would hit the AWS API
 verbatim. An unset reference expands to itself, so a missing variable is a visibly

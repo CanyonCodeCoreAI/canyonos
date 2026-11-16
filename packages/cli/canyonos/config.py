@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos config`: view or change project/deploy configuration.
+Logic for `canyonos config`: view or change the deployment's `deployment.yaml`.
 
 View merely prints out the config, while change opens up a separate temp screen for easy changes.
 """
@@ -13,7 +13,6 @@ from rich.table import Table
 from canyonos.constants import existing_config_path, round_trip_yaml, write_config
 from canyonos.theme import GREEN, WHITE
 from canyonos import ui
-from canyonos.sync import run_sync_and_reload
 from utils.tui import DELETE_ACTION, QUIT_ACTION, select_menu
 
 BACK = "__back__"
@@ -28,7 +27,7 @@ HEADER = f"bold {GREEN}"
 
 # Rendered as their own tables (in this order); everything else scalar at the
 # top level is collected into a single "General" table.
-STRUCTURED_KEYS = ("agents", "otel")
+STRUCTURED_KEYS = ("otel",)
 
 
 def _fmt(value):
@@ -42,36 +41,6 @@ def _fmt(value):
     if isinstance(value, dict):
         return ", ".join(f"{k}={_fmt(v)}" for k, v in value.items()) if value else "-"
     return str(value)
-
-
-def _agents_table(agent_specs):
-    """Build a read-only table of agent settings, shown in the terminal when you choose
-    View in `canyonos config`."""
-    table = Table(
-        title="Agents", border_style=BORDER, header_style=HEADER, title_style=HEADER
-    )
-    for col in (
-        "Name",
-        "Type",
-        "Replicas",
-        "CPU",
-        "Mem",
-        "Entrypoint",
-    ):
-        table.add_column(col)
-
-    for agent_spec in agent_specs:
-        resources = agent_spec.get("resources") or {}
-        entry = agent_spec.get("entrypoint") or "-"
-        table.add_row(
-            _fmt(agent_spec.get("name")),
-            agent_spec.get("type", "agent"),
-            _fmt(agent_spec.get("replicas")),
-            _fmt(resources.get("cpu")),
-            _fmt(resources.get("memory")),
-            entry,
-        )
-    return table
 
 
 def _otel_table(otel):
@@ -121,9 +90,6 @@ def _run_view_config():
 
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
-
-    ui.console.print(_agents_table(config.get("agents") or []))
-    ui.blank()
 
     if config.get("otel"):
         ui.console.print(_otel_table(config["otel"]))
@@ -343,7 +309,8 @@ def _run_change_config():
 
     if saves:
         ui.ok(f"Saved {saves} change(s) to {config_path}")
-        return run_sync_and_reload()
+        ui.hint("Apply them with `canyonos sync <project folder>...`.")
+        return True
     ui.say("No changes made.")
     return True
 

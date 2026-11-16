@@ -35,14 +35,16 @@ export type Prompt = z.infer<typeof PromptSchema>;
 export type SystemPromptCreate = z.infer<typeof SystemPromptCreateSchema>;
 export type PromptLive = z.infer<typeof PromptLiveSchema>;
 
-/** Splits `<agent>.<function>`; a name without a dot is all agent. */
+/**
+ * Splits `<project>.<agent>.<function>`, the agent named `<project>.<agent>` as the deployment
+ * names it; a name without a function is all agent.
+ */
 export function prompt_name_parts(name: string): {
   readonly agent: string;
   readonly function: string | null;
 } {
-  const dot = name.indexOf('.');
-  if (dot === -1) return { agent: name, function: null };
-  return { agent: name.slice(0, dot), function: name.slice(dot + 1) };
+  const parts = name.split('.');
+  return { agent: parts.slice(0, 2).join('.'), function: parts.slice(2).join('.') || null };
 }
 
 /**

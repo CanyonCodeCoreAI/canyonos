@@ -304,7 +304,7 @@ function QueriesBody({
     return (
       <div className={cn('flex flex-col', TABLE_REGION_HEIGHT)} data-testid="project-queries-body">
         <QueryError
-          message="Could not load this project's queries."
+          message="Could not load this deployment's queries."
           onRetry={onRetry}
           className="my-auto"
           test_id="project-queries-error"
@@ -398,7 +398,7 @@ function emptyQueriesMessage(
 ): string {
   if (selection) return `No queries landed in this range${day_label ? ` on ${day_label}` : ''}.`;
   if (day_label) return `No queries on ${day_label}.`;
-  return 'This project has not served any queries yet.';
+  return 'This deployment has not served any queries yet.';
 }
 
 function queriesDescription(

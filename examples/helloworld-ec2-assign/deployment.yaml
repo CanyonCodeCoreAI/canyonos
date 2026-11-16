@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The settings every project of the deployment shares. Each project's agents and
+# routes are in its config/workflow_config.yaml.
+
+# Where the deployment runs: `docker` is Docker on this machine, which starts the
+# EC2 machines below.
+target: docker
+
+# Where every replica runs: here, an EC2 machine of its own per replica, of the type
+# `ec2-assign: machine_type:` gives its agent, named `<project>.<agent>`. See docs/guides/EC2.md.
+provider: ec2-assign
+
+ec2-assign:
+  machine_type:
+    helloworld.HelloAgent: t3.micro
+    helloworld.Workflow: t3.micro
+
+# Stream failure/log detail into each future's `logs` field; on by default, off here to save bandwidth.
+logs: false
