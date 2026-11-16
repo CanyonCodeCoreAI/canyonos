@@ -8,6 +8,7 @@ processes the agent code starts."""
 import _thread
 import functools
 import multiprocessing.pool
+import multiprocessing.process
 import sys
 import threading
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -97,6 +98,16 @@ def _binding_func(method):
     return bound_method
 
 
+def _binding_run(start):
+    # Binding run rather than the low-level thread start also covers 3.14+, which runs each thread in a fresh context.
+    @functools.wraps(start)
+    def start_with_bound_run(self):
+        self.run = bind(self.run)
+        return start(self)
+
+    return start_with_bound_run
+
+
 _original_start_new_thread = _thread.start_new_thread
 _POOL_SUBMITTERS = (
     (ThreadPoolExecutor, "submit"),
@@ -119,8 +130,6 @@ def install():
         for owner, name in _POOL_SUBMITTERS
         if not hasattr(owner, name)
     ]
-    if "_start_new_thread" not in threading.Thread.start.__code__.co_names:
-        missing.append("threading.Thread.start through _start_new_thread")
     if missing:
         raise RuntimeError(
             "CanyonOS cannot carry request context into threads and worker processes "
@@ -129,6 +138,7 @@ def install():
     setattr(_start_new_thread_in_request_context, "_canyonos_hook", True)
     setattr(_thread, "start_new_thread", _start_new_thread_in_request_context)
     setattr(_thread, "start_new", _start_new_thread_in_request_context)
-    setattr(threading, "_start_new_thread", _start_new_thread_in_request_context)
+    for owner in (threading.Thread, multiprocessing.process.BaseProcess):
+        setattr(owner, "start", _binding_run(owner.start))
     for owner, name in _POOL_SUBMITTERS:
         setattr(owner, name, _binding_func(getattr(owner, name)))

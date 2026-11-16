@@ -150,6 +150,75 @@ jobs:
           path: ${{ runner.temp }}/e2e
           retention-days: 14
 
+  python:
+    name: Agents on Python ${{ matrix.python }}
+    # The same rule as `projects`.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # The top entry is the default agents get without a .python-version, which `project` runs too:
+        # NEWEST_IMAGE_PYTHON_MINOR in packages/core/canyonos_core/stub_generator.py. Bump the two together.
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.15"
+          python-version: "3.11.15"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: packages/core
+          file: packages/core/Dockerfile
+          load: true
+          tags: canyonos-core:ci
+          cache-from: type=gha,scope=canyonos-core
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packages/web/Dockerfile
+          target: canyonos
+          build-args: VITE_API_URL=/api
+          load: true
+          tags: canyonos-web:ci
+          cache-from: type=gha,scope=canyonos-web
+
+      # context-propagation is staged from examples/helloworld/helloworld, so its .python-version picks the agents' Python.
+      - name: Run context-propagation with agents on Python ${{ matrix.python }}
+        env:
+          CANYONOS_CORE_IMAGE: canyonos-core:ci
+          CANYONOS_WEB_IMAGE: canyonos-web:ci
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          # Also what the project's check expects both agents to run on.
+          E2E_AGENT_PYTHON: ${{ matrix.python }}
+          ARTIFACTS: ${{ runner.temp }}/python-${{ matrix.python }}
+        run: |
+          echo "$E2E_AGENT_PYTHON" > examples/helloworld/helloworld/.python-version
+          mkdir -p "$ARTIFACTS"
+          timeout -s INT 35m uv run --frozen pytest tests/e2e/cases \
+            --project=context-propagation --artifacts-dir="$ARTIFACTS" \
+            -p no:cacheprovider -v
+
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-${{ matrix.python }}
+          path: ${{ runner.temp }}/python-${{ matrix.python }}
+          retention-days: 14
+
   scenarios:
     # The same rule as `projects`. A run by hand with project names runs only those
     # projects; `pr`, `release` or nothing runs the scenarios too.

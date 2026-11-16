@@ -6,8 +6,9 @@ start with an import error or a missing file.
 
 ## What `/app` can import
 
-Each image is built on `python:3.11-slim`, copies its build context into `/app`, and
-starts there. The agent's controller puts `/app` and `/app/grpc_stubs` on `sys.path`.
+Each image is built on the [Python version](#python-version) the project asks for,
+copies its build context into `/app`, and starts there. The agent's controller puts
+`/app` and `/app/grpc_stubs` on `sys.path`.
 Nothing sets `PYTHONPATH` and nothing is installed from your source tree, so every
 import resolves from `/app`:
 
@@ -22,6 +23,12 @@ The workflow root is the only import root. If your app imports `tools` from a `s
 folder, make the workflow root a copy of `src/`, not of the repository; each
 `entrypoint` is then relative to it. Code that imports both `tools` and `src.tools`
 has no single root that serves both.
+
+## Python version
+
+Agent images run Python 3.15 by default. For an earlier one, add a
+`.python-version` file with that version, such as `3.12`, to the workflow root.
+`uv init` writes one. CanyonOS tests 3.10 to 3.15.
 
 ## What gets installed
 

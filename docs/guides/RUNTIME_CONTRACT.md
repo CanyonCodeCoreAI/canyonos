@@ -234,7 +234,7 @@ key the answer takes with its type. For an Agents SDK approval, the question is
 | Checking the answer | Each of these except `ask_human` asks again when the answer lacks a key or has a value of the wrong type                                               |
 | Types shown         | Written the way a Python developer writes them. Unions, `Literal`s and nested models can show less precisely, and the answer is still checked          |
 | JSON Schema         | A JSON Schema `response_schema` shows its `properties`, or `input` when it has none, and the answer isn't checked against it                           |
-| TypedDict           | The images run Python 3.11, so use `typing_extensions.TypedDict`, as LangGraph itself requires                                                         |
+| TypedDict           | On Python 3.10 or 3.11, use `typing_extensions.TypedDict`, as LangGraph itself requires                                                                |
 | Order               | Questions waiting in one request are answered oldest first                                                                                             |
 | Request ends first  | If the request finishes or fails before a question is answered, the waiting call raises                                                                |
 | No answer           | After an hour, the waiting call raises `TimeoutError`                                                                                                  |

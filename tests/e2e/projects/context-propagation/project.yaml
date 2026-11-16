@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# helloworld with a Workflow that calls HelloAgent from threads, asyncio, and
-# reused thread, process and multiprocessing pools, and returns the request
-# context each call saw.
+# helloworld with a Workflow that calls HelloAgent from threads, asyncio,
+# reused thread, process and multiprocessing pools, and fork and spawn
+# processes, and returns the request context each call saw and the Python
+# each agent runs on.
 source: examples/helloworld/helloworld
 overlay:
+  config/workflow_config.yaml: workflow_config.yaml
+  agents/hello_agent.py: hello_agent.py
   agents/workflow.py: workflow.py
 query: World
-calls: {Workflow.main: 1, HelloAgent.hello: 12}
+calls: {Workflow.main: 1, HelloAgent.hello: 18, HelloAgent.python_version: 1}
 traits: [quick, text-query, context-propagation]
 timeout: 180

@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/CanyonCodeCoreAI/canyonos/actions/workflows/ci.yml"><img src="https://github.com/CanyonCodeCoreAI/canyonos/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/CanyonCodeCoreAI/canyonos/releases"><img src="https://img.shields.io/github/v/release/CanyonCodeCoreAI/canyonos?filter=v0.2.*&sort=semver&label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
+  <a href="https://github.com/CanyonCodeCoreAI/canyonos/actions/workflows/e2e.yml"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue" alt="Python 3.10 to 3.15"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
 </p>
 
@@ -31,6 +31,7 @@ Maintained by [CanyonCode](https://canyoncode.ai/).
 ## Requirements
 - Python 3+
 - [Docker](https://docs.docker.com/desktop/) with Compose v2
+- Agents run on Python 3.15 by default. For an earlier one (3.10 or later), add a `.python-version` file with that version, such as `3.12`, to your project folder.
 - _Optional_: A coding agent of your choice to convert an existing project
 
 ## Our Principles

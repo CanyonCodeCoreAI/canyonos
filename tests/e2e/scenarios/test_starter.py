@@ -7,8 +7,9 @@ macOS hides in config/ next to it, and keeps the deployment's id out of the
 project's manifest, in the deployment.yaml it writes beside the project. Its
 agent writes to and reads from a database agent, whose stock image never reports
 its own health, with the dashboard running as a deploy starts it. A deploy that
-cannot come up names the reason: an agent whose replica cannot launch, or a config
-file that is not valid YAML, with its line."""
+cannot come up names the reason: an agent whose replica cannot launch, a config
+file that is not valid YAML, with its line, or a `.python-version` outside 3.10
+to 3.15 or not saved as UTF-8."""
 
 import pytest
 
@@ -172,3 +173,32 @@ def test_invalid_yaml_names_the_file_and_line(recorder, starter):
     assert call.code != 0, call.output
     expected = f"config/llms.yaml:{broken_line}: is not valid YAML"
     assert expected in call.output, call.output
+
+
+@pytest.mark.parametrize(
+    ("version", "encoding"), [("3.9", "utf-8"), ("3.99", "utf-8-sig")]
+)
+def test_unsupported_python_version_names_the_file_and_value(
+    recorder, starter, version, encoding
+):
+    """The 3.99 file starts with a UTF-8 BOM, which the message leaves out."""
+    python_version = project_dir(starter) / ".python-version"
+    python_version.write_text(f"{version}\n", encoding=encoding)
+    call = _deploy(recorder, starter, check=False)
+    assert call.code != 0, call.output
+    expected = (
+        f"✗ Root Cause: starter/.python-version says '{version}', but agents need "
+        "Python 3.10 to 3.15, written like 3.12 or 3.12.4."
+    )
+    assert expected in call.output.splitlines(), call.output
+
+
+def test_utf16_python_version_asks_for_utf8(recorder, starter):
+    """What Windows PowerShell 5 writes for `echo 3.12 > .python-version`."""
+    (project_dir(starter) / ".python-version").write_text("3.12\n", encoding="utf-16")
+    call = _deploy(recorder, starter, check=False)
+    assert call.code != 0, call.output
+    expected = (
+        "✗ Root Cause: starter/.python-version is not UTF-8 text; save it as UTF-8."
+    )
+    assert expected in call.output.splitlines(), call.output

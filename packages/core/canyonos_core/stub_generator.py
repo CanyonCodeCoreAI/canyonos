@@ -13,6 +13,7 @@ definitions.
 import ast
 import os
 import platform
+import re
 import shutil
 import subprocess
 from packaging.requirements import InvalidRequirement, Requirement
@@ -56,7 +57,12 @@ PROTOBUF_FLOOR = Requirement(
 # Mounted only in the build steps that run it, so agent images never carry uv.
 UV_IMAGE = "ghcr.io/astral-sh/uv:latest"
 
-IMAGE_PYTHON_VERSION = "3.11"
+# A .python-version picks a 3.<minor> in this range, and a project without one gets
+# the newest. The newest is the top of the `python` job's matrix in
+# .github/workflows/e2e.yml; bump the two together.
+OLDEST_IMAGE_PYTHON_MINOR = 10
+NEWEST_IMAGE_PYTHON_MINOR = 15
+DEFAULT_IMAGE_PYTHON_VERSION = f"3.{NEWEST_IMAGE_PYTHON_MINOR}"
 
 # Runtime modules copied flat into the context root, which `canyonos validate` checks app files against.
 _AGENT_FLAT_SOURCES = {
@@ -816,8 +822,28 @@ def generate_docker(
 
     # ---- Dockerfile ------------------------------------------------------
     agent_basename = os.path.basename(agent_file)
+    python_version = DEFAULT_IMAGE_PYTHON_VERSION
+    # Named from the deployment folder the build runs in, as the user sees it.
+    python_version_file = os.path.relpath(os.path.join(project_dir, ".python-version"))
+    if os.path.isfile(python_version_file):
+        try:
+            with open(python_version_file, encoding="utf-8-sig") as f:
+                python_version = f.readline().strip()
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(
+                f"{python_version_file} is not UTF-8 text; save it as UTF-8."
+            ) from exc
+        match = re.fullmatch(r"3\.(0|[1-9]\d*)(\.(0|[1-9]\d*))?", python_version)
+        if not match or not (
+            OLDEST_IMAGE_PYTHON_MINOR <= int(match[1]) <= NEWEST_IMAGE_PYTHON_MINOR
+        ):
+            raise RuntimeError(
+                f"{python_version_file} says '{python_version}', but agents need "
+                f"Python 3.{OLDEST_IMAGE_PYTHON_MINOR} to 3.{NEWEST_IMAGE_PYTHON_MINOR}, "
+                "written like 3.12 or 3.12.4."
+            )
     dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:{IMAGE_PYTHON_VERSION}-slim
+FROM python:{python_version}-slim
 
 WORKDIR /app
 
