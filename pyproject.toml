@@ -71,6 +71,7 @@ allowed-unresolved-imports = [
     "grpc_options",
     "log_entry",
     "log_handler",
+    "worker_controller",
     "log_convert",
     "llm_gateway",
     "local_controller_pb2",

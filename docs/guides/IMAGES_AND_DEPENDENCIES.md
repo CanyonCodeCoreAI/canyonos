@@ -88,7 +88,7 @@ win:
    `canyonos_governance.py`, `canyonos_health.py`, `gateway_headers.py`,
    `local_controller.py`, `local_controller_frontend.py`, `redis_client.py`,
    `grpc_options.py`, `log_entry.py`, `gpu_metrics.py`, `log_handler.py`,
-   `human_input.py` and `canyonos_lazy.py`.
+   `human_input.py`, `canyonos_lazy.py` and `worker_controller.py`.
 2. Every agent's stub, at its `entrypoint` path and at the root under its basename;
    see [Agent functions and stubs](RUNTIME_CONTRACT.md#agent-functions-and-stubs).
 3. The generated `*_pb2.py` and `*_pb2_grpc.py` modules, at the root.

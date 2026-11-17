@@ -76,6 +76,7 @@ _AGENT_FLAT_SOURCES = {
     "log_handler.py": ("controller", "utils", "log_handler.py"),
     "human_input.py": ("controller", "utils", "human_input.py"),
     "canyonos_lazy.py": ("controller", "lazy_values.py"),
+    "worker_controller.py": ("controller", "utils", "worker_controller.py"),
 }
 
 AGENT_FLAT_MODULES = frozenset(_AGENT_FLAT_SOURCES)

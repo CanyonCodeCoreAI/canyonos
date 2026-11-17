@@ -122,10 +122,23 @@ An agent image runs `python local_controller.py --port 50051`. The endpoint runs
 
 Startup:
 
-1. Connect to the machine's Redis, load the governance rules and start the gRPC server.
-2. In an agent replica, start the LLM Gateway on `127.0.0.1:8081` and wait for it.
-3. Set the status to `initializing`, start the heartbeat and import the agent class.
-4. Set the status to `healthy`. If the agent can't be created, set `failed` and exit.
+1. Connects to Redis at `CANYONOS_REDIS_HOST` and `CANYONOS_REDIS_PORT`, and loads the
+   governance rules, admitting every call if they can't be read.
+2. Starts the gRPC server (`start_server`, 8 threads on `[::]:<port>`) and loads the
+   routing table.
+3. In an agent replica only, starts the LLM Gateway on `127.0.0.1:8081` and waits up to
+   60 seconds for its `/healthz`. A port already taken, or a gateway that exits or never
+   answers, sets the status to `failed` and raises.
+4. Reads `CANYONOS_REPLICA_ID`, and with `CANYONOS_LOGS_ENABLED` (default `true`) adds
+   the log handler that copies the agent's log lines onto its future.
+5. Sets its status to `initializing`, with a first heartbeat in the same transaction,
+   and starts the health server when `CANYONOS_HEALTH_PORT` is set.
+6. Creates the thread pool calls run on (`CANYONOS_MAX_WORKERS`, default 512) and
+   starts the metrics loop, so a slow agent constructor still heartbeats.
+7. Imports `CANYONOS_AGENT_FILE` and instantiates the class `CANYONOS_AGENT_NAME`. If
+   that fails, the replica is marked `failed`, the gateway killed, and the process
+   exits. Otherwise the status becomes `healthy`. The endpoint passes
+   `publish_ready=False` and calls `mark_ready()` once gunicorn answers on `8080`.
 
 Then it takes requests off a queue until the process stops or a drain ends.
 
@@ -158,6 +171,38 @@ sequenceDiagram
     OL->>OR: HSET future:{id},<br/>fan out to consumers
     S->>OR: first use of the result<br/>reads future:{id}
 ```
+
+1. `Future(...)` writes `future:<future_id>` and adds it to
+   `request:<request_id>:futures` on the caller's machine Redis, then sends gRPC
+   `Execute` to its own Local Controller (`CANYONOS_LC_HOST`:`CANYONOS_LC_PORT`,
+   default `localhost:50051`). Each `Future` in the arguments, at any depth, travels
+   as its ID, listed in `future_refs` with its path and its function's declared
+   `returns` type; `future_args` keeps the top-level names.
+2. `LocalControllerServicer.Execute` drops a call it already accepted
+   (`execute:<address>:<future_id>:accepted`, `SET NX` with a 1-hour expiry). On the
+   first hop (no `route_to`), it checks governance against its snapshot of the rules:
+   a refused call is marked failed and answered with `{"refused": ...}`; it is never
+   queued. Anything else goes on the request queue.
+3. `_process_request` takes the request's `_context` from the call's baggage, or from
+   `request:<request_id>:context`, and `_resolve_address` picks an address from the
+   routing table (`routing_table:addresses` and `routing_table:stateful`), held in
+   memory, skipping replicas marked down. A stateful agent's replica is bound to the
+   request in `affinity:<request_id>`, so every later call of that request lands on
+   it; a stateless agent's is picked at random each call.
+4. Its own address queues the call, which runs on the thread pool (`_execute_locally`)
+   once fewer than the replica's limit are running. Any other is
+   forwarded with `Execute`, carrying `origin`, `route_to` and the baggage (context
+   and affinities); the target is added to each `Future` argument's consumers.
+5. The executing replica writes its record of the call to its own Redis, waits for any
+   `Future` arguments and reads each back as its declared type (`convert_result`), runs
+   the method, writes `result` or the failure, and sends
+   `WriteResult` with the full hash back to the origin, which writes it and fans it out
+   to the call's consumers (`_fan_out_to_consumers`).
+6. The first line that uses the result (`Future.resolved()`, see
+   [Lazy values](#lazy-values)), or `Future.value()`, waits on `future:<future_id>` on
+   the caller's Redis: the Local Controller wakes it when it writes the value, and it
+   rereads Redis every second anyway. For a root future, `GET /status/<request_id>`
+   reads the same hash.
 
 Things the diagram does not show:
 

@@ -36,7 +36,9 @@ Fields:
 `LocalController` publishes `controller:{host}:{port}:metrics`.
 
 Fields: `status`, `queue_length`, `observed_at`, `started_at`, `requests_served`,
-`requests_completed` and `full_failures`.
+`requests_completed`, `full_failures`, `max_workers` (the replica's current concurrency limit,
+lowered to how many calls fit in its memory and held while its CPU is full), `container_memory_bytes` and
+`container_memory_limit_bytes`.
 
 ## `metrics_waiting` table schema (`controller/utils/schema.py`)
 
@@ -88,6 +90,9 @@ semconv, kept as-is), `host.name`, `canyonos.agent.port`, `canyonos.project.id`.
 | --- | --- | --- | --- |
 | `queue_length` | `canyonos.agent.queue.length` | Gauge | `{item}` |
 | `draining` | `canyonos.agent.draining` | Gauge (`1` once the replica has seen its drain flag, else `0`) | `1` |
+| `max_workers` | `canyonos.agent.concurrency.limit` | Gauge | `{request}` |
+| `container_memory_bytes` | `canyonos.agent.memory.used` | Gauge | `By` |
+| `container_memory_limit_bytes` | `canyonos.agent.memory.limit` | Gauge | `By` |
 | `requests_served` | `canyonos.agent.requests` | Sum (monotonic, cumulative) | `{request}` |
 | `requests_completed` | `canyonos.agent.requests.completed` | Sum (monotonic, cumulative) | `{request}` |
 | `full_failures` | `canyonos.agent.failures` | Sum (monotonic, cumulative) | `{failure}` |

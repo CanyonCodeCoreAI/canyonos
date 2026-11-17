@@ -69,6 +69,9 @@ _CAPACITY_GAUGES = {
 _AGENT_GAUGES = {
     "queue_length": ("canyonos.agent.queue.length", "{item}"),
     "draining": ("canyonos.agent.draining", "1"),
+    "max_workers": ("canyonos.agent.concurrency.limit", "{request}"),
+    "container_memory_bytes": ("canyonos.agent.memory.used", "By"),
+    "container_memory_limit_bytes": ("canyonos.agent.memory.limit", "By"),
 }
 _AGENT_SUMS = {
     "requests_served": ("canyonos.agent.requests", "{request}"),

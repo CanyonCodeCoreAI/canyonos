@@ -7,6 +7,7 @@ the queue, and runs them on the agent or forwards them to another controller."""
 # Starts the gRPC frontend server and polls the request queue for incoming requests.
 # Routes requests to the correct agent — either locally or by forwarding to another controller.
 
+import ctypes
 import json
 import logging
 import os
@@ -17,7 +18,9 @@ import sys
 import threading
 import time
 import importlib.util
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait
+from pathlib import Path
 
 import grpc
 import redis
@@ -39,6 +42,7 @@ try:
         build_failure_entry,
         append_log_entry,
     )
+    from canyonos_core.controller.utils.worker_controller import WorkerLimit
 except ImportError:
     import canyonos_governance as governance
     import gateway_headers
@@ -49,6 +53,7 @@ except ImportError:
     from redis_client import RedisClient
     from grpc_options import GRPC_CHANNEL_OPTIONS, call_with_retry
     from log_entry import build_failure_entry, append_log_entry
+    from worker_controller import WorkerLimit
 
 # Add local generated grpc_stubs to path (Docker context copies them directly to /app)
 sys.path.insert(0, ".")
@@ -111,6 +116,7 @@ CANYONOS_FILES = {
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
 EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5
+CGROUP = Path("/sys/fs/cgroup")
 # A replica only queues a request forwarded to it, so one slower than this to
 # accept it is stuck.
 FORWARD_TIMEOUT_SECONDS = 2
@@ -314,12 +320,18 @@ class LocalController(object):
         # Thread pool for executing agent methods concurrently.
         # This prevents deadlocks when an agent method creates nested Futures
         # that need to be routed through the same controller's request queue.
-        max_instances = int(os.environ.get("CANYONOS_MAX_AGENT_INSTANCES", 16))
-        self._executor = ThreadPoolExecutor(max_workers=max_instances)
+        max_workers = int(os.environ.get("CANYONOS_MAX_WORKERS", 512))
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._executor_futures = {}
         self._executor_futures_lock = threading.Lock()
         # address -> time.monotonic() until which new picks skip it
         self._down_until = {}
+        self._max_workers = max_workers
+        self._agent_queue = deque()
+        # Set once the agent has loaded, so its startup memory counts as base, not as calls.
+        self._worker_limit = None
+        # The container's CPU time used and when, at the previous _cpu_percent call.
+        self._cpu_read = None
 
         # Heartbeat through the agent load, so a slow constructor is not mistaken for a dead replica.
         self._metrics_thread.start()
@@ -343,13 +355,37 @@ class LocalController(object):
                 f"Failed to load configured agent {self.agent_name or self.agent_file}."
             )
 
+        if runs_agent:
+            self._malloc_trim = ctypes.CDLL("libc.so.6").malloc_trim
+            # Trim first so memory freed while the agent loaded doesn't count as base.
+            self._malloc_trim(0)
+            container_memory = self._container_memory()
+            swap_max = CGROUP / "memory.swap.max"
+            # Docker sets a swap limit even on a machine without swap, so the machine must have some too.
+            has_swap = (
+                swap_max.exists()
+                and swap_max.read_text().strip() != "0"
+                and next(
+                    int(line.split()[1])
+                    for line in Path("/proc/meminfo").read_text().splitlines()
+                    if line.startswith("SwapTotal:")
+                )
+                > 0
+            )
+            self._worker_limit = WorkerLimit(
+                max_workers,
+                int(container_memory["container_memory_bytes"]),
+                int(container_memory["container_memory_limit_bytes"]),
+                has_swap,
+            )
+
         if publish_ready:
             self.mark_ready()
 
         logger.info(
-            "Local controller initialized at %s (max_agent_instances=%d); %s.",
+            "Local controller initialized at %s (max_workers=%d); %s.",
             self._my_address,
-            max_instances,
+            max_workers,
             "reported healthy to Redis"
             if publish_ready
             else "readiness left to the launcher",
@@ -521,12 +557,45 @@ class LocalController(object):
         """
         return {
             "status": "healthy",
-            "queue_length": str(self._executor._work_queue.qsize()),
+            "queue_length": str(len(self._agent_queue)),
+            "max_workers": str(self._max_workers),
             "draining": str(int(self._draining)),
             "open_requests": str(len(self.servicer.open_requests)),
             "pending_requests": str(self.request_queue.unfinished_tasks + self._unsent),
             "observed_at": str(time.time()),
+            **self._container_memory(),
         }
+
+    def _container_memory(self):
+        """Read this replica's container memory use and limit, for the metrics heartbeat.
+        Use leaves out file cache the kernel can reclaim and includes swap."""
+        memory_stat = dict(
+            line.split() for line in (CGROUP / "memory.stat").read_text().splitlines()
+        )
+        memory_used = int((CGROUP / "memory.current").read_text())
+        swap_used_path = CGROUP / "memory.swap.current"
+        if swap_used_path.exists():
+            # A page back from swap that kept its slot is charged to both memory and swap; count it once.
+            memory_used += int(swap_used_path.read_text()) - int(
+                memory_stat.get("swapcached", 0)
+            )
+        return {
+            "container_memory_bytes": str(
+                memory_used - int(memory_stat["inactive_file"])
+            ),
+            "container_memory_limit_bytes": (CGROUP / "memory.max").read_text().strip(),
+        }
+
+    def _cpu_percent(self):
+        """Read how much of its CPU limit this replica's container used since the previous
+        call, as a percent, for the call limit; 0 on the first call."""
+        quota, period = map(int, (CGROUP / "cpu.max").read_text().split())
+        cpu_read = (int((CGROUP / "cpu.stat").read_text().split()[1]), time.monotonic())
+        previous, self._cpu_read = self._cpu_read, cpu_read
+        if previous is None:
+            return 0.0
+        cpu_seconds = (cpu_read[0] - previous[0]) / 1e6
+        return cpu_seconds / (cpu_read[1] - previous[1]) / (quota / period) * 100
 
     def _watch_llm_gateway(self):
         """Restart the LLM gateway if it has exited. After MAX_GATEWAY_RESTARTS restarts, fail
@@ -557,7 +626,9 @@ class LocalController(object):
         self._gateway_process = self._start_llm_gateway(*self._redis_address)
 
     def _metrics_loop(self):
-        """Background thread: periodically publish replica metrics and refresh status."""
+        """Background thread: periodically publish replica metrics, refresh status, and
+        lower how many calls this replica runs at once to what fits in its memory,
+        holding it while its CPU is full."""
         while not self._metrics_stop_event.is_set():
             # First and on its own, so a failure later in the tick never leaves stale rules.
             self._refresh_rules()
@@ -585,6 +656,17 @@ class LocalController(object):
                         self.redis.set(self._status_key, "healthy")
                 self._load_routing()
                 self._fail_calls_to_gone_replicas()
+                if self._worker_limit is not None:
+                    # After the memory read: what glibc still holds for other threads belongs in the peak.
+                    self._malloc_trim(0)
+                    self.set_max_workers(
+                        self._worker_limit.update(
+                            len(self._executor_futures),
+                            len(self._agent_queue),
+                            int(metrics["container_memory_bytes"]),
+                            self._cpu_percent(),
+                        )
+                    )
             except Exception as e:
                 logger.warning("Metrics loop encountered an error: %s", e)
             # Outside the try, so an unreachable Redis cannot keep a stopping replica alive.
@@ -1031,8 +1113,7 @@ class LocalController(object):
             if request_id and agent_name in self._stateful:
                 self.servicer.open_requests.add(request_id)
             submitted_at = time.time()
-            executor_future = self._executor.submit(
-                self._execute_locally,
+            call_args = (
                 agent_name,
                 function,
                 args,
@@ -1045,13 +1126,10 @@ class LocalController(object):
                 future_refs,
             )
             with self._executor_futures_lock:
-                self._executor_futures[executor_future] = (
-                    future_id,
-                    origin,
-                    agent_name,
-                    function,
+                self._agent_queue.append(
+                    ((future_id, origin, agent_name, function), call_args)
                 )
-            executor_future.add_done_callback(self._forget_executor_future)
+            self._drain()
         else:
             # Register the target as a consumer for any Future args
             # so results get pushed to its Redis via WriteResult.
@@ -1103,6 +1181,31 @@ class LocalController(object):
                 address,
             )
             self._forward_request(address, data)
+
+    def _drain(self):
+        """Start calls waiting to run on this replica's agent, keeping at most the current
+        limit running at once, oldest first; runs when a call arrives or finishes."""
+        while True:
+            with self._executor_futures_lock:
+                if (
+                    not self._agent_queue
+                    or len(self._executor_futures) >= self._max_workers
+                ):
+                    return
+                call_info, call_args = self._agent_queue.popleft()
+                executor_future = self._executor.submit(
+                    self._execute_locally, *call_args
+                )
+                self._executor_futures[executor_future] = call_info
+            executor_future.add_done_callback(self._forget_executor_future)
+
+    def set_max_workers(self, max_workers):
+        """Change how many calls this replica's agent runs at once, without a restart.
+        Raising it starts waiting calls right away; lowering it lets running calls
+        finish and holds new ones back until fewer than the new limit are running."""
+        with self._executor_futures_lock:
+            self._max_workers = max_workers
+        self._drain()
 
     def _resolve_future_args(
         self, args, future_args, timeout=FUTURE_RESULT_TIMEOUT_SECONDS
@@ -1589,6 +1692,7 @@ class LocalController(object):
         instead of waiting on a replica that is about to be removed."""
         with self._executor_futures_lock:
             unfinished = list(self._executor_futures.values())
+            unfinished += [call_info for call_info, _ in self._agent_queue]
         while True:
             try:
                 raw = self.request_queue.get_nowait()
@@ -1620,14 +1724,19 @@ class LocalController(object):
             )
 
     def _forget_executor_future(self, executor_future):
+        """When a call on this replica's agent finishes, free its slot, stop waiting on
+        it at shutdown, and start the next waiting call."""
         with self._executor_futures_lock:
             self._executor_futures.pop(executor_future, None)
+        self._drain()
 
     def stop(self):
         """Gracefully shut down the server."""
         logger.info("Shutting down local controller...")
         self._metrics_stop_event.set()
         self._metrics_thread.join(timeout=2)
+        with self._executor_futures_lock:
+            self._agent_queue.clear()
         self._executor.shutdown(wait=False, cancel_futures=True)
         with self._executor_futures_lock:
             outstanding = dict(self._executor_futures)

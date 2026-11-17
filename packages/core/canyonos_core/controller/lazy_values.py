@@ -71,6 +71,7 @@ CANYONOS_FLAT_FILES = frozenset(
         "gpu_metrics.py",
         "log_handler.py",
         "human_input.py",
+        "worker_controller.py",
     }
 )
 

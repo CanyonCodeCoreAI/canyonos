@@ -55,6 +55,7 @@ Run `bun run check` and the E2E suite that covers the change before calling it d
   - _container_: the Docker container itself (`container_name`, `container_port`, `docker` commands). Redis, the metrics collector and the Global Controller run in containers too, so not every container is a replica.
   - _orchestrator_: what starts, replaces and removes an agent's replicas; on Docker and EC2, CanyonOS's own reconciler; on Kubernetes, the operator and Kubernetes. The Global Controller decides how many replicas each agent should have and asks `gc.orchestrator` (`controller/orchestrator.py`) to run them. Never "replica manager" or "backend", and never call it "replicas", which are the running copies.
   - Names that predate this and stay: stored Redis keys such as `agent_instance:*` and `agent:<name>:instances`, exported telemetry names such as `agent.id` (it holds a replica ID), and AWS API names such as `run_instances` or `InstanceType`.
+- Name a variable for what it holds, with its subject: `memory_per_call`, not `per_call`. If the code already has a word for that thing, use it rather than a new one: the cap on one replica's calls is `max_workers`, not `replica_limit`.
 - Core modules are also imported as flat modules inside container images. Do not "fix" those fallback imports or the `E402` ignore in `pyproject.toml`.
 
 ## Reporting CanyonOS bugs
