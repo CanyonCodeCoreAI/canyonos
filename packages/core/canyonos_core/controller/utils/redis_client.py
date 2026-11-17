@@ -7,6 +7,8 @@ import os
 import socket
 
 import redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 PASSWORD_ENV = "CANYONOS_REDIS_PASSWORD"
 _ENABLED = {"1", "true", "yes", "on"}
@@ -16,7 +18,8 @@ def connection_options(environ=None):
     """Password, username and TLS for a Redis that requires them (such as one the
     Kubernetes operator runs, or a managed one), from the CANYONOS_REDIS_* variables.
     Docker and EC2 set only the password, from the project's; none set means a plain
-    connection. Timeouts and retries stay redis-py's defaults. The LLM gateway
+    connection. Timeouts and retries stay redis-py's defaults unless `RedisClient`
+    is given a `timeout`. The LLM gateway
     (llm_gateway/hooks.py) uses the same rules.
     """
     env = os.environ if environ is None else environ
@@ -68,8 +71,22 @@ def hide_password(text):
 class RedisClient(object):
     """Redis utility for connecting to localhost with support for strings, hashes, and sets."""
 
-    def __init__(self, host="localhost", port=6379, db=0):
-        self.client = redis.Redis(host=host, port=port, db=db, **connection_options())
+    def __init__(self, host="localhost", port=6379, db=0, timeout=None):
+        """With `timeout` seconds, a command that cannot connect or answer within it
+        fails at once, with no retry, instead of waiting out redis-py's ten retries;
+        no retry also keeps a pop that reached Redis from being sent twice."""
+        bounded = (
+            {}
+            if timeout is None
+            else {
+                "socket_timeout": timeout,
+                "socket_connect_timeout": timeout,
+                "retry": Retry(NoBackoff(), 0),
+            }
+        )
+        self.client = redis.Redis(
+            host=host, port=port, db=db, **connection_options(), **bounded
+        )
         # IPv4 only: Docker Desktop's host.docker.internal also resolves to an unreachable IPv6 address.
         if host == "host.docker.internal":
             self.client.connection_pool.connection_kwargs["socket_type"] = (

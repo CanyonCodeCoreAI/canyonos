@@ -1,0 +1,266 @@
+[
+  {
+    "name": "all-projects-query",
+    "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IjMxMTRmNjU3MjJhM2YzYWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3MywianRpIjoiMDZjYjBmMDc0MmIwNDI2OGIxZDIzMzllZTIzNGM3ZDQiLCJhdWQiOlsiKiJdLCJzY29wZSI6InF1ZXJ5In0.RpRT-dXz-gKgZEQ2mcCsg-tu-CTXWyhH3Jk1-qKFLcsQTtcnOZue7JM1myCfuuTxQXUpeV7ZSvc_13xPhUmEAg",
+    "expect": {
+      "endpoint": {
+        "status": 404
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "wrong-aud",
+    "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IjMxMTRmNjU3MjJhM2YzYWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiMjcyMDhiOTllMDkxNGIwNmJkNTdkNzYyZjk3OWZlOTMiLCJhdWQiOlsiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIl0sInNjb3BlIjoicXVlcnkifQ._wyWe9cis6YlQsIuDE0_eYKw284ra8FvEaBsLxEawCuRWatAgD2bJqfpSoovFfkd-fo1YG168UWX7S_OUPp6Dg",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "scope-write-aud-api",
+    "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IjMxMTRmNjU3MjJhM2YzYWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiMjUwMGU0MzBlYzhkNGE1NWEyY2MwYWU2ZWMxNjVlMGEiLCJhdWQiOlsiY2FueW9ub3MtYXBpIl0sInNjb3BlIjoid3JpdGUifQ.evMxOdkeF3WGUcQc3RjSJzKvqvDYVA-XYCAVQnm9JtuTJJ_nXEIE6ezxLwv0iRdJiAhR56tGEJ03RuVmD5J3Cg",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 403,
+        "code": "auth.insufficient_scope"
+      }
+    }
+  },
+  {
+    "name": "expired",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzU1NCwianRpIjoiY2M1NjUwYjY0MmE1NGNkNzkxNzAxNTFmNDJhMjc4MjAiLCJhdWQiOlsiKiIsImNhbnlvbm9zLWFwaSJdLCJzY29wZSI6InF1ZXJ5IiwiZXhwIjoxNzk0ODY3NjE0fQ.MAEx_0vyObYX__ZJ5pmRA_SdYo3J8lZcKtbx8eYzyVYhnauPzg2ZwpZsmysxOAIhMUc06dE2R32i3RiX4ArzDA",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "no-aud",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiYjIyMmVkZjUyYThjNGEyM2E5NTJkYTE4ZWQwMDAzMzYiLCJzY29wZSI6InF1ZXJ5In0.yTMIDZTqfW7wAeI_8d-W7MbYC7uIXnFh70VDlzXQEXOBvMwCYn2ftQxM71xTs23XOPNw5gMR_7uCs4HNO9W6Bw",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "wrong-iss",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzb21lb25lLWVsc2UiLCJpYXQiOjE3OTQ4Njc2NzQsImp0aSI6IjRmMGYyZjhjMGNjYjRkODA4ZTY5ZTJjYzM2MDhjZmYzIiwiYXVkIjpbIioiLCJjYW55b25vcy1hcGkiXSwic2NvcGUiOiJxdWVyeSJ9.5Kpc8J06UVs1dkprOD2Rq7T6d8vpz5KpUYd9myv1nGhwSt1mdf7qFNJI1xikxZzdtplHzdSF92pSCQE7f8RwCw",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "no-scope",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiYWI1ZTZkYmRlNDRkNGUyOWIyYjg2OWM3ZDNhYTZiYTEiLCJhdWQiOlsiKiIsImNhbnlvbm9zLWFwaSJdfQ.ix4kA5d5eUGxc8dOcemSF0QjFKwGZwHvi4DXRVUHjjh7KG2Wh4MTtydWFfaI-ifCQoAW1_DUUEhGFTZJ4UNXBw",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "alg-none",
+    "token": "eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJpc3MiOiAiY2FueW9ub3MiLCAiaWF0IjogMTc5NDg2NzY3NCwgImp0aSI6ICI3OTY2MzlkYzAwYzQ0NDBlOTFkZmI1ZjEwZjIwMTEyOCIsICJhdWQiOiBbIioiLCAiY2FueW9ub3MtYXBpIl0sICJzY29wZSI6ICJxdWVyeSJ9.",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "hs256",
+    "token": "eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJpc3MiOiAiY2FueW9ub3MiLCAiaWF0IjogMTc5NDg2NzY3NCwgImp0aSI6ICJhM2E5MjU4YjA4NGM0YTEwODBlNDFmOTc2OWVjYTgxMyIsICJhdWQiOiBbIioiLCAiY2FueW9ub3MtYXBpIl0sICJzY29wZSI6ICJxdWVyeSJ9.4upi6B50q2bQ6u_AzBDANuWWs8VqngsR2a7MWkHADao",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "two-scopes",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiZGI2MTcxYzEzNDk1NDY0ZGJlMWJiN2RhNGIzZGQwYWEiLCJhdWQiOlsiKiIsImNhbnlvbm9zLWFwaSJdLCJzY29wZSI6InF1ZXJ5IHJlYWQifQ.1jHmApHLdXlCfaEodiZ706Gu5iutkaKy3kL3dIiUkozv8gr3NUholZx3vy6M-Ai6csr-rMScrXVV40kiueyVCA",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "scope-read-aud-project",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiYjYxNjA2NzNkNmJlNGQwNzg1MzkzNTRiODU0NmU1NDIiLCJhdWQiOlsiKiJdLCJzY29wZSI6InJlYWQifQ.9kx6sVLvuT70Z5yjkgwGH0QTadMszTdqHfsIS3DuJxwWFh0BI7OQ3YJhbpiHEZ0pT-EAJ1bXvGf6aRe1rw7JAg",
+    "expect": {
+      "endpoint": {
+        "status": 403,
+        "code": "auth.insufficient_scope"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "scope-query-aud-api",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiNzBjNzljOTliMDg0NGQ2NmFhODQ3NWU5NTE2YjBhODkiLCJhdWQiOlsiY2FueW9ub3MtYXBpIl0sInNjb3BlIjoicXVlcnkifQ.t2FoRy0zhyjFSPjFDsQJ9mBAUygWUU9On0qhc9x1S0SIFUCADsOGKN3ghcCdsN2XNa_7vExGjThcAhzKn8JtCQ",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 403,
+        "code": "auth.insufficient_scope"
+      }
+    }
+  },
+  {
+    "name": "aud-int",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiNTU3NDE1ODQxYzIxNGNlMzhjMWYyOGFkYzk3YTJmZWUiLCJhdWQiOjUsInNjb3BlIjoicXVlcnkifQ.6w5JP9yWVe1cgqqnfxdFFelXoIX_Phz-BqeP0M1RtuZ1Mjk3h_JDHVjlbsYR1kzzAcFnefkqWi4Unb2K-15rDA",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "aud-bool",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiYmY0NmVjZmVkNTk0NGFiNjk2ZjM5OTQ0NDA4N2VhZWEiLCJhdWQiOnRydWUsInNjb3BlIjoicXVlcnkifQ.Y21PKN9vyQTtHjfii9emAQ2PIfgeQ2SaZSPxHKRVJPsFuMt795_5QE3K9XqlIJONjZG-SLGM5itxzEZWXNcAAQ",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "wrong-aud-bad-jti",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjo1LCJhdWQiOlsiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIl0sInNjb3BlIjoicXVlcnkifQ.xGS6J4UApjUhWLSy9n2ttAqFLrIDWf1UBgigII66ynEk5ONOIUDsjBi9pB96uT4i8TKg9M-ILI-ZE0EMzCMJBg",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "wrong-aud-bad-sub",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiNDMzMDg0ZjRkYjBmNDcwZDhiYmJkOWQzNWNjNGIyYTgiLCJhdWQiOlsiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIl0sInNjb3BlIjoicXVlcnkiLCJzdWIiOjV9._jE0f6x5iNKGL2-e2X7JOEiWqODaEpGA85VUYWu2gtWCQl2RYWsR3AZE1Z4JUcEKoAMpnTk_QBIEAyGFBws6Dg",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "scope-padded",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiMDkwZDBlODhkY2UzNDk2OGEzNzI3YzFmODUzMWQ2ODEiLCJhdWQiOlsiKiIsImNhbnlvbm9zLWFwaSJdLCJzY29wZSI6IiBxdWVyeSJ9.awpih4Xst0bvYBec9tS9pf5LgIH3z2KgNorXTW8qy3W-MYIWgvkgZ5z2YShAC5Kry2CkhK7lJKz7NpvVAlUyBw",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "scope-unknown",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6MTc5NDg2NzY3NCwianRpIjoiNWRiMmNlNmE4ZTEwNDIwZmE2ZGI2NWVjZTlkNjE0NDQiLCJhdWQiOlsiKiIsImNhbnlvbm9zLWFwaSJdLCJzY29wZSI6ImFkbWluIn0._e4kUF_z1vJMmGIAhis5qkvWOLnigKaePaxjCZWLOgEVO68oKFOdLbrkswYgsih426bHZpN2QaX0cW8sWr2HAw",
+    "expect": {
+      "endpoint": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      },
+      "api": {
+        "status": 401,
+        "code": "auth.invalid_token"
+      }
+    }
+  },
+  {
+    "name": "iat-future",
+    "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjYW55b25vcyIsImlhdCI6NDEwMjQ0NDgwMCwianRpIjoiN2EyNGExM2RiODgzNGIxY2EzOWIxMGJkZWJmZDczNTEiLCJhdWQiOlsiKiIsImNhbnlvbm9zLWFwaSJdLCJzY29wZSI6InF1ZXJ5In0.hFcNfB75sTjVaCPSb2Gm6mf01yPTyyihgcLs5-K2rHPJrAnOYTgD2_raCDF1P2vVclxAJmWJTdrWcI56ribqBA",
+    "expect": {
+      "endpoint": {
+        "status": 404
+      },
+      "api": {
+        "status": 403,
+        "code": "auth.insufficient_scope"
+      }
+    }
+  }
+]

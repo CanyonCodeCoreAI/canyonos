@@ -13,6 +13,7 @@ import redis
 
 from ..conftest import DEPLOY_TIMEOUT
 from ..harness import (
+    answer,
     canyonos,
     deployed_endpoint,
     docker,
@@ -78,7 +79,9 @@ def _waiting_status(recorder, deployment, request_id):
     url = f"{deployment.endpoint.url}/status/{request_id}"
 
     def waiting():
-        call = http(recorder, "GET", url, check=False)
+        call = http(
+            recorder, "GET", url, headers=deployment.endpoint.headers, check=False
+        )
         if call.code != 200:
             return None
         status = call.json()
@@ -125,13 +128,10 @@ def test_workflow_pauses_for_an_answer_and_resumes(recorder, human_input_deploy)
         "question": {"question": QUESTION, "input_schema": {"input": "str"}},
     }, waiting
 
-    answer = http(
-        recorder,
-        "POST",
-        f"{human_input_deploy.endpoint.url}/answer/{request_id}",
-        json={"input": "remember this"},
+    answered = answer(
+        recorder, human_input_deploy.endpoint, request_id, {"input": "remember this"}
     )
-    assert answer.json() == {"request_id": request_id}, answer.output
+    assert answered.json() == {"request_id": request_id}, answered.output
 
     status = finished(recorder, human_input_deploy.endpoint, request_id, timeout=120)
     assert status == {
@@ -140,11 +140,11 @@ def test_workflow_pauses_for_an_answer_and_resumes(recorder, human_input_deploy)
         "result": {"answer": "remember this"},
     }, status
 
-    repeated = http(
+    repeated = answer(
         recorder,
-        "POST",
-        f"{human_input_deploy.endpoint.url}/answer/{request_id}",
-        json={"input": "too late"},
+        human_input_deploy.endpoint,
+        request_id,
+        {"input": "too late"},
         check=False,
     )
     assert repeated.code == 409, repeated.output
@@ -188,6 +188,7 @@ def test_failed_status_recovers_from_its_dashboard_span(recorder, human_input_de
         recorder,
         "GET",
         f"{human_input_deploy.endpoint.url}/status/{request_id}",
+        headers=human_input_deploy.endpoint.headers,
     ).json()
     assert recovered == {
         "request_id": request_id,

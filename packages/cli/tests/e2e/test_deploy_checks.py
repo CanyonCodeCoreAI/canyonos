@@ -4,12 +4,14 @@
 """`canyonos deploy` through the installed command: the checks it runs before
 anything is built, from a deployment folder or from inside a project folder. The
 key check comes first, after the folder check: a run that must stop there points
-DOCKER_HOST at nothing, so a Docker call would show."""
+DOCKER_HOST at nothing, so a Docker call would show. `canyonos test`, which queries
+the running deployment, stops at the same check."""
 
 from __future__ import annotations
 
 import os
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
@@ -289,3 +291,30 @@ def test_deploy_help_lists_the_auth_flags(cli_case: CliCase):
     assert "answer anyone" in output
     assert "--auth-dir PATH" in output
     assert "instead of ~/.canyonos/auth" in output
+
+
+def test_deploy_refuses_a_deployment_id_no_token_can_name(cli_case: CliCase):
+    _broken_project(cli_case)
+    _make_key(cli_case)
+    deployment_id = str(uuid.uuid4()).upper()
+    (cli_case.cwd / "deployment.yaml").write_text(f"deployment_id: {deployment_id}\n")
+
+    result = _deploy(cli_case, "echo", docker=False)
+
+    output = _said(result)
+    assert result.returncode == 1, output
+    assert f"deployment_id '{deployment_id}'" in output
+    assert "lowercase, hyphenated UUID" in output
+    assert "Docker" not in output
+
+
+def test_canyonos_test_without_a_key_stops_before_docker(cli_case: CliCase):
+    (cli_case.cwd / "deployment.yaml").write_text(f"deployment_id: {uuid.uuid4()}\n")
+
+    result = cli_case.run_cli(["test"], timeout=60, env=NO_DOCKER)
+
+    output = _said(result)
+    assert result.returncode == 1, output
+    assert f"No key is trusted in {_trusted(cli_case)}" in output
+    assert "canyonos keys create" in output
+    assert "Docker" not in output

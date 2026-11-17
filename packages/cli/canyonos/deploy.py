@@ -39,6 +39,7 @@ from canyonos import deployment, env, ui
 from canyonos.auth import (
     SKIP_AUTH_WARNING,
     gc_env,
+    is_project_id,
     refuse_keys_in_project,
     require_keys,
 )
@@ -356,6 +357,22 @@ def save_deployment_config(config_path):
     _save_id(config_path, "deployment_id")
 
 
+def require_deployment_id(config_path):
+    """Raise when the deployment's `deployment_id` is set but is not a lowercase,
+    hyphenated UUID, the form `save_deployment_config` writes, since query tokens name
+    the deployment by it exactly as written."""
+    config = read_config(config_path)
+    value = config.get("deployment_id") if isinstance(config, dict) else None
+    if not value or is_project_id(value):
+        return
+    raise RuntimeError(
+        f"deployment_id {value!r} in {config_path} is not a project ID: it must be a "
+        "lowercase, hyphenated UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), the form a "
+        "query token names the deployment in. Write it in that form, or delete the "
+        "line and the deploy makes a new one."
+    )
+
+
 # Providers whose agents run on machines other than this one.
 _REMOTE_PROVIDERS = ("ec2-pool", "ec2-assign")
 
@@ -433,6 +450,7 @@ def run_deploy(
         keys = []
     else:
         keys = require_keys(auth_dir)
+    require_deployment_id(config_path)
     for folder in projects.values():
         _warn_unset_example_keys(folder)
     # Before the project check, which runs in the core image when core isn't installed.
@@ -507,6 +525,10 @@ def run_deploy(
     return state
 
 
+# The header every printed `curl` sends, its token left for the reader to make.
+BEARER_HEADER = '-H "Authorization: Bearer <token>"'
+
+
 def _curl_example(url, body):
     """A single-line, directly copy-pasteable `curl -X POST ...` command.
 
@@ -516,16 +538,28 @@ def _curl_example(url, body):
     a single line always works no matter where it lands.
     """
     compact_body = shlex.quote(json.dumps(body))
-    return f'curl -X POST {url} -H "Content-Type: application/json" -d {compact_body}'
+    return (
+        f"curl -X POST {url} {BEARER_HEADER} "
+        f'-H "Content-Type: application/json" -d {compact_body}'
+    )
+
+
+def token_command(config_path):
+    """The `canyonos token create` that makes a query token for this deployment, which
+    the endpoint knows by its `deployment_id`."""
+    project_id = read_config(config_path).get("deployment_id") or "<project_id>"
+    return f"canyonos token create --scope query --project {project_id}"
 
 
 def summary_body(dashboard_url, endpoint):
     """Build the deploy panel's text: the dashboard URL, a warning when the dashboard
     is down or the project's `otel:` block leaves it out, and how to call, poll and
-    answer the endpoint described by its published record, when there is one."""
+    answer the endpoint described by its published record, when there is one, with
+    the command that makes the token each call sends."""
     body = Text()
     body.append("Dashboard  ", "dim")
-    to_dashboard = sends_to_dashboard(deployment_config_path())
+    config_path = deployment_config_path()
+    to_dashboard = sends_to_dashboard(config_path)
     no_telemetry = (
         "No telemetry configured -- add the `local` entry to your `otel:` block"
     )
@@ -556,7 +590,9 @@ def summary_body(dashboard_url, endpoint):
             WHITE,
         )
         body.append("\ncheck result      ", "dim")
-        body.append(f"curl {base}/status/<request_id>", WHITE)
+        body.append(f"curl {BEARER_HEADER} {base}/status/<request_id>", WHITE)
+        body.append("\ntoken             ", "dim")
+        body.append(f"Make a token with: {token_command(config_path)}", WHITE)
         if host not in ("127.0.0.1", "localhost"):
             body.append(
                 f"\n                  needs inbound TCP {api_port} open on {host}",

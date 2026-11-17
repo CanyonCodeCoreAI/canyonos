@@ -22,15 +22,27 @@ import urllib.request
 
 from canyonos import ui
 from canyonos.clean import run_clean
-from canyonos.auth import DEFAULT_KEY_NAME, holds_a_key, require_keys, run_keys_create
-from canyonos.constants import CANYON_DIR, project_config_path, project_folder
+from canyonos.auth import (
+    DEFAULT_KEY_NAME,
+    holds_a_key,
+    query_token,
+    require_keys,
+    run_keys_create,
+)
+from canyonos.constants import (
+    CANYON_DIR,
+    deployment_config_path,
+    project_config_path,
+    project_folder,
+    read_config,
+)
 from canyonos.dashboard_registration import (
     RegistrationError,
     add_sample_data,
     register_project,
 )
 from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
-from canyonos.deploy import run_deploy
+from canyonos.deploy import run_deploy, token_command
 from canyonos.doctor import run_doctor
 from canyonos.gc import deploy_status, deployed_endpoint
 from canyonos.init import load_state, redis_port_of
@@ -56,6 +68,10 @@ TOTAL_STEPS = len(STAGES)
 
 # The progress bar in each heading: one block per stage, not per minute.
 BAR_DONE, BAR_TODO = "█", "░"
+
+# How long the token in the typed `curl` lasts: it is shown on screen, so it expires
+# soon after the first request rather than never.
+TOKEN_TTL_SECONDS = 3600
 
 # Characters of an unexpected endpoint reply to show before truncating it.
 MAX_REPLY_SHOWN = 200
@@ -463,16 +479,20 @@ def _show_dashboard(caption="Watch it run in the dashboard:"):
     ui.command(f"  {dashboard_url(port)}")
 
 
-def _await_result(endpoint, request_id, timeout=REQUEST_TIMEOUT):
-    """Poll the endpoint until the request is done or errors, showing a spinner
-    in the terminal meanwhile. Returns what it answered with, or
+def _await_result(endpoint, request_id, token, timeout=REQUEST_TIMEOUT):
+    """Poll the endpoint with `token` until the request is done or errors, showing a
+    spinner in the terminal meanwhile. Returns what it answered with, or
     `{"status": "timeout"}`."""
     url = f"http://{endpoint['public_host']}:{endpoint['api_port']}/status/{request_id}"
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     deadline = time.time() + timeout
     with ui.status("Waiting for the workflow..."):
         while time.time() < deadline:
             try:
-                with urllib.request.urlopen(url, timeout=POLL_TIMEOUT) as answer:
+                # The URL is always http:// to the deployment's own endpoint, never a
+                # caller's scheme, which the rule cannot see.
+                # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+                with urllib.request.urlopen(request, timeout=POLL_TIMEOUT) as answer:
                     data = json.loads(answer.read())
                 if data.get("status") in ("done", "error"):
                     return data
@@ -484,8 +504,9 @@ def _await_result(endpoint, request_id, timeout=REQUEST_TIMEOUT):
     return {"status": "timeout"}
 
 
-def _curl_for(endpoint, project):
-    """The `curl` stage 6 asks for, and the file its query came from.
+def _curl_for(endpoint, project, token):
+    """The `curl` stage 6 asks for, sending `token`, and the file its query came
+    from.
 
     Built from what the deploy published -- the address and method from the
     manifest, the body keys from the served method's own arguments -- so it works
@@ -499,12 +520,15 @@ def _curl_for(endpoint, project):
     route = endpoint["routes"][0]
     body = json.dumps({name: query or f"your {name}" for name in route["arguments"]})
     command = (
-        f"curl -X POST {route['url']} -H 'Content-Type: application/json' -d '{body}'"
+        f"curl -X POST {route['url']} "
+        f"-H 'Authorization: Bearer {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{body}'"
     )
     return command, query_path
 
 
-def _send_request(command, endpoint):
+def _send_request(command, endpoint, token):
     """Run the typed `curl`, wait for the workflow, and show the result in the
     terminal. Returns True when it answered.
 
@@ -537,7 +561,7 @@ def _send_request(command, endpoint):
         return False
 
     ui.ok(f"Accepted as request {request_id}.")
-    data = _await_result(endpoint, request_id)
+    data = _await_result(endpoint, request_id, token)
 
     if data.get("status") == "done":
         ui.blank()
@@ -597,23 +621,36 @@ def _add_sample_data(workflow):
 
 def _send_first_request(project):
     """Show the `curl` for the deployed endpoint, with the query of the starter in
-    `project`, wait for the user to type it,
-    send it and wait for the answer. True when the workflow answered."""
+    `project` and a query token signed for this deployment, wait for the user to type
+    it, send it and wait for the answer. True when the workflow answered."""
     try:
         endpoint = deployed_endpoint(load_state()["port"])
     except (KeyError, OSError, RuntimeError, ValueError):
         ui.warn("Could not read the endpoint -- `canyonos status` prints it.")
         return False
 
-    command, query_path = _curl_for(endpoint, project)
+    config_path = deployment_config_path()
+    try:
+        token = query_token(
+            read_config(config_path)["deployment_id"], ttl=TOKEN_TTL_SECONDS
+        )
+    except RuntimeError as error:
+        ui.warn(f"Could not sign a token for the request: {error}")
+        return False
+    command, query_path = _curl_for(endpoint, project, token)
+    expires = time.strftime("%H:%M UTC", time.gmtime(time.time() + TOKEN_TTL_SECONDS))
+    ui.hint(
+        f"  the token in it expires in an hour, at {expires}; make your own with: "
+        f"{token_command(config_path)}"
+    )
     if query_path:
         ui.hint(f"  query from {query_path}")
-        ui.blank()
+    ui.blank()
 
     return bool(
         _typed(
             command,
-            lambda: _send_request(command, endpoint),
+            lambda: _send_request(command, endpoint, token),
             "send one request through the workflow and wait for the answer",
         )
     )

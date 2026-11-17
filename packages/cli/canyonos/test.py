@@ -3,8 +3,9 @@
 
 """
 Logic for `canyonos test`: send one prompt to each workflow the deployment running
-from this folder serves, and report what each answered. It deploys nothing: run
-`canyonos deploy <project folder>...` first.
+from this folder serves, with a query token signed here for the deployment, and report
+what each answered. It deploys nothing: run `canyonos deploy <project folder>...`
+first.
 """
 
 import json
@@ -17,8 +18,11 @@ from rich.panel import Panel
 from rich.text import Text
 
 from canyonos import kubernetes_target, ui
+from canyonos.auth import private_key_path, query_token, require_keys
+from canyonos.constants import existing_config_path, read_config
 from canyonos.deploy import (
     _curl_example,
+    require_deployment_id,
 )
 from canyonos.gc import _error_detail, deployed_endpoint, existing_deploy, test_queries
 from canyonos.os_support import is_terminal
@@ -27,14 +31,43 @@ from canyonos.theme import GREEN, WHITE
 DEFAULT_QUERY = "hello"
 REQUEST_TIMEOUT = 300
 SUBMIT_TIMEOUT = 30
+# How long each query token lasts: every request to the endpoint signs its own.
+TOKEN_TTL_SECONDS = 60
 POLL_INTERVAL = 2
 
 
-def _send_query(url, body):
+def _query_signer(config_path, key, auth_dir):
+    """A function returning the header that sends a new query token for the deployment
+    in `config_path`, by its `deployment_id`, signed with the private key `key` (or
+    the only one) in `auth_dir` and expiring TOKEN_TTL_SECONDS later, so each request
+    carries its own however long the run waits. Signs the first one here, so a key
+    that cannot sign raises RuntimeError now, as does a folder no deploy saved a
+    `deployment_id` in, and says once which key signs on stderr, also with --json;
+    never shows a token."""
+    project_id = read_config(config_path).get("deployment_id")
+    if not project_id:
+        raise RuntimeError(
+            f"{config_path} has no deployment_id, so there is no deployment to sign a "
+            "query token for. Run `canyonos deploy` from this folder first."
+        )
+
+    def signed_headers():
+        token = query_token(project_id, key, auth_dir, ttl=TOKEN_TTL_SECONDS)
+        return {"Authorization": f"Bearer {token}"}
+
+    signed_headers()
+    ui.note(f"Signed a query token with {private_key_path(key, auth_dir)}")
+    return signed_headers
+
+
+def _send_query(url, body, headers):
     """POST a query or an answer to the endpoint and return the request ID it sends back."""
     data = json.dumps(body).encode()
     req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        url,
+        data=data,
+        headers={**headers, "Content-Type": "application/json"},
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=SUBMIT_TIMEOUT) as resp:
         payload = resp.read()
@@ -47,15 +80,19 @@ def _send_query(url, body):
         ) from None
 
 
-def _await_result(endpoint, request_id, timeout):
-    """Poll the endpoint until the request is done, errors or waits for an answer, or
-    return `{"status": "timeout"}`."""
+def _await_result(endpoint, request_id, timeout, sign):
+    """Poll the endpoint, each call with the header `sign` returns, until the request
+    is done, errors or waits for an answer, or return `{"status": "timeout"}`."""
     url = f"http://{endpoint['public_host']}:{endpoint['api_port']}/status/{request_id}"
     deadline = time.time() + timeout
     with ui.status("Running query..."):
         while time.time() < deadline:
+            request = urllib.request.Request(url, headers=sign())
             try:
-                with urllib.request.urlopen(url, timeout=10) as resp:
+                # The URL is always http:// to the deployment's own endpoint, never a
+                # caller's scheme, which the rule cannot see.
+                # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+                with urllib.request.urlopen(request, timeout=10) as resp:
                     data = json.loads(resp.read())
                 if data.get("status") in ("done", "error", "input_required"):
                     return data
@@ -115,20 +152,22 @@ def _read_answer(prompt, kind):
         return text
 
 
-def _query(run, endpoint, timeout, queries):
+def _query(run, endpoint, timeout, queries, sign):
     """Send every route of the deployed endpoint a test query: the one given on the
-    command line, else its project's in `queries`, else DEFAULT_QUERY. Stores each
-    result on the run; raises if one errors or times out."""
+    command line, else its project's in `queries`, else DEFAULT_QUERY, each call with
+    the header `sign` returns. Stores each result on the run; raises if one errors or
+    times out."""
     run.begin("query", "Query the workflows")
     for route in endpoint["routes"]:
         query = run.query or queries.get(route.get("project")) or DEFAULT_QUERY
-        _query_route(run, endpoint, route, query, timeout)
+        _query_route(run, endpoint, route, query, timeout, sign)
     run.done(f"{len(run.results)} workflow(s) answered in {run.elapsed()}s")
 
 
-def _query_route(run, endpoint, route, query, timeout):
-    """Send `query` to one route, as every argument of its method, and store the result
-    on the run; raises if it errors or times out."""
+def _query_route(run, endpoint, route, query, timeout, sign):
+    """Send `query` to one route, as every argument of its method, each call with the
+    header `sign` returns, and store the result on the run; raises if it errors or
+    times out."""
     body = {name: query for name in route["arguments"]}
     url = route["url"]
     run.endpoints.append(url)
@@ -136,7 +175,7 @@ def _query_route(run, endpoint, route, query, timeout):
     ui.say(f"POST {url}  {json.dumps(body)}")
 
     try:
-        request_id = _send_query(url, body)
+        request_id = _send_query(url, body, sign())
     except urllib.error.HTTPError as e:
         detail = _error_detail(e)
         if e.code == 403:
@@ -148,7 +187,7 @@ def _query_route(run, endpoint, route, query, timeout):
     except OSError as e:
         raise RuntimeError(f"Could not reach the workflow at {url}: {e}") from None
 
-    data = _await_result(endpoint, request_id, timeout)
+    data = _await_result(endpoint, request_id, timeout, sign)
     answer_url = (
         f"http://{endpoint['public_host']}:{endpoint['api_port']}/answer/{request_id}"
     )
@@ -172,7 +211,7 @@ def _query_route(run, endpoint, route, query, timeout):
                 prompt = "Your answer: " if kind == "str" else f"Your answer ({kind}): "
             body[key] = _read_answer(prompt, kind)
         try:
-            _send_query(answer_url, body)
+            _send_query(answer_url, body, sign())
         except urllib.error.HTTPError as e:
             raise RuntimeError(
                 f"Could not send the answer to {answer_url}: {_error_detail(e)}"
@@ -181,7 +220,7 @@ def _query_route(run, endpoint, route, query, timeout):
             raise RuntimeError(
                 f"Could not send the answer to {answer_url}: {e}"
             ) from None
-        data = _await_result(endpoint, request_id, timeout)
+        data = _await_result(endpoint, request_id, timeout, sign)
     status = data.get("status")
     if status == "error":
         raise RuntimeError(data.get("error") or "the workflow returned an error.")
@@ -191,12 +230,17 @@ def _query_route(run, endpoint, route, query, timeout):
     run.results.append(data.get("result"))
 
 
-def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False):
+def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False, key=None, auth_dir=None):
     """Query each workflow of the deployment running from this folder, or, on
-    Kubernetes, of the project deployed in the cluster, through a port-forward."""
+    Kubernetes, of the project deployed in the cluster, through a port-forward, with a
+    query token signed by the key `key` in `auth_dir`."""
+    config_path = existing_config_path()
+    require_keys(auth_dir)
+    require_deployment_id(config_path)
     if kubernetes:
+        sign = _query_signer(config_path, key, auth_dir)
         with kubernetes_target.kubernetes_endpoint() as endpoint:
-            _query(run, endpoint, timeout, {})
+            _query(run, endpoint, timeout, {}, sign)
         return
 
     existing = existing_deploy()
@@ -205,11 +249,13 @@ def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False):
             "No deployment is running from this folder. Run it from the deployment's "
             "folder, the one `canyonos deploy --folder` made."
         )
+    sign = _query_signer(config_path, key, auth_dir)
     _query(
         run,
         deployed_endpoint(existing["port"]),
         timeout,
         test_queries(existing["port"]),
+        sign,
     )
 
 
@@ -287,15 +333,25 @@ def _payload(run):
     }
 
 
-def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT, kubernetes=False):
-    """Run `canyonos test`: query each workflow of the running deployment, report the
-    results, and return the exit code."""
+def run_test(
+    prompt=None,
+    as_json=False,
+    timeout=REQUEST_TIMEOUT,
+    kubernetes=False,
+    key=None,
+    auth_dir=None,
+):
+    """Run `canyonos test`: query each workflow of the running deployment with a token
+    signed by the key `key` in `auth_dir`, report the results, and return the exit
+    code."""
     run = _Run(prompt)
     ui.set_quiet(as_json)
 
     try:
         try:
-            _run_test(run, timeout=timeout, kubernetes=kubernetes)
+            _run_test(
+                run, timeout=timeout, kubernetes=kubernetes, key=key, auth_dir=auth_dir
+            )
         except KeyboardInterrupt:
             run.error = "cancelled by user"
         except EOFError:

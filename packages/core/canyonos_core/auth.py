@@ -22,6 +22,10 @@ TRUSTED_KEYS_ENV = "CANYONOS_TRUSTED_KEYS"
 AUTH_DISABLED_ENV = "CANYONOS_AUTH_DISABLED"
 
 TRUSTED_KEYS_KEY = "auth:trusted_keys"
+# How far apart a signer's clock and a verifier's may be for `exp`; the dashboard
+# API gives jose the same clockTolerance. Like jose, the endpoint ignores `iat`, so
+# a signer whose clock runs ahead is not refused at one verifier only.
+CLOCK_LEEWAY_SECONDS = 60
 
 
 class AuthError(Exception):
@@ -126,7 +130,8 @@ def _claims(token: str, trusted_pems: list[str], audiences: list[str]) -> dict:
                 algorithms=["EdDSA"],
                 audience=audiences,
                 issuer=ISSUER,
-                options={"require": ["iss", "aud", "scope"]},
+                leeway=CLOCK_LEEWAY_SECONDS,
+                options={"require": ["iss", "aud", "scope"], "verify_iat": False},
             )
         except jwt.InvalidSignatureError:
             continue

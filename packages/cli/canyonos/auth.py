@@ -319,14 +319,19 @@ def _audience(scope: str, projects: list[str], all_projects: bool) -> list[str]:
     return list(dict.fromkeys(_project_id(value) for value in projects))
 
 
-def _project_id(value: str) -> str:
-    """`value` when it is a UUID in the form `canyonos deploy` writes `deployment_id`:
+def is_project_id(value) -> bool:
+    """True when `value` is a UUID in the form `canyonos deploy` writes `deployment_id`:
     lowercase and hyphenated, since the endpoint compares `aud` with it as written."""
     try:
-        canonical = str(uuid.UUID(value))
+        return isinstance(value, str) and value == str(uuid.UUID(value))
     except ValueError:
-        canonical = None
-    if value != canonical:
+        return False
+
+
+def _project_id(value: str) -> str:
+    """`value` when it is a project ID (see `is_project_id`); raise RuntimeError
+    saying what one looks like otherwise."""
+    if not is_project_id(value):
         raise RuntimeError(
             f"--project {value!r} is not a project ID: a project ID is a lowercase, "
             "hyphenated UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), the `deployment_id` "
@@ -363,12 +368,18 @@ def sign_token(private_pem: str, claims: dict, kid: str) -> str:
     return jwt.encode(claims, private_pem, algorithm="EdDSA", headers={"kid": kid})
 
 
-def query_token(project_id: str, auth_dir: Path | None = None) -> str:
-    """Sign a token that may query the project `project_id`, with the only private key
-    in `auth_dir`, for a command that queries the workflow itself."""
-    private, public = load_key_pair(private_key_path(None, auth_dir))
+def query_token(
+    project_id: str,
+    key: str | None = None,
+    auth_dir: Path | None = None,
+    ttl: int | None = None,
+) -> str:
+    """Sign a token that may query the project `project_id`, with the private key
+    named `key` in `auth_dir` (or its only one), for a command that queries the
+    workflow itself; with `ttl`, it expires that many seconds from now."""
+    private, public = load_key_pair(private_key_path(key, auth_dir))
     return sign_token(
-        private, token_claims("query", [project_id], False, None), key_id(public)
+        private, token_claims("query", [project_id], False, ttl), key_id(public)
     )
 
 

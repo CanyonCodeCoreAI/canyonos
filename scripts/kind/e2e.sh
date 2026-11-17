@@ -16,6 +16,10 @@
 #     registry, fills an empty kubernetes: block, and fails rather than waits on a
 #     prompt when it cannot; `validate` refuses an empty block, and a config that is
 #     not valid YAML is refused rather than taken for a Docker project;
+#   - the endpoint needs a query token for the project (or for every project): none is
+#     401 auth.missing_token, a 503 auth.not_ready while the Global Controller has not
+#     published its keys counts as not up, `canyonos test` signs its own token and
+#     never shows it, and rotating the key refuses the tokens the old one signed;
 #   - the endpoint stays on 127.0.0.1:8080, also once its pod is replaced, and
 #     `canyonos serve` keeps the dashboard on 8081 and returns, and another project's
 #     serve keeps it there;
@@ -101,6 +105,23 @@ EOF
     local kubeconfig="$1" dir="$2"
     shift 2
     (cd "${dir}" && KUBECONFIG="${kubeconfig}" COLUMNS=200 timeout 600 /w/.venv/bin/canyonos "$@" </dev/null)
+  }
+  signing_key=default
+  token() { canyonos token create --key "${signing_key}" "$@"; }  # the token alone, on stdout
+  endpoint_up() {  # url, token or "" for none: wait for the unknown request's 404; a 503 is not up yet
+    local code="" header=()
+    [ -n "$2" ] && header=(-H "Authorization: Bearer $2")
+    for _ in $(seq 60); do
+      code="$(curl -s -m 5 -o /tmp/probe.json -w '%{http_code}' "${header[@]}" "$1/status/e2e")"
+      [ "${code}" = 404 ] && return 0
+      sleep 2
+    done
+    if [ "${code}" = 503 ] && grep -q auth.not_ready /tmp/probe.json; then
+      echo "still 503 auth.not_ready: $(cat /tmp/probe.json)"
+    else
+      echo "last answer ${code}: $(cat /tmp/probe.json 2>/dev/null)"
+    fi
+    return 1
   }
   config_value() {  # project folder, dotted key: its value in workflow_config.yaml
     /w/.venv/bin/python -c 'import sys, yaml
@@ -188,9 +209,16 @@ EOF
   grep -q "PRIVATE KEY" /tmp/canyonbuilds.yaml && fail "the CanyonBuild holds a private key"
   as_deployer kubectl -n "${NS}" get canyonproject -o yaml | grep -q "PRIVATE KEY" \
     && fail "the CanyonProject holds a private key"
+  project_id="$(grep -E '^project_id:' /hw/config/workflow_config.yaml | awk '{print $2}')"
+  query_token="$(token --scope query --project "${project_id}")" || fail "token create"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
-  [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ] \
-    || fail "the endpoint is not forwarded to 127.0.0.1:8080"
+  said="$(endpoint_up http://127.0.0.1:8080 "${query_token}")" \
+    || fail "the endpoint is not forwarded to 127.0.0.1:8080: ${said}"
+
+  log "The endpoint refuses a request with no token"
+  code="$(curl -s -m 5 -o /tmp/refused.json -w '%{http_code}' http://127.0.0.1:8080/status/e2e)"
+  [ "${code}" = 401 ] && grep -q auth.missing_token /tmp/refused.json \
+    || fail "no token answered ${code}: $(cat /tmp/refused.json)"
 
   canyonos status || fail "status"
   canyonos status --json | python -c 'import sys, json; json.load(sys.stdin)' \
@@ -198,43 +226,54 @@ EOF
   canyonos doctor || fail "doctor"
   canyonos logs --no-follow --tail 5 >/dev/null || fail "logs"
   canyonos logs HelloAgent-0 --no-follow --tail 5 >/dev/null || fail "logs HelloAgent-0"
-  project_id="$(grep -E '^project_id:' /hw/config/workflow_config.yaml | awk '{print $2}')"
 
   log "The endpoint stays on 127.0.0.1:8080 when its pod is replaced"
   selector="$(as_deployer kubectl -n "${NS}" get svc canyonos-endpoint \
     -o go-template='{{range $k, $v := .spec.selector}}{{$k}}={{$v}},{{end}}')"
   as_deployer kubectl -n "${NS}" delete pods -l "${selector%,}" --wait=true >/dev/null \
     || fail "could not delete the endpoint's pod"
-  back=""
-  for _ in $(seq 60); do
-    if [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ]; then
-      back=1
-      break
-    fi
-    sleep 2
-  done
-  [ -n "${back}" ] || fail "the endpoint forward did not come back after its pod was replaced"
+  said="$(endpoint_up http://127.0.0.1:8080 "${query_token}")" \
+    || fail "the endpoint forward did not come back after its pod was replaced: ${said}"
   as_deployer kubectl -n "${NS}" wait pods -l "${selector%,}" --for=condition=Ready --timeout=5m >/dev/null \
     || fail "the endpoint's new pod is not ready"
 
-  requests() {
-    as_deployer kubectl -n "${NS}" port-forward svc/canyonos-endpoint 18080:8080 >/dev/null 2>&1 &
-    local forward=$! ok=0 id
-    for _ in $(seq 30); do curl -s -m 5 -o /dev/null http://127.0.0.1:18080/ && break; sleep 2; done
+  requests() {  # signed for this project: the project_id the GC wrote is the config's
+    # kubectl itself in the background, not a function's subshell, so the kill below stops
+    # it and the next call's forward can take the port.
+    KUBECONFIG="${DEPLOYER}" kubectl -n "${NS}" port-forward svc/canyonos-endpoint 18080:8080 >/dev/null 2>&1 &
+    local forward=$! ok=0 id signed sent answer
+    signed="$(token --scope query --project "${project_id}")" || return 1
+    endpoint_up http://127.0.0.1:18080 "${signed}" || { kill "${forward}"; return 1; }
     for n in 1 2 3 4 5; do
-      id="$(curl -s -m 10 -X POST http://127.0.0.1:18080/Workflow/main -H 'Content-Type: application/json' \
-        -d "{\"query\": \"e2e ${n}\"}" | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])' 2>/dev/null || true)"
+      sent="$(curl -s -m 10 -w ' %{http_code}' -X POST http://127.0.0.1:18080/Workflow/main \
+        -H "Authorization: Bearer ${signed}" -H 'Content-Type: application/json' \
+        -d "{\"query\": \"e2e ${n}\"}" || true)"
+      id="$(echo "${sent% *}" | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])' 2>/dev/null || true)"
+      [ -n "${id}" ] || echo "request ${n} answered ${sent}"
       for _ in $(seq 60); do
-        case "$(curl -s -m 5 "http://127.0.0.1:18080/status/${id}")" in *'"done"'*) ok=$((ok + 1)); break ;; esac
+        answer="$(curl -s -m 5 -H "Authorization: Bearer ${signed}" "http://127.0.0.1:18080/status/${id}" || true)"
+        case "${answer}" in *'"done"'*) ok=$((ok + 1)); break ;; esac
         sleep 0.5
       done
+      case "${answer}" in *'"done"'*) ;; *) echo "request ${n} last status: ${answer}" ;; esac
     done
     kill "${forward}" 2>/dev/null || true
     echo "requests done: ${ok}/5"
     [ "${ok}" = 5 ]
   }
+  query_status() {  # token: the status a POST of one query answers with
+    curl -s -m 10 -o /tmp/query.json -w '%{http_code}' -X POST http://127.0.0.1:8080/Workflow/main \
+      -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -d '{"query": "e2e"}'
+  }
   log "Requests through the endpoint"
   requests || fail "requests"
+  code="$(query_status "$(token --scope query --all-projects)")"
+  [ "${code}" = 202 ] || fail "a token for every project answered ${code}: $(cat /tmp/query.json)"
+
+  log "canyonos test signs its own query token and never shows it"
+  said="$(canyonos test 2>&1)" || fail "canyonos test: ${said}"
+  echo "${said}" | grep -q "Signed a query token with" || fail "canyonos test did not say it signed a token: ${said}"
+  echo "${said}" | grep -Eq 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.' && fail "canyonos test showed a token: ${said}"
 
   log "The dashboard lists the project, reads its Redis and receives its telemetry"
   for _ in $(seq 30); do
@@ -292,6 +331,25 @@ EOF
     "the dashboard lost the project's Redis after the rotation"
   kill "${dashboard_forward}" 2>/dev/null || true
 
+  log "Rotating the key refuses every query token the old one signed"
+  canyonos keys create --name rotated || fail "keys create --name rotated"
+  rm "${HOME}/.canyonos/auth/trusted/default.pub"
+  canyonos deploy || fail "deploy after the key rotation"
+  refused=""
+  for _ in $(seq 60); do
+    if [ "$(query_status "${query_token}")" = 401 ]; then
+      refused=1
+      break
+    fi
+    sleep 5
+  done
+  [ -n "${refused}" ] && grep -q auth.invalid_token /tmp/query.json \
+    || fail "the old key's token still answers: $(cat /tmp/query.json)"
+  signing_key=rotated
+  query_token="$(token --scope query --project "${project_id}")" || fail "token create --key rotated"
+  code="$(query_status "${query_token}")"
+  [ "${code}" = 202 ] || fail "the rotated key's token answered ${code}: $(cat /tmp/query.json)"
+
   log "canyonos serve keeps the dashboard on 127.0.0.1:8081 and returns"
   # As an admin: the deployer may not port-forward into the dashboard's namespace.
   canyonos_in "${ADMIN}" /hw serve || fail "serve"
@@ -337,16 +395,16 @@ EOF
   log "deploy and serve again, so the stop below has both forwards to close"
   canyonos deploy || fail "deploy again"
   canyonos_in "${ADMIN}" /hw serve || fail "serve again"
-  [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ] \
-    || fail "the redeploy did not forward the endpoint to 127.0.0.1:8080"
+  said="$(endpoint_up http://127.0.0.1:8080 "${query_token}")" \
+    || fail "the redeploy did not forward the endpoint to 127.0.0.1:8080: ${said}"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "serve did not open the dashboard again"
 
   log "deploy --dangerous-skip-auth turns the project's verification off"
   canyonos deploy --dangerous-skip-auth || fail "deploy --dangerous-skip-auth"
   disabled="$(as_deployer kubectl -n "${NS}" get canyonproject -o jsonpath='{.items[0].spec.auth.disabled}')"
   [ "${disabled}" = true ] || fail "spec.auth.disabled is ${disabled:-unset}, not true"
-  [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ] \
-    || fail "the endpoint does not answer with verification off"
+  said="$(endpoint_up http://127.0.0.1:8080 "")" \
+    || fail "the endpoint does not answer a request with no token with verification off: ${said}"
 
   log "canyonos stop, then clean"
   canyonos stop || fail "stop"

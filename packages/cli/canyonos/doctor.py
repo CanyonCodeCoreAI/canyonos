@@ -11,12 +11,11 @@ nothing here attempts to auto-fix anything.
 import json
 import shutil
 import subprocess
-import urllib.error
-import urllib.request
 
 from canyonos import ui
 from canyonos.constants import (
     endpoint_answers,
+    endpoint_answers_at,
     port_in_use,
 )
 from canyonos.dashboard_stack import (
@@ -35,6 +34,9 @@ from canyonos.init import (
     redis_port_of,
 )
 from canyonos.verify import _runtime_table, agent_rows
+
+# Seconds the endpoint gets to answer through a port-forward or an Ingress.
+FORWARDED_TIMEOUT = 5
 
 
 def _compose_available():
@@ -263,7 +265,7 @@ def _kubernetes_endpoint_check(namespace, project, found):
     if not k8s._in_cluster_only(url):
         return _print_check(
             "Endpoint",
-            _endpoint_answers_at(url),
+            endpoint_answers_at(url, FORWARDED_TIMEOUT),
             url,
             "nothing answers there -- check the Ingress or `endpoint.url`",
         )
@@ -272,13 +274,15 @@ def _kubernetes_endpoint_check(namespace, project, found):
         detail = f"127.0.0.1:{port} (forwarded until `canyonos stop`)"
         return _print_check(
             "Endpoint",
-            _endpoint_answers_at(f"http://127.0.0.1:{port}"),
+            endpoint_answers_at(f"http://127.0.0.1:{port}", FORWARDED_TIMEOUT),
             detail,
             f"nothing answers on {port} -- `canyonos deploy` again opens it anew",
         )
     forward = k8s.PortForward(namespace)
     try:
-        answers = _endpoint_answers_at(f"http://127.0.0.1:{forward.port}")
+        answers = endpoint_answers_at(
+            f"http://127.0.0.1:{forward.port}", FORWARDED_TIMEOUT
+        )
     finally:
         forward.close()
     return _print_check(
@@ -287,21 +291,6 @@ def _kubernetes_endpoint_check(namespace, project, found):
         f"{url} (not forwarded here: `canyonos deploy` keeps it on 127.0.0.1)",
         "the endpoint isn't answering -- see `canyonos logs`",
     )
-
-
-def _endpoint_answers_at(url):
-    """Any HTTP answer from the endpoint at `url`, the probe `endpoint_answers` sends;
-    an unknown request id takes the endpoint about two seconds to refuse, so it gets
-    longer here, through a port-forward or an Ingress."""
-    try:
-        urllib.request.urlopen(
-            f"{url.rstrip('/')}/status/canyonos-test-probe", timeout=5
-        )
-    except urllib.error.HTTPError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def _kubernetes_dashboard_check():

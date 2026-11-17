@@ -159,18 +159,30 @@ def endpoint_api_port(config_path):
     return port if isinstance(port, int) and not isinstance(port, bool) else None
 
 
-def endpoint_answers(api_port):
-    """True when the endpoint on this machine gives any HTTP answer; the probe's
-    unknown request id 404s, which still proves the server is up and listening."""
+# What an endpoint answers before the Global Controller has published its trusted
+# keys (`auth.not_ready`): up, but refusing every request.
+NOT_READY_STATUS = 503
+
+
+def endpoint_answers_at(url, timeout):
+    """True when the endpoint at `url` is up and taking requests: any HTTP answer to
+    the probe, which sends no token, counts (a 401 is the endpoint verifying, and the
+    404 of its unknown request id comes with verification off), except the 503 it
+    answers while it waits for its trusted keys."""
     try:
         urllib.request.urlopen(
-            f"http://127.0.0.1:{api_port}/status/canyonos-test-probe", timeout=2
+            f"{url.rstrip('/')}/status/canyonos-test-probe", timeout=timeout
         )
-    except urllib.error.HTTPError:
-        return True
+    except urllib.error.HTTPError as error:
+        return error.code != NOT_READY_STATUS
     except OSError:
         return False
     return True
+
+
+def endpoint_answers(api_port):
+    """`endpoint_answers_at` for the endpoint on this machine."""
+    return endpoint_answers_at(f"http://127.0.0.1:{api_port}", timeout=2)
 
 
 def local_redis_port(config_path):

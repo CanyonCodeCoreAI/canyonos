@@ -80,6 +80,17 @@ def ok(message):
     _emit(message, GREEN, "✓")
 
 
+def note(message):
+    """Show a success message on stderr, marked with a green ✓, even while the
+    helpers are quiet: `canyonos test --json` keeps stdout for its payload and still
+    says what it did."""
+    quiet, err_console.quiet = err_console.quiet, False
+    try:
+        _emit(message, GREEN, "✓", err_console)
+    finally:
+        err_console.quiet = quiet
+
+
 def fail(message):
     """Show an error message on stderr, marked with a red ✗."""
     _emit(message, "bold red", "✗", err_console)

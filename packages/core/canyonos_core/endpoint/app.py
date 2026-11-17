@@ -5,7 +5,8 @@
 
 `main` runs a local controller with no agent, which routes each call to a replica
 of the served agent, and gunicorn workers built by `worker_app`, which queue those
-calls and report their results.
+calls and report their results. Every route needs a `query` token for this project,
+signed by a key the Global Controller published to Redis.
 """
 
 import json
@@ -20,15 +21,23 @@ import time
 import uuid
 
 import psycopg
+import redis
 from flask import Flask, jsonify, request
 
+from canyonos_core.auth import ALL_PROJECTS, TRUSTED_KEYS_KEY, AuthError, verify_bearer
 from canyonos_core.controller import canyonos_context
 from canyonos_core.controller.future import Future
 from canyonos_core.controller.local_controller import (
     LocalController,
     shutdown_grace_seconds,
 )
-from canyonos_core.endpoint import ENDPOINT_CPUS, ENDPOINT_PORT, route_path
+from canyonos_core.controller.utils.redis_client import RedisClient
+from canyonos_core.endpoint import (
+    ENDPOINT_CPUS,
+    ENDPOINT_PORT,
+    IDENTITY_KEY,
+    route_path,
+)
 from canyonos_core.schema import qualified_name
 
 import local_controller_pb2
@@ -41,6 +50,51 @@ WORKER_THREADS = 16
 DASHBOARD_DATABASE_URL = (
     "postgresql://canyonos:canyonos@canyonos-dashboard-db:5432/canyonos"
 )
+# How long a Redis call may take before the request is answered without it, so an
+# unreachable Redis is a quick 503 rather than a hung request.
+REDIS_TIMEOUT_SECONDS = 2
+NOT_READY = (
+    "The endpoint is starting; the Global Controller has not published its trusted "
+    "keys yet"
+)
+MISSING_TOKEN = (
+    "This endpoint needs a query token, sent as the header Authorization: Bearer "
+    "<token>. Make one with: canyonos token create --scope query --project "
+    "<project_id>"
+)
+
+
+def _auth_record(redis_client) -> tuple[dict, str] | None:
+    """The trusted keys the Global Controller published and the project id it wrote,
+    or None while either is missing or Redis cannot be read."""
+    try:
+        record = redis_client.get(TRUSTED_KEYS_KEY)
+        project_id = redis_client.hget(IDENTITY_KEY, "project_id")
+    except redis.RedisError as error:
+        logger.warning("Could not read the trusted keys from Redis: %s", error)
+        return None
+    if record is None or not project_id:
+        return None
+    return json.loads(record), project_id
+
+
+def _bearer_token(header: str) -> str | None:
+    """The token of an `Authorization: Bearer <token>` header, the scheme in any case;
+    None for any other header."""
+    scheme, _, token = header.strip().partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def _refusal(code: str, message: str, status: int):
+    """A request refused before it reached its route, in the governance refusal's
+    shape; a 401 also names the scheme it takes."""
+    response = jsonify({"error": message, "error_name": code})
+    response.status_code = status
+    if status == 401:
+        response.headers["WWW-Authenticate"] = "Bearer"
+    return response
 
 
 def _record_from_dashboard(request_id):
@@ -68,10 +122,39 @@ def create_app(routes, redis_client):
     """Build the Flask app that queues calls to each route's agent method at
     `POST /<project>/<agent>/<method>`, refusing a body that lacks one of the method's
     declared `arguments`, and reports their results at `GET /status/<request_id>`;
-    `POST /answer/<request_id>` answers that request's oldest waiting question."""
+    `POST /answer/<request_id>` answers that request's oldest waiting question. Every
+    route first needs a `query` token for this project or for every project, unless
+    the deploy turned that off."""
     app = Flask("canyonos-endpoint")
     served = {route_path(route): route.get("arguments") or [] for route in routes}
     paths = ", ".join(f"POST {path}" for path in served)
+
+    @app.before_request
+    def require_a_query_token():
+        """Refuse a request without a valid query token, before its body is read; a
+        CORS preflight carries none and needs none."""
+        if request.method == "OPTIONS":
+            return None
+        found = _auth_record(redis_client)
+        if found is None:
+            return _refusal("auth.not_ready", NOT_READY, 503)
+        record, project_id = found
+        if record["disabled"]:
+            return None
+        token = _bearer_token(request.headers.get("Authorization", ""))
+        if token is None:
+            return _refusal("auth.missing_token", MISSING_TOKEN, 401)
+        try:
+            verify_bearer(
+                token,
+                record["keys"],
+                audiences=[project_id, ALL_PROJECTS],
+                scope="query",
+            )
+        except AuthError as error:
+            logger.info("Refused %s %s: %s", request.method, request.path, error.code)
+            return _refusal(error.code, error.message, error.status)
+        return None
 
     @app.errorhandler(404)
     def not_found(_error):
@@ -204,8 +287,16 @@ def create_app(routes, redis_client):
 
 
 def worker_app():
-    """Build the app each gunicorn worker serves from the container's env."""
-    return create_app(json.loads(os.environ["CANYONOS_ENDPOINT_ROUTES"]), Future.redis)
+    """Build the app each gunicorn worker serves from the container's env, reading
+    Redis through a client that gives up after REDIS_TIMEOUT_SECONDS."""
+    return create_app(
+        json.loads(os.environ["CANYONOS_ENDPOINT_ROUTES"]),
+        RedisClient(
+            host=os.environ.get("CANYONOS_REDIS_HOST", "localhost"),
+            port=int(os.environ.get("CANYONOS_REDIS_PORT", 6379)),
+            timeout=REDIS_TIMEOUT_SECONDS,
+        ),
+    )
 
 
 def main():

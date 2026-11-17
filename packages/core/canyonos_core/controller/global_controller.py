@@ -33,6 +33,7 @@ from canyonos_core.controller.orchestrator import TARGET_ENV, orchestrator_for
 from canyonos_core.endpoint import (
     ADDRESS_KEY,
     ENDPOINT_PORT,
+    IDENTITY_KEY,
     endpoint_record,
     read_endpoint_record,
 )
@@ -217,8 +218,6 @@ class GlobalController(ControllerContext):
     """
 
     POLICY_RULES_KEY = "policy:rules"
-    # The deployment as the dashboard knows it: its id and name, as one project.
-    IDENTITY_KEY = "controller:identity"
     OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
     # Redis keys of the config files last published, so a removed file's key is cleared.
     CONFIG_FILES_KEY = "config:files"
@@ -602,7 +601,7 @@ class GlobalController(ControllerContext):
         }
         targets = list(self.machine_redis.values()) or [self.redis]
         for redis_client in targets:
-            redis_client.hset_multiple(self.IDENTITY_KEY, payload)
+            redis_client.hset_multiple(IDENTITY_KEY, payload)
 
         logger.info(
             "Identity (project %s) published to %d Redis instance(s).",

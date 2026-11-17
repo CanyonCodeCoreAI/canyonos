@@ -30,6 +30,10 @@ ENDPOINT_AGENT_NAME = "endpoint"
 # The dashboard API reads the endpoint's address here.
 ADDRESS_KEY = "endpoint:address"
 
+# The Global Controller writes the project_id here, the audience the endpoint
+# accepts tokens for.
+IDENTITY_KEY = "controller:identity"
+
 
 def route_path(route):
     """The path a route is served at: `/<project>/<agent>/<method>`."""

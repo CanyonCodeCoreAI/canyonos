@@ -42,7 +42,12 @@ from canyonos.constants import (
     project_root,
     read_config,
 )
-from canyonos.deploy import save_deployment_config
+from canyonos.deploy import (
+    BEARER_HEADER,
+    require_deployment_id,
+    save_deployment_config,
+    token_command,
+)
 from canyonos.forwards import (
     DASHBOARD,
     close_forward,
@@ -734,7 +739,9 @@ def _forward_endpoint(namespace, project, config):
     return f"http://127.0.0.1:{port}"
 
 
-def _summary(namespace, project_obj, config, local_url=None, dashboard_url=None):
+def _summary(
+    namespace, project_obj, config, config_path, local_url=None, dashboard_url=None
+):
     url = project_obj.get("status", {}).get("endpointURL", "")
     lines = [
         Text.assemble(
@@ -771,12 +778,16 @@ def _summary(namespace, project_obj, config, local_url=None, dashboard_url=None)
         lines.append(
             Text.assemble(
                 ("Call       ", "bold"),
-                f"curl -X POST {url}/{path} -H \"Content-Type: application/json\" -d '{body}'",
+                f"curl -X POST {url}/{path} {BEARER_HEADER} "
+                f"-H \"Content-Type: application/json\" -d '{body}'",
             )
         )
     lines.append(
-        Text.assemble(("Poll       ", "bold"), f"curl {url}/status/<request_id>")
+        Text.assemble(
+            ("Poll       ", "bold"), f"curl {BEARER_HEADER} {url}/status/<request_id>"
+        )
     )
+    lines.append(Text.assemble(("Token      ", "bold"), token_command(config_path)))
     lines.append(
         Text.assemble(("Test       ", "bold"), kubernetes_command('test "your query"'))
     )
@@ -807,6 +818,7 @@ def run_kubernetes_deploy(
     else:
         keys = require_keys(auth_dir)
     config_path = resolve_config(config_path)
+    require_deployment_id(config_path)
     env_values = read_dotenv()
     config = load_config(config_path, env_values)
     k8s = config["kubernetes"]
@@ -844,7 +856,9 @@ def run_kubernetes_deploy(
         except RuntimeError as error:
             ui.hint(f"Dashboard not opened: {error}")
     dashboard_url = f"http://127.0.0.1:{dashboard_port}" if dashboard_port else None
-    ui.panel(_summary(namespace, project_obj, config, local_url, dashboard_url))
+    ui.panel(
+        _summary(namespace, project_obj, config, config_path, local_url, dashboard_url)
+    )
     return agents
 
 

@@ -7,7 +7,6 @@ doctor."""
 
 import json
 import re
-from pathlib import Path
 
 from ..harness import (
     canyonos,
@@ -20,6 +19,8 @@ from ..harness import (
     project_containers,
     project_redis,
     qualified,
+    query_token,
+    run,
 )
 
 DASHBOARD = [
@@ -30,22 +31,28 @@ DASHBOARD = [
 REPLICA_SUFFIX = "-[0-9a-f]{8}"
 TRUSTED_KEYS_KEY = "auth:trusted_keys"
 AUTH_ENV = ("CANYONOS_TRUSTED_KEYS", "CANYONOS_AUTH_DISABLED")
+BEARER = '-H "Authorization: Bearer <token>"'
 
 
 def _whole_curl(url: str, body: str) -> str:
     """The one-line curl the CLI prints for `url`, as piped output has to keep it."""
-    return f"curl -X POST {url} -H \"Content-Type: application/json\" -d '{body}'"
+    return (
+        f"curl -X POST {url} {BEARER} -H \"Content-Type: application/json\" -d '{body}'"
+    )
+
+
+def _query_curl(endpoint) -> str:
+    return _whole_curl(
+        f"{endpoint.url}/{endpoint.route}", f'{{"{endpoint.argument}": "your query"}}'
+    )
 
 
 def _endpoint_lines(endpoint) -> list[str]:
     """The lines a deploy panel shows to call, answer and poll this endpoint."""
     return [
-        _whole_curl(
-            f"{endpoint.url}/{endpoint.route}",
-            f'{{"{endpoint.argument}": "your query"}}',
-        ),
+        _query_curl(endpoint),
         _whole_curl(f"{endpoint.url}/answer/<request_id>", '{"input": "your answer"}'),
-        f"curl {endpoint.url}/status/<request_id>",
+        f"curl {BEARER} {endpoint.url}/status/<request_id>",
     ]
 
 
@@ -64,9 +71,21 @@ def _replica_logs(output: str) -> dict[str, list[str]]:
 
 def test_deploy_and_status_print_the_curl_whole(recorder, deployed):
     status = canyonos(recorder, ["status"], cwd=deployed.dir)
+    hint = (
+        "Make a token with: canyonos token create --scope query --project "
+        f"{deployed.project_id}"
+    )
     for output in (deployed.deploy_output, status.output):
-        for line in _endpoint_lines(deployed.endpoint):
+        for line in [*_endpoint_lines(deployed.endpoint), hint]:
             assert line in output, f"{line!r} missing\n{output[-3000:]}"
+
+
+def test_the_printed_curl_works_with_a_token(recorder, deployed):
+    printed = _query_curl(deployed.endpoint)
+    assert printed in deployed.deploy_output, deployed.deploy_output[-3000:]
+    command = printed.replace("<token>", query_token(recorder, deployed.dir))
+    call = run(recorder, ["sh", "-c", command], cwd=deployed.dir)
+    assert json.loads(call.stdout)["request_id"], call.output
 
 
 def test_containers_up(recorder, deployed):
@@ -112,8 +131,8 @@ def test_the_global_controller_publishes_the_trusted_keys(recorder, deployed):
     trusted = cli_value(
         recorder,
         deployed.dir,
-        "trusted_keys(None)",
-        "from canyonos.auth import trusted_keys",
+        f"trusted_keys(Path({str(recorder.auth_dir)!r}))",
+        "from pathlib import Path; from canyonos.auth import trusted_keys",
     )
 
     assert set(record) == {"keys", "disabled"}, record
@@ -125,7 +144,7 @@ def test_the_global_controller_publishes_the_trusted_keys(recorder, deployed):
 def test_only_the_global_controller_gets_the_public_keys(recorder, deployed):
     keys = _published_keys(recorder, deployed)["keys"]
     controller = f"{deployed.group}-global-controller"
-    auth_dir = str(Path.home() / ".canyonos" / "auth")
+    auth_dir = str(recorder.auth_dir)
 
     for name in project_containers(recorder, deployed.group):
         inspected = docker(recorder, ["inspect", name]).json()[0]

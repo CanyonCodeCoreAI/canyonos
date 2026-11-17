@@ -43,8 +43,8 @@ def pytest_runtest_setup(item):
 
 @pytest.fixture(scope="session", autouse=True)
 def trusted_key(recorder):
-    """A key in the caller's HOME before any scenario deploys, as `deployed` makes
-    for the cases."""
+    """A key in the session's keys folder before any scenario deploys, as
+    `deployed` makes for the cases."""
     trust_a_key(recorder, REPO_ROOT)
 
 

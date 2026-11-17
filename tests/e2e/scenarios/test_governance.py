@@ -366,6 +366,7 @@ def test_a_root_call_whose_requirement_is_down_gets_a_403(recorder, governed):
         "POST",
         url,
         json={governed.endpoint.argument: QUERY},
+        headers=governed.endpoint.headers,
         check=False,
     )
     assert call.code == 403, call.output
@@ -375,7 +376,7 @@ def test_a_root_call_whose_requirement_is_down_gets_a_403(recorder, governed):
         f"DependencyDown: {WORKFLOW} requires {RUNNER}"
     ), call.output
     status_url = f"{governed.endpoint.url}/status/{refusal['request_id']}"
-    status = http(recorder, "GET", status_url).json()
+    status = http(recorder, "GET", status_url, headers=governed.endpoint.headers).json()
     assert status["status"] == "error", status
     assert status["error"] == refusal["error"], status
 

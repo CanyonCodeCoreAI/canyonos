@@ -567,7 +567,7 @@ def _run_command(settings_at_start):
     )
     add("upgrade", lambda args: sys.exit(run_upgrade()))
 
-    # Test has args: prompt, --json, --timeout, --target.
+    # Test has args: prompt, --json, --timeout, --key, --auth-dir, --target.
     test = add_target(
         add(
             "test",
@@ -577,8 +577,11 @@ def _run_command(settings_at_start):
                     as_json=args.json,
                     timeout=args.timeout,
                     kubernetes=on_kubernetes(args),
+                    key=args.key,
+                    auth_dir=args.auth_dir,
                 )
             ),
+            parents=[auth_dir],
         )
     )
     test.add_argument(
@@ -601,6 +604,12 @@ def _run_command(settings_at_start):
             "Seconds to wait for the workflow to finish; the wait restarts after each "
             f"answer (default: {REQUEST_TIMEOUT})."
         ),
+    )
+    test.add_argument(
+        "--key",
+        metavar="NAME",
+        help="The private key to sign the query token with; needed only when there "
+        "is more than one",
     )
 
     validate = add(

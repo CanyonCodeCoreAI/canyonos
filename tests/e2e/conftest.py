@@ -42,6 +42,7 @@ from .harness import (
     stage,
     stop_project,
     trust_a_key,
+    trust_the_vectors,
 )
 from .projects import Project, list_projects, load_check, load_project
 
@@ -234,8 +235,9 @@ class QueryResult:
 
 @pytest.fixture(scope="session")
 def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[Deployed]:
-    """Deploy the staged project with `canyonos deploy`, sign in to the dashboard
-    and hand cases the endpoint and API. Afterwards, and also when any of that
+    """Deploy the staged project with `canyonos deploy`, trusting a key of the
+    caller's and the token vectors' key, sign in to the dashboard and hand cases the
+    endpoint and API. Afterwards, and also when any of that
     fails, save the container logs and remove the deploy with `canyonos stop`. A
     failing stop fails the run, unless the deploy had already failed: that failure
     is the one reported."""
@@ -243,6 +245,7 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[De
     folder = project_dir(workspace)
     try:
         trust_a_key(recorder, workspace)
+        trust_the_vectors(recorder, workspace)
         # From the project folder, naming the deployment's folder, as a user would.
         deploy = canyonos(
             recorder,

@@ -13,6 +13,11 @@ case runs the stage a first-time user reaches with no key: copy, deploy, ask, re
 the greeting back, ask again through `canyonos test`, and never launch a coding
 agent.
 
+The same deploy carries the endpoint's token checks that need a real runtime: a
+query without a token is refused, rotating the key refuses the tokens it signed,
+`--dangerous-skip-auth` lasts only for its own deploy, and a paused Redis is a quick
+503 rather than a hang. Each case has its own HOME, so its keys touch nobody's.
+
 Unlike the rest of this suite it owns the shared Docker names, ports and daemon,
 so it tears the deploy down whether or not it passed.
 """
@@ -26,6 +31,7 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator, Mapping
@@ -33,10 +39,11 @@ from pathlib import Path
 
 import pexpect
 import pytest
+import yaml
 
 from canyonos.quickstart import _fetch
 
-from .harness import CliCase
+from .harness import CliCase, token_in
 
 # The workflow the quickstart offers first, and the only one that reaches a trace
 # without an API key -- which is what makes it the one this suite can deploy.
@@ -48,6 +55,8 @@ DEPLOY_TIMEOUT = 600
 CLEAN_TIMEOUT = 300
 REQUEST_TIMEOUT = 120
 POLL_INTERVAL = 2
+# How long a request may take to be refused while Redis does not answer.
+NOT_READY_WITHIN = 10
 
 # The endpoint address out of `canyonos deploy`'s own summary. The port is picked
 # at deploy time, so it is read back rather than assumed.
@@ -159,18 +168,34 @@ def _runtime_environment() -> dict[str, str]:
     return {"CANYONOS_CORE_IMAGE": CORE_IMAGE, **DOCKER}
 
 
-def _answer(endpoint: str, query: str) -> dict:
-    """Send `query` through the deployed workflow and return what it answered."""
+def _bearer(token: str | None) -> dict[str, str]:
+    return {} if token is None else {"Authorization": f"Bearer {token}"}
+
+
+def _post(endpoint: str, query: str, token: str | None) -> tuple[int, dict]:
+    """POST `query` to the endpoint, with `token` when there is one, and return the
+    status and the JSON body it answered with, refusals included."""
     submitted = urllib.request.Request(
         endpoint,
         data=json.dumps({"query": query}).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **_bearer(token)},
     )
-    with urllib.request.urlopen(submitted, timeout=30) as reply:
-        request_id = json.loads(reply.read())["request_id"]
+    try:
+        with urllib.request.urlopen(submitted, timeout=30) as reply:
+            return reply.status, json.loads(reply.read())
+    except urllib.error.HTTPError as refused:
+        return refused.code, json.loads(refused.read())
+
+
+def _answer(endpoint: str, query: str, token: str | None) -> dict:
+    """Send `query` through the deployed workflow with `token` and return what it
+    answered."""
+    code, body = _post(endpoint, query, token)
+    assert code == 202, body
+    request_id = body["request_id"]
 
     status = urllib.parse.urlsplit(endpoint)._replace(path=f"/status/{request_id}")
-    status = status.geturl()
+    status = urllib.request.Request(status.geturl(), headers=_bearer(token))
     deadline = time.time() + REQUEST_TIMEOUT
     while time.time() < deadline:
         try:
@@ -184,10 +209,62 @@ def _answer(endpoint: str, query: str) -> dict:
     return {"status": "timeout"}
 
 
+def _run(case: CliCase, args: list[str], **options) -> str:
+    """Run `canyonos` with `args`, fail the case unless it exits 0, and return what
+    it showed."""
+    result = case.run_cli(args, **options)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    return output
+
+
+def _deploy(
+    case: CliCase, folder: Path, *args: str, env: Mapping[str, str] | None = None
+) -> tuple[str, str]:
+    """Deploy the workflow from its deployment folder `folder`, as the quickstart
+    types it, naming its project, without the dashboard, which is shared across every
+    deployment on the machine (`tests/e2e/scenarios/test_shared_dashboard.py` is where
+    it belongs), with `env` or the runtime's environment; return the endpoint it
+    published and what it showed."""
+    output = _run(
+        case,
+        ["deploy", STARTER, "--serve", "false", *args],
+        timeout=DEPLOY_TIMEOUT,
+        env=env or _runtime_environment(),
+        cwd=folder,
+    )
+    endpoint = ENDPOINT.search(output)
+    assert endpoint, f"the deploy published no endpoint: {output}"
+    return endpoint.group(), output
+
+
+def _deployment_id(folder: Path) -> str:
+    """The `deployment_id` the deploy saved in the deployment folder `folder`."""
+    return yaml.safe_load((folder / "deployment.yaml").read_text())["deployment_id"]
+
+
+def _query_token(case: CliCase, folder: Path, *args: str) -> str:
+    """A query token for the deployment in `folder`, by its `deployment_id`, from
+    `canyonos token create` with `args` added."""
+    made = case.run_cli(
+        ["token", "create", "--scope", "query", "--project", _deployment_id(folder)]
+        + list(args),
+        cwd=folder,
+    )
+    assert made.returncode == 0, made.stdout + made.stderr
+    return token_in(made.stdout)
+
+
+def _assert_refused(answer: tuple[int, dict], status: int, code: str) -> None:
+    assert answer[0] == status, answer
+    assert answer[1].get("error_name") == code, answer
+
+
 @needs_a_runtime
 def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     """What a first run reaches: the copy out of the package deploys, the endpoint
-    it publishes and `canyonos test` both answer with the agent's greeting, and no
+    it publishes answers a token for the project with the agent's greeting, and
+    nothing without one, `canyonos test` answers with the greeting too, and no
     coding agent is launched."""
     case, folder = deployed_workflow
     bin_dir = case.root / "bin"
@@ -202,28 +279,13 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
         "PATH": f"{bin_dir}{os.pathsep}{case.env['PATH']}",
     }
 
-    # The dashboard is shared across every deployment on the machine, so this case
-    # does not start one; `tests/e2e/scenarios/test_shared_dashboard.py` is where
-    # it belongs.
-    keys = case.run_cli(["keys", "create"])
-    assert keys.returncode == 0, keys.stdout + keys.stderr
-    # As the quickstart types it: from the deployment folder, naming its project.
-    deployed = case.run_cli(
-        ["deploy", STARTER, "--serve", "false"],
-        timeout=DEPLOY_TIMEOUT,
-        env=runtime,
-        cwd=folder,
-    )
+    _run(case, ["keys", "create"])
+    endpoint, _ = _deploy(case, folder, env=runtime)
 
-    output = deployed.stdout + deployed.stderr
-    assert deployed.returncode == 0, output
-
-    endpoint = ENDPOINT.search(output)
-    assert endpoint, f"the deploy published no endpoint: {output}"
-
-    answered = _answer(endpoint.group(), "CanyonOS")
+    answered = _answer(endpoint, "CanyonOS", _query_token(case, folder))
     assert answered.get("status") == "done", answered
     assert "greeting" in answered.get("result", {}), answered
+    _assert_refused(_post(endpoint, "CanyonOS", None), 401, "auth.missing_token")
 
     test = case.run_cli(
         ["test", "--json"], timeout=REQUEST_TIMEOUT, env=runtime, cwd=folder
@@ -231,6 +293,81 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     assert not launched.exists()
     assert test.returncode == 0, test.stdout + test.stderr
     assert "greeting" in json.loads(test.stdout)["results"][0]["result"]
+
+
+@needs_a_runtime
+def test_rotating_the_key_refuses_every_token_it_signed(deployed_workflow):
+    case, folder = deployed_workflow
+    _run(case, ["keys", "create"])
+    endpoint, _ = _deploy(case, folder)
+    old = _query_token(case, folder)
+    assert _post(endpoint, "CanyonOS", old)[0] == 202
+
+    _run(case, ["keys", "create", "--name", "next"])
+    (case.home / ".canyonos" / "auth" / "trusted" / "default.pub").unlink()
+    endpoint, _ = _deploy(case, folder)
+
+    _assert_refused(_post(endpoint, "CanyonOS", old), 401, "auth.invalid_token")
+    answered = _answer(
+        endpoint, "CanyonOS", _query_token(case, folder, "--key", "next")
+    )
+    assert answered.get("status") == "done", answered
+
+
+@needs_a_runtime
+def test_dangerous_skip_auth_lasts_only_for_its_own_deploy(deployed_workflow):
+    case, folder = deployed_workflow
+
+    endpoint, output = _deploy(case, folder, "--dangerous-skip-auth")
+    assert "the endpoint and the dashboard will answer anyone" in " ".join(
+        output.split()
+    ), output
+    answered = _answer(endpoint, "CanyonOS", None)
+    assert answered.get("status") == "done", answered
+
+    _run(case, ["keys", "create"])
+    endpoint, _ = _deploy(case, folder)
+    _assert_refused(_post(endpoint, "CanyonOS", None), 401, "auth.missing_token")
+
+
+def _docker(*args: str) -> str:
+    done = subprocess.run(
+        ["docker", *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, **DOCKER},
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return done.stdout.strip()
+
+
+@needs_a_runtime
+def test_a_paused_redis_is_a_quick_503_not_a_hang(deployed_workflow):
+    case, folder = deployed_workflow
+    _run(case, ["keys", "create"])
+    endpoint, _ = _deploy(case, folder)
+    token = _query_token(case, folder)
+    redis = _docker(
+        "ps",
+        "--filter",
+        f"name={_deployment_id(folder)[:8]}-redis-localhost",
+        "--format",
+        "{{.Names}}",
+    )
+    assert redis, "no Redis container for the deploy"
+
+    _docker("pause", redis)
+    try:
+        started = time.monotonic()
+        refused = _post(endpoint, "CanyonOS", token)
+        took = time.monotonic() - started
+    finally:
+        _docker("unpause", redis)
+
+    _assert_refused(refused, 503, "auth.not_ready")
+    assert took < NOT_READY_WITHIN, took
+    assert _post(endpoint, "CanyonOS", token)[0] == 202
 
 
 needs_docker = pytest.mark.skipif(

@@ -18,6 +18,7 @@ import shutil
 import signal
 import struct
 import subprocess
+import tempfile
 import termios
 import time
 from dataclasses import asdict, dataclass, field
@@ -30,6 +31,7 @@ import requests
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+VECTORS_DIR = REPO_ROOT / "tests" / "auth-vectors"
 API_URL = "http://127.0.0.1:3000"
 DASHBOARD_WEB = "canyonos-dashboard-web"
 OUTPUT_LIMIT = 20_000
@@ -39,6 +41,8 @@ ESCAPE_SEQUENCE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 AUTH_MODES = ("none", "password")
 SIGN_IN_EMAIL = "e2e@canyonos.test"
 SIGN_IN_PASSWORD = "e2e-password-1"
+# The commands that read or write keys, each given the run's own keys folder.
+AUTH_DIR_COMMANDS = ("keys", "token", "deploy", "test")
 
 
 @dataclass
@@ -75,13 +79,20 @@ class CallFailed(AssertionError):
         self.call = call
 
 
+def _new_auth_dir() -> Path:
+    return Path(tempfile.mkdtemp(prefix="canyonos-e2e-")) / "auth"
+
+
 @dataclass
 class Recorder:
-    """The calls made so far in this session, in order, and every deployment folder
-    `stage` made, each with the number of calls made before it."""
+    """The calls made so far in this session, in order, every deployment folder
+    `stage` made, each with the number of calls made before it, and the session's
+    own keys folder, so a run never reads or writes the caller's `~/.canyonos/auth`
+    and the vectors' key is never trusted outside it."""
 
     calls: list[Call] = field(default_factory=list)
     staged: list[tuple[int, Path]] = field(default_factory=list)
+    auth_dir: Path = field(default_factory=_new_auth_dir)
 
     def record(self, call: Call) -> Call:
         self.calls.append(call)
@@ -144,7 +155,8 @@ def cli_env() -> dict[str, str]:
 
     HOME stays the caller's: the CLI keeps its state, the dashboard's settings and
     the usage outbox under `~/.canyonos` with no other setting for it, and a
-    different HOME would also hide Docker's own config and uv's cache."""
+    different HOME would also hide Docker's own config and uv's cache. Keys are the
+    exception: `canyonos` passes the session's own folder as --auth-dir."""
     return {
         **os.environ,
         "CANYONOS_ENV": "development",
@@ -306,8 +318,24 @@ def canyonos(
     recorder: Recorder, args: list[str], *, cwd, timeout: int = 600, check: bool = True
 ) -> Call:
     """Run the checkout's `canyonos` command in the project directory `cwd`."""
-    argv = ["uv", "run", "--project", str(REPO_ROOT), "--frozen", "canyonos", *args]
+    argv = [
+        "uv",
+        "run",
+        "--project",
+        str(REPO_ROOT),
+        "--frozen",
+        "canyonos",
+        *_with_auth_dir(recorder, args),
+    ]
     return run(recorder, argv, cwd=cwd, env=cli_env(), timeout=timeout, check=check)
+
+
+def _with_auth_dir(recorder: Recorder, args: list[str]) -> list[str]:
+    """`args` with the session's keys folder as --auth-dir, for a command that reads
+    or writes keys and names no folder of its own."""
+    if not args or args[0] not in AUTH_DIR_COMMANDS or "--auth-dir" in args:
+        return args
+    return [*args, "--auth-dir", str(recorder.auth_dir)]
 
 
 def canyonos_in_terminal(
@@ -321,7 +349,15 @@ def canyonos_in_terminal(
 ) -> Call:
     """Run the checkout's `canyonos` command in a terminal from `cwd`, typing each of
     `answers` when its prompt shows (see `run_in_terminal`)."""
-    argv = ["uv", "run", "--project", str(REPO_ROOT), "--frozen", "canyonos", *args]
+    argv = [
+        "uv",
+        "run",
+        "--project",
+        str(REPO_ROOT),
+        "--frozen",
+        "canyonos",
+        *_with_auth_dir(recorder, args),
+    ]
     return run_in_terminal(
         recorder,
         argv,
@@ -597,18 +633,30 @@ def manifest(workspace: Path) -> dict:
     return yaml.safe_load(path.read_text())
 
 
+def bearer(token: str) -> dict[str, str]:
+    """The header that sends `token`."""
+    return {"Authorization": f"Bearer {token}"}
+
+
 @dataclass(frozen=True)
 class Endpoint:
     """The deployed endpoint: its base URL, its first route
     (`<project>/<agent>/<method>`), the agent that route calls (`<project>.<agent>`),
-    the name of that method's first argument (the one a query goes in) and the names
+    the name of that method's first argument (the one a query goes in), a query token
+    for the deployment and the names
     of all its arguments."""
 
     url: str
     route: str
     agent: str
     argument: str
+    token: str
     arguments: tuple[str, ...] = ()
+
+    @property
+    def headers(self) -> dict[str, str]:
+        """The header every request to the endpoint sends its token in."""
+        return bearer(self.token)
 
 
 def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
@@ -637,16 +685,44 @@ def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str
 
 
 def trust_a_key(recorder: Recorder, workspace: Path) -> None:
-    """Make the key pair `e2e` when the caller's `~/.canyonos/auth/trusted/` holds no
-    key, since `canyonos deploy` refuses without one. A key made here stays behind
-    under HOME, as the Redis password does (see `cli_env`)."""
-    if not cli_value(
-        recorder,
-        workspace,
-        "bool(trusted_keys(None))",
-        "from canyonos.auth import trusted_keys",
-    ):
+    """Make the key pair `e2e` in the session's keys folder unless it is there,
+    since `canyonos deploy` refuses without a trusted key."""
+    if not (recorder.auth_dir / "e2e.key").is_file():
         canyonos(recorder, ["keys", "create", "--name", "e2e"], cwd=workspace)
+
+
+def trust_the_vectors(recorder: Recorder, workspace: Path) -> None:
+    """Trust `tests/auth-vectors/vectors.pub` in the session's keys folder, so the
+    endpoint of the next deploy judges the vectors' tokens. Its private half was
+    deleted, so the key signs nothing new."""
+    if not (recorder.auth_dir / "trusted" / "vectors.pub").is_file():
+        canyonos(
+            recorder, ["keys", "trust", str(VECTORS_DIR / "vectors.pub")], cwd=workspace
+        )
+
+
+def vectors() -> list[dict]:
+    """The shared token vectors, each `{name, token, expect}` (see their README)."""
+    return _json.loads((VECTORS_DIR / "vectors.json").read_text())
+
+
+def token(recorder: Recorder, workspace: Path, *args: str) -> str:
+    """`canyonos token create` with `args`, from `workspace`: the token, which is
+    all it writes to stdout."""
+    return canyonos(recorder, ["token", "create", *args], cwd=workspace).stdout.strip()
+
+
+def deployment_id(workspace: Path) -> str:
+    """The `deployment_id` `canyonos deploy` saved in the deployment folder
+    `workspace`, the project id the endpoint takes query tokens for."""
+    return yaml.safe_load((workspace / "deployment.yaml").read_text())["deployment_id"]
+
+
+def query_token(recorder: Recorder, workspace: Path) -> str:
+    """A query token for the deployment in `workspace`, by its `deployment_id`."""
+    return token(
+        recorder, workspace, "--scope", "query", "--project", deployment_id(workspace)
+    )
 
 
 def deployment_group(recorder: Recorder, workspace: Path) -> str:
@@ -727,7 +803,8 @@ def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
 
 
 def deployed_endpoint(recorder: Recorder, workspace: Path) -> Endpoint:
-    """Ask the running Global Controller for the endpoint, from the deployment folder."""
+    """Ask the running Global Controller for the endpoint, from the deployment folder,
+    with a query token for the deployment."""
     endpoint = cli_value(
         recorder,
         workspace,
@@ -740,6 +817,7 @@ def deployed_endpoint(recorder: Recorder, workspace: Path) -> Endpoint:
         route=f"{route['project']}/{route['agent']}/{route['method']}",
         agent=f"{route['project']}.{route['agent']}",
         argument=route["arguments"][0],
+        token=query_token(recorder, workspace),
         arguments=tuple(route["arguments"]),
     )
 
@@ -748,9 +826,29 @@ def submit(recorder: Recorder, endpoint: Endpoint, query) -> str:
     """POST `query` to the endpoint as its first argument and return its request
     id; fail unless the endpoint answers 202, its answer for a queued request."""
     url = f"{endpoint.url}/{endpoint.route}"
-    call = http(recorder, "POST", url, json={endpoint.argument: query})
+    call = http(
+        recorder,
+        "POST",
+        url,
+        json={endpoint.argument: query},
+        headers=endpoint.headers,
+    )
     assert call.code == 202, call.output
     return call.json()["request_id"]
+
+
+def answer(
+    recorder: Recorder,
+    endpoint: Endpoint,
+    request_id: str,
+    body: dict,
+    *,
+    check: bool = True,
+) -> Call:
+    """POST `body` to `/answer/<request_id>`, answering the request's oldest
+    waiting question."""
+    url = f"{endpoint.url}/answer/{request_id}"
+    return http(recorder, "POST", url, json=body, headers=endpoint.headers, check=check)
 
 
 def finished(recorder: Recorder, endpoint: Endpoint, request_id: str, *, timeout):
@@ -762,7 +860,7 @@ def finished(recorder: Recorder, endpoint: Endpoint, request_id: str, *, timeout
     answers: list[Call] = []
 
     def settled():
-        call = http(recorder, "GET", url, check=False)
+        call = http(recorder, "GET", url, headers=endpoint.headers, check=False)
         answers.append(call)
         if call.code < 0 or call.code >= 500:
             return None

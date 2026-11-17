@@ -27,6 +27,8 @@ POOL = {"t3.micro": 2, "t3.small": 1}
 CAPACITY = {"t3.micro": ("2", "1024"), "t3.small": ("2", "2048")}
 
 PASSWORD = os.environ.get("CANYONOS_REDIS_PASSWORD")
+# ec2_pool.sh signs it with `canyonos token create --scope query --all-projects`.
+BEARER = {"Authorization": f"Bearer {os.environ.get('POOL_QUERY_TOKEN', '')}"}
 controller_redis = redis.Redis(port=6390, password=PASSWORD, decode_responses=True)
 ec2 = boto3.client("ec2", region_name=os.environ["EC2_REGION"])
 
@@ -201,7 +203,7 @@ def call(seconds):
     request = urllib.request.Request(
         f"{ENDPOINT}/{PROJECT}/Workflow/main",
         data=json.dumps({"seconds": seconds}).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={**BEARER, "Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -213,7 +215,10 @@ def status(request_id, timeout, expected):
     ended = {}
 
     def done():
-        with urllib.request.urlopen(f"{ENDPOINT}/status/{request_id}") as response:
+        request = urllib.request.Request(
+            f"{ENDPOINT}/status/{request_id}", headers=BEARER
+        )
+        with urllib.request.urlopen(request) as response:
             ended.update(json.loads(response.read()))
         return ended["status"] in ("done", "error")
 
