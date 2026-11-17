@@ -6,14 +6,12 @@ import { Link } from '@tanstack/react-router';
 import { ChevronRightIcon, FolderIcon } from 'lucide-react';
 import type { UseQueryResult } from '@tanstack/react-query';
 
-import type { User } from '@canyonos/api/auth';
 import type { ProjectSummary } from '@canyonos/api/projects';
 import type { FleetProject } from '@canyonos/api/resources';
 
 import { SectionLabel } from '@repo/ui/components/section-label';
 import { Card } from '@repo/ui/shadcn/card';
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
-import { authSelectors, useAuthStore } from '@/modules/auth/auth.store';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
 import { formatCount, formatMoneyValue } from '@/modules/projects/projects.format';
@@ -34,10 +32,6 @@ function greetingForHour(hour: number): Greeting {
   if (hour < 12) return 'morning';
   if (hour < 18) return 'afternoon';
   return 'evening';
-}
-
-function firstNameFor(user: User | null): string | undefined {
-  return user?.email.split('@')[0];
 }
 
 function heroSummary(projectCount: number | undefined): string {
@@ -68,7 +62,6 @@ function formatRelativeTime(iso: string): string {
 export function ProjectsOverviewScreen() {
   const projectsQuery = useQuery(projectsQueryOptions());
   const spend_query = useQuery(fleetOverviewQueryOptions({ range: OVERVIEW_RANGE }));
-  const user = useAuthStore(authSelectors.user);
 
   // Spend is decoration on a row that already reads without it, so a failed rollup drops the figures
   // rather than failing the list.
@@ -77,8 +70,6 @@ export function ProjectsOverviewScreen() {
   );
 
   const greeting = greetingForHour(new Date().getHours());
-  const firstName = firstNameFor(user);
-  const heading = firstName ? `Good ${greeting}, ${firstName}` : `Good ${greeting}`;
 
   return (
     <main
@@ -91,7 +82,7 @@ export function ProjectsOverviewScreen() {
       >
         <div className="flex flex-col gap-1.5">
           <h1 className="text-foreground text-[1.75rem] leading-none font-bold tracking-tight text-balance">
-            {heading}
+            Good {greeting}
           </h1>
           <p className="text-muted-foreground max-w-[38rem] text-sm leading-relaxed text-pretty">
             {heroSummary(projectsQuery.data?.length)}
@@ -136,6 +127,7 @@ function ProjectsList({
   if (projectsQuery.error) {
     return (
       <QueryError
+        error={projectsQuery.error}
         test_id="projects-overview-error"
         message="We couldn't load your deployments."
         onRetry={() => void projectsQuery.refetch()}

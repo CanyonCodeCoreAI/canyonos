@@ -102,6 +102,7 @@ function DistributionBody({
   if (query.error) {
     return (
       <QueryError
+        error={query.error}
         message="Could not load the per-query distribution."
         onRetry={() => void query.refetch()}
         test_id="project-distribution-error"

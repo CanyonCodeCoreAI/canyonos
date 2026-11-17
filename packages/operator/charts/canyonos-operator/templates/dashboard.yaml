@@ -4,7 +4,8 @@
 # The cluster's CanyonOS dashboard, one for every project: Postgres, the API and the web
 # front end, as `canyonos serve` runs them on Docker. Nothing is exposed outside the
 # cluster: it is opened with a port-forward, so only who may port-forward into its
-# namespace reaches it, and the first account made there is its only one.
+# namespace reaches it, and its API answers only tokens signed by a key some project
+# trusts (`canyonos token create --scope read` or `--scope write`).
 {{- if .Values.dashboard.enabled }}
 {{- $ns := .Values.dashboard.namespace }}
 {{- $secret := .Values.dashboard.existingSecret | default "canyonos-dashboard" }}
@@ -37,12 +38,10 @@ metadata:
 data:
   {{- if $existing }}
   db-password: {{ index $existing.data "db-password" }}
-  jwt-secret: {{ index $existing.data "jwt-secret" }}
   {{- /* Added after the first releases: a Secret made before it gets one on upgrade. */}}
   redis-password-key: {{ index $existing.data "redis-password-key" | default (randAlphaNum 48 | b64enc) }}
   {{- else }}
   db-password: {{ randAlphaNum 32 | b64enc }}
-  jwt-secret: {{ randAlphaNum 48 | b64enc }}
   redis-password-key: {{ randAlphaNum 48 | b64enc }}
   {{- end }}
 ---
@@ -173,16 +172,17 @@ spec:
             - name: DB_PASSWORD
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: db-password}}
             - {name: DATABASE_URL, value: "postgresql://canyonos:$(DB_PASSWORD)@canyonos-dashboard-db:5432/canyonos"}
-            - name: JWT_SECRET
-              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: jwt-secret}}
             # Encrypts a Redis password the API stores; projects the operator lists keep
             # theirs in its list, but the API refuses to start without the key.
             - name: REDIS_PASSWORD_ENCRYPTION_KEY
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: redis-password-key}}
-            # Sign-in always: every project's global controller may reach this API (for
-            # telemetry), and with AUTH_MODE=none any pod labelled as one could read and
-            # change every project.
-            - {name: AUTH_MODE, value: password}
+            # Tokens always, unless the chart says otherwise: every project's global
+            # controller may reach this API (for telemetry), and with verification off any
+            # pod labelled as one could read and change every project. The keys are every
+            # listed project's spec.auth.trustedKeys, which the operator writes and rolls
+            # this pod on (its trusted-keys annotation).
+            - {name: AUTH_DISABLED, value: {{ .Values.dashboard.dangerousSkipAuth | quote }}}
+            - {name: AUTH_TRUSTED_KEYS_DIR, value: /etc/canyonos/auth/trusted}
             - {name: LOG_LEVEL, value: info}
             - {name: CANYONOS_PROJECTS_FILE, value: /etc/canyonos/projects/projects.json}
             - {name: METRICS_RAW_RETENTION_DAYS, value: {{ .Values.dashboard.metricsRawRetentionDays | quote }}}
@@ -204,11 +204,16 @@ spec:
             capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: projects, mountPath: /etc/canyonos/projects, readOnly: true}
+            - {name: trusted-keys, mountPath: /etc/canyonos/auth/trusted, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
         # Written by the operator once the first project's Redis is ready.
         - name: projects
           secret: {secretName: canyonos-dashboard-projects, optional: true}
+        # Written by the operator as it starts, with no key until a project is listed:
+        # the pod waits for it rather than start without the folder.
+        - name: trusted-keys
+          configMap: {name: canyonos-dashboard-trusted-keys}
         - {name: tmp, emptyDir: {}}
 ---
 apiVersion: v1
@@ -314,7 +319,8 @@ spec:
             matchExpressions: [{key: canyonos.canyoncode.ai/project, operator: Exists}]
       ports: [{port: 3000}]
 ---
-# The operator keeps the list of projects in one Secret here, and may change no other.
+# The operator keeps the list of projects in one Secret here and their trusted keys in
+# one ConfigMap, rolls the API when the keys change, and may change nothing else.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -327,10 +333,18 @@ rules:
     resources: [secrets]
     resourceNames: [canyonos-dashboard-projects]
     verbs: [get, update]
-  # Create cannot be limited by name; the operator creates only that one.
   - apiGroups: [""]
-    resources: [secrets]
+    resources: [configmaps]
+    resourceNames: [canyonos-dashboard-trusted-keys]
+    verbs: [get, update]
+  # Create cannot be limited by name; the operator creates only those two.
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
     verbs: [create]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [canyonos-dashboard-api]
+    verbs: [get, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

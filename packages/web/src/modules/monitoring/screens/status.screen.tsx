@@ -24,6 +24,7 @@ import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { toast } from '@repo/ui/shadcn/sonner';
 import { cn } from '@repo/ui/utils';
 import { ApiResponseError } from '@/api';
+import { readRefusal } from '@/modules/core/components/QueryError';
 import { ContainersSection } from '@/modules/monitoring/components/containers-section';
 import {
   endpointQueryOptions,
@@ -46,12 +47,15 @@ function deploymentOf(endpoint: UseQueryResult<MonitoringEndpointResponse>): Dep
   return is_not_running ? 'not_running' : 'unknown';
 }
 
-/** A tile's number: `undefined` while it loads, `null` when its read failed. */
+/**
+ * A tile's number: `undefined` while it loads, `null` when its read failed, and the API's words
+ * when it refused the token for the read.
+ */
 function readout<T>(
   query: UseQueryResult<T>,
   read: (data: T) => number
-): number | null | undefined {
-  if (query.isError) return null;
+): number | string | null | undefined {
+  if (query.isError) return readRefusal(query.error);
   return query.data === undefined ? undefined : read(query.data);
 }
 
@@ -341,9 +345,20 @@ function StatusTile({
   test_id,
 }: {
   readonly label: string;
-  readonly value: number | null | undefined;
+  readonly value: number | string | null | undefined;
   readonly test_id: string;
 }) {
+  if (typeof value === 'string') {
+    return (
+      <div className={CARD} data-testid={test_id} data-state="refused">
+        <p className="text-muted-foreground text-xs">{label}</p>
+        <p className="text-muted-foreground mt-1.5 text-xs text-pretty" role="status">
+          {value}
+        </p>
+      </div>
+    );
+  }
+
   if (value === null) {
     return (
       <div className={CARD} data-testid={test_id} data-state="unavailable">

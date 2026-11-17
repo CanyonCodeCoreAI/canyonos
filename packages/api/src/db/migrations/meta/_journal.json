@@ -64,6 +64,13 @@
       "when": 1794318655262,
       "tag": "0008_project_redis_password",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794843998781,
+      "tag": "0009_drop_users",
+      "breakpoints": true
     }
   ]
 }

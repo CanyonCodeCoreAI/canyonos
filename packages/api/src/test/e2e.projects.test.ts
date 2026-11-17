@@ -28,6 +28,8 @@ import type { TestProjectFile } from './project-test.utils';
 
 setupE2ETests();
 
+const write = bearer(await authenticate('write'));
+
 const FILES: TestProjectFile[] = [
   { path: 'workflow.py', component_kind: 'workflow' },
   { path: 'nested/sales_workflow.py', component_kind: 'workflow' },
@@ -39,9 +41,9 @@ const FILES: TestProjectFile[] = [
 
 describe('project list and detail', () => {
   test('lists and reads a project with its file count', async () => {
-    const token = await authenticate('project-list@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'Demo Flow', files: FILES });
+    const { project_id } = await create_test_project({ name: 'Demo Flow', files: FILES });
 
     const list = await api.projects.get({ $headers: headers });
     expect(list.error).toBeNull();
@@ -56,17 +58,17 @@ describe('project list and detail', () => {
   });
 
   test('a project with no files reports a zero file count', async () => {
-    const token = await authenticate('project-empty@canyonos.test');
-    const { project_id } = await create_test_project(token, { name: 'Empty' });
+    const token = await authenticate('read');
+    const { project_id } = await create_test_project({ name: 'Empty' });
 
     const detail = await api.projects[project_id]!.get({ $headers: bearer(token) });
     expect(detail.data?.file_count).toBe(0);
   });
 
-  test('lets another user list and read a project', async () => {
-    const owner = await authenticate('project-owner@canyonos.test');
-    const { project_id } = await create_test_project(owner, { name: 'Shared', files: FILES });
-    const other_user = await authenticate('project-outsider@canyonos.test');
+  test('lets another read token list and read a project', async () => {
+    const owner = await authenticate('read');
+    const { project_id } = await create_test_project({ name: 'Shared', files: FILES });
+    const other_user = await authenticate('read');
 
     for (const token of [owner, other_user]) {
       const list = await api.projects.get({ $headers: bearer(token) });
@@ -77,7 +79,7 @@ describe('project list and detail', () => {
   });
 
   test('returns 404 projects.not_found for an unknown project', async () => {
-    const token = await authenticate('project-unknown@canyonos.test');
+    const token = await authenticate('read');
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.get({ $headers: bearer(token) });
@@ -92,9 +94,9 @@ describe('project list and detail', () => {
 
 describe('GET /projects/:project_id/stats', () => {
   test('counts files by component kind and workflows by readiness', async () => {
-    const token = await authenticate('project-stats@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id, workflow_ids } = await create_test_project(token, {
+    const { project_id, workflow_ids } = await create_test_project({
       name: 'Stats',
       files: FILES,
     });
@@ -120,8 +122,8 @@ describe('GET /projects/:project_id/stats', () => {
   });
 
   test('a stale READY workflow is not counted as ready', async () => {
-    const token = await authenticate('project-stats-stale@canyonos.test');
-    const { project_id, workflow_ids } = await create_test_project(token, {
+    const token = await authenticate('read');
+    const { project_id, workflow_ids } = await create_test_project({
       name: 'Stale Stats',
       files: [{ path: 'workflow.py', component_kind: 'workflow' }],
     });
@@ -140,8 +142,8 @@ describe('GET /projects/:project_id/stats', () => {
   });
 
   test('a project with no files reports zero counts', async () => {
-    const token = await authenticate('project-stats-empty@canyonos.test');
-    const { project_id } = await create_test_project(token, { name: 'Empty Stats' });
+    const token = await authenticate('read');
+    const { project_id } = await create_test_project({ name: 'Empty Stats' });
 
     const stats = await api.projects[project_id]!.stats.get({ $headers: bearer(token) });
     expect(stats.data).toEqual({
@@ -155,8 +157,7 @@ describe('GET /projects/:project_id/stats', () => {
   });
 
   test('rejects unauthenticated access', async () => {
-    const token = await authenticate('project-stats-unauth@canyonos.test');
-    const { project_id } = await create_test_project(token, { name: 'Unauth Stats' });
+    const { project_id } = await create_test_project({ name: 'Unauth Stats' });
 
     expect((await api.projects[project_id]!.stats.get()).error?.status as number).toBe(401);
   });
@@ -221,14 +222,14 @@ describe('DELETE /projects/:project_id', () => {
   beforeEach(reset_controller);
 
   test('deletes a stopped project and its telemetry, and leaves other projects alone', async () => {
-    const token = await authenticate('project-delete@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'Stopped', files: FILES });
-    const { project_id: other_id } = await create_test_project(token, { name: 'Other' });
+    const { project_id } = await create_test_project({ name: 'Stopped', files: FILES });
+    const { project_id: other_id } = await create_test_project({ name: 'Other' });
     await write_telemetry(project_id);
     await write_telemetry(other_id);
 
-    const res = await api.projects[project_id]!.delete(undefined, { headers });
+    const res = await api.projects[project_id]!.delete(undefined, { headers: write });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({ project_id });
 
@@ -239,12 +240,12 @@ describe('DELETE /projects/:project_id', () => {
   });
 
   test('refuses a running project with 409 projects.running and keeps it', async () => {
-    const token = await authenticate('project-delete-running@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'Running' });
+    const { project_id } = await create_test_project({ name: 'Running' });
     await seed_running_project(project_id, { prompts: {} });
 
-    const res = await api.projects[project_id]!.delete(undefined, { headers });
+    const res = await api.projects[project_id]!.delete(undefined, { headers: write });
     expect(res.error?.status as number).toBe(409);
     expect((res.error?.value as { error?: string })?.error).toBe('projects.running');
 

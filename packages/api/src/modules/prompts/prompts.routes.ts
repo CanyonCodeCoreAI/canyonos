@@ -4,7 +4,7 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { resolveAuth } from '../auth/auth.middleware';
+import { authPlugin, requireScope } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { create_system_prompt, get_prompt, list_prompts, set_live } from './prompts.service';
 import {
@@ -20,11 +20,12 @@ const ProjectParams = z.object({ project_id: z.string().uuid() });
 const PromptParams = ProjectParams.extend({ name: z.string().min(1) });
 
 export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
-  .resolve(async ({ request }) => ({ auth: await resolveAuth(request) }))
+  .use(authPlugin)
   .resolve(resolveProjectAccess)
   .get('/:project_id/prompts', ({ params }) => list_prompts(params.project_id), {
     params: ProjectParams,
     response: { 200: z.array(PromptListItemSchema) },
+    beforeHandle: requireScope('read', 'write'),
     detail: {
       ...doc,
       summary: 'List the prompts of the running deployment with the system prompt agents get',
@@ -33,6 +34,7 @@ export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
   .get('/:project_id/prompts/:name', ({ params }) => get_prompt(params.project_id, params.name), {
     params: PromptParams,
     response: { 200: PromptSchema },
+    beforeHandle: requireScope('read', 'write'),
     detail: { ...doc, summary: 'Get one prompt with every stored system prompt' },
   })
   .post(
@@ -46,6 +48,7 @@ export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
       params: PromptParams,
       body: SystemPromptCreateSchema,
       response: { 201: SystemPromptSchema },
+      beforeHandle: requireScope('write'),
       detail: { ...doc, summary: 'Store a new system prompt for a prompt without making it live' },
     }
   )
@@ -56,6 +59,7 @@ export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
       params: PromptParams,
       body: PromptLiveSchema,
       response: { 200: PromptListItemSchema },
+      beforeHandle: requireScope('write'),
       detail: { ...doc, summary: 'Make one stored system prompt the live one' },
     }
   );

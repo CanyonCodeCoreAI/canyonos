@@ -56,6 +56,7 @@ function ErrorSummary({
   if (summary.error) {
     return (
       <QueryError
+        error={summary.error}
         message="Could not load the error breakdown."
         onRetry={() => void summary.refetch()}
         test_id="errors-summary-error"

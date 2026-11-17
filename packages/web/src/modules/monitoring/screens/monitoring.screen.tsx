@@ -99,6 +99,7 @@ function SignalGrid({ query }: { readonly query: UseQueryResult<MonitoringSeries
   if (query.isError) {
     return (
       <QueryError
+        error={query.error}
         message="Could not load trace signals."
         onRetry={() => void query.refetch()}
         test_id="monitoring-error"

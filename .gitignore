@@ -74,6 +74,8 @@ packages/api/data/*.db-*
 test-results/
 packages/web/src/routeTree.gen.ts
 playwright-report/
+# The key pair each Playwright run of the dashboard makes for its API.
+packages/web/.playwright/
 
 # MkDocs build output
 site/

@@ -32,7 +32,6 @@ jobs:
       NODE_ENV: test
       CI: true
       DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
-      JWT_SECRET: test-jwt-secret-not-for-production
 
     services:
       postgres:

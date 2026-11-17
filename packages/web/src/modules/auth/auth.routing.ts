@@ -18,15 +18,15 @@ export const authSearchSchema = z.object({
 });
 export type AuthSearch = z.infer<typeof authSearchSchema>;
 
-/** Only an API in password mode has accounts; in none mode every visitor is in without a session. */
+/** False only for an API started with `AUTH_DISABLED=true`, where nobody needs a token. */
 export async function signInRequired(queryClient: QueryClient): Promise<boolean> {
-  const { mode } = await queryClient.ensureQueryData(authStatusQuery);
-  return mode === 'password';
+  const { disabled } = await queryClient.ensureQueryData(authStatusQuery);
+  return !disabled;
 }
 
 /**
- * The sign-in screens are for signed-out visitors of a password-mode API; anyone else continues
- * where they were going.
+ * The token screen is for visitors of an API that verifies tokens and who hold none it can use;
+ * anyone else continues where they were going.
  */
 export async function leaveIfSignedIn(queryClient: QueryClient, search: AuthSearch): Promise<void> {
   if (!(await signInRequired(queryClient))) throw redirect({ to: '/' });

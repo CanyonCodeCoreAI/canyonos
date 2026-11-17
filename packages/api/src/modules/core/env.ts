@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { AUTH_MODES } from '@api/modules/auth/types';
-import type { AuthMode } from '@api/modules/auth/types';
-
 import { helpers } from './env.helpers';
 
 const env = Bun.env;
-const { parseInteger, parseBoolean, parseDuration, requireEnv } = helpers;
+const { parseInteger, parseBoolean, requireEnv } = helpers;
 
 const APP_ENVIRONMENTS = ['development', 'test', 'production', 'demo', 'staging'] as const;
 export type AppEnvironment = (typeof APP_ENVIRONMENTS)[number];
@@ -27,33 +24,14 @@ export function resolveConfiguredEnvironment(
 
 const environment = resolveConfiguredEnvironment(env.APP_ENV, env.NODE_ENV);
 
-export function resolveAuthMode(value: string | undefined): AuthMode {
-  if (value === undefined || value === '') return 'none';
-  if ((AUTH_MODES as readonly string[]).includes(value)) return value as AuthMode;
-  throw new Error(`AUTH_MODE must be one of ${AUTH_MODES.join(', ')}, got ${value}`);
+/** `AUTH_DISABLED`: `true` turns token verification off, which `--dangerous-skip-auth` sets. */
+export function resolveAuthDisabled(value: string | undefined): boolean {
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  throw new Error(`AUTH_DISABLED must be true or false, got ${value}`);
 }
 
-const authMode = resolveAuthMode(env.AUTH_MODE);
-
-const EXAMPLE_JWT_SECRET = 'changeme-generate-with-openssl-rand-base64-32';
-const MIN_JWT_SECRET_LENGTH = 32;
-
-/** Outside development and test, refuses the committed example secret and short secrets. */
-export function assertJwtSecret(secret: string | undefined, environment: AppEnvironment): void {
-  if (environment === 'development' || environment === 'test' || !secret) return;
-  if (secret === EXAMPLE_JWT_SECRET) {
-    throw new Error(
-      'JWT_SECRET is the committed example secret. Generate one with `openssl rand -base64 32`.'
-    );
-  }
-  if (secret.length < MIN_JWT_SECRET_LENGTH) {
-    throw new Error(
-      `JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters. Generate one with \`openssl rand -base64 32\`.`
-    );
-  }
-}
-
-if (authMode === 'password') assertJwtSecret(env.JWT_SECRET, environment);
+const authDisabled = resolveAuthDisabled(env.AUTH_DISABLED);
 
 const DEVELOPMENT_REDIS_PASSWORD_KEY = 'canyonos-local-development-only-redis-password-key';
 const MIN_REDIS_PASSWORD_KEY_LENGTH = 32;
@@ -152,11 +130,8 @@ export const config = {
     devData: parseBoolean(env.SEED_DEV_DATA, false),
   },
   auth: {
-    mode: authMode,
-    jwtSecret: authMode === 'password' ? requireEnv('JWT_SECRET') : (env.JWT_SECRET ?? ''),
-    jwtIssuer: env.JWT_ISSUER ?? 'canyonos-api',
-    jwtAudience: env.JWT_AUDIENCE ?? 'canyonos-clients',
-    jwtTtlSeconds: parseDuration(env.JWT_TTL, 60 * 60 * 24),
+    disabled: authDisabled,
+    trustedKeysDir: authDisabled ? null : requireEnv('AUTH_TRUSTED_KEYS_DIR'),
   },
 };
 

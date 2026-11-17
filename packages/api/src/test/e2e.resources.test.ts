@@ -34,18 +34,10 @@ interface SpanSeed {
   failed?: boolean;
 }
 
-async function authed_user(email: string): Promise<{ token: string; user_id: string }> {
-  const token = await authenticate(email);
-  const profile = await api.auth.profile.get({ $headers: bearer(token) });
-  expect(profile.error).toBeNull();
-  return { token, user_id: profile.data!.id };
-}
-
-async function insert_project(user_id: string, name: string, ms_ago: number): Promise<string> {
+async function insert_project(name: string, ms_ago: number): Promise<string> {
   const id = crypto.randomUUID();
   await db.insert(projects).values({
     id,
-    created_by: user_id,
     name,
     created_at: at(ms_ago),
     updated_at: at(ms_ago),
@@ -96,11 +88,11 @@ describe('GET /resources/overview', () => {
   });
 
   test('derives per-project cost, requests and tokens from project spans', async () => {
-    const { token, user_id } = await authed_user('fleet-owner@canyonos.test');
+    const token = await authenticate('read');
 
-    const alpha = await insert_project(user_id, 'Alpha', 3 * DAY_MS);
-    const bravo = await insert_project(user_id, 'Bravo', 2 * DAY_MS);
-    const charlie = await insert_project(user_id, 'Charlie', 1 * DAY_MS);
+    const alpha = await insert_project('Alpha', 3 * DAY_MS);
+    const bravo = await insert_project('Bravo', 2 * DAY_MS);
+    const charlie = await insert_project('Charlie', 1 * DAY_MS);
 
     await insert_span(alpha, {
       span_id: 'fleet-a1-s',
@@ -158,8 +150,8 @@ describe('GET /resources/overview', () => {
   });
 
   test('two spans in one trace count as one request', async () => {
-    const { token, user_id } = await authed_user('fleet-one-trace@canyonos.test');
-    const project = await insert_project(user_id, 'OneTrace', DAY_MS);
+    const token = await authenticate('read');
+    const project = await insert_project('OneTrace', DAY_MS);
 
     await insert_span(project, {
       span_id: 'one-trace-a',
@@ -189,8 +181,8 @@ describe('GET /resources/overview', () => {
   });
 
   test('a span with no canyon.project.id is invisible', async () => {
-    const { token, user_id } = await authed_user('fleet-orphan@canyonos.test');
-    const project = await insert_project(user_id, 'Owned', DAY_MS);
+    const token = await authenticate('read');
+    const project = await insert_project('Owned', DAY_MS);
 
     await insert_span(project, {
       span_id: 'orphan-owned',
@@ -220,9 +212,9 @@ describe('GET /resources/overview', () => {
   });
 
   test('one trace id in two projects stays isolated', async () => {
-    const { token, user_id } = await authed_user('fleet-shared@canyonos.test');
-    const first = await insert_project(user_id, 'First', 2 * DAY_MS);
-    const second = await insert_project(user_id, 'Second', DAY_MS);
+    const token = await authenticate('read');
+    const first = await insert_project('First', 2 * DAY_MS);
+    const second = await insert_project('Second', DAY_MS);
 
     await insert_span(first, {
       span_id: 'shared-first',
@@ -252,11 +244,10 @@ describe('GET /resources/overview', () => {
     expect(tokens_usage(second_row)).toBe(0.3);
   });
 
-  test("another user's project appears with its own totals", async () => {
-    const mine = await authed_user('fleet-mine@canyonos.test');
-    const theirs = await authed_user('fleet-theirs@canyonos.test');
-    const my_project = await insert_project(mine.user_id, 'Mine', DAY_MS);
-    const their_project = await insert_project(theirs.user_id, 'Theirs', DAY_MS);
+  test('each project appears with its own totals', async () => {
+    const token = await authenticate('read');
+    const my_project = await insert_project('Mine', DAY_MS);
+    const their_project = await insert_project('Theirs', DAY_MS);
 
     await insert_span(my_project, {
       span_id: 'mine-s',
@@ -275,15 +266,15 @@ describe('GET /resources/overview', () => {
       cost: 5,
     });
 
-    const res = await overview(mine.token, range(30 * DAY_MS));
+    const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
     expect(fleet_row(res.data!, my_project).cost).toBe(0.1);
     expect(fleet_row(res.data!, their_project)).toMatchObject({ name: 'Theirs', cost: 5 });
   });
 
   test('a narrow window excludes older spans', async () => {
-    const { token, user_id } = await authed_user('fleet-window@canyonos.test');
-    const project = await insert_project(user_id, 'Windowed', 40 * DAY_MS);
+    const token = await authenticate('read');
+    const project = await insert_project('Windowed', 40 * DAY_MS);
 
     await insert_span(project, {
       span_id: 'win-recent-s',
@@ -319,7 +310,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('a range whose from is not before its to is rejected with 422', async () => {
-    const { token } = await authed_user('fleet-backwards@canyonos.test');
+    const token = await authenticate('read');
     const { from, to } = range(DAY_MS);
 
     const res = await overview(token, { from: to, to: from });
@@ -327,8 +318,8 @@ describe('GET /resources/overview', () => {
   });
 
   test('an ERROR status span drives the error rate', async () => {
-    const { token, user_id } = await authed_user('fleet-errors@canyonos.test');
-    const project = await insert_project(user_id, 'Erroring', DAY_MS);
+    const token = await authenticate('read');
+    const project = await insert_project('Erroring', DAY_MS);
 
     await insert_span(project, {
       span_id: 'err-ok-1',
@@ -362,8 +353,8 @@ describe('GET /resources/overview', () => {
   });
 
   test('tokens sum input and output, and latency averages the span durations', async () => {
-    const { token, user_id } = await authed_user('fleet-derive@canyonos.test');
-    const project = await insert_project(user_id, 'Derived', DAY_MS);
+    const token = await authenticate('read');
+    const project = await insert_project('Derived', DAY_MS);
 
     await insert_span(project, {
       span_id: 'derive-both',
@@ -392,8 +383,8 @@ describe('GET /resources/overview', () => {
   });
 
   test('attributes of the wrong type and invalid counts are absent, not a failure', async () => {
-    const { token, user_id } = await authed_user('fleet-malformed@canyonos.test');
-    const project = await insert_project(user_id, 'Malformed', DAY_MS);
+    const token = await authenticate('read');
+    const project = await insert_project('Malformed', DAY_MS);
 
     const start = nanos_ago(2 * HOUR_MS);
     await db.insert(otelSpans).values({
@@ -428,31 +419,5 @@ describe('GET /resources/overview', () => {
     expect(project_row.cost).toBe(0.25);
     expect(project_row.avg_latency_ms).toBe(500);
     expect(project_row.error_rate_pct).toBe(0);
-  });
-
-  test('a user who created no project sees the same fleet as everyone else', async () => {
-    const owner = await authed_user('fleet-shared-owner@canyonos.test');
-    const owned = await insert_project(owner.user_id, 'Shared Fleet', DAY_MS);
-    await insert_span(owned, {
-      span_id: 'shared-fleet-s',
-      trace_id: 'shared-fleet-trace',
-      ms_ago: 2 * HOUR_MS,
-      duration_ms: 1000,
-      input_tokens: 100,
-      cost: 0.2,
-    });
-
-    const token = await authenticate('fleet-no-projects@canyonos.test');
-
-    const res = await overview(token, range(30 * DAY_MS));
-    expect(res.error).toBeNull();
-    expect(fleet_row(res.data!, owned)).toMatchObject({ name: 'Shared Fleet', cost: 0.2 });
-    expect(res.data!.resources.map((resource) => resource.id)).toEqual([
-      'gpu',
-      'cpu',
-      'mem',
-      'storage',
-      'tokens',
-    ]);
   });
 });

@@ -3,36 +3,26 @@
 
 import { z } from 'zod';
 
-export const PASSWORD_MIN_LENGTH = 8;
-export const PASSWORD_MAX_LENGTH = 128;
+/** Every scope a CanyonOS token carries: `query` for a workflow, `read` and `write` for the API. */
+export const SCOPES = ['query', 'read', 'write'] as const;
+export type Scope = (typeof SCOPES)[number];
 
-export const UserSchema = z.object({
-  id: z.string(),
-  email: z.string().email(),
-  created_at: z.string(),
-});
-export type User = z.infer<typeof UserSchema>;
+export const API_SCOPES = ['read', 'write'] as const;
+export type ApiScope = (typeof API_SCOPES)[number];
 
-export const LoginSchema = z.object({
-  email: z.string().trim().email(),
-  password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
-});
-export type LoginInput = z.infer<typeof LoginSchema>;
+// packages/core/canyonos_core/auth.py and packages/cli/canyonos/auth.py hold the same two values.
+export const TOKEN_ISSUER = 'canyonos';
+export const API_AUDIENCE = 'canyonos-api';
+// How far apart a signer's clock and this API's may be for `exp`; the endpoint gives PyJWT the
+// same leeway (CLOCK_LEEWAY_SECONDS in packages/core/canyonos_core/auth.py), and neither checks
+// `iat`.
+export const CLOCK_TOLERANCE_SECONDS = 60;
 
-export const RegisterSchema = LoginSchema.extend({ password_confirmation: z.string() }).refine(
-  (input) => input.password === input.password_confirmation,
-  { message: 'Passwords do not match', path: ['password_confirmation'] }
-);
-export type RegisterInput = z.infer<typeof RegisterSchema>;
-
-export const AUTH_MODES = ['none', 'password'] as const;
-export type AuthMode = (typeof AUTH_MODES)[number];
-
-export const AuthStatusSchema = z.object({ mode: z.enum(AUTH_MODES), has_users: z.boolean() });
+export const AuthStatusSchema = z.object({ disabled: z.boolean() });
 export type AuthStatus = z.infer<typeof AuthStatusSchema>;
 
-export const AuthTokenSchema = z.object({
-  token: z.string(),
-  user: UserSchema,
+export const TokenInfoSchema = z.object({
+  scope: z.enum(SCOPES),
+  expires_at: z.string().nullable(),
 });
-export type AuthToken = z.infer<typeof AuthTokenSchema>;
+export type TokenInfo = z.infer<typeof TokenInfoSchema>;

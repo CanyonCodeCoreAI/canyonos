@@ -68,8 +68,8 @@ let next_project = 0;
 
 async function project(): Promise<{ token: string; project_id: string }> {
   next_project += 1;
-  const token = await authenticate(`time-range-${next_project}-${Date.now()}@canyonos.test`);
-  const { project_id } = await create_test_project(token, { name: `Range ${next_project}` });
+  const token = await authenticate('read');
+  const { project_id } = await create_test_project({ name: `Range ${next_project}` });
   return { token, project_id };
 }
 

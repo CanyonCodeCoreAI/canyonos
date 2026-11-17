@@ -27,7 +27,8 @@ const dev = Bun.spawn(['turbo', 'run', 'dev', '--filter=@canyonos/api', '--filte
     CANYONOS_REDIS_HOST: env.CANYONOS_REDIS_HOST || '127.0.0.1',
     CANYONOS_REDIS_PORT: env.CANYONOS_REDIS_PORT || '6379',
     DEPLOY_WORKER: env.DEPLOY_WORKER || 'none',
-    JWT_SECRET: env.JWT_SECRET || 'canyonos-local-development-only-secret',
+    // No token on the hot-reload loop; AUTH_DISABLED=false with AUTH_TRUSTED_KEYS_DIR turns it on.
+    AUTH_DISABLED: env.AUTH_DISABLED || 'true',
     VITE_API_URL: env.VITE_API_URL || env.API_URL || `http://localhost:${env.PORT || '3000'}`,
   },
   stdio: ['inherit', 'inherit', 'inherit'],

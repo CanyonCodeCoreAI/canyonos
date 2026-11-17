@@ -32,6 +32,8 @@ import { seed_running_project, seed_scaling, seed_scaling_agents } from './redis
 
 setupE2ETests();
 
+const write = bearer(await authenticate('write'));
+
 describe('SDK contract', () => {
   test('healthz round-trip preserves shape', async () => {
     const { data, error } = await api.healthz.get();
@@ -44,9 +46,9 @@ describe('SDK contract', () => {
   });
 
   test('project, stats, requests, metrics, and resources endpoints are typed at runtime', async () => {
-    const token = await authenticate('sdk-project-contract@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, {
+    const { project_id } = await create_test_project({
       name: 'SDK Project',
       files: [{ path: 'workflow.py', component_kind: 'workflow' }],
     });
@@ -95,9 +97,9 @@ describe('SDK contract', () => {
   });
 
   test('monitoring endpoints are typed at runtime', async () => {
-    const token = await authenticate('sdk-monitoring-contract@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'SDK Monitoring' });
+    const { project_id } = await create_test_project({ name: 'SDK Monitoring' });
     const monitoring = api.projects[project_id]!.monitoring;
     // On the hour, so the hourly grid has exactly 24 whole buckets rather than two partial ends.
     const to_ms = Math.floor(Date.now() / 3_600_000) * 3_600_000;
@@ -151,9 +153,9 @@ describe('SDK contract', () => {
   });
 
   test('prompt endpoints are typed at runtime', async () => {
-    const token = await authenticate('sdk-prompts-contract@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'SDK Prompts' });
+    const { project_id } = await create_test_project({ name: 'SDK Prompts' });
     await seed_running_project(project_id, {
       prompts: {
         'app.summarize': [
@@ -178,7 +180,7 @@ describe('SDK contract', () => {
     const created: SystemPrompt = (
       await api.projects[project_id]!.prompts['app.summarize']!.versions.post(
         { content: 'Summarize briefly.' },
-        { headers }
+        { headers: write }
       )
     ).data!;
     const prompt: Prompt = (
@@ -187,7 +189,7 @@ describe('SDK contract', () => {
     const live: PromptListItem = (
       await api.projects[project_id]!.prompts['app.summarize']!.live.put(
         { version: created.version },
-        { headers }
+        { headers: write }
       )
     ).data!;
 
@@ -200,9 +202,9 @@ describe('SDK contract', () => {
   });
 
   test('scaling endpoints are typed at runtime', async () => {
-    const token = await authenticate('sdk-scaling-contract@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'SDK Scaling' });
+    const { project_id } = await create_test_project({ name: 'SDK Scaling' });
     const policy: ScalingPolicy = {
       min_replicas: 1,
       max_replicas: 4,
@@ -223,7 +225,7 @@ describe('SDK contract', () => {
     const saved: ScalingPolicy = (
       await api.projects[project_id]!.scaling.app!.put(
         { ...policy, metric: 'requests_per_minute_per_replica' },
-        { headers }
+        { headers: write }
       )
     ).data!;
 
@@ -234,7 +236,7 @@ describe('SDK contract', () => {
     expect(saved).toEqual({ ...policy, metric: 'requests_per_minute_per_replica' });
 
     const deleted: ScalingDeleteResponse = (
-      await api.projects[project_id]!.scaling.app!.delete(undefined, { headers })
+      await api.projects[project_id]!.scaling.app!.delete(undefined, { headers: write })
     ).data!;
     expect(deleted).toEqual({ status: 'none' });
   });

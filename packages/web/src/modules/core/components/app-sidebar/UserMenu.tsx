@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useNavigate } from '@tanstack/react-router';
-import { ChevronsUpDownIcon, LogOutIcon } from 'lucide-react';
+import { ChevronsUpDownIcon, KeyRoundIcon, LogOutIcon } from 'lucide-react';
 
 import { Avatar, AvatarFallback } from '@repo/ui/shadcn/avatar';
 import {
@@ -19,13 +19,8 @@ import { authSelectors, useAuthStore } from '@/modules/auth/auth.store';
 
 export function UserMenu() {
   const navigate = useNavigate();
-  const user = useAuthStore(authSelectors.user);
-  if (!user) return null;
-
-  const initials = user.email
-    .split('@')
-    .map((part) => part[0]?.toUpperCase())
-    .join('');
+  const heldScopes = useAuthStore(authSelectors.heldScopes);
+  if (!heldScopes) return null;
 
   const logout = () => {
     useAuthStore.getState().logout();
@@ -46,13 +41,12 @@ export function UserMenu() {
             'hover:bg-foreground/[0.035] focus-visible:outline-none active:scale-[0.985]'
           )}
         >
-          <Avatar>
-            <AvatarFallback>{initials}</AvatarFallback>
-          </Avatar>
+          <TokensAvatar />
           <span className="app-sidebar-hide-when-collapsed min-w-0 flex-1">
             <span className="text-foreground block truncate text-[0.8125rem] font-semibold">
-              {user.email}
+              API tokens
             </span>
+            <span className="text-muted-foreground block truncate text-xs">{heldScopes}</span>
           </span>
           <ChevronsUpDownIcon
             className="app-sidebar-hide-when-collapsed text-muted-foreground size-3.5 shrink-0"
@@ -69,10 +63,10 @@ export function UserMenu() {
       >
         <DropdownMenuLabel className="font-normal">
           <div className="flex items-center gap-2">
-            <Avatar>
-              <AvatarFallback>{initials}</AvatarFallback>
-            </Avatar>
-            <p className="min-w-0 truncate text-sm font-medium">{user.email}</p>
+            <TokensAvatar />
+            <p className="min-w-0 truncate text-sm font-medium" data-testid="sidebar-held-tokens">
+              Tokens held: {heldScopes}
+            </p>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -82,5 +76,15 @@ export function UserMenu() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function TokensAvatar() {
+  return (
+    <Avatar>
+      <AvatarFallback>
+        <KeyRoundIcon className="size-4" aria-hidden />
+      </AvatarFallback>
+    </Avatar>
   );
 }

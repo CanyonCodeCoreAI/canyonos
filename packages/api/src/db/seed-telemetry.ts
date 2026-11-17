@@ -147,10 +147,7 @@ function seedProjectId(): string {
 
 async function ensureDemoProject(tx: SeedTx): Promise<string> {
   const id = seedProjectId();
-  await tx
-    .insert(projects)
-    .values({ id, created_by: null, name: DEMO_PROJECT_NAME })
-    .onConflictDoNothing();
+  await tx.insert(projects).values({ id, name: DEMO_PROJECT_NAME }).onConflictDoNothing();
   return id;
 }
 

@@ -40,10 +40,12 @@ services:
       DATABASE_URL: postgres://canyonos:canyonos@postgres:5432/canyonos
       CANYONOS_REDIS_HOST: redis
       CANYONOS_REDIS_PORT: '6379'
-      # Fixed for the smoke run only. A real stack gets a random per-stack value from the CLI.
-      JWT_SECRET: canyonos-smoke-secret-not-for-production-0123456789
+      # The smoke script makes the key and sets SMOKE_TRUSTED_KEYS_DIR to its folder.
+      AUTH_TRUSTED_KEYS_DIR: /etc/canyonos/auth/trusted
       REDIS_PASSWORD_ENCRYPTION_KEY: canyonos-smoke-redis-password-key-not-for-production
       LOG_LEVEL: info
+    volumes:
+      - '${SMOKE_TRUSTED_KEYS_DIR:?set by scripts/canyonos-smoke.ts}:/etc/canyonos/auth/trusted:ro'
     ports:
       - '127.0.0.1:${SMOKE_API_PORT:-53000}:3000'
 

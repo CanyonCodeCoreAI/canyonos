@@ -26,7 +26,12 @@
 #   - `doctor` and `status` fail when the cluster cannot be reached, `status --json`
 #     still prints its report, and `stop` still closes the forwards;
 #   - requests through the endpoint complete;
-#   - the dashboard lists the project, reads its Redis and receives its telemetry;
+#   - the dashboard lists the project, reads its Redis and receives its telemetry; its
+#     API trusts the project's keys (the operator's ConfigMap, the API pod rolled on
+#     its hash), refuses a request with no token, takes a read token to read and refuses
+#     it to change, and after the key rotation refuses the old key's write token;
+#   - `canyonos serve` refuses with no key to sign the dashboard's tokens unless
+#     `--dangerous-skip-auth`, which leaves the cluster's dashboard to its chart;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` closes both forwards, `canyonos clean` removes the project and
 #     leaves the namespace, and `canyonos target docker` keeps the kubernetes: block.
@@ -281,26 +286,86 @@ EOF
       -o jsonpath='{.data.projects\.json}' 2>/dev/null | base64 -d | grep -q "${project_id}" && break
     sleep 2
   done
-  as_admin kubectl -n canyonos-dashboard port-forward svc/canyonos-dashboard-api 18081:3000 >/dev/null 2>&1 &
+  project="$(as_deployer kubectl -n "${NS}" get canyonproject -o jsonpath='{.items[0].metadata.name}')"
+  dashboard_hash() {
+    as_admin kubectl -n canyonos-dashboard get deploy canyonos-dashboard-api \
+      -o jsonpath='{.spec.template.metadata.annotations.canyonos\.canyoncode\.ai/trusted-keys}'
+  }
+  dashboard_trusts_keys() {  # wait until the API runs with ~/.canyonos/auth/trusted as this project's keys
+    local trusts=""
+    for _ in $(seq 60); do
+      as_admin kubectl -n canyonos-dashboard get configmap canyonos-dashboard-trusted-keys -o json >/tmp/trusted-keys.json 2>/dev/null \
+        && python - /tmp/trusted-keys.json "$(dashboard_hash)" "${NS}_${project}_" "${HOME}"/.canyonos/auth/trusted/*.pub <<'EOF' \
+        && { trusts=1; break; }
+import hashlib, json, sys
+data = json.load(open(sys.argv[1])).get("data") or {}
+ours = sorted(key for name, key in data.items() if name.startswith(sys.argv[3]))
+files = sorted(open(path).read() for path in sys.argv[4:])
+content = "".join(f"{name}\0{data[name]}\0" for name in sorted(data))
+sys.exit(ours != files or hashlib.sha256(content.encode()).hexdigest() != sys.argv[2])
+EOF
+      sleep 2
+    done
+    [ -n "${trusts}" ] || fail "the dashboard's API does not run with the project's keys: $(cat /tmp/trusted-keys.json) annotation $(dashboard_hash)"
+    as_admin kubectl -n canyonos-dashboard rollout status deploy/canyonos-dashboard-api --timeout=5m >/dev/null \
+      || fail "the dashboard's API did not roll on its new keys"
+  }
+  dashboard_trusts_keys
+  # The API's pod is replaced whenever the keys change, and a port-forward ends with its
+  # pod: the forward opens again until it is stopped.
+  (
+    trap 'kill "${child:-}" 2>/dev/null; exit 0' TERM
+    while true; do
+      KUBECONFIG="${ADMIN}" kubectl -n canyonos-dashboard port-forward svc/canyonos-dashboard-api 18081:3000 >/dev/null 2>&1 &
+      child=$!
+      wait "${child}" || true
+      sleep 1
+    done
+  ) &
   dashboard_forward=$!
   api="http://127.0.0.1:18081"
-  for _ in $(seq 30); do curl -s -m 5 -o /dev/null "${api}/auth/status" && break; sleep 2; done
-  password="e2e-Password-123!"
-  session="$(curl -s -X POST "${api}/auth/register" -H 'Content-Type: application/json' \
-    -d "{\"email\": \"e2e@canyonos.test\", \"password\": \"${password}\", \"password_confirmation\": \"${password}\"}")"
-  token="$(echo "${session}" | python -c 'import sys, json; print(json.load(sys.stdin).get("token", ""))')"
-  if [ -z "${token}" ]; then  # an earlier run on this cluster made the account
-    session="$(curl -s -X POST "${api}/auth/login" -H 'Content-Type: application/json' \
-      -d "{\"email\": \"e2e@canyonos.test\", \"password\": \"${password}\"}")"
-    token="$(echo "${session}" | python -c 'import sys, json; print(json.load(sys.stdin).get("token", ""))')"
-  fi
-  [ -n "${token}" ] || fail "no dashboard session: ${session}"
-  get() { curl -s -H "Authorization: Bearer ${token}" "${api}$1"; }
-  until_found() {  # path, text, what
+  api_call() {  # method, path, token or "", JSON body or nothing: the status; the body in /tmp/api.json
+    local code="" header=() body=()
+    [ -n "$3" ] && header=(-H "Authorization: Bearer $3")
+    [ -n "${4:-}" ] && body=(-H 'Content-Type: application/json' -d "$4")
+    for _ in $(seq 30); do  # 000 while the forward opens again
+      code="$(curl -s -m 10 -o /tmp/api.json -w '%{http_code}' -X "$1" "${header[@]}" "${body[@]}" "${api}$2")"
+      [ "${code}" != 000 ] && break
+      sleep 2
+    done
+    echo "${code}"
+  }
+
+  log "The dashboard's API verifies tokens"
+  code="$(api_call GET /auth/status "")"
+  [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json")) != {"disabled": False})' \
+    || fail "/auth/status answered ${code}: $(cat /tmp/api.json)"
+  code="$(api_call GET /projects "")"
+  [ "${code}" = 401 ] || fail "/projects with no token answered ${code}: $(cat /tmp/api.json)"
+  # A read token reads and never writes; a write token changes, and reads only what it can change.
+  read_token="$(token --scope read)" || fail "token create --scope read"
+  write_token="$(token --scope write)" || fail "token create --scope write"
+  get() { curl -s -m 10 -H "Authorization: Bearer ${read_token}" "${api}$1"; }
+  until_found() {  # path, text, what; a 401 while the API restarts on new keys is not found yet
     for _ in $(seq 40); do get "$1" | grep -q "$2" && return 0; sleep 5; done
     fail "$3: $(get "$1")"
   }
   until_found /projects "${project_id}" "the dashboard does not list the project"
+  code="$(api_call GET "/projects/${project_id}/scaling" "${read_token}")"
+  [ "${code}" = 200 ] || fail "a read token reading scaling answered ${code}: $(cat /tmp/api.json)"
+  code="$(api_call DELETE "/projects/${project_id}/scaling" "${read_token}")"
+  [ "${code}" = 403 ] && grep -q auth.insufficient_scope /tmp/api.json \
+    || fail "a read token deleting scaling answered ${code}: $(cat /tmp/api.json)"
+  # One replica, as helloworld runs: the policy changes nothing, and goes right after.
+  policy='{"min_replicas": 1, "max_replicas": 1, "metric": "queue_length_total", "scale_up_above": 10, "scale_down_below": 1}'
+  changes_scaling() {  # write token: 0 when it saves a scaling policy and deletes it again
+    code="$(api_call PUT "/projects/${project_id}/scaling" "$1" "${policy}")"
+    [ "${code}" = 200 ] || return 1
+    code="$(api_call DELETE "/projects/${project_id}/scaling" "$1")"
+    [ "${code}" = 200 ]
+  }
+  changes_scaling "${write_token}" || fail "a write token changing scaling answered ${code}: $(cat /tmp/api.json)"
+
   until_found "/projects/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard could not read the project's Redis"
   until_found "/projects/${project_id}/monitoring/replicas" '"replica":' "no telemetry reached the dashboard"
@@ -329,9 +394,9 @@ EOF
   requests || fail "requests after the rotation"
   until_found "/projects/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard lost the project's Redis after the rotation"
-  kill "${dashboard_forward}" 2>/dev/null || true
 
   log "Rotating the key refuses every query token the old one signed"
+  keys_hash="$(dashboard_hash)"
   canyonos keys create --name rotated || fail "keys create --name rotated"
   rm "${HOME}/.canyonos/auth/trusted/default.pub"
   canyonos deploy || fail "deploy after the key rotation"
@@ -350,10 +415,31 @@ EOF
   code="$(query_status "${query_token}")"
   [ "${code}" = 202 ] || fail "the rotated key's token answered ${code}: $(cat /tmp/query.json)"
 
+  log "Rotating the key refuses the old key's dashboard tokens once the API rolled"
+  dashboard_trusts_keys
+  [ "$(dashboard_hash)" != "${keys_hash}" ] || fail "the dashboard's API kept its trusted-keys annotation"
+  code="$(api_call PUT "/projects/${project_id}/scaling" "${write_token}" "${policy}")"
+  [ "${code}" = 401 ] && grep -q auth.invalid_token /tmp/api.json \
+    || fail "the old key's write token answered ${code}: $(cat /tmp/api.json)"
+  write_token="$(token --scope write)" || fail "token create --scope write --key rotated"
+  read_token="$(token --scope read)" || fail "token create --scope read --key rotated"
+  changes_scaling "${write_token}" || fail "the rotated key's write token answered ${code}: $(cat /tmp/api.json)"
+  until_found /projects "${project_id}" "the rotated key's read token does not list the project"
+  kill "${dashboard_forward}" 2>/dev/null || true
+
   log "canyonos serve keeps the dashboard on 127.0.0.1:8081 and returns"
   # As an admin: the deployer may not port-forward into the dashboard's namespace.
   canyonos_in "${ADMIN}" /hw serve || fail "serve"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "the dashboard is not on 127.0.0.1:8081"
+
+  log "canyonos serve refuses with no key to sign the dashboard's tokens, unless told to skip"
+  said="$(canyonos_in "${ADMIN}" /hw serve --auth-dir /tmp/no-keys 2>&1)" && fail "serve passed with no trusted key: ${said}"
+  echo "${said}" | tr -s ' \n' ' ' | grep -q "canyonos keys create" \
+    || fail "the refused serve did not say to run canyonos keys create: ${said}"
+  said="$(canyonos_in "${ADMIN}" /hw serve --dangerous-skip-auth --auth-dir /tmp/no-keys 2>&1)" \
+    || fail "serve --dangerous-skip-auth: ${said}"
+  echo "${said}" | tr -s ' \n' ' ' | grep -q "dashboard.dangerousSkipAuth=true" \
+    || fail "serve --dangerous-skip-auth did not say the cluster's dashboard keeps its chart's setting: ${said}"
 
   log "another project's serve keeps the running dashboard on its port"
   printf 'dashboard_port: 9000\n' >> /tmp/Target_Check/config/workflow_config.yaml
@@ -400,7 +486,9 @@ EOF
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "serve did not open the dashboard again"
 
   log "deploy --dangerous-skip-auth turns the project's verification off"
-  canyonos deploy --dangerous-skip-auth || fail "deploy --dangerous-skip-auth"
+  said="$(canyonos deploy --dangerous-skip-auth 2>&1)" || fail "deploy --dangerous-skip-auth: ${said}"
+  echo "${said}" | tr -s ' \n' ' ' | grep -q "dashboard.dangerousSkipAuth" \
+    || fail "deploy --dangerous-skip-auth did not say the cluster's dashboard keeps its chart's setting: ${said}"
   disabled="$(as_deployer kubectl -n "${NS}" get canyonproject -o jsonpath='{.items[0].spec.auth.disabled}')"
   [ "${disabled}" = true ] || fail "spec.auth.disabled is ${disabled:-unset}, not true"
   said="$(endpoint_up http://127.0.0.1:8080 "")" \

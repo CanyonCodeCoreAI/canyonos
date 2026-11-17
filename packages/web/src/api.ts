@@ -14,7 +14,7 @@ const API_URL = webEnv.api.baseUrl;
 export const forgePublicApi = edenTreaty<ForgeApiType>(API_URL);
 
 const fetchWithAuth = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-  const token = authActions.getToken();
+  const token = authActions.tokenFor(init?.method);
   const headers = new Headers(init?.headers);
   if (token) headers.set('authorization', `Bearer ${token}`);
   return fetch(input, { ...init, headers });
@@ -46,6 +46,10 @@ export class ApiResponseError extends Error {
   }
 }
 
+/** Whether the API answered `error` with one of `statuses`, such as a token's 401 or 403. */
+export const answeredWith = (error: unknown, ...statuses: number[]): error is ApiResponseError =>
+  error instanceof ApiResponseError && statuses.includes(error.status ?? 0);
+
 type EdenResponse<T> = Promise<{ data: T; error: null } | { data: null; error: any }>;
 
 /**
@@ -54,9 +58,9 @@ type EdenResponse<T> = Promise<{ data: T; error: null } | { data: null; error: a
  * @example
  * const data = await apiCall<MyType>(() => forgeApi.healthz.get());
  *
- * const profile = await apiCall<Profile>(
- *   () => forgeAuthApi.auth.profile.get(),
- *   profileSchema
+ * const project = await apiCall<Project>(
+ *   () => forgeAuthApi.projects[project_id]!.get(),
+ *   projectSchema
  * );
  */
 export async function apiCall<T>(

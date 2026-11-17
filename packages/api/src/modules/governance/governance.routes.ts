@@ -4,7 +4,7 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { resolveAuth } from '../auth/auth.middleware';
+import { authPlugin, requireScope } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { ProjectIdParams } from '../projects/projects.types';
 import { get_governance, save_agent_rules, set_stopped } from './governance.service';
@@ -15,11 +15,12 @@ const doc = { tags: ['Governance'], security: [{ bearerAuth: [] }] };
 const AgentParams = ProjectIdParams.extend({ agent: z.string().min(1) });
 
 export const governanceRoutes = new Elysia({ name: 'governance.routes' })
-  .resolve(async ({ request }) => ({ auth: await resolveAuth(request) }))
+  .use(authPlugin)
   .resolve(resolveProjectAccess)
   .get('/:project_id/governance', ({ params }) => get_governance(params.project_id), {
     params: ProjectIdParams,
     response: { 200: GovernanceResponseSchema },
+    beforeHandle: requireScope('read', 'write'),
     detail: { ...doc, summary: 'Get every agent state, rules and spend, and who calls whom' },
   })
   .put(
@@ -29,6 +30,7 @@ export const governanceRoutes = new Elysia({ name: 'governance.routes' })
       params: AgentParams,
       body: AgentRulesSchema,
       response: { 200: GovernanceResponseSchema },
+      beforeHandle: requireScope('write'),
       detail: { ...doc, summary: "Replace one agent's requirements and spend rules" },
     }
   )
@@ -39,6 +41,7 @@ export const governanceRoutes = new Elysia({ name: 'governance.routes' })
       params: AgentParams,
       body: StoppedBodySchema,
       response: { 200: GovernanceResponseSchema },
+      beforeHandle: requireScope('write'),
       detail: { ...doc, summary: 'Stop an agent, or start it again with its configured replicas' },
     }
   );

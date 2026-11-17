@@ -21,6 +21,7 @@ import pytest
 from ..harness import (
     API_URL,
     Api,
+    api_tokens,
     canyonos,
     dashboard_containers,
     deployed_endpoint,
@@ -32,7 +33,6 @@ from ..harness import (
     project_containers,
     project_dir,
     redis_port,
-    sign_in,
     stage,
     traces,
 )
@@ -59,8 +59,11 @@ class Fleet:
 
 @pytest.fixture(scope="module")
 def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
-    """helloworld staged under `kept/` and `gone/`. Every project on the machine is
-    stopped afterwards and the dashboard removed, whether the steps passed or not."""
+    """helloworld staged under `kept/` and `gone/`, after `canyonos serve`, as for the
+    `deployed` fixture: the dashboard API reads the session's trusted keys only when
+    it starts, and a deploy leaves a running dashboard as it is. Every project on the
+    machine is stopped afterwards and the dashboard removed, whether the steps passed
+    or not."""
     parent = tmp_path_factory.mktemp("restart")
     # Finalizers run last-added first, so this runs after `stop --all`.
     request.addfinalizer(
@@ -73,6 +76,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     request.addfinalizer(
         lambda: canyonos(recorder, ["stop", "--all"], cwd=parent, check=False)
     )
+    canyonos(recorder, ["serve"], cwd=parent, timeout=600)
     dirs = {}
     for copy in COPIES:
         (parent / copy).mkdir()
@@ -94,7 +98,7 @@ def test_two_projects_deploy_one_after_the_other_and_answer(recorder, fleet):
         _deploy(recorder, fleet.dirs[copy])
         fleet.groups[copy] = deployment_group(recorder, fleet.dirs[copy])
         greets(recorder, fleet.dirs[copy], copy)
-    api = Api(recorder, API_URL, sign_in(recorder, API_URL))
+    api = Api(recorder, API_URL, api_tokens(recorder, fleet.parent))
     for copy in COPIES:
         project_id = deployed_project_id(recorder, api, fleet.dirs[copy], "helloworld")
         fleet.ids[copy] = project_id
@@ -129,7 +133,7 @@ def test_after_docker_stops_everything_serve_lists_both_with_their_history(
 
     canyonos(recorder, ["serve"], cwd=fleet.dirs["kept"])
 
-    api = Api(recorder, API_URL, sign_in(recorder, API_URL))
+    api = Api(recorder, API_URL, api_tokens(recorder, fleet.parent))
     listed = {project["id"] for project in api.get("/projects").json()}
     assert set(fleet.ids.values()) <= listed, listed
     for copy in COPIES:

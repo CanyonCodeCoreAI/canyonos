@@ -119,10 +119,10 @@ describe('migration baseline', () => {
     expect(status_updated?.predicate).toBeNull();
   });
 
-  test('companies and auth_challenges are gone and users carries a password hash', async () => {
+  test('companies, auth_challenges, users and the project columns pointing at them are gone', async () => {
     const tables = await postgres<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name IN ('companies', 'auth_challenges')
+      WHERE table_schema = 'public' AND table_name IN ('companies', 'auth_challenges', 'users')
     `;
     expect(tables).toHaveLength(0);
 
@@ -132,7 +132,6 @@ describe('migration baseline', () => {
       SELECT table_name, column_name, is_nullable FROM information_schema.columns
       WHERE table_schema = 'public'
         AND (table_name, column_name) IN (
-          ('users', 'password_hash'),
           ('projects', 'company_id'),
           ('projects', 'created_by')
         )
@@ -144,9 +143,6 @@ describe('migration baseline', () => {
         column_name,
         is_nullable,
       }))
-    ).toEqual([
-      { table_name: 'projects', column_name: 'created_by', is_nullable: 'YES' },
-      { table_name: 'users', column_name: 'password_hash', is_nullable: 'NO' },
-    ]);
+    ).toEqual([]);
   });
 });

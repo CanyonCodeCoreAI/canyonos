@@ -40,13 +40,21 @@ services:
       - "${CANYONOS_API_PORT:-3000}:3000"
     environment:
       DATABASE_URL: postgresql://canyonos:canyonos@db:5432/canyonos
-      JWT_SECRET: ${CANYONOS_JWT_SECRET}
       REDIS_PASSWORD_ENCRYPTION_KEY: ${CANYONOS_REDIS_PASSWORD_ENCRYPTION_KEY}
+      # `true` only with --dangerous-skip-auth; otherwise every API token must be signed
+      # by a key in the trusted folder below, read once when the API starts.
+      AUTH_DISABLED: ${CANYONOS_DASHBOARD_AUTH_DISABLED}
+      AUTH_TRUSTED_KEYS_DIR: /etc/canyonos/auth/trusted
       LOG_LEVEL: info
       # Taken from the shell `canyonos deploy` or `canyonos serve` runs in, since the
       # CLI has no setting for how long the API keeps metrics; unset, the API defaults.
       METRICS_RAW_RETENTION_DAYS:
       METRICS_ROLLUP_RETENTION_DAYS:
+    # The public keys in `trusted/` of the keys folder (`~/.canyonos/auth`, or
+    # --auth-dir). The CLI creates the folder before every start, even with
+    # --dangerous-skip-auth, so Docker never makes it, owned by root, in its place.
+    volumes:
+      - "${CANYONOS_AUTH_TRUSTED_DIR}:/etc/canyonos/auth/trusted:ro"
     extra_hosts:
       - host.docker.internal:host-gateway
   web:
@@ -59,8 +67,7 @@ services:
       api:
         condition: service_healthy
     # Published on all interfaces so teammates can open the dashboard on the deploy
-    # host's address. The API starts with AUTH_MODE=none, so by default anyone who
-    # can reach this port reads every project; set AUTH_MODE=password on the api
-    # service to require accounts.
+    # host's address. Reading or changing a project still takes an API token the api
+    # trusts, unless it runs with --dangerous-skip-auth.
     ports:
       - "${CANYONOS_WEB_PORT}:8080"

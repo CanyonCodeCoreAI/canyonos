@@ -212,7 +212,7 @@ async function create_project(
   token: string,
   name = 'Monitoring Project'
 ): Promise<{ project_id: string }> {
-  return create_test_project(token, { name });
+  return create_test_project({ name });
 }
 
 interface PlanNode {
@@ -258,7 +258,7 @@ const SECONDS_PER_HOUR = 3600;
 let token: string;
 
 beforeAll(async () => {
-  token = await authenticate('monitoring-owner@canyonos.test');
+  token = await authenticate('read');
 });
 
 describe('GET /projects/:project_id/monitoring/series', () => {

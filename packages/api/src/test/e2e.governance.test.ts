@@ -34,6 +34,8 @@ import type { SeededAgent } from './redis-test.utils';
 
 setupE2ETests();
 
+const write = bearer(await authenticate('write'));
+
 const error_code = (res: { error: { value?: unknown } | null }) =>
   (res.error?.value as { error?: string } | undefined)?.error;
 
@@ -60,11 +62,12 @@ const LLMS = {
 };
 
 /** A running project whose agents are all up except TestRunnerAgent. */
-async function governed_project(
-  email: string
-): Promise<{ headers: Record<string, string>; project_id: string }> {
-  const token = await authenticate(email);
-  const { project_id } = await create_test_project(token, { name: 'Governance Project' });
+async function governed_project(): Promise<{
+  headers: Record<string, string>;
+  project_id: string;
+}> {
+  const token = await authenticate('read');
+  const { project_id } = await create_test_project({ name: 'Governance Project' });
   await seed_running_project(project_id, { prompts: {} });
   await seed_scaling_agents([...AGENTS.map((name) => sampled(name, 2)), { name: 'Idle' }]);
   await seed_up_agents(AGENTS.filter((name) => name !== 'TestRunnerAgent'));
@@ -124,7 +127,7 @@ describe('project governance', () => {
   beforeEach(reset_controller);
 
   test('reports each agent up, down, unknown or stopped and the requirements it misses', async () => {
-    const { headers, project_id } = await governed_project('gov-state@canyonos.test');
+    const { headers, project_id } = await governed_project();
     await seed_scaling_agents([
       ...AGENTS.map((name) => sampled(name, 2)),
       { name: 'Idle' },
@@ -152,7 +155,7 @@ describe('project governance', () => {
   });
 
   test('saving one agent rules stores them, stamps since, and leaves the others alone', async () => {
-    const { headers, project_id } = await governed_project('gov-save@canyonos.test');
+    const { project_id } = await governed_project();
     await seed_governance({
       agents: {
         MergeAgent: { requires: ['TestRunnerAgent'] },
@@ -162,7 +165,7 @@ describe('project governance', () => {
     const governance = api.projects[project_id]!.governance;
 
     const before = Date.now();
-    const saved = await governance.agents.MergeAgent!.put(MERGE_RULES, { headers });
+    const saved = await governance.agents.MergeAgent!.put(MERGE_RULES, { headers: write });
 
     expect(saved.error).toBeNull();
     const stored = (await read_governance_config()) as {
@@ -179,7 +182,7 @@ describe('project governance', () => {
       requires: [],
       spend: { rules: [{ above_usd: 50, action: { kind: 'deny' } }] },
     };
-    const again = await governance.agents.MergeAgent!.put(raised, { headers });
+    const again = await governance.agents.MergeAgent!.put(raised, { headers: write });
 
     expect(again.error).toBeNull();
     const restored = (await read_governance_config()) as typeof stored;
@@ -190,21 +193,21 @@ describe('project governance', () => {
   });
 
   test('an unknown required agent or a model the agent may not use is 422 and nothing is stored', async () => {
-    const { headers, project_id } = await governed_project('gov-invalid@canyonos.test');
+    const { project_id } = await governed_project();
     await seed_llms(LLMS);
     const merge = api.projects[project_id]!.governance.agents.MergeAgent!;
 
-    const ghost = await merge.put({ requires: ['Ghost'], spend: null }, { headers });
+    const ghost = await merge.put({ requires: ['Ghost'], spend: null }, { headers: write });
     const forbidden = await merge.put(
       {
         requires: [],
         spend: { rules: [{ above_usd: 1, action: { kind: 'switch_model', model: 'gpt-5.5' } }] },
       },
-      { headers }
+      { headers: write }
     );
     const unknown_agent = await api.projects[project_id]!.governance.agents.Ghost!.put(
       { requires: [], spend: null },
-      { headers }
+      { headers: write }
     );
 
     expect(ghost.error?.status as number).toBe(422);
@@ -219,7 +222,7 @@ describe('project governance', () => {
   });
 
   test('lists the models each agent may use and accepts one of them', async () => {
-    const { headers, project_id } = await governed_project('gov-models@canyonos.test');
+    const { headers, project_id } = await governed_project();
     await seed_llms(LLMS);
     const governance = api.projects[project_id]!.governance;
 
@@ -231,7 +234,7 @@ describe('project governance', () => {
           rules: [{ above_usd: 1, action: { kind: 'switch_model', model: 'claude-haiku' } }],
         },
       },
-      { headers }
+      { headers: write }
     );
 
     expect([...by_name(listed.data!.agents, 'MergeAgent').models!].sort()).toEqual([
@@ -243,7 +246,7 @@ describe('project governance', () => {
   });
 
   test('an llms.yaml entry without a model_id is skipped, as the gateway skips it', async () => {
-    const { headers, project_id } = await governed_project('gov-llms-no-model@canyonos.test');
+    const { headers, project_id } = await governed_project();
     await seed_llms({ ...LLMS, unnamed: { agents: { MergeAgent: null } } });
 
     const listed = await api.projects[project_id]!.governance.get({ $headers: headers });
@@ -256,14 +259,14 @@ describe('project governance', () => {
   });
 
   test('with no llms.yaml published any model is accepted and models is null', async () => {
-    const { headers, project_id } = await governed_project('gov-no-llms@canyonos.test');
+    const { project_id } = await governed_project();
 
     const saved = await api.projects[project_id]!.governance.agents.MergeAgent!.put(
       {
         requires: [],
         spend: { rules: [{ above_usd: 1, action: { kind: 'switch_model', model: 'anything' } }] },
       },
-      { headers }
+      { headers: write }
     );
 
     expect(saved.error).toBeNull();
@@ -271,7 +274,7 @@ describe('project governance', () => {
   });
 
   test('spend counts the agent cost since its start, names the highest rule passed and is published on save', async () => {
-    const { headers, project_id } = await governed_project('gov-spend@canyonos.test');
+    const { project_id } = await governed_project();
     const since = SPEND_SINCE;
     await seed_review_spend(project_id, 'gov-spend');
 
@@ -286,7 +289,7 @@ describe('project governance', () => {
           ],
         },
       },
-      { headers }
+      { headers: write }
     );
 
     expect(saved.error).toBeNull();
@@ -299,7 +302,7 @@ describe('project governance', () => {
   });
 
   test('edges are the distinct caller to callee agent pairs, never an agent calling itself', async () => {
-    const { headers, project_id } = await governed_project('gov-edges@canyonos.test');
+    const { headers, project_id } = await governed_project();
     const now = BigInt(Date.now()) * 1_000_000n;
     const span = (span_id: string, name: string, parent_span_id?: string) =>
       write_project_span(project_id, {
@@ -322,10 +325,10 @@ describe('project governance', () => {
   });
 
   test('stopping an agent sets its desired replicas to 0 and starting it restores the spec count', async () => {
-    const { headers, project_id } = await governed_project('gov-stop@canyonos.test');
+    const { project_id } = await governed_project();
     const stopped = api.projects[project_id]!.governance.agents.TestRunnerAgent!.stopped;
 
-    const stop = await stopped.put({ stopped: true }, { headers });
+    const stop = await stopped.put({ stopped: true }, { headers: write });
 
     expect(stop.error).toBeNull();
     expect(await read_desired_replicas('TestRunnerAgent')).toBe('0');
@@ -334,7 +337,7 @@ describe('project governance', () => {
       desired_replicas: 0,
     });
 
-    const start = await stopped.put({ stopped: false }, { headers });
+    const start = await stopped.put({ stopped: false }, { headers: write });
 
     expect(start.error).toBeNull();
     expect(await read_desired_replicas('TestRunnerAgent')).toBe('2');
@@ -342,11 +345,11 @@ describe('project governance', () => {
   });
 
   test('stopping an agent the controller does not run is 422 governance.unknown_agent', async () => {
-    const { headers, project_id } = await governed_project('gov-stop-ghost@canyonos.test');
+    const { project_id } = await governed_project();
 
     const res = await api.projects[project_id]!.governance.agents.Ghost!.stopped.put(
       { stopped: true },
-      { headers }
+      { headers: write }
     );
 
     expect(res.error?.status as number).toBe(422);
@@ -355,7 +358,7 @@ describe('project governance', () => {
   });
 
   test('reports whether a scaling policy is stored', async () => {
-    const { headers, project_id } = await governed_project('gov-scaling@canyonos.test');
+    const { headers, project_id } = await governed_project();
     await seed_scaling_agents([sampled('app.Workflow', 1), sampled('ops.Workflow', 1)]);
     await seed_scaling(JSON.stringify({ projects: { app: { min_replicas: 1 } } }));
 
@@ -366,7 +369,7 @@ describe('project governance', () => {
   });
 
   test('a corrupt governance:config is 502 governance.config_invalid', async () => {
-    const { headers, project_id } = await governed_project('gov-corrupt@canyonos.test');
+    const { headers, project_id } = await governed_project();
     await seed_governance({ agents: { MergeAgent: { requires: 'TestRunnerAgent' } } });
 
     const res = await api.projects[project_id]!.governance.get({ $headers: headers });
@@ -376,15 +379,15 @@ describe('project governance', () => {
   });
 
   test('a project the controller is not running is 404 on every route', async () => {
-    const token = await authenticate('gov-not-running@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'Idle Project' });
+    const { project_id } = await create_test_project({ name: 'Idle Project' });
     const governance = api.projects[project_id]!.governance;
 
     const responses = await Promise.all([
       governance.get({ $headers: headers }),
-      governance.agents.MergeAgent!.put({ requires: [], spend: null }, { headers }),
-      governance.agents.MergeAgent!.stopped.put({ stopped: true }, { headers }),
+      governance.agents.MergeAgent!.put({ requires: [], spend: null }, { headers: write }),
+      governance.agents.MergeAgent!.stopped.put({ stopped: true }, { headers: write }),
     ]);
 
     for (const res of responses) {
@@ -394,7 +397,7 @@ describe('project governance', () => {
   });
 
   test('a caller with no token is rejected on every route', async () => {
-    const { project_id } = await governed_project('gov-anon@canyonos.test');
+    const { project_id } = await governed_project();
     const governance = api.projects[project_id]!.governance;
 
     const responses = await Promise.all([
@@ -409,7 +412,7 @@ describe('project governance', () => {
   });
 
   test('publishing writes each governed agent spend to its controller past a dead one', async () => {
-    const { project_id } = await governed_project('gov-publish@canyonos.test');
+    const { project_id } = await governed_project();
     await register_at(project_id, config.canyonos.redisPort);
     await seed_review_spend(project_id, 'gov-publish');
     await seed_governance({
@@ -421,8 +424,7 @@ describe('project governance', () => {
         },
       },
     });
-    const token = await authenticate('gov-publish-dead@canyonos.test');
-    const dead = await create_test_project(token, { name: 'Dead Controller' });
+    const dead = await create_test_project({ name: 'Dead Controller' });
     await register_at(dead.project_id, CLOSED_PORT);
 
     await publish_spend_once();
@@ -431,7 +433,7 @@ describe('project governance', () => {
   });
 
   test('publishing clears a stale governance:spend for a project without spend rules', async () => {
-    const { project_id } = await governed_project('gov-publish-none@canyonos.test');
+    const { project_id } = await governed_project();
     await register_at(project_id, config.canyonos.redisPort);
     await seed_governance_spend({ ReviewAgent: 7 });
 
@@ -441,7 +443,7 @@ describe('project governance', () => {
   });
 
   test('on Kubernetes spend goes to the Redis the operator lists, not to the stored port', async () => {
-    const { project_id } = await governed_project('gov-publish-k8s@canyonos.test');
+    const { project_id } = await governed_project();
     // The port stored for it leads nowhere: on Kubernetes the listed Redis is used.
     await register_at(project_id, CLOSED_PORT);
     await seed_review_spend(project_id, 'gov-publish-k8s');
@@ -454,8 +456,7 @@ describe('project governance', () => {
       },
     });
     // Stored, but no longer listed: gone from the cluster, so it is skipped.
-    const token = await authenticate('gov-publish-k8s-gone@canyonos.test');
-    const gone = await create_test_project(token, { name: 'Gone From The Cluster' });
+    const gone = await create_test_project({ name: 'Gone From The Cluster' });
     await register_at(gone.project_id, CLOSED_PORT);
 
     const dir = mkdtempSync(join(tmpdir(), 'registry-'));

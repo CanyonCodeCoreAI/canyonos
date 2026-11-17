@@ -37,8 +37,8 @@ from .harness import (
     project_dir,
     qualified,
     query_for,
+    api_tokens,
     result_of,
-    sign_in,
     stage,
     stop_project,
     trust_a_key,
@@ -235,17 +235,20 @@ class QueryResult:
 
 @pytest.fixture(scope="session")
 def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[Deployed]:
-    """Deploy the staged project with `canyonos deploy`, trusting a key of the
-    caller's and the token vectors' key, sign in to the dashboard and hand cases the
-    endpoint and API. Afterwards, and also when any of that
-    fails, save the container logs and remove the deploy with `canyonos stop`. A
-    failing stop fails the run, unless the deploy had already failed: that failure
-    is the one reported."""
+    """Deploy the staged project with `canyonos deploy`, trusting the session's key
+    and the token vectors' key, and hand cases the endpoint and the
+    dashboard API with a read and a write token. `canyonos serve` runs first: the
+    dashboard API reads its trusted keys only when it starts, and a deploy leaves a
+    running dashboard as it is. Afterwards, and also when any of that fails, save
+    the container logs and remove the deploy with `canyonos stop`. A failing stop
+    fails the run, unless the deploy had already failed: that failure is the one
+    reported."""
     succeeded = False
     folder = project_dir(workspace)
     try:
         trust_a_key(recorder, workspace)
         trust_the_vectors(recorder, workspace)
+        canyonos(recorder, ["serve"], cwd=workspace)
         # From the project folder, naming the deployment's folder, as a user would.
         deploy = canyonos(
             recorder,
@@ -256,7 +259,7 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[De
         assert f"Registered {project.name} with the dashboard" in deploy.output, (
             deploy.output[-3000:]
         )
-        api = Api(recorder, API_URL, sign_in(recorder, API_URL))
+        api = Api(recorder, API_URL, api_tokens(recorder, workspace))
         yield Deployed(
             project=project,
             dir=workspace,

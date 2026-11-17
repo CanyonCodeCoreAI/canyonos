@@ -64,6 +64,7 @@ function PromptsBody({
     case 'error':
       return (
         <QueryError
+          error={query.error}
           message={promptErrorMessage(query.error, 'Could not load prompts.')}
           onRetry={() => void query.refetch()}
           test_id="project-prompt-error"

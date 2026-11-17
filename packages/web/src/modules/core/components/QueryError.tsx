@@ -3,8 +3,16 @@
 
 import { Button } from '@repo/ui/shadcn/button';
 import { cn } from '@repo/ui/utils';
+import { answeredWith } from '@/api';
+import { EmptyState } from '@/modules/core/components/EmptyState';
+
+/** The API's words when it refused the token for a read (403), such as a write token on a GET. */
+export function readRefusal(error: unknown): string | null {
+  return answeredWith(error, 403) ? error.message : null;
+}
 
 interface QueryErrorProps {
+  readonly error: unknown;
   readonly message: string;
   readonly onRetry: () => void;
   readonly className?: string;
@@ -12,13 +20,27 @@ interface QueryErrorProps {
   readonly retry_test_id?: string;
 }
 
+/**
+ * A failed read. When the API refused the token (403, such as a write token on a read), its
+ * message stands where the data would be, with no retry: the same token gets the same answer.
+ */
 export function QueryError({
+  error,
   message,
   onRetry,
   className,
   test_id,
   retry_test_id,
 }: QueryErrorProps) {
+  const refusal = readRefusal(error);
+  if (refusal !== null) {
+    return (
+      <EmptyState size="section" className={className} test_id="query-refused">
+        <p role="status">{refusal}</p>
+      </EmptyState>
+    );
+  }
+
   return (
     <div
       className={cn(

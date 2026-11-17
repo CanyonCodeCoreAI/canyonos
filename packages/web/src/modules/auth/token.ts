@@ -23,8 +23,9 @@ const decodeTokenPayload = (token: string): JwtPayload | null => {
 
 /**
  * Client-side expiry check from the JWT `exp` claim. The signature is NOT verified here
- * (the secret is server-only) — this only short-circuits clearly-expired tokens before
- * navigation. A token with no readable `exp` is deferred to the server's profile check.
+ * (only the API holds the trusted public keys) — this only short-circuits clearly-expired
+ * tokens before navigation. A token with no readable `exp` is left to the API, which verifies
+ * it on `GET /auth/token` and on every request.
  */
 export const isTokenExpired = (token: string): boolean => {
   const payload = decodeTokenPayload(token);

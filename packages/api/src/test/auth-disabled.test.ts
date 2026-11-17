@@ -7,7 +7,8 @@ import { db } from '@api/db/client';
 import { projects } from '@api/db/schema';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { seed_running_project } from './redis-test.utils';
+import { seed_active_agents, seed_running_project } from './redis-test.utils';
+import type { ScalingPolicy } from '../modules/scaling/scaling.types';
 
 setupE2ETests();
 
@@ -18,37 +19,65 @@ const RANGE = {
   to: RANGE_TO.toISOString(),
 };
 
-const CREDENTIALS = { email: 'nobody@example.com', password: 'e2e-password-1' };
+const STALE_BEARER = { authorization: 'Bearer x.y.z' };
 
-const expectSignInDisabled = (res: { error: { status: unknown; value: unknown } | null }) => {
-  expect(res.error?.status as number).toBe(404);
-  expect((res.error?.value as { error?: string })?.error).toBe('auth.disabled');
+const POLICY: ScalingPolicy = {
+  min_replicas: 1,
+  max_replicas: 3,
+  metric: 'requests_per_minute_per_replica',
+  scale_up_above: 10,
+  scale_down_below: 1,
 };
 
-describe('AUTH_MODE=none', () => {
-  test('/auth/status reports the mode', async () => {
+async function open_project(name: string): Promise<string> {
+  const [project] = await db.insert(projects).values({ name }).returning({ id: projects.id });
+  await seed_running_project(project!.id, { prompts: {} });
+  await seed_active_agents(JSON.stringify(['app.Alpha']));
+  return project!.id;
+}
+
+describe('AUTH_DISABLED=true', () => {
+  test('/auth/status reports verification off', async () => {
     const status = await api.auth.status.get();
 
-    expect(status.data).toEqual({ mode: 'none', has_users: false });
+    expect(status.data).toEqual({ disabled: true });
   });
 
-  test('register, login and profile are 404 auth.disabled', async () => {
-    expectSignInDisabled(
-      await api.auth.register.post({ ...CREDENTIALS, password_confirmation: CREDENTIALS.password })
-    );
-    expectSignInDisabled(await api.auth.login.post(CREDENTIALS));
-    expectSignInDisabled(await api.auth.profile.get());
+  test('/auth/token answers what a write token would, with no token', async () => {
+    const token = await api.auth.token.get();
+
+    expect(token.data).toEqual({ scope: 'write', expires_at: null });
+  });
+
+  test('a caller with no token lists projects and changes scaling', async () => {
+    const project_id = await open_project('Unsigned Writes');
+
+    const listed = await api.projects.get();
+    expect(listed.error).toBeNull();
+    expect(listed.data!.map(({ id }) => id)).toContain(project_id);
+
+    const saved = await api.projects[project_id]!.scaling.app!.put(POLICY);
+    expect(saved.error).toBeNull();
+  });
+
+  // A bearer left in a browser from before the switch was flipped must not turn into a 401.
+  test('a stale or forged bearer is ignored', async () => {
+    const project_id = await open_project('Stale Bearer');
+
+    const listed = await api.projects.get({ $headers: STALE_BEARER });
+    expect(listed.error).toBeNull();
+    expect(listed.data!.map(({ id }) => id)).toContain(project_id);
+
+    const saved = await api.projects[project_id]!.scaling.app!.put(POLICY, {
+      headers: STALE_BEARER,
+    });
+    expect(saved.error).toBeNull();
   });
 
   // The resolver is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling),
   // so reaching every sub-resource proves each composed plugin serves a caller with no headers.
   test('a caller with no headers lists the projects and reaches every sub-resource', async () => {
-    const [project] = await db
-      .insert(projects)
-      .values({ name: 'Open Project' })
-      .returning({ id: projects.id });
-    const project_id = project!.id;
-    await seed_running_project(project_id, { prompts: {} });
+    const project_id = await open_project('Open Project');
 
     const listed = await api.projects.get();
     expect(listed.error).toBeNull();

@@ -4,44 +4,29 @@
 import { Elysia } from 'elysia';
 
 import { config } from '@core/env';
-import { notFound } from '@core/errors';
 
-import { resolveAuth } from './auth.middleware';
-import { authService } from './auth.service';
-import {
-  AuthStatusSchema,
-  AuthTokenSchema,
-  LoginSchema,
-  RegisterSchema,
-  UserSchema,
-} from './types';
+import { authPlugin, requireScope } from './auth.middleware';
+import { AuthStatusSchema, TokenInfoSchema } from './types';
+import type { Auth } from './auth.middleware';
+import type { TokenInfo } from './types';
 
-const signInDisabled = () =>
-  notFound('auth.disabled', 'Sign-in is disabled; set AUTH_MODE=password to enable accounts');
+const doc = { tags: ['Auth'], security: [{ bearerAuth: [] }] };
+
+/** With verification off there is no token; the UI gets the answer a write token would. */
+const tokenInfo = (auth: Auth | null): TokenInfo =>
+  auth
+    ? { scope: auth.scope, expires_at: auth.exp ? new Date(auth.exp * 1000).toISOString() : null }
+    : { scope: 'write', expires_at: null };
 
 export const authRoutes = new Elysia({ prefix: '/auth', name: 'auth.routes' })
-  .get('/status', () => authService.status(), { response: { 200: AuthStatusSchema } })
-  .onBeforeHandle(() => {
-    if (config.auth.mode === 'none') throw signInDisabled();
+  .get('/status', () => ({ disabled: config.auth.disabled }), {
+    response: { 200: AuthStatusSchema },
+    detail: { tags: ['Auth'], summary: 'Whether the API verifies tokens; asked before sign-in' },
   })
-  .post(
-    '/register',
-    async ({ body, set }) => {
-      const session = await authService.register(body.email, body.password);
-      set.status = 201;
-      return session;
-    },
-    { body: RegisterSchema, response: { 201: AuthTokenSchema } }
-  )
-  .post('/login', ({ body }) => authService.login(body.email, body.password), {
-    body: LoginSchema,
-    response: { 200: AuthTokenSchema },
-  })
-  .resolve(async ({ request }) => {
-    const auth = await resolveAuth(request);
-    if (!auth) throw signInDisabled();
-    return { auth };
-  })
-  .get('/profile', ({ auth }) => authService.getProfile(auth.sub), {
-    response: { 200: UserSchema },
+  .use(authPlugin)
+  // Either scope: the dashboard checks the read and the write token it was given through here.
+  .get('/token', ({ auth }) => tokenInfo(auth), {
+    beforeHandle: requireScope('read', 'write'),
+    response: { 200: TokenInfoSchema },
+    detail: { ...doc, summary: "The bearer's scope and expiry" },
   });

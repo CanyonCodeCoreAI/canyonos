@@ -43,19 +43,10 @@ export const deployment_status = pgEnum('deployment_status', [
   'stop_failed',
 ]);
 
-export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  email: text('email').notNull().unique(),
-  password_hash: text('password_hash').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow(),
-});
-
 // snake_case column keys so `$inferSelect` matches the snake_case API payload directly — the repos
-// select the exact shape without a rename mapper. Every signed-in user reaches every project;
-// `created_by` is audit only and empties when that user is deleted.
+// select the exact shape without a rename mapper.
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
-  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   name: text('name').notNull(),
   // Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
   // with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
@@ -110,14 +101,13 @@ export const fileBlobs = pgTable('file_blobs', {
     .defaultNow(),
 });
 
-// Generic file store. `project_id` is nullable so non-project files fit later; `created_by` is
-// audit only. Bytes are addressed through `content_hash`.
+// Generic file store. `project_id` is nullable so non-project files fit later. Bytes are addressed
+// through `content_hash`.
 export const files = pgTable(
   'files',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     project_id: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
-    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     path: text('path').notNull(),
     name: text('name').notNull(),
     content_hash: text('content_hash')
@@ -192,7 +182,6 @@ export const deploySetups = pgTable('deploy_setups', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   provider: text('provider').notNull().default('AWS'),
-  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   region: text('region').notNull(),
   ami_id: text('ami_id').notNull(),
   instance_type: text('instance_type').notNull(),
@@ -217,7 +206,6 @@ export const deployments = pgTable(
     project_id: uuid('project_id')
       .notNull()
       .references(() => projects.id),
-    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     deploy_setup_id: uuid('deploy_setup_id')
       .notNull()
       .references(() => deploySetups.id),

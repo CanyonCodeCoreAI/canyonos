@@ -16,6 +16,8 @@ import { write_project_span } from './telemetry-test.utils';
 
 setupE2ETests();
 
+const write = bearer(await authenticate('write'));
+
 const NANOS_PER_DAY = 86_400_000_000_000n;
 
 const WORKFLOWS = ['helloworld', 'portfolio'] as const;
@@ -27,7 +29,7 @@ const add_sample_data = (project_id: string, token: string, workflow: string) =>
   api.projects[project_id]!['sample-data'].post(
     // Typed as the enum; the refusal test sends what the enum would not allow.
     { workflow } as { workflow: (typeof WORKFLOWS)[number] },
-    { headers: bearer(token) }
+    { headers: write }
   );
 
 const project_spans = async (project_id: string) => {
@@ -62,8 +64,8 @@ const rollup_samples = async (project_id: string) => {
 
 describe('sample data refuses', () => {
   test('a workflow the api ships no recording of, and writes nothing', async () => {
-    const token = await authenticate(`sample-${crypto.randomUUID()}@canyonos.test`);
-    const { project_id } = await create_test_project(token, { name: 'Unknown' });
+    const token = await authenticate('read');
+    const { project_id } = await create_test_project({ name: 'Unknown' });
 
     const refused = await add_sample_data(project_id, token, 'not-a-workflow');
 
@@ -79,8 +81,8 @@ describe.each([...WORKFLOWS])('sample data for %s', (workflow) => {
   const add = () => add_sample_data(project_id, token, workflow);
 
   beforeEach(async () => {
-    token = await authenticate(`sample-${crypto.randomUUID()}@canyonos.test`);
-    ({ project_id } = await create_test_project(token, { name: workflow }));
+    token = await authenticate('read');
+    ({ project_id } = await create_test_project({ name: workflow }));
   });
 
   // A replay dates a week of rows up to now, and the files share one database: left behind, they

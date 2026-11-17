@@ -42,6 +42,7 @@ from canyonos.auth import (
     is_project_id,
     refuse_keys_in_project,
     require_keys,
+    trusted_dir,
 )
 from canyonos.constants import (
     DEFAULT_API_PORT,
@@ -487,7 +488,7 @@ def run_deploy(
         # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
         threading.Thread(
             target=run_dashboard,
-            args=(None, dashboard_port(config_path)),
+            args=(None, dashboard_port(config_path), skip_auth, trusted_dir(auth_dir)),
             daemon=True,
         ).start()
 
@@ -510,6 +511,8 @@ def run_deploy(
             serve=serve,
             verbose=verbose,
             on_ready=ready.append,
+            skip_auth=skip_auth,
+            auth_dir=auth_dir,
         )
     except (Exception, KeyboardInterrupt):
         # Torn down only if it never came up; a failure after that is just a reporting problem.
@@ -616,8 +619,10 @@ def _print_deploy_summary(dashboard_url, endpoint):
     ui.blank()
 
 
-def _start_dashboard():
-    """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy."""
+def _start_dashboard(skip_auth, auth_dir):
+    """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy.
+    One that is not running yet starts with its API trusting the keys in `auth_dir`,
+    unless `skip_auth`; a running one is left as it is."""
     try:
         # Waits out a background start, so a half-started dashboard is not registered.
         with ui.status("Starting the dashboard..."), _dashboard_lock():
@@ -626,7 +631,7 @@ def _start_dashboard():
             _warn_if_dashboard_port_ignored()
             _register_running_project()
             return dashboard_url(port)
-        result = serve_dashboard()
+        result = serve_dashboard(skip_auth=skip_auth, auth_dir=auth_dir)
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")
         ui.hint("Run `canyonos serve` manually to view it.")
@@ -634,10 +639,10 @@ def _start_dashboard():
     return result.url
 
 
-def _deploy_summary(state, serve, on_ready):
+def _deploy_summary(state, serve, on_ready, skip_auth, auth_dir):
     on_ready(True)
     if serve:
-        dashboard = _start_dashboard()
+        dashboard = _start_dashboard(skip_auth, auth_dir)
     else:
         port = _existing_dashboard_port()
         dashboard = dashboard_url(port) if port else None
@@ -670,7 +675,7 @@ def _interrupted():
     ui.hint("To resubscribe to log stream run `canyonos logs`.")
 
 
-def _tail_verbose(lines, state, serve, on_ready):
+def _tail_verbose(lines, state, serve, on_ready, skip_auth, auth_dir):
     """Every log line, verbatim, until the workflow is up -- what `-v` restores.
 
     Lines are echoed rather than summarized, but the same tracker decides what
@@ -688,7 +693,7 @@ def _tail_verbose(lines, state, serve, on_ready):
                 "The full log is above."
             )
         if UP_MARKER in line and not tracker.in_container_log:
-            return _deploy_summary(state, serve, on_ready)
+            return _deploy_summary(state, serve, on_ready, skip_auth, auth_dir)
 
     raise RuntimeError(
         "Deploy stopped or timed out before the workflow became ready. "
@@ -717,7 +722,7 @@ def _echo_until_the_deploy_is_gone(lines, state):
     return echoed
 
 
-def _tail_quiet(lines, state, serve, on_ready):
+def _tail_quiet(lines, state, serve, on_ready, skip_auth, auth_dir):
     """Only the phase transitions, until the workflow is up or something fails.
 
     Nothing is echoed raw: the buildx transcript, canyonos' bare prints and grpc's
@@ -779,7 +784,7 @@ def _tail_quiet(lines, state, serve, on_ready):
                 break
 
     if reached_up_marker:
-        return _deploy_summary(state, serve, on_ready)
+        return _deploy_summary(state, serve, on_ready, skip_auth, auth_dir)
 
     _reveal_failure(lines, recent, state, tracker, trigger)
     if trigger:
@@ -933,18 +938,18 @@ def follow_gc_log(state):
     )
 
 
-def _stream_logs_and_autoserve(state, serve, verbose, on_ready):
+def _stream_logs_and_autoserve(state, serve, verbose, on_ready, skip_auth, auth_dir):
     """Tail the GC container's logs until the workflow is up, then start the
-    dashboard (unless disabled via `serve=False`), print where everything
-    lives, and stop tailing.
+    dashboard (unless disabled via `serve=False`) with its API trusting the keys in
+    `auth_dir` unless `skip_auth`, print where everything lives, and stop tailing.
     """
     process = follow_gc_log(state)
     try:
         lines = queued_lines(process.stdout)
         if verbose:
-            _tail_verbose(lines, state, serve, on_ready)
+            _tail_verbose(lines, state, serve, on_ready, skip_auth, auth_dir)
         else:
-            _tail_quiet(lines, state, serve, on_ready)
+            _tail_quiet(lines, state, serve, on_ready, skip_auth, auth_dir)
     except KeyboardInterrupt:
         _interrupted()
     finally:

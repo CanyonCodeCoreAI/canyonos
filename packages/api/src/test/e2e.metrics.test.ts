@@ -101,9 +101,9 @@ async function insert_span(project_id: string, span: SpanFixture): Promise<void>
   });
 }
 
-async function create_project(email: string): Promise<{ token: string; project_id: string }> {
-  const token = await authenticate(email);
-  const { project_id } = await create_test_project(token, { name: 'Metrics Project' });
+async function create_project(): Promise<{ token: string; project_id: string }> {
+  const token = await authenticate('read');
+  const { project_id } = await create_test_project({ name: 'Metrics Project' });
   return { token, project_id };
 }
 
@@ -193,7 +193,7 @@ let token: string;
 let project_id: string;
 
 beforeAll(async () => {
-  ({ token, project_id } = await create_project('metrics-owner@canyonos.test'));
+  ({ token, project_id } = await create_project());
   await seed_span_fixture(project_id);
 });
 
@@ -235,7 +235,7 @@ describe('GET /projects/:project_id/metrics/kpis', () => {
   });
 
   test('a project with no telemetry spans returns zeroed totals', async () => {
-    const empty = await create_project('metrics-empty@canyonos.test');
+    const empty = await create_project();
     const query = range(90);
     const res = await api.projects[empty.project_id]!.metrics.kpis.get({
       $query: query,
@@ -338,7 +338,7 @@ describe('GET /projects/:project_id/metrics/distribution', () => {
   });
 
   test('a project with no telemetry spans returns an empty distribution', async () => {
-    const empty = await create_project('metrics-empty-dist@canyonos.test');
+    const empty = await create_project();
     const res = await api.projects[empty.project_id]!.metrics.distribution.get({
       $headers: bearer(empty.token),
       $query: { metric: 'latency', ...range(90), buckets: 10 },
@@ -375,9 +375,7 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
   let series_project: string;
 
   beforeAll(async () => {
-    ({ token: series_token, project_id: series_project } = await create_project(
-      'metrics-series@canyonos.test'
-    ));
+    ({ token: series_token, project_id: series_project } = await create_project());
     await insert_span(series_project, {
       span_id: 'ser-b-1',
       trace_id: 'ser-recent',
@@ -446,7 +444,7 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
   });
 
   test('an empty project still emits the shared time grid', async () => {
-    const empty = await create_project('metrics-empty-series@canyonos.test');
+    const empty = await create_project();
     const query = range(30);
     const res = await api.projects[empty.project_id]!.metrics.timeseries.get({
       $headers: bearer(empty.token),
@@ -513,8 +511,8 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another user reads the project's timeseries", async () => {
-    const other_user = await authenticate('metrics-series-intruder@canyonos.test');
+  test("another read token reads the project's timeseries", async () => {
+    const other_user = await authenticate('read');
     const res = await api.projects[project_id]!.metrics.timeseries.get({
       $headers: bearer(other_user),
       $query: range(30),
@@ -529,9 +527,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
   let blocks_project: string;
 
   beforeAll(async () => {
-    ({ token: blocks_token, project_id: blocks_project } = await create_project(
-      'metrics-blocks@canyonos.test'
-    ));
+    ({ token: blocks_token, project_id: blocks_project } = await create_project());
     register_agent_name('blk-agent-model');
     register_agent_name('blk-agent-harness');
 
@@ -641,7 +637,7 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
   });
 
   test('a project with no telemetry spans returns no blocks and zero cost', async () => {
-    const empty = await create_project('metrics-empty-blocks@canyonos.test');
+    const empty = await create_project();
     const res = await api.projects[empty.project_id]!.metrics.blocks.get({
       $headers: bearer(empty.token),
       $query: { ...range(30) },
@@ -681,8 +677,8 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another user reads the project's blocks", async () => {
-    const other_user = await authenticate('metrics-blocks-intruder@canyonos.test');
+  test("another read token reads the project's blocks", async () => {
+    const other_user = await authenticate('read');
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
       $headers: bearer(other_user),
       $query: { ...range(30) },
@@ -697,9 +693,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
   let details_project: string;
 
   beforeAll(async () => {
-    ({ token: details_token, project_id: details_project } = await create_project(
-      'metrics-agent-details@canyonos.test'
-    ));
+    ({ token: details_token, project_id: details_project } = await create_project());
 
     register_agent_name('detail-agent', 'Drawer Agent');
     register_agent_name('detail-other');
@@ -889,7 +883,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
   });
 
   test('all three distributions cover every request the agent ran', async () => {
-    const partial = await create_project('metrics-agent-partial@canyonos.test');
+    const partial = await create_project();
     register_agent_name('partial-agent');
 
     await insert_span(partial.project_id, {
@@ -959,8 +953,8 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another user reads the agent's metrics", async () => {
-    const other_user = await authenticate('metrics-agent-details-intruder@canyonos.test');
+  test("another read token reads the agent's metrics", async () => {
+    const other_user = await authenticate('read');
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
       $query: range(30),
       $headers: bearer(other_user),
@@ -970,7 +964,7 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
   });
 
   test('the drawer reports one aggregate for a name shared by several replicas', async () => {
-    const rep = await create_project('metrics-drawer-replicas@canyonos.test');
+    const rep = await create_project();
     register_agent_name('drawer-rep-a', 'DrawerAgent');
     register_agent_name('drawer-rep-b', 'DrawerAgent');
 
@@ -1026,9 +1020,7 @@ describe('stored runtime pricing', () => {
   let price_project: string;
 
   beforeAll(async () => {
-    ({ token: price_token, project_id: price_project } = await create_project(
-      'metrics-pricing@canyonos.test'
-    ));
+    ({ token: price_token, project_id: price_project } = await create_project());
     register_agent_name('price-agent-stored');
     register_agent_name('price-agent-zero');
 
@@ -1137,9 +1129,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
   // Five traces clustered so the buckets come back uneven: some hold two, one holds none, and the
   // largest value sits exactly on the top bucket's upper bound.
   beforeAll(async () => {
-    ({ token: coh_token, project_id: coh_project } = await create_project(
-      'metrics-coherence@canyonos.test'
-    ));
+    ({ token: coh_token, project_id: coh_project } = await create_project());
     register_agent_name('coh-agent');
 
     const steps = [1, 1, 2, 4, 4];
@@ -1200,7 +1190,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
 
 describe('project scoping at the data boundary', () => {
   test('a span with no canyon.project.id is invisible to KPI and requests', async () => {
-    const owner = await create_project('metrics-boundary-orphan@canyonos.test');
+    const owner = await create_project();
     register_agent_name('orphan-agent');
     await insert_span(owner.project_id, {
       span_id: 'boundary-owned-1',
@@ -1248,8 +1238,8 @@ describe('project scoping at the data boundary', () => {
   });
 
   test('one trace id in two projects stays split across KPI, distribution, and requests', async () => {
-    const owner = await create_project('metrics-boundary-shared@canyonos.test');
-    const { project_id: project_b } = await create_test_project(owner.token, { name: 'Second' });
+    const owner = await create_project();
+    const { project_id: project_b } = await create_test_project({ name: 'Second' });
 
     register_agent_name('shared-agent');
     await insert_span(owner.project_id, {
@@ -1313,7 +1303,7 @@ describe('project scoping at the data boundary', () => {
   });
 
   test('malformed numeric attributes read as absent instead of failing', async () => {
-    const owner = await create_project('metrics-boundary-malformed@canyonos.test');
+    const owner = await create_project();
     const start = nanos_ago(HOUR_MS);
     await db.insert(otelSpans).values({
       span_id: 'malformed-1',
@@ -1377,9 +1367,7 @@ describe('every executed agent has an address', () => {
   let addr_project: string;
 
   beforeAll(async () => {
-    ({ token: addr_token, project_id: addr_project } = await create_project(
-      'metrics-address@canyonos.test'
-    ));
+    ({ token: addr_token, project_id: addr_project } = await create_project());
     // One agent reporting a single id, one reporting two, and one reporting none at all.
     register_agent_name('addr-solo', 'SoloAgent');
     register_agent_name('addr-rep-a', 'ReplicaAgent');
@@ -1451,8 +1439,8 @@ describe('metrics auth & access', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another user reads the project's metrics", async () => {
-    const other_user = await authenticate('metrics-intruder@canyonos.test');
+  test("another read token reads the project's metrics", async () => {
+    const other_user = await authenticate('read');
     const res = await api.projects[project_id]!.metrics.kpis.get({
       $query: range(30),
       $headers: bearer(other_user),
@@ -1462,7 +1450,7 @@ describe('metrics auth & access', () => {
   });
 
   test('an unknown project id is 404 projects.not_found', async () => {
-    const token = await authenticate('metrics-unknown-project@canyonos.test');
+    const token = await authenticate('read');
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.metrics.kpis.get({
@@ -1480,9 +1468,7 @@ describe('a request spends the sum of its spans', () => {
   let once_project: string;
 
   beforeAll(async () => {
-    ({ token: once_token, project_id: once_project } = await create_project(
-      'metrics-sum-of-spans@canyonos.test'
-    ));
+    ({ token: once_token, project_id: once_project } = await create_project());
     register_agent_name('summed-agent');
 
     await insert_span(once_project, {
@@ -1550,7 +1536,7 @@ describe('a request spends the sum of its spans', () => {
   });
 
   test('a single-execution run with no children still counts', async () => {
-    const { token, project_id: solo_project } = await create_project('metrics-solo@canyonos.test');
+    const { token, project_id: solo_project } = await create_project();
     await insert_span(solo_project, {
       span_id: 'solo-only',
       trace_id: 'solo-session',

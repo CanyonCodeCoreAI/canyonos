@@ -5,7 +5,8 @@
 anything is built, from a deployment folder or from inside a project folder. The
 key check comes first, after the folder check: a run that must stop there points
 DOCKER_HOST at nothing, so a Docker call would show. `canyonos test`, which queries
-the running deployment, stops at the same check."""
+the running deployment, stops at the same check, and so does `canyonos serve`, whose
+dashboard also needs a Docker engine on this machine to mount the trusted keys."""
 
 from __future__ import annotations
 
@@ -250,6 +251,20 @@ def test_deploy_refuses_a_keys_folder_inside_any_of_its_projects(cli_case: CliCa
     assert "CANYON-SCHEMA" not in output
 
 
+def test_serve_in_a_project_refuses_a_keys_folder_inside_it(cli_case: CliCase):
+    _project(cli_case.cwd)
+    _make_key(cli_case, "--auth-dir", "./team-keys")
+
+    result = cli_case.run_cli(
+        ["serve", "--auth-dir", "./team-keys"], timeout=60, env=NO_DOCKER
+    )
+
+    output = _said(result)
+    assert result.returncode == 1, output
+    assert str((cli_case.cwd / "team-keys").resolve()) in output
+    assert "inside the project folder" in output
+
+
 def test_deploy_auth_dir_is_read_from_where_it_was_typed_with_folder(
     cli_case: CliCase,
 ):
@@ -318,3 +333,55 @@ def test_canyonos_test_without_a_key_stops_before_docker(cli_case: CliCase):
     assert f"No key is trusted in {_trusted(cli_case)}" in output
     assert "canyonos keys create" in output
     assert "Docker" not in output
+
+
+def test_serve_without_a_key_stops_before_docker(cli_case: CliCase):
+    result = cli_case.run_cli(["serve"], timeout=60, env=NO_DOCKER)
+
+    output = _said(result)
+    assert result.returncode == 1, output
+    assert f"No key is trusted in {_trusted(cli_case)}" in output
+    assert "canyonos keys create" in output
+    assert "--dangerous-skip-auth" in output
+    assert "Docker" not in output
+    assert "docker" not in output
+
+
+def test_serve_on_a_docker_engine_elsewhere_needs_skip_auth(cli_case: CliCase):
+    _make_key(cli_case)
+
+    result = cli_case.run_cli(
+        ["serve"], timeout=60, env={"DOCKER_HOST": "tcp://203.0.113.10:2375"}
+    )
+
+    output = _said(result)
+    assert result.returncode == 1, output
+    assert (
+        "the dashboard needs a Docker engine on this machine to read "
+        f"`{_trusted(cli_case)}`; use `--dangerous-skip-auth`"
+    ) in output
+
+
+def test_serve_dangerous_skip_auth_warns_and_goes_on_without_a_key(
+    cli_case: CliCase,
+):
+    result = cli_case.run_cli(
+        ["serve", "--dangerous-skip-auth"], timeout=60, env=NO_DOCKER
+    )
+
+    output = _said(result)
+    assert result.returncode == 1, output
+    assert "the endpoint and the dashboard will answer anyone" in output
+    assert "No key is trusted" not in output
+    assert "docker daemon or socket is unavailable" in output
+
+
+def test_serve_help_lists_the_auth_flags(cli_case: CliCase):
+    result = cli_case.run_cli(["serve", "-h"])
+
+    output = _said(result)
+    assert result.returncode == 0, output
+    assert "--dangerous-skip-auth" in output
+    assert "answer anyone" in output
+    assert "--auth-dir PATH" in output
+    assert "instead of ~/.canyonos/auth" in output

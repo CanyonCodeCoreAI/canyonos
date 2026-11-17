@@ -201,6 +201,7 @@ function RibbonBody({ query }: { readonly query: UseQueryResult<MetricsKpis> }) 
   if (query.error) {
     return (
       <QueryError
+        error={query.error}
         message="Could not load cost totals for this deployment."
         onRetry={() => void query.refetch()}
         test_id="project-cost-ribbon-error"

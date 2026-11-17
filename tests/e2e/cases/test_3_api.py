@@ -6,11 +6,15 @@ made, on which replicas, with their tokens and cost, and the
 project's figures agree with each other over this run. The dashboard page loads from
 its own port, and its `/api` proxy gives the same trace as the API. Telemetry
 reaches Postgres through the Global Controller and the OTLP exporter, each polling
-every few seconds, so data cases poll. Every ranged read covers this run only."""
+every few seconds, so data cases poll. Every ranged read covers this run only. The
+API the CLI started verifies API tokens against the session's trusted keys, mounted
+read-only: a read token reads, through the dashboard's proxy too, and cannot
+write."""
 
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
@@ -18,16 +22,22 @@ import yaml
 
 from ..fleet import routed_replicas, store
 from ..harness import (
+    API_URL,
     CallFailed,
+    bearer,
     dashboard_port,
+    docker,
     http,
     manifest,
     poll,
     project_root,
     qualified,
+    token,
 )
 
 DATA_TIMEOUT = 90
+DASHBOARD_API = "canyonos-dashboard-api"
+TRUSTED_MOUNT = "/etc/canyonos/auth/trusted"
 # Read when pytest collects the cases, before the deploy, so every request this run
 # sends starts after it and none of an earlier run's can.
 RUN_STARTED = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -149,7 +159,7 @@ def test_the_dashboard_page_and_its_api_proxy_serve_the_trace(
     direct = _trace(deployed, query_result.request_id)
     path = _project_path(deployed, f"/requests/{query_result.request_id}")
     url = f"{web}/api{path}?{_window()}"
-    proxied = http(recorder, "GET", url, headers=deployed.api.headers).json()
+    proxied = http(recorder, "GET", url, headers=deployed.api.headers("GET")).json()
     labels = Counter(block["label"] for block in direct["blocks"])
     assert Counter(block["label"] for block in proxied["blocks"]) == labels, proxied
 
@@ -354,13 +364,70 @@ def _shipped_policy(deployed):
     return (yaml.safe_load(path.read_text()) or {}).get("scaling")
 
 
-def test_scaling_read(deployed):
-    projects = deployed.api.get(_project_path(deployed, "/scaling")).json()["projects"]
+def _project_scaling(deployed, body):
+    """The scaling status of the deployment's one project, from a GET /scaling body."""
+    projects = body["projects"]
     assert set(projects) == {deployed.project_dir.name}, projects
-    status = projects[deployed.project_dir.name]
+    return projects[deployed.project_dir.name]
+
+
+def _assert_shipped_scaling(deployed, status):
     shipped = _shipped_policy(deployed)
     if shipped is None:
         assert status == {"status": "none"}, status
     else:
         assert status["status"] == "applied", status
         assert {k: status["policy"][k] for k in shipped} == shipped, status
+
+
+def test_scaling_read(deployed):
+    body = deployed.api.get(_project_path(deployed, "/scaling")).json()
+    _assert_shipped_scaling(deployed, _project_scaling(deployed, body))
+
+
+def _refused(call, status, code):
+    assert call.code == status, call.output
+    assert call.json()["error"] == code, call.output
+
+
+def test_the_dashboard_api_verifies_tokens(recorder, deployed):
+    status = http(recorder, "GET", f"{API_URL}/auth/status").json()
+    assert status == {"disabled": False}, status
+    anonymous = http(recorder, "GET", f"{API_URL}/projects", check=False)
+    _refused(anonymous, 401, "auth.missing_token")
+
+
+def test_a_read_token_reads_and_cannot_write(recorder, deployed):
+    headers = bearer(token(recorder, deployed.dir, "--scope", "read"))
+    projects = http(recorder, "GET", f"{API_URL}/projects", headers=headers).json()
+    assert deployed.project_id in {project["id"] for project in projects}, projects
+    scaling = f"{API_URL}{_project_path(deployed, '/scaling')}"
+    http(recorder, "GET", scaling, headers=headers)
+    policy = f"{scaling}/{deployed.project_dir.name}"
+    removed = http(recorder, "DELETE", policy, headers=headers, check=False)
+    _refused(removed, 403, "auth.insufficient_scope")
+    after = http(recorder, "GET", scaling, headers=headers).json()
+    _assert_shipped_scaling(deployed, _project_scaling(deployed, after))
+
+
+def test_the_dashboard_proxy_passes_the_token_on(recorder, deployed):
+    url = f"http://127.0.0.1:{dashboard_port(recorder)}/api/projects"
+    headers = bearer(token(recorder, deployed.dir, "--scope", "read"))
+    http(recorder, "GET", url, headers=headers)
+    _refused(http(recorder, "GET", url, check=False), 401, "auth.missing_token")
+
+
+def test_the_api_reads_the_sessions_trusted_keys_read_only(recorder, deployed):
+    container = docker(recorder, ["inspect", DASHBOARD_API]).json()[0]
+    mounts = [m for m in container["Mounts"] if m["Destination"] == TRUSTED_MOUNT]
+    assert len(mounts) == 1, container["Mounts"]
+    trusted = recorder.auth_dir / "trusted"
+    assert Path(mounts[0]["Source"]).resolve() == trusted.resolve(), mounts
+    assert mounts[0]["RW"] is False, mounts
+    environment = container["Config"]["Env"]
+    assert "AUTH_DISABLED=false" in environment, environment
+    assert f"AUTH_TRUSTED_KEYS_DIR={TRUSTED_MOUNT}" in environment, environment
+    assert not [e for e in environment if e.startswith("JWT_SECRET=")], environment
+    listed = docker(recorder, ["exec", DASHBOARD_API, "ls", TRUSTED_MOUNT]).output
+    names = listed.split()
+    assert names and all(name.endswith(".pub") for name in names), listed

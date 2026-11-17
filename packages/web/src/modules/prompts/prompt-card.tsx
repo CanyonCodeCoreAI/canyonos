@@ -132,6 +132,7 @@ function PromptHistory({
     return (
       <div className="border-border/60 border-t p-5">
         <QueryError
+          error={query.error}
           message={promptErrorMessage(query.error, 'Could not load its versions.')}
           onRetry={() => void query.refetch()}
           test_id="prompt-body-error"

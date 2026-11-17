@@ -4,73 +4,61 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import type { User } from '@canyonos/api/auth';
-
 import { isTokenExpired } from './token';
 
-interface AuthState {
-  user: User | null;
-  token: string | null;
+export interface ApiTokens {
+  readToken: string | null;
+  writeToken: string | null;
+}
 
-  // actions
-  login: (user: User, token: string) => void;
+interface AuthState extends ApiTokens {
+  login: (tokens: ApiTokens) => void;
   logout: () => void;
 }
+
+const SIGNED_OUT: ApiTokens = { readToken: null, writeToken: null };
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      // initial state
-      user: null,
-      token: null,
-
-      login: (user, token) => {
-        set({
-          user,
-          token,
-        });
-      },
-
-      logout: () => {
-        set({
-          user: null,
-          token: null,
-        });
-      },
+      ...SIGNED_OUT,
+      login: ({ readToken, writeToken }) => set({ readToken, writeToken }),
+      logout: () => set(SIGNED_OUT),
     }),
     {
       name: 'cc-auth-storage',
-      partialize: (state) => ({
-        user: state.user,
-        token: state.token,
-      }),
+      partialize: ({ readToken, writeToken }) => ({ readToken, writeToken }),
     }
   )
 );
 
+const READ_METHODS = new Set(['GET', 'HEAD']);
+
+function heldTokens({ readToken, writeToken }: ApiTokens): string[] {
+  return [readToken, writeToken].filter((token): token is string => token !== null);
+}
+
 export const authActions = {
-  getToken(): string | null {
-    return useAuthStore.getState().token;
+  /**
+   * The token a request with this method needs; the other one when it is not held, so the
+   * person reads the API's refusal rather than a request that silently never left.
+   */
+  tokenFor(method: string | undefined): string | null {
+    const { readToken, writeToken } = useAuthStore.getState();
+    if (READ_METHODS.has((method ?? 'GET').toUpperCase())) return readToken ?? writeToken;
+    return writeToken ?? readToken;
   },
-  getUser(): User | null {
-    return useAuthStore.getState().user;
+  heldTokens(): string[] {
+    return heldTokens(useAuthStore.getState());
   },
   isAuthenticated(): boolean {
-    const token = useAuthStore.getState().token;
-    return !!token && !isTokenExpired(token);
-  },
-  setUser(user: User) {
-    useAuthStore.setState({ user });
+    const tokens = heldTokens(useAuthStore.getState());
+    return tokens.length > 0 && tokens.every((token) => !isTokenExpired(token));
   },
 };
 
-export const authStoreState = () => useAuthStore.getState();
-
-/**
- * Selectors for optimal re-renders
- */
 export const authSelectors = {
-  isAuthenticated: (state: AuthState) => Boolean(state.token && state.user),
-  user: (state: AuthState) => state.user,
-  token: (state: AuthState) => state.token,
+  /** "read", "write" or "read and write": which of the two tokens this browser holds. */
+  heldScopes: ({ readToken, writeToken }: AuthState): string =>
+    [readToken ? 'read' : null, writeToken ? 'write' : null].filter(Boolean).join(' and '),
 };

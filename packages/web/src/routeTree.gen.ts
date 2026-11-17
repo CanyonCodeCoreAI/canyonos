@@ -11,9 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as BrandRouteImport } from './routes/_brand'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as BrandLoginRouteImport } from './routes/_brand/login'
-import { Route as BrandRegisterRouteImport } from './routes/_brand/register'
 import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authenticated/projects/index'
 import { Route as AuthenticatedProjectsProject_idRouteImport } from './routes/_authenticated/projects/$project_id'
 import { Route as AuthenticatedProjectsProject_idIndexRouteImport } from './routes/_authenticated/projects/$project_id/index'
@@ -34,6 +34,11 @@ const BrandRoute = BrandRouteImport.update({
   id: '/_brand',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -42,11 +47,6 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
 const BrandLoginRoute = BrandLoginRouteImport.update({
   id: '/login',
   path: '/login',
-  getParentRoute: () => BrandRoute,
-} as any)
-const BrandRegisterRoute = BrandRegisterRouteImport.update({
-  id: '/register',
-  path: '/register',
   getParentRoute: () => BrandRoute,
 } as any)
 const AuthenticatedProjectsIndexRoute =
@@ -118,8 +118,8 @@ const AuthenticatedProjectsProject_idStatusRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
+  '/register': typeof RegisterRoute
   '/login': typeof BrandLoginRoute
-  '/register': typeof BrandRegisterRoute
   '/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/projects/': typeof AuthenticatedProjectsIndexRoute
   '/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
@@ -134,8 +134,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
+  '/register': typeof RegisterRoute
   '/login': typeof BrandLoginRoute
-  '/register': typeof BrandRegisterRoute
   '/projects': typeof AuthenticatedProjectsIndexRoute
   '/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
   '/projects/$project_id/governance': typeof AuthenticatedProjectsProject_idGovernanceRoute
@@ -151,8 +151,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/_brand': typeof BrandRouteWithChildren
+  '/register': typeof RegisterRoute
   '/_brand/login': typeof BrandLoginRoute
-  '/_brand/register': typeof BrandRegisterRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
   '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
@@ -170,8 +170,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/login'
     | '/register'
+    | '/login'
     | '/projects/$project_id'
     | '/projects/'
     | '/projects/$project_id/errors'
@@ -186,8 +186,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/login'
     | '/register'
+    | '/login'
     | '/projects'
     | '/projects/$project_id/errors'
     | '/projects/$project_id/governance'
@@ -202,8 +202,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/_brand'
+    | '/register'
     | '/_brand/login'
-    | '/_brand/register'
     | '/_authenticated/'
     | '/_authenticated/projects/$project_id'
     | '/_authenticated/projects/'
@@ -221,6 +221,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   BrandRoute: typeof BrandRouteWithChildren
+  RegisterRoute: typeof RegisterRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -239,6 +240,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrandRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/': {
       id: '/_authenticated/'
       path: '/'
@@ -251,13 +259,6 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof BrandLoginRouteImport
-      parentRoute: typeof BrandRoute
-    }
-    '/_brand/register': {
-      id: '/_brand/register'
-      path: '/register'
-      fullPath: '/register'
-      preLoaderRoute: typeof BrandRegisterRouteImport
       parentRoute: typeof BrandRoute
     }
     '/_authenticated/projects/': {
@@ -398,12 +399,10 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 
 interface BrandRouteChildren {
   BrandLoginRoute: typeof BrandLoginRoute
-  BrandRegisterRoute: typeof BrandRegisterRoute
 }
 
 const BrandRouteChildren: BrandRouteChildren = {
   BrandLoginRoute: BrandLoginRoute,
-  BrandRegisterRoute: BrandRegisterRoute,
 }
 
 const BrandRouteWithChildren = BrandRoute._addFileChildren(BrandRouteChildren)
@@ -411,6 +410,7 @@ const BrandRouteWithChildren = BrandRoute._addFileChildren(BrandRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   BrandRoute: BrandRouteWithChildren,
+  RegisterRoute: RegisterRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

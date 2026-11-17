@@ -16,6 +16,8 @@ import type { PromptsConfig } from './redis-test.utils';
 
 setupE2ETests();
 
+const write = bearer(await authenticate('write'));
+
 /** The project's stored prompt rows as `[name, version, live]`, sorted by version. */
 const recorded = async (project_id: string) =>
   (
@@ -57,9 +59,9 @@ const SUMMARIZE_V1 = CONFIG.prompts['app.summarize']![0]!;
 
 const EDIT = { content: 'edited system' };
 
-async function running_project(email: string): Promise<{ token: string; project_id: string }> {
-  const token = await authenticate(email);
-  const { project_id } = await create_test_project(token, { name: 'Prompts Project' });
+async function running_project(): Promise<{ token: string; project_id: string }> {
+  const token = await authenticate('read');
+  const { project_id } = await create_test_project({ name: 'Prompts Project' });
   await seed_running_project(project_id, CONFIG);
   await load_prompts(project_id);
   return { token, project_id };
@@ -69,7 +71,7 @@ describe('project prompts', () => {
   beforeEach(reset_controller);
 
   test('the listing carries each prompt with its live version, the highest n', async () => {
-    const { token, project_id } = await running_project('prompts-list@canyonos.test');
+    const { token, project_id } = await running_project();
 
     const res = await api.projects[project_id]!.prompts.get({ $headers: bearer(token) });
 
@@ -81,7 +83,7 @@ describe('project prompts', () => {
   });
 
   test('a prompt carries every version newest first, and an unknown name is 404', async () => {
-    const { token, project_id } = await running_project('prompts-get@canyonos.test');
+    const { token, project_id } = await running_project();
     const headers = bearer(token);
 
     const res = await api.projects[project_id]!.prompts['app.intent.parse']!.get({
@@ -101,11 +103,11 @@ describe('project prompts', () => {
   });
 
   test('creating a version appends the next revision and keeps the live one live', async () => {
-    const { token, project_id } = await running_project('prompts-save@canyonos.test');
+    const { token, project_id } = await running_project();
     const headers = bearer(token);
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
-    const created = await prompt.versions.post(EDIT, { headers });
+    const created = await prompt.versions.post(EDIT, { headers: write });
 
     expect(created.error).toBeNull();
     expect(created.status).toBe(201);
@@ -130,11 +132,14 @@ describe('project prompts', () => {
   });
 
   test('setting an older version live moves the live flag to it', async () => {
-    const { token, project_id } = await running_project('prompts-live@canyonos.test');
+    const { token, project_id } = await running_project();
     const headers = bearer(token);
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
-    const res = await prompt.live.put({ version: 'app-intent-parse-00000002-v2' }, { headers });
+    const res = await prompt.live.put(
+      { version: 'app-intent-parse-00000002-v2' },
+      { headers: write }
+    );
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
@@ -146,12 +151,15 @@ describe('project prompts', () => {
     const listed = await api.projects[project_id]!.prompts.get({ $headers: headers });
     expect(listed.data?.[0]?.live.version).toBe('app-intent-parse-00000002-v2');
 
-    const unknown = await prompt.live.put({ version: 'app-intent-parse-ffffffff-v9' }, { headers });
+    const unknown = await prompt.live.put(
+      { version: 'app-intent-parse-ffffffff-v9' },
+      { headers: write }
+    );
     expect(unknown.error?.status as number).toBe(404);
     expect(error_code(unknown)).toBe('prompts.version_not_found');
 
-    const newest = (await prompt.versions.post(EDIT, { headers })).data!.version;
-    expect((await prompt.live.put({ version: newest }, { headers })).error).toBeNull();
+    const newest = (await prompt.versions.post(EDIT, { headers: write })).data!.version;
+    expect((await prompt.live.put({ version: newest }, { headers: write })).error).toBeNull();
     expect(await recorded(project_id)).toEqual([
       ['app.intent.parse', 'app-intent-parse-00000002-v2', false],
       ['app.intent.parse', 'app-intent-parse-00000003-v3', false],
@@ -161,11 +169,11 @@ describe('project prompts', () => {
   });
 
   test('a version for a prompt the config does not have is 404 prompts.prompt_not_found', async () => {
-    const { token, project_id } = await running_project('prompts-unknown@canyonos.test');
+    const { project_id } = await running_project();
 
     const before = await read_prompts_config();
     const res = await api.projects[project_id]!.prompts.missing!.versions.post(EDIT, {
-      headers: bearer(token),
+      headers: write,
     });
 
     expect(res.error?.status as number).toBe(404);
@@ -174,18 +182,21 @@ describe('project prompts', () => {
   });
 
   test('a project the controller is not running is 404 canyonos.project_not_running', async () => {
-    const token = await authenticate('prompts-not-running@canyonos.test');
+    const token = await authenticate('read');
     const headers = bearer(token);
-    const { project_id } = await create_test_project(token, { name: 'Idle Project' });
-    const { project_id: running_id } = await create_test_project(token, { name: 'Running' });
+    const { project_id } = await create_test_project({ name: 'Idle Project' });
+    const { project_id: running_id } = await create_test_project({ name: 'Running' });
     await seed_running_project(running_id, CONFIG);
     const before = await read_prompts_config();
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const listed = await api.projects[project_id]!.prompts.get({ $headers: headers });
     const read = await prompt.get({ $headers: headers });
-    const created = await prompt.versions.post(EDIT, { headers });
-    const live = await prompt.live.put({ version: 'app-intent-parse-00000003-v3' }, { headers });
+    const created = await prompt.versions.post(EDIT, { headers: write });
+    const live = await prompt.live.put(
+      { version: 'app-intent-parse-00000003-v3' },
+      { headers: write }
+    );
 
     for (const res of [listed, read, created, live]) {
       expect(res.error?.status as number).toBe(404);
@@ -195,19 +206,18 @@ describe('project prompts', () => {
   });
 
   test('an empty system prompt is rejected before anything is stored', async () => {
-    const { token, project_id } = await running_project('prompts-invalid@canyonos.test');
-    const headers = bearer(token);
+    const { project_id } = await running_project();
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const before = await read_prompts_config();
-    const res = await prompt.versions.post({ content: '' }, { headers });
+    const res = await prompt.versions.post({ content: '' }, { headers: write });
 
     expect(res.error?.status as number).toBe(422);
     expect(await read_prompts_config()).toEqual(before);
   });
 
   test('a caller with no token is rejected on every route', async () => {
-    const { project_id } = await running_project('prompts-anon@canyonos.test');
+    const { project_id } = await running_project();
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const before = await read_prompts_config();
@@ -223,8 +233,8 @@ describe('project prompts', () => {
   });
 
   test('an empty controller config lists no prompts', async () => {
-    const token = await authenticate('prompts-empty@canyonos.test');
-    const { project_id } = await create_test_project(token, { name: 'Bare Project' });
+    const token = await authenticate('read');
+    const { project_id } = await create_test_project({ name: 'Bare Project' });
     await seed_running_project(project_id, { prompts: {} });
     await load_prompts(project_id);
 
@@ -236,10 +246,9 @@ describe('project prompts', () => {
   });
 
   test('a redeploy keeps stored prompts over prompts.yaml and stores a prompt new to it', async () => {
-    const { token, project_id } = await running_project('prompts-redeploy@canyonos.test');
-    const headers = bearer(token);
+    const { project_id } = await running_project();
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
-    const newest = (await prompt.versions.post(EDIT, { headers })).data!.version;
+    const newest = (await prompt.versions.post(EDIT, { headers: write })).data!.version;
     const added = { version: 'app-advise-00000001-v1', content: 'Advise.', updated_at: null };
 
     await seed_running_project(project_id, {
@@ -267,7 +276,7 @@ describe('project prompts', () => {
   });
 
   test('a prompt added to prompts.yaml after startup is stored and listed on the next read', async () => {
-    const { token, project_id } = await running_project('prompts-added@canyonos.test');
+    const { token, project_id } = await running_project();
     const headers = bearer(token);
     const added = { version: 'app-advise-00000001-v1', content: 'Advise.', updated_at: null };
     await seed_running_project(project_id, {
@@ -299,13 +308,12 @@ describe('project prompts', () => {
   });
 
   test('two versions created at once get distinct consecutive revisions', async () => {
-    const { token, project_id } = await running_project('prompts-concurrent@canyonos.test');
-    const headers = bearer(token);
+    const { project_id } = await running_project();
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const [first, second] = await Promise.all([
-      prompt.versions.post({ content: 'first' }, { headers }),
-      prompt.versions.post({ content: 'second' }, { headers }),
+      prompt.versions.post({ content: 'first' }, { headers: write }),
+      prompt.versions.post({ content: 'second' }, { headers: write }),
     ]);
 
     expect(first.error).toBeNull();
@@ -327,12 +335,12 @@ describe('a prompt write whose publish to Redis fails', () => {
     spyOn(RedisClient.prototype, 'set').mockRejectedValueOnce(new Error('redis down'));
 
   test('creating a version stores nothing', async () => {
-    const { token, project_id } = await running_project('prompts-save-fails@canyonos.test');
+    const { project_id } = await running_project();
     const before = [await recorded(project_id), await read_prompts_config()];
 
     fail_publish();
     const res = await api.projects[project_id]!.prompts['app.intent.parse']!.versions.post(EDIT, {
-      headers: bearer(token),
+      headers: write,
     });
 
     expect(res.error?.status as number).toBe(500);
@@ -340,13 +348,13 @@ describe('a prompt write whose publish to Redis fails', () => {
   });
 
   test('set live keeps the previous live version', async () => {
-    const { token, project_id } = await running_project('prompts-live-fails@canyonos.test');
+    const { project_id } = await running_project();
     const before = [await recorded(project_id), await read_prompts_config()];
 
     fail_publish();
     const res = await api.projects[project_id]!.prompts['app.intent.parse']!.live.put(
       { version: 'app-intent-parse-00000002-v2' },
-      { headers: bearer(token) }
+      { headers: write }
     );
 
     expect(res.error?.status as number).toBe(500);
@@ -354,8 +362,7 @@ describe('a prompt write whose publish to Redis fails', () => {
   });
 
   test('loading prompts.yaml at startup stores nothing', async () => {
-    const token = await authenticate('prompts-load-fails@canyonos.test');
-    const { project_id } = await create_test_project(token, { name: 'Prompts Project' });
+    const { project_id } = await create_test_project({ name: 'Prompts Project' });
     await seed_running_project(project_id, CONFIG);
 
     fail_publish();

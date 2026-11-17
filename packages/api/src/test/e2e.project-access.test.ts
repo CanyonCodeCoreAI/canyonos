@@ -16,15 +16,15 @@ const RANGE = {
   to: RANGE_TO.toISOString(),
 };
 
-async function create_project(token: string): Promise<string> {
-  const { project_id } = await create_test_project(token, { name: 'Access Project' });
+async function create_project(): Promise<string> {
+  const { project_id } = await create_test_project({ name: 'Access Project' });
   return project_id;
 }
 
 describe('project access across the /projects tree', () => {
-  test('the creator reaches its sub-resources', async () => {
-    const token = await authenticate('access-creator@canyonos.test');
-    const project_id = await create_project(token);
+  test('a read token reaches the project', async () => {
+    const token = await authenticate('read');
+    const project_id = await create_project();
 
     const detail = await api.projects[project_id]!.get({ $headers: bearer(token) });
     expect(detail.error).toBeNull();
@@ -33,12 +33,11 @@ describe('project access across the /projects tree', () => {
 
   // The resolver is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling), so
   // reaching every sub-resource proves the new rule fires in each composed plugin.
-  test('another user reaches every project sub-resource', async () => {
-    const owner = await authenticate('access-owner2@canyonos.test');
-    const project_id = await create_project(owner);
+  test('another read token reaches every project sub-resource', async () => {
+    const project_id = await create_project();
     await seed_running_project(project_id, { prompts: {} });
 
-    const other = await authenticate('access-other@canyonos.test');
+    const other = await authenticate('read');
     const read = { $headers: bearer(other) };
 
     const responses = await Promise.all([
@@ -76,7 +75,7 @@ describe('project access across the /projects tree', () => {
   });
 
   test('a project id that does not exist is 404 projects.not_found for any caller', async () => {
-    const token = await authenticate('access-missing@canyonos.test');
+    const token = await authenticate('read');
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.stats.get({ $headers: bearer(token) });
@@ -86,8 +85,7 @@ describe('project access across the /projects tree', () => {
   });
 
   test('a caller with no token is rejected before the project is resolved', async () => {
-    const owner = await authenticate('access-anon-owner@canyonos.test');
-    const project_id = await create_project(owner);
+    const project_id = await create_project();
 
     expect((await api.projects[project_id]!.get()).error?.status as number).toBe(401);
     expect((await api.projects[project_id]!.prompts.get()).error?.status as number).toBe(401);

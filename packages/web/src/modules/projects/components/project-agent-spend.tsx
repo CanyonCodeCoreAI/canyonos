@@ -77,6 +77,7 @@ export function ProjectAgentSpend({ project_id, range }: ProjectAgentSpendProps)
     return (
       <AgentSpendSection>
         <QueryError
+          error={blocks_query.error}
           message="Could not load per-agent spend."
           onRetry={() => void blocks_query.refetch()}
           test_id="project-agents-error"

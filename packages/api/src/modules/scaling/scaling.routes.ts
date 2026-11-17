@@ -4,7 +4,7 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { resolveAuth } from '../auth/auth.middleware';
+import { authPlugin, requireScope } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { ProjectIdParams } from '../projects/projects.types';
 import {
@@ -26,11 +26,12 @@ const ProjectPolicyParams = ProjectIdParams.extend({ project: z.string().min(1) 
 const doc = { tags: ['Scaling'], security: [{ bearerAuth: [] }] };
 
 export const scalingRoutes = new Elysia({ name: 'scaling.routes' })
-  .resolve(async ({ request }) => ({ auth: await resolveAuth(request) }))
+  .use(authPlugin)
   .resolve(resolveProjectAccess)
   .get('/:project_id/scaling', ({ params }) => get_scaling(params.project_id), {
     params: ProjectIdParams,
     response: { 200: ScalingResponseSchema },
+    beforeHandle: requireScope('read', 'write'),
     detail: { ...doc, summary: 'Get the autoscaling policy of each project of the deployment' },
   })
   .put(
@@ -40,6 +41,7 @@ export const scalingRoutes = new Elysia({ name: 'scaling.routes' })
       params: ProjectPolicyParams,
       body: ScalingPolicySchema,
       response: { 200: ScalingPolicySchema },
+      beforeHandle: requireScope('write'),
       detail: {
         ...doc,
         summary: "Create or replace a project's autoscaling policy, applied to each of its agents",
@@ -52,11 +54,13 @@ export const scalingRoutes = new Elysia({ name: 'scaling.routes' })
     {
       params: ProjectPolicyParams,
       response: { 200: ScalingDeleteResponseSchema },
+      beforeHandle: requireScope('write'),
       detail: { ...doc, summary: "Delete a project's autoscaling policy" },
     }
   )
   .get('/:project_id/scaling/agents', ({ params }) => list_scaling_agents(params.project_id), {
     params: ProjectIdParams,
     response: { 200: ScalingAgentsResponseSchema },
+    beforeHandle: requireScope('read', 'write'),
     detail: { ...doc, summary: 'List the agents the policy applies to and their current replicas' },
   });

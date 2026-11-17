@@ -38,11 +38,9 @@ OUTPUT_LIMIT = 20_000
 KILL_GRACE = 10
 TERMINAL_SIZE = (40, 120)
 ESCAPE_SEQUENCE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-AUTH_MODES = ("none", "password")
-SIGN_IN_EMAIL = "e2e@canyonos.test"
-SIGN_IN_PASSWORD = "e2e-password-1"
+READ_METHODS = ("GET", "HEAD")
 # The commands that read or write keys, each given the run's own keys folder.
-AUTH_DIR_COMMANDS = ("keys", "token", "deploy", "test")
+AUTH_DIR_COMMANDS = ("keys", "token", "deploy", "serve", "test")
 
 
 @dataclass
@@ -433,13 +431,24 @@ def poll(predicate, *, timeout: float, interval: float = 5, what: str):
 
 
 class Api:
-    """The dashboard API as one signed-in user, or as anyone when sign-in is off
-    and there is no token to send."""
+    """The dashboard API with an API token for each kind of request: the read token
+    on a GET or HEAD and the write token on any other method. The read token reads
+    every GET; the write token also reads what it can change (project detail,
+    scaling, governance, prompts), but never the project list, requests, logs or
+    metrics. With token verification off there are no tokens, and nothing is sent."""
 
-    def __init__(self, recorder: Recorder, base_url: str, token: str | None):
+    def __init__(
+        self, recorder: Recorder, base_url: str, tokens: dict[str, str] | None
+    ):
         self.recorder = recorder
         self.base_url = base_url.rstrip("/")
-        self.headers = {} if token is None else {"Authorization": f"Bearer {token}"}
+        self.tokens = tokens
+
+    def headers(self, method: str) -> dict[str, str]:
+        """The header that sends the token a `method` request needs, if any."""
+        if self.tokens is None:
+            return {}
+        return bearer(self.tokens["read" if method in READ_METHODS else "write"])
 
     def request(self, method: str, path: str, *, json=None, check: bool = True) -> Call:
         return http(
@@ -447,7 +456,7 @@ class Api:
             method,
             f"{self.base_url}{path}",
             json=json,
-            headers=self.headers,
+            headers=self.headers(method),
             check=check,
         )
 
@@ -477,29 +486,17 @@ def traces(api: Api, project_id: str) -> list[dict]:
     return api.get(path).json()["traces"]
 
 
-def sign_in(recorder: Recorder, base_url: str) -> str | None:
-    """Register the E2E account, or log in once registration is closed, and
-    return the bearer token. Return None when the API runs with sign-in off
-    (`AUTH_MODE=none`, what the CLI's dashboard runs with), since every route then
-    answers without a token. Any other mode fails the call."""
-    mode = http(recorder, "GET", f"{base_url}/auth/status").json()["mode"]
-    if mode not in AUTH_MODES:
-        raise AssertionError(f"the dashboard API reports an unknown auth mode {mode!r}")
-    if mode == "none":
+def api_tokens(recorder: Recorder, workspace: Path) -> dict[str, str] | None:
+    """A read and a write API token, `canyonos token create` made from `workspace`
+    with the session's key, by scope; None when the dashboard API reports token
+    verification off (`--dangerous-skip-auth`), since every route then answers
+    without one."""
+    if http(recorder, "GET", f"{API_URL}/auth/status").json()["disabled"]:
         return None
-    credentials = {"email": SIGN_IN_EMAIL, "password": SIGN_IN_PASSWORD}
-    call = http(
-        recorder,
-        "POST",
-        f"{base_url}/auth/register",
-        json={**credentials, "password_confirmation": SIGN_IN_PASSWORD},
-        check=False,
-    )
-    if call.code == 403:
-        call = http(recorder, "POST", f"{base_url}/auth/login", json=credentials)
-    elif call.code != 201:
-        raise CallFailed(call)
-    return call.json()["token"]
+    return {
+        scope: token(recorder, workspace, "--scope", scope)
+        for scope in ("read", "write")
+    }
 
 
 def case_slug(module: str, name: str) -> str:

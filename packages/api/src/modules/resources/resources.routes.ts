@@ -5,15 +5,16 @@ import { Elysia } from 'elysia';
 
 import { TimeRangeQuerySchema } from '@core/time-range';
 
-import { resolveAuth } from '../auth/auth.middleware';
+import { authPlugin, requireScope } from '../auth/auth.middleware';
 import { get_fleet_overview } from './resources.service';
 import { FleetOverviewSchema } from './resources.types';
 
 export const resourcesRoutes = new Elysia({ prefix: '/resources', name: 'resources.routes' })
-  .resolve(async ({ request }) => ({ auth: await resolveAuth(request) }))
+  .use(authPlugin)
   .get('/overview', ({ query }) => get_fleet_overview(query), {
     query: TimeRangeQuerySchema,
     response: { 200: FleetOverviewSchema },
+    beforeHandle: requireScope('read'),
     detail: {
       tags: ['Resources'],
       security: [{ bearerAuth: [] }],

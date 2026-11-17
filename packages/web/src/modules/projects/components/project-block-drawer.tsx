@@ -280,6 +280,7 @@ function AgentSections({
   if (query.error) {
     return (
       <QueryError
+        error={query.error}
         message="Could not load this block's metrics."
         onRetry={() => void query.refetch()}
         test_id={`${TEST_ID}-error`}

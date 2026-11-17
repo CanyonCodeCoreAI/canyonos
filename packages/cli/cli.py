@@ -513,15 +513,27 @@ def _run_command(settings_at_start):
             ),
         )
     )
-    add_target(
+    serve = add_target(
         add(
             "serve",
             lambda args: sys.exit(
-                kubernetes_target.run_kubernetes_serve()
+                kubernetes_target.run_kubernetes_serve(
+                    skip_auth=args.dangerous_skip_auth, auth_dir=args.auth_dir
+                )
                 if on_kubernetes(args)
-                else run_serve()
+                else run_serve(
+                    skip_auth=args.dangerous_skip_auth, auth_dir=args.auth_dir
+                )
             ),
+            parents=[auth_dir],
         )
+    )
+    serve.add_argument(
+        "--dangerous-skip-auth",
+        action="store_true",
+        help="Start the dashboard without a key: its API will answer anyone who reaches "
+        "it, with no token. For a throwaway run only. On Kubernetes it only skips this "
+        "machine's key check: the cluster's dashboard keeps its chart's setting",
     )
     status = add_target(
         add(

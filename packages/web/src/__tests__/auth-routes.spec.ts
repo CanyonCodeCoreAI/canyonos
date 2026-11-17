@@ -3,21 +3,31 @@
 
 import { expect, test } from '@playwright/test';
 
-import { authenticate } from './helpers/auth';
+import { setTokens, tokenFor } from './helpers/auth';
+import { expectPath } from './helpers/session';
 
-test('@smoke a signed-in session grants access to the protected route', async ({ page }) => {
-  await authenticate(page);
+test('@smoke a stored read token grants access to the protected route', async ({ page }) => {
+  await setTokens(page, { readToken: tokenFor('read') });
   await page.goto('/');
-  // The authenticated home redirects to the Projects Overview at /projects.
+
   await expect(page.getByTestId('projects-overview')).toBeVisible();
-  await expect(page).toHaveURL(/\/projects$/);
+  await expectPath(page, '/projects');
 });
 
-test('@smoke an authenticated visit to /login is redirected to the protected route', async ({
+test('@smoke a visit to /login with a stored read token lands on the projects overview', async ({
   page,
 }) => {
-  await authenticate(page);
+  await setTokens(page, { readToken: tokenFor('read') });
   await page.goto('/login');
+
   await expect(page.getByTestId('projects-overview')).toBeVisible();
-  await expect(page).toHaveURL(/\/projects$/);
+  await expectPath(page, '/projects');
+});
+
+test('the old sign-up page sends a signed-out visitor to the token screen', async ({ page }) => {
+  await page.goto('/register?redirect=/projects');
+
+  await expectPath(page, '/login');
+  expect(new URL(page.url()).searchParams.get('redirect')).toBe('/projects');
+  await expect(page.getByTestId('auth-read-token')).toBeVisible();
 });

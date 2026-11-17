@@ -304,6 +304,7 @@ function QueriesBody({
     return (
       <div className={cn('flex flex-col', TABLE_REGION_HEIGHT)} data-testid="project-queries-body">
         <QueryError
+          error={query.error}
           message="Could not load this deployment's queries."
           onRetry={onRetry}
           className="my-auto"

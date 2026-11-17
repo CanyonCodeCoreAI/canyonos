@@ -3,9 +3,9 @@
 
 import { queryOptions } from '@tanstack/react-query';
 
-import type { AuthStatus, User } from '@canyonos/api/auth';
+import type { AuthStatus, TokenInfo } from '@canyonos/api/auth';
 
-import { apiCall, forgeAuthApi, forgePublicApi } from '@/api';
+import { apiCall, forgePublicApi } from '@/api';
 
 export const authStatusQuery = queryOptions({
   queryKey: ['auth', 'status'],
@@ -13,9 +13,13 @@ export const authStatusQuery = queryOptions({
   staleTime: 0,
 });
 
-/** Keyed by token so a new session never reads the previous session's profile. */
-export const profileQuery = (token: string) =>
+/** What the API makes of `token`, sent as the bearer whichever tokens this browser holds. */
+export const tokenInfoQuery = (token: string) =>
   queryOptions({
-    queryKey: ['auth', 'profile', token],
-    queryFn: () => apiCall<User>(() => forgeAuthApi.auth.profile.get()),
+    queryKey: ['auth', 'token', token],
+    queryFn: () =>
+      apiCall<TokenInfo>(() =>
+        forgePublicApi.auth.token.get({ $headers: { authorization: `Bearer ${token}` } })
+      ),
+    retry: false,
   });

@@ -383,6 +383,19 @@ def query_token(
     )
 
 
+def api_token(
+    scope: str,
+    ttl: int,
+    key: str | None = None,
+    auth_dir: Path | None = None,
+) -> str:
+    """Sign a `read` or `write` token for the dashboard API, expiring `ttl` seconds
+    from now, with the private key named `key` in `auth_dir` (or its only one), for
+    a command that calls the dashboard API itself."""
+    private, public = load_key_pair(private_key_path(key, auth_dir))
+    return sign_token(private, token_claims(scope, [], False, ttl), key_id(public))
+
+
 def gc_env(keys: list[str], disabled: bool) -> list[str]:
     """The `docker run` options that hand the Global Controller the trusted public
     keys, and the switch that turns verification off when `disabled`."""
@@ -424,8 +437,9 @@ def _grants(claims: dict) -> str:
         ),
         "read": "read the dashboard API (every GET), for every project it shows",
         "write": (
-            "change things through the dashboard API (POST, PUT, PATCH, DELETE); it "
-            "does not read, so a caller that does both holds a read token too"
+            "change things through the dashboard API (POST, PUT, PATCH, DELETE), and "
+            "read what it can change: project detail, scaling, governance and prompts; "
+            "the project list, requests, logs and metrics need a read token"
         ),
     }[claims["scope"]]
 

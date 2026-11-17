@@ -226,6 +226,22 @@ test('a failed replicas read shows the containers error, not the empty state', a
   );
 });
 
+test('a replicas read the API refuses shows its message in the tiles and the containers', async ({
+  page,
+}) => {
+  const refusal = 'A write token reads only what it can change; send a read token for this';
+  await openStatus(page, {
+    replicas: (route) =>
+      fulfillJson(route, { error: 'auth.insufficient_scope', message: refusal }, 403),
+  });
+
+  const tile = page.getByTestId('status-tile-replicas');
+  await expect(tile).toHaveAttribute('data-state', 'refused');
+  await expect(tile).toContainText(refusal);
+  await expect(page.getByTestId('status-screen').getByTestId('query-refused')).toHaveText(refusal);
+  await expect(page.getByTestId('metrics-containers-error')).toHaveCount(0);
+});
+
 test('no replicas up shows the empty containers state', async ({ page }) => {
   await openStatus(page, {
     replicas: (route) => fulfillJson(route, { project_id: PROJECT.id, replicas: [] }),

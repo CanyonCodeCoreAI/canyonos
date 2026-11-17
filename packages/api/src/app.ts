@@ -69,9 +69,10 @@ export const createApp = () =>
                 title: 'CanyonOS API',
                 version: '0.1.0',
                 description:
-                  'Bearer authentication applies only with AUTH_MODE=password; with AUTH_MODE=none every route is open.',
+                  'Every /projects and /resources route needs an API token from `canyonos token create`: --scope read on a GET, --scope write on any other method. A write token also reads what it can change: project detail, scaling, governance and prompts. With AUTH_DISABLED=true every route is open.',
               },
               tags: [
+                { name: 'Auth' },
                 { name: 'Projects' },
                 { name: 'Requests' },
                 { name: 'Metrics' },
@@ -98,7 +99,7 @@ export const createApp = () =>
     .use(authRoutes)
     .use(resourcesRoutes)
     .use(projectsRoutes)
-    // Deliberately unauthenticated in every mode: the OTLP emitter is an agent process, not a person.
+    // Deliberately unauthenticated: the OTLP emitter is an agent process, which holds no API token.
     .use(telemetryRoutes)
     .use(canyonosRoutes);
 

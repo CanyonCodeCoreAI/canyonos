@@ -68,6 +68,7 @@ function ScalingBody({
   if (query.isError && !query.isFetching) {
     return (
       <QueryError
+        error={query.error}
         className="max-w-3xl"
         message={scalingErrorMessage(query.error, 'Could not load the policy.')}
         onRetry={() => void query.refetch()}
@@ -175,6 +176,7 @@ function ScalingAgentsBody({
   if (query.isError && !query.isFetching) {
     return (
       <QueryError
+        error={query.error}
         message={scalingErrorMessage(query.error, 'Could not load the agents.')}
         onRetry={() => void query.refetch()}
         test_id="scaling-agents-error"

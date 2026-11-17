@@ -34,10 +34,11 @@ from rich.table import Table
 from rich.text import Text
 
 from canyonos import env, ui
-from canyonos.auth import SKIP_AUTH_WARNING, refuse_keys_in_project, require_keys
+from canyonos.auth import refuse_keys_in_project, require_keys
 from canyonos.constants import (
     deployment_config_path,
     existing_config_path,
+    project_config_path,
     project_env_path,
     project_root,
     read_config,
@@ -87,6 +88,17 @@ OPERATOR_HINT = (
 )
 # Reasons the operator gives for a CanyonAgent that will never start as configured.
 FATAL_REASONS = ("NameMismatch", "Unsupported", "ProjectNotFound")
+# The cluster's dashboard is every project's: --dangerous-skip-auth leaves it to its chart.
+KUBERNETES_SKIP_AUTH_WARNING = (
+    "--dangerous-skip-auth: the endpoint will answer anyone who reaches it, with no "
+    "token. The cluster's dashboard keeps its chart's setting "
+    "(dashboard.dangerousSkipAuth). Use it only for a throwaway run."
+)
+KUBERNETES_DASHBOARD_SKIP_AUTH = (
+    "--dangerous-skip-auth: no key is needed here, but the cluster's dashboard is shared "
+    "by every project, so it still asks for a token unless its chart turns that off "
+    "(dashboard.dangerousSkipAuth=true)."
+)
 DASHBOARD_NAMESPACE = "canyonos-dashboard"
 DASHBOARD_SERVICE = "svc/canyonos-dashboard-web"
 DASHBOARD_PORT = 8080
@@ -813,7 +825,7 @@ def run_kubernetes_deploy(
     verification off."""
     refuse_keys_in_project(auth_dir)
     if skip_auth:
-        ui.warn(SKIP_AUTH_WARNING)
+        ui.warn(KUBERNETES_SKIP_AUTH_WARNING)
         keys = []
     else:
         keys = require_keys(auth_dir)
@@ -1023,11 +1035,21 @@ def run_kubernetes_stop(config_path=None):
     return True
 
 
-def run_kubernetes_serve(port=None):
+def run_kubernetes_serve(port=None, skip_auth=False, auth_dir=None):
     """Run `canyonos serve --target kubernetes`: keep the cluster's dashboard on
     127.0.0.1 here through a port-forward in the background, on `port`, else the
     project's `dashboard_port`, else 8081 or the next free one, until `canyonos stop`.
-    Only who may port-forward into its namespace can open it. Returns the exit code."""
+    Only who may port-forward into its namespace can open it. As on Docker it refuses
+    before opening anything when `auth_dir` trusts no key to sign its tokens with,
+    unless `skip_auth`; the dashboard's own verification is its chart's
+    (`dashboard.dangerousSkipAuth`), never this machine's, and, run in a project, it
+    refuses a keys folder inside it. Returns the exit code."""
+    if os.path.isfile(project_config_path(project_root())):
+        refuse_keys_in_project(auth_dir)
+    if skip_auth:
+        ui.warn(KUBERNETES_DASHBOARD_SKIP_AUTH)
+    else:
+        require_keys(auth_dir)
     port = _open_dashboard(port)
     ui.ok(f"Dashboard: http://127.0.0.1:{port} (until canyonos stop)")
     return 0

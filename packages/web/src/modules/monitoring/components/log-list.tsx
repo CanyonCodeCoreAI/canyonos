@@ -51,6 +51,7 @@ export function LogList({
   if (query.error) {
     return (
       <QueryError
+        error={query.error}
         message={error_message}
         onRetry={() => void query.refetch()}
         test_id={`${test_id}-error`}

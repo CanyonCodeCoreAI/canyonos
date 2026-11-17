@@ -1,48 +1,74 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { APIRequestContext, Page } from '@playwright/test';
+import { createPrivateKey, randomUUID, sign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import type { KeyObject } from 'node:crypto';
 
-import type { AuthToken } from '@canyonos/api/auth';
+import type { Page } from '@playwright/test';
 
-const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';
+import type { ApiTokens } from '@/modules/auth/auth.store';
 
-/** The account the API's dev seed creates when it starts with `SEED_DEV_DATA=true`. */
-export const TEST_EMAIL = 'e2e@canyonos.test';
-export const TEST_PASSWORD = 'e2e-password-1';
+export const AUTH_STORAGE_KEY = 'cc-auth-storage';
+
+/** The key `playwright.config.ts` made for this run and put in the API's trusted folder. */
+const trustedKey = (): KeyObject => createPrivateKey(readFileSync(process.env.PRIVATE_KEY_PATH!));
 
 const base64Url = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
 
-const makeToken = (expSeconds: number) =>
-  `${base64Url({ alg: 'HS256', typ: 'JWT' })}.${base64Url({ exp: expSeconds })}.signature`;
-
-const nowSeconds = Math.floor(Date.now() / 1000);
-
-/** Unexpired but unsigned: the client-side guard accepts it, the API's profile check does not. */
-export const validToken = makeToken(nowSeconds + 3600);
-
-export const setToken = (token: string) =>
-  localStorage.setItem(
-    'cc-auth-storage',
-    JSON.stringify({ state: { user: { id: '1', email: 'test@canyonos.test' }, token }, version: 0 })
-  );
-
-const persistAuth = (session: AuthToken) =>
-  localStorage.setItem('cc-auth-storage', JSON.stringify({ state: session, version: 0 }));
-
-export async function signIn(request: APIRequestContext): Promise<AuthToken> {
-  const response = await request.post(`${apiBaseUrl}/auth/login`, {
-    data: { email: TEST_EMAIL, password: TEST_PASSWORD },
-  });
-  if (!response.ok()) {
-    throw new Error(`Test sign-in failed (${response.status()}): ${await response.text()}`);
-  }
-  return (await response.json()) as AuthToken;
+interface TokenOptions {
+  readonly aud?: readonly string[];
+  readonly key?: KeyObject;
 }
 
-/** Sign the seeded user in through the real API and boot the app with that session stored. */
-export async function authenticate(page: Page): Promise<AuthToken> {
-  const session = await signIn(page.request);
-  await page.addInitScript(persistAuth, session);
-  return session;
+/**
+ * A token signed the way `canyonos token create` signs one, by the trusted key unless `key` says
+ * otherwise. `exp` is in seconds since the epoch.
+ */
+export function tokenFor(
+  scope: string,
+  exp?: number,
+  { aud = ['canyonos-api'], key = trustedKey() }: TokenOptions = {}
+): string {
+  const header = base64Url({ alg: 'EdDSA', typ: 'JWT' });
+  const payload = base64Url({
+    iss: 'canyonos',
+    iat: Math.floor(Date.now() / 1000),
+    jti: randomUUID().replaceAll('-', ''),
+    aud,
+    scope,
+    ...(exp === undefined ? {} : { exp }),
+  });
+  const signature = sign(null, Buffer.from(`${header}.${payload}`), key).toString('base64url');
+  return `${header}.${payload}.${signature}`;
+}
+
+/** The persisted store as the dashboard writes it. */
+export const storedTokens = ({ readToken = null, writeToken = null }: Partial<ApiTokens>) => ({
+  state: { readToken, writeToken },
+  version: 0,
+});
+
+/** Stores `tokens` once per tab, before the app boots, so a later sign-out or refusal sticks. */
+export async function setTokens(page: Page, tokens: Partial<ApiTokens>): Promise<void> {
+  await page.addInitScript(
+    ([key, value]) => {
+      if (sessionStorage.getItem('e2e-tokens-set')) return;
+      sessionStorage.setItem('e2e-tokens-set', '1');
+      localStorage.setItem(key, value);
+    },
+    [AUTH_STORAGE_KEY, JSON.stringify(storedTokens(tokens))] as const
+  );
+}
+
+export const readStoredTokens = (page: Page): Promise<unknown> =>
+  page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? 'null'), AUTH_STORAGE_KEY);
+
+/** Boots the app holding a read and a write token, as a person who may do everything. */
+export async function authenticate(
+  page: Page
+): Promise<{ readonly readToken: string; readonly writeToken: string }> {
+  const tokens = { readToken: tokenFor('read'), writeToken: tokenFor('write') };
+  await setTokens(page, tokens);
+  return tokens;
 }

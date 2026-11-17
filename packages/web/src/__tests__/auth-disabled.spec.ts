@@ -3,32 +3,39 @@
 
 import { expect, test } from '@playwright/test';
 
-import { setToken, validToken } from './helpers/auth';
-import { apiBaseUrl, noAuthApiBaseUrl } from './helpers/projects';
+import type { AuthStatus } from '@canyonos/api/auth';
+
+import { readStoredTokens, setTokens, storedTokens, tokenFor } from './helpers/auth';
+import { apiBaseUrl, fulfillJson, noAuthApiBaseUrl } from './helpers/projects';
 import { expectPath } from './helpers/session';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const SEEDED_PROJECT_NAME = 'Canyon Code Demo Flow';
 
-/** The dashboard is built against the password-mode API; send its calls to the sign-in-off one. */
+/** The dashboard is built against the verifying API; send its calls to the switched-off one. */
 test.beforeEach(async ({ page }) => {
   await page.route(
     (url) => url.origin === apiOrigin,
     (route) => {
       const url = new URL(route.request().url());
+      if (url.pathname === '/auth/status') {
+        return fulfillJson(route, { disabled: true } satisfies AuthStatus);
+      }
       return route.continue({ url: `${noAuthApiBaseUrl}${url.pathname}${url.search}` });
     }
   );
 });
 
-test('home opens the projects overview with no sign-in', async ({ page }) => {
+test('home opens the projects overview with no token screen', async ({ page }) => {
   await page.goto('/');
 
   await expectPath(page, '/projects');
   await expect(page.getByTestId('projects-overview')).toContainText(SEEDED_PROJECT_NAME);
 });
 
-test('the sign-in screens send visitors to the projects overview', async ({ page }) => {
+test('the token screen and the old sign-up page send visitors to the projects overview', async ({
+  page,
+}) => {
   await page.goto('/login');
   await expectPath(page, '/projects');
 
@@ -37,15 +44,21 @@ test('the sign-in screens send visitors to the projects overview', async ({ page
   await expect(page.getByTestId('projects-overview')).toBeVisible();
 });
 
-test('a session stored by an earlier password-mode visit shows no user', async ({ page }) => {
-  await page.addInitScript(setToken, validToken);
+test('a token stored by an earlier visit is dropped and no request carries it', async ({
+  page,
+}) => {
+  const authorizations: string[] = [];
+  page.on('request', (request) => {
+    const authorization = request.headers()['authorization'];
+    if (authorization) authorizations.push(`${request.method()} ${request.url()}`);
+  });
+  await setTokens(page, { readToken: tokenFor('read'), writeToken: tokenFor('write') });
 
   await page.goto('/projects');
 
   await expect(page.getByTestId('projects-overview')).toContainText(SEEDED_PROJECT_NAME);
   await expect(page.getByTestId('app-sidebar')).toBeVisible();
   await expect(page.getByTestId('sidebar-user-menu')).toHaveCount(0);
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    /^Good (morning|afternoon|evening)$/
-  );
+  await expect.poll(() => readStoredTokens(page)).toEqual(storedTokens({}));
+  expect(authorizations).toEqual([]);
 });

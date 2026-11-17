@@ -58,6 +58,7 @@ function MetricsBody({
   if (query.error) {
     return (
       <QueryError
+        error={query.error}
         message="Could not load resource metrics."
         onRetry={() => void query.refetch()}
         test_id="metrics-error"

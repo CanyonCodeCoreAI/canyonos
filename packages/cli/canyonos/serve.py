@@ -7,8 +7,22 @@ CLI output for the local dashboard stack.
 Automatically gets created when deploy runs unless --serve flag is set to false.
 """
 
+import os
+from pathlib import Path
+
 from canyonos import ui
-from canyonos.constants import dashboard_port, deployment_config_path
+from canyonos.auth import (
+    SKIP_AUTH_WARNING,
+    refuse_keys_in_project,
+    require_keys,
+    trusted_dir,
+)
+from canyonos.constants import (
+    dashboard_port,
+    deployment_config_path,
+    project_config_path,
+    project_root,
+)
 from canyonos.gc import deploy_status
 from canyonos.init import load_state, redis_port_of
 from .dashboard_registration import RegistrationError, register_project
@@ -54,15 +68,21 @@ def _warn_if_dashboard_port_ignored() -> None:
         )
 
 
-def serve_dashboard(report_failure: bool = True) -> ServeResult:
-    """Bring the dashboard up, reporting progress. Returns the stack's result.
+def serve_dashboard(
+    report_failure: bool = True,
+    skip_auth: bool = False,
+    auth_dir: Path | None = None,
+    renewed: tuple[str, ...] = (),
+) -> ServeResult:
+    """Bring the dashboard up, reporting progress, with its API trusting the public
+    keys in `auth_dir`'s `trusted/` unless `skip_auth`, and the `renewed` services in
+    new containers. Returns the stack's result.
 
     Phases drive the spinner while the stack comes up; the trace itself is
     only printed when something fails and the user needs to see how far it got.
     """
     trace = []
     configured_port = dashboard_port(deployment_config_path())
-    _warn_if_dashboard_port_ignored()
 
     with ui.status("Starting the dashboard...") as spinner:
 
@@ -70,9 +90,12 @@ def serve_dashboard(report_failure: bool = True) -> ServeResult:
             trace.append((phase, message))
             spinner.update(message)
 
-        result = run_dashboard(report, configured_port)
+        result = run_dashboard(
+            report, configured_port, skip_auth, trusted_dir(auth_dir), renewed
+        )
 
     if result.ok:
+        _warn_if_dashboard_port_ignored()
         _register_running_project()
         return result
     if not report_failure:
@@ -86,10 +109,19 @@ def serve_dashboard(report_failure: bool = True) -> ServeResult:
     return result
 
 
-def run_serve() -> int:
-    """Run `canyonos serve`: start the dashboard and show its URL in the terminal.
-    Returns 0 or 1."""
-    result = serve_dashboard()
+def run_serve(skip_auth: bool = False, auth_dir: Path | None = None) -> int:
+    """Run `canyonos serve`: start the dashboard, its API in a new container that
+    reads the public keys trusted in `auth_dir` (or verifies nothing with
+    `skip_auth`), and show its URL in the terminal. Returns 0 or 1; raises
+    RuntimeError before anything starts when no key is trusted, or when it runs in
+    a project that holds its keys folder."""
+    if os.path.isfile(project_config_path(project_root())):
+        refuse_keys_in_project(auth_dir)
+    if skip_auth:
+        ui.warn(SKIP_AUTH_WARNING)
+    else:
+        require_keys(auth_dir)
+    result = serve_dashboard(skip_auth=skip_auth, auth_dir=auth_dir, renewed=("api",))
     if not result.ok:
         return 1
 

@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { projects, users } from '@api/db/schema';
+import { projects } from '@api/db/schema';
 import {
   bootstrap_canyonos,
   save_controller_project,
@@ -19,7 +19,7 @@ import { sync_registered_projects } from '@api/modules/canyonos/canyonos.sync';
 import { config } from '@core/env';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_user } from './project-test.utils';
+import { authenticate, bearer } from './project-test.utils';
 import { write_project_span } from './telemetry-test.utils';
 
 setupE2ETests();
@@ -33,22 +33,13 @@ const MINUTE_NANOS = 60_000_000_000n;
 const count_projects = async (): Promise<number> =>
   (await db.select({ id: projects.id }).from(projects)).length;
 
-const count_users = async (): Promise<number> =>
-  (await db.select({ id: users.id }).from(users)).length;
-
 async function read_project(project_id: string) {
   const [row] = await db.select().from(projects).where(eq(projects.id, project_id)).limit(1);
   return row;
 }
 
-async function seed_user_project(label: string): Promise<string> {
-  const email = `${label}@canyonos.test`;
-  await create_test_user(email);
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  const [project] = await db
-    .insert(projects)
-    .values({ created_by: user!.id, name: label })
-    .returning();
+async function seed_project(name: string): Promise<string> {
+  const [project] = await db.insert(projects).values({ name }).returning();
   return project!.id;
 }
 
@@ -63,14 +54,7 @@ const rejection = (promise: Promise<unknown>) =>
 
 describe('canyonos bootstrap', () => {
   // The suite points the Redis client at a closed port, so boot took the unreachable path.
-  test('no user exists after startup', async () => {
-    expect(await count_users()).toBe(0);
-
-    const status = await api.auth.status.get();
-    expect(status.data).toEqual({ mode: 'password', has_users: false });
-  });
-
-  test('an unusable identity creates no project and no user', async () => {
+  test('an unusable identity creates no project', async () => {
     const before = await count_projects();
 
     for (const identity of ['0', '', '   ', 'not-a-uuid', null]) {
@@ -82,17 +66,14 @@ describe('canyonos bootstrap', () => {
     await bootstrap_canyonos();
 
     expect(await count_projects()).toBe(before);
-    expect(await count_users()).toBe(0);
   });
 
-  test('the controller project is registered with no creator', async () => {
+  test('the controller project is registered with its Redis port', async () => {
     const project_id = '11111111-1111-4111-8111-111111111111';
     expect(await save_project(project_id)).toEqual({ project_id, name: 'project_1' });
 
     const project = await read_project(project_id);
     expect(project?.redis_port).toBe(REDIS_PORT);
-    expect(project?.created_by).toBeNull();
-    expect(await count_users()).toBe(0);
   });
 
   test('the controller project takes the published project name, falling back when empty', async () => {
@@ -113,7 +94,6 @@ describe('canyonos bootstrap', () => {
     await save_project(project_id);
 
     expect(await count_projects()).toBe(before);
-    expect(await count_users()).toBe(0);
   });
 
   test('every project the operator lists is stored once, by its name', async () => {
@@ -158,7 +138,7 @@ describe('POST /v1/traces', () => {
 });
 
 describe('canyonos reads', () => {
-  test('a registered user lists and reads the controller project and its requests', async () => {
+  test('a read token lists and reads the controller project and its requests', async () => {
     const project_id = '33333333-3333-4333-8333-333333333333';
     await save_project(project_id);
     await write_project_span(project_id, {
@@ -167,8 +147,7 @@ describe('canyonos reads', () => {
       start_time_unix_nano: NOW_NANOS - MINUTE_NANOS,
       end_time_unix_nano: NOW_NANOS,
     });
-    const token = await authenticate('owner@canyonos.test');
-    expect(await count_users()).toBe(1);
+    const token = await authenticate('read');
     const headers = bearer(token);
 
     const listed = await api.projects.get({ $headers: headers });
@@ -192,8 +171,8 @@ describe('canyonos reads', () => {
     expect(requests.data?.items.map((item) => item.session_id)).toEqual(['canyonos-user-trace']);
   });
 
-  test('an existing project only takes the Redis and its password, encrypted: name, creator, timestamps stay', async () => {
-    const project_id = await seed_user_project('kept-owner');
+  test('an existing project only takes the Redis and its password, encrypted: name and timestamps stay', async () => {
+    const project_id = await seed_project('kept-owner');
     const before = await read_project(project_id);
 
     expect(await save_project(project_id, 'renamed')).toEqual({ project_id, name: 'kept-owner' });

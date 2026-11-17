@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { TimeRangeQuerySchema } from '@core/time-range';
 
-import { resolveAuth } from '../auth/auth.middleware';
+import { authPlugin, requireScope } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { get_request_trace, list_requests } from './requests.service';
 import { ListRequestsQuerySchema, RequestListSchema, RequestTraceSchema } from './requests.types';
@@ -16,12 +16,13 @@ const doc = { tags: ['Requests'], security: [{ bearerAuth: [] }] };
 // Prefix-less: composed into projects.routes so both live in one `/projects` tree. Two separate
 // `/projects` plugins would make Eden type `projects[:id]` a union and drop `.get` for clients.
 export const requestsRoutes = new Elysia({ name: 'requests.routes' })
-  .resolve(async ({ request }) => ({ auth: await resolveAuth(request) }))
+  .use(authPlugin)
   .resolve(resolveProjectAccess)
   .get('/:project_id/requests', ({ params, query }) => list_requests(params.project_id, query), {
     params: z.object({ project_id: z.string().uuid() }),
     query: ListRequestsQuerySchema,
     response: { 200: RequestListSchema },
+    beforeHandle: requireScope('read'),
     detail: { ...doc, summary: 'List OTEL request traces with per-trace rollups' },
   })
   .get(
@@ -36,6 +37,7 @@ export const requestsRoutes = new Elysia({ name: 'requests.routes' })
       }),
       query: TimeRangeQuerySchema,
       response: { 200: RequestTraceSchema },
+      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Get a single request trace',

@@ -29,17 +29,30 @@ interface AuthFieldProps extends Omit<ComponentProps<'input'>, 'id'> {
   readonly id: string;
   readonly label: string;
   readonly error?: string;
+  readonly help?: ReactNode;
   /** Another element that also explains this field, such as the form-level error. */
   readonly describedBy?: string;
 }
 
-export function AuthField({ id, label, error, describedBy, className, ...input }: AuthFieldProps) {
+export function AuthField({
+  id,
+  label,
+  error,
+  help,
+  describedBy,
+  className,
+  ...input
+}: AuthFieldProps) {
   const errorId = `${id}-error`;
-  const descriptions = [error ? errorId : undefined, describedBy].filter(Boolean).join(' ');
+  const helpId = `${id}-help`;
+  const descriptions = [help ? helpId : undefined, error ? errorId : undefined, describedBy]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       <Label htmlFor={id}>{label}</Label>
+      <FieldHelp id={helpId}>{help}</FieldHelp>
       <Input
         id={id}
         data-testid={id}
@@ -50,6 +63,16 @@ export function AuthField({ id, label, error, describedBy, className, ...input }
       />
       <FieldError id={errorId} message={error} />
     </div>
+  );
+}
+
+function FieldHelp({ id, children }: { readonly id: string; readonly children?: ReactNode }) {
+  if (!children) return null;
+
+  return (
+    <p id={id} data-testid={id} className="text-muted-foreground text-xs">
+      {children}
+    </p>
   );
 }
 
@@ -82,17 +105,27 @@ export function AuthFormError({ error }: { readonly error: Error | null }) {
 
 interface AuthSubmitProps {
   readonly pending: boolean;
+  readonly disabled?: boolean;
   readonly pendingLabel: string;
   readonly className?: string;
   readonly children: ReactNode;
 }
 
-export function AuthSubmit({ pending, pendingLabel, className, children }: AuthSubmitProps) {
+export function AuthSubmit({
+  pending,
+  disabled = false,
+  pendingLabel,
+  className,
+  children,
+}: AuthSubmitProps) {
   return (
     <Button
       type="submit"
-      className={cn('mt-1 w-full rounded-md disabled:opacity-100', className)}
-      disabled={pending}
+      className={cn(
+        'mt-1 w-full rounded-md disabled:opacity-50 aria-busy:disabled:opacity-100',
+        className
+      )}
+      disabled={pending || disabled}
       aria-busy={pending}
       data-testid="auth-submit"
     >
@@ -103,7 +136,11 @@ export function AuthSubmit({ pending, pendingLabel, className, children }: AuthS
   );
 }
 
-function SubmitLabel({ pending, pendingLabel, children }: Omit<AuthSubmitProps, 'className'>) {
+function SubmitLabel({
+  pending,
+  pendingLabel,
+  children,
+}: Pick<AuthSubmitProps, 'pending' | 'pendingLabel' | 'children'>) {
   if (!pending) return children;
 
   return (

@@ -37,6 +37,7 @@ export function LlmCallList({ project_id, range }: LlmCallListProps) {
   if (query.error) {
     return (
       <QueryError
+        error={query.error}
         message="Could not load LLM calls."
         onRetry={() => void query.refetch()}
         test_id="llm-error"
