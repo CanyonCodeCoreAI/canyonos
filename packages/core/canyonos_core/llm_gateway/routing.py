@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Blocks proxied calls to a model this agent isn't allowed to use, or that could cost more than its cap."""
+"""Blocks proxied calls to a model the calling agent isn't allowed to use, or that could cost more than its cap."""
 
 from __future__ import annotations
 
@@ -22,7 +22,10 @@ except ImportError:
 
 log = logging.getLogger("llm_gateway")
 
-AGENT_NAME = os.environ.get("CANYONOS_AGENT_NAME")
+# The agent this replica runs as: the agent, or a toy bundle.
+REPLICA_AGENT = os.environ.get("CANYONOS_AGENT_NAME")
+# The agents this replica runs, by name: its own, or a toy bundle's.
+HOSTED_AGENTS = json.loads(os.environ.get("CANYONOS_AGENTS", "{}"))
 REFRESH_SECONDS = 5
 # Rough bytes-per-token ratio, so input tokens are estimated without asking the provider.
 BYTES_PER_TOKEN = 4
@@ -58,9 +61,11 @@ def refresh(redis) -> None:
         )
 
 
-def route(model_id: str, body: bytes, prefix: Optional[str] = None) -> Optional[str]:
-    """Why this agent's call to model_id, served by LiteLLM's provider `prefix`, is refused,
-    or None to let it through."""
+def route(
+    agent_name: Optional[str], model_id: str, body: bytes, prefix: Optional[str] = None
+) -> Optional[str]:
+    """Why `agent_name`'s call to model_id, served by LiteLLM's provider `prefix`, is
+    refused, or None to let it through."""
     if llms.llms_by_model_id is None:
         return (
             "LLM calls are blocked: CanyonOS could not load llms.yaml yet "
@@ -71,15 +76,15 @@ def route(model_id: str, body: bytes, prefix: Optional[str] = None) -> Optional[
         return None
 
     agents = llm["agents"] or {}
-    if AGENT_NAME not in agents:
-        return f"canyonos denied: {AGENT_NAME} is not allowed to use {llm['name']}"
+    if agent_name not in agents:
+        return f"canyonos denied: {agent_name} is not allowed to use {llm['name']}"
 
-    cap = agents[AGENT_NAME]
+    cap = agents[agent_name]
     if cap is None:
         return None
     if pricing.token_prices(llms.normalize_model_id(llm["model_id"]), prefix) is None:
         return (
-            f"canyonos denied: {AGENT_NAME} has a per-request cap on {llm['name']}, "
+            f"canyonos denied: {agent_name} has a per-request cap on {llm['name']}, "
             "but CanyonOS has no price for it at the provider serving this call, so the "
             "cap can't be checked; remove the cap in llms.yaml"
         )
@@ -87,12 +92,12 @@ def route(model_id: str, body: bytes, prefix: Optional[str] = None) -> Optional[
         cost = worst_case_cost(body, llm, prefix)
     except ValueError:
         return (
-            f"canyonos denied: {AGENT_NAME} has a per-request cap on {llm['name']}, "
+            f"canyonos denied: {agent_name} has a per-request cap on {llm['name']}, "
             "so the request body must be a JSON object"
         )
     if cost > cap:
         return (
-            f"canyonos denied: {AGENT_NAME} call to {llm['name']} could cost up to "
+            f"canyonos denied: {agent_name} call to {llm['name']} could cost up to "
             f"${cost:.4f}, over its ${cap} per-request cap"
         )
     return None

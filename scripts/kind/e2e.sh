@@ -6,16 +6,16 @@
 # makes. It builds CanyonOS's images from this checkout as `bun run canyonos:dev` does,
 # installs them with scripts/kind/operator.sh (the operator, then the chart with the
 # in-cluster builder and the dashboard), then, as a user who may only edit one
-# namespace, deploys examples/helloworld with `canyonos target kubernetes` and a plain
-# `canyonos deploy` and checks that:
+# namespace, deploys examples/helloworld's deployment with `canyonos target kubernetes`
+# and a plain `canyonos deploy helloworld` and checks that:
 #   - `canyonos deploy` refuses before `canyonos keys create` and creates nothing in the
 #     cluster; after it, the CanyonProject trusts the key's public half and neither it
 #     nor the CanyonBuild holds a private key; `deploy --dangerous-skip-auth` marks the
 #     project's verification off;
 #   - `canyonos target` names the namespace after the folder, finds the cluster's
 #     registry, fills an empty kubernetes: block, and fails rather than waits on a
-#     prompt when it cannot; `validate` refuses an empty block, and a config that is
-#     not valid YAML is refused rather than taken for a Docker project;
+#     prompt when it cannot; `deploy` refuses an empty block, and a config that is
+#     not valid YAML is refused rather than taken for a Docker deployment;
 #   - the endpoint needs a query token for the project (or for every project): none is
 #     401 auth.missing_token, a 503 auth.not_ready while the Global Controller has not
 #     published its keys counts as not up, `canyonos test` signs its own token and
@@ -34,7 +34,8 @@
 #     `--dangerous-skip-auth`, which leaves the cluster's dashboard to its chart;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` closes both forwards, `canyonos clean` removes the project and
-#     leaves the namespace, and `canyonos target docker` keeps the kubernetes: block.
+#     leaves the namespace, and `canyonos target docker` keeps the kubernetes: block;
+#   - with `deploy_mode: toy`, one agent StatefulSet runs the project and answers.
 #
 # Usage: scripts/kind/e2e.sh   (CANYONOS_KIND_CLUSTER names another cluster than canyonos)
 # Needs docker, kind, kubectl, bun and git on this machine; everything else runs in a
@@ -98,8 +99,8 @@ EOF
   [ "$(as_deployer kubectl auth can-i get crds 2>/dev/null)" = "no" ] || fail "the deployer may read CRDs"
 
   log "canyonos target kubernetes, then canyonos deploy (as the deployer)"
-  cp -r /w/examples/helloworld/helloworld /hw
-  printf 'EXAMPLE=1\n' > /hw/.env
+  cp -r /w/examples/helloworld /hw
+  printf 'EXAMPLE=1\n' > /hw/helloworld/.env
   # Development mode (no usage events, no upgrade check) naming the release image,
   # so the build runs the canyonos-core image the operator was installed with.
   export CANYONOS_ENV=development CANYONOS_USAGE_URL=""
@@ -128,67 +129,68 @@ EOF
     fi
     return 1
   }
-  config_value() {  # project folder, dotted key: its value in workflow_config.yaml
+  config_value() {  # deployment folder, dotted key: its value in deployment.yaml
     /w/.venv/bin/python -c 'import sys, yaml
 value = yaml.safe_load(open(sys.argv[1]))
 for key in sys.argv[2].split("."):
     value = value.get(key) if isinstance(value, dict) else None
-print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
+print("" if value is None else value)' "$1/deployment.yaml" "$2"
   }
 
   log "canyonos target with no options takes the folder's name and the cluster's registry"
-  cp -r /w/examples/helloworld/helloworld /tmp/Target_Check
+  cp -r /w/examples/helloworld /tmp/Target_Check
   canyonos_in "${ADMIN}" /tmp/Target_Check target kubernetes || fail "target with no options"
   [ "$(config_value /tmp/Target_Check target)" = kubernetes ] \
     && [ "$(config_value /tmp/Target_Check kubernetes.namespace)" = target-check ] \
     && [ "$(config_value /tmp/Target_Check kubernetes.registry)" = "${REGISTRY}" ] \
-    || fail "target wrote: $(cat /tmp/Target_Check/config/workflow_config.yaml)"
+    || fail "target wrote: $(cat /tmp/Target_Check/deployment.yaml)"
   # The block goes right under `target`, keeping the file's order.
-  grep -A1 '^target: kubernetes$' /tmp/Target_Check/config/workflow_config.yaml | grep -q '^kubernetes:$' \
-    || fail "target did not put the kubernetes: block under target: $(cat /tmp/Target_Check/config/workflow_config.yaml)"
+  grep -A1 '^target: kubernetes$' /tmp/Target_Check/deployment.yaml | grep -q '^kubernetes:$' \
+    || fail "target did not put the kubernetes: block under target: $(cat /tmp/Target_Check/deployment.yaml)"
   shown="$(canyonos_in "${ADMIN}" /tmp/Target_Check target)" || fail "target (show): ${shown}"
   echo "${shown}" | grep -q "deploys to Kubernetes: namespace target-check" \
     || fail "target does not show where the project deploys: ${shown}"
 
-  log "canyonos target fills an empty kubernetes: block, and validate refuses one"
-  cp -r /w/examples/helloworld/helloworld /tmp/Empty_Block
-  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Empty_Block/config/workflow_config.yaml
-  printf 'kubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/config/workflow_config.yaml
-  said="$(canyonos_in "${ADMIN}" /tmp/Empty_Block validate 2>&1)" && fail "validate passed an empty kubernetes: block"
-  echo "${said}" | grep -q "kubernetes: section is missing or empty" \
-    || fail "validate did not name the empty kubernetes: block: ${said}"
+  log "canyonos target fills an empty kubernetes: block, and deploy refuses one"
+  cp -r /w/examples/helloworld /tmp/Empty_Block
+  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Empty_Block/deployment.yaml
+  printf 'kubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/deployment.yaml
+  # No key exists yet, and deploy checks for one first: skip that to reach the config check.
+  said="$(canyonos_in "${ADMIN}" /tmp/Empty_Block deploy helloworld --dangerous-skip-auth 2>&1)" && fail "deploy passed an empty kubernetes: block"
+  echo "${said}" | grep -q 'needs a `kubernetes:` block' \
+    || fail "deploy did not name the empty kubernetes: block: ${said}"
   canyonos_in "${ADMIN}" /tmp/Empty_Block target kubernetes || fail "target with an empty kubernetes: block"
   [ "$(config_value /tmp/Empty_Block kubernetes.namespace)" = empty-block ] \
-    || fail "target left the kubernetes: block empty: $(cat /tmp/Empty_Block/config/workflow_config.yaml)"
+    || fail "target left the kubernetes: block empty: $(cat /tmp/Empty_Block/deployment.yaml)"
 
   log "a config that is not valid YAML is refused, not taken for a Docker project"
-  cp -r /w/examples/helloworld/helloworld /tmp/Bad_Yaml
-  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Bad_Yaml/config/workflow_config.yaml
-  printf 'kubernetes: [\n' >> /tmp/Bad_Yaml/config/workflow_config.yaml
+  cp -r /w/examples/helloworld /tmp/Bad_Yaml
+  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Bad_Yaml/deployment.yaml
+  printf 'kubernetes: [\n' >> /tmp/Bad_Yaml/deployment.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Bad_Yaml stop 2>&1)" && fail "stop passed with a config that is not YAML: ${said}"
   echo "${said}" | grep -q "Could not read" || fail "stop did not say it could not read the config: ${said}"
 
   log "canyonos target with no terminal and no --registry does not wait on a prompt"
   # The deployer may edit one namespace only, so it may not be able to read kube-public,
   # where the cluster advertises its registry: it then has to name it, not be asked.
-  cp -r /w/examples/helloworld/helloworld /tmp/hw-deployer
+  cp -r /w/examples/helloworld /tmp/hw-deployer
   rc=0
   said="$(canyonos_in "${DEPLOYER}" /tmp/hw-deployer target kubernetes --namespace "${NS}" 2>&1)" || rc=$?
   echo "exit ${rc}: ${said}"
   case "${rc}" in
     124) fail "target waited for an answer with no terminal to ask" ;;
     0) [ "$(config_value /tmp/hw-deployer kubernetes.registry)" = "${REGISTRY}" ] \
-         || fail "target wrote another registry: $(cat /tmp/hw-deployer/config/workflow_config.yaml)" ;;
+         || fail "target wrote another registry: $(cat /tmp/hw-deployer/deployment.yaml)" ;;
     *) echo "${said}" | grep -q -- "--registry" || fail "target failed without naming --registry"
-       cmp -s /w/examples/helloworld/helloworld/config/workflow_config.yaml /tmp/hw-deployer/config/workflow_config.yaml \
-         || fail "a failed target still wrote the config: $(cat /tmp/hw-deployer/config/workflow_config.yaml)" ;;
+       cmp -s /w/examples/helloworld/deployment.yaml /tmp/hw-deployer/deployment.yaml \
+         || fail "a failed target still wrote the config: $(cat /tmp/hw-deployer/deployment.yaml)" ;;
   esac
 
   canyonos target kubernetes --namespace "${NS}" --registry "${REGISTRY}" || fail "target"
-  grep -q '^target: kubernetes' /hw/config/workflow_config.yaml || fail "target not written"
+  grep -q '^target: kubernetes' /hw/deployment.yaml || fail "target not written"
 
   log "deploy refuses before canyonos keys create, and nothing reaches the cluster"
-  said="$(canyonos_in "${DEPLOYER}" /hw deploy 2>&1)" && fail "deploy passed with no trusted key: ${said}"
+  said="$(canyonos_in "${DEPLOYER}" /hw deploy helloworld 2>&1)" && fail "deploy passed with no trusted key: ${said}"
   echo "${said}" | tr -s ' \n' ' ' | grep -q "canyonos keys create" \
     || fail "the refused deploy did not say to run canyonos keys create: ${said}"
   builds="$(as_deployer kubectl -n "${NS}" get canyonbuilds -o name)"
@@ -198,7 +200,7 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
   # The CanyonBuild is deleted once it succeeds: watch it while the deploy runs.
   as_deployer kubectl -n "${NS}" get canyonbuilds --watch -o yaml >/tmp/canyonbuilds.yaml 2>/dev/null &
   build_watch=$!
-  canyonos deploy || fail "deploy"
+  canyonos deploy helloworld || fail "deploy"
   kill "${build_watch}" 2>/dev/null || true
 
   log "The project trusts the key's public half, and no private key reached the cluster"
@@ -214,7 +216,7 @@ EOF
   grep -q "PRIVATE KEY" /tmp/canyonbuilds.yaml && fail "the CanyonBuild holds a private key"
   as_deployer kubectl -n "${NS}" get canyonproject -o yaml | grep -q "PRIVATE KEY" \
     && fail "the CanyonProject holds a private key"
-  project_id="$(grep -E '^project_id:' /hw/config/workflow_config.yaml | awk '{print $2}')"
+  project_id="$(grep -E '^deployment_id:' /hw/deployment.yaml | awk '{print $2}')"
   query_token="$(token --scope query --project "${project_id}")" || fail "token create"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
   said="$(endpoint_up http://127.0.0.1:8080 "${query_token}")" \
@@ -230,7 +232,7 @@ EOF
     || fail "status --json is not JSON"
   canyonos doctor || fail "doctor"
   canyonos logs --no-follow --tail 5 >/dev/null || fail "logs"
-  canyonos logs HelloAgent-0 --no-follow --tail 5 >/dev/null || fail "logs HelloAgent-0"
+  canyonos logs helloworld.HelloAgent-0 --no-follow --tail 5 >/dev/null || fail "logs helloworld.HelloAgent-0"
 
   log "The endpoint stays on 127.0.0.1:8080 when its pod is replaced"
   selector="$(as_deployer kubectl -n "${NS}" get svc canyonos-endpoint \
@@ -250,7 +252,7 @@ EOF
     signed="$(token --scope query --project "${project_id}")" || return 1
     endpoint_up http://127.0.0.1:18080 "${signed}" || { kill "${forward}"; return 1; }
     for n in 1 2 3 4 5; do
-      sent="$(curl -s -m 10 -w ' %{http_code}' -X POST http://127.0.0.1:18080/Workflow/main \
+      sent="$(curl -s -m 10 -w ' %{http_code}' -X POST http://127.0.0.1:18080/helloworld/Workflow/main \
         -H "Authorization: Bearer ${signed}" -H 'Content-Type: application/json' \
         -d "{\"query\": \"e2e ${n}\"}" || true)"
       id="$(echo "${sent% *}" | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])' 2>/dev/null || true)"
@@ -267,7 +269,7 @@ EOF
     [ "${ok}" = 5 ]
   }
   query_status() {  # token: the status a POST of one query answers with
-    curl -s -m 10 -o /tmp/query.json -w '%{http_code}' -X POST http://127.0.0.1:8080/Workflow/main \
+    curl -s -m 10 -o /tmp/query.json -w '%{http_code}' -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
       -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -d '{"query": "e2e"}'
   }
   log "Requests through the endpoint"
@@ -353,15 +355,15 @@ EOF
   until_found /projects "${project_id}" "the dashboard does not list the project"
   code="$(api_call GET "/projects/${project_id}/scaling" "${read_token}")"
   [ "${code}" = 200 ] || fail "a read token reading scaling answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call DELETE "/projects/${project_id}/scaling" "${read_token}")"
+  code="$(api_call DELETE "/projects/${project_id}/scaling/helloworld" "${read_token}")"
   [ "${code}" = 403 ] && grep -q auth.insufficient_scope /tmp/api.json \
     || fail "a read token deleting scaling answered ${code}: $(cat /tmp/api.json)"
   # One replica, as helloworld runs: the policy changes nothing, and goes right after.
   policy='{"min_replicas": 1, "max_replicas": 1, "metric": "queue_length_total", "scale_up_above": 10, "scale_down_below": 1}'
   changes_scaling() {  # write token: 0 when it saves a scaling policy and deletes it again
-    code="$(api_call PUT "/projects/${project_id}/scaling" "$1" "${policy}")"
+    code="$(api_call PUT "/projects/${project_id}/scaling/helloworld" "$1" "${policy}")"
     [ "${code}" = 200 ] || return 1
-    code="$(api_call DELETE "/projects/${project_id}/scaling" "$1")"
+    code="$(api_call DELETE "/projects/${project_id}/scaling/helloworld" "$1")"
     [ "${code}" = 200 ]
   }
   changes_scaling "${write_token}" || fail "a write token changing scaling answered ${code}: $(cat /tmp/api.json)"
@@ -399,7 +401,7 @@ EOF
   keys_hash="$(dashboard_hash)"
   canyonos keys create --name rotated || fail "keys create --name rotated"
   rm "${HOME}/.canyonos/auth/trusted/default.pub"
-  canyonos deploy || fail "deploy after the key rotation"
+  canyonos deploy helloworld || fail "deploy after the key rotation"
   refused=""
   for _ in $(seq 60); do
     if [ "$(query_status "${query_token}")" = 401 ]; then
@@ -418,7 +420,7 @@ EOF
   log "Rotating the key refuses the old key's dashboard tokens once the API rolled"
   dashboard_trusts_keys
   [ "$(dashboard_hash)" != "${keys_hash}" ] || fail "the dashboard's API kept its trusted-keys annotation"
-  code="$(api_call PUT "/projects/${project_id}/scaling" "${write_token}" "${policy}")"
+  code="$(api_call PUT "/projects/${project_id}/scaling/helloworld" "${write_token}" "${policy}")"
   [ "${code}" = 401 ] && grep -q auth.invalid_token /tmp/api.json \
     || fail "the old key's write token answered ${code}: $(cat /tmp/api.json)"
   write_token="$(token --scope write)" || fail "token create --scope write --key rotated"
@@ -442,7 +444,7 @@ EOF
     || fail "serve --dangerous-skip-auth did not say the cluster's dashboard keeps its chart's setting: ${said}"
 
   log "another project's serve keeps the running dashboard on its port"
-  printf 'dashboard_port: 9000\n' >> /tmp/Target_Check/config/workflow_config.yaml
+  printf 'dashboard_port: 9000\n' >> /tmp/Target_Check/deployment.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Target_Check serve)" || fail "serve from another project: ${said}"
   echo "${said}" | grep -q "127.0.0.1:8081" || fail "serve moved the running dashboard: ${said}"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "the dashboard left 127.0.0.1:8081"
@@ -479,14 +481,14 @@ EOF
   curl -s -m 5 -o /dev/null http://127.0.0.1:8081/ && fail "a failed stop left the dashboard forwarded: $(forwards)"
 
   log "deploy and serve again, so the stop below has both forwards to close"
-  canyonos deploy || fail "deploy again"
+  canyonos deploy helloworld || fail "deploy again"
   canyonos_in "${ADMIN}" /hw serve || fail "serve again"
   said="$(endpoint_up http://127.0.0.1:8080 "${query_token}")" \
     || fail "the redeploy did not forward the endpoint to 127.0.0.1:8080: ${said}"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "serve did not open the dashboard again"
 
   log "deploy --dangerous-skip-auth turns the project's verification off"
-  said="$(canyonos deploy --dangerous-skip-auth 2>&1)" || fail "deploy --dangerous-skip-auth: ${said}"
+  said="$(canyonos deploy helloworld --dangerous-skip-auth 2>&1)" || fail "deploy --dangerous-skip-auth: ${said}"
   echo "${said}" | tr -s ' \n' ' ' | grep -q "dashboard.dangerousSkipAuth" \
     || fail "deploy --dangerous-skip-auth did not say the cluster's dashboard keeps its chart's setting: ${said}"
   disabled="$(as_deployer kubectl -n "${NS}" get canyonproject -o jsonpath='{.items[0].spec.auth.disabled}')"
@@ -514,7 +516,27 @@ EOF
   # Its Docker checks fail in this container, which has no Docker: only the config counts.
   canyonos target docker || true
   [ "$(config_value /hw target)" = docker ] && [ "$(config_value /hw kubernetes.namespace)" = "${NS}" ] \
-    || fail "target docker wrote: $(cat /hw/config/workflow_config.yaml)"
+    || fail "target docker wrote: $(cat /hw/deployment.yaml)"
+
+  log "deploy_mode: toy runs the project as one agent StatefulSet, which answers"
+  cp -r /w/examples/helloworld /toy
+  printf 'deploy_mode: toy\n' >> /toy/deployment.yaml
+  canyonos_in "${DEPLOYER}" /toy target kubernetes --namespace "${NS}" --registry "${REGISTRY}" || fail "toy target"
+  (cd /toy && KUBECONFIG="${DEPLOYER}" /w/.venv/bin/canyonos deploy helloworld) || fail "toy deploy"
+  [ "$(as_deployer kubectl -n "${NS}" get canyonagents -o name)" = canyonagent.canyonos.canyoncode.ai/helloworld-toy ] \
+    && [ "$(as_deployer kubectl -n "${NS}" get statefulsets -l canyonos.canyoncode.ai/agent -o name)" = statefulset.apps/helloworld-toy ] \
+    && as_deployer kubectl -n "${NS}" get statefulset endpoint >/dev/null \
+    || fail "toy runs: $(as_deployer kubectl -n "${NS}" get canyonagents,statefulsets -o name)"
+  toy_token="$(token --scope query --project "$(grep -E '^deployment_id:' /toy/deployment.yaml | awk '{print $2}')")" || fail "toy token"
+  id="$(curl -s -m 10 -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Authorization: Bearer ${toy_token}" \
+    -H 'Content-Type: application/json' -d '{"query": "toy"}' | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])')" || fail "toy query"
+  for _ in $(seq 60); do
+    answer="$(curl -s -m 5 -H "Authorization: Bearer ${toy_token}" "http://127.0.0.1:8080/status/${id}")"
+    case "${answer}" in *'"done"'*) break ;; esac
+    sleep 0.5
+  done
+  echo "${answer}" | grep -q "Hello, toy! I'm the HelloAgent!" || fail "toy answered: ${answer}"
+  canyonos_in "${DEPLOYER}" /toy stop || fail "toy stop"
 
   as_admin kubectl delete namespace "${NS}" --wait=false >/dev/null
 

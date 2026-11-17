@@ -1,27 +1,31 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Adds the running future's ID and the agent function making the call to every LLM call
-an agent sends through the LLM gateway, so the gateway can record that call's tokens on the
-future and send the function's live prompt. The Local Controller calls `install` once at
-startup."""
+"""Adds the running future's ID and the agent and function making the call to every LLM
+call an agent sends through the LLM gateway, so the gateway can record that call's tokens
+on the future, apply the agent's rules and send the function's live prompt. The Local
+Controller calls `install` once at startup."""
 
 import importlib
 import logging
 from functools import wraps
 
-from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, FUTURE_ID_HEADER, LLM_PATHS
+from canyonos_core.llm_gateway.hooks import (
+    AGENT_HEADER,
+    FUNCTION_HEADER,
+    FUTURE_ID_HEADER,
+    LLM_PATHS,
+)
 
 log = logging.getLogger(__name__)
 
 _PATCH_MARKER = "_canyonos_future_id_header_injection"
 
 
-def install(get_future_id, get_function=lambda: ""):
-    """Add the future-id and function headers, read from `get_future_id()` and
-    `get_function()`, to Bedrock calls when boto3 is installed and to every POST to an
-    OpenAI-format or Anthropic LLM path, which the container's proxy sends to the gateway
-    when its body names a model."""
+def install(get_future_id, get_function, get_agent):
+    """Add the future-id, function and agent headers, read from the three getters, to
+    Bedrock calls when boto3 is installed and to every POST to an OpenAI-format or
+    Anthropic LLM path, which the proxy sends to the gateway when it names a model."""
 
     def add_header(headers):
         future_id = get_future_id()
@@ -30,6 +34,9 @@ def install(get_future_id, get_function=lambda: ""):
         function = get_function()
         if function:
             headers[FUNCTION_HEADER] = function
+        agent = get_agent()
+        if agent:
+            headers[AGENT_HEADER] = agent
 
     try:
         import boto3

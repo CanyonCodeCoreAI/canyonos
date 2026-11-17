@@ -1546,7 +1546,7 @@ class GlobalController(ControllerContext):
         logger.info("Cleaning up all resources...")
         return self.stop()
 
-    def _remove_all_replicas(self, timeout=STOP_TIMEOUT_SECONDS, interval=1):
+    def _remove_all_replicas(self, timeout=STOP_TIMEOUT_SECONDS, interval=0.2):
         """Have the reconciler remove every replica and then terminate every machine, then
         forget the endpoint's address. True once none are left."""
         state.set_stopping(self.redis)

@@ -4,12 +4,13 @@
 """`canyonos deploy --target kubernetes`, and the Kubernetes versions of `status`,
 `logs`, `stop`, `clean` and `serve`.
 
-The CLI hands the project to the cluster: its `.env` as a Secret, then a CanyonBuild
-the CanyonOS operator (installed once per cluster) runs as a build pod. The project is
-uploaded to that pod, which builds the images on the cluster's builder, pushes them to
-the `kubernetes:` block's registry and applies the project from its config. Cluster
-access goes through `kubectl`, so every way of signing in to a cluster (EKS,
-OpenShift, a kubeconfig) works, and a namespace's edit role is all it needs.
+The CLI hands the deployment to the cluster: its `.env` and each project's as Secrets,
+then a CanyonBuild the CanyonOS operator (installed once per cluster) runs as a build
+pod. The deployment is uploaded to that pod, which builds the images on the cluster's
+builder, pushes them to the `kubernetes:` block's registry and applies the deployment
+from its config. Cluster access goes through `kubectl`, so every way of signing in to
+a cluster (EKS, OpenShift, a kubeconfig) works, and a namespace's edit role is all it
+needs.
 """
 
 import contextlib
@@ -33,13 +34,14 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from canyonos import env, ui
+from canyonos import deployment, env, ui
 from canyonos.auth import refuse_keys_in_project, require_keys
 from canyonos.constants import (
     deployment_config_path,
     existing_config_path,
     project_config_path,
     project_env_path,
+    project_folder,
     project_root,
     read_config,
 )
@@ -137,8 +139,8 @@ def resolve_config(config_path):
 
 
 def read_dotenv(path=None):
-    """The project's `.env` as a dict (empty when there is none): the one in the folder
-    `canyonos` runs in, as on Docker."""
+    """The `.env` at `path` as a dict (empty when there is none), by default the
+    deployment's: the one in the folder `canyonos` runs in, as on Docker."""
     path = path or project_env_path()
     if not os.path.isfile(path):
         return {}
@@ -261,11 +263,10 @@ def _uploaded(name):
     return name not in UPLOAD_EXCLUDES and not name.startswith(".env")
 
 
-def source_tarball(project_dir=None):
-    """The project root as the build reads it, gzipped (`.canyon` when the project was
-    converted, else this folder, as Docker syncs it): everything but UPLOAD_EXCLUDES
-    and `.env*`, so no API key leaves for the cluster inside it."""
-    project_dir = project_dir or project_root()
+def source_tarball(projects):
+    """The deployment gzipped as Docker syncs it: `deployment.yaml`, and each of `projects`
+    (name to folder) under its name, without UPLOAD_EXCLUDES or `.env*`, so no API key
+    leaves for the cluster inside it."""
     buffer = io.BytesIO()
 
     def keep(info):
@@ -276,9 +277,9 @@ def source_tarball(project_dir=None):
         return info
 
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        for entry in sorted(os.listdir(project_dir)):
-            if _uploaded(entry):
-                tar.add(os.path.join(project_dir, entry), arcname=entry, filter=keep)
+        tar.add(deployment_config_path(), filter=keep)
+        for name, folder in projects.items():
+            tar.add(project_folder(folder), arcname=name, filter=keep)
     return buffer.getvalue()
 
 
@@ -417,17 +418,17 @@ def check_operator_version(namespace, name, status):
     )
 
 
-def build_in_cluster(config_path, namespace, project, k8s, env_secret, auth):
-    """Build the project's images in the cluster and apply it there, trusting `auth`'s
-    keys: create a CanyonBuild, upload the project to its pod, wait until it
-    succeeds. Returns {agent: image by digest}."""
+def build_in_cluster(config_path, namespace, project, k8s, env_secret, projects, auth):
+    """Build the deployment's images in the cluster and apply it there, trusting `auth`'s
+    keys: create a CanyonBuild, upload `projects` (name to folder) to its pod, wait until
+    it succeeds. Returns {agent: image by digest}."""
     tag = time.strftime("%Y%m%d-%H%M%S")
     # Random too: two deploys in the same second would otherwise share one build.
     suffix = f"-{tag}-{uuid.uuid4().hex[:4]}"
     name = resource_name(project)[: 63 - len(suffix)].rstrip("-") + suffix
     image = build_image(k8s["registry"], tag)
-    # The build runs in the uploaded project root, so the config is named from there.
-    config_rel = os.path.relpath(config_path, project_root()).replace(os.sep, "/")
+    # The build runs in the upload, which holds deployment.yaml at its root.
+    config_rel = os.path.basename(config_path)
     apply(
         [
             canyon_build(
@@ -441,7 +442,7 @@ def build_in_cluster(config_path, namespace, project, k8s, env_secret, auth):
         )
     check_operator_version(namespace, name, status)
     with ui.status("Uploading the project to the build..."):
-        upload_project(namespace, status["podName"], source_tarball())
+        upload_project(namespace, status["podName"], source_tarball(projects))
     with ui.status("Building images in the cluster..."):
         status = wait_for_build(namespace, name, ("Succeeded",), BUILD_TIMEOUT_SECONDS)
     kubectl(
@@ -701,27 +702,6 @@ def _env_secret(k8s, project, env_values):
     return k8s.get("env_secret") or (f"{project}-env" if env_values else None)
 
 
-def _endpoint_routes(config):
-    """The endpoint's routes, each with its method's argument names, from the config."""
-    functions = {
-        (agent_spec.get("name"), function.get("name")): function
-        for agent_spec in config.get("agents") or []
-        for function in agent_spec.get("functions") or []
-    }
-    routes = []
-    for route in (config.get("endpoint") or {}).get("routes") or []:
-        function = functions.get((route.get("agent"), route.get("method"))) or {}
-        arguments = function.get("arguments") or []
-        routes.append(
-            {
-                "agent": route.get("agent"),
-                "method": route.get("method"),
-                "arguments": [a.get("name") for a in arguments],
-            }
-        )
-    return routes
-
-
 def _in_cluster_only(url):
     """Whether the endpoint is reachable inside the cluster only (no Ingress or URL)."""
     return ".svc:" in (url or "")
@@ -751,9 +731,7 @@ def _forward_endpoint(namespace, project, config):
     return f"http://127.0.0.1:{port}"
 
 
-def _summary(
-    namespace, project_obj, config, config_path, local_url=None, dashboard_url=None
-):
+def _summary(namespace, project_obj, config_path, local_url=None, dashboard_url=None):
     url = project_obj.get("status", {}).get("endpointURL", "")
     lines = [
         Text.assemble(
@@ -784,9 +762,9 @@ def _summary(
         url = "http://127.0.0.1:8080"
     else:
         lines.append(Text.assemble(("Endpoint   ", "bold"), url))
-    for route in _endpoint_routes(config):
-        path = f"{route['agent']}/{route['method']}"
-        body = json.dumps({name: "your query" for name in route["arguments"]})
+    for route in project_obj["spec"]["endpoint"]["routes"]:
+        path = f"{route['project']}/{route['agent']}/{route['method']}"
+        body = json.dumps({name: "your query" for name in route.get("arguments", [])})
         lines.append(
             Text.assemble(
                 ("Call       ", "bold"),
@@ -810,19 +788,19 @@ def _summary(
 
 
 def run_kubernetes_deploy(
+    folders,
     config_path=None,
     timeout=READY_TIMEOUT_SECONDS,
     serve=False,
     skip_auth=False,
     auth_dir=None,
 ):
-    """Run `canyonos deploy --target kubernetes`: hand the project to the cluster, which
-    builds its images and applies its objects from its config; this only uploads it,
-    with its `.env` as a Secret. Then wait until every agent is ready, keep the
-    endpoint (and with `serve`, the dashboard) on this machine, and show how to call
-    it. As on Docker, the project trusts the public keys in `auth_dir` and the deploy
-    refuses before reaching the cluster without one, unless `skip_auth` turns token
-    verification off."""
+    """Run `canyonos deploy --target kubernetes` for the projects in `folders`: upload the
+    deployment, with its `.env` and each project's as Secrets, for the cluster to build and
+    apply, wait until every agent is ready, and forward and show the endpoint. As on
+    Docker, the deployment trusts the public keys in `auth_dir` and the deploy refuses
+    before reaching the cluster without one, unless `skip_auth` turns verification off."""
+    projects = deployment.projects(folders)
     refuse_keys_in_project(auth_dir)
     if skip_auth:
         ui.warn(KUBERNETES_SKIP_AUTH_WARNING)
@@ -842,14 +820,27 @@ def run_kubernetes_deploy(
     save_deployment_config(config_path)
     project = resource_name(deployment_name())
     env_secret = _env_secret(k8s, project, env_values)
-    if env_values and not k8s.get("env_secret"):
-        apply([dotenv_secret(namespace, env_secret, project, env_values)])
+    if not k8s.get("env_secret"):
+        # Each project's agents get its own .env; manifests.py in core names it the same way.
+        secrets = [
+            dotenv_secret(
+                namespace,
+                f"{project}-{resource_name(name)}-env",
+                project,
+                read_dotenv(project_env_path(folder)),
+            )
+            for name, folder in projects.items()
+        ]
+        if env_values:
+            secrets.append(dotenv_secret(namespace, env_secret, project, env_values))
+        apply(secrets)
     images = build_in_cluster(
         config_path,
         namespace,
         deployment_name(),
         k8s,
         env_secret,
+        projects,
         {"trustedKeys": keys, "disabled": skip_auth},
     )
     ui.ok(f"Built {len(images)} image(s) in the cluster and applied the project")
@@ -868,9 +859,7 @@ def run_kubernetes_deploy(
         except RuntimeError as error:
             ui.hint(f"Dashboard not opened: {error}")
     dashboard_url = f"http://127.0.0.1:{dashboard_port}" if dashboard_port else None
-    ui.panel(
-        _summary(namespace, project_obj, config, config_path, local_url, dashboard_url)
-    )
+    ui.panel(_summary(namespace, project_obj, config_path, local_url, dashboard_url))
     return agents
 
 
@@ -1173,13 +1162,14 @@ def kubernetes_endpoint(config_path=None):
             f"No CanyonOS project {project!r} in namespace {namespace}: deploy it first "
             f"with {kubernetes_command('deploy')} ({(found.stderr or '').strip()})"
         )
-    ready = condition(json.loads(found.stdout), "Ready")
+    project_obj = json.loads(found.stdout)
+    ready = condition(project_obj, "Ready")
     if ready.get("status") != "True":
         raise RuntimeError(
             f"{project} in {namespace} is not ready ({ready.get('message') or 'starting'}): "
             f"see {kubernetes_command('status')}"
         )
-    routes = _endpoint_routes(load_config(resolve_config(config_path), read_dotenv()))
+    routes = project_obj["spec"]["endpoint"]["routes"]
     forward = PortForward(namespace)
     base_url = f"http://127.0.0.1:{forward.port}"
     try:
@@ -1187,7 +1177,11 @@ def kubernetes_endpoint(config_path=None):
             "public_host": "127.0.0.1",
             "api_port": forward.port,
             "routes": [
-                {**route, "url": f"{base_url}/{route['agent']}/{route['method']}"}
+                {
+                    "arguments": [],
+                    **route,
+                    "url": f"{base_url}/{route['project']}/{route['agent']}/{route['method']}",
+                }
                 for route in routes
             ],
         }

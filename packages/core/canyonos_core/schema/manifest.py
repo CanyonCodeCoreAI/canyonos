@@ -10,6 +10,7 @@ than deep inside the provisioner once containers are already up.
 """
 
 import ntpath
+import multiprocessing
 import os
 import posixpath
 from dataclasses import dataclass, field, replace
@@ -93,6 +94,7 @@ _DEPLOYMENT_KEYS = frozenset(
     {
         "deployment_id",
         "target",
+        "deploy_mode",
         "provider",
         "poll_interval",
         "cleanup_interval",
@@ -110,6 +112,8 @@ _DEPLOYMENT_KEYS = frozenset(
 # Kubernetes cluster. Keep in sync with the CLI's canyonos/target.py: the CLI and the
 # core image ship separately.
 TARGETS = ("docker", "kubernetes")
+# How each project's code agents run: replicas of their own each, or all in one replica.
+DEPLOY_MODES = ("distributed", "toy")
 _DEPLOYMENT_ENDPOINT_KEYS = frozenset({"api_port"})
 _MOVED_TO_DEPLOYMENT = (
     "is a deployment setting, shared by every project: set it in deployment.yaml"
@@ -246,6 +250,7 @@ class Manifest:
 
     agents: tuple
     target: str = TARGETS[0]
+    deploy_mode: str = DEPLOY_MODES[0]
     provider: str = providers.DEFAULT
     poll_interval: float = 5
     cleanup_interval: float = 10
@@ -365,18 +370,21 @@ def _agent_type(collector, node, prefix):
     return value
 
 
+def _one_of(collector, node, key, choices):
+    """The setting `key` in any casing, lowercased; the first of `choices` when it is
+    unset or not one of them."""
+    value = _string(collector, node, key, "", choices[0])
+    if value.casefold() not in choices:
+        collector.add(
+            node, key, key, f"expected one of {list(choices)}, got {_describe(value)}"
+        )
+        return choices[0]
+    return value.casefold()
+
+
 def _target(collector, node):
     """The target in any casing, lowercased; Kubernetes needs the `kubernetes:` section."""
-    value = _string(collector, node, "target", "", TARGETS[0])
-    if value.casefold() not in TARGETS:
-        collector.add(
-            node,
-            "target",
-            "target",
-            f"expected one of {list(TARGETS)}, got {_describe(value)}",
-        )
-        return TARGETS[0]
-    target = value.casefold()
+    target = _one_of(collector, node, "target", TARGETS)
     if target == "kubernetes" and node.get("kubernetes") is None:
         collector.add(
             node,
@@ -872,6 +880,7 @@ def load_deployment(workspace):
         manifest = Manifest(
             agents=tuple(agent_specs),
             target=_target(collector, document),
+            deploy_mode=_one_of(collector, document, "deploy_mode", DEPLOY_MODES),
             provider=provider,
             poll_interval=_number(collector, document, "poll_interval", "", 5, 0),
             cleanup_interval=_number(
@@ -897,6 +906,18 @@ def load_deployment(workspace):
             provider,
             [agent_spec.name for agent_spec in agent_specs],
         )
+        # On Docker a toy bundle mounts its files from the Global Controller's machine.
+        if (
+            manifest.deploy_mode == "toy"
+            and manifest.target == "docker"
+            and provider != providers.DEFAULT
+        ):
+            collector.add(
+                document,
+                "deploy_mode",
+                "deploy_mode",
+                "toy runs every agent on this machine, so it needs `provider: local`",
+            )
         if _unset_reference(_string(collector, document, "ssh_private_key_path", "")):
             collector.add(
                 document,
@@ -927,6 +948,7 @@ def load_deployment_config(workspace):
     config = _expanded(
         os.path.join(workspace, DEPLOYMENT_CONFIG), os.path.join(workspace, ".env")
     )
+    config["deploy_mode"] = str(config.get("deploy_mode", DEPLOY_MODES[0])).casefold()
     agent_specs = []
     routes = []
     for name in project_names(workspace):
@@ -934,7 +956,7 @@ def load_deployment_config(workspace):
             os.path.join(workspace, name, CONFIG_PATH),
             os.path.join(workspace, name, ".env"),
         )
-        agent_specs += [
+        project_specs = [
             {
                 **agent_spec,
                 "name": qualified_name(name, agent_spec["name"]),
@@ -942,12 +964,51 @@ def load_deployment_config(workspace):
             }
             for agent_spec in project["agents"]
         ]
+        agent_specs += (
+            _toy_bundle(name, project_specs)
+            if config["deploy_mode"] == "toy"
+            else project_specs
+        )
         routes += [
             {**route, "project": name} for route in project["endpoint"]["routes"]
         ]
     config["agents"] = agent_specs
     config["endpoint"] = {**(config.get("endpoint") or {}), "routes": routes}
     return config
+
+
+def _toy_bundle(project, agent_specs):
+    """A project's agent specs for toy mode: its databases as they are, and one spec
+    whose single replica runs every code agent, listed under its `agents`, with their
+    resources added up, CPU at most the machine's, and their requirements combined."""
+    hosted = [spec for spec in agent_specs if spec.get("type", "agent") == "agent"]
+    defaults = Resources()
+    bundle = {
+        "name": qualified_name(project, "toy"),
+        "project": project,
+        "type": "agent",
+        # An agent that sets no resources gets the defaults, as its own replica would.
+        "resources": {
+            key: sum(
+                (spec.get("resources") or {}).get(key) or getattr(defaults, key) or 0
+                for spec in hosted
+            )
+            for key in _RESOURCE_KEYS
+        },
+        "requirements": list(
+            dict.fromkeys(
+                requirement
+                for spec in hosted
+                for requirement in spec.get("requirements") or []
+            )
+        ),
+        "agents": hosted,
+    }
+    # Docker refuses a CPU limit above the machine's, which a sum over many agents can pass.
+    bundle["resources"]["cpu"] = min(
+        bundle["resources"]["cpu"], multiprocessing.cpu_count()
+    )
+    return [*(spec for spec in agent_specs if spec.get("type") == "database"), bundle]
 
 
 def _redis(collector, node):

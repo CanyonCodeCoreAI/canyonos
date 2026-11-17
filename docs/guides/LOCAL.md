@@ -59,6 +59,8 @@ before it builds anything and prints that command. See
    **2. Configure an agent** to change them first.
 3. It builds an image per agent and starts the Global Controller, Redis, the agents'
    replicas, the endpoint and, if it isn't running yet, the [dashboard](DASHBOARD.md).
+   With `deploy_mode: toy`, each project's agents run in one replica with no image
+   build, and the dashboard doesn't start: run `canyonos serve` for it.
 4. At **Deploy is live** it prints the dashboard address, `curl` commands to send a
    request and get its result, and the `canyonos token create` command that makes the
    token they send. [Endpoint](RUNTIME_CONTRACT.md#endpoint) covers the

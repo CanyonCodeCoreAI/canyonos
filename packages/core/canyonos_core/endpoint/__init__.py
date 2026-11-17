@@ -46,7 +46,8 @@ def endpoint_routes(config):
     serves them."""
     functions = {
         (agent["name"], function["name"]): function
-        for agent in config["agents"]
+        for agent_spec in config["agents"]
+        for agent in [agent_spec, *agent_spec.get("agents", [])]
         for function in agent.get("functions") or []
     }
     routes = []

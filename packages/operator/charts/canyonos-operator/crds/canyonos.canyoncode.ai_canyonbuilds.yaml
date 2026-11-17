@@ -70,7 +70,7 @@ spec:
                     x-kubernetes-list-type: atomic
                 type: object
               config:
-                description: config is the path of workflow_config.yaml in the upload.
+                description: config is the path of deployment.yaml in the upload.
                 minLength: 1
                 type: string
               envSecretRef:

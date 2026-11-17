@@ -14,8 +14,18 @@ from urllib.parse import urlsplit
 from flask import Response, stream_with_context
 
 from canyonos_core.llm_gateway import pricing, prompts, routing
-from canyonos_core.llm_gateway.hooks import FUNCTION_HEADER, UPSTREAM_HEADER, Ctx
-from canyonos_core.llm_gateway.routing import AGENT_NAME, route, denied_response
+from canyonos_core.llm_gateway.hooks import (
+    AGENT_HEADER,
+    FUNCTION_HEADER,
+    UPSTREAM_HEADER,
+    Ctx,
+)
+from canyonos_core.llm_gateway.routing import (
+    HOSTED_AGENTS,
+    REPLICA_AGENT,
+    denied_response,
+    route,
+)
 
 try:
     from canyonos_core.controller import governance
@@ -60,15 +70,19 @@ def _switch_model(provider, subpath: str, body: bytes, model: str) -> tuple[str,
 
 def proxy_request(hooks, provider, subpath, flask_request):
     """Forward one agent request to its LLM provider, on the model governance switched
-    this agent to if any, and record its token usage on the calling future."""
+    the calling agent to if any, and record its token usage on the calling future."""
     body = flask_request.get_data()
-    target = governance.model_for(routing.rules, AGENT_NAME) if routing.rules else None
+    agent_name = flask_request.headers.get(AGENT_HEADER)
+    # Agent code can set this header, so it may only name an agent this replica runs.
+    if agent_name not in HOSTED_AGENTS:
+        agent_name = REPLICA_AGENT
+    target = governance.model_for(routing.rules, agent_name) if routing.rules else None
     if target:
         switched = _switch_model(provider, subpath, body, target)
         if switched != (subpath, body):
             subpath, body = switched
-            log.info("Governance switched %s to %s", AGENT_NAME, target)
-    prompt_name = f"{AGENT_NAME}.{flask_request.headers.get(FUNCTION_HEADER)}"
+            log.info("Governance switched %s to %s", agent_name, target)
+    prompt_name = f"{agent_name}.{flask_request.headers.get(FUNCTION_HEADER)}"
     body, prompt_version = prompts.apply(provider, prompt_name, subpath, body)
     ctx = Ctx(
         provider=provider.name,
@@ -88,7 +102,7 @@ def proxy_request(hooks, provider, subpath, flask_request):
     )
     hooks.on_request(ctx)
     # Policy/routing call; all routing and policy logic lives in routing.py.
-    denied = route(hooks._extract_model_id(ctx), body, ctx.price_prefix)
+    denied = route(agent_name, hooks._extract_model_id(ctx), body, ctx.price_prefix)
     if denied:
         pr = denied_response(denied)
     else:

@@ -17,12 +17,14 @@ from contextvars import ContextVar
 _request_id = ContextVar("canyonos_request_id", default="")
 _current_future_id = ContextVar("canyonos_current_future_id", default="")
 _current_function = ContextVar("canyonos_current_function", default="")
+_current_agent = ContextVar("canyonos_current_agent", default="")
 _current_metrics_key = ContextVar("canyonos_current_metrics_key", default="")
 # Threads and worker processes receive exactly these, so a new request variable goes here too.
 REQUEST_CONTEXT = (
     _request_id,
     _current_future_id,
     _current_function,
+    _current_agent,
     _current_metrics_key,
 )
 
@@ -55,6 +57,16 @@ def set_current_function(function: str):
 def get_current_function() -> str:
     """Get the agent function currently executing, or an empty string if not set."""
     return _current_function.get()
+
+
+def set_current_agent(agent_name: str):
+    """Set the agent currently executing."""
+    _current_agent.set(agent_name)
+
+
+def get_current_agent() -> str:
+    """Get the agent currently executing, or an empty string if not set."""
+    return _current_agent.get()
 
 
 def set_current_metrics_key(metrics_key: str):

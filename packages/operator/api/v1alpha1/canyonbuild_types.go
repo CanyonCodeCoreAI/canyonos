@@ -20,7 +20,7 @@ type CanyonBuildSpec struct {
 	// +required
 	Project string `json:"project"`
 
-	// config is the path of workflow_config.yaml in the upload.
+	// config is the path of deployment.yaml in the upload.
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Config string `json:"config"`

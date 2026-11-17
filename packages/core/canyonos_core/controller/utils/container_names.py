@@ -88,6 +88,11 @@ def image_name(agent_name):
     return f"{_prefix()}-{docker_name(agent_name)}"
 
 
+def workspace_volume_name():
+    """Return the Docker volume the deployment's files are synced into, as the CLI names it."""
+    return f"{_prefix()}-workspace"
+
+
 def data_volume_name(agent_name):
     """Return the Docker volume a database agent keeps its data in, which outlives
     its containers across redeploys."""

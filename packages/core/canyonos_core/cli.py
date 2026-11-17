@@ -241,14 +241,17 @@ def _generate_build_contexts(manifest, config, workspace):
             # Every key read below is one the schema requires and has checked,
             # down to the file being on disk -- an agent that cannot be built
             # fails the deploy rather than dropping quietly out of it.
-            agent_file = os.path.join(project_dir, agent_spec["entrypoint"])
+            agent_files = {
+                hosted["name"]: os.path.join(project_dir, hosted["entrypoint"])
+                for hosted in agent_spec.get("agents", [agent_spec])
+            }
             docker_context = os.path.join(
                 workspace, "docker_container", docker_name(agent_name)
             )
             logger.info("Generating Docker context for '%s'", agent_name)
             generate_docker(
                 agent_name,
-                agent_file,
+                agent_files,
                 output_dir=docker_context,
                 grpc_stubs_dir=grpc_stubs_dir,
                 stub_files=stub_paths,
@@ -301,7 +304,13 @@ def _run_build(workspace):
         )
         database_pulls.append((pull, image, target_image, agent_name))
 
-    bake_targets = _generate_build_contexts(manifest, config, workspace)
+    # Docker runs a toy bundle's context on the agent base image, so it builds none.
+    bundles = {spec["name"] for spec in config.get("agents", []) if "agents" in spec}
+    bake_targets = [
+        target
+        for target in _generate_build_contexts(manifest, config, workspace)
+        if target["service"] not in bundles
+    ]
     return partial(
         _build_images,
         workspace,

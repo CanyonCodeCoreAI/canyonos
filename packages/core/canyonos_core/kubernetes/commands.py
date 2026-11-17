@@ -17,9 +17,8 @@ from canyonos_core.cli import (
     _validate_or_exit,
     _write_bake_file,
 )
-from canyonos_core.controller.utils.config_env import load_config
 from canyonos_core.kubernetes.api import KubernetesApi, resource_name
-from canyonos_core.schema import CONFIG_PATH
+from canyonos_core.schema import DEPLOYMENT_CONFIG, load_deployment_config
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,9 @@ def _cmd_build(args):
     """Build the project's images on the cluster's BuildKit (--builder) and push them to
     --registry; write each service's digest-pinned reference to --output-json. The
     in-cluster build Job runs this; there is no Docker daemon in its pod."""
-    bake_targets = _generate_build_contexts(*_checked_config(args.config))
+    workspace = os.path.dirname(os.path.abspath(args.config))
+    manifest, config = _checked_config(workspace)
+    bake_targets = _generate_build_contexts(manifest, config, workspace)
     from canyonos_core.stub_generator import this_machine_platform
 
     # The project's `kubernetes.platform`, else the nodes' own (this pod's): there is
@@ -111,7 +112,7 @@ def _cmd_build(args):
 
 
 def _render_project(
-    config_path,
+    workspace,
     project_name,
     images,
     controller_image,
@@ -120,28 +121,30 @@ def _render_project(
     live_replicas,
     namespace=None,
 ):
-    """The project's Kubernetes objects and warnings, from its config, checked by the
-    schema first. `auth` is the trusted keys record its global controller gets.
-    `namespace` overrides `kubernetes.namespace` (the namespace the in-cluster build
-    runs in)."""
+    """The deployment's Kubernetes objects and warnings, from its folder `workspace`,
+    checked by the schema first. `auth` is the trusted keys record its global controller
+    gets. `namespace` overrides `kubernetes.namespace` (the namespace the in-cluster
+    build runs in)."""
     import dataclasses
 
     from canyonos_core.kubernetes import manifests
 
-    config = load_config(config_path)
-    spec = _validate_or_exit(config_path).kubernetes
+    config = load_deployment_config(workspace)
+    spec = _validate_or_exit(workspace).kubernetes
     if spec is None:
-        raise RuntimeError(f"{config_path} has no kubernetes: section")
+        raise RuntimeError(
+            f"{workspace}/{DEPLOYMENT_CONFIG} has no kubernetes: section"
+        )
     if namespace:
         spec = dataclasses.replace(spec, namespace=namespace)
-    if not config.get("project_id"):
-        raise RuntimeError(f"{config_path} has no project_id")
+    if not config.get("deployment_id"):
+        raise RuntimeError(f"{workspace}/{DEPLOYMENT_CONFIG} has no deployment_id")
     return manifests.render(
         config,
         spec,
         project_name=project_name,
-        project_id=str(config["project_id"]),
-        config_files=manifests.config_folder(config_path),
+        project_id=str(config["deployment_id"]),
+        config_files=manifests.config_folder(workspace),
         images=images,
         controller_image=controller_image,
         env_secret=env_secret or None,
@@ -169,16 +172,17 @@ def _cmd_apply_project(args):
         agent["metadata"]["name"]: agent.get("spec", {}).get("replicas")
         for agent in api.canyon_agents(project)
     }
-    files = manifests.config_folder(args.config)
+    workspace = os.path.dirname(os.path.abspath(args.config))
+    files = manifests.config_folder(workspace)
     # An autoscaled agent keeps the count the global controller gave it: the apply sets
     # that live count. (A /scale between this read and the apply is undone until the
     # global controller's next decision.)
     live = {}
-    if "scaling.yaml" in files:
+    if any(name.endswith(".scaling.yaml") for name in files):
         live = {name: count for name, count in existing.items() if count is not None}
     try:
         objects, warnings = _render_project(
-            args.config,
+            workspace,
             args.project,
             _read_images(args.images),
             os.environ.get("CANYONOS_CORE_IMAGE", ""),
@@ -234,8 +238,8 @@ def add_parsers(subparsers):
     build.add_argument(
         "-c",
         "--config",
-        default=CONFIG_PATH,
-        help=f"Path to the workflow config (default: {CONFIG_PATH})",
+        default=DEPLOYMENT_CONFIG,
+        help=f"Path to the deployment's config (default: {DEPLOYMENT_CONFIG})",
     )
     build.add_argument(
         "--builder", required=True, help="The BuildKit to build on (tcp://host:1234)"
@@ -257,7 +261,7 @@ def add_parsers(subparsers):
     apply_project = subparsers.add_parser(
         "apply-project", help="Apply the project's Kubernetes objects here"
     )
-    apply_project.add_argument("-c", "--config", default=CONFIG_PATH)
+    apply_project.add_argument("-c", "--config", default=DEPLOYMENT_CONFIG)
     apply_project.add_argument(
         "--images", required=True, help="{images: {agent: ref}} JSON"
     )
@@ -284,7 +288,7 @@ def add_parsers(subparsers):
     run_gc.add_argument(
         "-c",
         "--config",
-        default=CONFIG_PATH,
-        help=f"Path to the workflow config (default: {CONFIG_PATH})",
+        default=DEPLOYMENT_CONFIG,
+        help=f"Path to the deployment's config (default: {DEPLOYMENT_CONFIG})",
     )
     run_gc.set_defaults(func=_cmd_run_gc)

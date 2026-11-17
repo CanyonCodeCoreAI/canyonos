@@ -392,6 +392,9 @@ def _handle_shutdown(signum, frame):
     waiting to retry, so the process exits at once."""
     global _running
     _running = False
+    # None built yet, as while startup probes a destination: nothing to shut down, so exit now.
+    if not (_trace_exporters or _metric_exporters or _log_exporters):
+        raise SystemExit(0)
     _shutdown_exporters(_trace_exporters, "shutting the exporter process down")
     _shutdown_exporters(_metric_exporters, "shutting the exporter process down")
     _shutdown_exporters(_log_exporters, "shutting the exporter process down")

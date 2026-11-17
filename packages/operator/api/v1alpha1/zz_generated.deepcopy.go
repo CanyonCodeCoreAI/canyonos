@@ -110,6 +110,11 @@ func (in *CanyonAgentSpec) DeepCopyInto(out *CanyonAgentSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.HostedAgents != nil {
+		in, out := &in.HostedAgents, &out.HostedAgents
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.TerminationGracePeriodSeconds != nil {
 		in, out := &in.TerminationGracePeriodSeconds, &out.TerminationGracePeriodSeconds
 		*out = new(int64)

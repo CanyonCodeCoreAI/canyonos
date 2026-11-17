@@ -27,6 +27,7 @@ from canyonos_core.controller.utils.container_names import (
     project_group,
     project_label_args,
     redis_container_name,
+    workspace_volume_name,
 )
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.utils.port_utils import (
@@ -55,6 +56,12 @@ from canyonos_core.reconciler.providers.shared_utils.llm_gateway_env import (
 )
 from canyonos_core.reconciler.providers.shared_utils.resource_limits import (
     resource_limit_args,
+)
+from canyonos_core.stub_generator import (
+    TOY_PACKAGES_DIR,
+    TOY_PACKAGES_VOLUME,
+    TOY_START_SCRIPT,
+    agent_base_image,
 )
 
 logger = logging.getLogger(__name__)
@@ -126,7 +133,7 @@ def publishes_port(controller, machine, agent_spec):
 def launch(controller, machine, agent_spec, host_port, replica_id):
     """Start a replica's container on its machine, publishing it on `host_port` or the
     next free port when `publishes_port` says so (replacing a leftover one with the same
-    name), and return the replica's record. The image must already be on the machine.
+    name), and return the replica's record. An agent's own image must already be on the machine.
     Starts another machine's Redis first if it isn't running. Used by the provisioner for
     every launch."""
     agent_name = agent_spec["name"]
@@ -499,7 +506,23 @@ def _image_args(controller, agent_spec, image, host, user, api_port):
         user,
         _is_local_host(host),
     ) as args:
-        yield [*args, image]
+        if "agents" not in agent_spec:
+            yield [*args, image]
+            return
+        # A toy bundle builds no image, to deploy faster: a stock image runs its mounted build context.
+        yield [
+            *args,
+            "--mount",
+            f"type=volume,source={workspace_volume_name()},target=/app,"
+            f"volume-subpath=docker_container/{docker_name(agent_spec['name'])}",
+            "-v",
+            f"{TOY_PACKAGES_VOLUME}:{TOY_PACKAGES_DIR}",
+            "-w",
+            "/app",
+            agent_base_image(os.path.join(controller.workspace, agent_spec["project"])),
+            "sh",
+            TOY_START_SCRIPT,
+        ]
 
 
 def _clear_stale_status(machine_redis, host, address, container):

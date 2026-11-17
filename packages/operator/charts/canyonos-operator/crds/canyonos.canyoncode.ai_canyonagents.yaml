@@ -262,6 +262,16 @@ spec:
                   - name
                   type: object
                 type: array
+              envSecretRef:
+                description: envSecretRef names the Secret holding the agent's project's
+                  .env (its API keys), given to its pods.
+                type: string
+              hostedAgents:
+                description: hostedAgents are the agents a toy deployment's agent
+                  also runs; calls to them are routed to its replicas.
+                items:
+                  type: string
+                type: array
               image:
                 description: |-
                   image runs the agent; agent images are named by digest, so an unchanged

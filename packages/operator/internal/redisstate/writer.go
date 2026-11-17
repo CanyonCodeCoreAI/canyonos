@@ -19,6 +19,7 @@ import (
 type Agent struct {
 	Name     string // as in the config (HelloAgent)
 	Stateful bool
+	ServedBy string // the agent whose replicas take its calls: a toy agent for each it hosts, else empty
 }
 
 // TrackedKey is the operator's own note of the replica addresses whose status keys
@@ -106,8 +107,9 @@ func forgetGone(ctx context.Context, pipe redis.Pipeliner, agentName string, tra
 
 // PublishRouting writes the project's routing table from the replica records, as
 // core's publish_routing_snapshot does: every agent listed, its replicas' addresses
-// oldest first, every replica that still exists (stopping ones too), stateful
-// flags, and agents no longer listed removed. It also writes
+// (those of the agent serving it, when another does) oldest first, every replica that
+// still exists (stopping ones too), stateful flags, and agents no longer listed
+// removed. It also writes
 // UpKey, the agents with a replica up, which governance and the dashboard read (one
 // missing from it counts as down). Core's reconciler judges it from each
 // replica's `healthy` status and heartbeat. Here a replica is up when it has a record,
@@ -143,7 +145,8 @@ func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) erro
 		} else {
 			pipe.HDel(ctx, StatefulKey, agent.Name)
 		}
-		addresses, err := routedAddresses(ctx, rdb, agent.Name)
+		owner := cmp.Or(agent.ServedBy, agent.Name)
+		addresses, err := routedAddresses(ctx, rdb, owner)
 		if err != nil {
 			return err
 		}
@@ -153,7 +156,7 @@ func PublishRouting(ctx context.Context, rdb redis.Cmdable, agents []Agent) erro
 		} else {
 			pipe.HDel(ctx, AddressesKey, agent.Name)
 		}
-		tracked, err := rdb.SMembers(ctx, TrackedKey(agent.Name)).Result()
+		tracked, err := rdb.SMembers(ctx, TrackedKey(owner)).Result()
 		if err != nil {
 			return err
 		}

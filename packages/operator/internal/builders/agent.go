@@ -121,7 +121,7 @@ func AgentStatefulSet(p *canyonosv1alpha1.CanyonProject, agent *canyonosv1alpha1
 			Name:    "agent",
 			Image:   agent.Spec.Image,
 			Env:     AgentEnv(p, agent),
-			EnvFrom: appEnv(p),
+			EnvFrom: appEnv(agent.Spec.EnvSecretRef),
 			Ports: []corev1.ContainerPort{
 				{Name: portGRPC, ContainerPort: AgentPort},
 				{Name: portHealth, ContainerPort: HealthPort},

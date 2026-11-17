@@ -475,6 +475,20 @@ def stop_all(remove_everything=False):
             failures += remove_images(
                 [*_OWN_IMAGES, *(agent_images(name) for name in deployments)]
             )
+            listed = _list_docker(["docker", "volume", "ls", "-q"], "Listing volumes")
+            if isinstance(listed, str):
+                failures.append(listed)
+            else:
+                # Every volume CanyonOS makes is named canyonos-...
+                for volume in [name for name in listed if name.startswith("canyonos")]:
+                    failure = cleanup_docker(
+                        ["docker", "volume", "rm", volume],
+                        action=f"Removing Docker volume {volume}",
+                        missing_text="No such volume",
+                        timeout=DOCKER_CLEANUP_TIMEOUT,
+                    )
+                    if failure:
+                        failures.append(failure)
         if remove_everything and not failures:
             failures += _remove_home()
     command = "clean --all" if remove_everything else "stop --all"

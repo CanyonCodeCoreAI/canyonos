@@ -12,3 +12,9 @@ target: docker
 # Where every agent runs: `local` is this machine; `ec2-pool` and `ec2-assign` run
 # them on Amazon EC2.
 provider: local
+
+# How each project's agents run: `distributed` gives each agent its own container;
+# `toy` runs all of a project's agents in one container, which deploys faster.
+# Toy runs only on this machine (`provider: local`) or on Kubernetes.
+# By default it's `distributed`.
+# deploy_mode: distributed

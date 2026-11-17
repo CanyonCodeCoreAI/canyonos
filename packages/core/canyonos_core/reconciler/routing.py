@@ -24,13 +24,17 @@ ROUTING_UP_KEY = "routing_table:up"
 
 def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
     """Write every agent's replica addresses to each machine's Redis, leaving out agents
-    not in agent_specs and draining replicas."""
-    agent_names = {agent_spec["name"] for agent_spec in agent_specs}
-    stateful = {
-        agent_spec["name"]
+    not in agent_specs and draining replicas. A toy bundle's replicas are written under
+    each agent it hosts too."""
+    # Every routed agent's spec, with the agent whose replicas serve it.
+    routed = [
+        (hosted, agent_spec["name"])
         for agent_spec in agent_specs
-        if agent_spec.get("stateful", False)
-    }
+        for hosted in [agent_spec, *agent_spec.get("agents", [])]
+    ]
+    served_by = {hosted["name"]: owner for hosted, owner in routed}
+    agent_names = set(served_by)
+    stateful = {hosted["name"] for hosted, _ in routed if hosted.get("stateful", False)}
     targets = list((machine_redis or {}).values()) or [primary_redis]
 
     for redis_client in targets:
@@ -51,13 +55,14 @@ def publish_routing_snapshot(agent_specs, primary_redis, machine_redis=None):
                 addresses = [
                     item["address"]
                     for item in sorted(
-                        list_replicas(primary_redis, agent_name),
+                        list_replicas(primary_redis, served_by[agent_name]),
                         key=lambda item: float(item["created_at"]),
                     )
                     if "draining_at" not in item
                 ]
                 known = [
-                    item["address"] for item in list_replicas(primary_redis, agent_name)
+                    item["address"]
+                    for item in list_replicas(primary_redis, served_by[agent_name])
                 ]
                 redis_client.hset(ROUTING_REPLICAS_KEY, agent_name, json.dumps(known))
                 if addresses:

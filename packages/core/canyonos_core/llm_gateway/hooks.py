@@ -30,6 +30,8 @@ log = logging.getLogger("llm_gateway")
 FUTURE_ID_HEADER = "x-canyonos-future-id"
 # The agent function making the call, so the gateway can pick its prompt.
 FUNCTION_HEADER = "x-canyonos-function"
+# The agent making the call, for its prompts, LLM access and governance rules.
+AGENT_HEADER = "x-canyonos-agent"
 # The gateway always runs on localhost inside the agent's own container.
 GATEWAY_HOST = "http://127.0.0.1:8081"
 # Every HTTP(S) call in the container leaves through the gateway's proxy on this port.

@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The Kubernetes objects of a project, from its `workflow_config.yaml`: a ConfigMap of
-the config folder, one CanyonProject and one CanyonAgent per agent.
+"""The Kubernetes objects of a deployment, from its folder: a ConfigMap of its config
+files, one CanyonProject and one CanyonAgent per agent.
 
 Rendered next to the schema that checks the file, in the core image: the in-cluster
 build applies them after building the images (`canyonos_core.cli apply-project`). Pure:
@@ -19,6 +19,7 @@ from canyonos_core.kubernetes.api import (
     MANAGED_BY_LABEL,
     resource_name,
 )
+from canyonos_core.schema import DEPLOYMENT_CONFIG, project_names
 from canyonos_core.schema.kubernetes_block import KubernetesDatabase
 from canyonos_core.schema.otel_destinations import LOCAL_DASHBOARD_ENDPOINT
 
@@ -32,23 +33,23 @@ DEFAULT_CPU = 1
 DEFAULT_MEMORY_MB = 512
 
 
-def config_folder(config_path):
-    """Every YAML file in the config folder, by name: the ConfigMap's contents (the
-    global controller reads workflow_config.yaml and, when there, scaling.yaml)."""
-    folder = os.path.dirname(os.path.abspath(config_path))
-    files = {}
-    for name in sorted(os.listdir(folder)):
-        path = os.path.join(folder, name)
-        if (
-            name.endswith((".yaml", ".yml"))
-            and not name.startswith(".")
-            and os.path.isfile(path)
-        ):
-            with open(path, encoding="utf-8") as f:
-                files[name] = f.read()
-    if os.path.basename(config_path) != "workflow_config.yaml":
-        # The global controller pod reads this name.
-        files["workflow_config.yaml"] = files.pop(os.path.basename(config_path))
+def config_folder(workspace):
+    """The ConfigMap's contents: the deployment's `deployment.yaml`, and every YAML file
+    in each project's config folder as `<project>.<file>`, which run_gc lays out again
+    as the deployment's folder for the global controller."""
+    with open(os.path.join(workspace, DEPLOYMENT_CONFIG), encoding="utf-8") as f:
+        files = {DEPLOYMENT_CONFIG: f.read()}
+    for project in project_names(workspace):
+        folder = os.path.join(workspace, project, "config")
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if (
+                name.endswith((".yaml", ".yml"))
+                and not name.startswith(".")
+                and os.path.isfile(path)
+            ):
+                with open(path, encoding="utf-8") as f:
+                    files[f"{project}.{name}"] = f.read()
     return files
 
 
@@ -189,10 +190,10 @@ def render(
     auth,
     live_replicas=None,
 ):
-    """The Kubernetes objects for one project, and warnings about settings Kubernetes
+    """The Kubernetes objects for one deployment, and warnings about settings Kubernetes
     ignores. `spec` is its parsed `kubernetes:` section; `auth` is the trusted keys
     record (`{"keys": [...], "disabled": bool}`, as `trusted_keys_from_env` reads it)
-    the project's global controller gets. Pure: no cluster or Docker access.
+    the deployment's global controller gets. Pure: no cluster or Docker access.
     `live_replicas` maps the CanyonAgents the global controller autoscales to their
     live count, which they keep: leaving the count out instead would make the
     server-side apply delete the field it owns, and the CRD default (1) would reset
@@ -242,7 +243,14 @@ def render(
                 "image": images[name],
                 "stateful": bool(agent_spec.get("stateful", False)),
                 "resources": _resources(agent_spec),
+                # Its project's .env, by the name the CLI's kubernetes_target.py gives it.
+                "envSecretRef": spec.env_secret
+                or f"{project}-{resource_name(agent_spec['project'])}-env",
             }
+            if "agents" in agent_spec:
+                agent["hostedAgents"] = [
+                    hosted["name"] for hosted in agent_spec["agents"]
+                ]
             replicas = agent_spec.get("replicas", 1)
             agent["replicas"] = (live_replicas or {}).get(
                 agent_name, replicas if isinstance(replicas, int) else 1

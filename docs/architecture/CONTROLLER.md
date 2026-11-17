@@ -135,9 +135,10 @@ Startup:
    and starts the health server when `CANYONOS_HEALTH_PORT` is set.
 6. Creates the thread pool calls run on (`CANYONOS_MAX_WORKERS`, default 512) and
    starts the metrics loop, so a slow agent constructor still heartbeats.
-7. Imports `CANYONOS_AGENT_FILE` and instantiates the class `CANYONOS_AGENT_NAME`. If
-   that fails, the replica is marked `failed`, the gateway killed, and the process
-   exits. Otherwise the status becomes `healthy`. The endpoint passes
+7. Imports each file in `CANYONOS_AGENTS` (agent name to file: one agent, or every agent
+   of a toy bundle) and instantiates its class, then runs each call on the agent it
+   names. If one fails, the replica is marked `failed`, the gateway killed, and the
+   process exits. Otherwise the status becomes `healthy`. The endpoint passes
    `publish_ready=False` and calls `mark_ready()` once gunicorn answers on `8080`.
 
 Then it takes requests off a queue until the process stops or a drain ends.

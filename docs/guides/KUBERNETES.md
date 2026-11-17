@@ -10,8 +10,10 @@ the workflow, and the cluster builds the agents' images, pushes them to your reg
 and starts them. Nothing else on the cluster changes. How the operator works is in
 [Operator](../architecture/OPERATOR.md).
 
-Kubernetes deploys don't support multi-folder deployments yet: the deployment folder
-and project folders of a [Docker deploy](LOCAL.md) don't apply here.
+A deployment is laid out as for a [Docker deploy](LOCAL.md): `canyonos deploy` runs from
+the deployment folder, which holds `deployment.yaml`, and takes the project folders to
+deploy. The whole deployment is one CanyonProject. With `deploy_mode: toy`, each
+project's agents build into one image and run as one CanyonAgent.
 
 ## What you need
 
@@ -167,14 +169,16 @@ overrides it for one run (see the [CLI reference](CLI.md#where-it-runs)).
 The CLI needs no Docker for this. `canyonos deploy`:
 
 1. Creates the namespace if it's missing, labeled as made by CanyonOS.
-2. Turns `.env` into a Secret in the namespace, unless `env_secret` names your own.
+2. Turns the deployment's `.env` into a Secret for the Global Controller, and each
+   project's `.env` into a Secret for that project's agents, unless `env_secret` names
+   your own.
 3. Asks the operator for a build (a CanyonBuild), with the public keys in
-   `~/.canyonos/auth/trusted/`, and uploads the workflow root to the build's pod
-   through a port-forward. `.env` and every other `.env*` file, `.git`,
-   `.venv`, `node_modules` and `__pycache__` are never uploaded.
+   `~/.canyonos/auth/trusted/`, and uploads `deployment.yaml` and each project folder
+   to the build's pod through a port-forward. `.env` and every other `.env*` file,
+   `.git`, `.venv`, `node_modules` and `__pycache__` are never uploaded.
 4. The build builds each agent's image on the cluster's builder, pushes it by digest,
-   and applies the workflow's objects from the workflow config, its CanyonProject
-   carrying those keys in `spec.auth.trustedKeys`. A redeploy of unchanged code
+   and applies the deployment's objects from its config, its CanyonProject carrying
+   those keys in `spec.auth.trustedKeys`. A redeploy of unchanged code
    restarts nothing.
 5. Waits until the operator reports the workflow and every agent ready, then forwards
    the endpoint to this machine and opens the dashboard.
@@ -226,8 +230,9 @@ kubernetes:
   registry: registry.example.com/acme   # where images are pushed, and nodes pull from
 ```
 
-`${VAR}` in the block is filled in from the workflow's `.env`, which also holds the only
-values the build in the cluster sees.
+`${VAR}` in the block is filled in from the deployment's `.env`, which also holds the only
+values the build and the Global Controller see. A `${VAR}` in a project's config is
+filled in from that file too, not from the project's own `.env`.
 
 Optional settings:
 
@@ -351,8 +356,8 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
 
 | Command                 | What it removes                                                                                                                                                                                                       | What stays                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `canyonos stop`         | The workflow's CanyonProject, and with it the endpoint, agents, Global Controller and Redis with its disk. The endpoint's port-forward on this machine, and the dashboard's when no other workflow here is forwarded. | The namespace, the ConfigMap of the workflow config, the `.env` Secret, and each database's disk |
-| `canyonos clean`        | What `stop` removes, then the ConfigMap and the `.env` Secret                                                                                                                                                         | The namespace, each database's disk, and everything on this machine but the port-forwards        |
+| `canyonos stop`         | The workflow's CanyonProject, and with it the endpoint, agents, Global Controller and Redis with its disk. The endpoint's port-forward on this machine, and the dashboard's when no other workflow here is forwarded. | The namespace, the deployment's ConfigMap, its `.env` Secrets, and each database's disk          |
+| `canyonos clean`        | What `stop` removes, then the ConfigMap and the `.env` Secrets                                                                                                                                                        | The namespace, each database's disk, and everything on this machine but the port-forwards        |
 | `canyonos cluster down` | The local kind cluster, and the port-forwards to it                                                                                                                                                                   | The registry and the images in it, unless you pass `--all`                                       |
 
 - **Order:** `stop` takes the endpoint down first, so no new request arrives, then each

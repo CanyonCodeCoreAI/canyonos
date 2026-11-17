@@ -484,7 +484,16 @@ def run_deploy(
     _warn_about_the_collector_image(config_path)
 
     run_init(banner=banner, auth_env=gc_env(keys, skip_auth))
-    if serve and _existing_dashboard_port() is None:
+    dashboard_up = _existing_dashboard_port() is not None
+    # A toy deploy doesn't wait for a dashboard that isn't up; `canyonos serve` starts it.
+    if str(read_config(config_path).get("deploy_mode")).casefold() == "toy":
+        if serve and not dashboard_up:
+            ui.say(
+                "Toy mode is on, so this deploy doesn't start the dashboard. "
+                "Run `canyonos serve` to launch it."
+            )
+        serve = serve and dashboard_up
+    if serve and not dashboard_up:
         # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
         threading.Thread(
             target=run_dashboard,

@@ -96,7 +96,9 @@ except ImportError:
 human_input.install()
 # After human_input: httpx loads click, which keeps the input() it imports with.
 gateway_headers.install(
-    canyonos_context.get_current_future_id, canyonos_context.get_current_function
+    canyonos_context.get_current_future_id,
+    canyonos_context.get_current_function,
+    canyonos_context.get_current_agent,
 )
 
 
@@ -187,9 +189,10 @@ class LocalController(object):
         self.port = port
         self.agent_host = os.environ.get("CANYONOS_AGENT_HOST", "localhost")
         self.agent_name = os.environ.get("CANYONOS_AGENT_NAME")
-        self.agent_file = os.environ.get("CANYONOS_AGENT_FILE")
+        # The file of each agent this replica runs, by name; several in toy mode.
+        self.agent_files = json.loads(os.environ.get("CANYONOS_AGENTS", "{}"))
         # The endpoint's controller runs no agent: it only forwards calls.
-        runs_agent = bool(self.agent_name or self.agent_file)
+        runs_agent = bool(self.agent_files)
 
         # Public port is how the routing table and other machines know us;
         # internally the gRPC server binds to `port` (50051 inside Docker).
@@ -341,8 +344,8 @@ class LocalController(object):
         # in-process metrics: queue length, counters, and health heartbeat.
 
         # After the gateway, which an agent constructor may call.
-        self.agent = self._load_agent()
-        if runs_agent and self.agent is None:
+        self.agents = self._load_agents()
+        if self.agents is None:
             self._metrics_stop_event.set()
             self._metrics_thread.join(timeout=2)
             self.mark_failed()
@@ -351,9 +354,7 @@ class LocalController(object):
             # Otherwise the gateway keeps the container alive, answering every
             # request with "No agent loaded" long after the cause has scrolled by.
             self._gateway_process.kill()
-            raise RuntimeError(
-                f"Failed to load configured agent {self.agent_name or self.agent_file}."
-            )
+            raise RuntimeError(f"Failed to load configured agent {self.agent_name}.")
 
         if runs_agent:
             self._malloc_trim = ctypes.CDLL("libc.so.6").malloc_trim
@@ -601,7 +602,7 @@ class LocalController(object):
         """Restart the LLM gateway if it has exited. After MAX_GATEWAY_RESTARTS restarts, fail
         this replica and stop serving and heartbeating instead, so the reconciler replaces it."""
         # Only a replica that runs an agent starts a gateway.
-        if not (self.agent_name or self.agent_file):
+        if not self.agent_files:
             return
         if self._gateway_process.poll() is None:
             return
@@ -639,7 +640,7 @@ class LocalController(object):
                 self._draining = remove_at is not None
                 # A stateful replica keeps taking calls; open_requests holds its drain instead.
                 self.servicer.refusing = (
-                    self._draining and self.agent_name not in self._stateful
+                    self._draining and not self._stateful & self.agent_files.keys()
                 )
                 # Two heartbeats before removal, so every caller gets an error, not silence.
                 if (
@@ -702,24 +703,30 @@ class LocalController(object):
             )
             self._shutdown_at = remove_at
 
-    def _load_agent(self):
-        """Dynamically load and instantiate the agent class."""
-        if not self.agent_name or not self.agent_file:
-            logger.warning(
-                "CANYONOS_AGENT_NAME or CANYONOS_AGENT_FILE not set. Running without an agent."
-            )
-            return None
+    def _load_agents(self):
+        """Load and instantiate every agent in CANYONOS_AGENTS; return them by name, or
+        None as soon as one fails."""
+        agents = {}
+        for agent_name, agent_file in self.agent_files.items():
+            # So LLM calls made at import or in __init__ carry the agent's name.
+            canyonos_context.set_current_agent(agent_name)
+            agents[agent_name] = self._load_agent(agent_name, agent_file)
+            if agents[agent_name] is None:
+                return None
+        return agents
 
+    def _load_agent(self, agent_name, agent_file):
+        """Dynamically load and instantiate the agent class."""
         # Use a dotted module name (e.g. "agents.aml_agent", not "agents/aml_agent")
         # so importlib derives __package__ correctly and package-relative imports
         # inside nested entrypoints (e.g. `from .prompts import PROMPT`) resolve.
         agent_module_name = (
-            self.agent_file.replace(".py", "").replace(os.sep, ".").replace("/", ".")
+            agent_file.replace(".py", "").replace(os.sep, ".").replace("/", ".")
         )
 
         # We assume the agent file is in the same directory as the local controller (e.g. copied by Docker)
         # or in the current working directory.
-        agent_path = os.path.abspath(str(self.agent_file))
+        agent_path = os.path.abspath(str(agent_file))
 
         if not os.path.exists(agent_path):
             logger.error(f"Agent file not found at {agent_path}")
@@ -747,16 +754,14 @@ class LocalController(object):
             loader.exec_module(module)
 
             # The agent is named `<project>.<class>`; its module defines the class.
-            agent_class = getattr(module, self.agent_name.rsplit(".", 1)[-1])
+            agent_class = getattr(module, agent_name.rsplit(".", 1)[-1])
             agent_instance = agent_class()
-            logger.info(
-                f"Successfully loaded and instantiated agent: {self.agent_name}"
-            )
+            logger.info(f"Successfully loaded and instantiated agent: {agent_name}")
             return agent_instance
         except Exception as e:
             # The traceback is what names the import that actually failed.
             logger.exception(
-                f"Failed to load agent {self.agent_name} from {self.agent_file}: {type(e).__name__}: {e}"
+                f"Failed to load agent {agent_name} from {agent_file}: {type(e).__name__}: {e}"
             )
             return None
 
@@ -1291,8 +1296,10 @@ class LocalController(object):
             canyonos_context.set_request_id(request_id)
         canyonos_context.set_current_future_id(future_id)
         canyonos_context.set_current_function(function)
+        canyonos_context.set_current_agent(agent_name)
         canyonos_context.set_current_metrics_key(self._metrics_key)
-        if self.agent is None:
+        agent = self.agents.get(agent_name)
+        if agent is None:
             logger.error("No agent loaded, cannot execute %s.%s", agent_name, function)
             self._mark_future_failed(
                 future_id,
@@ -1302,12 +1309,12 @@ class LocalController(object):
             )
             return
 
-        method = getattr(self.agent, function, None)
+        method = getattr(agent, function, None)
         if method is None:
-            logger.error("Agent %s has no method '%s'", self.agent_name, function)
+            logger.error("Agent %s has no method '%s'", agent_name, function)
             self._mark_future_failed(
                 future_id,
-                f"Agent {self.agent_name} has no method '{function}'",
+                f"Agent {agent_name} has no method '{function}'",
                 origin,
                 error_name="UnknownMethod",
             )

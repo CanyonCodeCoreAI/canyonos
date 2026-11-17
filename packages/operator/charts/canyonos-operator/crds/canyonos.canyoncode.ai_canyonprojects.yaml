@@ -191,7 +191,7 @@ spec:
                   routes:
                     description: |-
                       routes are the agent methods the endpoint serves, each at
-                      POST /<agent>/<method>.
+                      POST /<project>/<agent>/<method>.
                     items:
                       description: EndpointRoute is one agent method the endpoint
                         serves.
@@ -212,12 +212,18 @@ spec:
                           x-kubernetes-list-type: atomic
                         method:
                           description: method is the agent function served at POST
-                            /<agent>/<method>.
+                            /<project>/<agent>/<method>.
+                          minLength: 1
+                          type: string
+                        project:
+                          description: project is the project folder of the deployment
+                            the agent belongs to.
                           minLength: 1
                           type: string
                       required:
                       - agent
                       - method
+                      - project
                       type: object
                     minItems: 1
                     type: array
@@ -234,8 +240,8 @@ spec:
                 type: object
               envSecretRef:
                 description: |-
-                  envSecretRef names the Secret holding the project's environment (API keys
-                  from its .env), given to the global controller and every agent.
+                  envSecretRef names the Secret holding the deployment's environment (API keys
+                  from the .env beside its deployment.yaml), given to the global controller.
                 type: string
               imagePullSecrets:
                 description: imagePullSecrets pull the project's images from a private

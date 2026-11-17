@@ -91,6 +91,14 @@ type CanyonAgentSpec struct {
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
+	// envSecretRef names the Secret holding the agent's project's .env (its API keys), given to its pods.
+	// +optional
+	EnvSecretRef string `json:"envSecretRef,omitempty"`
+
+	// hostedAgents are the agents a toy deployment's agent also runs; calls to them are routed to its replicas.
+	// +optional
+	HostedAgents []string `json:"hostedAgents,omitempty"`
+
 	// terminationGracePeriodSeconds is how long a stopping replica may finish the
 	// calls it accepted before it is killed.
 	// +kubebuilder:validation:Minimum=20

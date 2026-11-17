@@ -96,9 +96,9 @@ func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL, dashboa
 		Containers: []corev1.Container{{
 			Name:    "global-controller",
 			Image:   image,
-			Command: []string{pythonCommand, "-m", "canyonos_core.cli", "run-gc", "-c", gcConfigPath + "/workflow_config.yaml"},
+			Command: []string{pythonCommand, "-m", "canyonos_core.cli", "run-gc", "-c", gcConfigPath + "/deployment.yaml"},
 			Env:     gcEnv(p, endpointURL, dashboardNamespace),
-			EnvFrom: appEnv(p),
+			EnvFrom: appEnv(p.Spec.EnvSecretRef),
 			Ports:   []corev1.ContainerPort{{Name: portHealth, ContainerPort: HealthPort}},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: volumeConfig, MountPath: gcConfigPath, ReadOnly: true},
@@ -200,12 +200,12 @@ func RedisEnv(p *canyonosv1alpha1.CanyonProject) []corev1.EnvVar {
 }
 
 // appEnv gives a pod the project's environment Secret (API keys from its .env).
-func appEnv(p *canyonosv1alpha1.CanyonProject) []corev1.EnvFromSource {
-	if p.Spec.EnvSecretRef == "" {
+func appEnv(secret string) []corev1.EnvFromSource {
+	if secret == "" {
 		return nil
 	}
 	return []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
-		LocalObjectReference: corev1.LocalObjectReference{Name: p.Spec.EnvSecretRef},
+		LocalObjectReference: corev1.LocalObjectReference{Name: secret},
 	}}}
 }
 

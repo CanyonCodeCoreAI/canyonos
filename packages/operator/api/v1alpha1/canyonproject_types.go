@@ -57,7 +57,7 @@ type RedisSpec struct {
 // EndpointSpec is the agent methods the project serves over HTTP.
 type EndpointSpec struct {
 	// routes are the agent methods the endpoint serves, each at
-	// POST /<agent>/<method>.
+	// POST /<project>/<agent>/<method>.
 	// +kubebuilder:validation:MinItems=1
 	// +required
 	Routes []EndpointRoute `json:"routes"`
@@ -84,13 +84,18 @@ type EndpointSpec struct {
 
 // EndpointRoute is one agent method the endpoint serves.
 type EndpointRoute struct {
+	// project is the project folder of the deployment the agent belongs to.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Project string `json:"project"`
+
 	// agent is the name of the agent whose method the route serves, as in the
 	// project's config (for example Workflow).
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Agent string `json:"agent"`
 
-	// method is the agent function served at POST /<agent>/<method>.
+	// method is the agent function served at POST /<project>/<agent>/<method>.
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Method string `json:"method"`
@@ -171,8 +176,8 @@ type CanyonProjectSpec struct {
 	// +required
 	ConfigRef string `json:"configRef"`
 
-	// envSecretRef names the Secret holding the project's environment (API keys
-	// from its .env), given to the global controller and every agent.
+	// envSecretRef names the Secret holding the deployment's environment (API keys
+	// from the .env beside its deployment.yaml), given to the global controller.
 	// +optional
 	EnvSecretRef string `json:"envSecretRef,omitempty"`
 

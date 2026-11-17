@@ -214,6 +214,7 @@ def _run_command(settings_at_start):
                 0
                 if (
                     kubernetes_target.run_kubernetes_deploy(
+                        args.folders,
                         serve=args.serve,
                         skip_auth=args.dangerous_skip_auth,
                         auth_dir=args.auth_dir,

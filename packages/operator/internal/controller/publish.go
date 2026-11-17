@@ -102,8 +102,8 @@ func routable(agent *canyonosv1alpha1.CanyonAgent) bool {
 	return agent.DeletionTimestamp == nil && agent.Name == builders.ResourceName(agent.Spec.AgentName)
 }
 
-// routedAgents are the project's agents that run, and its endpoint, as core's
-// routing lists every replica spec including the endpoint's.
+// routedAgents are the project's agents that run, the agents each of them hosts, and
+// its endpoint, as core's routing lists every replica spec including the endpoint's.
 func routedAgents(
 	ctx context.Context, c client.Client, project *canyonosv1alpha1.CanyonProject,
 ) ([]redisstate.Agent, error) {
@@ -117,6 +117,9 @@ func routedAgents(
 			continue
 		}
 		agents = append(agents, redisstate.Agent{Name: agent.Spec.AgentName, Stateful: agent.Spec.Stateful})
+		for _, hosted := range agent.Spec.HostedAgents {
+			agents = append(agents, redisstate.Agent{Name: hosted, Stateful: agent.Spec.Stateful, ServedBy: agent.Spec.AgentName})
+		}
 	}
 	return append(agents, redisstate.Agent{Name: builders.EndpointAgentName}), nil
 }

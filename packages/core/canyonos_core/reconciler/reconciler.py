@@ -212,8 +212,8 @@ class Reconciler(object):
         return None
 
     def _remove_without_draining(self, replica_id, replica, reason):
-        """Remove a replica that can't drain, an unhealthy one or a database, at once,
-        first copying an unhealthy one's last output into this log."""
+        """Remove a replica that can't drain, an unhealthy one or a database, or any of a
+        toy deployment's, at once, first copying an unhealthy one's last output into this log."""
         logger.info("Removing replica %s (%s)", replica_id, reason)
         if reason == "unhealthy":
             dump_container_log(
@@ -269,12 +269,13 @@ class Reconciler(object):
 
     def _drain_replica(self, replica_id, replica, reason):
         """Advance one step towards removing a replica, draining it first. One that can never
-        report idle, a database or one that stopped answering, is removed at once. Returns
-        True once removed."""
+        report idle, a database or one that stopped answering, and any of a toy deployment's,
+        is removed at once. Returns True once removed."""
         # A stock database image has no controller to report idle.
         if (
             self.context.agent_specs_by_name.get(replica["agent_name"], {}).get("type")
             == "database"
+            or self.context.config["deploy_mode"] == "toy"
         ):
             self._remove_without_draining(replica_id, replica, reason)
             return True
@@ -356,13 +357,14 @@ class Reconciler(object):
         so its `healthy`, written once it answers, is enough). Every agent's, whichever
         were reconciled, so the set follows liveness on every pass."""
         try:
-            up = {
-                replica["agent_name"]
-                for replica in list_replicas(self.context.redis)
-                if replica["agent_name"] in self.context.agent_specs_by_name
-                and "draining_at" not in replica
-                and self._is_up(replica)
-            }
+            up = set()
+            for replica in list_replicas(self.context.redis):
+                agent_spec = self.context.agent_specs_by_name.get(replica["agent_name"])
+                if agent_spec and "draining_at" not in replica and self._is_up(replica):
+                    up |= {
+                        spec["name"]
+                        for spec in [agent_spec, *agent_spec.get("agents", [])]
+                    }
             publish_up_agents(up, self.context.redis, self.context.machine_redis)
         except Exception as e:
             logger.warning("Failed to publish the agents up: %s", e)

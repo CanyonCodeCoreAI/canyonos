@@ -6,15 +6,17 @@
 No image build and no wait for replicas: the operator and Kubernetes run the pods. It
 serves its health checks first, waits for the project's Redis (no crash loop while it
 starts), then runs the Global Controller and watches its config: the config is a
-mounted ConfigMap, and a change to its files reloads it in place. SIGTERM stops the
-Global Controller and leaves the agents running.
+mounted ConfigMap, laid out again as the deployment's folder, and a change to its files
+reloads it in place. SIGTERM stops the Global Controller and leaves the agents running.
 """
 
 import hashlib
 import logging
 import os
+import shutil
 import signal
 import sys
+import tempfile
 import threading
 from typing import NoReturn
 
@@ -22,6 +24,7 @@ from canyonos_core.controller.health import start_health_server
 from canyonos_core.controller.orchestrator import TARGET_ENV
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
+from canyonos_core.schema import DEPLOYMENT_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +60,25 @@ def config_fingerprint(config_dir):
     return digest.hexdigest()
 
 
+def lay_out_workspace(config_dir, workspace):
+    """Write the ConfigMap's files in `config_dir` into `workspace` as the deployment's
+    folder they came from (kubernetes/manifests.py config_folder names them)."""
+    shutil.rmtree(workspace, ignore_errors=True)
+    for name in os.listdir(config_dir):
+        source = os.path.join(config_dir, name)
+        if name.startswith(".") or not os.path.isfile(source):
+            continue  # the ConfigMap's ..data bookkeeping
+        project, _, file = name.partition(".")
+        target = os.path.join(workspace, project, "config", file)
+        if name == DEPLOYMENT_CONFIG:
+            target = os.path.join(workspace, name)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copyfile(source, target)
+
+
 def watch_config(controller, config_dir, stop, interval=CONFIG_WATCH_SECONDS):
-    """Reload the controller's config whenever the folder's files change, until `stop`
-    is set. A broken edit is logged and the running config stays."""
+    """Lay out and reload the controller's config whenever the folder's files change,
+    until `stop` is set. A broken edit is logged and the running config stays."""
     seen = config_fingerprint(config_dir)
     while not stop.wait(interval):
         try:
@@ -72,6 +91,7 @@ def watch_config(controller, config_dir, stop, interval=CONFIG_WATCH_SECONDS):
         seen = current
         logger.info("Config files changed; reloading.")
         try:
+            lay_out_workspace(config_dir, controller.workspace)
             controller.reload_config()
         except Exception as e:
             logger.error("Reload failed; keeping the running config: %s", e)
@@ -119,8 +139,11 @@ def run(config_path):
 
     from canyonos_core.controller.global_controller import GlobalController
 
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    workspace = os.path.join(tempfile.gettempdir(), "canyonos-deployment")
     try:
-        controller = GlobalController(config_path)
+        lay_out_workspace(config_dir, workspace)
+        controller = GlobalController(workspace)
     except RuntimeError as e:
         _exit_with(e)
     stop = threading.Event()
@@ -136,7 +159,7 @@ def run(config_path):
 
     threading.Thread(
         target=watch_config,
-        args=(controller, os.path.dirname(os.path.abspath(config_path)), stop),
+        args=(controller, config_dir, stop),
         name="config-watcher",
         daemon=True,
     ).start()

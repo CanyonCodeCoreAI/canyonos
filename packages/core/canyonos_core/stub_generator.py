@@ -12,6 +12,7 @@ definitions.
 
 import ast
 import hashlib
+import json
 import os
 import platform
 import re
@@ -22,6 +23,9 @@ from packaging.version import InvalidVersion, Version
 
 from canyonos_core.controller.utils.container_names import CONTAINER_PORT
 from canyonos_core.reconciler import providers
+from canyonos_core.reconciler.providers.shared_utils.llm_gateway_env import (
+    _llm_gateway_env_vars,
+)
 
 # Lowest versions the image's own code runs on; an app asking for older fails the install.
 BASE_AGENT_REQUIREMENTS = [
@@ -50,7 +54,8 @@ PROTOBUF_FLOOR = Requirement(
 )
 
 # Mounted only in the build steps that run it, so agent images never carry uv.
-UV_IMAGE = "ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85"
+UV_VERSION = "0.13.8"
+UV_IMAGE = f"ghcr.io/astral-sh/uv:{UV_VERSION}@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85"
 
 # A .python-version picks a 3.<minor> in this range, and a project without one gets
 # the newest. The range is the `python` matrix of .github/workflows/e2e.yml and
@@ -58,6 +63,11 @@ UV_IMAGE = "ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab2
 OLDEST_IMAGE_PYTHON_MINOR = 10
 NEWEST_IMAGE_PYTHON_MINOR = 15
 DEFAULT_IMAGE_PYTHON_VERSION = f"3.{NEWEST_IMAGE_PYTHON_MINOR}"
+
+# A toy bundle's start script, and where it keeps uv and its packages: a volume every bundle shares.
+TOY_START_SCRIPT = "canyonos_toy_start.sh"
+TOY_PACKAGES_DIR = "/opt/canyonos-toy"
+TOY_PACKAGES_VOLUME = "canyonos-toy-packages"
 
 # Runtime modules copied flat into the context root, which `canyonos validate` checks app files against.
 _AGENT_FLAT_SOURCES = {
@@ -704,8 +714,8 @@ def too_new_requirements(requirements):
     return too_new
 
 
-def _dockerfile_install_steps(overrides, requirements):
-    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested."""
+def _app_install_command(overrides, requirements, target):
+    """The shell command that installs the agent's packages with uv's `target` flag, capped at the versions CanyonOS has tested."""
     forced = " ".join(f"'{override}'" for override in overrides)
     asked_newer = {
         Requirement(requirement).name.lower()
@@ -716,18 +726,53 @@ def _dockerfile_install_steps(overrides, requirements):
         for name, major in TESTED_MAJOR_VERSIONS.items()
         if name not in asked_newer
     )
-    return f"""COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
+    return f"""printf '%s\\n' {forced} > /tmp/overrides.txt \\
  && printf '%s\\n' {caps} > /tmp/tested.txt \\
- && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt \\
- && (uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app.") \\
+ && uv pip install {target} -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt \\
+ && (uv pip check {target} || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app.")"""
+
+
+def _dockerfile_install_steps(overrides, requirements):
+    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested."""
+    return f"""COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv {_app_install_command(overrides, requirements, "--system")} \\
  && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
 """
 
 
+def agent_base_image(project_dir):
+    """The agent base image a project's agents run on: its `.python-version`'s Python, else the newest."""
+    python_version = DEFAULT_IMAGE_PYTHON_VERSION
+    # Named from the deployment folder the build runs in, as the user sees it.
+    python_version_file = os.path.relpath(os.path.join(project_dir, ".python-version"))
+    if os.path.isfile(python_version_file):
+        try:
+            with open(python_version_file, encoding="utf-8-sig") as f:
+                python_version = f.readline().strip()
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(
+                f"{python_version_file} is not UTF-8 text; save it as UTF-8."
+            ) from exc
+        match = re.fullmatch(r"3\.(0|[1-9]\d*)(\.(0|[1-9]\d*))?", python_version)
+        if not match or not (
+            OLDEST_IMAGE_PYTHON_MINOR <= int(match[1]) <= NEWEST_IMAGE_PYTHON_MINOR
+        ):
+            raise RuntimeError(
+                f"{python_version_file} says '{python_version}', but agents need "
+                f"Python 3.{OLDEST_IMAGE_PYTHON_MINOR} to 3.{NEWEST_IMAGE_PYTHON_MINOR}, "
+                "written like 3.12 or 3.12.4."
+            )
+        # Base images exist per minor, so a patch version is ignored.
+        python_version = f"3.{match[1]}"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(script_dir, "agent_base", "Dockerfile"), "rb") as f:
+        base_hash = hashlib.sha256(f.read()).hexdigest()[:12]
+    return f"{AGENT_BASE_IMAGE}:py{python_version}-{base_hash}"
+
+
 def generate_docker(
     agent_name,
-    agent_file,
+    agent_files,
     output_dir=None,
     grpc_stubs_dir=None,
     stub_files=None,
@@ -739,12 +784,13 @@ def generate_docker(
     Generate a minimal Docker build context for an agent.
 
     Creates a directory containing a Dockerfile, requirements.txt, and all
-    source files needed to run the agent with its own local controller.
+    source files needed to run the agent with its own local controller, plus,
+    for a toy bundle, the script its replica starts with instead of an image.
 
     Args:
-        agent_name:        The agent's name in the deployment, `<project>.<agent>`;
-                           the part after the `.` is its class name.
-        agent_file:        Path to the original Python agent implementation.
+        agent_name:        The agent's name in the deployment, `<project>.<agent>`.
+        agent_files:       {agent name: path to its real Python file} for each agent
+                           its replica runs: the agent itself, or a toy bundle's agents.
         output_dir:        Optional output directory (default: docker_container/<AgentName>/).
         grpc_stubs_dir:    Optional path to compiled gRPC stubs (default: <repo_root>/grpc_stubs).
         stub_files:        Optional list of agent stub files to copy into the context.
@@ -803,40 +849,21 @@ def generate_docker(
     _copy_files(output_dir, files_to_copy)
     _copy_llm_gateway(output_dir, script_dir)
 
-    # Copy the real agent entrypoint to the context root (after _copy_files so it
-    # wins over any swept copy of the same file from the project directory).
-    shutil.copy2(
-        os.path.abspath(agent_file),
-        os.path.join(output_dir, os.path.basename(agent_file)),
-    )
+    # After _copy_files, so they win over swept copies; a bundle's own names keep each peer's flat stub.
+    files_in_image = {
+        name: os.path.basename(path)
+        if name == agent_name
+        else f"canyonos_agent_{name.rsplit('.', 1)[-1]}.py"
+        for name, path in agent_files.items()
+    }
+    for name, path in agent_files.items():
+        shutil.copy2(
+            os.path.abspath(path), os.path.join(output_dir, files_in_image[name])
+        )
 
     # ---- Dockerfile ------------------------------------------------------
-    agent_basename = os.path.basename(agent_file)
-    python_version = DEFAULT_IMAGE_PYTHON_VERSION
-    # Named from the deployment folder the build runs in, as the user sees it.
-    python_version_file = os.path.relpath(os.path.join(project_dir, ".python-version"))
-    if os.path.isfile(python_version_file):
-        try:
-            with open(python_version_file, encoding="utf-8-sig") as f:
-                python_version = f.readline().strip()
-        except UnicodeDecodeError as exc:
-            raise RuntimeError(
-                f"{python_version_file} is not UTF-8 text; save it as UTF-8."
-            ) from exc
-        match = re.fullmatch(r"3\.(0|[1-9]\d*)(\.(0|[1-9]\d*))?", python_version)
-        if not match or not (
-            OLDEST_IMAGE_PYTHON_MINOR <= int(match[1]) <= NEWEST_IMAGE_PYTHON_MINOR
-        ):
-            raise RuntimeError(
-                f"{python_version_file} says '{python_version}', but agents need "
-                f"Python 3.{OLDEST_IMAGE_PYTHON_MINOR} to 3.{NEWEST_IMAGE_PYTHON_MINOR}, "
-                "written like 3.12 or 3.12.4."
-            )
-        # Base images exist per minor, so a patch version is ignored.
-        python_version = f"3.{match[1]}"
-    with open(os.path.join(script_dir, "agent_base", "Dockerfile"), "rb") as f:
-        base_hash = hashlib.sha256(f.read()).hexdigest()[:12]
-    dockerfile = f"""FROM {AGENT_BASE_IMAGE}:py{python_version}-{base_hash}
+    base_image = agent_base_image(project_dir)
+    dockerfile = f"""FROM {base_image}
 
 WORKDIR /app
 
@@ -846,7 +873,7 @@ ENV PYTHONUNBUFFERED=1
 COPY . .
 
 ENV CANYONOS_AGENT_NAME={agent_name}
-ENV CANYONOS_AGENT_FILE={agent_basename}
+ENV CANYONOS_AGENTS='{json.dumps(files_in_image)}'
 
 EXPOSE {CONTAINER_PORT}
 
@@ -854,6 +881,39 @@ CMD ["python", "local_controller.py", "--port", "{CONTAINER_PORT}"]
 """
     with open(os.path.join(output_dir, "Dockerfile"), "w") as f:
         f.write(dockerfile)
+
+    # A toy bundle builds no image: the base image runs this script, which installs its packages once per hash of them.
+    if agent_name not in agent_files:
+        install = _app_install_command(
+            overrides, requirements or [], '--python "$env/app/bin/python"'
+        )
+        key = hashlib.sha256(
+            json.dumps([base_image, requirements_txt, install]).encode()
+        ).hexdigest()[:16]
+        script = f"""set -e
+export PYTHONUNBUFFERED=1 CANYONOS_AGENT_NAME={agent_name}
+export CANYONOS_AGENTS='{json.dumps(files_in_image)}'
+export UV_CACHE_DIR={TOY_PACKAGES_DIR}/cache PATH={TOY_PACKAGES_DIR}/uv-{UV_VERSION}/bin:$PATH
+env={TOY_PACKAGES_DIR}/envs/{key}
+mkdir -p {TOY_PACKAGES_DIR}/envs
+(
+unset {" ".join(_llm_gateway_env_vars())}
+(
+flock 9
+if [ ! -f "$env/done" ]; then
+rm -rf "$env"
+flock {TOY_PACKAGES_DIR}/uv.lock sh -c '[ -x {TOY_PACKAGES_DIR}/uv-{UV_VERSION}/bin/uv ] || pip install --target {TOY_PACKAGES_DIR}/uv-{UV_VERSION} uv=={UV_VERSION}'
+python -m venv --without-pip "$env/app"
+{install} || exit 1
+touch "$env/done"
+fi
+) 9>"$env.lock"
+if "$env/app/bin/python" -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
+)
+exec "$env/app/bin/python" local_controller.py --port {CONTAINER_PORT}
+"""
+        with open(os.path.join(output_dir, TOY_START_SCRIPT), "w") as f:
+            f.write(script)
 
     print(f"Generated Docker context for '{agent_name}' -> {output_dir}")
     return output_dir

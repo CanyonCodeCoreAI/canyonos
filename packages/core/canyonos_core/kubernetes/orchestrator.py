@@ -83,7 +83,7 @@ class KubernetesOrchestrator:
             rows = pod_machine_rows(
                 self.api.project_pods(),
                 self.api.pod_metrics(),
-                self.gc.config.get("project_id"),
+                self.gc.config.get("deployment_id"),
             )
         except KubernetesError as e:
             if not self._metrics_unavailable:
