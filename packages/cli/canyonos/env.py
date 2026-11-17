@@ -64,8 +64,9 @@ PROD_CORE_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-core:{VERSION}"
 PROD_API_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-api:{VERSION}"
 PROD_WEB_IMAGE = f"ghcr.io/canyoncodecoreai/canyonos-web:{VERSION}"
 # The operator's Helm chart takes only SemVer, so a release candidate's 1.0.0rc1 is
-# published as 1.0.0-rc1 (scripts/release-version.ts writes it that way).
-PROD_CHART_VERSION = re.sub(r"(\d)(rc\d+)$", r"\1-\2", VERSION)
+# published as 1.0.0-rc1, and a development release's 1.0.0.dev1 as 1.0.0-dev1
+# (scripts/release-version.ts writes them that way).
+PROD_CHART_VERSION = re.sub(r"(\d)\.?(rc\d+|dev\d+)$", r"\1-\2", VERSION)
 PROD_SKILL_REF = f"v{VERSION}"
 PROD_USAGE_URL = "https://d23tpmlxh0fxet.cloudfront.net"
 

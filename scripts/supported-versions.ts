@@ -3,7 +3,7 @@
 
 import { join } from 'node:path';
 
-import { isReleaseVersion } from './release-version';
+import { isFinalVersion } from './release-version';
 
 // The latest stable CLI release and the two before it, within its MAJOR.MINOR series:
 // a minor or major bump leaves the older series unsupported.
@@ -25,8 +25,8 @@ function newestFirst(a: string, b: string): number {
 
 export function supportedWindow(versions: string[]): SupportedVersions {
   for (const version of versions) {
-    if (!isReleaseVersion(version)) {
-      throw new Error(`${version} is not a release version like 0.1.732.`);
+    if (!isFinalVersion(version)) {
+      throw new Error(`${version} is not a final release version like 0.1.732.`);
     }
   }
   const newest = [...new Set(versions)].sort(newestFirst);

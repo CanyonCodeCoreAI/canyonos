@@ -3,7 +3,8 @@
 
 import { join } from 'node:path';
 
-// `semver` marks a file that only takes SemVer, where 1.0.0rc1 is spelled 1.0.0-rc1.
+// `semver` marks a file that only takes SemVer, where 1.0.0rc1 is spelled 1.0.0-rc1 and
+// 1.0.0.dev1 is spelled 1.0.0-dev1. SemVer orders dev1 before rc1, as PEP 440 does.
 export type Manifest = { path: string; pattern: RegExp; semver?: boolean };
 
 // Every file that states the shared version. `uv lock` derives its entries from the
@@ -13,8 +14,18 @@ export const manifests: Manifest[] = [
   { path: 'packages/cli/pyproject.toml', pattern: /^(version = ")([^"]+)(")$/m },
   { path: 'packages/core/pyproject.toml', pattern: /^(version = ")([^"]+)(")$/m },
   { path: 'packages/core/canyonos_core/__init__.py', pattern: /^(__version__ = ")([^"]+)(")$/m },
-  { path: 'packages/api/package.json', pattern: /^(\s*"version": ")([^"]+)(",?)$/m },
-  { path: 'packages/web/package.json', pattern: /^(\s*"version": ")([^"]+)(",?)$/m },
+  // Bun drops a workspace's version from bun.lock when package.json does not hold SemVer,
+  // and 1.0.0.dev1 is not.
+  {
+    path: 'packages/api/package.json',
+    pattern: /^(\s*"version": ")([^"]+)(",?)$/m,
+    semver: true,
+  },
+  {
+    path: 'packages/web/package.json',
+    pattern: /^(\s*"version": ")([^"]+)(",?)$/m,
+    semver: true,
+  },
   // The operator image defaults to the chart's appVersion, so both follow the release.
   {
     path: 'packages/operator/charts/canyonos-operator/Chart.yaml (version)',
@@ -33,7 +44,7 @@ export const lockfileEntries: Manifest[] = [
     path: 'uv.lock (canyonos-core)',
     pattern: /^(name = "canyonos-core"\nversion = ")([^"]+)(")$/m,
   },
-  // Bun spells a release candidate the SemVer way, 1.0.0-rc1.
+  // Bun spells a pre-release the SemVer way, 1.0.0-rc1 or 1.0.0-dev1.
   {
     path: 'bun.lock (@canyonos/api)',
     pattern: /^(\s*"name": "@canyonos\/api",\n\s*"version": ")([^"]+)(",)$/m,
@@ -46,23 +57,34 @@ export const lockfileEntries: Manifest[] = [
   },
 ];
 
-// A final release such as 0.1.732, or a release candidate such as 1.0.0rc1, spelled the
-// way PEP 440 normalizes it so PyPI, uv.lock and the image tags all agree.
-const releaseVersionPattern = /^\d+\.\d+\.\d+(?:rc\d+)?$/;
+// A final release such as 0.1.732, a release candidate such as 1.0.0rc1, or a development
+// release such as 1.0.0.dev1, spelled the way PEP 440 normalizes it so PyPI, uv.lock and
+// the image tags all agree.
+const releaseVersionPattern = /^\d+\.\d+\.\d+(?:rc\d+|\.dev\d+)?$/;
 
 export function isReleaseVersion(version: string): boolean {
   return releaseVersionPattern.test(version);
 }
 
+// A final release only: release candidates and development releases stay pre-releases, so
+// they never become the latest or a supported version.
+export function isFinalVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(version);
+}
+
 export function readVersion(manifest: Manifest, content: string): string {
   const version = content.match(manifest.pattern)?.[2];
   if (!version) throw new Error(`${manifest.path} has no version line.`);
-  return manifest.semver ? version.replace(/-(rc\d+)$/, '$1') : version;
+  return manifest.semver
+    ? version.replace(/-(rc\d+)$/, '$1').replace(/-(dev\d+)$/, '.$1')
+    : version;
 }
 
 export function writeVersion(manifest: Manifest, content: string, version: string): string {
   readVersion(manifest, content);
-  const spelled = manifest.semver ? version.replace(/(rc\d+)$/, '-$1') : version;
+  const spelled = manifest.semver
+    ? version.replace(/(rc\d+)$/, '-$1').replace(/\.(dev\d+)$/, '-$1')
+    : version;
   return content.replace(manifest.pattern, `$1${spelled}$3`);
 }
 
@@ -74,7 +96,7 @@ export function findProblems(
     .filter((entry) => !isReleaseVersion(entry.version))
     .map(
       (entry) =>
-        `${entry.path} is ${entry.version}, not a release version like 0.1.732 or 1.0.0rc1.`
+        `${entry.path} is ${entry.version}, not a release version like 0.1.732, 1.0.0rc1 or 1.0.0.dev1.`
     );
   const reference = expected ?? found[0]?.version;
   if (!reference) return malformed;
@@ -109,7 +131,7 @@ async function check(root: string, expected?: string): Promise<void> {
 
 async function set(root: string, version: string): Promise<void> {
   if (!isReleaseVersion(version)) {
-    throw new Error(`${version} is not a release version like 0.1.732 or 1.0.0rc1.`);
+    throw new Error(`${version} is not a release version like 0.1.732, 1.0.0rc1 or 1.0.0.dev1.`);
   }
   for (const manifest of manifests) {
     const file = Bun.file(join(root, fileOf(manifest)));
