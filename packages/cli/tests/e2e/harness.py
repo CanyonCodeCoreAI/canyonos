@@ -425,6 +425,19 @@ def reported_tcp_address(path: Path) -> Callable[[OwnedService], str | None]:
     return probe
 
 
+_TOKEN = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+
+
+def token_in(stdout: str) -> str:
+    """Return the token `canyonos token create` wrote to `stdout`, which carries the
+    token and nothing else; raise AssertionError, showing the output, when it is not
+    one whole token."""
+    token = stdout.strip()
+    if not _TOKEN.fullmatch(token):
+        raise AssertionError(f"stdout is not one token:\n{stdout}")
+    return token
+
+
 def process_exists(pid: int) -> bool:
     """Return whether the operating system still has a process with `pid`."""
     try:

@@ -29,6 +29,7 @@ console = Console(width=None if is_terminal(sys.stdout) else _PIPED_WIDTH)
 err_console = Console(
     stderr=True, width=None if is_terminal(sys.stderr) else _PIPED_WIDTH
 )
+_messages = console
 
 
 def set_quiet(quiet):
@@ -36,10 +37,28 @@ def set_quiet(quiet):
     console.quiet = err_console.quiet = quiet
 
 
-def _emit(message, style, symbol=None, target=console):
+@contextmanager
+def to_stderr():
+    """Show the block's messages on stderr, so stdout carries only what `result`
+    writes, such as the token `canyonos token create` makes."""
+    global _messages
+    _messages = err_console
+    try:
+        yield
+    finally:
+        _messages = console
+
+
+def result(text):
+    """Write `text` alone on one line of stdout, never wrapped: the value a script
+    captures with `$(canyonos ...)`."""
+    console.print(Text(str(text)), soft_wrap=True)
+
+
+def _emit(message, style, symbol=None, target=None):
     parts = [(f"{symbol} ", style)] if symbol else []
     parts.append((str(message), WHITE if symbol else style))
-    target.print(Text.assemble(*parts))
+    (target or _messages).print(Text.assemble(*parts))
 
 
 def say(message):
@@ -90,12 +109,12 @@ def hint(message):
 def command(text):
     """Show a command to copy in the terminal, dimmed and never wrapped, so even a long
     one pastes back as one line."""
-    console.print(Text(str(text), style="dim"), soft_wrap=True)
+    _messages.print(Text(str(text), style="dim"), soft_wrap=True)
 
 
 def blank():
     """Show an empty line in the terminal."""
-    console.print()
+    _messages.print()
 
 
 def gradient(text):

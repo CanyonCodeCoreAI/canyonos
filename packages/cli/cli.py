@@ -11,8 +11,17 @@ import importlib.metadata
 import os
 import signal
 import sys
+from pathlib import Path
 
 from canyonos import env, ui
+from canyonos.auth import (
+    DEFAULT_KEY_NAME,
+    SCOPES as TOKEN_SCOPES,
+    run_keys_create,
+    run_keys_list,
+    run_keys_trust,
+    run_token_create,
+)
 from canyonos.clean import run_clean
 from canyonos.config import run_config
 from canyonos.contact import run_contact
@@ -58,6 +67,19 @@ def _parse_bool(value):
     if value.lower() in ("false", "0", "no"):
         return False
     raise argparse.ArgumentTypeError(f"expected true/false, got: {value!r}")
+
+
+def _auth_dir_option():
+    """A parent parser with --auth-dir, for every command that reads or writes keys.
+    Attached to each action, so the option also works after it."""
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument(
+        "--auth-dir",
+        type=Path,
+        metavar="PATH",
+        help="The folder of keys to use instead of ~/.canyonos/auth",
+    )
+    return parent
 
 
 class _RootParser(argparse.ArgumentParser):
@@ -113,13 +135,29 @@ def _run_command(settings_at_start):
         dest="command", parser_class=argparse.ArgumentParser
     )
 
-    def add(name, run):
+    def add(name, run=None):
         # A KeyError here means the command has no entry on the help screen.
         command = subparsers.add_parser(
             name, help=DESCRIPTIONS[name], description=DESCRIPTIONS[name]
         )
         command.set_defaults(func=run)
         return command
+
+    auth_dir = _auth_dir_option()
+
+    def add_actions(command):
+        """Give `command` required actions, each run on its own, such as
+        `canyonos keys create`; returns the function that adds one."""
+        actions = command.add_subparsers(dest="action", required=True)
+
+        def add_action(name, description, run):
+            action = actions.add_parser(
+                name, help=description, description=description, parents=[auth_dir]
+            )
+            action.set_defaults(func=lambda args: sys.exit(0 if run(args) else 1))
+            return action
+
+        return add_action
 
     add("quickstart", lambda args: sys.exit(0 if run_quickstart() else 1))
     add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
@@ -290,6 +328,73 @@ def _run_command(settings_at_start):
         nargs="+",
         metavar="folder",
         help="A project folder of the running deployment to copy in again",
+    )
+
+    add_key_action = add_actions(add("keys"))
+    add_key_action(
+        "create",
+        "Make a key pair: a private key that signs tokens on this machine, and its "
+        "public half, which deploys and the dashboard trust",
+        lambda args: run_keys_create(args.name, args.auth_dir),
+    ).add_argument(
+        "--name",
+        default=DEFAULT_KEY_NAME,
+        help=f"The key's name, from the characters [A-Za-z0-9._-] (default: "
+        f"{DEFAULT_KEY_NAME})",
+    )
+    add_key_action(
+        "list",
+        "Show the public keys deploys and the dashboard trust",
+        lambda args: run_keys_list(args.auth_dir),
+    )
+    add_key_action(
+        "trust",
+        "Trust a public key made elsewhere, such as a teammate's, so the tokens it "
+        "signs are accepted",
+        lambda args: run_keys_trust(args.file, args.auth_dir),
+    ).add_argument("file", help="The Ed25519 public key, in PEM, to trust")
+
+    token_create = add_actions(add("token"))(
+        "create",
+        "Sign a token and show it once, with what it grants and how to send it",
+        lambda args: run_token_create(
+            args.scope,
+            args.projects,
+            args.all_projects,
+            args.ttl,
+            args.key,
+            args.auth_dir,
+        ),
+    )
+    token_create.add_argument(
+        "--scope",
+        required=True,
+        choices=TOKEN_SCOPES,
+        help="query: a workflow's endpoint; read or write: the dashboard API",
+    )
+    token_create.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="query: the ID of a project the token may query; repeat it for more",
+    )
+    token_create.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="query: let the token query every project",
+    )
+    token_create.add_argument(
+        "--ttl",
+        type=int,
+        metavar="SECONDS",
+        help="Seconds until the token expires (default: no expiry)",
+    )
+    token_create.add_argument(
+        "--key",
+        metavar="NAME",
+        help="The private key to sign with; needed only when there is more than one",
     )
 
     logs = add_target(

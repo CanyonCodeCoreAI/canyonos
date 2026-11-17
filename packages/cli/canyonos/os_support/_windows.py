@@ -155,6 +155,12 @@ def make_private_dir(path):
     path.mkdir(parents=True, exist_ok=True)
 
 
+def readable_by_others(path):
+    """False: Windows has no mode bits, and a file under your user folder is readable
+    only by you through its inherited access list."""
+    return False
+
+
 def open_lock_file(path):
     """Open (creating) a lock file. Windows only follows a symlink an administrator (or
     Developer Mode) let you create, so there is no planted link to refuse."""

@@ -25,6 +25,7 @@ __all__ = [
     "make_private_dir",
     "prepare_console",
     "query_terminal",
+    "readable_by_others",
     "shell_command",
     "spawn_detached",
     "write_private_file",
@@ -42,6 +43,7 @@ shell_command = _system.shell_command
 # Files only you may read
 write_private_file = _system.write_private_file
 make_private_dir = _system.make_private_dir
+readable_by_others = _system.readable_by_others
 
 
 @contextlib.contextmanager

@@ -99,6 +99,11 @@ def make_private_dir(path):
     os.chmod(path, PRIVATE_DIR_MODE)
 
 
+def readable_by_others(path):
+    """True when the file at `path` grants read access to its group or to everyone."""
+    return bool(os.stat(path).st_mode & 0o044)
+
+
 def open_lock_file(path):
     """Open (creating) a lock file, refusing to follow a symlink planted in its place."""
     return os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, PRIVATE_FILE_MODE)

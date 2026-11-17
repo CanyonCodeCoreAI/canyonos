@@ -26,6 +26,10 @@ UTIL_COMMANDS = (
     ("cluster", "Make or delete a local Kubernetes cluster with CanyonOS (kind)"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
     ("doctor", "Check what deploying needs and, once deployed, every part of it"),
+    (
+        "keys",
+        "Make and register the keys that sign tokens for the endpoint and the dashboard",
+    ),
     ("logs", "Follow the running deploy's logs"),
     ("new-app", "Create a starter CanyonOS project with two agents"),
     ("quickstart", "Guided first run, from a starter project to your first trace"),
@@ -39,6 +43,10 @@ UTIL_COMMANDS = (
     ),
     ("target", "Show or choose where this deployment runs: Docker or Kubernetes"),
     ("test", "Send one prompt to every workflow of the running deployment"),
+    (
+        "token",
+        "Make a token that lets its holder query a workflow or use the dashboard API",
+    ),
     ("upgrade", "Upgrade the canyonos CLI to the latest release"),
     ("validate", "Check the project against the CanyonOS contract"),
 )
