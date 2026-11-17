@@ -59,6 +59,10 @@ type CanyonBuildSpec struct {
 	// imagePullSecrets to pull the core image with.
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// auth is copied unchanged into the CanyonProject the build applies.
+	// +optional
+	Auth *AuthSpec `json:"auth,omitempty"`
 }
 
 // CanyonBuildStatus is how far the build got.

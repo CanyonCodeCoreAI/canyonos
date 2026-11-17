@@ -122,6 +122,8 @@ func BuildJob(build *canyonosv1alpha1.CanyonBuild, opts BuildOptions) *batchv1.J
 		// Unset, the build takes its own node's architecture.
 		env = append(env, corev1.EnvVar{Name: "CANYONOS_DOCKER_PLATFORM", Value: build.Spec.Platform})
 	}
+	// apply-project copies them into the CanyonProject.
+	env = append(env, authEnv(build.Spec.Auth)...)
 	var envFrom []corev1.EnvFromSource
 	if build.Spec.EnvSecretRef != "" {
 		envFrom = []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{

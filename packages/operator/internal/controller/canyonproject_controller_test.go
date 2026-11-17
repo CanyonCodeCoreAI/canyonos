@@ -7,6 +7,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/alicebob/miniredis/v2"
@@ -33,7 +34,29 @@ import (
 const (
 	testControllerImage   = "ghcr.io/canyoncodecoreai/canyonos-core:1.2.3"
 	testExternalRedisHost = "redis.example.internal"
+	testTrustedKeyA       = "-----BEGIN PUBLIC KEY-----\n" +
+		"MCowBQYDK2VwAyEApT3YYS9qwqjlm4emNZxOEkoGZT1VGP/molRVHDKVI/o=\n-----END PUBLIC KEY-----\n"
+	testTrustedKeyB = "-----BEGIN PUBLIC KEY-----\n" +
+		"MCowBQYDK2VwAyEAQNQTGyScYygt7sqS7H101LNItV1TBCP5ZRSqd/7tDAo=\n-----END PUBLIC KEY-----\n"
+	envTrustedKeys  = "CANYONOS_TRUSTED_KEYS"
+	envAuthDisabled = "CANYONOS_AUTH_DISABLED"
 )
+
+// envOf is a container's literal environment by name.
+func envOf(container corev1.Container) map[string]string {
+	env := map[string]string{}
+	for _, variable := range container.Env {
+		env[variable.Name] = variable.Value
+	}
+	return env
+}
+
+// trustedKeysJSON is CANYONOS_TRUSTED_KEYS as core reads it: a JSON list of PEMs.
+func trustedKeysJSON(keys ...string) string {
+	raw, err := json.Marshal(keys)
+	Expect(err).NotTo(HaveOccurred())
+	return string(raw)
+}
 
 // envtest runs an API server but no controllers, so a StatefulSet never gets pods;
 // readiness is set by hand where a test needs it.
@@ -86,7 +109,7 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 
 	BeforeEach(func() {
 		counter++
-		namespace = "redis-" + string(rune('a'+counter))
+		namespace = fmt.Sprintf("redis-%d", counter)
 		rdb = redis.NewClient(&redis.Options{Addr: miniredis.RunT(GinkgoT()).Addr()})
 		Expect(k8sClient.Create(ctx, &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: namespace},
@@ -309,6 +332,63 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 		gc := &appsv1.Deployment{}
 		get(gc, builders.GCName)
 		Expect(gc.Spec.Template.Annotations).NotTo(HaveKey(builders.RedisLoginAnnotation))
+	})
+
+	gcEnv := func() map[string]string {
+		gc := &appsv1.Deployment{}
+		get(gc, builders.GCName)
+		return envOf(gc.Spec.Template.Spec.Containers[0])
+	}
+	runGC := func() {
+		reconcileProject()
+		markRedisReady()
+		reconcileProject()
+	}
+
+	It("hands the global controller the project's trusted keys, verification on", func() {
+		createProject(func(p *canyonosv1alpha1.CanyonProject) {
+			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{testTrustedKeyA}}
+		})
+		runGC()
+
+		env := gcEnv()
+		Expect(env).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyA)))
+		Expect(env).NotTo(HaveKey(envAuthDisabled))
+	})
+
+	It("turns verification off on the global controller when the project says so", func() {
+		createProject(func(p *canyonosv1alpha1.CanyonProject) {
+			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{Disabled: true}
+		})
+		runGC()
+
+		Expect(gcEnv()).To(HaveKeyWithValue(envAuthDisabled, "true"))
+	})
+
+	It("gives a project with no spec.auth neither variable: a missing block is not disabled", func() {
+		createProject(nil)
+		runGC()
+
+		env := gcEnv()
+		Expect(env).NotTo(HaveKey(envTrustedKeys))
+		Expect(env).NotTo(HaveKey(envAuthDisabled))
+	})
+
+	It("rolls a rotated key out to the global controller on the next reconcile", func() {
+		createProject(func(p *canyonosv1alpha1.CanyonProject) {
+			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{testTrustedKeyA}}
+		})
+		runGC()
+		Expect(gcEnv()).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyA)))
+
+		By("the next deploy trusting key B instead")
+		project := &canyonosv1alpha1.CanyonProject{}
+		get(project, testProjectName)
+		project.Spec.Auth.TrustedKeys = []string{testTrustedKeyB}
+		Expect(k8sClient.Update(ctx, project)).To(Succeed())
+		reconcileProject()
+
+		Expect(gcEnv()).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyB)))
 	})
 
 	It("writes the endpoint's replica and routes it beside the agents", func() {

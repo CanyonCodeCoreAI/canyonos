@@ -8,6 +8,10 @@
 # in-cluster builder and the dashboard), then, as a user who may only edit one
 # namespace, deploys examples/helloworld with `canyonos target kubernetes` and a plain
 # `canyonos deploy` and checks that:
+#   - `canyonos deploy` refuses before `canyonos keys create` and creates nothing in the
+#     cluster; after it, the CanyonProject trusts the key's public half and neither it
+#     nor the CanyonBuild holds a private key; `deploy --dangerous-skip-auth` marks the
+#     project's verification off;
 #   - `canyonos target` names the namespace after the folder, finds the cluster's
 #     registry, fills an empty kubernetes: block, and fails rather than waits on a
 #     prompt when it cannot; `validate` refuses an empty block, and a config that is
@@ -156,7 +160,34 @@ print("" if value is None else value)' "$1/config/workflow_config.yaml" "$2"
 
   canyonos target kubernetes --namespace "${NS}" --registry "${REGISTRY}" || fail "target"
   grep -q '^target: kubernetes' /hw/config/workflow_config.yaml || fail "target not written"
+
+  log "deploy refuses before canyonos keys create, and nothing reaches the cluster"
+  said="$(canyonos_in "${DEPLOYER}" /hw deploy 2>&1)" && fail "deploy passed with no trusted key: ${said}"
+  echo "${said}" | tr -s ' \n' ' ' | grep -q "canyonos keys create" \
+    || fail "the refused deploy did not say to run canyonos keys create: ${said}"
+  builds="$(as_deployer kubectl -n "${NS}" get canyonbuilds -o name)"
+  [ -z "${builds}" ] || fail "the refused deploy still created ${builds}"
+  canyonos keys create || fail "keys create"
+
+  # The CanyonBuild is deleted once it succeeds: watch it while the deploy runs.
+  as_deployer kubectl -n "${NS}" get canyonbuilds --watch -o yaml >/tmp/canyonbuilds.yaml 2>/dev/null &
+  build_watch=$!
   canyonos deploy || fail "deploy"
+  kill "${build_watch}" 2>/dev/null || true
+
+  log "The project trusts the key's public half, and no private key reached the cluster"
+  grep -q "trustedKeys" /tmp/canyonbuilds.yaml || fail "the CanyonBuild carried no keys: $(cat /tmp/canyonbuilds.yaml)"
+  as_deployer kubectl -n "${NS}" get canyonproject -o jsonpath='{.items[0].spec.auth.trustedKeys}' >/tmp/trusted.json
+  /w/.venv/bin/python - /tmp/trusted.json "${HOME}"/.canyonos/auth/trusted/*.pub <<'EOF' \
+    || fail "spec.auth.trustedKeys is not the PEMs in ~/.canyonos/auth/trusted"
+import json, sys
+spec = json.load(open(sys.argv[1]))
+files = [open(path).read() for path in sorted(sys.argv[2:])]
+sys.exit(0 if files and spec == files else f"spec.auth.trustedKeys {spec} != {files}")
+EOF
+  grep -q "PRIVATE KEY" /tmp/canyonbuilds.yaml && fail "the CanyonBuild holds a private key"
+  as_deployer kubectl -n "${NS}" get canyonproject -o yaml | grep -q "PRIVATE KEY" \
+    && fail "the CanyonProject holds a private key"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
   [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ] \
     || fail "the endpoint is not forwarded to 127.0.0.1:8080"
@@ -309,6 +340,13 @@ EOF
   [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ] \
     || fail "the redeploy did not forward the endpoint to 127.0.0.1:8080"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "serve did not open the dashboard again"
+
+  log "deploy --dangerous-skip-auth turns the project's verification off"
+  canyonos deploy --dangerous-skip-auth || fail "deploy --dangerous-skip-auth"
+  disabled="$(as_deployer kubectl -n "${NS}" get canyonproject -o jsonpath='{.items[0].spec.auth.disabled}')"
+  [ "${disabled}" = true ] || fail "spec.auth.disabled is ${disabled:-unset}, not true"
+  [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/status/e2e)" = 404 ] \
+    || fail "the endpoint does not answer with verification off"
 
   log "canyonos stop, then clean"
   canyonos stop || fail "stop"

@@ -77,8 +77,16 @@ def _placement(spec):
     return {"nodeSelector": {str(k): str(v) for k, v in spec.node_selector.items()}}
 
 
+def _auth_spec(auth):
+    """`spec.auth` from the record `trusted_keys_from_env` reads, or None when it
+    trusts no key and leaves verification on, so the field is left out."""
+    if not auth["keys"] and not auth["disabled"]:
+        return None
+    return {"trustedKeys": auth["keys"], "disabled": auth["disabled"]}
+
+
 def _project_spec(
-    config, spec, project_id, config_map, env_secret, controller_image, name
+    config, spec, project_id, config_map, env_secret, controller_image, name, auth
 ):
     redis = spec.redis
     if redis.host:
@@ -125,6 +133,9 @@ def _project_spec(
         project["imagePullSecrets"] = [{"name": spec.image_pull_secret}]
     if _placement(spec):
         project["placement"] = _placement(spec)
+    auth_spec = _auth_spec(auth)
+    if auth_spec:
+        project["auth"] = auth_spec
     return project
 
 
@@ -136,8 +147,8 @@ def _database_spec(agent_spec, project, spec):
     name = agent_spec["name"]
     if not agent_spec.get("volume_path"):
         raise RuntimeError(
-            f"{name}: a database on Kubernetes needs volume_path, where its disk is mounted "
-            "(for postgres: /var/lib/postgresql/data)"
+            f"{name}: a database on Kubernetes needs volume_path, where its disk is "
+            "mounted (for postgres: /var/lib/postgresql/data)"
         )
     settings = spec.databases.get(name) or KubernetesDatabase()
     database = {
@@ -175,12 +186,15 @@ def render(
     images,
     controller_image,
     env_secret,
+    auth,
     live_replicas=None,
 ):
     """The Kubernetes objects for one project, and warnings about settings Kubernetes
-    ignores. `spec` is its parsed `kubernetes:` section. Pure: no cluster or Docker
-    access. `live_replicas` maps the CanyonAgents the global controller autoscales to
-    their live count, which they keep: leaving the count out instead would make the
+    ignores. `spec` is its parsed `kubernetes:` section; `auth` is the trusted keys
+    record (`{"keys": [...], "disabled": bool}`, as `trusted_keys_from_env` reads it)
+    the project's global controller gets. Pure: no cluster or Docker access.
+    `live_replicas` maps the CanyonAgents the global controller autoscales to their
+    live count, which they keep: leaving the count out instead would make the
     server-side apply delete the field it owns, and the CRD default (1) would reset
     the agent."""
     namespace = spec.namespace
@@ -208,6 +222,7 @@ def render(
                 env_secret,
                 controller_image,
                 project_name,
+                auth,
             ),
         },
     ]

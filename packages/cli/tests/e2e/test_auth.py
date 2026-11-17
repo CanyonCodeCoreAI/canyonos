@@ -15,6 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import jwt
+import pexpect
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from cryptography.hazmat.primitives.serialization import (
@@ -31,6 +32,8 @@ PROJECT_A = "8a3f6c1e-2b4d-4e5f-9a7b-1c2d3e4f5a6b"
 PROJECT_B = "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
 API_AUDIENCE = "canyonos-api"
 KEYS_LINE = re.compile(r"^(\S+)\s+([0-9a-f]{16})\s+(\S+)$")
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+APPLE_DOUBLE = b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        "
 
 
 def _auth(case: CliCase) -> Path:
@@ -614,3 +617,74 @@ def test_keys_and_token_help_and_usage_errors(cli_case: CliCase):
         "--auth-dir",
     ):
         assert shown in token_help.stdout
+
+
+@pytest.mark.parametrize(
+    "typed", [PROJECT_A.upper(), f"{{{PROJECT_A}}}", PROJECT_A.replace("-", "")]
+)
+def test_token_create_takes_a_project_id_only_as_deploy_writes_it(
+    cli_case: CliCase, typed: str
+):
+    _make_key(cli_case)
+
+    result = cli_case.run_cli(
+        ["token", "create", "--scope", "query", "--project", typed]
+    )
+
+    _refused_without_token(result)
+    assert typed in _said(result)
+    assert "lowercase, hyphenated UUID" in _said(result)
+
+
+def test_keys_skip_apple_double_files(cli_case: CliCase):
+    _make_key(cli_case)
+    auth = _auth(cli_case)
+    (auth / "trusted" / "._default.pub").write_bytes(APPLE_DOUBLE)
+    (auth / "._default.key").write_bytes(APPLE_DOUBLE)
+
+    listed = cli_case.run_cli(["keys", "list"])
+    token = _token(cli_case, "--scope", "read")
+
+    assert listed.returncode == 0, _said(listed)
+    assert [name for name, _kid, _path in _listed(listed.stdout)] == ["default"]
+    assert "._default" not in listed.stdout
+    _claims(token, auth / "trusted" / "default.pub", API_AUDIENCE)
+
+
+def test_keys_list_names_a_trusted_file_whose_name_cannot_name_a_key(
+    cli_case: CliCase,
+):
+    _make_key(cli_case)
+    odd = _auth(cli_case) / "trusted" / "alice@host.pub"
+    odd.write_text(_public_pem(_teammate_key()))
+
+    result = cli_case.run_cli(["keys", "list"])
+
+    assert result.returncode == 1, _said(result)
+    assert str(odd) in _said(result)
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def _without_ansi(text: str) -> str:
+    return " ".join(ANSI.sub("", text).split())
+
+
+def test_clean_all_names_the_keys_before_it_deletes_them(cli_case: CliCase):
+    _make_key(cli_case)
+    auth = _auth(cli_case)
+
+    unattended = cli_case.run_cli(["clean", "--all"])
+
+    assert unattended.returncode == 1, _said(unattended)
+    assert "the keys under ~/.canyonos/auth" in _said(unattended)
+
+    terminal = cli_case.spawn_cli(["clean", "--all"])
+    terminal.child.expect("Remove CanyonOS from this machine")
+    assert "the keys under ~/.canyonos/auth" in _without_ansi(terminal.child.before)
+    terminal.child.send("2")
+    terminal.child.expect(pexpect.EOF)
+    terminal.child.close()
+
+    assert terminal.child.exitstatus == 1
+    assert (auth / "default.key").is_file()
+    assert (auth / "trusted" / "default.pub").is_file()

@@ -115,8 +115,10 @@ def main():
 def _enter_deployment_folder(args):
     """Deploy from the deployment's folder `args.folder`, made when it is missing, as
     if the command were typed there; the project folders it names stay relative to
-    where it was typed."""
+    where it was typed, as does its keys folder."""
     args.folders = [os.path.abspath(folder) for folder in args.folders]
+    if getattr(args, "auth_dir", None):
+        args.auth_dir = args.auth_dir.absolute()
     os.makedirs(args.folder, exist_ok=True)
     os.chdir(args.folder)
 
@@ -135,10 +137,13 @@ def _run_command(settings_at_start):
         dest="command", parser_class=argparse.ArgumentParser
     )
 
-    def add(name, run=None):
+    def add(name, run=None, parents=()):
         # A KeyError here means the command has no entry on the help screen.
         command = subparsers.add_parser(
-            name, help=DESCRIPTIONS[name], description=DESCRIPTIONS[name]
+            name,
+            help=DESCRIPTIONS[name],
+            description=DESCRIPTIONS[name],
+            parents=list(parents),
         )
         command.set_defaults(func=run)
         return command
@@ -208,15 +213,24 @@ def _run_command(settings_at_start):
             lambda args: sys.exit(
                 0
                 if (
-                    kubernetes_target.run_kubernetes_deploy(serve=args.serve)
+                    kubernetes_target.run_kubernetes_deploy(
+                        serve=args.serve,
+                        skip_auth=args.dangerous_skip_auth,
+                        auth_dir=args.auth_dir,
+                    )
                     if on_kubernetes(args)
                     else run_deploy(
-                        args.folders, serve=args.serve, verbose=args.verbose
+                        args.folders,
+                        serve=args.serve,
+                        verbose=args.verbose,
+                        skip_auth=args.dangerous_skip_auth,
+                        auth_dir=args.auth_dir,
                     )
                 )
                 is not None
                 else 1
             ),
+            parents=[auth_dir],
         )
     )
     deploy.add_argument(
@@ -244,6 +258,12 @@ def _run_command(settings_at_start):
         "--verbose",
         action="store_true",
         help="Stream the container's full build and deploy logs instead of a progress summary",
+    )
+    deploy.add_argument(
+        "--dangerous-skip-auth",
+        action="store_true",
+        help="Deploy without a key: the endpoint and the dashboard answer anyone who "
+        "reaches them, with no token. For a throwaway run only",
     )
 
     def this_machine_or_cluster(local, cluster):

@@ -5,15 +5,20 @@
 no terminal: the deploy's own output, the containers it started, status, logs and
 doctor."""
 
+import json
 import re
+from pathlib import Path
 
 from ..harness import (
     canyonos,
+    cli_value,
     dashboard_containers,
+    docker,
     docker_name,
     manifest,
     poll,
     project_containers,
+    project_redis,
     qualified,
 )
 
@@ -23,6 +28,8 @@ DASHBOARD = [
     "canyonos-dashboard-web",
 ]
 REPLICA_SUFFIX = "-[0-9a-f]{8}"
+TRUSTED_KEYS_KEY = "auth:trusted_keys"
+AUTH_ENV = ("CANYONOS_TRUSTED_KEYS", "CANYONOS_AUTH_DISABLED")
 
 
 def _whole_curl(url: str, body: str) -> str:
@@ -94,6 +101,45 @@ def test_containers_up(recorder, deployed):
     stopped = {name: state for name, state in containers.items() if state != "running"}
     assert not stopped, f"not running: {stopped}"
     assert dashboard_containers(recorder) == DASHBOARD
+
+
+def _published_keys(recorder, deployed) -> dict:
+    return json.loads(project_redis(recorder, deployed.dir).get(TRUSTED_KEYS_KEY))
+
+
+def test_the_global_controller_publishes_the_trusted_keys(recorder, deployed):
+    record = _published_keys(recorder, deployed)
+    trusted = cli_value(
+        recorder,
+        deployed.dir,
+        "trusted_keys(None)",
+        "from canyonos.auth import trusted_keys",
+    )
+
+    assert set(record) == {"keys", "disabled"}, record
+    assert record["disabled"] is False
+    assert trusted, "the deploy ran with no trusted key"
+    assert record["keys"] == trusted
+
+
+def test_only_the_global_controller_gets_the_public_keys(recorder, deployed):
+    keys = _published_keys(recorder, deployed)["keys"]
+    controller = f"{deployed.group}-global-controller"
+    auth_dir = str(Path.home() / ".canyonos" / "auth")
+
+    for name in project_containers(recorder, deployed.group):
+        inspected = docker(recorder, ["inspect", name]).json()[0]
+        env = dict(
+            item.partition("=")[::2] for item in inspected["Config"]["Env"] or []
+        )
+        sources = [mount.get("Source", "") for mount in inspected["Mounts"]]
+        assert not [k for k, v in env.items() if "PRIVATE KEY" in v], name
+        assert not [s for s in sources if s.startswith(auth_dir)], (name, sources)
+        if name == controller:
+            assert json.loads(env["CANYONOS_TRUSTED_KEYS"]) == keys
+            assert "CANYONOS_AUTH_DISABLED" not in env
+        else:
+            assert not [k for k in AUTH_ENV if k in env], name
 
 
 def test_status_json_counts_every_replica(recorder, deployed):

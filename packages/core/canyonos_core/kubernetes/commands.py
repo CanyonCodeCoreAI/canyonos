@@ -116,12 +116,14 @@ def _render_project(
     images,
     controller_image,
     env_secret,
+    auth,
     live_replicas,
     namespace=None,
 ):
     """The project's Kubernetes objects and warnings, from its config, checked by the
-    schema first. `namespace` overrides `kubernetes.namespace` (the namespace the
-    in-cluster build runs in)."""
+    schema first. `auth` is the trusted keys record its global controller gets.
+    `namespace` overrides `kubernetes.namespace` (the namespace the in-cluster build
+    runs in)."""
     import dataclasses
 
     from canyonos_core.kubernetes import manifests
@@ -143,6 +145,7 @@ def _render_project(
         images=images,
         controller_image=controller_image,
         env_secret=env_secret or None,
+        auth=auth,
         live_replicas=live_replicas,
     )
 
@@ -155,7 +158,9 @@ def _read_images(path):
 def _cmd_apply_project(args):
     """Render the project's objects and apply them in this pod's namespace, then delete
     the CanyonAgents of agents no longer in the config. The in-cluster build runs this
-    after pushing the images, with a Role the operator gives it."""
+    after pushing the images, with a Role the operator gives it, and the trusted keys
+    of its CanyonBuild in its environment, which the CanyonProject carries on."""
+    from canyonos_core.auth import trusted_keys_from_env
     from canyonos_core.kubernetes import manifests
 
     api = KubernetesApi.from_environment()
@@ -178,6 +183,7 @@ def _cmd_apply_project(args):
             _read_images(args.images),
             os.environ.get("CANYONOS_CORE_IMAGE", ""),
             args.env_secret,
+            trusted_keys_from_env(os.environ),
             live,
             namespace=api.namespace,
         )

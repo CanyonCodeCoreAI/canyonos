@@ -30,6 +30,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from canyonos import ui
+from canyonos.constants import project_root
 from canyonos.os_support import (
     make_private_dir,
     readable_by_others,
@@ -52,6 +53,11 @@ _PRIVATE_KEY_MARKER = b"PRIVATE KEY-----"
 # The dashboard API container runs as another user and bind-mounts trusted/.
 _PUBLIC_DIR_MODE = 0o755
 _PUBLIC_FILE_MODE = 0o644
+
+SKIP_AUTH_WARNING = (
+    "--dangerous-skip-auth: the endpoint and the dashboard will answer anyone who "
+    "reaches them, with no token. Use it only for a throwaway run."
+)
 
 _ROTATION = (
     "To rotate: make a new key (canyonos keys create --name <new_name>), delete the "
@@ -140,8 +146,24 @@ def load_public_key(path: Path) -> str:
     return _public_pem(key)
 
 
+def _named_keys(folder: Path, suffix: str) -> list[Path]:
+    """The files in `folder` ending in `suffix`, sorted, leaving out dotfiles such as
+    the `._default.pub` macOS writes beside a copy; raise RuntimeError naming a file
+    whose name cannot name a key."""
+    paths = sorted(
+        path for path in folder.glob(f"*{suffix}") if not path.name.startswith(".")
+    )
+    for path in paths:
+        if not _KEY_NAME.fullmatch(path.stem):
+            raise RuntimeError(
+                f"{path} cannot be a key: its name may use only the characters "
+                "[A-Za-z0-9._-]. Rename it, or move it out of the folder"
+            )
+    return paths
+
+
 def _trusted_files(auth_dir: Path | None) -> list[Path]:
-    return sorted(trusted_dir(auth_dir).glob("*.pub"))
+    return _named_keys(trusted_dir(auth_dir), ".pub")
 
 
 def trusted_keys(auth_dir: Path | None) -> list[str]:
@@ -165,8 +187,32 @@ def require_keys(auth_dir: Path | None) -> list[str]:
     return keys
 
 
+def refuse_keys_in_project(
+    auth_dir: Path | None, project_folders: list[str] | None = None
+) -> None:
+    """Raise RuntimeError naming both folders when the keys folder is inside one of
+    `project_folders`, by default the current folder's project, whose files go into
+    the image build and the Kubernetes upload."""
+    folder = _folder(auth_dir).resolve()
+    for root in project_folders or [project_root()]:
+        project = Path(root).resolve()
+        if folder.is_relative_to(project):
+            raise RuntimeError(
+                f"The keys folder {folder} is inside the project folder {project}, "
+                "so its private keys would be copied into the images and the "
+                "Kubernetes upload. Keep the keys outside the project and pass that "
+                "folder to --auth-dir"
+            )
+
+
 def _key_names(folder: Path) -> list[str]:
-    return [path.stem for path in sorted(folder.glob("*.key"))]
+    return [path.stem for path in _named_keys(folder, ".key")]
+
+
+def holds_a_key(auth_dir: Path | None) -> bool:
+    """True when `auth_dir` holds a private key or a trusted public key, so a first
+    run knows whether making the default pair would be its first key."""
+    return bool(_key_names(_folder(auth_dir)) or _trusted_files(auth_dir))
 
 
 def private_key_path(name: str | None, auth_dir: Path | None) -> Path:
@@ -274,13 +320,19 @@ def _audience(scope: str, projects: list[str], all_projects: bool) -> list[str]:
 
 
 def _project_id(value: str) -> str:
+    """`value` when it is a UUID in the form `canyonos deploy` writes `deployment_id`:
+    lowercase and hyphenated, since the endpoint compares `aud` with it as written."""
     try:
-        return str(uuid.UUID(value))
+        canonical = str(uuid.UUID(value))
     except ValueError:
+        canonical = None
+    if value != canonical:
         raise RuntimeError(
-            f"--project {value!r} is not a project ID: a project ID is a UUID, the "
-            "`deployment_id` in its deployment.yaml"
-        ) from None
+            f"--project {value!r} is not a project ID: a project ID is a lowercase, "
+            "hyphenated UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), the `deployment_id` "
+            "in its deployment.yaml"
+        )
+    return value
 
 
 def token_claims(

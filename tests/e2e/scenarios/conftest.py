@@ -6,7 +6,7 @@
 
 import pytest
 
-from ..harness import stage
+from ..harness import REPO_ROOT, stage, trust_a_key
 from ..projects import load_project
 
 FAILED_STEP_KEY = pytest.StashKey[str]()
@@ -39,6 +39,13 @@ def pytest_runtest_setup(item):
     failed = item.parent.stash.get(FAILED_STEP_KEY, None)
     if failed is not None:
         pytest.skip(f"{failed} failed, and this step starts from what it leaves")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def trusted_key(recorder):
+    """A key in the caller's HOME before any scenario deploys, as `deployed` makes
+    for the cases."""
+    trust_a_key(recorder, REPO_ROOT)
 
 
 @pytest.fixture

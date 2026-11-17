@@ -27,6 +27,7 @@ from canyonos_core.controller.controller_context import (
     _redis_connect_host,
     list_replicas,
 )
+from canyonos_core.auth import TRUSTED_KEYS_KEY, trusted_keys_from_env
 from canyonos_core.controller import governance, scaling
 from canyonos_core.controller.orchestrator import TARGET_ENV, orchestrator_for
 from canyonos_core.endpoint import (
@@ -439,6 +440,7 @@ class GlobalController(ControllerContext):
         # Overwrites any dashboard edits, except prompts: the dashboard API owns prompts:config.
         self._write_policies(*config_files)
         self._write_identity()
+        self._write_trusted_keys()
         # Without `api_port`, a reload keeps the port the endpoint's container already got,
         # and a deploy starts from the one it had last deploy, which the CLI passes in.
         published = read_endpoint_record(self.redis)
@@ -607,6 +609,28 @@ class GlobalController(ControllerContext):
             payload["project_id"],
             len(targets),
         )
+
+    def _write_trusted_keys(self):
+        """Publish the public keys this deploy trusts, and whether it turned token
+        verification off, to every machine's Redis, where the endpoint reads them."""
+        record = trusted_keys_from_env(os.environ)
+        payload = json.dumps(record)
+        targets = list(self.machine_redis.values()) or [self.redis]
+        for redis_client in targets:
+            redis_client.set(TRUSTED_KEYS_KEY, payload)
+
+        if record["disabled"]:
+            logger.warning(
+                "Token verification is off (--dangerous-skip-auth): the endpoint "
+                "answers anyone. Published to %d Redis instance(s).",
+                len(targets),
+            )
+        else:
+            logger.info(
+                "%d trusted key(s) published to %d Redis instance(s).",
+                len(record["keys"]),
+                len(targets),
+            )
 
     # The reconciler publishes the routing table; these keys are read-only here:
     # - self.redis.hgetall(self.ROUTING_ADDRESSES_KEY)

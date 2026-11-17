@@ -36,6 +36,12 @@ from rich.panel import Panel
 from rich.text import Text
 
 from canyonos import deployment, env, ui
+from canyonos.auth import (
+    SKIP_AUTH_WARNING,
+    gc_env,
+    refuse_keys_in_project,
+    require_keys,
+)
 from canyonos.constants import (
     DEFAULT_API_PORT,
     dashboard_port,
@@ -409,11 +415,24 @@ def run_deploy(
     serve=True,
     verbose=False,
     banner=True,
+    skip_auth=False,
+    auth_dir=None,
 ):
     """Deploy the projects in `folders` as one deployment, named after the folder this
-    runs from and configured by its `deployment.yaml`."""
+    runs from and configured by its `deployment.yaml`. The deploy hands the Global
+    Controller the public keys trusted in `auth_dir` and refuses to start without one,
+    or with the keys folder inside one of the projects, unless `skip_auth` turns token
+    verification off."""
     projects = deployment.projects(folders)
     config_path = deployment_config_path()
+    refuse_keys_in_project(
+        auth_dir, [project_folder(folder) for folder in projects.values()]
+    )
+    if skip_auth:
+        ui.warn(SKIP_AUTH_WARNING)
+        keys = []
+    else:
+        keys = require_keys(auth_dir)
     for folder in projects.values():
         _warn_unset_example_keys(folder)
     # Before the project check, which runs in the core image when core isn't installed.
@@ -445,7 +464,7 @@ def run_deploy(
         return None
     _warn_about_the_collector_image(config_path)
 
-    run_init(banner=banner)
+    run_init(banner=banner, auth_env=gc_env(keys, skip_auth))
     if serve and _existing_dashboard_port() is None:
         # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
         threading.Thread(

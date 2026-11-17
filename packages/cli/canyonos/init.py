@@ -340,11 +340,13 @@ def _run_container(
     api_port=None,
     max_attempts=50,
     reserved=frozenset(),
+    auth_env=(),
 ):
     """Start this deployment's Global Controller container, published on 127.0.0.1 at
     `port`, or at the next free port after it that isn't `reserved`, and tell it
     Redis's port, the `reserved` ports and, for an endpoint whose port isn't set, the
-    port it had last deploy."""
+    port it had last deploy. `auth_env` are the `docker run` options that hand it the
+    trusted keys."""
     if port in reserved:
         port = next_port(port, reserved)
     start_port = port
@@ -429,6 +431,7 @@ def _run_container(
             # Names and labels every container the GC launches with this deployment.
             "-e",
             f"{deployment.DOCKER_PROJECT_ENV}={deployment.deployment_name()}",
+            *auth_env,
         ]
         if host_private_ip:
             cmd.extend(["-e", f"CANYONOS_PRIVATE_IP={host_private_ip}"])
@@ -595,11 +598,11 @@ def redis_port_of(state):
     )
 
 
-def run_init(banner=True, image=GC_IMAGE):
+def run_init(banner=True, image=GC_IMAGE, auth_env=()):
     """Replace any existing Global Controller with a fresh container from `image` and
     save its ID and port for later commands; run at the start of `canyonos deploy`.
     The container is published on the last deploy's port or 8000, or the next free
-    port after it."""
+    port after it, and gets `auth_env`, the options that hand it the trusted keys."""
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
@@ -643,6 +646,7 @@ def run_init(banner=True, image=GC_IMAGE):
                 redis_port=redis_port,
                 api_port=last_api_port,
                 reserved=frozenset(claims),
+                auth_env=auth_env,
             )
         try:
             _save_state(container_id, port, docker_socket, redis_port, last_api_port)

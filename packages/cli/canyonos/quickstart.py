@@ -22,6 +22,7 @@ import urllib.request
 
 from canyonos import ui
 from canyonos.clean import run_clean
+from canyonos.auth import DEFAULT_KEY_NAME, holds_a_key, require_keys, run_keys_create
 from canyonos.constants import CANYON_DIR, project_config_path, project_folder
 from canyonos.dashboard_registration import (
     RegistrationError,
@@ -329,10 +330,21 @@ def _prepare_project(folder):
 
 
 def _deploy(folder):
-    """Run stage 4: deploy the starter's project from its deployment folder `folder`,
-    the current one, then check it and show the dashboard address. Returns True
-    when it is up and healthy."""
+    """Run stage 4: make the key pair on a machine with none, deploy the starter's
+    project from its deployment folder `folder`, the current one, then check it and
+    show the dashboard address. Returns True when it is up and healthy. A machine that
+    holds keys but trusts none gets `require_keys`'s message, rather than a new key
+    beside the ones it has."""
     _step(4)
+    if holds_a_key(None):
+        require_keys(None)
+    elif not _typed(
+        "canyonos keys create",
+        lambda: run_keys_create(DEFAULT_KEY_NAME, None),
+        "make the key pair that signs the tokens your workflow will accept",
+    ):
+        return False
+    ui.blank()
     name = os.path.basename(folder)
     deployed = _typed(
         f"canyonos deploy {name}",

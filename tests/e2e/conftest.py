@@ -41,6 +41,7 @@ from .harness import (
     sign_in,
     stage,
     stop_project,
+    trust_a_key,
 )
 from .projects import Project, list_projects, load_check, load_project
 
@@ -241,6 +242,7 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[De
     succeeded = False
     folder = project_dir(workspace)
     try:
+        trust_a_key(recorder, workspace)
         # From the project folder, naming the deployment's folder, as a user would.
         deploy = canyonos(
             recorder,

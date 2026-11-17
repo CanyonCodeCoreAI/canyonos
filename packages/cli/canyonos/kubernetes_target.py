@@ -34,6 +34,7 @@ from rich.table import Table
 from rich.text import Text
 
 from canyonos import env, ui
+from canyonos.auth import SKIP_AUTH_WARNING, refuse_keys_in_project, require_keys
 from canyonos.constants import (
     deployment_config_path,
     existing_config_path,
@@ -264,14 +265,18 @@ def source_tarball(project_dir=None):
     return buffer.getvalue()
 
 
-def canyon_build(name, namespace, project, config_rel, k8s, tag, image, env_secret):
+def canyon_build(
+    name, namespace, project, config_rel, k8s, tag, image, env_secret, auth
+):
     """The CanyonBuild asking the operator to build the project in the cluster and
-    apply it from its config."""
+    apply it from its config. `auth` (`{"trustedKeys": [...], "disabled": bool}`) is
+    copied unchanged into the project's CanyonProject: public keys only."""
     spec = {
         "project": project,
         "config": config_rel,
         "registry": k8s["registry"],
         "tag": tag,
+        "auth": auth,
     }
     if image:
         spec["image"] = image
@@ -395,10 +400,10 @@ def check_operator_version(namespace, name, status):
     )
 
 
-def build_in_cluster(config_path, namespace, project, k8s, env_secret):
-    """Build the project's images in the cluster and apply it there: create a
-    CanyonBuild, upload the project to its pod, wait until it succeeds. Returns
-    {agent: image by digest}."""
+def build_in_cluster(config_path, namespace, project, k8s, env_secret, auth):
+    """Build the project's images in the cluster and apply it there, trusting `auth`'s
+    keys: create a CanyonBuild, upload the project to its pod, wait until it
+    succeeds. Returns {agent: image by digest}."""
     tag = time.strftime("%Y%m%d-%H%M%S")
     # Random too: two deploys in the same second would otherwise share one build.
     suffix = f"-{tag}-{uuid.uuid4().hex[:4]}"
@@ -409,7 +414,7 @@ def build_in_cluster(config_path, namespace, project, k8s, env_secret):
     apply(
         [
             canyon_build(
-                name, namespace, project, config_rel, k8s, tag, image, env_secret
+                name, namespace, project, config_rel, k8s, tag, image, env_secret, auth
             )
         ]
     )
@@ -781,12 +786,26 @@ def _summary(namespace, project_obj, config, local_url=None, dashboard_url=None)
     )
 
 
-def run_kubernetes_deploy(config_path=None, timeout=READY_TIMEOUT_SECONDS, serve=False):
+def run_kubernetes_deploy(
+    config_path=None,
+    timeout=READY_TIMEOUT_SECONDS,
+    serve=False,
+    skip_auth=False,
+    auth_dir=None,
+):
     """Run `canyonos deploy --target kubernetes`: hand the project to the cluster, which
     builds its images and applies its objects from its config; this only uploads it,
     with its `.env` as a Secret. Then wait until every agent is ready, keep the
     endpoint (and with `serve`, the dashboard) on this machine, and show how to call
-    it."""
+    it. As on Docker, the project trusts the public keys in `auth_dir` and the deploy
+    refuses before reaching the cluster without one, unless `skip_auth` turns token
+    verification off."""
+    refuse_keys_in_project(auth_dir)
+    if skip_auth:
+        ui.warn(SKIP_AUTH_WARNING)
+        keys = []
+    else:
+        keys = require_keys(auth_dir)
     config_path = resolve_config(config_path)
     env_values = read_dotenv()
     config = load_config(config_path, env_values)
@@ -802,7 +821,12 @@ def run_kubernetes_deploy(config_path=None, timeout=READY_TIMEOUT_SECONDS, serve
     if env_values and not k8s.get("env_secret"):
         apply([dotenv_secret(namespace, env_secret, project, env_values)])
     images = build_in_cluster(
-        config_path, namespace, deployment_name(), k8s, env_secret
+        config_path,
+        namespace,
+        deployment_name(),
+        k8s,
+        env_secret,
+        {"trustedKeys": keys, "disabled": skip_auth},
     )
     ui.ok(f"Built {len(images)} image(s) in the cluster and applied the project")
     project_obj, agents = wait_until_ready(namespace, project, timeout=timeout)

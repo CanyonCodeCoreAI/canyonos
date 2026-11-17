@@ -636,6 +636,19 @@ def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str
     return _json.loads(output.strip().splitlines()[-1])
 
 
+def trust_a_key(recorder: Recorder, workspace: Path) -> None:
+    """Make the key pair `e2e` when the caller's `~/.canyonos/auth/trusted/` holds no
+    key, since `canyonos deploy` refuses without one. A key made here stays behind
+    under HOME, as the Redis password does (see `cli_env`)."""
+    if not cli_value(
+        recorder,
+        workspace,
+        "bool(trusted_keys(None))",
+        "from canyonos.auth import trusted_keys",
+    ):
+        canyonos(recorder, ["keys", "create", "--name", "e2e"], cwd=workspace)
+
+
 def deployment_group(recorder: Recorder, workspace: Path) -> str:
     """The Docker group of the deployment in `workspace`, `canyonos-<folder>-`
     and the start of its deployment_id, which every container name starts with."""

@@ -27,6 +27,10 @@
         "namespace": "acme"
       },
       "spec": {
+        "auth": {
+          "disabled": true,
+          "trustedKeys": []
+        },
         "configRef": "demo-project-config",
         "controllerImage": "registry.example.com/canyonos-core@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "displayName": "Demo_Project",
@@ -114,6 +118,12 @@
       },
       "spec": {
         "agentServiceAccountName": "agents",
+        "auth": {
+          "disabled": false,
+          "trustedKeys": [
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApT3YYS9qwqjlm4emNZxOEkoGZT1VGP/molRVHDKVI/o=\n-----END PUBLIC KEY-----\n"
+          ]
+        },
         "configRef": "demo-project-config",
         "controllerImage": "registry.example.com/canyonos-core@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "displayName": "Demo_Project",

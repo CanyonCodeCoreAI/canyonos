@@ -51,6 +51,24 @@ spec:
           spec:
             description: spec defines the build
             properties:
+              auth:
+                description: auth is copied unchanged into the CanyonProject the build
+                  applies.
+                properties:
+                  disabled:
+                    description: |-
+                      disabled turns token verification off, as `canyonos deploy
+                      --dangerous-skip-auth` asks: anyone who reaches the endpoint may call it.
+                    type: boolean
+                  trustedKeys:
+                    description: |-
+                      trustedKeys are the Ed25519 public keys, in PEM, that sign the tokens the
+                      endpoint accepts: the .pub files `canyonos deploy` trusts. Public halves only.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                type: object
               config:
                 description: config is the path of workflow_config.yaml in the upload.
                 minLength: 1

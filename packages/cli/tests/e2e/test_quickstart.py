@@ -31,6 +31,7 @@ import urllib.request
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
+import pexpect
 import pytest
 
 from canyonos.quickstart import _fetch
@@ -204,6 +205,8 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     # The dashboard is shared across every deployment on the machine, so this case
     # does not start one; `tests/e2e/scenarios/test_shared_dashboard.py` is where
     # it belongs.
+    keys = case.run_cli(["keys", "create"])
+    assert keys.returncode == 0, keys.stdout + keys.stderr
     # As the quickstart types it: from the deployment folder, naming its project.
     deployed = case.run_cli(
         ["deploy", STARTER, "--serve", "false"],
@@ -228,3 +231,74 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     assert not launched.exists()
     assert test.returncode == 0, test.stdout + test.stderr
     assert "greeting" in json.loads(test.stdout)["results"][0]["result"]
+
+
+needs_docker = pytest.mark.skipif(
+    not _docker_is_usable(DOCKER), reason="quickstart's first stage checks Docker"
+)
+
+# What stage 4 asks the user to type, by the phrase each command's prompt shows.
+KEY_STEP = "make the key pair that signs the tokens"
+DEPLOY_STEP = "deploy the workflow's project, building each agent's image"
+PROMPT = "canyonos-quickstart \\$"
+STARTER_MENU = "Select a workflow to get started"
+RESOURCES_MENU = "Set the upper limit on what its replicas can use"
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _quickstart_until_the_deploy(case: CliCase) -> tuple[str, int | None]:
+    """Run `canyonos quickstart` in a terminal, pressing enter at every prompt up to
+    the deploy's, where it stops with ctrl-c so nothing is deployed. Returns what
+    it showed, without colors, and its exit status."""
+    case.env.update(DOCKER)
+    terminal = case.spawn_cli(["quickstart"], timeout=120)
+    child = terminal.child
+    shown = []
+    at_the_deploy = False
+    while True:
+        index = child.expect(
+            [DEPLOY_STEP, PROMPT, STARTER_MENU, RESOURCES_MENU, pexpect.EOF]
+        )
+        shown.append(child.before + (child.after if index < 4 else ""))
+        if index == 4:
+            break
+        if index == 0:
+            at_the_deploy = True
+        elif at_the_deploy and index == 1:
+            child.send("\x03")
+        else:
+            child.send("\r")
+    child.close()
+    return " ".join(ANSI.sub("", "".join(shown)).split()), child.exitstatus
+
+
+@needs_docker
+def test_quickstart_makes_the_default_key_on_a_machine_with_none(cli_case: CliCase):
+    shown, _status = _quickstart_until_the_deploy(cli_case)
+
+    auth = cli_case.home / ".canyonos" / "auth"
+    assert "canyonos keys create" in shown
+    assert KEY_STEP in shown
+    assert shown.index(KEY_STEP) < shown.index(DEPLOY_STEP), shown
+    assert (auth / "default.key").is_file()
+    assert (auth / "trusted" / "default.pub").is_file()
+
+
+@needs_docker
+def test_quickstart_names_a_key_no_deploy_trusts_instead_of_making_one(
+    cli_case: CliCase,
+):
+    made = cli_case.run_cli(["keys", "create"])
+    assert made.returncode == 0, made.stdout + made.stderr
+    auth = cli_case.home / ".canyonos" / "auth"
+    (auth / "trusted" / "default.pub").unlink()
+
+    shown, status = _quickstart_until_the_deploy(cli_case)
+
+    assert status == 1, shown
+    assert "No key is trusted in" in shown
+    # The terminal folds the long path wherever the line ends.
+    assert str(auth / "trusted") in shown.replace(" ", "")
+    assert KEY_STEP not in shown
+    assert DEPLOY_STEP not in shown
+    assert sorted(path.name for path in auth.rglob("*")) == ["default.key", "trusted"]

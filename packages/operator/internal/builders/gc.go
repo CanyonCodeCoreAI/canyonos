@@ -171,6 +171,7 @@ func gcEnv(p *canyonosv1alpha1.CanyonProject, endpointURL, dashboardNamespace st
 			Name: "CANYONOS_DASHBOARD_OTLP_ENDPOINT", Value: DashboardOTLPEndpoint(dashboardNamespace),
 		})
 	}
+	env = append(env, authEnv(p.Spec.Auth)...)
 	return append(env, RedisEnv(p)...)
 }
 

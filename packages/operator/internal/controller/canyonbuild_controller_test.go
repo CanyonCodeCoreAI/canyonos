@@ -29,12 +29,15 @@ var _ = Describe("CanyonBuild controller", func() {
 	var counter int
 	reconciler := &CanyonBuildReconciler{}
 
-	newBuild := func() *canyonosv1alpha1.CanyonBuild {
+	newBuild := func(mutate func(*canyonosv1alpha1.CanyonBuild)) *canyonosv1alpha1.CanyonBuild {
 		build := &canyonosv1alpha1.CanyonBuild{
 			ObjectMeta: metav1.ObjectMeta{Name: testBuildName, Namespace: namespace},
 			Spec: canyonosv1alpha1.CanyonBuildSpec{
 				Project: testProjectName, Config: "config/workflow_config.yaml", Registry: "localhost:5001", Tag: "t1",
 			},
+		}
+		if mutate != nil {
+			mutate(build)
 		}
 		Expect(k8sClient.Create(ctx, build)).To(Succeed())
 		return build
@@ -59,19 +62,19 @@ var _ = Describe("CanyonBuild controller", func() {
 
 	It("reports the operator's CanyonOS release on the build, for the CLI to check", func() {
 		reconciler.Version = "0.1.739"
-		build := reconcileBuild(newBuild())
+		build := reconcileBuild(newBuild(nil))
 		Expect(build.Status.OperatorVersion).To(Equal("0.1.739"))
 	})
 
 	It("fails at once on a cluster with no builder", func() {
 		reconciler.BuilderAddress = ""
-		build := reconcileBuild(newBuild())
+		build := reconcileBuild(newBuild(nil))
 		Expect(build.Status.Phase).To(Equal(BuildFailed))
 		Expect(build.Status.Message).To(ContainSubstring("builder.enabled=true"))
 	})
 
 	It("runs the build as a Job with its own identity, pushing to the alias", func() {
-		build := reconcileBuild(newBuild())
+		build := reconcileBuild(newBuild(nil))
 		Expect(build.Status.Phase).To(Equal(BuildPending))
 
 		for _, obj := range []client.Object{&batchv1.Job{}, &corev1.ServiceAccount{}, &rbacv1.Role{}, &rbacv1.RoleBinding{}} {
@@ -82,6 +85,38 @@ var _ = Describe("CanyonBuild controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testBuildName}, job)).To(Succeed())
 		Expect(job.Spec.Template.Spec.Containers[1].Command[2]).To(ContainSubstring("--push-registry 'kind-registry:5000'"))
 		Expect(job.Spec.Template.Spec.Containers[1].Image).To(Equal(testControllerImage))
+	})
+
+	buildEnv := func() map[string]string {
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testBuildName}, job)).To(Succeed())
+		return envOf(job.Spec.Template.Spec.Containers[1])
+	}
+
+	It("hands the build the trusted keys, for the project it applies", func() {
+		reconcileBuild(newBuild(func(b *canyonosv1alpha1.CanyonBuild) {
+			b.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{testTrustedKeyA, testTrustedKeyB}}
+		}))
+
+		env := buildEnv()
+		Expect(env).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyA, testTrustedKeyB)))
+		Expect(env).NotTo(HaveKey(envAuthDisabled))
+	})
+
+	It("tells the build verification is off when the deploy skipped it", func() {
+		reconcileBuild(newBuild(func(b *canyonosv1alpha1.CanyonBuild) {
+			b.Spec.Auth = &canyonosv1alpha1.AuthSpec{Disabled: true}
+		}))
+
+		Expect(buildEnv()).To(HaveKeyWithValue(envAuthDisabled, "true"))
+	})
+
+	It("gives a build with no spec.auth neither variable", func() {
+		reconcileBuild(newBuild(nil))
+
+		env := buildEnv()
+		Expect(env).NotTo(HaveKey(envTrustedKeys))
+		Expect(env).NotTo(HaveKey(envAuthDisabled))
 	})
 
 	// receivingPod is a build pod waiting for the upload, as the Job controller (absent
@@ -112,7 +147,7 @@ var _ = Describe("CanyonBuild controller", func() {
 	}
 
 	It("never takes the pod of an earlier build of the same name for its own", func() {
-		build := reconcileBuild(newBuild())
+		build := reconcileBuild(newBuild(nil))
 		receivingPod(testBuildName+"-old00", "an-earlier-job")
 
 		build = reconcileBuild(build)
@@ -126,7 +161,7 @@ var _ = Describe("CanyonBuild controller", func() {
 	})
 
 	It("says when to upload, then reports the pushed images", func() {
-		build := reconcileBuild(newBuild())
+		build := reconcileBuild(newBuild(nil))
 		pod := receivingPod(testBuildName+"-abcde", buildJob().UID)
 		build = reconcileBuild(build)
 		Expect(build.Status.Phase).To(Equal(BuildReceiving))
