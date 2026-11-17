@@ -11,6 +11,7 @@ definitions.
 """
 
 import ast
+import hashlib
 import os
 import platform
 import re
@@ -36,14 +37,8 @@ TESTED_MAJOR_VERSIONS = {
     "redis": 8,
 }
 
-# The LLM gateway runs from its own Python 3.12 venv (mitmproxy 12 needs it), so these exact pins never meet the app's.
-# These requirements are not pinned to a specific version because LLM-gateway is completely managed by CanyonOS, with no user code interacting with the internals
-GATEWAY_REQUIREMENTS = [
-    "flask==3.1.3",
-    "requests==2.34.2",
-    "redis==8.1.0",
-    "mitmproxy==12.2.3",
-]
+# Published as <image>:py3.<minor>-<first 12 hex of the sha256 of agent_base/Dockerfile>.
+AGENT_BASE_IMAGE = "ghcr.io/canyoncodecoreai/canyonos-agent-base"
 
 # Only images whose app can import boto3 can call Bedrock, so only they get the gateway's Bedrock route.
 GATEWAY_BEDROCK_REQUIREMENT = "boto3==1.43.91"
@@ -55,11 +50,11 @@ PROTOBUF_FLOOR = Requirement(
 )
 
 # Mounted only in the build steps that run it, so agent images never carry uv.
-UV_IMAGE = "ghcr.io/astral-sh/uv:latest"
+UV_IMAGE = "ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85"
 
 # A .python-version picks a 3.<minor> in this range, and a project without one gets
-# the newest. The newest is the top of the `python` job's matrix in
-# .github/workflows/e2e.yml; bump the two together.
+# the newest. The range is the `python` matrix of .github/workflows/e2e.yml and
+# .github/workflows/agent-base.yml; bump the three together.
 OLDEST_IMAGE_PYTHON_MINOR = 10
 NEWEST_IMAGE_PYTHON_MINOR = 15
 DEFAULT_IMAGE_PYTHON_VERSION = f"3.{NEWEST_IMAGE_PYTHON_MINOR}"
@@ -709,7 +704,7 @@ def too_new_requirements(requirements):
 
 
 def _dockerfile_install_steps(overrides, requirements):
-    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested, plus the LLM gateway's own separate packages."""
+    """Writes the Dockerfile steps that install the agent's packages, capped at the versions CanyonOS has tested."""
     forced = " ".join(f"'{override}'" for override in overrides)
     asked_newer = {
         Requirement(requirement).name.lower()
@@ -720,18 +715,12 @@ def _dockerfile_install_steps(overrides, requirements):
         for name, major in TESTED_MAJOR_VERSIONS.items()
         if name not in asked_newer
     )
-    # The gateway's packages go before the app's, so every agent image on a machine shares that layer.
-    # The Python uv fetches for the gateway goes under /opt, not /root, so an agent run
-    # as another user (Kubernetes' restricted profile, OpenShift) can start it too.
-    return f"""ENV UV_COMPILE_BYTECODE=1 UV_PYTHON_INSTALL_DIR=/opt/canyonos-python
-RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv venv --python 3.12 /opt/canyonos-gateway \\
- && uv pip install --python /opt/canyonos-gateway/bin/python {" ".join(GATEWAY_REQUIREMENTS)}
-COPY requirements.txt .
+    return f"""COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv printf '%s\\n' {forced} > /tmp/overrides.txt \\
  && printf '%s\\n' {caps} > /tmp/tested.txt \\
- && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt
-RUN --mount=from={UV_IMAGE},source=/uv,target=/bin/uv uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app."
-RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv,target=/bin/uv if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
+ && uv pip install --system -r requirements.txt --overrides /tmp/overrides.txt -c /tmp/tested.txt \\
+ && (uv pip check --system || echo "NOTE: CanyonOS forces {forced}; an incompatibility above naming one of those is a bound it could not share with the app.") \\
+ && if python -c "import boto3" 2>/dev/null; then uv pip install --python /opt/canyonos-gateway/bin/python {GATEWAY_BEDROCK_REQUIREMENT}; fi
 """
 
 
@@ -842,8 +831,11 @@ def generate_docker(
                 f"Python 3.{OLDEST_IMAGE_PYTHON_MINOR} to 3.{NEWEST_IMAGE_PYTHON_MINOR}, "
                 "written like 3.12 or 3.12.4."
             )
-    dockerfile = f"""# syntax=docker/dockerfile:1
-FROM python:{python_version}-slim
+        # Base images exist per minor, so a patch version is ignored.
+        python_version = f"3.{match[1]}"
+    with open(os.path.join(script_dir, "agent_base", "Dockerfile"), "rb") as f:
+        base_hash = hashlib.sha256(f.read()).hexdigest()[:12]
+    dockerfile = f"""FROM {AGENT_BASE_IMAGE}:py{python_version}-{base_hash}
 
 WORKDIR /app
 

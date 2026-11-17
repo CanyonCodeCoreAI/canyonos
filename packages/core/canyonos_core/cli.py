@@ -100,7 +100,12 @@ def _write_bake_file(bake_targets, bake_file_path, platform, push_to=None):
                 "dockerfile": "Dockerfile",
                 "tags": tags(target),
                 "platforms": [platform],
-                "output": ["type=docker" if push_to is None else "type=registry"],
+                # Uncompressed: these images stay in this Docker, and EC2 transfers compress their own stream.
+                "output": [
+                    "type=docker,compression=uncompressed"
+                    if push_to is None
+                    else "type=registry"
+                ],
                 # type=docker could be changed to tarring it up, which would be
                 # faster but skipped because that change would alter canyonos deploy
             }

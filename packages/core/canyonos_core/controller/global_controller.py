@@ -867,7 +867,7 @@ class GlobalController(ControllerContext):
     #  Startup health check                                               #
     # ------------------------------------------------------------------ #
 
-    def _wait_for_healthy(self, timeout=CONTROLLER_READY_TIMEOUT_SECONDS, interval=2):
+    def _wait_for_healthy(self, timeout=CONTROLLER_READY_TIMEOUT_SECONDS, interval=0.5):
         """
         Block until all controllers report healthy in Redis, or fail the deploy.
 

@@ -32,7 +32,7 @@ Pieces that live elsewhere:
 | `controller/gateway_headers.py`                         | Adds the future and function headers in the agent's process      |
 | `controller/governance.py`                              | `model_for`, the spend rule's model switch                       |
 | `reconciler/providers/shared_utils/llm_gateway_env.py`  | The environment that routes the container's calls to the gateway |
-| `stub_generator.py` (`GATEWAY_REQUIREMENTS`)            | The gateway's own venv in each agent image                       |
+| `agent_base/Dockerfile`                                 | The gateway's own venv, in the base of every agent image         |
 | `controller/utils/otel_writer.py`                       | Prices calls for the dashboard with `pricing.py`                 |
 
 ## Where it runs
@@ -63,7 +63,7 @@ Pieces that live elsewhere:
   for `/healthz`. The endpoint's Local Controller starts no gateway.
 - The gateway has its own venv, `/opt/canyonos-gateway`, with pinned Flask, requests,
   redis and mitmproxy, plus boto3 when the agent's image has it
-  (`GATEWAY_REQUIREMENTS` in `stub_generator.py`). The agent's own environment gets no
+  (`agent_base/Dockerfile`). The agent's own environment gets no
   extra CanyonOS dependencies. Outside an image, it runs on the Local Controller's
   Python.
 - Every call it supports goes through it, with no fallback to a direct call. If the
@@ -283,7 +283,7 @@ What the gateway reads from its environment:
 - The end-to-end projects with model calls, and the governance scenario, exercise the
   gateway; see [Testing](../contributing/TESTING.md#end-to-end-tests).
 - The gateway runs in its own venv, so a new dependency goes into
-  `GATEWAY_REQUIREMENTS`, not the agent's requirements.
+  `agent_base/Dockerfile`, not the agent's requirements.
 - A new provider needs an entry in `build_registry`, its LLM paths in
   `hooks.LLM_PATHS` (for the proxy and `gateway_headers`), its hosts in `LLM_HOSTS`, and
   a usage parser in `Hooks._extract_usage`.

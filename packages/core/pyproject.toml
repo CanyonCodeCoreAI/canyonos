@@ -39,6 +39,7 @@ include = ["canyonos_core*"]
 
 [tool.setuptools.package-data]
 canyonos_core = [
+    "agent_base/Dockerfile",
     "controller/proto/*.proto",
     "llm_gateway/llm_prices.json",
 ]

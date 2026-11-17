@@ -437,7 +437,7 @@ def _wait_until_reachable(address, timeout):
             with socket.create_connection((host, int(port)), timeout=2):
                 return True
         except OSError:
-            time.sleep(2)
+            time.sleep(0.5)
     raise TimeoutError(f"Replica address never became reachable at {address}.")
 
 

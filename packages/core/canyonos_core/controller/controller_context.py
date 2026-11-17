@@ -48,7 +48,7 @@ def _is_local_host(host):
 
 def ssh_args(config, host, user=None):
     """Return the `ssh ... target` prefix that reaches a remote host with the key
-    `config` names."""
+    `config` names, reusing one connection per host until a minute after its last use."""
     ssh_key_path = os.path.expanduser(
         config.get("ssh_private_key_path", DEFAULT_SSH_KEY_PATH)
     )
@@ -64,6 +64,12 @@ def ssh_args(config, host, user=None):
         "ServerAliveInterval=10",
         "-o",
         "ServerAliveCountMax=3",
+        "-o",
+        "ControlMaster=auto",
+        "-o",
+        "ControlPath=/tmp/canyonos-ssh-%C",
+        "-o",
+        "ControlPersist=60",
         "-i",
         ssh_key_path,
         f"{user}@{host}" if user else host,

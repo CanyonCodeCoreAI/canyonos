@@ -16,12 +16,17 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+      start_period: 30s
+      start_interval: 500ms
 
   api:
     image: ${CANYONOS_API_IMAGE}
     container_name: canyonos-dashboard-api
     # Bun as PID 1 ignores SIGTERM, so without an init `docker compose stop` waits 10s to kill it.
     init: true
+    healthcheck:
+      start_period: 30s
+      start_interval: 500ms
     depends_on:
       db:
         condition: service_healthy
@@ -47,6 +52,9 @@ services:
   web:
     image: ${CANYONOS_WEB_IMAGE}
     container_name: canyonos-dashboard-web
+    healthcheck:
+      start_period: 30s
+      start_interval: 500ms
     depends_on:
       api:
         condition: service_healthy

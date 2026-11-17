@@ -28,7 +28,8 @@ has no single root that serves both.
 
 Agent images run Python 3.15 by default. For an earlier one, add a
 `.python-version` file with that version, such as `3.12`, to the workflow root.
-`uv init` writes one. CanyonOS tests 3.10 to 3.15.
+`uv init` writes one. CanyonOS tests 3.10 to 3.15. A patch version is ignored:
+`3.12.4` runs on the same 3.12 as `3.12`.
 
 ## What gets installed
 

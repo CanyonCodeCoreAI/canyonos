@@ -362,16 +362,17 @@ def wait_for_machine(machine):
     # The control plane reaches the machine over the private IP; the public IP is only recorded.
     private_host = described["PrivateIpAddress"]
     user = _controller.config.get(_section_name(), {}).get("ssh_user", DEFAULT_SSH_USER)
-    for _ in range(20):
+    deadline = time.time() + 120
+    while True:
         result = _controller._run_cmd(["true"], private_host, user=user)
         if result.returncode == 0:
             break
-        time.sleep(2)
-    else:
-        raise TimeoutError(
-            f"SSH never became ready on {user}@{private_host}: "
-            f"{(result.stderr or '').strip()}"
-        )
+        if time.time() >= deadline:
+            raise TimeoutError(
+                f"SSH never became ready on {user}@{private_host}: "
+                f"{(result.stderr or '').strip()}"
+            )
+        time.sleep(0.5)
     return {
         "private_host": private_host,
         "public_host": described["PublicIpAddress"],

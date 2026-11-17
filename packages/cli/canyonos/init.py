@@ -256,7 +256,7 @@ def _pull_image(image=GC_IMAGE):
         )
 
 
-def _port_reachable(port, attempts=10, delay=0.5):
+def _port_reachable(port, attempts=50, delay=0.1):
     """
     A successful `docker run` only means Docker accepted the port binding --
     not that traffic actually flows. Confirm the container is actually reachable before trusting it.
