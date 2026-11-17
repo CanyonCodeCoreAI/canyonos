@@ -73,6 +73,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
+      scenarios: ${{ steps.list.outputs.scenarios }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -85,7 +86,9 @@ jobs:
       - id: list
         env:
           PROJECTS: ${{ inputs.projects || 'pr' }}
-        run: echo "matrix=$(uv run --frozen python tests/e2e/projects.py $PROJECTS)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "matrix=$(uv run --frozen python tests/e2e/projects.py $PROJECTS)" >> "$GITHUB_OUTPUT"
+          echo "scenarios=$(cd tests/e2e/scenarios && basename -s .py test_*.py | jq -nRc '[inputs]')" >> "$GITHUB_OUTPUT"
 
   project:
     needs: projects
@@ -222,12 +225,17 @@ jobs:
   scenarios:
     # The same rule as `projects`. A run by hand with project names runs only those
     # projects; `pr`, `release` or nothing runs the scenarios too.
+    needs: projects
     if: >-
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name != 'workflow_dispatch' || contains(fromJson('["", "pr", "release"]'), inputs.projects))
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJson(needs.projects.outputs.scenarios) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -259,24 +267,25 @@ jobs:
           tags: canyonos-web:ci
           cache-from: type=gha,scope=canyonos-web
 
-      - name: Run the scenarios
+      - name: Run ${{ matrix.scenario }}
         env:
           CANYONOS_CORE_IMAGE: canyonos-core:ci
           CANYONOS_WEB_IMAGE: canyonos-web:ci
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           BEDROCK_SWITCH_MODEL_ID: ${{ vars.BEDROCK_SWITCH_MODEL_ID || 'meta.llama3-8b-instruct-v1:0' }}
-          ARTIFACTS: ${{ runner.temp }}/e2e/scenarios
+          SCENARIO: ${{ matrix.scenario }}
+          ARTIFACTS: ${{ runner.temp }}/e2e/scenarios-${{ matrix.scenario }}
         run: |
           mkdir -p "$ARTIFACTS"
-          timeout -s INT 85m uv run --frozen pytest tests/e2e/scenarios \
+          timeout -s INT 85m uv run --frozen pytest "tests/e2e/scenarios/$SCENARIO.py" \
             --artifacts-dir="$ARTIFACTS" --junitxml="$ARTIFACTS/junit.xml" \
             -o junit_family=xunit2 -p no:cacheprovider -v
 
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-scenarios
+          name: e2e-scenarios-${{ matrix.scenario }}
           path: ${{ runner.temp }}/e2e
           retention-days: 14
 
@@ -302,7 +311,7 @@ jobs:
         env:
           TITLE: "E2E: ${{ github.sha }}, run ${{ github.run_number }}"
           PROJECTS: ${{ join(fromJson(needs.projects.outputs.matrix || '[]'), ' ') }}
-          SCENARIOS: ${{ needs.scenarios.result != 'skipped' && 'scenarios' || '' }}
+          SCENARIOS: ${{ needs.scenarios.result != 'skipped' && format('scenarios-{0}', join(fromJson(needs.projects.outputs.scenarios || '[]'), ' scenarios-')) || '' }}
         run: |
           mkdir -p artifacts
           # shellcheck disable=SC2086

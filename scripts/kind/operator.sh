@@ -92,7 +92,7 @@ log "Image canyonos-operator:dev"
 # Only Kubernetes runs the operator, so canyonos:dev leaves it out. Quiet unless the
 # build fails; then the end of its own output says why.
 out="$(mktemp)"
-if ! docker build --progress=plain -f "${REPO}/packages/operator/Dockerfile" \
+if ! docker buildx build --load --progress=plain -f "${REPO}/packages/operator/Dockerfile" \
     -t canyonos-operator:dev "${REPO}/packages/operator" > "${out}" 2>&1; then
   tail -60 "${out}" >&2
   rm -f "${out}"
