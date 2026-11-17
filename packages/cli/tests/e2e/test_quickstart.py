@@ -10,7 +10,8 @@ bundling bug that keeps the files and breaks the workflow -- a truncated copy, a
 skip rule that drops a config file, an entrypoint that no longer resolves once the
 `.tmpl` suffix comes off. Only a deploy of what was written catches those, so this
 case runs the stage a first-time user reaches with no key: copy, deploy, ask, read
-the greeting back.
+the greeting back, ask again through `canyonos test`, and never launch a coding
+agent.
 
 Unlike the rest of this suite it owns the shared Docker names, ports and daemon,
 so it tears the deploy down whether or not it passed.
@@ -184,9 +185,21 @@ def _answer(endpoint: str, query: str) -> dict:
 
 @needs_a_runtime
 def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
-    """What a first run reaches: the copy out of the package deploys, and the
-    endpoint it publishes answers with the agent's greeting."""
+    """What a first run reaches: the copy out of the package deploys, the endpoint
+    it publishes and `canyonos test` both answer with the agent's greeting, and no
+    coding agent is launched."""
     case, folder = deployed_workflow
+    bin_dir = case.root / "bin"
+    bin_dir.mkdir()
+    launched = case.root / "agent-was-launched"
+    for name in ("claude", "codex"):
+        agent = bin_dir / name
+        agent.write_text(f"#!/bin/sh\ntouch '{launched}'\n")
+        agent.chmod(0o755)
+    runtime = {
+        **_runtime_environment(),
+        "PATH": f"{bin_dir}{os.pathsep}{case.env['PATH']}",
+    }
 
     # The dashboard is shared across every deployment on the machine, so this case
     # does not start one; `tests/e2e/scenarios/test_shared_dashboard.py` is where
@@ -195,7 +208,7 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     deployed = case.run_cli(
         ["deploy", STARTER, "--serve", "false"],
         timeout=DEPLOY_TIMEOUT,
-        env=_runtime_environment(),
+        env=runtime,
         cwd=folder,
     )
 
@@ -208,3 +221,10 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     answered = _answer(endpoint.group(), "CanyonOS")
     assert answered.get("status") == "done", answered
     assert "greeting" in answered.get("result", {}), answered
+
+    test = case.run_cli(
+        ["test", "--json"], timeout=REQUEST_TIMEOUT, env=runtime, cwd=folder
+    )
+    assert not launched.exists()
+    assert test.returncode == 0, test.stdout + test.stderr
+    assert "greeting" in json.loads(test.stdout)["results"][0]["result"]

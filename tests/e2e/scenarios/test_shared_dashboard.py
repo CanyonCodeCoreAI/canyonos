@@ -3,7 +3,8 @@
 
 """Two projects side by side on one machine with the shared dashboard: helloworld and
 portfolio deploy at the same time, each on its own ports, and the dashboard lists
-both and reads each one's Redis. Each Redis takes only its own project's password, and
+both. helloworld's endpoint and Redis containers publish the ports it pins, and the
+dashboard reads each one's Redis. Each Redis takes only its own project's password, and
 no container's command shows one. helloworld's deployment.yaml has no `otel:` block,
 so its traces reach the dashboard by the default destination; portfolio keeps its
 own. `canyonos test` in another deployment folder named helloworld, with nothing
@@ -15,7 +16,8 @@ metrics in its own Redis, and is told the running dashboard ignores its
 recreating the api, a redeploy keeps the dashboard and the project's id, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
 refuses a taken `dashboard_port`, a deploy pinned to a taken `api_port` stops before
-anything starts, and with 8080 held and no dashboard up, the endpoint and the
+anything starts, a dashboard starting with a deploy takes its `dashboard_port` while
+8000-8003 are held, and with 8080 held and no dashboard up, the endpoint and the
 dashboard starting with it end up on different ports. The cases are steps on one
 fleet: once one fails, the rest are skipped."""
 
@@ -24,9 +26,8 @@ import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -37,11 +38,13 @@ from ..harness import (
     canyonos,
     cli_value,
     dashboard_containers,
+    dashboard_port,
     deployed_endpoint,
     deployed_project_id,
     deployment_group,
     docker,
     docker_name,
+    greets,
     manifest,
     poll,
     project_containers,
@@ -53,6 +56,7 @@ from ..harness import (
     sign_in,
     stage,
     stop_project,
+    traces,
 )
 from ..fleet import redis_reply
 from ..projects import load_project
@@ -65,7 +69,6 @@ DASHBOARD_CONTAINERS = [
     f"{DASHBOARD_GROUP}-{service}" for service in ("api", "db", "web")
 ]
 DASHBOARD_API = f"{DASHBOARD_GROUP}-api"
-DASHBOARD_WEB = f"{DASHBOARD_GROUP}-web"
 DEPLOY_TIMEOUT = 1800
 HELLOWORLD_API_PORT = 8082
 HELLOWORLD_REDIS_PORT = 6380
@@ -112,12 +115,6 @@ def _api_container(recorder) -> str:
     return docker(
         recorder, ["inspect", "-f", "{{.Id}} {{.State.StartedAt}}", DASHBOARD_API]
     ).output.strip()
-
-
-def _dashboard_port(recorder) -> int:
-    """The host port the running dashboard's web container is published on."""
-    published = docker(recorder, ["port", DASHBOARD_WEB, "8080/tcp"]).output
-    return int(published.split()[0].rsplit(":", 1)[1])
 
 
 def _port_of(url: str) -> int:
@@ -223,29 +220,12 @@ def _redis_password_file(recorder, directory: Path) -> tuple[str, int]:
     return path.read_text(), path.stat().st_mode & 0o777
 
 
-def _greets(recorder, directory: Path, name: str, greeting: str = "Hello"):
-    endpoint = deployed_endpoint(recorder, directory)
-    _, result = result_of(recorder, endpoint, name, timeout=60)
-    assert result == {"greeting": f"{greeting}, {name}! I'm the HelloAgent!"}, result
-    return endpoint
-
-
-def _traces(api: Api, project_id: str) -> list[dict]:
-    now = datetime.now(timezone.utc)
-    window = urlencode(
-        {
-            "from": (now - timedelta(hours=1)).isoformat(),
-            "to": (now + timedelta(minutes=5)).isoformat(),
-        }
-    )
-    path = f"/projects/{project_id}/monitoring/traces?{window}"
-    return api.get(path).json()["traces"]
-
-
 @contextmanager
 def _held(port: int):
     """Keep `port` taken on every interface, as another program on the machine would."""
     holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Binds past a TIME_WAIT a just-stopped Global Controller left on the port.
+    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     holder.bind(("", port))
     holder.listen()
     try:
@@ -333,6 +313,18 @@ def test_each_project_has_its_own_group_and_one_dashboard(recorder, fleet):
     assert dashboard_containers(recorder) == DASHBOARD_CONTAINERS
 
 
+def test_pinned_ports_are_the_published_host_ports(recorder, fleet):
+    containers = project_containers(recorder, fleet.groups["helloworld"])
+    for suffix, port in (
+        (r"-endpoint-[0-9a-f]{8}", HELLOWORLD_API_PORT),
+        ("-redis-localhost", HELLOWORLD_REDIS_PORT),
+    ):
+        named = [name for name in containers if re.search(f"{suffix}$", name)]
+        assert len(named) == 1, (suffix, containers)
+        published = docker(recorder, ["port", named[0]]).output.splitlines()
+        assert {int(line.rsplit(":", 1)[1]) for line in published} == {port}, published
+
+
 def test_dashboard_reads_each_projects_own_redis(recorder, fleet):
     for name in PROJECTS:
         _reads_own_redis(recorder, fleet, name)
@@ -390,10 +382,9 @@ def test_helloworld_without_an_otel_block_sends_traces_to_the_dashboard(
     assert result == {"greeting": "Hello, no-otel! I'm the HelloAgent!"}, result
 
     def helloworld_trace():
-        traces = _traces(fleet.api, fleet.ids["helloworld"])
         return [
             trace
-            for trace in traces
+            for trace in traces(fleet.api, fleet.ids["helloworld"])
             if trace["trace_id"] == request_id
             and any(span["name"] == HELLO_CALL for span in trace["spans"])
         ]
@@ -414,7 +405,7 @@ def test_test_in_another_folder_of_the_same_name_refuses(recorder, fleet):
     assert call.json()["error"].startswith(
         "No deployment is running from this folder."
     ), call.stdout
-    _greets(recorder, fleet.dirs["helloworld"], "still-here")
+    greets(recorder, fleet.dirs["helloworld"], "still-here")
 
 
 def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
@@ -463,9 +454,9 @@ def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fle
         assert api_port != taken_api, api_port
         own_redis = redis_port(recorder, directory)
         assert own_redis != redis_port(recorder, portfolio), own_redis
-        assert _dashboard_port(recorder) != DASHBOARD_PORT
+        assert dashboard_port(recorder) != DASHBOARD_PORT
         _reads_own_redis(recorder, fleet, "helloworld")
-        _greets(recorder, directory, "moved")
+        greets(recorder, directory, "moved")
         container = f"{fleet.groups['helloworld']}-redis-localhost"
 
         def metrics_stored():
@@ -567,6 +558,23 @@ def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
     assert not dashboard_containers(recorder), dashboard_containers(recorder)
 
 
+def test_a_starting_dashboard_takes_its_dashboard_port(recorder, fleet):
+    directory = fleet.dirs["helloworld"]
+    _edit_settings(
+        directory,
+        lambda text: re.sub(
+            r"^dashboard_port:.*$", "dashboard_port: 8301", text, flags=re.M
+        ),
+    )
+    try:
+        with _held(8000), _held(8001), _held(8002), _held(8003):
+            _deploy(recorder, directory, "helloworld")
+        assert dashboard_port(recorder) == 8301
+    finally:
+        stop = stop_project(recorder, directory)
+    assert stop is None or stop.code == 0, stop.output
+
+
 def test_endpoint_and_a_starting_dashboard_get_their_own_ports(recorder, fleet):
     directory = fleet.dirs["helloworld"]
     _edit_settings(
@@ -579,11 +587,11 @@ def test_endpoint_and_a_starting_dashboard_get_their_own_ports(recorder, fleet):
         with _held(8080):
             _deploy(recorder, directory, "helloworld")
         api_port = _port_of(deployed_endpoint(recorder, directory).url)
-        dashboard_port = _dashboard_port(recorder)
-        assert 8080 not in (api_port, dashboard_port), (api_port, dashboard_port)
-        assert api_port != dashboard_port, api_port
+        web_port = dashboard_port(recorder)
+        assert 8080 not in (api_port, web_port), (api_port, web_port)
+        assert api_port != web_port, api_port
         assert dashboard_containers(recorder) == DASHBOARD_CONTAINERS
-        _greets(recorder, directory, "own-port")
+        greets(recorder, directory, "own-port")
     finally:
         stop = stop_project(recorder, directory)
     assert stop is None or stop.code == 0, stop.output

@@ -3,9 +3,10 @@
 
 """The dashboard API shows the deployed project's query as it ran: the calls it
 made, on which replicas, with their tokens and cost, and the
-project's figures agree with each other over this run. Telemetry reaches Postgres
-through the Global Controller and the OTLP exporter, each polling every few
-seconds, so data cases poll. Every ranged read covers this run only."""
+project's figures agree with each other over this run. The dashboard page loads from
+its own port, and its `/api` proxy gives the same trace as the API. Telemetry
+reaches Postgres through the Global Controller and the OTLP exporter, each polling
+every few seconds, so data cases poll. Every ranged read covers this run only."""
 
 import re
 from collections import Counter
@@ -16,7 +17,15 @@ import pytest
 import yaml
 
 from ..fleet import routed_replicas, store
-from ..harness import CallFailed, manifest, poll, project_root, qualified
+from ..harness import (
+    CallFailed,
+    dashboard_port,
+    http,
+    manifest,
+    poll,
+    project_root,
+    qualified,
+)
 
 DATA_TIMEOUT = 90
 # Read when pytest collects the cases, before the deploy, so every request this run
@@ -129,6 +138,20 @@ def test_request_trace_names_each_call(deployed, query_result):
     assert item["status"] == "completed", item
     assert item["block_count"] == len(body["blocks"]), item
     assert item["failed_block_count"] == 0, item
+
+
+def test_the_dashboard_page_and_its_api_proxy_serve_the_trace(
+    recorder, deployed, query_result
+):
+    web = f"http://127.0.0.1:{dashboard_port(recorder)}"
+    page = http(recorder, "GET", f"{web}/")
+    assert page.code == 200 and "<html" in page.output.lower(), page.output[:2000]
+    direct = _trace(deployed, query_result.request_id)
+    path = _project_path(deployed, f"/requests/{query_result.request_id}")
+    url = f"{web}/api{path}?{_window()}"
+    proxied = http(recorder, "GET", url, headers=deployed.api.headers).json()
+    labels = Counter(block["label"] for block in direct["blocks"])
+    assert Counter(block["label"] for block in proxied["blocks"]) == labels, proxied
 
 
 @pytest.mark.trait("llm")

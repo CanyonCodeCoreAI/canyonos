@@ -6,15 +6,17 @@ This file provides guidance to AI coding agents when working with code in this r
 
 A Bun + Turborepo workspace (TypeScript) and a uv workspace (Python) in one repo.
 
-| Path            | What it is                                                             | Language                 |
-| --------------- | ---------------------------------------------------------------------- | ------------------------ |
-| `packages/core` | Runtime: controllers, LLM gateway, policy, telemetry (`canyonos_core`) | Python                   |
-| `packages/cli`  | The `canyonos` command line                                            | Python                   |
-| `packages/api`  | Dashboard API                                                          | TypeScript (Bun)         |
-| `packages/web`  | Dashboard frontend                                                     | TypeScript (React, Vite) |
-| `packages/ui`   | Shared React components for `web`                                      | TypeScript (React)       |
-| `examples/`     | Sample workflows to deploy with `canyonos deploy`                      | Python                   |
-| `tests/`        | Cross-package E2E tests                                                | Python                   |
+| Path                     | What it is                                                             | Language                 |
+| ------------------------ | ---------------------------------------------------------------------- | ------------------------ |
+| `packages/core`          | Runtime: controllers, LLM gateway, policy, telemetry (`canyonos_core`) | Python                   |
+| `packages/cli`           | The `canyonos` command line                                            | Python                   |
+| `packages/api`           | Dashboard API                                                          | TypeScript (Bun)         |
+| `packages/web`           | Dashboard frontend                                                     | TypeScript (React, Vite) |
+| `packages/ui`            | Shared React components for `web`                                      | TypeScript (React)       |
+| `packages/operator`      | Kubernetes operator that runs projects in a cluster                    | Go                       |
+| `packages/cli-usage-api` | Receives CLI usage reports and `canyonos feedback`                     | TypeScript (Bun)         |
+| `examples/`              | Sample workflows to deploy with `canyonos deploy`                      | Python                   |
+| `tests/`                 | Cross-package E2E tests                                                | Python                   |
 
 How each part works is in [docs/architecture/](docs/architecture/README.md).
 
@@ -30,6 +32,7 @@ bun run format           # fix formatting (Ruff, Prettier)
 bun run canyonos:dev     # shell with the CLI and images built from this checkout
 uv run canyonos <cmd>    # run the checkout's CLI from anywhere in the workspace
 
+bun run cli:test:e2e     # CLI end-to-end tests (packages/cli/tests/e2e)
 bun run api:test:e2e     # API end-to-end tests
 bun run ui:test:e2e      # dashboard Playwright tests
 uv run pytest tests/e2e/cases --project=<name>   # deploy one project and run the E2E cases

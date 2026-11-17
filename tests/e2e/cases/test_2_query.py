@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Queries through the deployed endpoint: the test query gives a result the
-project's own check accepts, through the REST API and through `canyonos test`,
-which sends its default query when given none in a deployment folder; a
-finished request stays readable after cleanup; a bad body and an unknown request
-are refused; a plain hex string is not taken for a Future on projects that take
-any text; and a failing agent is named in the error."""
+"""Queries through the deployed endpoint: a queued query answers 202, and the test
+query gives a result the project's own check accepts, through the REST API and
+through `canyonos test`, which sends its default query when given none in a
+deployment folder; on projects that call no model, twenty queries in a row all
+finish; a finished request stays readable after cleanup; a bad body and an unknown
+request are refused; a plain hex string is not taken for a Future on projects that
+take any text; and a failing agent is named in the error."""
 
 import json
 import uuid
@@ -21,6 +22,7 @@ from ..harness import (
     poll,
     project_redis,
     project_root,
+    result_of,
     submit,
 )
 
@@ -81,6 +83,19 @@ def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, 
     assert report["results"][0]["query"] == query, report
     problems = _problems(check, report["results"][0]["result"], query=query)
     assert not problems, problems
+
+
+@pytest.mark.trait("quick")
+def test_twenty_queries_in_a_row_all_finish(recorder, deployed, check):
+    if "llm" in deployed.project.traits:
+        pytest.skip("the AWS account's model rate limit can't take 20 queries in a row")
+    timeout = deployed.project.timeout
+    for _ in range(20):
+        request_id, result = result_of(
+            recorder, deployed.endpoint, deployed.query, timeout=timeout
+        )
+        problems = _problems(check, result, query=deployed.query, request_id=request_id)
+        assert not problems, problems
 
 
 def test_status_answers_after_cleanup(recorder, deployed, query_result):

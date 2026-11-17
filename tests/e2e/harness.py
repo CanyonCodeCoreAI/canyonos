@@ -21,7 +21,9 @@ import subprocess
 import termios
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 
 import redis
 import requests
@@ -29,6 +31,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_URL = "http://127.0.0.1:3000"
+DASHBOARD_WEB = "canyonos-dashboard-web"
 OUTPUT_LIMIT = 20_000
 KILL_GRACE = 10
 TERMINAL_SIZE = (40, 120)
@@ -425,6 +428,19 @@ class Api:
         return self.request("DELETE", path, **kwargs)
 
 
+def traces(api: Api, project_id: str) -> list[dict]:
+    """The project's traces from the last hour, as the dashboard API lists them."""
+    now = datetime.now(timezone.utc)
+    window = urlencode(
+        {
+            "from": (now - timedelta(hours=1)).isoformat(),
+            "to": (now + timedelta(minutes=5)).isoformat(),
+        }
+    )
+    path = f"/projects/{project_id}/monitoring/traces?{window}"
+    return api.get(path).json()["traces"]
+
+
 def sign_in(recorder: Recorder, base_url: str) -> str | None:
     """Register the E2E account, or log in once registration is closed, and
     return the bearer token. Return None when the API runs with sign-in off
@@ -717,9 +733,10 @@ def deployed_endpoint(recorder: Recorder, workspace: Path) -> Endpoint:
 
 def submit(recorder: Recorder, endpoint: Endpoint, query) -> str:
     """POST `query` to the endpoint as its first argument and return its request
-    id."""
+    id; fail unless the endpoint answers 202, its answer for a queued request."""
     url = f"{endpoint.url}/{endpoint.route}"
     call = http(recorder, "POST", url, json={endpoint.argument: query})
+    assert call.code == 202, call.output
     return call.json()["request_id"]
 
 
@@ -762,6 +779,14 @@ def result_of(recorder: Recorder, endpoint: Endpoint, query, *, timeout):
     return request_id, status["result"]
 
 
+def greets(recorder: Recorder, workspace: Path, name: str) -> None:
+    """Send `name` to the endpoint deployed from `workspace` and fail unless
+    helloworld's HelloAgent greets it."""
+    endpoint = deployed_endpoint(recorder, workspace)
+    _, result = result_of(recorder, endpoint, name, timeout=60)
+    assert result == {"greeting": f"Hello, {name}! I'm the HelloAgent!"}, result
+
+
 def project_containers(
     recorder: Recorder, group: str, *, every=False
 ) -> dict[str, str]:
@@ -779,3 +804,9 @@ def dashboard_containers(recorder: Recorder, *, every=False) -> list[str]:
     label = "label=com.docker.compose.project=canyonos-dashboard"
     args = ["ps", *(["-a"] if every else []), "--filter", label]
     return sorted(docker(recorder, [*args, "--format", "{{.Names}}"]).output.split())
+
+
+def dashboard_port(recorder: Recorder) -> int:
+    """The host port the running dashboard's web container is published on."""
+    published = docker(recorder, ["port", DASHBOARD_WEB, "8080/tcp"]).output
+    return int(published.split()[0].rsplit(":", 1)[1])
