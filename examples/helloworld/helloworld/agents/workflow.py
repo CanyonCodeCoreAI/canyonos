@@ -5,8 +5,10 @@
 # An agent that calls HelloAgent; the endpoint serves its `main` method.
 #
 # After `canyonos deploy helloworld` in examples/helloworld:
-#   curl -X POST http://localhost:8080/helloworld/Workflow/main -H 'Content-Type: application/json' -d '{"query": "World"}'
-#   curl http://localhost:8080/status/<request_id>
+#   TOKEN=$(canyonos token create --scope query --project <deployment_id>)
+#   curl -X POST http://localhost:8080/helloworld/Workflow/main -H "Authorization: Bearer $TOKEN" \
+#        -H 'Content-Type: application/json' -d '{"query": "World"}'
+#   curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/status/<request_id>
 
 from agents.hello_agent import HelloAgent
 

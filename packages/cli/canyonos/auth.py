@@ -437,9 +437,10 @@ def _grants(claims: dict) -> str:
         ),
         "read": "read the dashboard API (every GET), for every project it shows",
         "write": (
-            "change things through the dashboard API (POST, PUT, PATCH, DELETE), and "
+            "change things through the dashboard API (POST, PUT, DELETE), and "
             "read what it can change: project detail, scaling, governance and prompts; "
-            "the project list, requests, logs and metrics need a read token"
+            "every other GET (project list, stats, requests, logs, metrics, "
+            "monitoring, resources) needs a read token"
         ),
     }[claims["scope"]]
 

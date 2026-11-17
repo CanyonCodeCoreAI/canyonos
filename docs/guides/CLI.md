@@ -10,6 +10,7 @@ holds `deployment.yaml`; run the others from there. A typical session:
 
 ```bash
 canyonos doctor                       # can this machine deploy?
+canyonos keys create                  # once per machine: the key that signs your tokens
 canyonos deploy my-project --folder my-deployment   # build the images, start the workflow, open the dashboard
 cd my-deployment
 canyonos test "hello"                 # send one query end to end
@@ -57,6 +58,12 @@ canyonos stop                         # take the deploy down, keeping its images
   from inside a project folder.
 - `deploy --serve false` doesn't open the dashboard. On Docker, `-v` streams the full
   build and deploy logs instead of a progress summary.
+- `deploy` and `serve` refuse to start without a key in `~/.canyonos/auth/trusted/`.
+  `--dangerous-skip-auth` skips that and turns token checks off, for a throwaway run;
+  on Kubernetes the cluster dashboard keeps its chart's setting. See
+  [Tokens and keys](AUTHORIZATION.md#skip-it-for-a-throwaway-run).
+- `test` signs a new query token with your private key for each request it sends,
+  valid for a minute; `--key NAME` picks the key when you have more than one.
 - `test "your query"` sends that query to every route. Without one, each route gets its
   project's `config/test_query.txt`, else `hello`.
 - `test` queries every route of the deployment running from this folder. It never
@@ -76,6 +83,40 @@ canyonos stop                         # take the deploy down, keeping its images
   the config; code changes need `deploy`. `sync` and `config` change a deploy on Docker
   only; on Kubernetes, run `deploy` again. See
   [Configure your workflow](CONFIGURE.md#apply-a-change) for which command applies what.
+
+## Keys and tokens
+
+```bash
+canyonos keys create                                         # the pair that signs
+canyonos token create --scope query --project <deployment_id>   # query a deployment
+canyonos token create --scope read                           # read the dashboard API
+```
+
+| Command        | What it does                                                             |
+| -------------- | ------------------------------------------------------------------------ |
+| `keys create`  | Make a key pair: a private key that signs, and its public half, trusted  |
+| `keys list`    | Show the public keys deploys and the dashboard trust, with each key's ID |
+| `keys trust`   | Trust a public key made elsewhere, such as a teammate's                  |
+| `token create` | Sign a token and show it once, with what it grants and how to send it    |
+
+- `keys create --name NAME` names the pair (default `default`), from the characters
+  `[A-Za-z0-9._-]`, not starting with a dot.
+- `token create --scope query|read|write`: `query` for a workflow's endpoint, `read`
+  and `write` for the dashboard API.
+- `token create --project ID` names a deployment a query token may query, by the
+  `deployment_id` in its `deployment.yaml`, and repeats for more; `--all-projects`
+  covers every deployment.
+- `token create --ttl SECONDS` makes the token expire (default: never), and `--key NAME`
+  picks the private key to sign with when there is more than one.
+- `token create` writes the token alone to stdout and the rest to stderr, so
+  `$(canyonos token create ...)` is the token.
+- `--auth-dir PATH` uses another folder of keys than `~/.canyonos/auth`, on every
+  `keys`, `token`, `deploy`, `serve` and `test` command. `deploy` refuses a
+  folder inside a project it deploys, and `serve` one inside the project it runs in,
+  since a project's files go into its images.
+
+What each token reaches, where the keys live and how to rotate them is in
+[Tokens and keys](AUTHORIZATION.md).
 
 ## Stop and clean up
 
@@ -103,7 +144,8 @@ canyonos stop --all            # every deployment on this machine
 - `stop --all` stops every deployment on this machine, even one whose folder is deleted.
 - `clean --all` removes everything CanyonOS put on this machine, for before you
   uninstall: every deployment, the dashboard and its data, CanyonOS's images and
-  `~/.canyonos`. It asks first; `-y` skips the question.
+  `~/.canyonos`, the keys that sign your tokens included. It asks first; `-y` skips
+  the question.
 - `--all` and deployment names act on this machine's Docker only, so they are refused
   with `--target kubernetes`. On Kubernetes, `stop` and `clean` act on this folder's
   workflow in the cluster; see [Kubernetes deployment](KUBERNETES.md).

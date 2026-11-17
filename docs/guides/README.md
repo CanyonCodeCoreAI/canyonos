@@ -23,6 +23,8 @@
   CanyonOS operator.
 - [Dashboard](DASHBOARD.md): how to open the local dashboard, find a run, and read each
   page.
+- [Tokens and keys](AUTHORIZATION.md): the keys that sign tokens, the tokens the
+  endpoint and the dashboard API take, and how to rotate them.
 
 ## Reference
 

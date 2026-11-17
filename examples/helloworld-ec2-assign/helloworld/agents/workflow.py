@@ -6,8 +6,10 @@
 #
 # After `canyonos deploy helloworld` in examples/helloworld-ec2-assign (8080 unless it
 # was taken; the deploy prints the port):
-#   curl -X POST http://localhost:8080/helloworld/Workflow/main -H 'Content-Type: application/json' -d '{"query": "World"}'
-#   curl http://localhost:8080/status/<request_id>
+#   TOKEN=$(canyonos token create --scope query --project <deployment_id>)
+#   curl -X POST http://localhost:8080/helloworld/Workflow/main -H "Authorization: Bearer $TOKEN" \
+#        -H 'Content-Type: application/json' -d '{"query": "World"}'
+#   curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/status/<request_id>
 
 from agents.hello_agent import HelloAgent
 

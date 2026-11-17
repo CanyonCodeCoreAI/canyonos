@@ -48,6 +48,7 @@ With CanyonOS [installed](INSTALLATION.md), run these:
 ```bash
 mkdir my-app && cd my-app
 canyonos new-app                                # writes a starter workflow with two small agents
+canyonos keys create                            # makes the key pair that signs your tokens, once per machine
 cd ..
 canyonos deploy my-app --folder my-deployment   # runs it
 ```

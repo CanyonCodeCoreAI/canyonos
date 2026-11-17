@@ -11,10 +11,12 @@
 # ReviewAgent to another model once its spend passes a threshold.
 #
 # After `canyonos deploy pr_review` in examples/pr_review:
+#   TOKEN=$(canyonos token create --scope query --project <deployment_id>)
 #   curl -X POST http://localhost:8080/pr_review/Workflow/review \
+#        -H "Authorization: Bearer $TOKEN" \
 #        -H 'Content-Type: application/json' \
 #        -d '{"pr": {"title": "Add retry", "diff": "+def retry(): ..."}}'
-#   curl http://localhost:8080/status/<request_id>
+#   curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/status/<request_id>
 
 import json
 

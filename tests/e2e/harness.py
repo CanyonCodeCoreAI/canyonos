@@ -434,8 +434,9 @@ class Api:
     """The dashboard API with an API token for each kind of request: the read token
     on a GET or HEAD and the write token on any other method. The read token reads
     every GET; the write token also reads what it can change (project detail,
-    scaling, governance, prompts), but never the project list, requests, logs or
-    metrics. With token verification off there are no tokens, and nothing is sent."""
+    scaling, governance, prompts), and every other GET (project list, stats,
+    requests, logs, metrics, monitoring, resources) needs a read token. With token
+    verification off there are no tokens, and nothing is sent."""
 
     def __init__(
         self, recorder: Recorder, base_url: str, tokens: dict[str, str] | None

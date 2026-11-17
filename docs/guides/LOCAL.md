@@ -49,14 +49,19 @@ It makes the deployment folder and its `deployment.yaml` when there are none. Ru
 other commands, a redeploy included, from the deployment folder:
 `cd my-deployment && canyonos deploy ../my-project`.
 
+It needs a key, made once per machine with `canyonos keys create`; without one it stops
+before it builds anything and prints that command. See
+[Tokens and keys](AUTHORIZATION.md).
+
 1. It checks each project: it warns about keys in `.env.example` that `.env` leaves
    missing or empty, and stops on any problem `canyonos validate` finds.
 2. It shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
    **2. Configure an agent** to change them first.
 3. It builds an image per agent and starts the Global Controller, Redis, the agents'
    replicas, the endpoint and, if it isn't running yet, the [dashboard](DASHBOARD.md).
-4. At **Deploy is live** it prints the dashboard address and `curl` commands to send a
-   request and get its result. [Endpoint](RUNTIME_CONTRACT.md#endpoint) covers the
+4. At **Deploy is live** it prints the dashboard address, `curl` commands to send a
+   request and get its result, and the `canyonos token create` command that makes the
+   token they send. [Endpoint](RUNTIME_CONTRACT.md#endpoint) covers the
    requests it takes.
 
 | If                                                  | What happens                                                                                                 |

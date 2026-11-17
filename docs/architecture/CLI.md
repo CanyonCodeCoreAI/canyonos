@@ -27,12 +27,13 @@ The Global Controller talks to the host's Docker engine, so the Redis, replica a
 ## What a deploy does
 
 1. CLI: checks Docker and each project, writes `deployment.yaml` and its `deployment_id` when missing, then picks the ports.
-2. CLI: replaces the last Global Controller container with a fresh one.
+   Before any of that touches Docker, it refuses to go on with no key in `~/.canyonos/auth/trusted`, unless `--dangerous-skip-auth` is given. See [Tokens and keys](../guides/AUTHORIZATION.md).
+2. CLI: replaces the last Global Controller container with a fresh one, handing it the trusted public keys in `CANYONOS_TRUSTED_KEYS` (and `CANYONOS_AUTH_DISABLED=true` when skipped). Private keys never leave this machine.
 3. CLI: copies `deployment.yaml` and each project into its `/workspace` and calls `POST /deploy`.
 4. Global Controller: builds the agent images, starts Redis and the agent containers, and publishes the endpoint record.
 5. CLI: follows the container's log until the workflow is up, then reads `GET /endpoint` for the summary.
 
-On Kubernetes, the CLI instead creates a `CanyonBuild`, uploads the project to its build pod and waits for the agents to be ready. See [Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder deployments yet.
+On Kubernetes, the CLI instead creates a `CanyonBuild` carrying the public keys in `spec.auth`, uploads the project to its build pod and waits for the agents to be ready. See [Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder deployments yet.
 
 ## Talking to the Global Controller
 
@@ -54,6 +55,8 @@ Two things do not go over HTTP:
 - The deployment is copied with `docker cp`, so it is a copy, not a live mount. Edits reach the container on the next `canyonos sync` or `deploy`.
 - The deploy log is read with `docker logs -f`.
 
+`canyonos test` skips the Global Controller for its query: it calls the workflow endpoint directly, with a short-lived query token it signs and never prints.
+
 ## Code
 
 Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` command as `cli:main`.
@@ -62,6 +65,7 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | --- | --- |
 | `cli.py`, `utils/` | The parser, `--target` routing, the help screen, the arrow-key menus |
 | `canyonos/gc.py` | Every request to the Global Controller |
+| `canyonos/auth.py` | `keys` and `token`, the key check of `deploy`, `serve` and `test`, and the keys handed to the Global Controller |
 | `canyonos/init.py`, `deploy.py`, `sync.py`, `test.py`, `verify.py` | Starting the container, deploying, syncing, testing |
 | `canyonos/stop.py`, `clean.py`, `selection.py` | Stopping and cleaning; choosing which deployments they act on |
 | `canyonos/logs.py`, `status.py`, `doctor.py` | Reading logs, status and checks |
@@ -86,6 +90,8 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `~/.canyonos/deployments/<deployment>/sync-manifest.json` | What the last sync copied |
 | `~/.canyonos/deployments/<deployment>/redis_password` | The deployment's Redis password |
 | `~/.canyonos/deployments/<folder>/convert.log` | Output of an unattended `convert`, named after the folder it ran in |
+| `~/.canyonos/auth/<name>.key` | A private key that signs tokens (`0600`, folder `0700`); it never leaves this machine |
+| `~/.canyonos/auth/trusted/<name>.pub` | The public keys `deploy` and `serve` trust; the dashboard API mounts this folder read-only |
 | `~/.canyonos/ports.lock` | Lock for picking ports |
 | `~/.canyonos/dashboard/` | The dashboard stack: `.env`, `.lock`, `ports.json`, `stack.json`, `logs/serve-<time>.log` |
 | `~/.canyonos/forwards/<name>.json` | One background port-forward each |
@@ -93,7 +99,7 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `~/.canyonos/usage/` | The usage choice and the events waiting to be sent |
 | `~/.canyonos/supported-versions.json` | Cached supported CLI versions |
 
-`clean --all` deletes all of `~/.canyonos`. The CLI also edits `deployment.yaml` (`deployment_id`, `target`) and each project's workflow config (agent resources), keeping comments and key order.
+`clean --all` deletes all of `~/.canyonos`, keys included; its confirmation says so. `--auth-dir` on `keys`, `token`, `deploy`, `serve` and `test` points at another keys folder, which may not sit inside a project. The CLI also edits `deployment.yaml` (`deployment_id`, `target`) and each project's workflow config (agent resources), keeping comments and key order.
 
 ## Developer overrides
 

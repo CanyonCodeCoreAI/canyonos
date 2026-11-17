@@ -58,6 +58,15 @@ CLI and the Global Controller use the same rule. Any other name is not run and r
    force-deleted so the StatefulSet can replace it. A database pod never is, since the
    node may still be writing its disk.
 
+`spec.auth` says who may call the endpoint: `trustedKeys`, the Ed25519 public keys in
+PEM that sign its tokens, and `disabled`, which `--dangerous-skip-auth` sets. The CLI
+writes the deploying machine's trusted keys into the CanyonBuild's `spec.auth`, the
+build's `apply-project` copies it into the CanyonProject unchanged, and the operator
+hands it to the Global Controller as `CANYONOS_TRUSTED_KEYS` and, when `disabled`,
+`CANYONOS_AUTH_DISABLED=true` (see [Endpoint](ENDPOINT.md#tokens)). Private keys never
+reach the cluster. A CanyonProject without `spec.auth` gets neither variable, so its
+endpoint refuses every token.
+
 The operator never adopts an object it did not create. Pods that sign in to Redis carry
 the login Secret's version, so a rotated password restarts them.
 
@@ -88,6 +97,14 @@ at least once a minute in case Redis lost it. For the full schema, see
 - **Dashboard:** with `--dashboard-namespace`, the operator keeps one Secret there,
   `canyonos-dashboard-projects`, listing each project whose Redis is ready and how to
   sign in to it.
+- **Dashboard keys:** the same reconciler writes the ConfigMap
+  `canyonos-dashboard-trusted-keys`, which the dashboard's API mounts as its
+  `AUTH_TRUSTED_KEYS_DIR`: every `spec.auth.trustedKeys` key of each project whose Redis
+  is ready, one `<namespace>_<project>_<n>.pub` entry per key. A key that is not one
+  Ed25519 public key is left out and logged. The API reads its keys only when it starts,
+  so the entries' sha256 in the `canyonos.canyoncode.ai/trusted-keys` pod annotation of
+  `canyonos-dashboard-api` rolls it on a change. The chart's `dashboard.dangerousSkipAuth`
+  sets `AUTH_DISABLED` on the API.
 - **Deletion:** the finalizer `canyonos.canyoncode.ai/teardown` holds a CanyonAgent or
   CanyonProject until it is taken down in order. An agent is unrouted, then its
   StatefulSet is deleted and its pods drain. A project deletes its endpoint and agents,

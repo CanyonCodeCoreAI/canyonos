@@ -72,15 +72,25 @@ The last three pages change a workflow while it runs:
 
 ## Who can open it
 
-The dashboard that `canyonos deploy` and `canyonos serve` start has no sign-in, and the
-CLI has no setting to add one. Anyone who can reach its port, or the dashboard API on
-port `3000`, can read and change every deployment on it. Both listen on every interface,
-so keep them closed to anyone you don't trust.
+The dashboard asks for API tokens before it shows anything: a read token, a write token,
+or both. Make them on the machine that runs the dashboard:
+
+```bash
+canyonos token create --scope read     # shows every page
+canyonos token create --scope write    # changes prompts, scaling and governance
+```
+
+What each token reaches, and how to rotate the key that signs them, is in
+[Tokens and keys](AUTHORIZATION.md). Its API, on port `3000`, takes the same tokens from
+scripts. The API reads the trusted keys when it starts, so after a change to
+`~/.canyonos/auth/trusted/`, run `canyonos serve` to restart it. `canyonos serve
+--dangerous-skip-auth` starts it with no token checked, so that anyone who reaches its
+port can read and change every deployment on it. Both ports listen on every interface.
 
 The dashboard API also keeps each deployment's Redis password, encrypted with
 `REDIS_PASSWORD_ENCRYPTION_KEY`, and won't start without that key (32 characters or
-more). `canyonos serve` makes the key, and the secret the API signs sign-in tokens
-with, once, and keeps them in `~/.canyonos/dashboard/.env`.
+more). `canyonos serve` makes the key once and keeps it in
+`~/.canyonos/dashboard/.env`.
 
 ## Keep metrics longer
 

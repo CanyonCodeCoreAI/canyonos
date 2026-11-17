@@ -183,6 +183,7 @@ Kubernetes deploys don't support multi-folder deployments yet.
 
 ```bash
 canyonos validate                         # check the layout and the workflow config
+canyonos keys create                      # once per machine: the key pair that signs your tokens
 cd ..
 canyonos deploy my-workflow --folder my-deployment   # deploy from a folder of its own and keep it running
 cd my-deployment
@@ -192,10 +193,14 @@ canyonos test "your query"                # send one request
 `canyonos deploy` writes `deployment.yaml` in `my-deployment` when there is none. It
 first shows each agent's CPU, memory, GPU and replicas. Choose
 **1. Deploy**, or **2. Configure an agent** to change them first. What it deploys with,
-defaults included, is saved in the workflow config. When it's up, send a request:
+defaults included, is saved in the workflow config. When it's up, send a request with
+a query token, made with the `deployment_id` the deploy wrote into `deployment.yaml` (see
+[Tokens and keys](AUTHORIZATION.md)):
 
 ```bash
+TOKEN=$(canyonos token create --scope query --project <deployment_id>)
 curl -X POST http://127.0.0.1:8080/my-workflow/Workflow/main \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "your query"}'
 ```
@@ -203,7 +208,7 @@ curl -X POST http://127.0.0.1:8080/my-workflow/Workflow/main \
 It answers with a `request_id`. Get the result with:
 
 ```bash
-curl http://127.0.0.1:8080/status/<request_id>
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/status/<request_id>
 ```
 
 ### Watch it on the dashboard

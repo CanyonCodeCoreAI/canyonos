@@ -34,8 +34,11 @@ needs `OPENAI_API_KEY`. Without the
 `CANYONOS_*_IMAGE` variables the run builds the core, api and web images itself.
 
 The CLI runs with your HOME, so a run writes to your `~/.canyonos` like any
-`canyonos` command: it has no other setting for that folder. `CANYONOS_USAGE_URL`
-is set to `off`, so a run never sends usage events.
+`canyonos` command: it has no other setting for that folder. Keys are the exception:
+each run makes its own keys folder in a temp directory and passes it as `--auth-dir`
+to every `keys`, `token`, `deploy`, `serve` and `test` command, so it never reads or
+writes `~/.canyonos/auth`, and the key of the token vectors is trusted only there.
+`CANYONOS_USAGE_URL` is set to `off`, so a run never sends usage events.
 
 With `--artifacts-dir`, the run writes `collected.json`, `junit.xml`, `calls.jsonl`
 and `traces/` there. `python3 tests/e2e/report.py <dir> report.md --title <title>

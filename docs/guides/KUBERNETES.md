@@ -156,9 +156,11 @@ canyonos logs        # the Global Controller's logs (or: HelloAgent, HelloAgent-
 canyonos doctor      # check the cluster, the operator and the deployed workflow
 ```
 
-`canyonos deploy` prints the endpoint's URL and the `curl` commands to call it. Every
-command uses the workflow's `target`; `--target` overrides it for one run (see the
-[CLI reference](CLI.md#where-it-runs)).
+`canyonos deploy` needs a key, as on Docker: run `canyonos keys create` once on the
+machine you deploy from (see [Tokens and keys](AUTHORIZATION.md)). It prints the
+endpoint's URL, the `curl` commands to call it, and the `canyonos token create` command
+that makes the token they send. Every command uses the workflow's `target`; `--target`
+overrides it for one run (see the [CLI reference](CLI.md#where-it-runs)).
 
 ### What a deploy does
 
@@ -166,12 +168,14 @@ The CLI needs no Docker for this. `canyonos deploy`:
 
 1. Creates the namespace if it's missing, labeled as made by CanyonOS.
 2. Turns `.env` into a Secret in the namespace, unless `env_secret` names your own.
-3. Asks the operator for a build (a CanyonBuild) and uploads the workflow root to the
-   build's pod through a port-forward. `.env` and every other `.env*` file, `.git`,
+3. Asks the operator for a build (a CanyonBuild), with the public keys in
+   `~/.canyonos/auth/trusted/`, and uploads the workflow root to the build's pod
+   through a port-forward. `.env` and every other `.env*` file, `.git`,
    `.venv`, `node_modules` and `__pycache__` are never uploaded.
 4. The build builds each agent's image on the cluster's builder, pushes it by digest,
-   and applies the workflow's objects from the workflow config. A redeploy of unchanged
-   code restarts nothing.
+   and applies the workflow's objects from the workflow config, its CanyonProject
+   carrying those keys in `spec.auth.trustedKeys`. A redeploy of unchanged code
+   restarts nothing.
 5. Waits until the operator reports the workflow and every agent ready, then forwards
    the endpoint to this machine and opens the dashboard.
 
@@ -206,6 +210,9 @@ The commands take the same options as on Docker, with these differences:
 - `deploy -v` has no effect.
 - `canyonos sync`, and changes saved in `canyonos config`, don't reach the cluster. Run
   `canyonos deploy` again after any change.
+- `deploy --dangerous-skip-auth` turns token checks off for the endpoint only. The
+  cluster dashboard keeps its chart's `dashboard.dangerousSkipAuth`, and
+  `serve --dangerous-skip-auth` only skips the check that this machine has a key.
 
 ## Configuration
 
@@ -309,9 +316,17 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
   next free port; a `dashboard_port` you set is never moved. `canyonos stop` closes it
   with the last workflow forwarded from this machine.
 - **Who can open it:** only someone allowed to port-forward into `canyonos-dashboard`;
-  nothing is exposed outside the cluster. Unlike the local dashboard, it always asks you
-  to sign in (`AUTH_MODE=password`), because every workflow's Global Controller may
-  reach its API. The first account made is its only one: registration closes after it.
+  nothing is exposed outside the cluster. As the local dashboard does, it asks for a
+  read token, a write token or both (see
+  [Tokens and keys](AUTHORIZATION.md#send-a-token)), signed by a key that one of its
+  workflows trusts. One API token covers every workflow on the cluster; tokens per
+  workflow are not there yet.
+- **Which keys it trusts:** the operator writes every key in the `spec.auth.trustedKeys`
+  of each workflow it lists into the ConfigMap `canyonos-dashboard-trusted-keys`, one
+  `<namespace>_<project>_<n>.pub` entry per key, where `<project>` is the
+  CanyonProject's name. A key that is not one Ed25519 public key in PEM is left out
+  and logged by the operator. When the keys change, the operator restarts the API,
+  which reads them only when it starts. A workflow you stop takes its keys with it.
 - **How it reaches workflows:** the operator lists every workflow whose Redis is ready,
   with how to reach it, in the Secret `canyonos-dashboard-projects`, so the dashboard
   needs no access to any workflow's Secrets. Each workflow's Redis admits the
@@ -326,7 +341,8 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
 | `dashboard.dbImage`                    | `postgres:16-alpine`                             | The database's image.                                                                                                                                                                                                                                                                                       |
 | `dashboard.storage`                    | `1Gi`                                            | The database's disk.                                                                                                                                                                                                                                                                                        |
 | `dashboard.storageClassName`           | the cluster's default                            | The storage class of that disk.                                                                                                                                                                                                                                                                             |
-| `dashboard.existingSecret`             | none                                             | Your own Secret with `db-password`, plus a `jwt-secret` and a `redis-password-key` of 32 characters or more each. Without it, the chart makes all three on install and keeps them. Set it when the chart is rendered without the cluster (`helm template`, Argo CD), which can't keep a generated password. |
+| `dashboard.existingSecret`             | none                                             | Your own Secret with `db-password` and a `redis-password-key` of 32 characters or more. Without it, the chart makes both on install and keeps them. Set it when the chart is rendered without the cluster (`helm template`, Argo CD), which can't keep a generated password.                                |
+| `dashboard.dangerousSkipAuth`          | `false`                                          | `true`: the dashboard's API checks no token and answers anyone who reaches it. For a throwaway cluster only.                                                                                                                                                                                                |
 | `dashboard.fixedUsers`                 | `true`                                           | Runs the images as their own users. Set it to `false` on OpenShift, which assigns user IDs itself.                                                                                                                                                                                                          |
 | `dashboard.metricsRawRetentionDays`    | `3`                                              | Days to keep raw five-second metric ticks, which ranges of 30 minutes or less read.                                                                                                                                                                                                                         |
 | `dashboard.metricsRollupRetentionDays` | `120`                                            | Days to keep five-minute rollups, which longer ranges read.                                                                                                                                                                                                                                                 |
