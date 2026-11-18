@@ -231,6 +231,17 @@ deployment's Redis kept running, so a new password wouldn't open it.
 **Solution:** remove the old Redis as the message says, with
 `canyonos stop <deployment>` or `docker rm -f -v <container>`, then deploy again.
 
+### Deploy stops because the deployment's CA is gone
+
+`<deployment>'s Redis is still running, but its certificate authority ... is gone`
+
+**Cause:** on Docker, a deployment's internal traffic is mutual TLS, signed by a CA kept
+in `~/.canyonos/deployments/<deployment>/ca/`. That folder was deleted while the
+deployment's Redis kept running, and Redis would refuse every certificate a new CA signs.
+
+**Solution:** remove the old Redis as the message says, with
+`canyonos stop <deployment>` or `docker rm -f -v <container>`, then deploy again.
+
 ### Deploy fails because Redis refuses the deployment's password
 
 `refuses this deployment's password`, in the deploy output or `canyonos logs`

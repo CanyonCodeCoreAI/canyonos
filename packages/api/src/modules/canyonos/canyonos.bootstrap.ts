@@ -11,7 +11,7 @@ import { UUID_RE } from '../auth/project-access';
 import { load_prompts } from '../prompts/prompts.service';
 import { CONTROLLER_IDENTITY_KEY, reachable_redis_host, with_redis_at } from './canyonos.redis';
 import { canyonos_repo } from './canyonos.repo';
-import type { RegisteredProject } from './canyonos.types';
+import type { RedisClientTls, RegisteredProject } from './canyonos.types';
 
 const DEFAULT_PROJECT_NAME = 'project_1';
 
@@ -29,12 +29,14 @@ async function read_identity(redis: RedisClient): Promise<ControllerIdentity> {
   };
 }
 
-/** Stores the identity's project, or gives an existing one the new Redis and its password. */
+/** Stores the identity's project, or gives an existing one the new Redis, its password and its
+ * client certificate. */
 export async function save_controller_project(
   { project_id, project_name }: ControllerIdentity,
   redis_host: string,
   redis_port: number,
-  redis_password: string
+  redis_password: string,
+  redis_tls?: RedisClientTls
 ): Promise<RegisteredProject> {
   if (project_id === null || !UUID_RE.test(project_id)) {
     throw unprocessable(
@@ -49,24 +51,33 @@ export async function save_controller_project(
     redis_host,
     redis_port,
     redis_password,
+    redis_tls,
   });
 }
 
 /** Registers the project whose controller publishes its identity on redis_host:redis_port,
- * signing in with redis_password. The project keeps redis_host as sent, even when the api
- * reaches it on loopback. */
+ * signing in with redis_password, over TLS with redis_tls when its Redis takes only that. The
+ * project keeps redis_host as sent, even when the api reaches it on loopback. */
 export async function register_project_at(
   redis_host: string,
   redis_port: number,
-  redis_password: string
+  redis_password: string,
+  redis_tls?: RedisClientTls
 ): Promise<RegisteredProject> {
   const identity = await with_redis_at(
     reachable_redis_host(redis_host),
     redis_port,
     redis_password,
-    read_identity
+    read_identity,
+    redis_tls
   );
-  const project = await save_controller_project(identity, redis_host, redis_port, redis_password);
+  const project = await save_controller_project(
+    identity,
+    redis_host,
+    redis_port,
+    redis_password,
+    redis_tls
+  );
   // A failed prompt load must not fail the registration: the prompts listing stores them later.
   await load_prompts(project.project_id).catch((error: unknown) =>
     canyonos_logger.warn('Could not load stored prompts', { error })

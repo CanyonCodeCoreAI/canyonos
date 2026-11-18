@@ -303,9 +303,12 @@ class LocalControllerServicer(local_controller_pb2_grpc.LocalControllerServicer)
 def start_server(port=50051, my_address="unknown"):
     """Start the gRPC server."""
     try:
-        from canyonos_core.controller.utils.grpc_options import GRPC_SERVER_OPTIONS
+        from canyonos_core.controller.utils.grpc_options import (
+            GRPC_SERVER_OPTIONS,
+            add_server_port,
+        )
     except ImportError:
-        from grpc_options import GRPC_SERVER_OPTIONS
+        from grpc_options import GRPC_SERVER_OPTIONS, add_server_port
 
     servicer = LocalControllerServicer(my_address=my_address)
 
@@ -314,7 +317,7 @@ def start_server(port=50051, my_address="unknown"):
         futures.ThreadPoolExecutor(max_workers=8), options=GRPC_SERVER_OPTIONS
     )
     local_controller_pb2_grpc.add_LocalControllerServicer_to_server(servicer, server)
-    server.add_insecure_port(f"[::]:{port}")
+    add_server_port(server, port)
     server.start()
     logger.info(f"Local controller frontend started on port {port}")
 

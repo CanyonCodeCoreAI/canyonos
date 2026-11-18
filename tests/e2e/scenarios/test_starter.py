@@ -67,6 +67,10 @@ class MyAgent:
             port=int(os.environ["CANYONOS_REDIS_PORT"]),
             password=os.environ.get("CANYONOS_REDIS_PASSWORD"),
             decode_responses=True,
+            ssl=os.environ.get("CANYONOS_REDIS_TLS") == "true",
+            ssl_ca_certs=os.environ.get("CANYONOS_REDIS_CA_FILE"),
+            ssl_certfile=os.environ.get("CANYONOS_REDIS_CERT_FILE"),
+            ssl_keyfile=os.environ.get("CANYONOS_REDIS_KEY_FILE"),
         )
         address = json.loads(routes.hget("routing_table:addresses", "starter.StateDB"))[0]
         host, port = address.rsplit(":", 1)

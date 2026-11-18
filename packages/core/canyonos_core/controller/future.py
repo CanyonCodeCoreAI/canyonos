@@ -23,11 +23,11 @@ except ImportError:
 
 try:
     from canyonos_core.controller.utils.grpc_options import (
-        GRPC_CHANNEL_OPTIONS,
         call_with_retry,
+        open_channel,
     )
 except ImportError:
-    from grpc_options import GRPC_CHANNEL_OPTIONS, call_with_retry
+    from grpc_options import call_with_retry, open_channel
 
 try:
     from canyonos_core.controller.utils.log_entry import (
@@ -252,7 +252,7 @@ class Future(object):
         """Get or create the cached gRPC stub for the local controller."""
         if cls._stub is None:
             address = f"{cls._lc_host}:{cls._lc_port}"
-            cls._channel = grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
+            cls._channel = open_channel(address)
             cls._stub = local_controller_pb2_grpc.LocalControllerStub(cls._channel)
             logger.info("Connected to local controller at %s", address)
         return cls._stub
@@ -489,7 +489,7 @@ class Future(object):
                         self.id,
                         address,
                     )
-                channel = grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
+                channel = open_channel(address)
                 stub = local_controller_pb2_grpc.LocalControllerStub(channel)
                 payload = json.dumps({"future_id": self.id, "result": self.result})
                 request = local_controller_pb2.JsonResponse(response=payload)

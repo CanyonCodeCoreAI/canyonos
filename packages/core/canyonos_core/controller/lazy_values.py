@@ -66,6 +66,7 @@ CANYONOS_FLAT_FILES = frozenset(
         "local_controller.py",
         "local_controller_frontend.py",
         "redis_client.py",
+        "canyonos_internal_tls.py",
         "grpc_options.py",
         "log_entry.py",
         "gpu_metrics.py",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import ssl
 from dataclasses import dataclass
 from typing import cast
 
@@ -27,15 +28,18 @@ def store(recorder, deployed) -> redis.Redis:
     return project_redis(recorder, deployed.dir)
 
 
-def redis_reply(port: int, *command: str) -> str:
+def redis_reply(port: int, *command: str, tls: ssl.SSLContext | None = None) -> str:
     """The first line Redis on 127.0.0.1:`port` answers `command` with, sent over a
-    raw RESP connection, so no client signs in first or rewrites the error."""
+    raw RESP connection, so no client signs in first or rewrites the error; over TLS
+    with the `tls` context when given. A Redis that closes the connection answers ''."""
     request = f"*{len(command)}\r\n" + "".join(
         f"${len(part.encode())}\r\n{part}\r\n" for part in command
     )
-    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
-        connection.sendall(request.encode())
-        return connection.makefile("rb").readline().decode().rstrip("\r\n")
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as raw:
+        connection = tls.wrap_socket(raw, server_hostname="127.0.0.1") if tls else raw
+        with connection:
+            connection.sendall(request.encode())
+            return connection.makefile("rb").readline().decode().rstrip("\r\n")
 
 
 def _hash(redis_client: redis.Redis, key: str) -> dict[str, str]:

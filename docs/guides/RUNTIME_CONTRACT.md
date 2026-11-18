@@ -261,6 +261,7 @@ CanyonOS also sets these on each replica with `-e`, and they win over `.env`:
 | ------------------------------------------------------ | ---------------------------------------------------------- |
 | `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`           | The deployment's Redis                                     |
 | `CANYONOS_REDIS_PASSWORD`                              | The password the deployment's Redis requires               |
+| `CANYONOS_TLS_CA_CERT`, `CANYONOS_TLS_CERT`, `CANYONOS_TLS_KEY` | On Docker, the deployment CA's certificate and this replica's own certificate and key, base64 PEM |
 | `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`           | Where this replica serves calls                            |
 | `CANYONOS_REPLICA_ID`                                  | This replica's ID                                          |
 | `CANYONOS_POLL_INTERVAL`                               | `poll_interval` from `deployment.yaml`                     |
@@ -272,7 +273,12 @@ CanyonOS also sets these on each replica with `-e`, and they win over `.env`:
 
 A Redis client in your code that defaults to `localhost` reaches the container's own
 loopback, not the deployment's Redis. Build it from `CANYONOS_REDIS_HOST`,
-`CANYONOS_REDIS_PORT` and `CANYONOS_REDIS_PASSWORD`.
+`CANYONOS_REDIS_PORT` and `CANYONOS_REDIS_PASSWORD`. On Docker that Redis takes only
+TLS with a client certificate: before your code loads, the controller writes this
+replica's certificate to files and sets `CANYONOS_REDIS_TLS=true`,
+`CANYONOS_REDIS_CA_FILE`, `CANYONOS_REDIS_CERT_FILE` and `CANYONOS_REDIS_KEY_FILE`.
+With redis-py, pass them as `ssl=True`, `ssl_ca_certs`, `ssl_certfile` and
+`ssl_keyfile`.
 
 ## Policy
 

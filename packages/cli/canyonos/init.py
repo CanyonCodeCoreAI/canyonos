@@ -21,7 +21,7 @@ import urllib.request
 # Formatting
 from pyfiglet import figlet_format
 
-from canyonos import deployment, env, ports, ui
+from canyonos import deployment, env, internal_ca, ports, ui
 from canyonos.constants import (
     DEFAULT_API_PORT,
     DEFAULT_REDIS_PORT,
@@ -376,7 +376,12 @@ def _run_container(
         )
     host_private_ip = private_ip()
     host_public_ip = public_ip()
-    gc_env = {**os.environ, "CANYONOS_REDIS_PASSWORD": deployment.redis_password()}
+    ca_env = internal_ca.gc_env()
+    gc_env = {
+        **os.environ,
+        "CANYONOS_REDIS_PASSWORD": deployment.redis_password(),
+        **ca_env,
+    }
     _create_workspace_volume()
     for _ in range(max_attempts):
         _free_container_name()
@@ -432,6 +437,7 @@ def _run_container(
             "-e",
             f"{deployment.DOCKER_PROJECT_ENV}={deployment.deployment_name()}",
             *auth_env,
+            *(arg for name in ca_env for arg in ("-e", name)),
         ]
         if host_private_ip:
             cmd.extend(["-e", f"CANYONOS_PRIVATE_IP={host_private_ip}"])

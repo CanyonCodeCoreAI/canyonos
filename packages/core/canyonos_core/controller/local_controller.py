@@ -34,8 +34,8 @@ try:
     from canyonos_core.controller.utils.gpu_metrics import read_gpu_percent
     from canyonos_core.controller.utils.redis_client import RedisClient
     from canyonos_core.controller.utils.grpc_options import (
-        GRPC_CHANNEL_OPTIONS,
         call_with_retry,
+        open_channel,
     )
     from canyonos_core.controller.utils.log_handler import LogHandler
     from canyonos_core.controller.utils.log_entry import (
@@ -51,7 +51,7 @@ except ImportError:
     from local_controller_frontend import start_server
     from log_handler import LogHandler
     from redis_client import RedisClient
-    from grpc_options import GRPC_CHANNEL_OPTIONS, call_with_retry
+    from grpc_options import call_with_retry, open_channel
     from log_entry import build_failure_entry, append_log_entry
     from worker_controller import WorkerLimit
 
@@ -1458,9 +1458,7 @@ class LocalController(object):
         """Get or create a cached gRPC stub for a remote controller."""
         with self._remote_stubs_lock:
             if address not in self._remote_stubs:
-                self._remote_channels[address] = grpc.insecure_channel(
-                    address, options=GRPC_CHANNEL_OPTIONS
-                )
+                self._remote_channels[address] = open_channel(address)
                 self._remote_stubs[address] = (
                     local_controller_pb2_grpc.LocalControllerStub(
                         self._remote_channels[address]

@@ -60,6 +60,7 @@ from canyonos_core.controller.utils.config_env import (
     expand_env_value,
     read_dotenv,
 )
+from canyonos_core.controller.utils import internal_ca
 from canyonos_core.controller.utils.process_supervisor import ProcessSupervisor
 from canyonos_core.controller.utils.port_utils import is_port_conflict
 from canyonos_core.controller.utils.redis_utils import _wait_for_redis
@@ -71,7 +72,7 @@ from canyonos_core.controller.utils.redis_client import (
     password_env_args,
     redis_server_command,
 )
-from canyonos_core.controller.utils.grpc_options import GRPC_CHANNEL_OPTIONS
+from canyonos_core.controller.utils.grpc_options import open_channel
 from canyonos_core.schema import (
     SchemaError,
     check_deployment,
@@ -88,7 +89,6 @@ from canyonos_core.schema.yaml_lines import parse_failure
 sys.path.insert(0, os.path.abspath("grpc_stubs"))
 import local_controller_pb2
 import local_controller_pb2_grpc
-import grpc
 
 logging.basicConfig(level=logging.INFO)
 # How long before the GC tells every replica again to clean up a request it already
@@ -737,11 +737,22 @@ class GlobalController(ControllerContext):
                 "-p",
                 f"127.0.0.1:{redis_port}:{redis_port}",
                 *password_env_args(),
-                "redis:alpine",
-                *redis_server_command(redis_port),
             ]
             try:
-                result = self._run_cmd(cmd, host)
+                with internal_ca.certificate_env_file_args(
+                    [container_name, connect_host]
+                ) as certificate_args:
+                    result = self._run_cmd(
+                        [
+                            *cmd,
+                            *certificate_args,
+                            "redis:alpine",
+                            *redis_server_command(
+                                redis_port, tls=internal_ca.available()
+                            ),
+                        ],
+                        host,
+                    )
             except FileNotFoundError:
                 logger.critical(
                     "Docker is not installed or not in PATH. Cannot launch Redis."
@@ -1425,7 +1436,7 @@ class GlobalController(ControllerContext):
     def _get_lc_stub(self, address):
         """Get or create a cached gRPC stub for a local controller address."""
         if address not in self._lc_stubs:
-            channel = grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
+            channel = open_channel(address)
             self._lc_stubs[address] = local_controller_pb2_grpc.LocalControllerStub(
                 channel
             )

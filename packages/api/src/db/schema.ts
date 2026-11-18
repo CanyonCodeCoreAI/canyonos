@@ -53,6 +53,8 @@ export const projects = pgTable('projects', {
   redis_host: text('redis_host'),
   redis_port: integer('redis_port'),
   redis_password: text('redis_password'),
+  // The client certificate a Docker deployment's Redis takes, as sealed JSON.
+  redis_tls: text('redis_tls'),
   created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
     .notNull()
     .defaultNow(),

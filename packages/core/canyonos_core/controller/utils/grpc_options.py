@@ -16,6 +16,11 @@ import time
 
 import grpc
 
+try:
+    from canyonos_core.controller.utils import internal_tls
+except ImportError:
+    import canyonos_internal_tls as internal_tls
+
 logger = logging.getLogger(__name__)
 
 GRPC_CHANNEL_OPTIONS = [
@@ -32,6 +37,33 @@ GRPC_SERVER_OPTIONS = [
     ("grpc.http2.max_pings_without_data", 0),
     ("grpc.http2.min_ping_interval_without_data_ms", 10000),
 ]
+
+
+def open_channel(address):
+    """A channel to the controller at `address`. With this container's certificate
+    (Docker), mutual TLS: it presents the certificate and accepts only a server whose
+    certificate the deployment's CA signed for `address`'s host. Without one, plaintext."""
+    if not internal_tls.enabled():
+        return grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
+    ca, cert, key = internal_tls.credentials()
+    credentials = grpc.ssl_channel_credentials(
+        root_certificates=ca, private_key=key, certificate_chain=cert
+    )
+    return grpc.secure_channel(address, credentials, options=GRPC_CHANNEL_OPTIONS)
+
+
+def add_server_port(server, port):
+    """Serve `server` on `port` on every interface. With this container's certificate
+    (Docker), mutual TLS: a caller without a certificate the deployment's CA signed is
+    refused before any call. Without one, plaintext."""
+    address = f"[::]:{port}"
+    if not internal_tls.enabled():
+        return server.add_insecure_port(address)
+    ca, cert, key = internal_tls.credentials()
+    credentials = grpc.ssl_server_credentials(
+        [(key, cert)], root_certificates=ca, require_client_auth=True
+    )
+    return server.add_secure_port(address, credentials)
 
 
 def call_with_retry(fn, address):

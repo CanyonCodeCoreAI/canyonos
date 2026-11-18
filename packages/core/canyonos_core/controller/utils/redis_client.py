@@ -10,28 +10,48 @@ import redis
 from redis.backoff import NoBackoff
 from redis.retry import Retry
 
+try:
+    from canyonos_core.controller.utils import internal_tls
+except ImportError:
+    import canyonos_internal_tls as internal_tls
+
 PASSWORD_ENV = "CANYONOS_REDIS_PASSWORD"
 _ENABLED = {"1", "true", "yes", "on"}
+# Where a Redis container on Docker keeps the certificate it was given.
+SERVER_TLS_DIR = "/tmp/canyonos-tls"
+_SERVER_TLS_FILES = (
+    (internal_tls.CA_CERT_ENV, "ca.crt"),
+    (internal_tls.CERT_ENV, "tls.crt"),
+    (internal_tls.KEY_ENV, "tls.key"),
+)
 
 
 def connection_options(environ=None):
-    """Password, username and TLS for a Redis that requires them (such as one the
-    Kubernetes operator runs, or a managed one), from the CANYONOS_REDIS_* variables.
-    Docker and EC2 set only the password, from the project's; none set means a plain
-    connection. Timeouts and retries stay redis-py's defaults unless `RedisClient`
-    is given a `timeout`. The LLM gateway
+    """Password, username and TLS for a Redis that requires them, from the
+    CANYONOS_REDIS_* variables. On Docker the container's own certificate
+    (`internal_tls`) sets them: TLS with the deployment's CA and a client certificate.
+    The Kubernetes operator or a managed Redis can set them directly; EC2 sets only the
+    password. None set means a plain connection. Timeouts and retries stay redis-py's
+    defaults unless `RedisClient` is given a `timeout`. The LLM gateway
     (llm_gateway/hooks.py) uses the same rules.
     """
+    if environ is None:
+        internal_tls.export_files()
     env = os.environ if environ is None else environ
     options = {}
     if env.get(PASSWORD_ENV):
         options["password"] = env[PASSWORD_ENV]
     if env.get("CANYONOS_REDIS_USERNAME"):
         options["username"] = env["CANYONOS_REDIS_USERNAME"]
-    if env.get("CANYONOS_REDIS_TLS", "").strip().lower() in _ENABLED:
+    if env.get(internal_tls.REDIS_TLS_ENV, "").strip().lower() in _ENABLED:
         options["ssl"] = True
-        if env.get("CANYONOS_REDIS_CA_FILE"):
-            options["ssl_ca_certs"] = env["CANYONOS_REDIS_CA_FILE"]
+        for option, file_env in (
+            ("ssl_ca_certs", internal_tls.REDIS_CA_FILE_ENV),
+            ("ssl_certfile", internal_tls.REDIS_CERT_FILE_ENV),
+            ("ssl_keyfile", internal_tls.REDIS_KEY_FILE_ENV),
+        ):
+            if env.get(file_env):
+                options[option] = env[file_env]
     return options
 
 
@@ -45,20 +65,53 @@ def password_env_args(local=True):
     return ["-e", PASSWORD_ENV if local else f"{PASSWORD_ENV}={password}"]
 
 
-def redis_server_command(port, local=True):
+def redis_server_command(port, local=True, tls=False):
     """The command a Redis container runs on `port`, requiring the project's password. A
     local one reads it from the environment `password_env_args` gives the container, and
-    goes through the image's entrypoint, which starts Redis as its own user, not root."""
+    goes through the image's entrypoint, which starts Redis as its own user, not root.
+
+    With `tls` (local only), Redis serves `port` over TLS alone and takes only clients
+    with a certificate the deployment's CA signed. The container first writes the
+    certificate it was given (`internal_ca.certificate_env_file_args`) to files Redis's
+    user reads."""
     password = os.environ.get(PASSWORD_ENV)
-    command = ["redis-server", "--port", str(port)]
-    if not password:
+    if tls:
+        command = [
+            "redis-server",
+            "--port",
+            "0",
+            "--tls-port",
+            str(port),
+            "--tls-ca-cert-file",
+            f"{SERVER_TLS_DIR}/ca.crt",
+            "--tls-cert-file",
+            f"{SERVER_TLS_DIR}/tls.crt",
+            "--tls-key-file",
+            f"{SERVER_TLS_DIR}/tls.key",
+            "--tls-auth-clients",
+            "yes",
+        ]
+    else:
+        command = ["redis-server", "--port", str(port)]
+    if not password and not tls:
         return command
     if not local:
         return [*command, "--requirepass", password]
+    setup = ""
+    if tls:
+        writes = " && ".join(
+            f'printf %s "${env_name}" | base64 -d > {SERVER_TLS_DIR}/{file_name}'
+            for env_name, file_name in _SERVER_TLS_FILES
+        )
+        setup = (
+            f"umask 077 && mkdir -p {SERVER_TLS_DIR} && {writes} "
+            f"&& chown -R redis {SERVER_TLS_DIR} && "
+        )
+    requirepass = f' --requirepass "${PASSWORD_ENV}"' if password else ""
     return [
         "sh",
         "-c",
-        f'exec docker-entrypoint.sh {" ".join(command)} --requirepass "${PASSWORD_ENV}"',
+        f"{setup}exec docker-entrypoint.sh {' '.join(command)}{requirepass}",
     ]
 
 

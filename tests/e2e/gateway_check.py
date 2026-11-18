@@ -259,11 +259,16 @@ def gateway_pids():
     return pids
 
 
+# The image's own Redis rules: the password and, on Docker, TLS with this replica's
+# certificate, which it also exports for the gateway check below.
+sys.path.insert(0, "/app")
+from redis_client import connection_options  # noqa: E402
+
 REDIS = redis.Redis(
     host=os.environ["CANYONOS_REDIS_HOST"],
     port=int(os.environ["CANYONOS_REDIS_PORT"]),
-    password=os.environ.get("CANYONOS_REDIS_PASSWORD"),
     decode_responses=True,
+    **connection_options(),
 )
 
 
@@ -339,9 +344,10 @@ def main():
             GATEWAY_PYTHON,
             "-c",
             "import json, os, redis; from canyonos_core.llm_gateway import pricing; "
+            "from redis_client import connection_options; "
             "r = redis.Redis(host=os.environ['CANYONOS_REDIS_HOST'], "
-            "port=int(os.environ['CANYONOS_REDIS_PORT']), "
-            "password=os.environ.get('CANYONOS_REDIS_PASSWORD'), decode_responses=True); "
+            "port=int(os.environ['CANYONOS_REDIS_PORT']), decode_responses=True, "
+            "**connection_options()); "
             "published = json.loads(r.get(pricing.LLM_PRICES_KEY) or '{}'); "
             "prefixes = set(pricing.LLM_HOSTS.values()); "
             "key = next(k for k in published if k.split('/', 1)[0] in prefixes); "

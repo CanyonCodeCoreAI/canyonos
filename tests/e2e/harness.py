@@ -18,8 +18,10 @@ import secrets
 import select
 import shutil
 import signal
+import ssl
 import struct
 import subprocess
+import tempfile
 import termios
 import time
 from dataclasses import asdict, dataclass, field
@@ -732,9 +734,53 @@ def redis_port(recorder: Recorder, workspace: Path) -> int:
     )
 
 
+def redis_client_files(recorder: Recorder, workspace: Path) -> dict[str, str] | None:
+    """A client certificate the deployment's CA signs, written to a private temp folder:
+    `{ca, cert, key}` file paths, or None when its Redis takes plaintext."""
+    pems = cli_value(
+        recorder,
+        workspace,
+        "client_certificate('e2e')",
+        "from canyonos.internal_ca import client_certificate",
+    )
+    if pems is None:
+        return None
+    folder = Path(tempfile.mkdtemp(prefix="canyonos-e2e-tls-"))
+    files = {}
+    for name, pem in pems.items():
+        path = folder / f"{name}.pem"
+        path.write_text(pem)
+        path.chmod(0o600)
+        files[name] = str(path)
+    return files
+
+
+def redis_tls_context(recorder: Recorder, workspace: Path) -> ssl.SSLContext | None:
+    """The TLS context a host process reaches the deployment's Redis with, presenting the
+    client certificate its CA signs; None when its Redis takes plaintext."""
+    files = redis_client_files(recorder, workspace)
+    if files is None:
+        return None
+    context = ssl.create_default_context(cafile=files["ca"])
+    context.load_cert_chain(files["cert"], files["key"])
+    return context
+
+
 def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
     """The deployed project's Redis, on the host port the CLI recorded for it, signed in
-    with the password the CLI keeps for that project."""
+    with the password the CLI keeps for that project, over TLS with a client certificate
+    its CA signs when its Redis takes only that."""
+    files = redis_client_files(recorder, workspace)
+    tls = (
+        {
+            "ssl": True,
+            "ssl_ca_certs": files["ca"],
+            "ssl_certfile": files["cert"],
+            "ssl_keyfile": files["key"],
+        }
+        if files
+        else {}
+    )
     return redis.Redis(
         host="127.0.0.1",
         port=redis_port(recorder, workspace),
@@ -745,6 +791,7 @@ def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
             "from canyonos.deployment import redis_password",
         ),
         decode_responses=True,
+        **tls,
     )
 
 

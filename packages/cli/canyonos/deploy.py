@@ -35,7 +35,7 @@ from dotenv import dotenv_values
 from rich.panel import Panel
 from rich.text import Text
 
-from canyonos import deployment, env, ui
+from canyonos import deployment, env, internal_ca, ui
 from canyonos.auth import (
     curl_auth,
     gc_env,
@@ -470,6 +470,7 @@ def run_deploy(
             f"{deployment.redis_password_path()} is gone, so a new password would not "
             f"open it. {removal}, then deploy again."
         )
+    internal_ca.refuse_redis_that_outlived_its_ca()
     for folder in projects.values():
         stop_on_project_errors(folder, "Deploy")
 

@@ -58,6 +58,35 @@ On Kubernetes, the operator runs the Global Controller as a pod
 (`CANYONOS_TARGET=kubernetes`), and every replica reports to the one project Redis. See
 [Operator](OPERATOR.md).
 
+## Internal TLS
+
+On Docker with `provider: local`, every connection inside the deployment is mutual TLS,
+signed by a CA the deployment has to itself:
+
+1. The first `canyonos deploy` makes the CA (EC P-256, ten years) in
+   `~/.canyonos/deployments/<deployment>/ca/`, readable only by you. Later deploys reuse
+   it. A deploy refuses to start while the deployment's Redis still runs but the CA is gone.
+2. The CLI hands the CA and a client certificate of the Global Controller's own to its
+   container in `CANYONOS_TLS_*` variables, copied from the CLI's environment, never on the
+   command line.
+3. The Global Controller signs a certificate for Redis and the metrics collector, and the
+   Reconciler for each replica. Each goes to its container in an env file deleted right
+   after `docker run`. A certificate names the container, its name on the deployment's
+   network and `localhost`, and serves as both server and client. Only the Global
+   Controller's container holds the CA's key.
+
+| Channel | On Docker (`local`) | EC2, Kubernetes |
+| --- | --- | --- |
+| Redis | TLS only (`--port 0 --tls-port <redis_port>`), a client certificate the CA signed, and the password | Plaintext with the password (Kubernetes: TLS when the operator sets it) |
+| gRPC between controllers | Mutual TLS: the server requires a client certificate, the client checks the server's name | Plaintext |
+| Dashboard API to Redis | TLS with a client certificate the CLI signs when it registers the deployment, stored encrypted like the password | Plaintext with the password |
+
+A container reads its certificate in `controller/utils/internal_tls.py` (flat as
+`canyonos_internal_tls.py` in agent images), which writes it to files and sets
+`CANYONOS_REDIS_TLS`, `CANYONOS_REDIS_CA_FILE`, `CANYONOS_REDIS_CERT_FILE` and
+`CANYONOS_REDIS_KEY_FILE` before agent code loads. The endpoint's public port, the
+Global Controller's `:8000` on 127.0.0.1 and the dashboard stay as they are.
+
 ## Global Controller
 
 The CLI talks to the container's HTTP server on `8000`. The routes are in [CLI](CLI.md).
@@ -306,6 +335,7 @@ All paths are under `packages/core/canyonos_core/`.
 | `controller/future.py`                    | `Future` and its results                                                 |
 | `controller/lazy_values.py`               | The rewrite that lets agent code skip `.value()`                         |
 | `controller/proto/`                       | The gRPC definitions                                                     |
+| `controller/utils/internal_ca.py`, `internal_tls.py`, `grpc_options.py` | [Internal TLS](#internal-tls): signing, reading a certificate, mTLS channels and ports |
 | `controller/` (rest)                      | Governance, Kubernetes probes, the process supervisor, shared config     |
 
 `controller/gateway_headers.py` belongs to the [LLM Gateway](LLM_GATEWAY.md), and

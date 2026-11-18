@@ -29,6 +29,7 @@ from canyonos_core.controller.utils.container_names import (
     redis_container_name,
     workspace_volume_name,
 )
+from canyonos_core.controller.utils import internal_ca
 from canyonos_core.controller.utils.env_file import env_file_args
 from canyonos_core.controller.utils.port_utils import (
     clashed_port,
@@ -253,10 +254,15 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             )
         )
 
-        with _image_args(
-            controller, agent_spec, image, host, user, api_port
-        ) as image_args:
-            cmd.extend(image_args)
+        with (
+            internal_ca.certificate_env_file_args(
+                [network_name, container]
+            ) as certificate_args,
+            _image_args(
+                controller, agent_spec, image, host, user, api_port
+            ) as image_args,
+        ):
+            cmd.extend([*certificate_args, *image_args])
             result = controller._run_cmd(cmd, host, user)
 
         if result.returncode == 0:
@@ -406,15 +412,19 @@ def start_metrics_collector(controller, host, user, image, redis_port, wants_gpu
             f"CANYONOS_METRICS_KEY={machine_metrics_key(host)}",
             "-e",
             f"CANYONOS_POLL_INTERVAL={controller.config.get('poll_interval', 5)}",
-            # The controller image's entrypoint launches the GC; override it to run
-            # the collector instead.
-            "--entrypoint",
-            "python",
-            image,
-            "-m",
-            "canyonos_core.machine_metrics_poller",
         ]
-        result = controller._run_cmd(cmd, host, user)
+        with internal_ca.certificate_env_file_args([name]) as certificate_args:
+            cmd += [
+                *certificate_args,
+                # The controller image's entrypoint launches the GC; override it to
+                # run the collector instead.
+                "--entrypoint",
+                "python",
+                image,
+                "-m",
+                "canyonos_core.machine_metrics_poller",
+            ]
+            result = controller._run_cmd(cmd, host, user)
         if result.returncode != 0:
             logger.warning(
                 "Failed to start metrics collector on %s: %s",

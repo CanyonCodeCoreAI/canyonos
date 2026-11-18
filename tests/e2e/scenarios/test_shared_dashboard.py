@@ -13,8 +13,8 @@ running one. Then one project is stopped and the other keeps running; the stoppe
 one, redeployed without `endpoint.api_port` or `redis.port`, moves past the other's
 ports, keeps its machine metrics in its own Redis, and is told the running dashboard
 ignores its `dashboard_port`. `canyonos serve` re-registers on a new api container,
-which reads the key's hash again, a redeploy keeps the dashboard and the project's
-id, example runs go in with the machine's API key, and the
+which reads the key's hash again, a redeploy keeps the dashboard, the project's
+id and its CA, example runs go in with the machine's API key, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
 refuses a taken `dashboard_port`, a deploy pinned to a taken `api_port` stops before
 anything starts, a dashboard starting with a deploy takes its `dashboard_port` while
@@ -56,6 +56,7 @@ from ..harness import (
     project_root,
     qualified,
     redis_port,
+    redis_tls_context,
     result_of,
     stage,
     stop_project,
@@ -78,6 +79,16 @@ HELLOWORLD_REDIS_PORT = 6380
 DASHBOARD_PORT = 8090
 TRACE_TIMEOUT = 60
 HELLO_CALL = "helloworld.HelloAgent.hello"
+# Where a Redis container keeps the certificate it was given (redis_client.SERVER_TLS_DIR).
+REDIS_CLI_TLS = [
+    "--tls",
+    "--cacert",
+    "/tmp/canyonos-tls/ca.crt",
+    "--cert",
+    "/tmp/canyonos-tls/tls.crt",
+    "--key",
+    "/tmp/canyonos-tls/tls.key",
+]
 
 
 @dataclass
@@ -223,6 +234,17 @@ def _redis_password_file(recorder, directory: Path) -> tuple[str, int]:
         )
     )
     return path.read_text(), path.stat().st_mode & 0o777
+
+
+def _ca_certificate(recorder, directory: Path) -> str:
+    """The certificate of the deployment's CA, from the CLI's folder."""
+    path = cli_value(
+        recorder,
+        directory,
+        "ca_paths()[0]",
+        "from canyonos.internal_ca import ca_paths",
+    )
+    return Path(path).read_text()
 
 
 @contextmanager
@@ -372,11 +394,12 @@ def test_each_projects_redis_takes_only_its_own_password(recorder, fleet):
     assert passwords["helloworld"] != passwords["portfolio"]
     for name, other in zip(PROJECTS, reversed(PROJECTS)):
         port = redis_port(recorder, fleet.dirs[name])
-        unsigned = redis_reply(port, "PING")
+        tls = redis_tls_context(recorder, fleet.dirs[name])
+        unsigned = redis_reply(port, "PING", tls=tls)
         assert unsigned.startswith("-NOAUTH "), (name, unsigned)
-        crossed = redis_reply(port, "AUTH", passwords[other])
+        crossed = redis_reply(port, "AUTH", passwords[other], tls=tls)
         assert crossed.startswith("-WRONGPASS "), (name, other, crossed)
-        assert redis_reply(port, "AUTH", passwords[name]) == "+OK", name
+        assert redis_reply(port, "AUTH", passwords[name], tls=tls) == "+OK", name
     containers = [
         container
         for name in PROJECTS
@@ -491,6 +514,8 @@ def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fle
                     "-c",
                     'REDISCLI_AUTH="$CANYONOS_REDIS_PASSWORD" exec redis-cli "$@"',
                     "redis-cli",
+                    # Redis's own certificate is signed by the deployment's CA too.
+                    *REDIS_CLI_TLS,
                     "-p",
                     str(own_redis),
                     "exists",
@@ -522,7 +547,12 @@ def test_serve_registers_again_on_a_new_api(recorder, fleet):
 
 
 def test_redeploy_keeps_the_dashboard_and_the_project_id(recorder, fleet):
-    _deploy(recorder, fleet.dirs["portfolio"], "portfolio")
+    directory = fleet.dirs["portfolio"]
+    ca_before = _ca_certificate(recorder, directory)
+    _deploy(recorder, directory, "portfolio")
+    assert _ca_certificate(recorder, directory) == ca_before, (
+        "the redeploy made a new CA"
+    )
     assert _api_container(recorder) == fleet.api_after_serve
     for name in PROJECTS:
         listed = deployed_project_id(recorder, fleet.api, fleet.dirs[name], name)

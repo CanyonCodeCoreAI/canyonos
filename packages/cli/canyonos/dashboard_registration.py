@@ -16,7 +16,8 @@ import json
 import time
 import urllib.error
 import urllib.request
-from canyonos import deployment
+
+from canyonos import deployment, internal_ca
 from canyonos.auth import auth_header
 from canyonos.dashboard_stack import join_deployment_network
 
@@ -75,8 +76,9 @@ def _api_port() -> int:
 def register_project(redis_port: int, api_port: int | None = None) -> dict:
     """Connect the dashboard api to the deployment's network, then register the
     project with its Redis container's name, `redis_port` and the deployment's Redis
-    password, with the dashboard's API on `api_port`, or where it is when that is
-    None. The call sends this machine's API key, when one is set.
+    password, plus a client certificate its CA signs when its Redis takes only TLS,
+    with the dashboard's API on `api_port`, or where it is when that is None. The
+    call sends this machine's API key, when one is set.
 
     Returns the api's `{project_id, name}`. Connection failures and 5xx answers
     are retried for up to RETRY_SECONDS; a 4xx answer is final. Raises
@@ -87,13 +89,16 @@ def register_project(redis_port: int, api_port: int | None = None) -> dict:
     joined = join_deployment_network(deployment.deployment_group())
     if joined is not None:
         raise RegistrationError(joined)
-    payload = json.dumps(
-        {
-            "redis_host": deployment.redis_container_name(),
-            "redis_port": redis_port,
-            "redis_password": deployment.redis_password(),
-        }
-    ).encode()
+    registration = {
+        "redis_host": deployment.redis_container_name(),
+        "redis_port": redis_port,
+        "redis_password": deployment.redis_password(),
+    }
+    # Redis takes only TLS clients with a certificate the deployment's CA signed.
+    redis_tls = internal_ca.client_certificate("dashboard")
+    if redis_tls:
+        registration["redis_tls"] = redis_tls
+    payload = json.dumps(registration).encode()
     failure = "the dashboard api did not answer"
     deadline = time.monotonic() + RETRY_SECONDS
     while True:

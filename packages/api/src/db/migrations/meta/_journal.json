@@ -71,6 +71,13 @@
       "when": 1794843998781,
       "tag": "0009_drop_users",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795011413001,
+      "tag": "0010_project_redis_tls",
+      "breakpoints": true
     }
   ]
 }

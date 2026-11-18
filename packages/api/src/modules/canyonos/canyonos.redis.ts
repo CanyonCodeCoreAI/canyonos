@@ -9,6 +9,7 @@ import type { AppError } from '@core/errors';
 
 import { registered_projects } from './canyonos.registry';
 import { canyonos_repo } from './canyonos.repo';
+import type { RedisClientTls } from './canyonos.types';
 
 export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
 
@@ -22,11 +23,12 @@ export function reachable_redis_host(stored_host: string | null): string {
   return stored_host === null || LOOPBACK_HOSTS.has(configured) ? configured : stored_host;
 }
 
-/** Where a project's Redis is and how to sign in to it. */
+/** Where a project's Redis is and how to sign in to it: tls is true for TLS alone, or the
+ * client certificate a Docker deployment's Redis takes. */
 export interface RedisTarget {
   readonly host: string;
   readonly port: number;
-  readonly tls?: boolean;
+  readonly tls?: boolean | RedisClientTls;
   readonly username?: string;
   readonly password?: string;
 }
@@ -141,15 +143,16 @@ async function connect(redis: RedisClient, target: RedisTarget): Promise<void> {
 }
 
 /** Runs operation against the Redis on redis_host:redis_port, signing in with redis_password
- * when there is one, then closes the connection. */
+ * when there is one, over TLS with redis_tls when given, then closes the connection. */
 export async function with_redis_at<T>(
   redis_host: string,
   redis_port: number,
   redis_password: string,
-  operation: (redis: RedisClient) => Promise<T>
+  operation: (redis: RedisClient) => Promise<T>,
+  redis_tls?: RedisClientTls | null
 ): Promise<T> {
   return with_redis_target(
-    { host: redis_host, port: redis_port, password: redis_password },
+    { host: redis_host, port: redis_port, password: redis_password, tls: redis_tls ?? false },
     operation
   );
 }
@@ -164,6 +167,7 @@ async function with_redis_target<T>(
     maxRetries: 0,
     enableOfflineQueue: false,
     connectionTimeout: 5000,
+    ...(typeof target.tls === 'object' ? { tls: target.tls } : {}),
   });
 
   try {
@@ -196,7 +200,8 @@ export async function with_redis<T>(
     reachable_redis_host(project?.redis_host ?? null),
     project?.redis_port ?? config.canyonos.redisPort,
     project?.redis_password ?? '',
-    operation
+    operation,
+    project?.redis_tls
   );
 }
 
