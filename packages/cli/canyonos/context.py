@@ -6,8 +6,8 @@ Logic for `canyonos list` and `canyonos select-context`: the deployments on this
 machine, and the one picked to act on from a folder that is no deployment's.
 
 The pick is the deployment's name in `~/.canyonos/context.json`. `stop`, `clean`,
-`status`, `logs`, `test` and `sync` use it when they are given no deployment and run
-outside a deployment folder; a name or the current folder always wins.
+`status`, `logs`, `test`, `sync` and `curl` use it when they are given no deployment
+and run outside a deployment folder; a name or the current folder always wins.
 """
 
 import json
@@ -133,7 +133,7 @@ def run_select_context(ref, clear=False):
     )
     ui.ok(f"Selected {picked.name}")
     ui.hint(
-        "stop, clean, status, logs, test and sync act on it from any folder that is "
-        "no deployment's; a name or a deployment folder still wins."
+        "stop, clean, status, logs, test, sync and curl act on it from any folder "
+        "that is no deployment's; a name or a deployment folder still wins."
     )
     return True

@@ -18,6 +18,7 @@ from canyonos.clean import run_clean
 from canyonos.config import run_config
 from canyonos.contact import run_contact
 from canyonos.context import run_list, run_select_context
+from canyonos.curl import run_curl
 from canyonos.convert import (
     AGENTS as CONVERT_AGENTS,
     DEFAULT_AGENT,
@@ -124,12 +125,12 @@ def _enter_deployment_folder(args):
 
 def _uses_the_selected_deployment(args):
     """True when `args` is a command that acts on one deployment of this machine and
-    names none: `stop`, `clean`, `status`, `logs`, `test` and `sync`."""
+    names none: `stop`, `clean`, `status`, `logs`, `test`, `sync` and `curl`."""
     if getattr(args, "target", None) == "kubernetes":
         return False
     if args.command in ("stop", "clean"):
         return not args.all and not args.deployments
-    return args.command in ("status", "logs", "test", "sync")
+    return args.command in ("status", "logs", "test", "sync", "curl")
 
 
 def _enter_selected_deployment(args):
@@ -528,6 +529,31 @@ def _run_command(settings_at_start):
     )
     add("dashboard", lambda args: sys.exit(0 if run_open_dashboard() else 1))
     add("chat", lambda args: sys.exit(run_chat()))
+    curl = add(
+        "curl",
+        lambda args: sys.exit(
+            run_curl(args.body, route=args.route, show_command=args.print)
+        ),
+    )
+    curl.add_argument(
+        "body",
+        metavar="JSON",
+        help="The request body, a JSON string in single quotes, such as "
+        """'{"query": "hello"}'""",
+    )
+    curl.add_argument(
+        "--route",
+        metavar="PROJECT/AGENT/METHOD",
+        help="The route to call when the deployment serves several: its URL, "
+        "<project>/<agent>/<method>, <agent>/<method> or <method> (default: the only "
+        "route, else picked from a menu in a terminal)",
+    )
+    curl.add_argument(
+        "--print",
+        action="store_true",
+        help="Print the equivalent curl command, the API key left out, instead of "
+        "sending it",
+    )
 
     # Test has args: prompt, --json, --timeout, --target.
     test = add_target(

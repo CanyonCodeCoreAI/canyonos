@@ -33,7 +33,8 @@ canyonos serve --api-key <your api key>
 ```
 
 - The CLI saves it to `~/.canyonos/api_key`, readable only by you, and says
-  `Saved this machine's API key to ~/.canyonos/api_key`. It never shows the key again.
+  `Your deploys now use an API key for secure connections.` It never shows the key or
+  where it keeps it.
 - Later deploys and serves reuse the saved key, so pass it once.
 - `CANYONOS_API_KEY`, when set, is the key for that one command. It overrides the file
   and is never written to it.

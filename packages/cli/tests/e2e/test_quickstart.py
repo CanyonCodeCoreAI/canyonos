@@ -311,7 +311,9 @@ def test_a_new_api_key_refuses_the_old_one(deployed_workflow):
 
     endpoint, output = _deploy(case, folder, "--api-key", NEXT_API_KEY)
 
-    assert "Replaced this machine's API key." in output, output
+    assert "other running deployments keep the old one" in " ".join(output.split()), (
+        output
+    )
     _assert_refused(_post(endpoint, "CanyonOS", API_KEY), 401, "auth.invalid_key")
     answered = _answer(endpoint, "CanyonOS", NEXT_API_KEY)
     assert answered.get("status") == "done", answered

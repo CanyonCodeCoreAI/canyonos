@@ -49,6 +49,7 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
 | ----------- | -------------------------------------------------------------------- |
 | `deploy`    | Build an image per agent, start the workflow, and open the dashboard |
 | `test`      | Send one query end to end and show the answer                        |
+| `curl`      | POST one JSON body to the workflow and print what it answers         |
 | `status`    | Show whether a deploy is running, its endpoint, and how to query it  |
 | `logs`      | Stream the Global Controller's logs until Ctrl-C                     |
 | `config`    | View or edit `deployment.yaml`; `sync` applies the changes           |
@@ -64,7 +65,8 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
 - `deploy --serve false` doesn't open the dashboard. On Docker, `-v` streams the full
   build and deploy logs instead of a progress summary.
 - `deploy --api-key <key>` and `serve --api-key <key>` save the machine's API key to
-  `~/.canyonos/api_key`, replacing any saved one; later runs reuse it. `--no-api-key`
+  `~/.canyonos/api_key`, replacing any saved one, and say `Your deploys now use an API
+  key for secure connections.`; later runs reuse it. `--no-api-key`
   deletes it and runs open. Without a key, they warn that anyone who reaches the
   endpoint and the dashboard can use them. See [API key](AUTHORIZATION.md).
 - `test` sends the saved API key with each request.
@@ -75,6 +77,20 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
 - `test` on Kubernetes queries the workflow already deployed there.
 - `test --timeout SECONDS` sets the wait (default 300), which restarts after each answer
   you give. `--json` prints one JSON result, for CI.
+- `curl '<json>'` POSTs that body to the running deployment's workflow endpoint, with
+  the saved API key, and prints the answer, indented when it is JSON:
+  `canyonos curl '{"query": "World"}'` prints the queued request's `request_id`. It
+  sends that one request and waits for nothing more; `/status/<request_id>` has the
+  result. It exits 0 on a 2xx answer, else 1 with the status code. A body that is not
+  JSON is refused.
+- `curl` calls this folder's deployment, else the selected one; with neither, it
+  fails and points to `canyonos list` and `canyonos select-context`. It calls Docker
+  deployments.
+- `curl --route <project>/<agent>/<method>` picks the route of a deployment that serves
+  several; `<agent>/<method>`, `<method>` or the route's URL work too. Without it, a
+  terminal shows a menu of the routes, and a run with no terminal fails listing them.
+- `curl --print` prints the equivalent `curl` command instead of sending it, with
+  `<your api key>` in place of the key.
 - `status --json` prints one JSON object with each agent's replica counts.
 - `logs <agent>` prints that agent's logs instead of the Global Controller's, the agent
   named `<project>.<agent>` on Docker. A replica ID prints one replica:
@@ -108,9 +124,9 @@ canyonos select-context --clear        # forget it
   selected one `(selected)`. It lists the deployments recorded in
   `~/.canyonos/deployments/`, the Docker ones on this machine.
 - `select-context` takes a name, folder name, ID or the start of an ID, as `stop` does.
-- Outside a deployment folder, `stop`, `clean`, `status`, `logs`, `test` and `sync` act
-  on the selected deployment when you name none. A name, or running from a deployment
-  folder, always wins.
+- Outside a deployment folder, `stop`, `clean`, `status`, `logs`, `test`, `sync` and
+  `curl` act on the selected deployment when you name none. A name, or running from a
+  deployment folder, always wins.
 - A selected deployment that is no longer deployed is an error until you pick another
   or `--clear` it.
 

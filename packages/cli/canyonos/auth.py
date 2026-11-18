@@ -24,6 +24,7 @@ NO_KEY_WARNING = (
     "No API key is set: the endpoint and the dashboard answer anyone who reaches "
     "them. Set one with --api-key <key>."
 )
+KEY_SET = "Your deploys now use an API key for secure connections."
 
 
 def api_key_path() -> Path:
@@ -66,14 +67,12 @@ def _save(key: str) -> None:
         raise RuntimeError(
             f"Could not write {path}: {error.strerror or error}"
         ) from error
-    if not replaced:
-        ui.ok(f"Saved this machine's API key to {path}")
-        return
-    ui.ok("Replaced this machine's API key.")
-    ui.hint(
-        "The dashboard and this deployment use the new key; other running "
-        "deployments keep the old one until you redeploy them."
-    )
+    ui.ok(KEY_SET)
+    if replaced:
+        ui.hint(
+            "The dashboard and this deployment use the new key; other running "
+            "deployments keep the old one until you redeploy them."
+        )
 
 
 def _remove() -> None:

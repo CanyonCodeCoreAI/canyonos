@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """The CLI on a deployed project, the way a user or a coding agent drives it with
-no terminal: the deploy's own output, the containers it started, status, logs and
-doctor. The deploy hands only the Global Controller the hash of the session's API
-key, which it publishes to Redis; the key itself reaches no container."""
+no terminal: the deploy's own output, the containers it started, status, logs,
+doctor and `canyonos curl` on the selected deployment. The deploy hands only the
+Global Controller the hash of the session's API key, which it publishes to Redis; the
+key itself reaches no container."""
 
 import json
 import re
+import shlex
 
 from ..harness import (
     canyonos,
@@ -83,6 +85,26 @@ def test_the_printed_curl_works_with_the_api_key(recorder, deployed):
     command = printed.replace("<your api key>", recorder.api_key)
     call = run(recorder, ["sh", "-c", command], cwd=deployed.dir)
     assert json.loads(call.stdout)["request_id"], call.output
+
+
+def test_canyonos_curl_posts_to_the_selected_deployment(recorder, deployed, tmp_path):
+    body = json.dumps({deployed.endpoint.argument: deployed.query})
+    route = ["--route", deployed.endpoint.route]
+    try:
+        canyonos(recorder, ["select-context", deployed.project_id], cwd=tmp_path)
+        printed = canyonos(recorder, ["curl", body, *route, "--print"], cwd=tmp_path)
+        call = canyonos(recorder, ["curl", body, *route], cwd=tmp_path)
+    finally:
+        canyonos(recorder, ["select-context", "--clear"], cwd=tmp_path)
+
+    url = f"{deployed.endpoint.url}/{deployed.endpoint.route}"
+    expected = (
+        f'curl -X POST {url} {BEARER} -H "Content-Type: application/json" '
+        f"-d {shlex.quote(body)}"
+    )
+    assert printed.stdout.strip() == expected, printed.output
+    assert json.loads(call.stdout)["request_id"], call.output
+    assert recorder.api_key not in printed.output + call.output
 
 
 def test_containers_up(recorder, deployed):

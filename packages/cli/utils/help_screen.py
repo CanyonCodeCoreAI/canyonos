@@ -26,6 +26,7 @@ UTIL_COMMANDS = (
     ("clean", "Stop the deployment, then delete its agents' images and its records"),
     ("cluster", "Make or delete a local Kubernetes cluster with CanyonOS (kind)"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
+    ("curl", "POST one JSON body to the deployment's workflow and print the answer"),
     ("dashboard", "Open the dashboard, signed in with this machine's API key"),
     ("doctor", "Check what deploying needs and, once deployed, every part of it"),
     ("list", "List the deployments on this machine and the selected one"),

@@ -155,6 +155,18 @@ def test_a_command_outside_a_deployment_folder_runs_from_the_selected_one(
     assert "No deploy is currently running" in result.stderr, _said(result)
 
 
+def test_curl_outside_a_deployment_folder_calls_the_selected_one(cli_case: CliCase):
+    name = _record(cli_case, "app-abcz", FIRST_ID)
+    assert cli_case.run_cli(["select-context", name]).returncode == 0
+
+    result = cli_case.run_cli(["curl", '{"query": "World"}'], cwd=_outside(cli_case))
+
+    assert result.returncode == 1, _said(result)
+    assert f"Acting on {name}" in result.stderr, _said(result)
+    assert "No deploy is running" in result.stderr, _said(result)
+    assert "No deployment is selected" not in _said(result)
+
+
 def test_a_selected_deployment_that_is_gone_is_an_error_that_says_what_to_do(
     cli_case: CliCase,
 ):

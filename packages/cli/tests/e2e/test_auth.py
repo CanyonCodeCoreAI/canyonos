@@ -20,8 +20,7 @@ from .harness import CliCase
 NO_DOCKER = {"DOCKER_HOST": "unix:///nonexistent.sock"}
 API_KEY = "e2e-machine-key-3b7f9d2a"
 NEXT_API_KEY = "e2e-machine-key-c41e0b88"
-SAVED = "Saved this machine's API key"
-REPLACED = "Replaced this machine's API key."
+KEY_SET = "Your deploys now use an API key for secure connections."
 REPLACED_HINT = (
     "The dashboard and this deployment use the new key; other running deployments "
     "keep the old one until you redeploy them."
@@ -65,6 +64,7 @@ def _assert_never_shows_a_key(result: subprocess.CompletedProcess[str]) -> None:
     output = result.stdout + result.stderr
     assert API_KEY not in output, output
     assert NEXT_API_KEY not in output, output
+    assert ".canyonos/api_key" not in output, output
 
 
 @pytest.mark.parametrize("command", COMMANDS)
@@ -72,7 +72,8 @@ def test_api_key_saves_the_key_in_a_private_file(cli_case: CliCase, command: str
     result = _run(cli_case, command, "--api-key", API_KEY)
 
     output = _said(result)
-    assert SAVED in output, output
+    assert output.count(KEY_SET) == 1, output
+    assert REPLACED_HINT not in output, output
     assert OPEN_WARNING not in output, output
     assert _stored(cli_case) == API_KEY
     assert stat.S_IMODE(_key_file(cli_case).stat().st_mode) == 0o600
@@ -86,9 +87,8 @@ def test_api_key_replaces_the_stored_key(cli_case: CliCase, command: str):
     result = _run(cli_case, command, "--api-key", NEXT_API_KEY)
 
     output = _said(result)
-    assert REPLACED in output, output
+    assert output.count(KEY_SET) == 1, output
     assert REPLACED_HINT in output, output
-    assert SAVED not in output, output
     assert _stored(cli_case) == NEXT_API_KEY
     assert stat.S_IMODE(_key_file(cli_case).stat().st_mode) == 0o600
     _assert_never_shows_a_key(result)
@@ -114,7 +114,7 @@ def test_a_later_run_reuses_the_stored_key(cli_case: CliCase, command: str):
     result = _run(cli_case, command)
 
     output = _said(result)
-    for message in (SAVED, REPLACED, REMOVED, OPEN_WARNING):
+    for message in (KEY_SET, REMOVED, OPEN_WARNING):
         assert message not in output, output
     assert _stored(cli_case) == API_KEY
     _assert_never_shows_a_key(result)
@@ -160,7 +160,7 @@ def test_an_empty_api_key_is_refused_and_names_no_api_key(
     output = _said(result)
     assert result.returncode != 0, output
     assert "--no-api-key" in output, output
-    assert REPLACED not in output and REMOVED not in output, output
+    assert KEY_SET not in output and REMOVED not in output, output
     assert _stored(cli_case) == API_KEY
     assert "Traceback" not in result.stderr, result.stderr
 

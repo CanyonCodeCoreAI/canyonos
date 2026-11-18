@@ -55,11 +55,11 @@ Two things do not go over HTTP:
 - The deployment is copied with `docker cp`, so it is a copy, not a live mount. Edits reach the container on the next `canyonos sync` or `deploy`.
 - The deploy log is read with `docker logs -f`.
 
-`canyonos test` skips the Global Controller for its query: it calls the workflow endpoint directly, with the machine's API key, which it never prints.
+`canyonos test` and `canyonos curl` skip the Global Controller for their query: they read the route from `GET /endpoint`, then call the workflow endpoint directly, with the machine's API key, which they never print. `curl` sends one POST and prints the answer as it comes; `test` also polls `/status/<request_id>` and answers the workflow's questions.
 
 ## Which deployment a command acts on
 
-A command that acts on one deployment takes, in order: the deployment it is given by name, the deployment of the folder it runs from (its `deployment.yaml`), then the one `canyonos select-context` picked. `stop` and `clean` get the selected deployment as a name; `status`, `logs`, `test` and `sync` run from its folder, as if typed there (`_enter_selected_deployment` in `cli.py`). A selected deployment whose record is gone is an error, never a fallback to another one.
+A command that acts on one deployment takes, in order: the deployment it is given by name, the deployment of the folder it runs from (its `deployment.yaml`), then the one `canyonos select-context` picked. `stop` and `clean` get the selected deployment as a name; `status`, `logs`, `test`, `sync` and `curl` run from its folder, as if typed there (`_enter_selected_deployment` in `cli.py`). A selected deployment whose record is gone is an error, never a fallback to another one.
 
 ## Code
 
@@ -74,6 +74,7 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `canyonos/stop.py`, `clean.py`, `selection.py` | Stopping and cleaning; choosing which deployments they act on |
 | `canyonos/context.py` | `list`, `select-context`, and the selected deployment other commands act on |
 | `canyonos/dashboard.py` | `dashboard`: opening the dashboard with the API key in the URL fragment |
+| `canyonos/curl.py` | `curl`: one POST of a JSON body to a route of the running deployment |
 | `canyonos/logs.py`, `status.py`, `doctor.py` | Reading logs, status and checks |
 | `canyonos/config.py`, `resources.py`, `validate.py`, `convert.py` | Config edits, the resource picker, validation, `convert` |
 | `canyonos/serve.py`, `dashboard_stack.py`, `dashboard_registration.py`, `dashboard.compose.yml` | The local dashboard stack and deployment registration |
