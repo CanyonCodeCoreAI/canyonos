@@ -35,7 +35,7 @@ dependencies = [
 # `.canyonos_api_interface.api_interface`.
 
 [build-system]
-requires = ["setuptools>=84.1.0"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
