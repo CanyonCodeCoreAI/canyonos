@@ -3,15 +3,14 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useSearch } from '@tanstack/react-router';
+import { useNavigate, useRouteContext, useSearch } from '@tanstack/react-router';
 import { useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
-import type { QueryClient } from '@tanstack/react-query';
 import type { ComponentProps } from 'react';
 
 import type { ApiScope } from '@canyonos/api/auth';
 
-import { tokenInfoQuery } from '@/modules/auth/auth.queries';
+import { checkTokens, TOKEN_LABELS, TokenFieldError } from '@/modules/auth/auth.sign-in';
 import { useAuthStore } from '@/modules/auth/auth.store';
 import {
   AUTH_ERROR_ID,
@@ -23,9 +22,9 @@ import {
 import type { ApiTokens } from '@/modules/auth/auth.store';
 
 const TOKEN_FIELDS = {
-  read: { name: 'readToken', id: 'auth-read-token', label: 'Read token' },
-  write: { name: 'writeToken', id: 'auth-write-token', label: 'Write token' },
-} as const satisfies Record<ApiScope, { name: keyof ApiTokens; id: string; label: string }>;
+  read: { name: 'readToken', id: 'auth-read-token' },
+  write: { name: 'writeToken', id: 'auth-write-token' },
+} as const satisfies Record<ApiScope, { name: keyof ApiTokens; id: string }>;
 
 const typedToken = z
   .string()
@@ -35,28 +34,9 @@ const typedToken = z
 const TokensSchema = z.object({ readToken: typedToken, writeToken: typedToken });
 type TokensInput = z.input<typeof TokensSchema>;
 
-/** A refusal of the token typed into one field, which the message names. */
-class TokenFieldError extends Error {
-  constructor(
-    readonly scope: ApiScope,
-    message: string
-  ) {
-    super(`${TOKEN_FIELDS[scope].label}: ${message}`);
-  }
-}
-
-async function checkToken(queryClient: QueryClient, scope: ApiScope, token: string | null) {
-  if (!token) return;
-  const info = await queryClient.fetchQuery(tokenInfoQuery(token)).catch((error: unknown) => {
-    throw new TokenFieldError(scope, error instanceof Error ? error.message : String(error));
-  });
-  if (info.scope !== scope) {
-    throw new TokenFieldError(scope, `This is a ${info.scope} token, not a ${scope} token`);
-  }
-}
-
 export function TokenScreen() {
   const { redirect } = useSearch({ from: '/_brand/login' });
+  const { linkError } = useRouteContext({ from: '/_brand/login' });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const form = useForm<TokensInput, unknown, ApiTokens>({
@@ -66,8 +46,7 @@ export function TokenScreen() {
   const typed = useWatch({ control: form.control, name: ['readToken', 'writeToken'] });
   const signIn = useMutation({
     mutationFn: async (tokens: ApiTokens) => {
-      await checkToken(queryClient, 'read', tokens.readToken);
-      await checkToken(queryClient, 'write', tokens.writeToken);
+      await checkTokens(queryClient, tokens);
       return tokens;
     },
     onSuccess: (tokens) => {
@@ -79,7 +58,8 @@ export function TokenScreen() {
       form.setFocus(TOKEN_FIELDS[error.scope].name, { shouldSelect: true });
     },
   });
-  const faultyScope = signIn.error instanceof TokenFieldError ? signIn.error.scope : null;
+  const error = signIn.isIdle ? linkError : signIn.error;
+  const faultyScope = error instanceof TokenFieldError ? error.scope : null;
 
   return (
     <div>
@@ -112,7 +92,7 @@ export function TokenScreen() {
           faultyScope={faultyScope}
           {...form.register('writeToken')}
         />
-        <AuthFormError error={signIn.error} />
+        <AuthFormError error={error} />
         <AuthSubmit
           className={enterAt(3)}
           pending={signIn.isPending}
@@ -132,12 +112,10 @@ interface TokenFieldProps extends Omit<ComponentProps<typeof AuthField>, 'id' | 
 }
 
 function TokenField({ scope, faultyScope, ...input }: TokenFieldProps) {
-  const { id, label } = TOKEN_FIELDS[scope];
-
   return (
     <AuthField
-      id={id}
-      label={label}
+      id={TOKEN_FIELDS[scope].id}
+      label={TOKEN_LABELS[scope]}
       type="password"
       autoComplete="off"
       spellCheck={false}

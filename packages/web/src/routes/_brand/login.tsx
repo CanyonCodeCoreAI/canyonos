@@ -4,6 +4,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 
 import { authSearchSchema, leaveIfSignedIn } from '@/modules/auth/auth.routing';
+import { signInWithLink } from '@/modules/auth/auth.sign-in';
 import { TokenScreen } from '@/modules/auth/screens/TokenScreen';
 import type { BrandCopy } from '@/modules/auth/components/CanyonBrandPanel';
 
@@ -17,7 +18,11 @@ const LOGIN_BRAND: BrandCopy = {
 
 export const Route = createFileRoute('/_brand/login')({
   validateSearch: authSearchSchema,
-  beforeLoad: ({ context, search }) => leaveIfSignedIn(context.queryClient, search),
+  beforeLoad: async ({ context, location, search }) => {
+    const linkError = await signInWithLink(context.queryClient, location, search);
+    await leaveIfSignedIn(context.queryClient, search);
+    return { linkError };
+  },
   staticData: { brand: LOGIN_BRAND },
   component: TokenScreen,
 });

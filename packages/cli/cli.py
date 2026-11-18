@@ -13,7 +13,7 @@ import signal
 import sys
 from pathlib import Path
 
-from canyonos import env, ui
+from canyonos import context, env, ui
 from canyonos.auth import (
     DEFAULT_KEY_NAME,
     SCOPES as TOKEN_SCOPES,
@@ -22,9 +22,11 @@ from canyonos.auth import (
     run_keys_trust,
     run_token_create,
 )
+from canyonos.chat import run_chat
 from canyonos.clean import run_clean
 from canyonos.config import run_config
 from canyonos.contact import run_contact
+from canyonos.context import run_list, run_select_context
 from canyonos.convert import (
     AGENTS as CONVERT_AGENTS,
     DEFAULT_AGENT,
@@ -32,6 +34,7 @@ from canyonos.convert import (
     SCOPES as CONVERT_SCOPES,
     run_convert,
 )
+from canyonos.dashboard import SIGN_IN_TTL_SECONDS, run_open_dashboard
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos import kubernetes_local, kubernetes_target
@@ -121,6 +124,40 @@ def _enter_deployment_folder(args):
         args.auth_dir = args.auth_dir.absolute()
     os.makedirs(args.folder, exist_ok=True)
     os.chdir(args.folder)
+
+
+def _uses_the_selected_deployment(args):
+    """True when `args` is a command that acts on one deployment of this machine and
+    names none: `stop`, `clean`, `status`, `logs`, `test`, `sync`, and `token create`
+    for a query token given no project."""
+    if getattr(args, "target", None) == "kubernetes":
+        return False
+    if args.command in ("stop", "clean"):
+        return not args.all and not args.deployments
+    if args.command == "token":
+        return args.scope == "query" and not args.projects and not args.all_projects
+    return args.command in ("status", "logs", "test", "sync")
+
+
+def _enter_selected_deployment(args):
+    """Act on the deployment `canyonos select-context` picked when the command names
+    none and runs outside a deployment folder: `stop` and `clean` name it, the others
+    run from its folder, with the paths they were given kept relative to where they
+    were typed."""
+    if not _uses_the_selected_deployment(args):
+        return
+    selected = context.selected_deployment()
+    if selected is None:
+        return
+    ui.note(f"Acting on {selected.name}, the selected deployment")
+    if args.command in ("stop", "clean"):
+        args.deployments = [selected.name]
+        return
+    if getattr(args, "folders", None):
+        args.folders = [os.path.abspath(folder) for folder in args.folders]
+    if getattr(args, "auth_dir", None):
+        args.auth_dir = args.auth_dir.absolute()
+    context.enter_selected_folder(selected)
 
 
 def _run_command(settings_at_start):
@@ -399,7 +436,8 @@ def _run_command(settings_at_start):
         action="append",
         default=[],
         metavar="ID",
-        help="query: the ID of a project the token may query; repeat it for more",
+        help="query: the ID of a project the token may query; repeat it for more "
+        "(default: this folder's deployment, else the selected one)",
     )
     token_create.add_argument(
         "--all-projects",
@@ -579,6 +617,50 @@ def _run_command(settings_at_start):
         "local registry the cluster advertises, else asked)",
     )
     add("upgrade", lambda args: sys.exit(run_upgrade()))
+    add("list", lambda args: sys.exit(0 if run_list() else 1))
+    select_context = add(
+        "select-context",
+        lambda args: sys.exit(
+            0 if run_select_context(args.deployment, clear=args.clear) else 1
+        ),
+    )
+    select_context.add_argument(
+        "deployment",
+        nargs="?",
+        metavar="DEPLOYMENT",
+        help="The name, folder name or ID (or its start) of the deployment to act on "
+        "from folders that are no deployment's, as `canyonos list` shows it",
+    )
+    select_context.add_argument(
+        "--clear",
+        action="store_true",
+        help="Forget the selected deployment",
+    )
+    dashboard = add(
+        "dashboard",
+        lambda args: sys.exit(
+            0 if run_open_dashboard(key=args.key, auth_dir=args.auth_dir) else 1
+        ),
+        parents=[auth_dir],
+    )
+    dashboard.add_argument(
+        "--key",
+        metavar="NAME",
+        help="The private key to sign the sign-in tokens with "
+        f"({SIGN_IN_TTL_SECONDS // 3600} hours); needed only when there is more than "
+        "one",
+    )
+    chat = add(
+        "chat",
+        lambda args: sys.exit(run_chat(key=args.key, auth_dir=args.auth_dir)),
+        parents=[auth_dir],
+    )
+    chat.add_argument(
+        "--key",
+        metavar="NAME",
+        help="The private key to sign query tokens with; needed only when there is "
+        "more than one",
+    )
 
     # Test has args: prompt, --json, --timeout, --key, --auth-dir, --target.
     test = add_target(
@@ -652,6 +734,7 @@ def _run_command(settings_at_start):
     try:
         if getattr(args, "folder", None):
             _enter_deployment_folder(args)
+        _enter_selected_deployment(args)
         with recording_usage(args.command):
             args.func(args)
     except RuntimeError as e:

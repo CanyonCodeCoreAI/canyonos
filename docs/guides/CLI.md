@@ -15,8 +15,12 @@ canyonos deploy my-project --folder my-deployment   # build the images, start th
 cd my-deployment
 canyonos test "hello"                 # send one query end to end
 canyonos logs my-project.MyAgent      # print one agent's logs
+canyonos dashboard                    # open the dashboard, signed in
 canyonos stop                         # take the deploy down, keeping its images
 ```
+
+From any other folder, `canyonos select-context my-deployment` picks the deployment
+those commands act on; see [Pick a deployment](#pick-a-deployment).
 
 ## Start a workflow
 
@@ -41,15 +45,16 @@ canyonos stop                         # take the deploy down, keeping its images
 
 ## Deploy and run
 
-| Command  | What it does                                                         |
-| -------- | -------------------------------------------------------------------- |
-| `deploy` | Build an image per agent, start the workflow, and open the dashboard |
-| `test`   | Send one query end to end and show the answer                        |
-| `status` | Show whether a deploy is running, its endpoint, and how to query it  |
-| `logs`   | Stream the Global Controller's logs until Ctrl-C                     |
-| `config` | View or edit `deployment.yaml`; `sync` applies the changes           |
-| `sync`   | Apply changes you made by hand in `config/` to the running deploy    |
-| `serve`  | Start the local dashboard on its own                                 |
+| Command     | What it does                                                         |
+| ----------- | -------------------------------------------------------------------- |
+| `deploy`    | Build an image per agent, start the workflow, and open the dashboard |
+| `test`      | Send one query end to end and show the answer                        |
+| `status`    | Show whether a deploy is running, its endpoint, and how to query it  |
+| `logs`      | Stream the Global Controller's logs until Ctrl-C                     |
+| `config`    | View or edit `deployment.yaml`; `sync` applies the changes           |
+| `sync`      | Apply changes you made by hand in `config/` to the running deploy    |
+| `serve`     | Start the local dashboard on its own                                 |
+| `dashboard` | Open the running dashboard, signed in with tokens signed here        |
 
 - `deploy <folder>... --folder PATH` deploys the project folders it names as one
   deployment, named after the deployment folder `PATH`, made when missing. It writes
@@ -83,12 +88,43 @@ canyonos stop                         # take the deploy down, keeping its images
   the config; code changes need `deploy`. `sync` and `config` change a deploy on Docker
   only; on Kubernetes, run `deploy` again. See
   [Configure your workflow](CONFIGURE.md#apply-a-change) for which command applies what.
+- `dashboard` signs a read and a write token valid for 8 hours with your private key
+  and opens the dashboard with them in the link's `#` fragment, which the browser never
+  sends to a server; the sign-in screen stores them and drops the fragment. Without a
+  terminal or a browser it prints the link instead: it signs in whoever opens it, so
+  keep it like a password. `--key NAME` picks the key when you have more than one.
+  Without a private key it opens the sign-in screen and prints how to make tokens; a
+  dashboard started with `--dangerous-skip-auth` just opens.
+
+## Pick a deployment
+
+```bash
+canyonos list                          # every deployment on this machine
+canyonos select-context my-deployment  # act on it from any other folder
+canyonos select-context --clear        # forget it
+```
+
+| Command          | What it does                                                         |
+| ---------------- | -------------------------------------------------------------------- |
+| `list`           | One line per deployment: name, `deployment_id`, whether it runs      |
+| `select-context` | Pick the deployment commands act on outside a deployment folder      |
+
+- `list` marks a deployment deployed with `--dangerous-skip-auth` `(unauthenticated)`,
+  and the selected one `(selected)`. It lists the deployments recorded in
+  `~/.canyonos/deployments/`, the Docker ones on this machine.
+- `select-context` takes a name, folder name, ID or the start of an ID, as `stop` does.
+- Outside a deployment folder, `stop`, `clean`, `status`, `logs`, `test`, `sync` and
+  `token create --scope query` act on the selected deployment when you name none. A
+  name, or running from a deployment folder, always wins.
+- A selected deployment that is no longer deployed is an error until you pick another
+  or `--clear` it.
 
 ## Keys and tokens
 
 ```bash
 canyonos keys create                                         # the pair that signs
-canyonos token create --scope query --project <deployment_id>   # query a deployment
+canyonos token create --scope query                          # query this folder's deployment
+canyonos token create --scope query --project <deployment_id>   # query any deployment
 canyonos token create --scope read                           # read the dashboard API
 ```
 
@@ -105,13 +141,14 @@ canyonos token create --scope read                           # read the dashboar
   and `write` for the dashboard API.
 - `token create --project ID` names a deployment a query token may query, by the
   `deployment_id` in its `deployment.yaml`, and repeats for more; `--all-projects`
-  covers every deployment.
+  covers every deployment. With neither, a query token is for the deployment folder it
+  runs in, else the selected deployment.
 - `token create --ttl SECONDS` makes the token expire (default: never), and `--key NAME`
   picks the private key to sign with when there is more than one.
 - `token create` writes the token alone to stdout and the rest to stderr, so
   `$(canyonos token create ...)` is the token.
 - `--auth-dir PATH` uses another folder of keys than `~/.canyonos/auth`, on every
-  `keys`, `token`, `deploy`, `serve` and `test` command. `deploy` refuses a
+  `keys`, `token`, `deploy`, `serve`, `test`, `chat` and `dashboard` command. `deploy` refuses a
   folder inside a project it deploys, and `serve` one inside the project it runs in,
   since a project's files go into its images.
 
@@ -134,9 +171,11 @@ canyonos stop --all            # every deployment on this machine
 - Both work from any folder. Name deployments by name, folder name, ID or the start of
   an ID; a name two deployments share is refused, so use the ID. Names and `--all` don't
   mix.
-- Without a name, they act on the only deployment. With more than one, they list them:
-  tick the ones you want with space, then press enter. Without a terminal they list them
-  and act on none, so pass the names. `clean` also offers this folder's deployment.
+- Without a name, outside a deployment folder, they act on the selected deployment
+  (`canyonos select-context`). Else they act on the only deployment. With more than
+  one, they list them: tick the ones you want with space, then press enter. Without a
+  terminal they list them and act on none, so pass the names. `clean` also offers this
+  folder's deployment.
 - `stop` also stops the dashboard, keeping its history, when no other deployment runs.
 - `clean` removes the deployment's records in `~/.canyonos/deployments/<deployment>/`,
   its Redis password among them. It leaves a skill that `convert --scope global`

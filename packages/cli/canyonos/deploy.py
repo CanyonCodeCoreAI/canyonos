@@ -483,7 +483,7 @@ def run_deploy(
         return None
     _warn_about_the_collector_image(config_path)
 
-    run_init(banner=banner, auth_env=gc_env(keys, skip_auth))
+    run_init(banner=banner, auth_env=gc_env(keys, skip_auth), auth_disabled=skip_auth)
     dashboard_up = _existing_dashboard_port() is not None
     # A toy deploy doesn't wait for a dashboard that isn't up; `canyonos serve` starts it.
     if str(read_config(config_path).get("deploy_mode")).casefold() == "toy":

@@ -22,7 +22,9 @@ __all__ = [
     "file_lock",
     "is_terminal",
     "keypresses",
+    "keys_waiting",
     "make_private_dir",
+    "on_resize",
     "prepare_console",
     "query_terminal",
     "readable_by_others",
@@ -34,6 +36,8 @@ __all__ = [
 # Terminal
 is_terminal = _system.is_terminal
 keypresses = _system.keypresses
+keys_waiting = _system.keys_waiting
+on_resize = _system.on_resize
 query_terminal = _system.query_terminal
 prepare_console = _system.prepare_console
 

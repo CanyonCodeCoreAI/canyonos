@@ -22,18 +22,25 @@ CORE_COMMANDS = (
 )
 
 UTIL_COMMANDS = (
+    ("chat", "Send queries to your running workflows and answer their questions"),
     ("clean", "Stop the deployment, then delete its agents' images and its records"),
     ("cluster", "Make or delete a local Kubernetes cluster with CanyonOS (kind)"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
+    ("dashboard", "Open the dashboard, signed in with tokens signed on this machine"),
     ("doctor", "Check what deploying needs and, once deployed, every part of it"),
     (
         "keys",
         "Make and register the keys that sign tokens for the endpoint and the dashboard",
     ),
+    ("list", "List the deployments on this machine and the selected one"),
     ("logs", "Follow the running deploy's logs"),
     ("new-app", "Create a starter CanyonOS project with two agents"),
     ("quickstart", "Guided first run, from a starter project to your first trace"),
     ("provision", "Provision or tear down a cloud machine (e.g. AWS) to deploy from"),
+    (
+        "select-context",
+        "Pick the deployment commands act on outside a deployment folder",
+    ),
     ("serve", "Start local CanyonOS dashboard"),
     ("status", "Check whether a deploy is running and where it answers"),
     ("stop", "Stop the deploy and remove its containers, keeping its images"),

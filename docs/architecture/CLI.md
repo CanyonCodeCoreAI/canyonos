@@ -57,6 +57,10 @@ Two things do not go over HTTP:
 
 `canyonos test` skips the Global Controller for its query: it calls the workflow endpoint directly, with a short-lived query token it signs and never prints.
 
+## Which deployment a command acts on
+
+A command that acts on one deployment takes, in order: the deployment it is given by name, the deployment of the folder it runs from (its `deployment.yaml`), then the one `canyonos select-context` picked. `stop` and `clean` get the selected deployment as a name; `status`, `logs`, `test`, `sync` and `token create --scope query` run from its folder, as if typed there (`_enter_selected_deployment` in `cli.py`). A selected deployment whose record is gone is an error, never a fallback to another one.
+
 ## Code
 
 Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` command as `cli:main`.
@@ -68,6 +72,8 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `canyonos/auth.py` | `keys` and `token`, the key check of `deploy`, `serve` and `test`, and the keys handed to the Global Controller |
 | `canyonos/init.py`, `deploy.py`, `sync.py`, `test.py`, `verify.py` | Starting the container, deploying, syncing, testing |
 | `canyonos/stop.py`, `clean.py`, `selection.py` | Stopping and cleaning; choosing which deployments they act on |
+| `canyonos/context.py` | `list`, `select-context`, and the selected deployment other commands act on |
+| `canyonos/dashboard.py` | `dashboard`: opening the dashboard with sign-in tokens in the URL fragment |
 | `canyonos/logs.py`, `status.py`, `doctor.py` | Reading logs, status and checks |
 | `canyonos/config.py`, `resources.py`, `validate.py`, `convert.py` | Config edits, the resource picker, validation, `convert` |
 | `canyonos/serve.py`, `dashboard_stack.py`, `dashboard_registration.py`, `dashboard.compose.yml` | The local dashboard stack and deployment registration |
@@ -86,12 +92,13 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 
 | Path | Holds |
 | --- | --- |
-| `~/.canyonos/deployments/<deployment>/state.json` | The container and the ports of the last deploy |
+| `~/.canyonos/deployments/<deployment>/state.json` | The container and the ports of the last deploy, its folder and `deployment_id`, and `auth_disabled` for a deploy with `--dangerous-skip-auth` |
 | `~/.canyonos/deployments/<deployment>/sync-manifest.json` | What the last sync copied |
 | `~/.canyonos/deployments/<deployment>/redis_password` | The deployment's Redis password |
 | `~/.canyonos/deployments/<folder>/convert.log` | Output of an unattended `convert`, named after the folder it ran in |
 | `~/.canyonos/auth/<name>.key` | A private key that signs tokens (`0600`, folder `0700`); it never leaves this machine |
 | `~/.canyonos/auth/trusted/<name>.pub` | The public keys `deploy` and `serve` trust; the dashboard API mounts this folder read-only |
+| `~/.canyonos/context.json` | The deployment `select-context` picked, by name: `{"deployment": "<deployment>"}` |
 | `~/.canyonos/ports.lock` | Lock for picking ports |
 | `~/.canyonos/dashboard/` | The dashboard stack: `.env`, `.lock`, `ports.json`, `stack.json`, `logs/serve-<time>.log` |
 | `~/.canyonos/forwards/<name>.json` | One background port-forward each |
@@ -99,7 +106,7 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `~/.canyonos/usage/` | The usage choice and the events waiting to be sent |
 | `~/.canyonos/supported-versions.json` | Cached supported CLI versions |
 
-`clean --all` deletes all of `~/.canyonos`, keys included; its confirmation says so. `--auth-dir` on `keys`, `token`, `deploy`, `serve` and `test` points at another keys folder, which may not sit inside a project. The CLI also edits `deployment.yaml` (`deployment_id`, `target`) and each project's workflow config (agent resources), keeping comments and key order.
+`clean --all` deletes all of `~/.canyonos`, keys included; its confirmation says so. `--auth-dir` on `keys`, `token`, `deploy`, `serve`, `test`, `chat` and `dashboard` points at another keys folder, which may not sit inside a project. The CLI also edits `deployment.yaml` (`deployment_id`, `target`) and each project's workflow config (agent resources), keeping comments and key order.
 
 ## Developer overrides
 

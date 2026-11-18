@@ -12,8 +12,9 @@ make once.
   each request it sends, valid for a minute, never shown), the sample data the
   dashboard gets after quickstart's first request (a write token valid for five
   minutes, never shown), and quickstart's first request (a query token valid for an
-  hour, shown in the `curl` it asks you to type). Every other token is one you make
-  with `canyonos token create`.
+  hour, shown in the `curl` it asks you to type), and `canyonos dashboard` (a read and
+  a write token valid for 8 hours, in the link it opens). Every other token is one you
+  make with `canyonos token create`.
 
 ```mermaid
 flowchart LR
@@ -70,16 +71,17 @@ With none, it stops before it builds anything, says `No key is trusted in ...`, 
 prints the `keys create` and `token create` commands. `canyonos serve` refuses the same
 way.
 
-**3. Make a token.** For the deployment, with its `deployment_id` from the
-`deployment.yaml` in the deployment folder (the deploy summary prints the whole
-command):
+**3. Make a token.** For the deployment, from its folder:
 
 ```bash
-canyonos token create --scope query --project <deployment_id>
+canyonos token create --scope query
 ```
 
-`--project` takes the ID as written there, a lowercase UUID, and repeats for more
-deployments; `--all-projects` makes a token for every deployment. For the dashboard API:
+It is for the deployment of that folder's `deployment.yaml`. From any other folder, it
+is for the deployment `canyonos select-context <deployment>` picked; `canyonos list`
+shows them with their IDs. `--project <deployment_id>` names a deployment instead,
+by the ID as `deployment.yaml` writes it, a lowercase UUID, and repeats for more;
+`--all-projects` makes a token for every deployment. For the dashboard API:
 
 ```bash
 canyonos token create --scope read
@@ -101,7 +103,7 @@ they need no token from you.
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `canyonos keys list`         | Each public key in `trusted/`: its name, its key ID and its file                                                                        |
 | `canyonos keys trust <file>` | Trusts a public key made elsewhere, such as a teammate's, as `trusted/<name>.pub`, `<name>` being the file's name without its extension |
-| `--auth-dir PATH`            | On every `keys`, `token`, `deploy`, `serve` and `test` command: a folder of keys other than `~/.canyonos/auth`                          |
+| `--auth-dir PATH`            | On every `keys`, `token`, `deploy`, `serve`, `test`, `chat` and `dashboard` command: a folder of keys other than `~/.canyonos/auth`     |
 
 `deploy` refuses an `--auth-dir` inside any project folder it deploys, and `serve` one
 inside the project folder it runs in: a project's files go into its images and, on
@@ -116,14 +118,22 @@ refuses a private key.
 Send it as the header `Authorization: Bearer <token>`, to the endpoint:
 
 ```bash
-TOKEN=$(canyonos token create --scope query --project <deployment_id>)
+TOKEN=$(canyonos token create --scope query)
 curl -X POST http://127.0.0.1:8080/<project>/<agent>/<method> -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"query": "your query"}'
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/status/<request_id>
 ```
 
-On the **dashboard**, the sign-in screen asks for a read token and a write token. Give
-one or both:
+On the **dashboard**, `canyonos dashboard` signs you in on the machine that holds the
+key: it opens the dashboard with a read and a write token valid for 8 hours in the
+link's `#read=…&write=…` fragment, which the browser never sends to a server, and the
+sign-in screen stores them and removes the fragment from the address and its history.
+Without a terminal or a browser it prints the link, which signs in whoever opens it
+until the tokens expire. A link whose token the dashboard refuses, such as one signed
+by a key made after `canyonos serve`, stays on the sign-in screen with the reason.
+
+Elsewhere, the sign-in screen asks for a read token and a write token. Give one or
+both:
 
 - With a read token, every page shows, and every change is refused with the API's
   message.
@@ -204,5 +214,6 @@ nobody else can reach.
 | `canyonos deploy --dangerous-skip-auth`, Kubernetes | The endpoint only. The cluster dashboard follows its chart's `dashboard.dangerousSkipAuth`                |
 | `canyonos serve --dangerous-skip-auth`, Kubernetes  | Nothing: it only opens the dashboard without checking this machine has a key                              |
 
-To turn verification back on, run `canyonos deploy` and `canyonos serve` again without
-the option.
+`canyonos list` marks a deployment deployed this way `(unauthenticated)`. To turn
+verification back on, run `canyonos deploy` and `canyonos serve` again without the
+option.

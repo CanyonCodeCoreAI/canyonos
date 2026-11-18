@@ -8,6 +8,7 @@ import fcntl
 import os
 import select
 import shlex
+import signal
 import termios
 import tty
 
@@ -31,7 +32,10 @@ def _read_key(fd):
     # Reads straight off the fd (not sys.stdin) so this stays in sync with
     # the select() call below -- stdin's own buffering can silently swallow
     # an arrow key's trailing bytes before select() ever sees them queued.
-    ch = os.read(fd, 1).decode()
+    first = os.read(fd, 1)
+    # A non-ASCII character arrives as 2-4 bytes; its first byte says how many.
+    extra = (first >= b"\xc0") + (first >= b"\xe0") + (first >= b"\xf0")
+    ch = (first + os.read(fd, extra)).decode(errors="replace")
     if ch == "\x1b":
         # An arrow key arrives as a multi-byte escape sequence; a bare Esc
         # press has nothing queued right behind it.
@@ -39,6 +43,9 @@ def _read_key(fd):
             ch += os.read(fd, 1).decode()
             if ch[-1] in ("[", "O"):
                 ch += os.read(fd, 1).decode()
+                # Keys like Delete send digits before their last byte: `\x1b[3~`.
+                while ch[-1].isdigit() or ch[-1] == ";":
+                    ch += os.read(fd, 1).decode()
     return ch
 
 
@@ -53,6 +60,21 @@ def keypresses(stream):
         yield lambda: _read_key(fd)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def keys_waiting(stream):
+    """True when keys already typed or pasted into `stream` wait to be read."""
+    return bool(select.select([stream.fileno()], [], [], 0)[0])
+
+
+@contextlib.contextmanager
+def on_resize(callback):
+    """Call `callback` each time the terminal changes size, for the block."""
+    previous = signal.signal(signal.SIGWINCH, lambda signum, frame: callback())
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGWINCH, previous)
 
 
 def query_terminal(query, stdin, stdout, timeout):

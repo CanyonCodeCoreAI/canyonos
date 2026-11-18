@@ -19,7 +19,15 @@ _ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
 
 # The console reports an arrow key as a "\x00" or "\xe0" prefix and then a scan code;
 # they are handed on as the escape sequences a POSIX terminal sends.
-_ARROW_KEYS = {"H": "\x1b[A", "P": "\x1b[B"}
+_NAVIGATION_KEYS = {
+    "H": "\x1b[A",
+    "P": "\x1b[B",
+    "K": "\x1b[D",
+    "M": "\x1b[C",
+    "G": "\x1b[H",
+    "O": "\x1b[F",
+    "S": "\x1b[3~",
+}
 _CTRL_C = "\x03"
 
 # How often a held lock is retried: msvcrt can only wait 10 s before giving up.
@@ -115,7 +123,7 @@ def _read_key():
     except KeyboardInterrupt:
         return _CTRL_C
     if ch in ("\x00", "\xe0"):
-        return _ARROW_KEYS.get(msvcrt.getwch(), "")
+        return _NAVIGATION_KEYS.get(msvcrt.getwch(), "")
     return ch
 
 
@@ -125,6 +133,18 @@ def keypresses(stream):
     function returning the next key: a character, or an arrow key's escape sequence."""
     # msvcrt reads that way already; there is no mode to set or restore.
     yield _read_key
+
+
+def keys_waiting(stream):
+    """True when keys already typed or pasted into the console wait to be read."""
+    return msvcrt.kbhit()
+
+
+@contextlib.contextmanager
+def on_resize(callback):
+    """Nothing to hook: the console sends no signal when it changes size, so a caller
+    that redraws on each key catches up on the next one."""
+    yield
 
 
 def query_terminal(query, stdin, stdout, timeout):

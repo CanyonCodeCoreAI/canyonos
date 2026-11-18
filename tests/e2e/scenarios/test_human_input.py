@@ -7,6 +7,8 @@ from the dashboard after its Redis result expires."""
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import re
+import shlex
 
 import pytest
 import redis
@@ -15,6 +17,7 @@ from ..conftest import DEPLOY_TIMEOUT
 from ..harness import (
     answer,
     canyonos,
+    canyonos_in_terminal,
     deployed_endpoint,
     docker,
     Endpoint,
@@ -151,6 +154,71 @@ def test_workflow_pauses_for_an_answer_and_resumes(recorder, human_input_deploy)
     assert repeated.json() == {
         "error": f"Request {request_id} is not waiting for input"
     }, repeated.output
+
+
+def test_chat_finds_adds_switches_and_deletes_workflows_and_answers_questions(
+    recorder, human_input_deploy
+):
+    endpoint = human_input_deploy.endpoint
+    url = f"{endpoint.url}/{endpoint.route}"
+    body = shlex.quote(json.dumps({endpoint.argument: "your query"}))
+    curl = (
+        f'curl -X POST {url} -H "Authorization: Bearer {endpoint.token}" '
+        f'-H "Content-Type: application/json" -d {body}'
+    )
+    box = f"{endpoint.argument} (str)"
+    outside = human_input_deploy.directory.parent
+
+    def chat(cwd, answers, shown=None):
+        call = canyonos_in_terminal(
+            recorder, ["chat"], cwd=cwd, answers=answers, timeout=180
+        )
+        assert call.code == 0, call.output
+        if shown is not None:
+            assert shown in call.output, call.output
+            assert re.search(r"request [0-9a-f]{32} · ", call.output), call.output
+
+    # In the deployment's folder its workflow is there without a curl; the answer is
+    # fixed with the arrow, Delete and Home keys.
+    chat(
+        human_input_deploy.directory,
+        [
+            (box, "pause\r"),
+            ("the question above", "emember thxis\x1b[D\x1b[D\x1b[D\x1b[3~\x1b[Hr\r"),
+            (box, "/quit\r"),
+        ],
+        "answer  remember this",
+    )
+    # Its result comes back from /recent, without typing the request ID.
+    chat(
+        human_input_deploy.directory,
+        [
+            (box, "/rec\t\r"),
+            ("Show the result of", "\r"),
+            ("answer  remember this", "/quit\r"),
+        ],
+    )
+    # Elsewhere it is deleted, refused from a curl that isn't a workflow's, added back
+    # from its own, and answered with a pasted newline; then deleted for good.
+    chat(
+        outside,
+        [
+            ("/ commands", "/sw\t\r"),
+            ("Switch to", "d"),
+            ("/ commands", "/add curl -X POST http://127.0.0.1:9/x -d '{}'\r"),
+            ("not a workflow's curl command", f"/add {curl}\r"),
+            (box, "pause\r"),
+            ("the question above", "and\rthis café\r"),
+            (box, "/quit\r"),
+        ],
+        # Text with a line break shows as Markdown, which joins the lines.
+        "and this café",
+    )
+    chat(
+        outside,
+        [("/ commands", "/switch\r"), ("Switch to", "d"), ("/ commands", "/quit\r")],
+    )
+    assert url not in (Path.home() / ".canyonos" / "chat.json").read_text()
 
 
 def test_failed_status_recovers_from_its_dashboard_span(recorder, human_input_deploy):

@@ -40,7 +40,15 @@ TERMINAL_SIZE = (40, 120)
 ESCAPE_SEQUENCE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 READ_METHODS = ("GET", "HEAD")
 # The commands that read or write keys, each given the run's own keys folder.
-AUTH_DIR_COMMANDS = ("keys", "token", "deploy", "serve", "test")
+AUTH_DIR_COMMANDS = (
+    "keys",
+    "token",
+    "deploy",
+    "serve",
+    "test",
+    "chat",
+    "dashboard",
+)
 
 
 @dataclass

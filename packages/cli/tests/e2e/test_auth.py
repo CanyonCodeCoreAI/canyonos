@@ -126,7 +126,8 @@ def test_keys_create_writes_a_private_key_and_its_trusted_public_half(
     assert str(private) in output
     assert str(public) in output
     assert "never leaves this machine" in output
-    assert "canyonos token create --scope query --project <project_id>" in output
+    assert "from its deployment's folder" in output
+    assert "canyonos token create --scope query" in output
     assert "canyonos token create --scope read" in output
     assert "To rotate" in output
 
@@ -434,6 +435,7 @@ def test_token_create_query_needs_projects(cli_case: CliCase):
     _refused_without_token(result)
     assert "--project" in _said(result)
     assert "--all-projects" in _said(result)
+    assert "canyonos select-context" in _said(result)
 
 
 @pytest.mark.parametrize(

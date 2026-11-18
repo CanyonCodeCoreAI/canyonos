@@ -477,8 +477,16 @@ def _run_container(
     )
 
 
-def _save_state(container_id, port, docker_socket=None, redis_port=None, api_port=None):
-    """Atomically write GC state so interruption cannot truncate the old record."""
+def _save_state(
+    container_id,
+    port,
+    docker_socket=None,
+    redis_port=None,
+    api_port=None,
+    auth_disabled=False,
+):
+    """Atomically write GC state so interruption cannot truncate the old record;
+    `auth_disabled` records a deploy with `--dangerous-skip-auth`, for `canyonos list`."""
     state_dir = deployment.state_dir()
     os.makedirs(state_dir, exist_ok=True)
     temporary_path = None
@@ -503,6 +511,7 @@ def _save_state(container_id, port, docker_socket=None, redis_port=None, api_por
                         "deployment_id"
                     ),
                     "project_dir": os.getcwd(),
+                    "auth_disabled": auth_disabled,
                 },
                 f,
             )
@@ -585,6 +594,7 @@ def remember_api_port(api_port):
         state.get("docker_socket"),
         state.get("redis_port"),
         api_port,
+        state.get("auth_disabled", False),
     )
 
 
@@ -598,11 +608,12 @@ def redis_port_of(state):
     )
 
 
-def run_init(banner=True, image=GC_IMAGE, auth_env=()):
+def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
     """Replace any existing Global Controller with a fresh container from `image` and
     save its ID and port for later commands; run at the start of `canyonos deploy`.
     The container is published on the last deploy's port or 8000, or the next free
-    port after it, and gets `auth_env`, the options that hand it the trusted keys."""
+    port after it, and gets `auth_env`, the options that hand it the trusted keys, or
+    turn verification off when `auth_disabled`, which the state records."""
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
@@ -649,7 +660,14 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=()):
                 auth_env=auth_env,
             )
         try:
-            _save_state(container_id, port, docker_socket, redis_port, last_api_port)
+            _save_state(
+                container_id,
+                port,
+                docker_socket,
+                redis_port,
+                last_api_port,
+                auth_disabled,
+            )
         except OSError as e:
             cleanup_failure = cleanup_docker(
                 ["docker", "rm", "-f", container_id],

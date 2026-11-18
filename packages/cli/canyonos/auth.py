@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from canyonos import ui
-from canyonos.constants import project_root
+from canyonos.constants import deployment_config_path, project_root, read_config
 from canyonos.os_support import (
     make_private_dir,
     readable_by_others,
@@ -209,6 +209,11 @@ def _key_names(folder: Path) -> list[str]:
     return [path.stem for path in _named_keys(folder, ".key")]
 
 
+def signing_keys(auth_dir: Path | None) -> list[str]:
+    """The names of the private keys in `auth_dir` that can sign tokens here."""
+    return _key_names(_folder(auth_dir))
+
+
 def holds_a_key(auth_dir: Path | None) -> bool:
     """True when `auth_dir` holds a private key or a trusted public key, so a first
     run knows whether making the default pair would be its first key."""
@@ -340,6 +345,21 @@ def _project_id(value: str) -> str:
     return value
 
 
+def _this_deployment_id() -> str:
+    """The `deployment_id` in the `deployment.yaml` of the folder the command runs
+    from, the project a query token given none is for; raise RuntimeError saying how
+    to name one when there is none."""
+    project_id = read_config(deployment_config_path()).get("deployment_id")
+    if not project_id:
+        raise RuntimeError(
+            "A query token needs the projects it may query: --project <project_id> "
+            "(repeat it for more) or --all-projects. Run it from a deployment's "
+            "folder, or after `canyonos select-context <deployment>`, and it is for "
+            "that deployment"
+        )
+    return project_id
+
+
 def token_claims(
     scope: str, projects: list[str], all_projects: bool, ttl: int | None
 ) -> dict:
@@ -420,8 +440,11 @@ def show_new_key(private: Path, public: Path, auth_dir: Path | None) -> None:
         "Share the .pub, never the .key."
     )
     ui.blank()
-    ui.say("Make a token to query a workflow, or to read the dashboard API:")
-    ui.command(_cli("token create --scope query --project <project_id>", auth_dir))
+    ui.say(
+        "Make a token to query a workflow, from its deployment's folder, or to read "
+        "the dashboard API:"
+    )
+    ui.command(_cli("token create --scope query", auth_dir))
     ui.command(_cli("token create --scope read", auth_dir))
     ui.blank()
     ui.hint(_ROTATION)
@@ -544,7 +567,10 @@ def run_token_create(
     auth_dir: Path | None,
 ) -> bool:
     """Sign a token for `canyonos token create` and show it once, warning when the key
-    is readable by others or no deploy trusts it."""
+    is readable by others or no deploy trusts it. A query token given no project is for
+    the deployment of the folder it runs from."""
+    if scope == "query" and not projects and not all_projects:
+        projects = [_this_deployment_id()]
     claims = token_claims(scope, projects, all_projects, ttl)
     path = private_key_path(key, auth_dir)
     private, public = load_key_pair(path)

@@ -80,10 +80,10 @@ def _send_query(url, body, headers):
         ) from None
 
 
-def _await_result(endpoint, request_id, timeout, sign):
-    """Poll the endpoint, each call with the header `sign` returns, until the request
-    is done, errors or waits for an answer, or return `{"status": "timeout"}`."""
-    url = f"http://{endpoint['public_host']}:{endpoint['api_port']}/status/{request_id}"
+def _await_result(base, request_id, timeout, sign):
+    """Poll the endpoint at `base`, each call with the header `sign` returns, until the
+    request is done, errors or waits for an answer, or return `{"status": "timeout"}`."""
+    url = f"{base}/status/{request_id}"
     deadline = time.time() + timeout
     with ui.status("Running query..."):
         while time.time() < deadline:
@@ -140,10 +140,9 @@ class _Run:
         return round(time.monotonic() - self.started, 3)
 
 
-def _read_answer(prompt, kind):
-    """Read one answer to the workflow's question from the terminal: as typed when
-    `kind` is `str`, otherwise as JSON when it parses and as typed when it doesn't."""
-    text = input(prompt)
+def _parse_answer(text, kind):
+    """Read one typed answer: as typed when `kind` is `str`, otherwise as JSON when it
+    parses and as typed when it doesn't."""
     if kind == "str":
         return text
     try:
@@ -158,20 +157,34 @@ def _query(run, endpoint, timeout, queries, sign):
     the header `sign` returns. Stores each result on the run; raises if one errors or
     times out."""
     run.begin("query", "Query the workflows")
+    base = f"http://{endpoint['public_host']}:{endpoint['api_port']}"
     for route in endpoint["routes"]:
         query = run.query or queries.get(route.get("project")) or DEFAULT_QUERY
-        _query_route(run, endpoint, route, query, timeout, sign)
+        run.endpoints.append(route["url"])
+        run.queries.append(query)
+        body = {name: query for name in route["arguments"]}
+        run.results.append(_query_route(run, base, route["url"], body, timeout, sign))
     run.done(f"{len(run.results)} workflow(s) answered in {run.elapsed()}s")
 
 
-def _query_route(run, endpoint, route, query, timeout, sign):
-    """Send `query` to one route, as every argument of its method, each call with the
-    header `sign` returns, and store the result on the run; raises if it errors or
-    times out."""
-    body = {name: query for name in route["arguments"]}
-    url = route["url"]
-    run.endpoints.append(url)
-    run.queries.append(query)
+def _type_answer(question, schema):
+    """Show the workflow's `question`, ask for each key of its `schema`, which maps it
+    to its Python type name, on its own line, and return the answers by key."""
+    ui.say(f"The workflow asks: {json.dumps(question)}")
+    body = {}
+    for key, kind in schema.items():
+        prompt = f"{key} ({kind}): "
+        if list(schema) == ["input"]:
+            prompt = "Your answer: " if kind == "str" else f"Your answer ({kind}): "
+        body[key] = _parse_answer(input(prompt), kind)
+    return body
+
+
+def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
+    """POST `body` to the route at `url` of the endpoint at `base`, each call with the
+    header `sign` returns, answer each question the workflow asks with
+    `answer(question, schema)`, and return its result; raises if it errors or times
+    out."""
     ui.say(f"POST {url}  {json.dumps(body)}")
 
     try:
@@ -187,29 +200,22 @@ def _query_route(run, endpoint, route, query, timeout, sign):
     except OSError as e:
         raise RuntimeError(f"Could not reach the workflow at {url}: {e}") from None
 
-    data = _await_result(endpoint, request_id, timeout, sign)
-    answer_url = (
-        f"http://{endpoint['public_host']}:{endpoint['api_port']}/answer/{request_id}"
-    )
+    run.request_id = request_id
+    data = _await_result(base, request_id, timeout, sign)
+    answer_url = f"{base}/answer/{request_id}"
     while data.get("status") == "input_required":
         asked = data["question"]
         schema = asked["input_schema"]
         # Quiet means --json, which can't show the question; with no terminal, no one can type.
         if ui.console.quiet or not is_terminal(sys.stdin):
-            run.request_id, run.answer_url = request_id, answer_url
+            run.answer_url = answer_url
             example = {key: f"<{kind}>" for key, kind in schema.items()}
             raise RuntimeError(
                 f"The workflow asks {json.dumps(asked['question'])}, but `canyonos test` can "
                 "only take an answer typed in a terminal, without --json. The deploy stays "
                 f"up, so answer request {request_id} with: {_curl_example(answer_url, example)}"
             )
-        ui.say(f"The workflow asks: {json.dumps(asked['question'])}")
-        body = {}
-        for key, kind in schema.items():
-            prompt = f"{key} ({kind}): "
-            if list(schema) == ["input"]:
-                prompt = "Your answer: " if kind == "str" else f"Your answer ({kind}): "
-            body[key] = _read_answer(prompt, kind)
+        body = answer(asked["question"], schema)
         try:
             _send_query(answer_url, body, sign())
         except urllib.error.HTTPError as e:
@@ -220,14 +226,13 @@ def _query_route(run, endpoint, route, query, timeout, sign):
             raise RuntimeError(
                 f"Could not send the answer to {answer_url}: {e}"
             ) from None
-        data = _await_result(endpoint, request_id, timeout, sign)
+        data = _await_result(base, request_id, timeout, sign)
     status = data.get("status")
     if status == "error":
         raise RuntimeError(data.get("error") or "the workflow returned an error.")
     if status != "done":
         raise RuntimeError(f"The workflow did not finish within {timeout}s.")
-
-    run.results.append(data.get("result"))
+    return data.get("result")
 
 
 def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False, key=None, auth_dir=None):

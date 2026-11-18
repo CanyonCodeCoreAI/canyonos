@@ -6,25 +6,35 @@ from any folder, by name or ID as Docker picks containers, or in a menu. Two cop
 of helloworld deploy from folders both named `helloworld`, so only their IDs tell
 them apart. Without a terminal, a stop that would have to ask names both and stops
 neither, and the shared folder name is refused as ambiguous. In a terminal, `clean`
-lists both and cleans only the one ticked with space and confirmed with enter. Once
+lists both and cleans only the one ticked with space and confirmed with enter.
+`canyonos list` shows both running; once one is selected, `status` and `token create`
+outside every folder act on it, while a folder's own deployment still wins, and a
+selected deployment that is gone makes `stop` fail rather than stop the other.
+`canyonos dashboard` prints a link whose fragment signs the dashboard in. Once
 the other's Global Controller is gone, a stop with one project left acts without
 asking, reports it already gone and removes the Redis and replicas it left. Naming
 a project that is no longer deployed fails, and `clean` in its folder still finds
 it by ID. The cases are steps on one fleet: once one fails, the rest are skipped."""
 
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
+import jwt
 import pytest
 
 from ..harness import (
+    API_URL,
+    bearer,
     canyonos,
     canyonos_in_terminal,
     cli_value,
     dashboard_containers,
     docker,
+    http,
     project_containers,
     project_dir,
     stage,
@@ -42,6 +52,7 @@ PROJECT_LABEL = "com.docker.compose.project"
 SECOND_API_PORT = 8082
 SECOND_REDIS_PORT = 6380
 SKILL = Path(".claude/skills/converting-to-canyonos/SKILL.md")
+CONTEXT = Path.home() / ".canyonos" / "context.json"
 
 
 @dataclass
@@ -185,6 +196,60 @@ def test_the_shared_folder_name_is_refused_as_ambiguous(recorder, fleet):
     assert set(fleet.names.values()) <= _running_projects(recorder)
 
 
+def _query_audience(recorder, cwd: Path) -> list[str]:
+    """The projects a query token `canyonos token create` makes in `cwd` covers."""
+    created = canyonos(recorder, ["token", "create", "--scope", "query"], cwd=cwd)
+    token = created.stdout.strip()
+    return jwt.decode(token, options={"verify_signature": False})["aud"]
+
+
+def test_the_selected_deployment_is_the_one_commands_act_on_outside_its_folder(
+    recorder, fleet
+):
+    second = fleet.names["second"]
+    try:
+        listed = canyonos(recorder, ["list"], cwd=fleet.outside)
+        canyonos(
+            recorder, ["select-context", fleet.ids["second"][:12]], cwd=fleet.outside
+        )
+        selected = canyonos(recorder, ["list"], cwd=fleet.outside)
+        status = canyonos(recorder, ["status", "--json"], cwd=fleet.outside)
+
+        for copy in COPIES:
+            line = next(
+                line for line in listed.stdout.splitlines() if fleet.names[copy] in line
+            )
+            assert fleet.ids[copy] in line, listed.output
+            assert "running" in line and "not running" not in line, listed.output
+        assert "(selected)" not in listed.output, listed.output
+        marked = [line for line in selected.stdout.splitlines() if "(selected)" in line]
+        assert len(marked) == 1 and second in marked[0], selected.output
+        assert f"Acting on {second}" in status.output, status.output
+        endpoint = json.loads(status.stdout)["endpoint"]
+        assert endpoint["api_port"] == SECOND_API_PORT, status.stdout
+        assert _query_audience(recorder, fleet.outside) == [fleet.ids["second"]]
+        assert _query_audience(recorder, fleet.dirs["first"]) == [fleet.ids["first"]]
+    finally:
+        canyonos(recorder, ["select-context", "--clear"], cwd=fleet.outside)
+
+
+def test_dashboard_without_a_terminal_prints_a_link_that_signs_in_for_8_hours(
+    recorder, fleet
+):
+    call = canyonos(recorder, ["dashboard"], cwd=fleet.outside)
+
+    link = urlsplit(call.stdout.strip())
+    assert link.path == "/login" and not link.query, call.stdout
+    tokens = {scope: value for scope, [value] in parse_qs(link.fragment).items()}
+    assert set(tokens) == {"read", "write"}, call.stdout
+    for scope, token in tokens.items():
+        claims = jwt.decode(token, options={"verify_signature": False})
+        assert claims["exp"] - claims["iat"] == 8 * 60 * 60, claims
+        info = http(recorder, "GET", f"{API_URL}/auth/token", headers=bearer(token))
+        assert info.json()["scope"] == scope, info.output
+    assert "8 hours" in call.output, call.output
+
+
 def test_clean_in_a_terminal_cleans_only_the_ticked_project(recorder, fleet):
     second, first = fleet.names["second"], fleet.names["first"]
     skill = fleet.dirs["second"] / SKILL
@@ -210,6 +275,23 @@ def test_clean_in_a_terminal_cleans_only_the_ticked_project(recorder, fleet):
     assert first in _running_projects(recorder)
     assert _images(recorder, first)
     assert len(dashboard_containers(recorder)) == DASHBOARD_CONTAINERS
+
+
+def test_stop_refuses_a_selected_deployment_that_is_gone_and_leaves_the_other(
+    recorder, fleet
+):
+    second, first = fleet.names["second"], fleet.names["first"]
+    CONTEXT.write_text(json.dumps({"deployment": second}))
+    try:
+        call = canyonos(recorder, ["stop"], cwd=fleet.outside, check=False)
+    finally:
+        CONTEXT.unlink()
+
+    assert call.code == 1, call.output
+    assert f"`{second}` is no longer deployed" in call.output, call.output
+    assert "canyonos list" in call.output, call.output
+    assert "Traceback" not in call.output, call.output
+    assert first in _running_projects(recorder)
 
 
 def test_with_one_project_left_stop_refuses_it_once_its_controller_is_down(
