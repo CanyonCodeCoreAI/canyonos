@@ -29,7 +29,6 @@
         "diff": "^7.0.0",
         "drizzle-orm": "^0.45.2",
         "elysia": "1.4.29",
-        "jose": "^6.2.3",
         "pino": "^10.1.1",
         "postgres": "^3.4.9",
         "protobufjs": "^8.8.0",

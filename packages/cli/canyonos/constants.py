@@ -159,16 +159,16 @@ def endpoint_api_port(config_path):
     return port if isinstance(port, int) and not isinstance(port, bool) else None
 
 
-# What an endpoint answers before the Global Controller has published its trusted
-# keys (`auth.not_ready`): up, but refusing every request.
+# What an endpoint answers before the Global Controller has published the API key
+# hash (`auth.not_ready`): up, but refusing every request.
 NOT_READY_STATUS = 503
 
 
 def endpoint_answers_at(url, timeout):
     """True when the endpoint at `url` is up and taking requests: any HTTP answer to
-    the probe, which sends no token, counts (a 401 is the endpoint verifying, and the
-    404 of its unknown request id comes with verification off), except the 503 it
-    answers while it waits for its trusted keys."""
+    the probe, which sends no key, counts (a 401 is the endpoint checking its API key,
+    and the 404 of its unknown request id comes with no key set), except the 503 it
+    answers while it waits for the API key hash."""
     try:
         urllib.request.urlopen(
             f"{url.rstrip('/')}/status/canyonos-test-probe", timeout=timeout

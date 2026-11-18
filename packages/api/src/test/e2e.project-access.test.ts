@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { seed_running_project } from './redis-test.utils';
 
 setupE2ETests();
@@ -22,8 +22,8 @@ async function create_project(): Promise<string> {
 }
 
 describe('project access across the /projects tree', () => {
-  test('a read token reaches the project', async () => {
-    const token = await authenticate('read');
+  test('the API key reaches the project', async () => {
+    const token = TEST_API_KEY;
     const project_id = await create_project();
 
     const detail = await api.projects[project_id]!.get({ $headers: bearer(token) });
@@ -33,12 +33,11 @@ describe('project access across the /projects tree', () => {
 
   // The resolver is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling), so
   // reaching every sub-resource proves the new rule fires in each composed plugin.
-  test('another read token reaches every project sub-resource', async () => {
+  test('the API key reaches every project sub-resource', async () => {
     const project_id = await create_project();
     await seed_running_project(project_id, { prompts: {} });
 
-    const other = await authenticate('read');
-    const read = { $headers: bearer(other) };
+    const read = { $headers: bearer(TEST_API_KEY) };
 
     const responses = await Promise.all([
       api.projects[project_id]!.get(read),
@@ -75,7 +74,7 @@ describe('project access across the /projects tree', () => {
   });
 
   test('a project id that does not exist is 404 projects.not_found for any caller', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.stats.get({ $headers: bearer(token) });
@@ -84,7 +83,7 @@ describe('project access across the /projects tree', () => {
     expect((res.error?.value as { error?: string })?.error).toBe('projects.not_found');
   });
 
-  test('a caller with no token is rejected before the project is resolved', async () => {
+  test('a caller with no API key is rejected before the project is resolved', async () => {
     const project_id = await create_project();
 
     expect((await api.projects[project_id]!.get()).error?.status as number).toBe(401);

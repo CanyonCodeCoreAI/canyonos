@@ -72,20 +72,17 @@ The last three pages change a workflow while it runs:
 
 ## Who can open it
 
-The dashboard asks for API tokens before it shows anything: a read token, a write token,
-or both. Make them on the machine that runs the dashboard:
+When the machine has an API key, the dashboard asks for it before it shows anything,
+and its API, on port `3000`, takes it from scripts. `canyonos dashboard` signs you in
+with it. Without a key, anyone who reaches either port can read and change every
+deployment on it. Both ports listen on every interface.
 
 ```bash
-canyonos token create --scope read     # shows every page
-canyonos token create --scope write    # changes prompts, scaling and governance
+canyonos serve --api-key <your api key>   # set or replace the key, restart the dashboard
+canyonos serve --no-api-key               # remove it: the dashboard opens for anyone
 ```
 
-What each token reaches, and how to rotate the key that signs them, is in
-[Tokens and keys](AUTHORIZATION.md). Its API, on port `3000`, takes the same tokens from
-scripts. The API reads the trusted keys when it starts, so after a change to
-`~/.canyonos/auth/trusted/`, run `canyonos serve` to restart it. `canyonos serve
---dangerous-skip-auth` starts it with no token checked, so that anyone who reaches its
-port can read and change every deployment on it. Both ports listen on every interface.
+How to set, send and replace the key is in [API key](AUTHORIZATION.md).
 
 The dashboard API also keeps each deployment's Redis password, encrypted with
 `REDIS_PASSWORD_ENCRYPTION_KEY`, and won't start without that key (32 characters or

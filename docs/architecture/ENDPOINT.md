@@ -8,7 +8,7 @@ No agent code runs in it. It serves three routes:
 2. `GET /status/<request_id>` reports the result, or the question the workflow is waiting on.
 3. `POST /answer/<request_id>` answers that question.
 
-Every route needs a query token; see [Tokens](#tokens).
+Every route needs the machine's API key, when one is set; see [API key](#api-key).
 
 The request and response contract is in [Runtime contract](../guides/RUNTIME_CONTRACT.md#endpoint).
 
@@ -22,7 +22,7 @@ sequenceDiagram
     participant A as Agent replica
 
     C->>E: POST /{project}/{agent}/{method}<br/>Authorization: Bearer<br/>{"query": "..."}
-    E->>R: GET auth:trusted_keys,<br/>HGET controller:identity<br/>(every request)
+    E->>R: GET auth:api_key_hash<br/>(every request)
     E->>R: SET request:{id}:context<br/>(when _context is sent)
     E->>R: HSET future:{future_id}<br/>(Future(agent, method, kwargs))
     E->>LC: gRPC Execute<br/>(localhost:50051)
@@ -42,8 +42,8 @@ sequenceDiagram
 | Path                                                           | What it holds                                                                  |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `packages/core/canyonos_core/endpoint/__init__.py`             | the port, CPU count, `endpoint:address` key and the record's builder and reader |
-| `packages/core/canyonos_core/endpoint/app.py`                  | the routes, the token check, the per-worker app, and `main`, the container's entry point |
-| `packages/core/canyonos_core/auth.py`                          | `verify_bearer` and `trusted_keys_from_env`: the token check and the trusted keys' record |
+| `packages/core/canyonos_core/endpoint/app.py`                  | the routes, the API key check, the per-worker app, and `main`, the container's entry point |
+| `packages/core/canyonos_core/auth.py`                          | the API key's hash, reading it from the environment, and the bearer check            |
 | `packages/core/canyonos_core/controller/controller_context.py` | adds the endpoint to the agent specs                                           |
 | `packages/core/canyonos_core/reconciler/replicas.py`           | the image, command and env the Reconciler launches it with                     |
 | `packages/core/canyonos_core/controller/utils/human_input.py`  | `ask_human`, the agent side of [a question](#answering-a-question)            |
@@ -71,23 +71,23 @@ If gunicorn exits on its own, the replica is marked `failed`. On SIGTERM, gunico
 
 Status has a fallback worth knowing. When a request's keys are gone from Redis, `GET /status` looks up its root span in the local dashboard's Postgres, at `canyonos-dashboard-db`. That name only exists where the dashboard database runs on the deployment's Docker network, so on Kubernetes, or with `bun run dashboard:dev`, status falls back to Redis only.
 
-## Tokens
+## API key
 
-Every route needs a query token, checked before the body is read. How a person makes and sends one is in [Tokens and keys](../guides/AUTHORIZATION.md).
+Every route needs the machine's API key, checked before the body is read. How a person sets and sends it is in [API key](../guides/AUTHORIZATION.md).
 
-- Each time it applies the config, the Global Controller writes `auth:trusted_keys`, `{"keys": [<PEM>, ...], "disabled": <bool>}`, beside `controller:identity`. It builds it from `CANYONOS_TRUSTED_KEYS` and `CANYONOS_AUTH_DISABLED`, which `canyonos deploy` or the operator set, and does not start when either is malformed.
-- On each request the worker reads both keys from Redis and keeps no copy, so a redeploy's keys count from the next request.
-- A token passes with an EdDSA signature by a trusted key, `iss` `canyonos`, an `aud` holding the deployment's `project_id` (its `deployment_id`) or `*`, `scope` `query`, and an `exp` not passed, when it has one.
-- An `OPTIONS` request passes, since a CORS preflight carries no token. With `disabled` (`--dangerous-skip-auth`), every request passes.
+- The Global Controller reads the key's SHA-256 from `CANYONOS_API_KEY_HASH`, which `canyonos deploy` or the operator set, and does not start when it is not 64 lowercase hex characters.
+- Each time it applies the config, it writes the hash to every machine's Redis as `auth:api_key_hash`, or `""` for no key.
+- On each request the worker reads `auth:api_key_hash` and keeps no copy, so a redeploy's key counts from the next request.
+- `""` lets every request pass. Otherwise the worker hashes the `Authorization: Bearer` value and compares it with the hash in constant time.
+- An `OPTIONS` request passes, since a CORS preflight carries no key.
 
-| Status | `error_name`              | When                                                                                    |
-| ------ | ------------------------- | --------------------------------------------------------------------------------------- |
-| `401`  | `auth.missing_token`      | no bearer token                                                                         |
-| `401`  | `auth.invalid_token`      | a bad signature or claim, an expired token, or an `aud` without this deployment's id    |
-| `403`  | `auth.insufficient_scope` | a valid token for this deployment whose scope is not `query`                            |
-| `503`  | `auth.not_ready`          | the Global Controller has not published the trusted keys, or Redis can't be read in 2 s |
+| Status | `error_name`       | When                                                                                 |
+| ------ | ------------------ | ------------------------------------------------------------------------------------ |
+| `401`  | `auth.missing_key` | no bearer, or another scheme                                                         |
+| `401`  | `auth.invalid_key` | a key whose hash is not the published one                                            |
+| `503`  | `auth.not_ready`   | the Global Controller has not published the hash, or Redis can't be read in 2 s      |
 
-A refusal's body is `{"error": <message>, "error_name": <code>}`; a `401` also sends `WWW-Authenticate: Bearer`. The worker logs a token that fails the check at `INFO`, with its code; a missing token is not logged, and a `503` logs a `WARNING` only when Redis can't be read. `canyonos doctor` and the CLI's readiness checks probe with no token, so they count a `401` as up and a `503` as not ready.
+A refusal's body is `{"error": <message>, "error_name": <code>}`; a `401` also sends `WWW-Authenticate: Bearer`. The worker logs a wrong key at `INFO`, with its code; a missing key is not logged, and a `503` logs a `WARNING` only when Redis can't be read. `canyonos doctor` and the CLI's readiness checks probe with no key, so they count a `401` as up and a `503` as not ready.
 
 ## Answering a question
 
@@ -119,4 +119,4 @@ Without `endpoint.api_port` in `deployment.yaml`, the endpoint keeps the port it
 - The record is read by the CLI and the dashboard API (`packages/api/src/modules/monitoring/`). Change all three together.
 - The operator builds the same container on Kubernetes, so a new environment variable is set in `endpoint.go` as well as in the Reconciler's image args.
 - The end-to-end suites send requests through the endpoint; see [Testing](../contributing/TESTING.md#end-to-end-tests).
-- The dashboard API checks its tokens with the same rules, in TypeScript (`packages/api/src/modules/auth/`). Both suites run the tokens in `tests/auth-vectors/`, so a rule change touches both verifiers and the vectors.
+- The dashboard API checks the same key with the same rules, in TypeScript (`packages/api/src/modules/auth/`), so a rule change touches both.

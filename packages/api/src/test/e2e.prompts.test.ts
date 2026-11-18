@@ -10,13 +10,13 @@ import { systemPrompts } from '@api/db/schema';
 
 import { load_prompts } from '../modules/prompts/prompts.service';
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { read_prompts_config, reset_controller, seed_running_project } from './redis-test.utils';
 import type { PromptsConfig } from './redis-test.utils';
 
 setupE2ETests();
 
-const write = bearer(await authenticate('write'));
+const key_headers = bearer(TEST_API_KEY);
 
 /** The project's stored prompt rows as `[name, version, live]`, sorted by version. */
 const recorded = async (project_id: string) =>
@@ -60,7 +60,7 @@ const SUMMARIZE_V1 = CONFIG.prompts['app.summarize']![0]!;
 const EDIT = { content: 'edited system' };
 
 async function running_project(): Promise<{ token: string; project_id: string }> {
-  const token = await authenticate('read');
+  const token = TEST_API_KEY;
   const { project_id } = await create_test_project({ name: 'Prompts Project' });
   await seed_running_project(project_id, CONFIG);
   await load_prompts(project_id);
@@ -107,7 +107,7 @@ describe('project prompts', () => {
     const headers = bearer(token);
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
-    const created = await prompt.versions.post(EDIT, { headers: write });
+    const created = await prompt.versions.post(EDIT, { headers: key_headers });
 
     expect(created.error).toBeNull();
     expect(created.status).toBe(201);
@@ -138,7 +138,7 @@ describe('project prompts', () => {
 
     const res = await prompt.live.put(
       { version: 'app-intent-parse-00000002-v2' },
-      { headers: write }
+      { headers: key_headers }
     );
 
     expect(res.error).toBeNull();
@@ -153,13 +153,13 @@ describe('project prompts', () => {
 
     const unknown = await prompt.live.put(
       { version: 'app-intent-parse-ffffffff-v9' },
-      { headers: write }
+      { headers: key_headers }
     );
     expect(unknown.error?.status as number).toBe(404);
     expect(error_code(unknown)).toBe('prompts.version_not_found');
 
-    const newest = (await prompt.versions.post(EDIT, { headers: write })).data!.version;
-    expect((await prompt.live.put({ version: newest }, { headers: write })).error).toBeNull();
+    const newest = (await prompt.versions.post(EDIT, { headers: key_headers })).data!.version;
+    expect((await prompt.live.put({ version: newest }, { headers: key_headers })).error).toBeNull();
     expect(await recorded(project_id)).toEqual([
       ['app.intent.parse', 'app-intent-parse-00000002-v2', false],
       ['app.intent.parse', 'app-intent-parse-00000003-v3', false],
@@ -173,7 +173,7 @@ describe('project prompts', () => {
 
     const before = await read_prompts_config();
     const res = await api.projects[project_id]!.prompts.missing!.versions.post(EDIT, {
-      headers: write,
+      headers: key_headers,
     });
 
     expect(res.error?.status as number).toBe(404);
@@ -182,7 +182,7 @@ describe('project prompts', () => {
   });
 
   test('a project the controller is not running is 404 canyonos.project_not_running', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'Idle Project' });
     const { project_id: running_id } = await create_test_project({ name: 'Running' });
@@ -192,10 +192,10 @@ describe('project prompts', () => {
 
     const listed = await api.projects[project_id]!.prompts.get({ $headers: headers });
     const read = await prompt.get({ $headers: headers });
-    const created = await prompt.versions.post(EDIT, { headers: write });
+    const created = await prompt.versions.post(EDIT, { headers: key_headers });
     const live = await prompt.live.put(
       { version: 'app-intent-parse-00000003-v3' },
-      { headers: write }
+      { headers: key_headers }
     );
 
     for (const res of [listed, read, created, live]) {
@@ -210,13 +210,13 @@ describe('project prompts', () => {
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const before = await read_prompts_config();
-    const res = await prompt.versions.post({ content: '' }, { headers: write });
+    const res = await prompt.versions.post({ content: '' }, { headers: key_headers });
 
     expect(res.error?.status as number).toBe(422);
     expect(await read_prompts_config()).toEqual(before);
   });
 
-  test('a caller with no token is rejected on every route', async () => {
+  test('a caller with no API key is rejected on every route', async () => {
     const { project_id } = await running_project();
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
@@ -233,7 +233,7 @@ describe('project prompts', () => {
   });
 
   test('an empty controller config lists no prompts', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Bare Project' });
     await seed_running_project(project_id, { prompts: {} });
     await load_prompts(project_id);
@@ -248,7 +248,7 @@ describe('project prompts', () => {
   test('a redeploy keeps stored prompts over prompts.yaml and stores a prompt new to it', async () => {
     const { project_id } = await running_project();
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
-    const newest = (await prompt.versions.post(EDIT, { headers: write })).data!.version;
+    const newest = (await prompt.versions.post(EDIT, { headers: key_headers })).data!.version;
     const added = { version: 'app-advise-00000001-v1', content: 'Advise.', updated_at: null };
 
     await seed_running_project(project_id, {
@@ -312,8 +312,8 @@ describe('project prompts', () => {
     const prompt = api.projects[project_id]!.prompts['app.intent.parse']!;
 
     const [first, second] = await Promise.all([
-      prompt.versions.post({ content: 'first' }, { headers: write }),
-      prompt.versions.post({ content: 'second' }, { headers: write }),
+      prompt.versions.post({ content: 'first' }, { headers: key_headers }),
+      prompt.versions.post({ content: 'second' }, { headers: key_headers }),
     ]);
 
     expect(first.error).toBeNull();
@@ -340,7 +340,7 @@ describe('a prompt write whose publish to Redis fails', () => {
 
     fail_publish();
     const res = await api.projects[project_id]!.prompts['app.intent.parse']!.versions.post(EDIT, {
-      headers: write,
+      headers: key_headers,
     });
 
     expect(res.error?.status as number).toBe(500);
@@ -354,7 +354,7 @@ describe('a prompt write whose publish to Redis fails', () => {
     fail_publish();
     const res = await api.projects[project_id]!.prompts['app.intent.parse']!.live.put(
       { version: 'app-intent-parse-00000002-v2' },
-      { headers: write }
+      { headers: key_headers }
     );
 
     expect(res.error?.status as number).toBe(500);

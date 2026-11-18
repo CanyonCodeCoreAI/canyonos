@@ -9,7 +9,7 @@ import { projects } from '@api/db/schema';
 import { config } from '@core/env';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { reset_controller, seed_project_name, seed_running_project } from './redis-test.utils';
 
 setupE2ETests();
@@ -121,7 +121,7 @@ describe('Redis-backed routes use the project port', () => {
   beforeEach(reset_controller);
 
   test('a project without a port is served from the configured Redis', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Default Port' });
     await seed_running_project(project_id, NO_PROMPTS);
 
@@ -132,7 +132,7 @@ describe('Redis-backed routes use the project port', () => {
   });
 
   test('an api on loopback reads a project stored with a container host on its own Redis host', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Container Host' });
     await seed_running_project(project_id, NO_PROMPTS);
     await db
@@ -147,7 +147,7 @@ describe('Redis-backed routes use the project port', () => {
   });
 
   test('a project registered on another port is read there, not from the configured Redis', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Own Port' });
     await seed_running_project(project_id, NO_PROMPTS);
     await db.update(projects).set({ redis_port: CLOSED_PORT }).where(eq(projects.id, project_id));

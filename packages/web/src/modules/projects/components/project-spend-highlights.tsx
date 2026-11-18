@@ -107,7 +107,6 @@ export function ProjectSpendHighlights({ project_id, range }: ProjectSpendHighli
   if (blocks_query.error || kpis_query.error || dearest_query.error) {
     return (
       <QueryError
-        error={blocks_query.error ?? kpis_query.error ?? dearest_query.error}
         message="Could not load spend highlights."
         onRetry={() => {
           void Promise.all([blocks_query.refetch(), kpis_query.refetch(), dearest_query.refetch()]);

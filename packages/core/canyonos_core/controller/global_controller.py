@@ -27,7 +27,7 @@ from canyonos_core.controller.controller_context import (
     _redis_connect_host,
     list_replicas,
 )
-from canyonos_core.auth import TRUSTED_KEYS_KEY, trusted_keys_from_env
+from canyonos_core.auth import API_KEY_HASH_KEY, api_key_hash_from_env
 from canyonos_core.controller import governance, scaling
 from canyonos_core.controller.orchestrator import TARGET_ENV, orchestrator_for
 from canyonos_core.endpoint import (
@@ -439,7 +439,7 @@ class GlobalController(ControllerContext):
         # Overwrites any dashboard edits, except prompts: the dashboard API owns prompts:config.
         self._write_policies(*config_files)
         self._write_identity()
-        self._write_trusted_keys()
+        self._write_api_key_hash()
         # Without `api_port`, a reload keeps the port the endpoint's container already got,
         # and a deploy starts from the one it had last deploy, which the CLI passes in.
         published = read_endpoint_record(self.redis)
@@ -609,25 +609,20 @@ class GlobalController(ControllerContext):
             len(targets),
         )
 
-    def _write_trusted_keys(self):
-        """Publish the public keys this deploy trusts, and whether it turned token
-        verification off, to every machine's Redis, where the endpoint reads them."""
-        record = trusted_keys_from_env(os.environ)
-        payload = json.dumps(record)
+    def _write_api_key_hash(self):
+        """Publish the hash of the machine's API key this deploy set, or "" when it set
+        none, to every machine's Redis, where the endpoint reads it."""
+        api_key_hash = api_key_hash_from_env(os.environ)
         targets = list(self.machine_redis.values()) or [self.redis]
         for redis_client in targets:
-            redis_client.set(TRUSTED_KEYS_KEY, payload)
+            redis_client.set(API_KEY_HASH_KEY, api_key_hash)
 
-        if record["disabled"]:
-            logger.warning(
-                "Token verification is off (--dangerous-skip-auth): the endpoint "
-                "answers anyone. Published to %d Redis instance(s).",
-                len(targets),
-            )
+        if api_key_hash:
+            logger.info("API key hash published to %d Redis instance(s).", len(targets))
         else:
-            logger.info(
-                "%d trusted key(s) published to %d Redis instance(s).",
-                len(record["keys"]),
+            logger.warning(
+                "No API key is set: the endpoint answers anyone. Published to %d "
+                "Redis instance(s).",
                 len(targets),
             )
 

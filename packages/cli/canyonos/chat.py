@@ -28,11 +28,10 @@ from rich.table import Table
 from rich.text import Text
 
 from canyonos import ui
-from canyonos.auth import query_token
-from canyonos.constants import deployment_config_path, read_config
+from canyonos.auth import auth_header
 from canyonos.gc import GCError, _error_detail, deployed_endpoint, existing_deploy
 from canyonos.os_support import is_terminal, write_private_file
-from canyonos.test import TOKEN_TTL_SECONDS, _parse_answer, _query_route, _Run
+from canyonos.test import _parse_answer, _query_route, _Run
 from canyonos.theme import GREEN, WHITE
 from utils import tui
 
@@ -50,9 +49,8 @@ COMMANDS = {
 
 
 def _load_workflows():
-    """Return the remembered workflows, last used first: each its `url`, the type name
-    of each argument, by name, and either the `project_id` chat signs query tokens for
-    or the `authorization` header its curl command sent."""
+    """Return the remembered workflows, last used first: each its `url` and the type
+    name of each argument, by name."""
     try:
         return json.loads(WORKFLOWS_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -61,8 +59,8 @@ def _load_workflows():
 
 def _from_curl(text):
     """Read the workflow a pasted `curl ... <url> ... -d '<json>'` command calls: its
-    URL, the type name of each argument in its body, by name, and the Authorization
-    header it sends, if any."""
+    URL and the type name of each argument in its body, by name. Its headers are left
+    out: every call sends this machine's API key."""
     # A curl split over lines ends each with a backslash.
     words = shlex.split(text.replace("\\\n", " "))
     url = next(word for word in words if word.startswith(("http://", "https://")))
@@ -70,64 +68,30 @@ def _from_curl(text):
     # A workflow's route is `/<project>/<agent>/<method>` and its body a JSON object.
     if len(urlsplit(url).path.strip("/").split("/")) < 3 or not isinstance(body, dict):
         raise ValueError("not a workflow's curl command")
-    headers = [words[i + 1] for i, word in enumerate(words[:-1]) if word == "-H"]
-    authorization = next(
-        (
-            value.partition(":")[2].strip()
-            for value in headers
-            if value.partition(":")[0].strip().lower() == "authorization"
-        ),
-        None,
-    )
-    workflow = {
+    return {
         "url": url,
         "arguments": {name: type(value).__name__ for name, value in body.items()},
     }
-    if authorization:
-        workflow["authorization"] = authorization
-    return workflow
 
 
 def _deployed_workflows():
     """Return the workflows of the deploy running from this folder, each argument read
-    as text and each queried with tokens signed for its `deployment_id`, or none when
-    no deploy runs here."""
+    as text, or none when no deploy runs here."""
     existing = existing_deploy()
     if existing is None:
         return []
-    project_id = read_config(deployment_config_path()).get("deployment_id")
     return [
         {
             "url": route["url"],
             "arguments": {name: "str" for name in route["arguments"]},
-            "project_id": project_id,
         }
         for route in deployed_endpoint(existing["port"])["routes"]
     ]
 
 
-def _signer(workflow, key, auth_dir):
-    """A function returning the header each request to `workflow` sends: a new query
-    token for its `project_id`, signed with the private key `key` in `auth_dir` and
-    valid for TOKEN_TTL_SECONDS, else the Authorization its curl command sent, else
-    none."""
-    if workflow.get("project_id"):
-
-        def signed():
-            token = query_token(
-                workflow["project_id"], key, auth_dir, TOKEN_TTL_SECONDS
-            )
-            return {"Authorization": f"Bearer {token}"}
-
-        return signed
-    if workflow.get("authorization"):
-        return lambda: {"Authorization": workflow["authorization"]}
-    return dict
-
-
 def _save(workflows):
     """Remember `workflows`, last used first, for the next `canyonos chat`, readable only
-    by you since a curl command's token is kept with its workflow."""
+    by you."""
     WORKFLOWS_FILE.parent.mkdir(parents=True, exist_ok=True)
     write_private_file(WORKFLOWS_FILE, json.dumps(workflows, indent=2))
 
@@ -329,10 +293,10 @@ def _open(workflow):
     ui.panel(Panel(Text(about, WHITE), border_style=GREEN, expand=False))
 
 
-def run_chat(key=None, auth_dir=None):
+def run_chat():
     """Run `canyonos chat`, starting on the newest remembered workflow, until /quit,
-    Ctrl-C or Ctrl-D in its boxes, signing query tokens with the private key `key` in
-    `auth_dir`; return the exit code."""
+    Ctrl-C or Ctrl-D in its boxes, each call sending this machine's API key; return
+    the exit code."""
     if not is_terminal(sys.stdin):
         ui.fail("`canyonos chat` needs a terminal to type in.")
         return 1
@@ -382,10 +346,10 @@ def run_chat(key=None, auth_dir=None):
             elif workflow is None:
                 error = "Add a workflow first: /add <its curl command>"
             elif values[0] == "/recent":
-                _show_recent(workflow, _signer(workflow, key, auth_dir))
+                _show_recent(workflow, auth_header)
             else:
                 sent.append(values)
-                _call(workflow, values, _signer(workflow, key, auth_dir))
+                _call(workflow, values, auth_header)
     finally:
         # Give the whole screen back to the shell, with its prompt under the boxes.
         sys.stderr.write(f"\x1b[r\x1b[{shutil.get_terminal_size().lines};1H\n")

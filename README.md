@@ -125,15 +125,14 @@ all.
 ```bash
 cd your-workflow
 canyonos convert
-canyonos keys create          # once per machine: the key that signs your tokens
 cd ..
-canyonos deploy your-workflow --folder my-deployment
+canyonos deploy your-workflow --folder my-deployment --api-key <your api key>
 cd my-deployment
 canyonos test "your query"
 ```
 
-The endpoint and the dashboard answer only requests with a token from
-`canyonos token create`; see [Tokens and keys](docs/guides/AUTHORIZATION.md).
+The endpoint and the dashboard answer only requests that carry that key, as
+`Authorization: Bearer <your api key>`; see [API key](docs/guides/AUTHORIZATION.md).
 
 The complete path, including credentials, requests, and cleanup, is in the
 [CanyonOS documentation](https://canyonos.readthedocs.io/en/latest/). Start with
@@ -145,8 +144,7 @@ The complete path, including credentials, requests, and cleanup, is in the
 |---|---|
 | `deploy` | Build Docker images, launch the workflow, start the dashboard |
 | `stop` | Stops the current local deployment |
-| `keys` | Make and register the keys that sign tokens |
-| `token` | Make a token to query a workflow or use the dashboard API |
+| `dashboard` | Open the dashboard, signed in with this machine's API key |
 | `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 | `feedback` | Send feedback to developers | 
 

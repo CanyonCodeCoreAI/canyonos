@@ -37,12 +37,10 @@ from rich.text import Text
 
 from canyonos import deployment, env, ui
 from canyonos.auth import (
-    SKIP_AUTH_WARNING,
+    curl_auth,
     gc_env,
-    is_project_id,
-    refuse_keys_in_project,
-    require_keys,
-    trusted_dir,
+    hash_api_key,
+    resolve_api_key,
 )
 from canyonos.constants import (
     DEFAULT_API_PORT,
@@ -62,6 +60,7 @@ from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
 from canyonos.dashboard_stack import (
     _dashboard_lock,
     _existing_dashboard_port,
+    dashboard_api_key_hash,
     dashboard_url,
     run_dashboard,
 )
@@ -358,19 +357,28 @@ def save_deployment_config(config_path):
     _save_id(config_path, "deployment_id")
 
 
+def _is_project_id(value) -> bool:
+    """True when `value` is a UUID in the form `canyonos deploy` writes `deployment_id`:
+    lowercase and hyphenated."""
+    try:
+        return isinstance(value, str) and value == str(uuid.UUID(value))
+    except ValueError:
+        return False
+
+
 def require_deployment_id(config_path):
     """Raise when the deployment's `deployment_id` is set but is not a lowercase,
-    hyphenated UUID, the form `save_deployment_config` writes, since query tokens name
-    the deployment by it exactly as written."""
+    hyphenated UUID, the form `save_deployment_config` writes, since the dashboard and
+    the Kubernetes resource names take it as written."""
     config = read_config(config_path)
     value = config.get("deployment_id") if isinstance(config, dict) else None
-    if not value or is_project_id(value):
+    if not value or _is_project_id(value):
         return
     raise RuntimeError(
         f"deployment_id {value!r} in {config_path} is not a project ID: it must be a "
-        "lowercase, hyphenated UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), the form a "
-        "query token names the deployment in. Write it in that form, or delete the "
-        "line and the deploy makes a new one."
+        "lowercase, hyphenated UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), the form "
+        "`canyonos deploy` writes. Write it in that form, or delete the line and the "
+        "deploy makes a new one."
     )
 
 
@@ -433,25 +441,17 @@ def run_deploy(
     serve=True,
     verbose=False,
     banner=True,
-    skip_auth=False,
-    auth_dir=None,
+    api_key=None,
+    no_api_key=False,
 ):
     """Deploy the projects in `folders` as one deployment, named after the folder this
     runs from and configured by its `deployment.yaml`. The deploy hands the Global
-    Controller the public keys trusted in `auth_dir` and refuses to start without one,
-    or with the keys folder inside one of the projects, unless `skip_auth` turns token
-    verification off."""
+    Controller the hash of this machine's API key, which `api_key` sets or replaces
+    and `no_api_key` removes; with no key, the endpoint checks nothing."""
     projects = deployment.projects(folders)
     config_path = deployment_config_path()
-    refuse_keys_in_project(
-        auth_dir, [project_folder(folder) for folder in projects.values()]
-    )
-    if skip_auth:
-        ui.warn(SKIP_AUTH_WARNING)
-        keys = []
-    else:
-        keys = require_keys(auth_dir)
     require_deployment_id(config_path)
+    key = resolve_api_key(api_key, no_api_key)
     for folder in projects.values():
         _warn_unset_example_keys(folder)
     # Before the project check, which runs in the core image when core isn't installed.
@@ -483,7 +483,7 @@ def run_deploy(
         return None
     _warn_about_the_collector_image(config_path)
 
-    run_init(banner=banner, auth_env=gc_env(keys, skip_auth), auth_disabled=skip_auth)
+    run_init(banner=banner, auth_env=gc_env(key), auth_disabled=key is None)
     dashboard_up = _existing_dashboard_port() is not None
     # A toy deploy doesn't wait for a dashboard that isn't up; `canyonos serve` starts it.
     if str(read_config(config_path).get("deploy_mode")).casefold() == "toy":
@@ -497,7 +497,7 @@ def run_deploy(
         # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
         threading.Thread(
             target=run_dashboard,
-            args=(None, dashboard_port(config_path), skip_auth, trusted_dir(auth_dir)),
+            args=(None, dashboard_port(config_path), hash_api_key(key)),
             daemon=True,
         ).start()
 
@@ -520,8 +520,7 @@ def run_deploy(
             serve=serve,
             verbose=verbose,
             on_ready=ready.append,
-            skip_auth=skip_auth,
-            auth_dir=auth_dir,
+            key=key,
         )
     except (Exception, KeyboardInterrupt):
         # Torn down only if it never came up; a failure after that is just a reporting problem.
@@ -537,11 +536,7 @@ def run_deploy(
     return state
 
 
-# The header every printed `curl` sends, its token left for the reader to make.
-BEARER_HEADER = '-H "Authorization: Bearer <token>"'
-
-
-def _curl_example(url, body):
+def _curl_example(url, body, keyed):
     """A single-line, directly copy-pasteable `curl -X POST ...` command.
 
     Deliberately not split across `\\`-continued lines or pretty-printed JSON --
@@ -551,23 +546,16 @@ def _curl_example(url, body):
     """
     compact_body = shlex.quote(json.dumps(body))
     return (
-        f"curl -X POST {url} {BEARER_HEADER} "
+        f"curl -X POST {url}{curl_auth(keyed)} "
         f'-H "Content-Type: application/json" -d {compact_body}'
     )
 
 
-def token_command(config_path):
-    """The `canyonos token create` that makes a query token for this deployment, which
-    the endpoint knows by its `deployment_id`."""
-    project_id = read_config(config_path).get("deployment_id") or "<project_id>"
-    return f"canyonos token create --scope query --project {project_id}"
-
-
-def summary_body(dashboard_url, endpoint):
+def summary_body(dashboard_url, endpoint, keyed):
     """Build the deploy panel's text: the dashboard URL, a warning when the dashboard
     is down or the project's `otel:` block leaves it out, and how to call, poll and
-    answer the endpoint described by its published record, when there is one, with
-    the command that makes the token each call sends."""
+    answer the endpoint described by its published record, when there is one, each
+    `curl` sending the API key when the deploy is `keyed`."""
     body = Text()
     body.append("Dashboard  ", "dim")
     config_path = deployment_config_path()
@@ -595,16 +583,19 @@ def summary_body(dashboard_url, endpoint):
             if index:
                 body.append("\n                  ")
             example = {name: "your query" for name in route["arguments"]}
-            body.append(_curl_example(route["url"], example), WHITE)
+            body.append(_curl_example(route["url"], example, keyed), WHITE)
         body.append("\nrespond to agent  ", "dim")
         body.append(
-            _curl_example(f"{base}/answer/<request_id>", {"input": "your answer"}),
+            _curl_example(
+                f"{base}/answer/<request_id>", {"input": "your answer"}, keyed
+            ),
             WHITE,
         )
         body.append("\ncheck result      ", "dim")
-        body.append(f"curl {BEARER_HEADER} {base}/status/<request_id>", WHITE)
-        body.append("\ntoken             ", "dim")
-        body.append(f"Make a token with: {token_command(config_path)}", WHITE)
+        body.append(f"curl{curl_auth(keyed)} {base}/status/<request_id>", WHITE)
+        if not keyed:
+            body.append("\napi key           ", "dim")
+            body.append("None: anyone who reaches the endpoint can call it", "yellow")
         if host not in ("127.0.0.1", "localhost"):
             body.append(
                 f"\n                  needs inbound TCP {api_port} open on {host}",
@@ -613,12 +604,12 @@ def summary_body(dashboard_url, endpoint):
     return body
 
 
-def _print_deploy_summary(dashboard_url, endpoint):
+def _print_deploy_summary(dashboard_url, endpoint, keyed):
     """The one screen printed once everything is up: the dashboard and the endpoint."""
     ui.blank()
     ui.panel(
         Panel(
-            summary_body(dashboard_url, endpoint),
+            summary_body(dashboard_url, endpoint, keyed),
             title=f"[bold {GREEN}]Deploy is live[/]",
             title_align="left",
             border_style=GREEN,
@@ -628,19 +619,21 @@ def _print_deploy_summary(dashboard_url, endpoint):
     ui.blank()
 
 
-def _start_dashboard(skip_auth, auth_dir):
+def _start_dashboard(key):
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy.
-    One that is not running yet starts with its API trusting the keys in `auth_dir`,
-    unless `skip_auth`; a running one is left as it is."""
+    One that is not running yet, or runs with another API key than `key`, starts with
+    its API checking `key`; a running one on the same key is left as it is."""
+    api_key_hash = hash_api_key(key)
     try:
         # Waits out a background start, so a half-started dashboard is not registered.
         with ui.status("Starting the dashboard..."), _dashboard_lock():
             port = _existing_dashboard_port()
-        if port is not None:
+            same_key = dashboard_api_key_hash() == api_key_hash
+        if port is not None and same_key:
             _warn_if_dashboard_port_ignored()
             _register_running_project()
             return dashboard_url(port)
-        result = serve_dashboard(skip_auth=skip_auth, auth_dir=auth_dir)
+        result = serve_dashboard(api_key_hash=api_key_hash, renewed=("api",))
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")
         ui.hint("Run `canyonos serve` manually to view it.")
@@ -648,10 +641,10 @@ def _start_dashboard(skip_auth, auth_dir):
     return result.url
 
 
-def _deploy_summary(state, serve, on_ready, skip_auth, auth_dir):
+def _deploy_summary(state, serve, on_ready, key):
     on_ready(True)
     if serve:
-        dashboard = _start_dashboard(skip_auth, auth_dir)
+        dashboard = _start_dashboard(key)
     else:
         port = _existing_dashboard_port()
         dashboard = dashboard_url(port) if port else None
@@ -671,7 +664,7 @@ def _deploy_summary(state, serve, on_ready, skip_auth, auth_dir):
             )
         remember_api_port(endpoint["api_port"])
     summary = (dashboard, endpoint)
-    _print_deploy_summary(*summary)
+    _print_deploy_summary(dashboard, endpoint, key is not None)
     ui.hint(
         "Run `canyonos logs` to view logs, or `canyonos stop` to stop the workflow."
     )
@@ -684,7 +677,7 @@ def _interrupted():
     ui.hint("To resubscribe to log stream run `canyonos logs`.")
 
 
-def _tail_verbose(lines, state, serve, on_ready, skip_auth, auth_dir):
+def _tail_verbose(lines, state, serve, on_ready, key):
     """Every log line, verbatim, until the workflow is up -- what `-v` restores.
 
     Lines are echoed rather than summarized, but the same tracker decides what
@@ -702,7 +695,7 @@ def _tail_verbose(lines, state, serve, on_ready, skip_auth, auth_dir):
                 "The full log is above."
             )
         if UP_MARKER in line and not tracker.in_container_log:
-            return _deploy_summary(state, serve, on_ready, skip_auth, auth_dir)
+            return _deploy_summary(state, serve, on_ready, key)
 
     raise RuntimeError(
         "Deploy stopped or timed out before the workflow became ready. "
@@ -731,7 +724,7 @@ def _echo_until_the_deploy_is_gone(lines, state):
     return echoed
 
 
-def _tail_quiet(lines, state, serve, on_ready, skip_auth, auth_dir):
+def _tail_quiet(lines, state, serve, on_ready, key):
     """Only the phase transitions, until the workflow is up or something fails.
 
     Nothing is echoed raw: the buildx transcript, canyonos' bare prints and grpc's
@@ -793,7 +786,7 @@ def _tail_quiet(lines, state, serve, on_ready, skip_auth, auth_dir):
                 break
 
     if reached_up_marker:
-        return _deploy_summary(state, serve, on_ready, skip_auth, auth_dir)
+        return _deploy_summary(state, serve, on_ready, key)
 
     _reveal_failure(lines, recent, state, tracker, trigger)
     if trigger:
@@ -947,18 +940,18 @@ def follow_gc_log(state):
     )
 
 
-def _stream_logs_and_autoserve(state, serve, verbose, on_ready, skip_auth, auth_dir):
+def _stream_logs_and_autoserve(state, serve, verbose, on_ready, key):
     """Tail the GC container's logs until the workflow is up, then start the
-    dashboard (unless disabled via `serve=False`) with its API trusting the keys in
-    `auth_dir` unless `skip_auth`, print where everything lives, and stop tailing.
+    dashboard (unless disabled via `serve=False`) with its API checking the API key
+    `key`, print where everything lives, and stop tailing.
     """
     process = follow_gc_log(state)
     try:
         lines = queued_lines(process.stdout)
         if verbose:
-            _tail_verbose(lines, state, serve, on_ready, skip_auth, auth_dir)
+            _tail_verbose(lines, state, serve, on_ready, key)
         else:
-            _tail_quiet(lines, state, serve, on_ready, skip_auth, auth_dir)
+            _tail_quiet(lines, state, serve, on_ready, key)
     except KeyboardInterrupt:
         _interrupted()
     finally:

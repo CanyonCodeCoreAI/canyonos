@@ -7,8 +7,7 @@
   "globalPassThroughEnv": [
     "APP_ENV",
     "API_URL",
-    "AUTH_DISABLED",
-    "AUTH_TRUSTED_KEYS_DIR",
+    "CANYONOS_API_KEY_HASH",
     "CANYONOS_REDIS_HOST",
     "CANYONOS_REDIS_PORT",
     "DATABASE_URL",
@@ -101,61 +100,22 @@
       ]
     },
     "canyonos-python#lint": {
-      "command": [
-        "uv",
-        "run",
-        "--active",
-        "--frozen",
-        "ruff",
-        "check",
-        "."
-      ]
+      "command": ["uv", "run", "--active", "--frozen", "ruff", "check", "."]
     },
     "canyonos-python#typecheck": {
-      "command": [
-        "uv",
-        "run",
-        "--active",
-        "--frozen",
-        "ty",
-        "check"
-      ]
+      "command": ["uv", "run", "--active", "--frozen", "ty", "check"]
     },
     "canyonos-python#license:check": {
-      "command": [
-        "uv",
-        "run",
-        "--active",
-        "--frozen",
-        "reuse",
-        "lint"
-      ],
+      "command": ["uv", "run", "--active", "--frozen", "reuse", "lint"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/**"],
       "cache": false
     },
     "canyonos-python#format": {
       "cache": false,
-      "command": [
-        "uv",
-        "run",
-        "--active",
-        "--frozen",
-        "ruff",
-        "format",
-        "."
-      ]
+      "command": ["uv", "run", "--active", "--frozen", "ruff", "format", "."]
     },
     "canyonos-python#format:check": {
-      "command": [
-        "uv",
-        "run",
-        "--active",
-        "--frozen",
-        "ruff",
-        "format",
-        "--check",
-        "."
-      ]
+      "command": ["uv", "run", "--active", "--frozen", "ruff", "format", "--check", "."]
     }
   }
 }

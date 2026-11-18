@@ -5,7 +5,7 @@ import { createRootRouteWithContext, Outlet, redirect } from '@tanstack/react-ro
 import type { QueryClient } from '@tanstack/react-query';
 
 import { signInRequired } from '@/modules/auth/auth.routing';
-import { authActions, useAuthStore } from '@/modules/auth/auth.store';
+import { authActions } from '@/modules/auth/auth.store';
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -19,7 +19,6 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     if (!(await signInRequired(context.queryClient))) return;
     if (authActions.isAuthenticated()) return;
 
-    useAuthStore.getState().logout();
     throw redirect({ to: '/login', search: { redirect: location.href } });
   },
   component: () => <Outlet />,

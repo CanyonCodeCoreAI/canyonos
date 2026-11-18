@@ -27,8 +27,8 @@ POOL = {"t3.micro": 2, "t3.small": 1}
 CAPACITY = {"t3.micro": ("2", "1024"), "t3.small": ("2", "2048")}
 
 PASSWORD = os.environ.get("CANYONOS_REDIS_PASSWORD")
-# ec2_pool.sh signs it with `canyonos token create --scope query --all-projects`.
-BEARER = {"Authorization": f"Bearer {os.environ.get('POOL_QUERY_TOKEN', '')}"}
+# The API key ec2_pool.sh deploys with.
+BEARER = {"Authorization": f"Bearer {os.environ['CANYONOS_API_KEY']}"}
 controller_redis = redis.Redis(port=6390, password=PASSWORD, decode_responses=True)
 ec2 = boto3.client("ec2", region_name=os.environ["EC2_REGION"])
 

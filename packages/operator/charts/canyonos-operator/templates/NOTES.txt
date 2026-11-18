@@ -4,5 +4,9 @@ Deploy a project with the CanyonOS CLI:  canyonos deploy --target kubernetes
 Check it:                                kubectl get canyonprojects,canyonagents -A
 {{- if .Values.dashboard.enabled }}
 Open the dashboard:                      kubectl -n {{ .Values.dashboard.namespace }} port-forward svc/canyonos-dashboard-web 8080:8080
-                                         then http://localhost:8080, signed in with tokens from `canyonos token create --scope read` and `--scope write`
+{{- if or .Values.dashboard.apiKeyHash .Values.dashboard.existingSecret }}
+                                         then http://localhost:8080, signed in with the dashboard's API key
+{{- else }}
+                                         then http://localhost:8080. No API key is set (dashboard.apiKeyHash): the dashboard answers anyone who reaches it.
+{{- end }}
 {{- end }}

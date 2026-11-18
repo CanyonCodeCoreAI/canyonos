@@ -346,7 +346,7 @@ def _run_container(
     `port`, or at the next free port after it that isn't `reserved`, and tell it
     Redis's port, the `reserved` ports and, for an endpoint whose port isn't set, the
     port it had last deploy. `auth_env` are the `docker run` options that hand it the
-    trusted keys."""
+    API key hash."""
     if port in reserved:
         port = next_port(port, reserved)
     start_port = port
@@ -486,7 +486,7 @@ def _save_state(
     auth_disabled=False,
 ):
     """Atomically write GC state so interruption cannot truncate the old record;
-    `auth_disabled` records a deploy with `--dangerous-skip-auth`, for `canyonos list`."""
+    `auth_disabled` records a deploy with no API key, for `canyonos list`."""
     state_dir = deployment.state_dir()
     os.makedirs(state_dir, exist_ok=True)
     temporary_path = None
@@ -612,8 +612,8 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
     """Replace any existing Global Controller with a fresh container from `image` and
     save its ID and port for later commands; run at the start of `canyonos deploy`.
     The container is published on the last deploy's port or 8000, or the next free
-    port after it, and gets `auth_env`, the options that hand it the trusted keys, or
-    turn verification off when `auth_disabled`, which the state records."""
+    port after it, and gets `auth_env`, the options that hand it the API key hash;
+    the state records `auth_disabled`, a deploy with no key."""
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 

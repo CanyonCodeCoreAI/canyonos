@@ -5,7 +5,7 @@ import { Elysia } from 'elysia';
 
 import { GridQuerySchema, TimeRangeQuerySchema } from '@core/time-range';
 
-import { authPlugin, requireScope } from '../auth/auth.middleware';
+import { authPlugin } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { ProjectIdParams } from '../projects/projects.types';
 import {
@@ -45,7 +45,6 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: GridQuerySchema,
       response: { 200: MonitoringSeriesResponseSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Golden-signal series on one shared time grid',
@@ -58,7 +57,6 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     params: ProjectIdParams,
     query: MonitoringLogsQuerySchema,
     response: { 200: MonitoringLogsResponseSchema },
-    beforeHandle: requireScope('read'),
     detail: {
       ...doc,
       summary: 'Recent log records for the deployment, newest first',
@@ -72,7 +70,6 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: TimeRangeQuerySchema,
       response: { 200: MonitoringLogSourcesResponseSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Agents and replicas that wrote logs in the range',
@@ -87,7 +84,6 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: MonitoringListQuerySchema,
       response: { 200: MonitoringLlmCallsResponseSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Spans carrying a model call, newest first',
@@ -102,7 +98,6 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: MonitoringListQuerySchema,
       response: { 200: MonitoringTracesResponseSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Recent traces with their spans, newest first',
@@ -117,7 +112,6 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: TimeRangeQuerySchema,
       response: { 200: MonitoringErrorSummaryResponseSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Error counts grouped by exception type and by agent',
@@ -132,7 +126,6 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       params: ProjectIdParams,
       query: GridQuerySchema,
       response: { 200: MonitoringResourceUtilizationResponseSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Resource utilization per machine and per agent',
@@ -144,12 +137,10 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
   .get('/:project_id/monitoring/replicas', ({ params }) => get_replicas(params.project_id), {
     params: ProjectIdParams,
     response: { 200: MonitoringReplicasResponseSchema },
-    beforeHandle: requireScope('read'),
     detail: { ...doc, summary: 'Replicas reporting up, with their queue lengths' },
   })
   .get('/:project_id/monitoring/endpoint', ({ params }) => get_endpoint(params.project_id), {
     params: ProjectIdParams,
     response: { 200: MonitoringEndpointResponseSchema },
-    beforeHandle: requireScope('read'),
     detail: { ...doc, summary: 'Where the running endpoint answers' },
   });

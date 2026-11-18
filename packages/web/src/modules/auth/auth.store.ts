@@ -4,61 +4,31 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import { isTokenExpired } from './token';
-
-export interface ApiTokens {
-  readToken: string | null;
-  writeToken: string | null;
-}
-
-interface AuthState extends ApiTokens {
-  login: (tokens: ApiTokens) => void;
+interface AuthState {
+  apiKey: string | null;
+  login: (apiKey: string) => void;
   logout: () => void;
 }
-
-const SIGNED_OUT: ApiTokens = { readToken: null, writeToken: null };
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      ...SIGNED_OUT,
-      login: ({ readToken, writeToken }) => set({ readToken, writeToken }),
-      logout: () => set(SIGNED_OUT),
+      apiKey: null,
+      login: (apiKey) => set({ apiKey }),
+      logout: () => set({ apiKey: null }),
     }),
     {
       name: 'cc-auth-storage',
-      partialize: ({ readToken, writeToken }) => ({ readToken, writeToken }),
+      partialize: ({ apiKey }) => ({ apiKey }),
     }
   )
 );
 
-const READ_METHODS = new Set(['GET', 'HEAD']);
-
-function heldTokens({ readToken, writeToken }: ApiTokens): string[] {
-  return [readToken, writeToken].filter((token): token is string => token !== null);
-}
-
 export const authActions = {
-  /**
-   * The token a request with this method needs; the other one when it is not held, so the
-   * person reads the API's refusal rather than a request that silently never left.
-   */
-  tokenFor(method: string | undefined): string | null {
-    const { readToken, writeToken } = useAuthStore.getState();
-    if (READ_METHODS.has((method ?? 'GET').toUpperCase())) return readToken ?? writeToken;
-    return writeToken ?? readToken;
-  },
-  heldTokens(): string[] {
-    return heldTokens(useAuthStore.getState());
-  },
-  isAuthenticated(): boolean {
-    const tokens = heldTokens(useAuthStore.getState());
-    return tokens.length > 0 && tokens.every((token) => !isTokenExpired(token));
-  },
+  apiKey: (): string | null => useAuthStore.getState().apiKey,
+  isAuthenticated: (): boolean => useAuthStore.getState().apiKey !== null,
 };
 
 export const authSelectors = {
-  /** "read", "write" or "read and write": which of the two tokens this browser holds. */
-  heldScopes: ({ readToken, writeToken }: AuthState): string =>
-    [readToken ? 'read' : null, writeToken ? 'write' : null].filter(Boolean).join(' and '),
+  signedIn: ({ apiKey }: AuthState): boolean => apiKey !== null,
 };

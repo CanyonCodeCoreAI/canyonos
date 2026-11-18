@@ -24,7 +24,7 @@ import psycopg
 import redis
 from flask import Flask, jsonify, request
 
-from canyonos_core.auth import ALL_PROJECTS, TRUSTED_KEYS_KEY, AuthError, verify_bearer
+from canyonos_core.auth import API_KEY_HASH_KEY, bearer_key, key_matches
 from canyonos_core.controller import canyonos_context
 from canyonos_core.controller.future import Future
 from canyonos_core.controller.local_controller import (
@@ -35,7 +35,6 @@ from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.endpoint import (
     ENDPOINT_CPUS,
     ENDPOINT_PORT,
-    IDENTITY_KEY,
     route_path,
 )
 from canyonos_core.schema import qualified_name
@@ -54,37 +53,23 @@ DASHBOARD_DATABASE_URL = (
 # unreachable Redis is a quick 503 rather than a hung request.
 REDIS_TIMEOUT_SECONDS = 2
 NOT_READY = (
-    "The endpoint is starting; the Global Controller has not published its trusted "
-    "keys yet"
+    "The endpoint is starting; the Global Controller has not published the API key yet"
 )
-MISSING_TOKEN = (
-    "This endpoint needs a query token, sent as the header Authorization: Bearer "
-    "<token>. Make one with: canyonos token create --scope query --project "
-    "<project_id>"
+MISSING_KEY = (
+    "This endpoint needs the machine's API key, sent as the header Authorization: "
+    "Bearer <your api key>. It is the key passed to `canyonos deploy --api-key`"
 )
+INVALID_KEY = "This is not the API key this endpoint was deployed with"
 
 
-def _auth_record(redis_client) -> tuple[dict, str] | None:
-    """The trusted keys the Global Controller published and the project id it wrote,
-    or None while either is missing or Redis cannot be read."""
+def _api_key_hash(redis_client) -> str | None:
+    """The API key hash the Global Controller published, "" when the deploy set no
+    key, or None while it is missing or Redis cannot be read."""
     try:
-        record = redis_client.get(TRUSTED_KEYS_KEY)
-        project_id = redis_client.hget(IDENTITY_KEY, "project_id")
+        return redis_client.get(API_KEY_HASH_KEY)
     except redis.RedisError as error:
-        logger.warning("Could not read the trusted keys from Redis: %s", error)
+        logger.warning("Could not read the API key hash from Redis: %s", error)
         return None
-    if record is None or not project_id:
-        return None
-    return json.loads(record), project_id
-
-
-def _bearer_token(header: str) -> str | None:
-    """The token of an `Authorization: Bearer <token>` header, the scheme in any case;
-    None for any other header."""
-    scheme, _, token = header.strip().partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        return None
-    return token.strip()
 
 
 def _refusal(code: str, message: str, status: int):
@@ -123,37 +108,28 @@ def create_app(routes, redis_client):
     `POST /<project>/<agent>/<method>`, refusing a body that lacks one of the method's
     declared `arguments`, and reports their results at `GET /status/<request_id>`;
     `POST /answer/<request_id>` answers that request's oldest waiting question. Every
-    route first needs a `query` token for this project or for every project, unless
-    the deploy turned that off."""
+    route first needs the machine's API key, when the deploy set one."""
     app = Flask("canyonos-endpoint")
     served = {route_path(route): route.get("arguments") or [] for route in routes}
     paths = ", ".join(f"POST {path}" for path in served)
 
     @app.before_request
-    def require_a_query_token():
-        """Refuse a request without a valid query token, before its body is read; a
+    def require_the_api_key():
+        """Refuse a request without the machine's API key, before its body is read; a
         CORS preflight carries none and needs none."""
         if request.method == "OPTIONS":
             return None
-        found = _auth_record(redis_client)
-        if found is None:
+        expected_hash = _api_key_hash(redis_client)
+        if expected_hash is None:
             return _refusal("auth.not_ready", NOT_READY, 503)
-        record, project_id = found
-        if record["disabled"]:
+        if not expected_hash:
             return None
-        token = _bearer_token(request.headers.get("Authorization", ""))
-        if token is None:
-            return _refusal("auth.missing_token", MISSING_TOKEN, 401)
-        try:
-            verify_bearer(
-                token,
-                record["keys"],
-                audiences=[project_id, ALL_PROJECTS],
-                scope="query",
-            )
-        except AuthError as error:
-            logger.info("Refused %s %s: %s", request.method, request.path, error.code)
-            return _refusal(error.code, error.message, error.status)
+        key = bearer_key(request.headers.get("Authorization", ""))
+        if key is None:
+            return _refusal("auth.missing_key", MISSING_KEY, 401)
+        if not key_matches(key, expected_hash):
+            logger.info("Refused %s %s: auth.invalid_key", request.method, request.path)
+            return _refusal("auth.invalid_key", INVALID_KEY, 401)
         return None
 
     @app.errorhandler(404)

@@ -3,7 +3,7 @@
 
 """
 Logic for `canyonos test`: send one prompt to each workflow the deployment running
-from this folder serves, with a query token signed here for the deployment, and report
+from this folder serves, with this machine's API key when one is set, and report
 what each answered. It deploys nothing: run `canyonos deploy <project folder>...`
 first.
 """
@@ -18,12 +18,9 @@ from rich.panel import Panel
 from rich.text import Text
 
 from canyonos import kubernetes_target, ui
-from canyonos.auth import private_key_path, query_token, require_keys
-from canyonos.constants import existing_config_path, read_config
-from canyonos.deploy import (
-    _curl_example,
-    require_deployment_id,
-)
+from canyonos.auth import auth_header, machine_api_key
+from canyonos.constants import existing_config_path
+from canyonos.deploy import _curl_example
 from canyonos.gc import _error_detail, deployed_endpoint, existing_deploy, test_queries
 from canyonos.os_support import is_terminal
 from canyonos.theme import GREEN, WHITE
@@ -31,33 +28,7 @@ from canyonos.theme import GREEN, WHITE
 DEFAULT_QUERY = "hello"
 REQUEST_TIMEOUT = 300
 SUBMIT_TIMEOUT = 30
-# How long each query token lasts: every request to the endpoint signs its own.
-TOKEN_TTL_SECONDS = 60
 POLL_INTERVAL = 2
-
-
-def _query_signer(config_path, key, auth_dir):
-    """A function returning the header that sends a new query token for the deployment
-    in `config_path`, by its `deployment_id`, signed with the private key `key` (or
-    the only one) in `auth_dir` and expiring TOKEN_TTL_SECONDS later, so each request
-    carries its own however long the run waits. Signs the first one here, so a key
-    that cannot sign raises RuntimeError now, as does a folder no deploy saved a
-    `deployment_id` in, and says once which key signs on stderr, also with --json;
-    never shows a token."""
-    project_id = read_config(config_path).get("deployment_id")
-    if not project_id:
-        raise RuntimeError(
-            f"{config_path} has no deployment_id, so there is no deployment to sign a "
-            "query token for. Run `canyonos deploy` from this folder first."
-        )
-
-    def signed_headers():
-        token = query_token(project_id, key, auth_dir, ttl=TOKEN_TTL_SECONDS)
-        return {"Authorization": f"Bearer {token}"}
-
-    signed_headers()
-    ui.note(f"Signed a query token with {private_key_path(key, auth_dir)}")
-    return signed_headers
 
 
 def _send_query(url, body, headers):
@@ -213,7 +184,8 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
             raise RuntimeError(
                 f"The workflow asks {json.dumps(asked['question'])}, but `canyonos test` can "
                 "only take an answer typed in a terminal, without --json. The deploy stays "
-                f"up, so answer request {request_id} with: {_curl_example(answer_url, example)}"
+                f"up, so answer request {request_id} with: "
+                f"{_curl_example(answer_url, example, machine_api_key() is not None)}"
             )
         body = answer(asked["question"], schema)
         try:
@@ -235,17 +207,14 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
     return data.get("result")
 
 
-def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False, key=None, auth_dir=None):
+def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False):
     """Query each workflow of the deployment running from this folder, or, on
-    Kubernetes, of the project deployed in the cluster, through a port-forward, with a
-    query token signed by the key `key` in `auth_dir`."""
-    config_path = existing_config_path()
-    require_keys(auth_dir)
-    require_deployment_id(config_path)
+    Kubernetes, of the project deployed in the cluster, through a port-forward, with
+    this machine's API key when one is set."""
+    existing_config_path()
     if kubernetes:
-        sign = _query_signer(config_path, key, auth_dir)
         with kubernetes_target.kubernetes_endpoint() as endpoint:
-            _query(run, endpoint, timeout, {}, sign)
+            _query(run, endpoint, timeout, {}, auth_header)
         return
 
     existing = existing_deploy()
@@ -254,13 +223,12 @@ def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False, key=None, auth_dir
             "No deployment is running from this folder. Run it from the deployment's "
             "folder, the one `canyonos deploy --folder` made."
         )
-    sign = _query_signer(config_path, key, auth_dir)
     _query(
         run,
         deployed_endpoint(existing["port"]),
         timeout,
         test_queries(existing["port"]),
-        sign,
+        auth_header,
     )
 
 
@@ -343,20 +311,15 @@ def run_test(
     as_json=False,
     timeout=REQUEST_TIMEOUT,
     kubernetes=False,
-    key=None,
-    auth_dir=None,
 ):
-    """Run `canyonos test`: query each workflow of the running deployment with a token
-    signed by the key `key` in `auth_dir`, report the results, and return the exit
-    code."""
+    """Run `canyonos test`: query each workflow of the running deployment with this
+    machine's API key, report the results, and return the exit code."""
     run = _Run(prompt)
     ui.set_quiet(as_json)
 
     try:
         try:
-            _run_test(
-                run, timeout=timeout, kubernetes=kubernetes, key=key, auth_dir=auth_dir
-            )
+            _run_test(run, timeout=timeout, kubernetes=kubernetes)
         except KeyboardInterrupt:
             run.error = "cancelled by user"
         except EOFError:

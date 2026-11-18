@@ -13,7 +13,7 @@ import {
 } from '@api/modules/metrics/metrics.contract';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 
 setupE2ETests();
 
@@ -102,7 +102,7 @@ async function insert_span(project_id: string, span: SpanFixture): Promise<void>
 }
 
 async function create_project(): Promise<{ token: string; project_id: string }> {
-  const token = await authenticate('read');
+  const token = TEST_API_KEY;
   const { project_id } = await create_test_project({ name: 'Metrics Project' });
   return { token, project_id };
 }
@@ -504,17 +504,16 @@ describe('GET /projects/:project_id/metrics/timeseries', () => {
     expect(res.error?.status as number).toBe(422);
   });
 
-  test('a request without a token is rejected with 401', async () => {
+  test('a request without the API key is rejected with 401', async () => {
     const res = await api.projects[project_id]!.metrics.timeseries.get({
       $query: range(30),
     });
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another read token reads the project's timeseries", async () => {
-    const other_user = await authenticate('read');
+  test("the API key reads the project's timeseries", async () => {
     const res = await api.projects[project_id]!.metrics.timeseries.get({
-      $headers: bearer(other_user),
+      $headers: bearer(TEST_API_KEY),
       $query: range(30),
     });
     expect(res.error).toBeNull();
@@ -670,17 +669,16 @@ describe('GET /projects/:project_id/metrics/blocks', () => {
     });
   });
 
-  test('a request without a token is rejected with 401', async () => {
+  test('a request without the API key is rejected with 401', async () => {
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
       $query: { ...range(30) },
     });
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another read token reads the project's blocks", async () => {
-    const other_user = await authenticate('read');
+  test("the API key reads the project's blocks", async () => {
     const res = await api.projects[blocks_project]!.metrics.blocks.get({
-      $headers: bearer(other_user),
+      $headers: bearer(TEST_API_KEY),
       $query: { ...range(30) },
     });
     expect(res.error).toBeNull();
@@ -946,18 +944,17 @@ describe('GET /projects/:project_id/metrics/agents/:agent_id', () => {
     expect((res.error?.value as { error?: string })?.error).toBe('metrics.agent_not_found');
   });
 
-  test('a request without a token is rejected with 401', async () => {
+  test('a request without the API key is rejected with 401', async () => {
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
       $query: range(30),
     });
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another read token reads the agent's metrics", async () => {
-    const other_user = await authenticate('read');
+  test("the API key reads the agent's metrics", async () => {
     const res = await api.projects[details_project]!.metrics.agents['detail-agent']!.get({
       $query: range(30),
-      $headers: bearer(other_user),
+      $headers: bearer(TEST_API_KEY),
     });
     expect(res.error).toBeNull();
     expect(res.data!.agent.block_count).toBeGreaterThan(0);
@@ -1434,23 +1431,22 @@ describe('every executed agent has an address', () => {
 });
 
 describe('metrics auth & access', () => {
-  test('requests without a token are rejected with 401', async () => {
+  test('requests without the API key are rejected with 401', async () => {
     const res = await api.projects[project_id]!.metrics.kpis.get({ $query: range(30) });
     expect(res.error?.status as number).toBe(401);
   });
 
-  test("another read token reads the project's metrics", async () => {
-    const other_user = await authenticate('read');
+  test("the API key reads the project's metrics", async () => {
     const res = await api.projects[project_id]!.metrics.kpis.get({
       $query: range(30),
-      $headers: bearer(other_user),
+      $headers: bearer(TEST_API_KEY),
     });
     expect(res.error).toBeNull();
     expect(res.data!.block_count).toBeGreaterThan(0);
   });
 
   test('an unknown project id is 404 projects.not_found', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.metrics.kpis.get({

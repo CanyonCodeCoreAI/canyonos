@@ -62,22 +62,16 @@ spec:
                   Kubernetes API access.
                 type: string
               auth:
-                description: auth is the keys the project's global controller hands
+                description: auth is the API key the project's global controller hands
                   its endpoint.
                 properties:
-                  disabled:
+                  apiKeyHash:
                     description: |-
-                      disabled turns token verification off, as `canyonos deploy
-                      --dangerous-skip-auth` asks: anyone who reaches the endpoint may call it.
-                    type: boolean
-                  trustedKeys:
-                    description: |-
-                      trustedKeys are the Ed25519 public keys, in PEM, that sign the tokens the
-                      endpoint accepts: the .pub files `canyonos deploy` trusts. Public halves only.
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: atomic
+                      apiKeyHash is the sha256 of the API key, as 64 lowercase hex characters: the key
+                      `canyonos deploy --api-key` saved on the deploying machine. Empty or absent, the
+                      endpoint answers anyone who reaches it.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
                 type: object
               configRef:
                 description: configRef names the ConfigMap holding the project's config/*.yaml

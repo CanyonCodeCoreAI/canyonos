@@ -16,7 +16,7 @@ import { PROJECT_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
 import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { reset_controller, seed_running_project } from './redis-test.utils';
 import {
   encode_metrics_export,
@@ -28,7 +28,7 @@ import type { TestProjectFile } from './project-test.utils';
 
 setupE2ETests();
 
-const write = bearer(await authenticate('write'));
+const key_headers = bearer(TEST_API_KEY);
 
 const FILES: TestProjectFile[] = [
   { path: 'workflow.py', component_kind: 'workflow' },
@@ -41,7 +41,7 @@ const FILES: TestProjectFile[] = [
 
 describe('project list and detail', () => {
   test('lists and reads a project with its file count', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'Demo Flow', files: FILES });
 
@@ -58,28 +58,25 @@ describe('project list and detail', () => {
   });
 
   test('a project with no files reports a zero file count', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Empty' });
 
     const detail = await api.projects[project_id]!.get({ $headers: bearer(token) });
     expect(detail.data?.file_count).toBe(0);
   });
 
-  test('lets another read token list and read a project', async () => {
-    const owner = await authenticate('read');
+  test('lets the API key list and read a project', async () => {
+    const headers = bearer(TEST_API_KEY);
     const { project_id } = await create_test_project({ name: 'Shared', files: FILES });
-    const other_user = await authenticate('read');
 
-    for (const token of [owner, other_user]) {
-      const list = await api.projects.get({ $headers: bearer(token) });
-      expect(list.data?.some(({ id }) => id === project_id)).toBe(true);
-      const detail = await api.projects[project_id]!.get({ $headers: bearer(token) });
-      expect(detail.data?.id).toBe(project_id);
-    }
+    const list = await api.projects.get({ $headers: headers });
+    expect(list.data?.some(({ id }) => id === project_id)).toBe(true);
+    const detail = await api.projects[project_id]!.get({ $headers: headers });
+    expect(detail.data?.id).toBe(project_id);
   });
 
   test('returns 404 projects.not_found for an unknown project', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.get({ $headers: bearer(token) });
@@ -94,7 +91,7 @@ describe('project list and detail', () => {
 
 describe('GET /projects/:project_id/stats', () => {
   test('counts files by component kind and workflows by readiness', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id, workflow_ids } = await create_test_project({
       name: 'Stats',
@@ -122,7 +119,7 @@ describe('GET /projects/:project_id/stats', () => {
   });
 
   test('a stale READY workflow is not counted as ready', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id, workflow_ids } = await create_test_project({
       name: 'Stale Stats',
       files: [{ path: 'workflow.py', component_kind: 'workflow' }],
@@ -142,7 +139,7 @@ describe('GET /projects/:project_id/stats', () => {
   });
 
   test('a project with no files reports zero counts', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Empty Stats' });
 
     const stats = await api.projects[project_id]!.stats.get({ $headers: bearer(token) });
@@ -222,14 +219,14 @@ describe('DELETE /projects/:project_id', () => {
   beforeEach(reset_controller);
 
   test('deletes a stopped project and its telemetry, and leaves other projects alone', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'Stopped', files: FILES });
     const { project_id: other_id } = await create_test_project({ name: 'Other' });
     await write_telemetry(project_id);
     await write_telemetry(other_id);
 
-    const res = await api.projects[project_id]!.delete(undefined, { headers: write });
+    const res = await api.projects[project_id]!.delete(undefined, { headers: key_headers });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({ project_id });
 
@@ -240,12 +237,12 @@ describe('DELETE /projects/:project_id', () => {
   });
 
   test('refuses a running project with 409 projects.running and keeps it', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'Running' });
     await seed_running_project(project_id, { prompts: {} });
 
-    const res = await api.projects[project_id]!.delete(undefined, { headers: write });
+    const res = await api.projects[project_id]!.delete(undefined, { headers: key_headers });
     expect(res.error?.status as number).toBe(409);
     expect((res.error?.value as { error?: string })?.error).toBe('projects.running');
 

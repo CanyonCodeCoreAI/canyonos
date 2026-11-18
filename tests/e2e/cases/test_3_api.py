@@ -7,14 +7,12 @@ project's figures agree with each other over this run. The dashboard page loads 
 its own port, and its `/api` proxy gives the same trace as the API. Telemetry
 reaches Postgres through the Global Controller and the OTLP exporter, each polling
 every few seconds, so data cases poll. Every ranged read covers this run only. The
-API the CLI started verifies API tokens against the session's trusted keys, mounted
-read-only: a read token reads, through the dashboard's proxy too, and cannot
-write."""
+API the CLI started holds only the hash of the session's API key and answers only
+that key, through the dashboard's proxy too."""
 
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
@@ -27,17 +25,18 @@ from ..harness import (
     bearer,
     dashboard_port,
     docker,
+    hash_api_key,
     http,
     manifest,
     poll,
     project_root,
     qualified,
-    token,
 )
 
 DATA_TIMEOUT = 90
 DASHBOARD_API = "canyonos-dashboard-api"
 TRUSTED_MOUNT = "/etc/canyonos/auth/trusted"
+RETIRED_AUTH_ENV = ("AUTH_DISABLED", "AUTH_TRUSTED_KEYS_DIR", "JWT_SECRET")
 # Read when pytest collects the cases, before the deploy, so every request this run
 # sends starts after it and none of an earlier run's can.
 RUN_STARTED = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -159,7 +158,7 @@ def test_the_dashboard_page_and_its_api_proxy_serve_the_trace(
     direct = _trace(deployed, query_result.request_id)
     path = _project_path(deployed, f"/requests/{query_result.request_id}")
     url = f"{web}/api{path}?{_window()}"
-    proxied = http(recorder, "GET", url, headers=deployed.api.headers("GET")).json()
+    proxied = http(recorder, "GET", url, headers=deployed.api.headers).json()
     labels = Counter(block["label"] for block in direct["blocks"])
     assert Counter(block["label"] for block in proxied["blocks"]) == labels, proxied
 
@@ -390,44 +389,52 @@ def _refused(call, status, code):
     assert call.json()["error"] == code, call.output
 
 
-def test_the_dashboard_api_verifies_tokens(recorder, deployed):
+def test_the_dashboard_api_needs_the_api_key(recorder, deployed):
     status = http(recorder, "GET", f"{API_URL}/auth/status").json()
-    assert status == {"disabled": False}, status
-    anonymous = http(recorder, "GET", f"{API_URL}/projects", check=False)
-    _refused(anonymous, 401, "auth.missing_token")
+    assert status == {"api_key_required": True}, status
+    projects = f"{API_URL}/projects"
+    _refused(http(recorder, "GET", projects, check=False), 401, "auth.missing_key")
+    wrong = bearer(f"{recorder.api_key}x")
+    refused = http(recorder, "GET", projects, headers=wrong, check=False)
+    _refused(refused, 401, "auth.invalid_key")
+    hashed = bearer(hash_api_key(recorder.api_key))
+    refused = http(recorder, "GET", projects, headers=hashed, check=False)
+    _refused(refused, 401, "auth.invalid_key")
+    checked = http(
+        recorder, "GET", f"{API_URL}/auth/check", headers=deployed.api.headers
+    )
+    assert checked.json() == {"ok": True}, checked.output
+    _refused(
+        http(recorder, "GET", f"{API_URL}/auth/check", check=False),
+        401,
+        "auth.missing_key",
+    )
 
 
-def test_a_read_token_reads_and_cannot_write(recorder, deployed):
-    headers = bearer(token(recorder, deployed.dir, "--scope", "read"))
-    projects = http(recorder, "GET", f"{API_URL}/projects", headers=headers).json()
+def test_a_write_without_the_key_changes_nothing(recorder, deployed):
+    projects = deployed.api.get("/projects").json()
     assert deployed.project_id in {project["id"] for project in projects}, projects
-    scaling = f"{API_URL}{_project_path(deployed, '/scaling')}"
-    http(recorder, "GET", scaling, headers=headers)
+    scaling = _project_path(deployed, "/scaling")
     policy = f"{scaling}/{deployed.project_dir.name}"
-    removed = http(recorder, "DELETE", policy, headers=headers, check=False)
-    _refused(removed, 403, "auth.insufficient_scope")
-    after = http(recorder, "GET", scaling, headers=headers).json()
+    refused = http(recorder, "DELETE", f"{API_URL}{policy}", check=False)
+    _refused(refused, 401, "auth.missing_key")
+    after = deployed.api.get(scaling).json()
     _assert_shipped_scaling(deployed, _project_scaling(deployed, after))
 
 
-def test_the_dashboard_proxy_passes_the_token_on(recorder, deployed):
+def test_the_dashboard_proxy_passes_the_key_on(recorder, deployed):
     url = f"http://127.0.0.1:{dashboard_port(recorder)}/api/projects"
-    headers = bearer(token(recorder, deployed.dir, "--scope", "read"))
-    http(recorder, "GET", url, headers=headers)
-    _refused(http(recorder, "GET", url, check=False), 401, "auth.missing_token")
+    http(recorder, "GET", url, headers=deployed.api.headers)
+    _refused(http(recorder, "GET", url, check=False), 401, "auth.missing_key")
 
 
-def test_the_api_reads_the_sessions_trusted_keys_read_only(recorder, deployed):
+def test_the_api_holds_only_the_key_hash(recorder, deployed):
     container = docker(recorder, ["inspect", DASHBOARD_API]).json()[0]
-    mounts = [m for m in container["Mounts"] if m["Destination"] == TRUSTED_MOUNT]
-    assert len(mounts) == 1, container["Mounts"]
-    trusted = recorder.auth_dir / "trusted"
-    assert Path(mounts[0]["Source"]).resolve() == trusted.resolve(), mounts
-    assert mounts[0]["RW"] is False, mounts
     environment = container["Config"]["Env"]
-    assert "AUTH_DISABLED=false" in environment, environment
-    assert f"AUTH_TRUSTED_KEYS_DIR={TRUSTED_MOUNT}" in environment, environment
-    assert not [e for e in environment if e.startswith("JWT_SECRET=")], environment
-    listed = docker(recorder, ["exec", DASHBOARD_API, "ls", TRUSTED_MOUNT]).output
-    names = listed.split()
-    assert names and all(name.endswith(".pub") for name in names), listed
+    expected = f"CANYONOS_API_KEY_HASH={hash_api_key(recorder.api_key)}"
+    assert expected in environment, environment
+    assert not [e for e in environment if recorder.api_key in e], environment
+    retired = [e for e in environment if e.split("=", 1)[0] in RETIRED_AUTH_ENV]
+    assert not retired, environment
+    mounts = [m for m in container["Mounts"] if m["Destination"] == TRUSTED_MOUNT]
+    assert not mounts, container["Mounts"]

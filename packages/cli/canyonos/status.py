@@ -79,5 +79,6 @@ def _report_status(with_agents):
     dashboard_port = _existing_dashboard_port()
     report["dashboard_url"] = dashboard_url(dashboard_port) if dashboard_port else None
     ui.blank()
-    ui.panel(summary_body(report["dashboard_url"], report["endpoint"]))
+    keyed = not state.get("auth_disabled", False)
+    ui.panel(summary_body(report["dashboard_url"], report["endpoint"], keyed))
     return report

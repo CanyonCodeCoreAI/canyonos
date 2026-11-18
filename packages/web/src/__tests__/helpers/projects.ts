@@ -5,7 +5,7 @@ import type { Route } from '@playwright/test';
 
 export const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';
 
-/** A second API on the same database with `AUTH_DISABLED=true`, started by Playwright. */
+/** A second API on the same database with no API key, started by Playwright. */
 export const noAuthApiBaseUrl = 'http://localhost:3010';
 
 export async function fulfillJson(route: Route, body: unknown, status = 200): Promise<void> {

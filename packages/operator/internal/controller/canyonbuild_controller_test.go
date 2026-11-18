@@ -93,30 +93,18 @@ var _ = Describe("CanyonBuild controller", func() {
 		return envOf(job.Spec.Template.Spec.Containers[1])
 	}
 
-	It("hands the build the trusted keys, for the project it applies", func() {
+	It("hands the build the API key hash, for the project it applies", func() {
 		reconcileBuild(newBuild(func(b *canyonosv1alpha1.CanyonBuild) {
-			b.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{testTrustedKeyA, testTrustedKeyB}}
+			b.Spec.Auth = &canyonosv1alpha1.AuthSpec{APIKeyHash: testAPIKeyHashA}
 		}))
 
-		env := buildEnv()
-		Expect(env).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyA, testTrustedKeyB)))
-		Expect(env).NotTo(HaveKey(envAuthDisabled))
+		Expect(buildEnv()).To(HaveKeyWithValue(builders.EnvAPIKeyHash, testAPIKeyHashA))
 	})
 
-	It("tells the build verification is off when the deploy skipped it", func() {
-		reconcileBuild(newBuild(func(b *canyonosv1alpha1.CanyonBuild) {
-			b.Spec.Auth = &canyonosv1alpha1.AuthSpec{Disabled: true}
-		}))
-
-		Expect(buildEnv()).To(HaveKeyWithValue(envAuthDisabled, "true"))
-	})
-
-	It("gives a build with no spec.auth neither variable", func() {
+	It("gives a build with no spec.auth no hash", func() {
 		reconcileBuild(newBuild(nil))
 
-		env := buildEnv()
-		Expect(env).NotTo(HaveKey(envTrustedKeys))
-		Expect(env).NotTo(HaveKey(envAuthDisabled))
+		Expect(buildEnv()).NotTo(HaveKey(builders.EnvAPIKeyHash))
 	})
 
 	// receivingPod is a build pod waiting for the upload, as the Job controller (absent

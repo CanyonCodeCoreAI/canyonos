@@ -48,9 +48,8 @@ With CanyonOS [installed](INSTALLATION.md), run these:
 ```bash
 mkdir my-app && cd my-app
 canyonos new-app                                # writes a starter workflow with two small agents
-canyonos keys create                            # makes the key pair that signs your tokens, once per machine
 cd ..
-canyonos deploy my-app --folder my-deployment   # runs it
+canyonos deploy my-app --folder my-deployment --api-key <your api key>   # runs it
 ```
 
 [Start from scratch](guides/FROM_SCRATCH.md) takes it from there, step by step.

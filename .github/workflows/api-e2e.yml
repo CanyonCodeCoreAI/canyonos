@@ -6,9 +6,9 @@ name: API E2E Tests
 on:
   push:
     branches: [main, master]
-    paths: ['packages/api/**', 'tests/auth-vectors/**', '.github/workflows/api-e2e.yml']
+    paths: ['packages/api/**', '.github/workflows/api-e2e.yml']
   pull_request:
-    paths: ['packages/api/**', 'tests/auth-vectors/**', '.github/workflows/api-e2e.yml']
+    paths: ['packages/api/**', '.github/workflows/api-e2e.yml']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -83,8 +83,8 @@ jobs:
           CI: true
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
 
-      - name: Run API tests with token verification disabled
-        run: cd packages/api && bun run test:auth-disabled
+      - name: Run API tests with no API key
+        run: cd packages/api && bun run test:open
         env:
           NODE_ENV: test
           CI: true

@@ -11,17 +11,8 @@ import importlib.metadata
 import os
 import signal
 import sys
-from pathlib import Path
 
 from canyonos import context, env, ui
-from canyonos.auth import (
-    DEFAULT_KEY_NAME,
-    SCOPES as TOKEN_SCOPES,
-    run_keys_create,
-    run_keys_list,
-    run_keys_trust,
-    run_token_create,
-)
 from canyonos.chat import run_chat
 from canyonos.clean import run_clean
 from canyonos.config import run_config
@@ -34,7 +25,7 @@ from canyonos.convert import (
     SCOPES as CONVERT_SCOPES,
     run_convert,
 )
-from canyonos.dashboard import SIGN_IN_TTL_SECONDS, run_open_dashboard
+from canyonos.dashboard import run_open_dashboard
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos import kubernetes_local, kubernetes_target
@@ -72,17 +63,24 @@ def _parse_bool(value):
     raise argparse.ArgumentTypeError(f"expected true/false, got: {value!r}")
 
 
-def _auth_dir_option():
-    """A parent parser with --auth-dir, for every command that reads or writes keys.
-    Attached to each action, so the option also works after it."""
-    parent = argparse.ArgumentParser(add_help=False)
-    parent.add_argument(
-        "--auth-dir",
-        type=Path,
-        metavar="PATH",
-        help="The folder of keys to use instead of ~/.canyonos/auth",
+def add_api_key_options(command):
+    """Give `command` --api-key and --no-api-key, which set, replace or remove this
+    machine's API key."""
+    options = command.add_mutually_exclusive_group()
+    options.add_argument(
+        "--api-key",
+        metavar="KEY",
+        help="Set this machine's API key, any string you choose, replacing the stored "
+        "one (~/.canyonos/api_key): every endpoint and the dashboard API then need "
+        "`Authorization: Bearer <key>`. Later deploys and serves reuse it. "
+        "Default: the stored key, else none, and anyone who reaches them is answered",
     )
-    return parent
+    options.add_argument(
+        "--no-api-key",
+        action="store_true",
+        help="Remove this machine's API key: this deploy or serve checks no key",
+    )
+    return command
 
 
 class _RootParser(argparse.ArgumentParser):
@@ -118,24 +116,19 @@ def main():
 def _enter_deployment_folder(args):
     """Deploy from the deployment's folder `args.folder`, made when it is missing, as
     if the command were typed there; the project folders it names stay relative to
-    where it was typed, as does its keys folder."""
+    where it was typed."""
     args.folders = [os.path.abspath(folder) for folder in args.folders]
-    if getattr(args, "auth_dir", None):
-        args.auth_dir = args.auth_dir.absolute()
     os.makedirs(args.folder, exist_ok=True)
     os.chdir(args.folder)
 
 
 def _uses_the_selected_deployment(args):
     """True when `args` is a command that acts on one deployment of this machine and
-    names none: `stop`, `clean`, `status`, `logs`, `test`, `sync`, and `token create`
-    for a query token given no project."""
+    names none: `stop`, `clean`, `status`, `logs`, `test` and `sync`."""
     if getattr(args, "target", None) == "kubernetes":
         return False
     if args.command in ("stop", "clean"):
         return not args.all and not args.deployments
-    if args.command == "token":
-        return args.scope == "query" and not args.projects and not args.all_projects
     return args.command in ("status", "logs", "test", "sync")
 
 
@@ -155,8 +148,6 @@ def _enter_selected_deployment(args):
         return
     if getattr(args, "folders", None):
         args.folders = [os.path.abspath(folder) for folder in args.folders]
-    if getattr(args, "auth_dir", None):
-        args.auth_dir = args.auth_dir.absolute()
     context.enter_selected_folder(selected)
 
 
@@ -184,22 +175,6 @@ def _run_command(settings_at_start):
         )
         command.set_defaults(func=run)
         return command
-
-    auth_dir = _auth_dir_option()
-
-    def add_actions(command):
-        """Give `command` required actions, each run on its own, such as
-        `canyonos keys create`; returns the function that adds one."""
-        actions = command.add_subparsers(dest="action", required=True)
-
-        def add_action(name, description, run):
-            action = actions.add_parser(
-                name, help=description, description=description, parents=[auth_dir]
-            )
-            action.set_defaults(func=lambda args: sys.exit(0 if run(args) else 1))
-            return action
-
-        return add_action
 
     add("quickstart", lambda args: sys.exit(0 if run_quickstart() else 1))
     add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
@@ -253,22 +228,21 @@ def _run_command(settings_at_start):
                     kubernetes_target.run_kubernetes_deploy(
                         args.folders,
                         serve=args.serve,
-                        skip_auth=args.dangerous_skip_auth,
-                        auth_dir=args.auth_dir,
+                        api_key=args.api_key,
+                        no_api_key=args.no_api_key,
                     )
                     if on_kubernetes(args)
                     else run_deploy(
                         args.folders,
                         serve=args.serve,
                         verbose=args.verbose,
-                        skip_auth=args.dangerous_skip_auth,
-                        auth_dir=args.auth_dir,
+                        api_key=args.api_key,
+                        no_api_key=args.no_api_key,
                     )
                 )
                 is not None
                 else 1
             ),
-            parents=[auth_dir],
         )
     )
     deploy.add_argument(
@@ -297,12 +271,7 @@ def _run_command(settings_at_start):
         action="store_true",
         help="Stream the container's full build and deploy logs instead of a progress summary",
     )
-    deploy.add_argument(
-        "--dangerous-skip-auth",
-        action="store_true",
-        help="Deploy without a key: the endpoint and the dashboard answer anyone who "
-        "reaches them, with no token. For a throwaway run only",
-    )
+    add_api_key_options(deploy)
 
     def this_machine_or_cluster(local, cluster):
         """Run `local(args)`, or `cluster()` on Kubernetes: the deployment of this
@@ -386,74 +355,6 @@ def _run_command(settings_at_start):
         nargs="+",
         metavar="folder",
         help="A project folder of the running deployment to copy in again",
-    )
-
-    add_key_action = add_actions(add("keys"))
-    add_key_action(
-        "create",
-        "Make a key pair: a private key that signs tokens on this machine, and its "
-        "public half, which deploys and the dashboard trust",
-        lambda args: run_keys_create(args.name, args.auth_dir),
-    ).add_argument(
-        "--name",
-        default=DEFAULT_KEY_NAME,
-        help=f"The key's name, from the characters [A-Za-z0-9._-] (default: "
-        f"{DEFAULT_KEY_NAME})",
-    )
-    add_key_action(
-        "list",
-        "Show the public keys deploys and the dashboard trust",
-        lambda args: run_keys_list(args.auth_dir),
-    )
-    add_key_action(
-        "trust",
-        "Trust a public key made elsewhere, such as a teammate's, so the tokens it "
-        "signs are accepted",
-        lambda args: run_keys_trust(args.file, args.auth_dir),
-    ).add_argument("file", help="The Ed25519 public key, in PEM, to trust")
-
-    token_create = add_actions(add("token"))(
-        "create",
-        "Sign a token and show it once, with what it grants and how to send it",
-        lambda args: run_token_create(
-            args.scope,
-            args.projects,
-            args.all_projects,
-            args.ttl,
-            args.key,
-            args.auth_dir,
-        ),
-    )
-    token_create.add_argument(
-        "--scope",
-        required=True,
-        choices=TOKEN_SCOPES,
-        help="query: a workflow's endpoint; read or write: the dashboard API",
-    )
-    token_create.add_argument(
-        "--project",
-        dest="projects",
-        action="append",
-        default=[],
-        metavar="ID",
-        help="query: the ID of a project the token may query; repeat it for more "
-        "(default: this folder's deployment, else the selected one)",
-    )
-    token_create.add_argument(
-        "--all-projects",
-        action="store_true",
-        help="query: let the token query every project",
-    )
-    token_create.add_argument(
-        "--ttl",
-        type=int,
-        metavar="SECONDS",
-        help="Seconds until the token expires (default: no expiry)",
-    )
-    token_create.add_argument(
-        "--key",
-        metavar="NAME",
-        help="The private key to sign with; needed only when there is more than one",
     )
 
     logs = add_target(
@@ -556,24 +457,13 @@ def _run_command(settings_at_start):
         add(
             "serve",
             lambda args: sys.exit(
-                kubernetes_target.run_kubernetes_serve(
-                    skip_auth=args.dangerous_skip_auth, auth_dir=args.auth_dir
-                )
+                kubernetes_target.run_kubernetes_serve()
                 if on_kubernetes(args)
-                else run_serve(
-                    skip_auth=args.dangerous_skip_auth, auth_dir=args.auth_dir
-                )
+                else run_serve(api_key=args.api_key, no_api_key=args.no_api_key)
             ),
-            parents=[auth_dir],
         )
     )
-    serve.add_argument(
-        "--dangerous-skip-auth",
-        action="store_true",
-        help="Start the dashboard without a key: its API will answer anyone who reaches "
-        "it, with no token. For a throwaway run only. On Kubernetes it only skips this "
-        "machine's key check: the cluster's dashboard keeps its chart's setting",
-    )
+    add_api_key_options(serve)
     status = add_target(
         add(
             "status",
@@ -636,33 +526,10 @@ def _run_command(settings_at_start):
         action="store_true",
         help="Forget the selected deployment",
     )
-    dashboard = add(
-        "dashboard",
-        lambda args: sys.exit(
-            0 if run_open_dashboard(key=args.key, auth_dir=args.auth_dir) else 1
-        ),
-        parents=[auth_dir],
-    )
-    dashboard.add_argument(
-        "--key",
-        metavar="NAME",
-        help="The private key to sign the sign-in tokens with "
-        f"({SIGN_IN_TTL_SECONDS // 3600} hours); needed only when there is more than "
-        "one",
-    )
-    chat = add(
-        "chat",
-        lambda args: sys.exit(run_chat(key=args.key, auth_dir=args.auth_dir)),
-        parents=[auth_dir],
-    )
-    chat.add_argument(
-        "--key",
-        metavar="NAME",
-        help="The private key to sign query tokens with; needed only when there is "
-        "more than one",
-    )
+    add("dashboard", lambda args: sys.exit(0 if run_open_dashboard() else 1))
+    add("chat", lambda args: sys.exit(run_chat()))
 
-    # Test has args: prompt, --json, --timeout, --key, --auth-dir, --target.
+    # Test has args: prompt, --json, --timeout, --target.
     test = add_target(
         add(
             "test",
@@ -672,11 +539,8 @@ def _run_command(settings_at_start):
                     as_json=args.json,
                     timeout=args.timeout,
                     kubernetes=on_kubernetes(args),
-                    key=args.key,
-                    auth_dir=args.auth_dir,
                 )
             ),
-            parents=[auth_dir],
         )
     )
     test.add_argument(
@@ -699,12 +563,6 @@ def _run_command(settings_at_start):
             "Seconds to wait for the workflow to finish; the wait restarts after each "
             f"answer (default: {REQUEST_TIMEOUT})."
         ),
-    )
-    test.add_argument(
-        "--key",
-        metavar="NAME",
-        help="The private key to sign the query token with; needed only when there "
-        "is more than one",
     )
 
     validate = add(

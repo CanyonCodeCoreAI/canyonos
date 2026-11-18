@@ -399,7 +399,6 @@ function GovernanceBody({
   if (query.data === undefined && query.isError && !query.isFetching) {
     return (
       <QueryError
-        error={query.error}
         className="max-w-3xl"
         message={governanceErrorMessage(query.error, 'Could not load the agents.')}
         onRetry={() => void query.refetch()}
@@ -504,7 +503,6 @@ function RefreshError({ query }: { readonly query: UseQueryResult<GovernanceResp
   if (!query.isError || query.isFetching) return null;
   return (
     <QueryError
-      error={query.error}
       message={`${governanceErrorMessage(query.error, 'Could not refresh the agents.')} Showing the last reading.`}
       onRetry={() => void query.refetch()}
       test_id="governance-refresh-error"
@@ -593,7 +591,6 @@ function PolicyBody({ project_id }: { readonly project_id: string }) {
   if (query.data === undefined && query.isError && !query.isFetching) {
     return (
       <QueryError
-        error={query.error}
         message={scalingErrorMessage(query.error, 'Could not load the policy.')}
         onRetry={() => void query.refetch()}
         test_id="governance-policy-error"

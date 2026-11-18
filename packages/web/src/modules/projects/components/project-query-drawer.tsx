@@ -166,7 +166,6 @@ function QueryDrawerBody({
         {trace_query.isPending ? <TraceLoading /> : null}
         {trace_query.error ? (
           <QueryError
-            error={trace_query.error}
             message="Could not load this query's trace."
             onRetry={() => void trace_query.refetch()}
             test_id={`${TEST_ID}-error`}

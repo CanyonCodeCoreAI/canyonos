@@ -3,28 +3,25 @@
 
 """`canyonos deploy` through the installed command: the checks it runs before
 anything is built, from a deployment folder or from inside a project folder. The
-key check comes first, after the folder check: a run that must stop there points
-DOCKER_HOST at nothing, so a Docker call would show. `canyonos test`, which queries
-the running deployment, stops at the same check, and so does `canyonos serve`, whose
-dashboard also needs a Docker engine on this machine to mount the trusted keys."""
+folder checks come first, before `--api-key` stores anything: a run that must stop
+there points DOCKER_HOST at nothing, so a Docker call would show. `canyonos serve`
+without a Docker engine stops at that, after it warns that no key is set."""
 
 from __future__ import annotations
 
-import os
 import subprocess
 import uuid
 from pathlib import Path
-
-import pytest
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from .harness import CliCase
 
 NO_DOCKER = {"DOCKER_HOST": "unix:///nonexistent.sock"}
 SCHEMA_ERROR = "CANYON-SCHEMA config/workflow_config.yaml:1"
 STOPPED = "Deploy stopped: fix the project errors"
-APPLE_DOUBLE = b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        "
+OPEN_WARNING = (
+    "No API key is set: the endpoint and the dashboard answer anyone who reaches "
+    "them. Set one with --api-key <key>."
+)
 
 
 def _said(result: subprocess.CompletedProcess[str]) -> str:
@@ -44,37 +41,14 @@ def _broken_project(case: CliCase) -> None:
     (case.cwd / "echo" / ".env.example").write_text("API_KEY=\n# OPTIONAL_KEY=\n")
 
 
-def _trusted(case: CliCase) -> Path:
-    return case.home / ".canyonos" / "auth" / "trusted"
-
-
-def _make_key(case: CliCase, *args: str) -> None:
-    result = case.run_cli(["keys", "create", *args])
-    assert result.returncode == 0, _said(result)
-
-
-def _teammate_public_key() -> ed25519.Ed25519PublicKey:
-    return ed25519.Ed25519PrivateKey.generate().public_key()
+def _key_file(case: CliCase) -> Path:
+    return case.home / ".canyonos" / "api_key"
 
 
 def _deploy(case: CliCase, *args: str, docker: bool = True):
     return case.run_cli(
         ["deploy", *args], timeout=120, env=None if docker else NO_DOCKER
     )
-
-
-def _assert_refused_for_no_key(
-    result: subprocess.CompletedProcess[str], trusted: Path
-) -> None:
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert str(trusted) in output
-    assert "canyonos keys create" in output
-    assert "canyonos token create --scope query --project <project_id>" in output
-    assert "--dangerous-skip-auth" in output
-    for later in ("Missing or empty in", "CANYON-SCHEMA", "Global Controller"):
-        assert later not in output
-    assert "Docker" not in output
 
 
 def _assert_reached_the_schema_check(result: subprocess.CompletedProcess[str]) -> None:
@@ -86,17 +60,8 @@ def _assert_reached_the_schema_check(result: subprocess.CompletedProcess[str]) -
     assert "Global Controller" not in output
 
 
-def test_deploy_without_a_key_stops_before_every_other_check(cli_case: CliCase):
-    _broken_project(cli_case)
-
-    result = _deploy(cli_case, "echo", docker=False)
-
-    _assert_refused_for_no_key(result, _trusted(cli_case))
-
-
 def test_deploy_warns_about_unset_keys_and_stops_on_project_errors(cli_case: CliCase):
     _broken_project(cli_case)
-    _make_key(cli_case)
 
     result = _deploy(cli_case, "echo")
 
@@ -104,213 +69,58 @@ def test_deploy_warns_about_unset_keys_and_stops_on_project_errors(cli_case: Cli
     assert "OPTIONAL_KEY" not in _said(result)
 
 
+def test_deploy_without_an_api_key_warns_and_goes_on(cli_case: CliCase):
+    _broken_project(cli_case)
+
+    result = _deploy(cli_case, "echo")
+
+    _assert_reached_the_schema_check(result)
+    errors = " ".join(result.stderr.split())
+    assert OPEN_WARNING in errors
+    assert errors.index(OPEN_WARNING) < errors.index(STOPPED), errors
+
+
+def test_deploy_with_an_api_key_stores_it_before_the_project_checks(
+    cli_case: CliCase,
+):
+    _broken_project(cli_case)
+
+    result = _deploy(cli_case, "echo", "--api-key", "deploy-checks-key")
+
+    _assert_reached_the_schema_check(result)
+    assert OPEN_WARNING not in _said(result)
+    assert _key_file(cli_case).read_text().strip() == "deploy-checks-key"
+
+
 def test_deploy_from_inside_a_project_folder_is_refused(cli_case: CliCase):
     _project(cli_case.cwd)
 
-    result = _deploy(cli_case, ".", docker=False)
+    result = _deploy(cli_case, ".", "--api-key", "deploy-checks-key", docker=False)
 
     output = _said(result)
     assert result.returncode == 1, output
     assert "This folder is a project. Give the deployment a folder of its own" in output
-    assert "canyonos keys create" not in output
     assert not (cli_case.cwd / "deployment.yaml").exists()
+    assert not _key_file(cli_case).exists()
 
 
-def test_deploy_dangerous_skip_auth_warns_and_goes_on_without_a_key(
+def test_deploy_of_a_folder_that_is_no_project_says_so_before_the_key_is_stored(
     cli_case: CliCase,
 ):
-    _broken_project(cli_case)
-
-    result = _deploy(cli_case, "echo", "--dangerous-skip-auth")
-
-    _assert_reached_the_schema_check(result)
-    assert "the endpoint and the dashboard will answer anyone" in _said(result)
-
-
-def test_deploy_needs_only_a_trusted_public_key(cli_case: CliCase):
-    _broken_project(cli_case)
-    laptop = cli_case.cwd / "laptop.pub"
-    laptop.write_bytes(
-        _teammate_public_key().public_bytes(
-            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
-        )
-    )
-    trusted = cli_case.run_cli(["keys", "trust", str(laptop)])
-    assert trusted.returncode == 0, _said(trusted)
-    assert not list(_trusted(cli_case).parent.glob("*.key"))
-
-    result = _deploy(cli_case, "echo")
-
-    _assert_reached_the_schema_check(result)
-
-
-def test_deploy_skips_apple_double_files_in_trusted(cli_case: CliCase):
-    _broken_project(cli_case)
-    _make_key(cli_case)
-    (_trusted(cli_case) / "._default.pub").write_bytes(APPLE_DOUBLE)
-
-    result = _deploy(cli_case, "echo")
-
-    _assert_reached_the_schema_check(result)
-
-
-def test_deploy_with_a_private_key_but_no_trusted_key_is_refused(cli_case: CliCase):
-    _broken_project(cli_case)
-    _make_key(cli_case)
-    (_trusted(cli_case) / "default.pub").unlink()
-
-    result = _deploy(cli_case, "echo", docker=False)
-
-    _assert_refused_for_no_key(result, _trusted(cli_case))
-
-
-def test_deploy_names_a_trusted_file_that_is_not_a_pem_public_key(cli_case: CliCase):
-    _broken_project(cli_case)
-    _trusted(cli_case).mkdir(parents=True)
-    laptop = _trusted(cli_case) / "laptop.pub"
-    laptop.write_text(
-        _teammate_public_key()
-        .public_bytes(Encoding.OpenSSH, PublicFormat.OpenSSH)
-        .decode()
-        + " user@host\n"
-    )
-
-    result = _deploy(cli_case, "echo", docker=False)
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert str(laptop) in output
-    assert "CANYON-SCHEMA" not in output
-    assert "Traceback" not in result.stdout + result.stderr
-
-
-def test_deploy_names_a_trusted_file_whose_name_cannot_name_a_key(cli_case: CliCase):
-    _broken_project(cli_case)
-    _make_key(cli_case)
-    copy = _trusted(cli_case) / "default (1).pub"
-    copy.write_bytes((_trusted(cli_case) / "default.pub").read_bytes())
-
-    result = _deploy(cli_case, "echo", docker=False)
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert str(copy) in output
-    assert "CANYON-SCHEMA" not in output
-    assert "Traceback" not in result.stdout + result.stderr
-
-
-@pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads any file"
-)
-def test_deploy_names_a_trusted_file_it_cannot_read(cli_case: CliCase):
-    _broken_project(cli_case)
-    _make_key(cli_case)
-    public = _trusted(cli_case) / "default.pub"
-    public.chmod(0o000)
-    try:
-        result = _deploy(cli_case, "echo", docker=False)
-    finally:
-        public.chmod(0o644)
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert str(public) in output
-    assert "CANYON-SCHEMA" not in output
-    assert "Traceback" not in result.stdout + result.stderr
-
-
-def test_deploy_auth_dir_replaces_the_home_folder(cli_case: CliCase):
-    _broken_project(cli_case)
-    _make_key(cli_case, "--auth-dir", "./team-keys")
-    assert not (cli_case.home / ".canyonos").exists()
-
-    with_team_keys = _deploy(cli_case, "echo", "--auth-dir", "./team-keys")
-
-    _assert_reached_the_schema_check(with_team_keys)
-
-    _make_key(cli_case)
-    nowhere = _deploy(cli_case, "echo", "--auth-dir", "./nowhere", docker=False)
-
-    _assert_refused_for_no_key(nowhere, cli_case.cwd / "nowhere" / "trusted")
-    assert f"--auth-dir {cli_case.cwd / 'nowhere'}" in _said(nowhere)
-
-
-def test_deploy_refuses_a_keys_folder_inside_any_of_its_projects(cli_case: CliCase):
-    _broken_project(cli_case)
-    _project(cli_case.cwd / "other")
-    _make_key(cli_case, "--auth-dir", "./other/team-keys")
-
     result = _deploy(
-        cli_case, "echo", "other", "--auth-dir", "./other/team-keys", docker=False
+        cli_case, "nowhere", "--api-key", "deploy-checks-key", docker=False
     )
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert str((cli_case.cwd / "other" / "team-keys").resolve()) in output
-    assert "inside the project folder" in output
-    assert "CANYON-SCHEMA" not in output
-
-
-def test_serve_in_a_project_refuses_a_keys_folder_inside_it(cli_case: CliCase):
-    _project(cli_case.cwd)
-    _make_key(cli_case, "--auth-dir", "./team-keys")
-
-    result = cli_case.run_cli(
-        ["serve", "--auth-dir", "./team-keys"], timeout=60, env=NO_DOCKER
-    )
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert str((cli_case.cwd / "team-keys").resolve()) in output
-    assert "inside the project folder" in output
-
-
-def test_deploy_auth_dir_is_read_from_where_it_was_typed_with_folder(
-    cli_case: CliCase,
-):
-    _broken_project(cli_case)
-    _make_key(cli_case, "--auth-dir", "./team-keys")
-
-    result = _deploy(
-        cli_case,
-        "echo",
-        "--folder",
-        "deployments/team",
-        "--auth-dir",
-        "./team-keys",
-    )
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert SCHEMA_ERROR in output
-    assert "canyonos keys create" not in output
-
-
-def test_deploy_of_a_folder_that_is_no_project_says_so_before_the_key_check(
-    cli_case: CliCase,
-):
-    result = _deploy(cli_case, "nowhere", docker=False)
 
     output = _said(result)
     assert result.returncode == 1, output
     assert "is nowhere a project folder?" in output
-    assert "canyonos keys create" not in output
+    assert not _key_file(cli_case).exists()
 
 
-def test_deploy_help_lists_the_auth_flags(cli_case: CliCase):
-    result = cli_case.run_cli(["deploy", "-h"])
-
-    output = _said(result)
-    assert result.returncode == 0, output
-    assert "--dangerous-skip-auth" in output
-    assert "answer anyone" in output
-    assert "--auth-dir PATH" in output
-    assert "instead of ~/.canyonos/auth" in output
-
-
-def test_deploy_refuses_a_deployment_id_no_token_can_name(cli_case: CliCase):
+def test_deploy_refuses_a_deployment_id_that_is_not_a_lowercase_uuid(
+    cli_case: CliCase,
+):
     _broken_project(cli_case)
-    _make_key(cli_case)
     deployment_id = str(uuid.uuid4()).upper()
     (cli_case.cwd / "deployment.yaml").write_text(f"deployment_id: {deployment_id}\n")
 
@@ -323,65 +133,10 @@ def test_deploy_refuses_a_deployment_id_no_token_can_name(cli_case: CliCase):
     assert "Docker" not in output
 
 
-def test_canyonos_test_without_a_key_stops_before_docker(cli_case: CliCase):
-    (cli_case.cwd / "deployment.yaml").write_text(f"deployment_id: {uuid.uuid4()}\n")
-
-    result = cli_case.run_cli(["test"], timeout=60, env=NO_DOCKER)
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert f"No key is trusted in {_trusted(cli_case)}" in output
-    assert "canyonos keys create" in output
-    assert "Docker" not in output
-
-
-def test_serve_without_a_key_stops_before_docker(cli_case: CliCase):
+def test_serve_without_a_docker_engine_warns_of_no_key_and_stops(cli_case: CliCase):
     result = cli_case.run_cli(["serve"], timeout=60, env=NO_DOCKER)
 
     output = _said(result)
     assert result.returncode == 1, output
-    assert f"No key is trusted in {_trusted(cli_case)}" in output
-    assert "canyonos keys create" in output
-    assert "--dangerous-skip-auth" in output
-    assert "Docker" not in output
-    assert "docker" not in output
-
-
-def test_serve_on_a_docker_engine_elsewhere_needs_skip_auth(cli_case: CliCase):
-    _make_key(cli_case)
-
-    result = cli_case.run_cli(
-        ["serve"], timeout=60, env={"DOCKER_HOST": "tcp://203.0.113.10:2375"}
-    )
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert (
-        "the dashboard needs a Docker engine on this machine to read "
-        f"`{_trusted(cli_case)}`; use `--dangerous-skip-auth`"
-    ) in output
-
-
-def test_serve_dangerous_skip_auth_warns_and_goes_on_without_a_key(
-    cli_case: CliCase,
-):
-    result = cli_case.run_cli(
-        ["serve", "--dangerous-skip-auth"], timeout=60, env=NO_DOCKER
-    )
-
-    output = _said(result)
-    assert result.returncode == 1, output
-    assert "the endpoint and the dashboard will answer anyone" in output
-    assert "No key is trusted" not in output
+    assert OPEN_WARNING in output
     assert "docker daemon or socket is unavailable" in output
-
-
-def test_serve_help_lists_the_auth_flags(cli_case: CliCase):
-    result = cli_case.run_cli(["serve", "-h"])
-
-    output = _said(result)
-    assert result.returncode == 0, output
-    assert "--dangerous-skip-auth" in output
-    assert "answer anyone" in output
-    assert "--auth-dir PATH" in output
-    assert "instead of ~/.canyonos/auth" in output

@@ -33,7 +33,7 @@ import { ROLLUP_SECONDS } from '@api/modules/telemetry/telemetry.rollup';
 import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitoring/monitoring.types';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { reset_controller, seed_endpoint, seed_running_project } from './redis-test.utils';
 import {
   encode_metrics_export,
@@ -258,7 +258,7 @@ const SECONDS_PER_HOUR = 3600;
 let token: string;
 
 beforeAll(async () => {
-  token = await authenticate('read');
+  token = TEST_API_KEY;
 });
 
 describe('GET /projects/:project_id/monitoring/series', () => {
@@ -1842,7 +1842,7 @@ describe('GET /projects/:project_id/monitoring/endpoint', () => {
 });
 
 describe('monitoring access', () => {
-  test('every monitoring route rejects a caller without a token and an unknown project', async () => {
+  test('every monitoring route rejects a caller without the API key and an unknown project', async () => {
     const { project_id } = await create_project(token, 'Access Monitoring');
     const unknown = '00000000-0000-4000-8000-000000000000';
     const routes = (id: string, headers: Record<string, string> = {}) => {

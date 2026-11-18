@@ -4,7 +4,7 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { authPlugin, requireScope } from '../auth/auth.middleware';
+import { authPlugin } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { governanceRoutes } from '../governance/governance.routes';
 import { metricsRoutes } from '../metrics/metrics.routes';
@@ -29,26 +29,22 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
   .use(authPlugin)
   .get('/', () => list_projects(), {
     response: { 200: z.array(ProjectSummarySchema) },
-    beforeHandle: requireScope('read'),
     detail: doc,
   })
   .resolve(resolveProjectAccess)
   .get('/:project_id', ({ params }) => get_project(params.project_id), {
     params: ProjectIdParams,
     response: { 200: ProjectSummarySchema },
-    beforeHandle: requireScope('read', 'write'),
     detail: doc,
   })
   .delete('/:project_id', ({ params }) => delete_project(params.project_id), {
     params: ProjectIdParams,
     response: { 200: ProjectDeletedSchema },
-    beforeHandle: requireScope('write'),
     detail: { ...doc, summary: 'Delete a deployment that is not running' },
   })
   .get('/:project_id/stats', ({ params }) => get_project_stats(params.project_id), {
     params: ProjectIdParams,
     response: { 200: ProjectStatsSchema },
-    beforeHandle: requireScope('read'),
     detail: { ...doc, summary: 'Get deployment statistics' },
   })
   .post(
@@ -58,7 +54,6 @@ export const projectsRoutes = new Elysia({ prefix: '/projects', name: 'projects.
       params: ProjectIdParams,
       body: SampleDataBody,
       response: { 200: SampleDataSchema },
-      beforeHandle: requireScope('write'),
       detail: {
         ...doc,
         summary: 'Add the recorded example run to this deployment',

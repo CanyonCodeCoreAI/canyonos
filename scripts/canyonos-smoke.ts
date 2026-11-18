@@ -9,10 +9,6 @@
  * the point is to prove the image reads rows that already exist.
  */
 
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { $ } from 'bun';
 
 const COMPOSE_FILE = '.docker/canyonos-smoke.compose.yml';
@@ -21,6 +17,7 @@ const TRACE_ID = 'smoke-trace';
 const API_PORT = Bun.env.SMOKE_API_PORT ?? '53000';
 const WEB_PORT = Bun.env.SMOKE_WEB_PORT ?? '58080';
 const BASE_URL = `http://127.0.0.1:${API_PORT}`;
+const API_KEY = 'canyonos-smoke-key';
 const WEB_URL = `http://127.0.0.1:${WEB_PORT}`;
 
 const compose = (...args: string[]) => $`docker compose -f ${COMPOSE_FILE} ${args}`;
@@ -52,61 +49,22 @@ async function waitFor<T>(label: string, budgetMs: number, probe: () => Promise<
   throw new Error(`timed out waiting for ${label}${last ? `: ${String(last)}` : ''}`);
 }
 
-const getJson = async (path: string, token?: string): Promise<{ status: number; body: any }> => {
-  const headers = token === undefined ? undefined : { authorization: `Bearer ${token}` };
+const getJson = async (path: string, key?: string): Promise<{ status: number; body: any }> => {
+  const headers = key === undefined ? undefined : { authorization: `Bearer ${key}` };
   const response = await fetch(`${BASE_URL}${path}`, { headers });
   return { status: response.status, body: await response.json().catch(() => null) };
 };
 
-const base64url = (bytes: ArrayBuffer | string) => Buffer.from(bytes).toString('base64url');
-
-/**
- * Trusts a key pair made for this run in its own folder, which the compose file mounts into the
- * API as `AUTH_TRUSTED_KEYS_DIR`, and signs a read token with it the way `canyonos token create
- * --scope read` does. No CLI runs here, so WebCrypto signs it.
- */
-async function trustSmokeKey(): Promise<{ folder: string; readToken: string }> {
-  const folder = await mkdtemp(join(tmpdir(), 'canyonos-smoke-'));
-  const trusted = join(folder, 'trusted');
-  await mkdir(trusted);
-  // The API container runs as `bun`, not as the user who made the folder.
-  await chmod(trusted, 0o755);
-  const { publicKey, privateKey } = (await crypto.subtle.generateKey('Ed25519', true, [
-    'sign',
-    'verify',
-  ])) as CryptoKeyPair;
-  const spki = Buffer.from(await crypto.subtle.exportKey('spki', publicKey)).toString('base64');
-  await writeFile(
-    join(trusted, 'smoke.pub'),
-    `-----BEGIN PUBLIC KEY-----\n${spki}\n-----END PUBLIC KEY-----\n`,
-    { mode: 0o644 }
-  );
-  const header = base64url(JSON.stringify({ alg: 'EdDSA', typ: 'JWT' }));
-  const claims = base64url(
-    JSON.stringify({
-      iss: 'canyonos',
-      aud: ['canyonos-api'],
-      scope: 'read',
-      iat: Math.floor(Date.now() / 1000),
-      jti: crypto.randomUUID().replaceAll('-', ''),
-    })
-  );
-  const signed = `${header}.${claims}`;
-  const signature = await crypto.subtle.sign('Ed25519', privateKey, Buffer.from(signed));
-  process.env.SMOKE_TRUSTED_KEYS_DIR = trusted;
-  return { folder, readToken: `${signed}.${base64url(signature)}` };
-}
-
-/** Checks, from `apiUrl`, that the API verifies tokens and takes the smoke's read token. */
-async function checkToken(apiUrl: string, token: string): Promise<void> {
+/** Checks, from `apiUrl`, that the API needs a key and takes the smoke's. */
+async function checkApiKey(apiUrl: string): Promise<void> {
   const status = await fetch(`${apiUrl}/auth/status`);
   equal(status.status, 200, `the auth status route at ${apiUrl} answers`);
-  equal(await status.json(), { disabled: false }, 'the API verifies tokens');
-  const info = await fetch(`${apiUrl}/auth/token`, {
-    headers: { authorization: `Bearer ${token}` },
+  equal(await status.json(), { api_key_required: true }, 'the API needs a key');
+  const check = await fetch(`${apiUrl}/auth/check`, {
+    headers: { authorization: `Bearer ${API_KEY}` },
   });
-  equal(info.status, 200, `the token route at ${apiUrl} accepts the read token`);
-  equal(await info.json(), { scope: 'read', expires_at: null }, 'the token is a read token');
+  equal(check.status, 200, `the key check at ${apiUrl} accepts the key`);
+  equal(await check.json(), { ok: true }, 'the key check answers ok');
 }
 
 const waitForHealth = () =>
@@ -117,9 +75,9 @@ const waitForHealth = () =>
 
 const getProxiedJson = async (
   path: string,
-  token?: string
+  key?: string
 ): Promise<{ status: number; body: any }> => {
-  const headers = token === undefined ? undefined : { authorization: `Bearer ${token}` };
+  const headers = key === undefined ? undefined : { authorization: `Bearer ${key}` };
   const response = await fetch(`${WEB_URL}/api${path}`, { headers });
   return { status: response.status, body: await response.json().catch(() => null) };
 };
@@ -165,7 +123,7 @@ async function seedTelemetry() {
 
 const findProject = (body: any) => body?.find?.((row: any) => row.id === PROJECT_ID);
 
-async function main(token: string) {
+async function main() {
   log('building the images');
   await $`docker build -f packages/api/Dockerfile -t canyonos-api:smoke .`;
   // CI prebuilds the web image and names it in CANYONOS_WEB_IMAGE, which the compose file reads.
@@ -193,16 +151,12 @@ async function main(token: string) {
   await compose('up', '-d', 'api');
   await waitForHealth();
 
-  log('checking the read token');
-  await checkToken(BASE_URL, token);
-  equal(
-    (await getJson('/projects')).status,
-    401,
-    'the project list refuses a caller with no token'
-  );
+  log('checking the API key');
+  await checkApiKey(BASE_URL);
+  equal((await getJson('/projects')).status, 401, 'the project list refuses a caller with no key');
 
   log('checking the bootstrapped project');
-  const projects = await getJson('/projects', token);
+  const projects = await getJson('/projects', API_KEY);
   equal(projects.status, 200, 'the user lists the bootstrapped project');
   const project = findProject(projects.body);
   check(project, 'the bootstrap used the controller id to create the project row');
@@ -217,7 +171,7 @@ async function main(token: string) {
     from: new Date(Date.now() - 3_600_000).toISOString(),
     to: new Date().toISOString(),
   });
-  const listing = await getJson(`/projects/${PROJECT_ID}/requests?${range}`, token);
+  const listing = await getJson(`/projects/${PROJECT_ID}/requests?${range}`, API_KEY);
   equal(listing.status, 200, 'the user reads the request listing');
   equal(listing.body.total, 1, 'the inserted trace is listed');
   equal(listing.body.items[0].session_id, TRACE_ID, 'the listed trace is the inserted one');
@@ -244,12 +198,12 @@ async function main(token: string) {
   equal(
     (await fetch(`${WEB_URL}/api/projects`)).status,
     401,
-    'the proxy forwards a read with no token to the real API, which refuses it as it does directly'
+    'the proxy forwards a read with no key to the real API, which refuses it as it does directly'
   );
 
-  log('checking the read token through the web proxy, the way the dashboard does');
-  await checkToken(`${WEB_URL}/api`, token);
-  const proxied_projects = await getProxiedJson('/projects', token);
+  log('checking the API key through the web proxy, the way the dashboard does');
+  await checkApiKey(`${WEB_URL}/api`);
+  const proxied_projects = await getProxiedJson('/projects', API_KEY);
   equal(proxied_projects.status, 200, 'the user lists projects through the proxy');
   equal(
     findProject(proxied_projects.body)?.id,
@@ -260,7 +214,7 @@ async function main(token: string) {
   log('restarting to prove the bootstrap is idempotent');
   await compose('restart', 'api');
   await waitForHealth();
-  const after = await getJson('/projects', token);
+  const after = await getJson('/projects', API_KEY);
   equal(
     after.body.filter((row: any) => row.id === PROJECT_ID).length,
     1,
@@ -270,15 +224,14 @@ async function main(token: string) {
   log('PASS');
 }
 
-const { folder, readToken } = await trustSmokeKey();
+process.env.CANYONOS_API_KEY_HASH = new Bun.CryptoHasher('sha256').update(API_KEY).digest('hex');
 try {
-  await main(readToken);
+  await main();
 } catch (error) {
   console.error('[smoke] FAIL', error);
   await compose('logs', '--tail', '80', 'api', 'web').nothrow();
   process.exitCode = 1;
 } finally {
-  // Always runs, so a failed smoke never leaves containers, volumes or the key behind.
+  // Always runs, so a failed smoke never leaves containers or volumes behind.
   await compose('down', '-v', '--remove-orphans').nothrow();
-  await rm(folder, { recursive: true, force: true });
 }

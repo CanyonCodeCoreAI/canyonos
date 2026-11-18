@@ -13,13 +13,13 @@ import type { BrandCopy } from '@/modules/auth/components/CanyonBrandPanel';
 const QUERY_RETRIES = 3;
 
 /**
- * A 401 in a session means a stored token stopped working, as a key rotation leaves it: forget
- * the tokens and let the root guard send the person to the token screen, back to this page after.
- * The token checks under `['auth']` are left to the sign-in guard that asked them.
+ * A 401 in a session means the stored key stopped working, as a new key on this machine leaves it:
+ * forget it and let the root guard send the person to sign in, back to this page after. The key
+ * checks under `['auth']` are left to the sign-in guard that asked them.
  */
 function signOutWhenRefused(error: unknown, query?: Query<unknown, unknown, unknown>): void {
   if (!answeredWith(error, 401) || query?.queryKey[0] === 'auth') return;
-  if (authActions.heldTokens().length === 0) return;
+  if (!authActions.isAuthenticated()) return;
   useAuthStore.getState().logout();
   void router.invalidate();
 }
@@ -29,8 +29,8 @@ export const queryClient = new QueryClient({
   mutationCache: new MutationCache({ onError: (error) => signOutWhenRefused(error) }),
   defaultOptions: {
     queries: {
-      // Another try with the same token gets the same refusal.
-      retry: (failures, error) => !answeredWith(error, 401, 403) && failures < QUERY_RETRIES,
+      // Another try with the same key gets the same refusal.
+      retry: (failures, error) => !answeredWith(error, 401) && failures < QUERY_RETRIES,
     },
   },
 });

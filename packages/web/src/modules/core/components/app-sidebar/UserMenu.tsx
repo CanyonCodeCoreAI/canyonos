@@ -19,8 +19,8 @@ import { authSelectors, useAuthStore } from '@/modules/auth/auth.store';
 
 export function UserMenu() {
   const navigate = useNavigate();
-  const heldScopes = useAuthStore(authSelectors.heldScopes);
-  if (!heldScopes) return null;
+  const signedIn = useAuthStore(authSelectors.signedIn);
+  if (!signedIn) return null;
 
   const logout = () => {
     useAuthStore.getState().logout();
@@ -41,12 +41,12 @@ export function UserMenu() {
             'hover:bg-foreground/[0.035] focus-visible:outline-none active:scale-[0.985]'
           )}
         >
-          <TokensAvatar />
+          <KeyAvatar />
           <span className="app-sidebar-hide-when-collapsed min-w-0 flex-1">
             <span className="text-foreground block truncate text-[0.8125rem] font-semibold">
-              API tokens
+              API key
             </span>
-            <span className="text-muted-foreground block truncate text-xs">{heldScopes}</span>
+            <span className="text-muted-foreground block truncate text-xs">Signed in</span>
           </span>
           <ChevronsUpDownIcon
             className="app-sidebar-hide-when-collapsed text-muted-foreground size-3.5 shrink-0"
@@ -63,9 +63,9 @@ export function UserMenu() {
       >
         <DropdownMenuLabel className="font-normal">
           <div className="flex items-center gap-2">
-            <TokensAvatar />
-            <p className="min-w-0 truncate text-sm font-medium" data-testid="sidebar-held-tokens">
-              Tokens held: {heldScopes}
+            <KeyAvatar />
+            <p className="min-w-0 truncate text-sm font-medium" data-testid="sidebar-signed-in">
+              Signed in with the API key
             </p>
           </div>
         </DropdownMenuLabel>
@@ -79,7 +79,7 @@ export function UserMenu() {
   );
 }
 
-function TokensAvatar() {
+function KeyAvatar() {
   return (
     <Avatar>
       <AvatarFallback>

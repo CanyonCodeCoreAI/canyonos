@@ -78,16 +78,15 @@ def _placement(spec):
     return {"nodeSelector": {str(k): str(v) for k, v in spec.node_selector.items()}}
 
 
-def _auth_spec(auth):
-    """`spec.auth` from the record `trusted_keys_from_env` reads, or None when it
-    trusts no key and leaves verification on, so the field is left out."""
-    if not auth["keys"] and not auth["disabled"]:
-        return None
-    return {"trustedKeys": auth["keys"], "disabled": auth["disabled"]}
-
-
 def _project_spec(
-    config, spec, project_id, config_map, env_secret, controller_image, name, auth
+    config,
+    spec,
+    project_id,
+    config_map,
+    env_secret,
+    controller_image,
+    name,
+    api_key_hash,
 ):
     redis = spec.redis
     if redis.host:
@@ -134,9 +133,8 @@ def _project_spec(
         project["imagePullSecrets"] = [{"name": spec.image_pull_secret}]
     if _placement(spec):
         project["placement"] = _placement(spec)
-    auth_spec = _auth_spec(auth)
-    if auth_spec:
-        project["auth"] = auth_spec
+    if api_key_hash:
+        project["auth"] = {"apiKeyHash": api_key_hash}
     return project
 
 
@@ -187,13 +185,13 @@ def render(
     images,
     controller_image,
     env_secret,
-    auth,
+    api_key_hash,
     live_replicas=None,
 ):
     """The Kubernetes objects for one deployment, and warnings about settings Kubernetes
-    ignores. `spec` is its parsed `kubernetes:` section; `auth` is the trusted keys
-    record (`{"keys": [...], "disabled": bool}`, as `trusted_keys_from_env` reads it)
-    the deployment's global controller gets. Pure: no cluster or Docker access.
+    ignores. `spec` is its parsed `kubernetes:` section; `api_key_hash` is the sha256
+    of the API key the deployment's endpoint accepts, "" for none (open). Pure: no
+    cluster or Docker access.
     `live_replicas` maps the CanyonAgents the global controller autoscales to their
     live count, which they keep: leaving the count out instead would make the
     server-side apply delete the field it owns, and the CRD default (1) would reset
@@ -223,7 +221,7 @@ def render(
                 env_secret,
                 controller_image,
                 project_name,
-                auth,
+                api_key_hash,
             ),
         },
     ]

@@ -9,18 +9,17 @@ import type { ProjectSummary } from '@canyonos/api/projects';
 import type { Prompt, PromptListItem, SystemPrompt } from '@canyonos/api/prompts';
 import type { ScalingPolicy, ScalingResponse, ScalingStatus } from '@canyonos/api/scaling';
 
-import { setTokens, tokenFor } from './helpers/auth';
+import { authenticate, TEST_API_KEY } from './helpers/auth';
 import { apiBaseUrl, fulfillJson } from './helpers/projects';
 import { expectPath } from './helpers/session';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
-const READ_REFUSAL = 'A write token reads only what it can change; send a read token for this';
 const SEEDED_PROJECT_NAME = 'Canyon Code Demo Flow';
 
 /** The project the API's dev seed makes, found the way the dashboard lists it. */
 async function seededProject(request: APIRequestContext): Promise<ProjectSummary> {
   const response = await request.get(`${apiBaseUrl}/projects`, {
-    headers: { authorization: `Bearer ${tokenFor('read')}` },
+    headers: { authorization: `Bearer ${TEST_API_KEY}` },
   });
   const projects = (await response.json()) as ProjectSummary[];
   return projects.find(({ name }) => name === SEEDED_PROJECT_NAME)!;
@@ -29,9 +28,9 @@ async function seededProject(request: APIRequestContext): Promise<ProjectSummary
 type ControllerAnswer = (route: Route) => unknown;
 
 /**
- * The API decides every call to `pathname`: its 401 or 403 reaches the page as it is. Past that
+ * The API decides every call to `pathname`: its 401 reaches the page as it is. Past that
  * check the API asks the project's controller, which this suite does not run, so its answer stands
- * in for the controller's. `statuses` keeps what the API said, to show it accepted the token.
+ * in for the controller's. `statuses` keeps what the API said, to show it accepted the key.
  */
 async function answerPastAuth(
   page: Page,
@@ -46,7 +45,7 @@ async function answerPastAuth(
       if (!answer) return route.fallback();
       const response = await route.fetch();
       statuses.push(response.status());
-      if (response.status() === 401 || response.status() === 403) {
+      if (response.status() === 401) {
         return route.fulfill({ response });
       }
       return fulfillJson(route, answer(route));
@@ -55,11 +54,7 @@ async function answerPastAuth(
   return statuses;
 }
 
-const refusedByToken = (status: number) => status === 401 || status === 403;
-
-async function signInWithWriteToken(page: Page): Promise<void> {
-  await setTokens(page, { writeToken: tokenFor('write') });
-}
+const refused = (status: number) => status === 401;
 
 let project: ProjectSummary;
 
@@ -69,37 +64,7 @@ test.beforeAll(async ({ playwright }) => {
   await request.dispose();
 });
 
-test('a write token alone opens a project, and its read-only sections show the refusal', async ({
-  page,
-}) => {
-  await signInWithWriteToken(page);
-
-  await page.goto(`/projects/${project.id}`);
-
-  await expect(page.getByTestId('project-screen')).toBeVisible();
-  await expect(page.getByTestId('project-layout-error')).toHaveCount(0);
-  await expect(page.getByRole('navigation', { name: 'breadcrumb' })).toContainText(project.name);
-  await expect(page.getByTestId('project-screen').getByTestId('query-refused').first()).toHaveText(
-    READ_REFUSAL
-  );
-});
-
-test('a write token alone sees the refusal on the projects list and its logs', async ({ page }) => {
-  await signInWithWriteToken(page);
-
-  await page.goto('/projects');
-  await expect(page.getByTestId('projects-overview').getByTestId('query-refused')).toHaveText(
-    READ_REFUSAL
-  );
-  await expect(page.getByTestId('projects-error').getByTestId('query-refused')).toHaveText(
-    READ_REFUSAL
-  );
-
-  await page.goto(`/projects/${project.id}/logs`);
-  await expect(page.getByTestId('query-refused').first()).toHaveText(READ_REFUSAL);
-});
-
-test('a write token alone saves a scaling policy and sees it stored', async ({ page }) => {
+test('the API key saves a scaling policy through the API and sees it stored', async ({ page }) => {
   let stored: ScalingStatus = { status: 'none' };
   const reads = await answerPastAuth(page, `/projects/${project.id}/scaling`, {
     GET: (): ScalingResponse => ({ projects: { app: stored } }),
@@ -114,7 +79,7 @@ test('a write token alone saves a scaling policy and sees it stored', async ({ p
   await answerPastAuth(page, `/projects/${project.id}/scaling/agents`, {
     GET: () => ({ agents: [] }),
   });
-  await signInWithWriteToken(page);
+  await authenticate(page);
 
   await page.goto(`/projects/${project.id}/scaling`);
   await expect(page.getByTestId('scaling-screen')).toHaveAttribute('data-state', 'ready');
@@ -128,7 +93,7 @@ test('a write token alone saves a scaling policy and sees it stored', async ({ p
   await expect(applied.getByTestId('policy-max-replicas-value')).toHaveText('6');
   expect(reads.length).toBeGreaterThanOrEqual(2);
   expect(writes).toHaveLength(1);
-  expect([...reads, ...writes].some(refusedByToken)).toBe(false);
+  expect([...reads, ...writes].some(refused)).toBe(false);
   await expectPath(page, `/projects/${project.id}/scaling`);
 });
 
@@ -150,7 +115,7 @@ const governanceWith = (status: GovernanceAgent['status']): GovernanceResponse =
   edges: [{ source: 'Workflow', target: 'PriceAgent' }],
 });
 
-test('a write token alone reads governance and stops an agent', async ({ page }) => {
+test('the API key reads governance and stops an agent through the API', async ({ page }) => {
   let status: GovernanceAgent['status'] = 'up';
   const reads = await answerPastAuth(page, `/projects/${project.id}/governance`, {
     GET: () => governanceWith(status),
@@ -170,7 +135,7 @@ test('a write token alone reads governance and stops an agent', async ({ page })
   await answerPastAuth(page, `/projects/${project.id}/scaling`, {
     GET: (): ScalingResponse => ({ projects: { app: { status: 'none' } } }),
   });
-  await signInWithWriteToken(page);
+  await authenticate(page);
 
   await page.goto(`/projects/${project.id}/governance?agent=PriceAgent`);
   const drawer = page.getByTestId('governance-drawer');
@@ -183,7 +148,7 @@ test('a write token alone reads governance and stops an agent', async ({ page })
     'stopped'
   );
   expect(writes).toHaveLength(1);
-  expect([...reads, ...writes].some(refusedByToken)).toBe(false);
+  expect([...reads, ...writes].some(refused)).toBe(false);
 });
 
 const V1: SystemPrompt = {
@@ -197,7 +162,9 @@ const V2: SystemPrompt = {
   updated_at: '2026-09-20T10:00:00.000Z',
 };
 
-test('a write token alone reads the prompts and makes an older version live', async ({ page }) => {
+test('the API key reads the prompts and makes an older version live through the API', async ({
+  page,
+}) => {
   let prompt: Prompt = { name: 'summarize', live: V2, versions: [V2, V1] };
   const listing = (): PromptListItem[] => [{ name: prompt.name, live: prompt.live }];
   const calls = [
@@ -211,7 +178,7 @@ test('a write token alone reads the prompts and makes an older version live', as
       },
     }),
   ];
-  await signInWithWriteToken(page);
+  await authenticate(page);
 
   await page.goto(`/projects/${project.id}/prompts`);
   const card = page.locator('[data-testid="prompt-card"][data-name="summarize"]');
@@ -223,5 +190,5 @@ test('a write token alone reads the prompts and makes an older version live', as
 
   await expect(page.getByTestId('app-toast')).toContainText('v1 of summarize is live.');
   await expect(card.getByTestId('prompt-live')).toHaveText('v1 live');
-  expect(calls.flat().some(refusedByToken)).toBe(false);
+  expect(calls.flat().some(refused)).toBe(false);
 });

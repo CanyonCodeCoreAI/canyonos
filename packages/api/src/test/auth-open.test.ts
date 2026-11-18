@@ -7,6 +7,7 @@ import { db } from '@api/db/client';
 import { projects } from '@api/db/schema';
 
 import { api, setupE2ETests } from './e2e.setup';
+import { bearer } from './project-test.utils';
 import { seed_active_agents, seed_running_project } from './redis-test.utils';
 import type { ScalingPolicy } from '../modules/scaling/scaling.types';
 
@@ -19,7 +20,7 @@ const RANGE = {
   to: RANGE_TO.toISOString(),
 };
 
-const STALE_BEARER = { authorization: 'Bearer x.y.z' };
+const STALE_BEARER = bearer('a key from before the API ran open');
 
 const POLICY: ScalingPolicy = {
   min_replicas: 1,
@@ -36,21 +37,21 @@ async function open_project(name: string): Promise<string> {
   return project!.id;
 }
 
-describe('AUTH_DISABLED=true', () => {
-  test('/auth/status reports verification off', async () => {
+describe('no CANYONOS_API_KEY_HASH', () => {
+  test('/auth/status reports that no key is needed', async () => {
     const status = await api.auth.status.get();
 
-    expect(status.data).toEqual({ disabled: true });
+    expect(status.data).toEqual({ api_key_required: false });
   });
 
-  test('/auth/token answers what a write token would, with no token', async () => {
-    const token = await api.auth.token.get();
+  test('/auth/check answers ok with no key', async () => {
+    const check = await api.auth.check.get();
 
-    expect(token.data).toEqual({ scope: 'write', expires_at: null });
+    expect(check.data).toEqual({ ok: true });
   });
 
-  test('a caller with no token lists projects and changes scaling', async () => {
-    const project_id = await open_project('Unsigned Writes');
+  test('a caller with no key lists projects and changes scaling', async () => {
+    const project_id = await open_project('Keyless Writes');
 
     const listed = await api.projects.get();
     expect(listed.error).toBeNull();
@@ -60,8 +61,8 @@ describe('AUTH_DISABLED=true', () => {
     expect(saved.error).toBeNull();
   });
 
-  // A bearer left in a browser from before the switch was flipped must not turn into a 401.
-  test('a stale or forged bearer is ignored', async () => {
+  // A key left in a browser from before the API ran open must not turn into a 401.
+  test('a stale bearer is ignored', async () => {
     const project_id = await open_project('Stale Bearer');
 
     const listed = await api.projects.get({ $headers: STALE_BEARER });
@@ -74,7 +75,7 @@ describe('AUTH_DISABLED=true', () => {
     expect(saved.error).toBeNull();
   });
 
-  // The resolver is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling),
+  // The check is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling),
   // so reaching every sub-resource proves each composed plugin serves a caller with no headers.
   test('a caller with no headers lists the projects and reaches every sub-resource', async () => {
     const project_id = await open_project('Open Project');

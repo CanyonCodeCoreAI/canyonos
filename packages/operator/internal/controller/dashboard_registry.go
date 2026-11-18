@@ -6,17 +6,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 package controller
 
 import (
-	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
-	"errors"
-	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -48,26 +39,12 @@ const (
 	DashboardProjectsSecret = "canyonos-dashboard-projects"
 	// DashboardProjectsKey is the file in it.
 	DashboardProjectsKey = "projects.json"
-	// DashboardTrustedKeysConfigMap holds the Ed25519 public keys of every project whose
-	// Redis is ready and that is not being deleted, also one whose Redis password cannot
-	// be read yet: one <namespace>_<project>_<n>.pub file each, which the dashboard's API
-	// mounts as its AUTH_TRUSTED_KEYS_DIR to verify API tokens. Each key is written as
-	// one canonical PEM block; a key that is not one Ed25519 public key is left out, as
-	// the API would refuse to start on it, and so is every key of a project whose entry
-	// names would be longer than a ConfigMap allows.
-	DashboardTrustedKeysConfigMap = "canyonos-dashboard-trusted-keys"
-	// maxConfigMapKey is the longest name a ConfigMap entry may have.
-	maxConfigMapKey = 253
-	// TrustedKeysAnnotation on the dashboard API's pod template is the sha256 of that
-	// ConfigMap's content: the API reads its keys once, on start, so a new hash rolls it.
-	TrustedKeysAnnotation = "canyonos.canyoncode.ai/trusted-keys"
 )
 
 // DashboardRegistryReconciler keeps the dashboard's list of projects: one Secret in
 // the dashboard's namespace naming each project whose Redis is ready, with how to
-// reach it and sign in, and one ConfigMap with the public keys those projects trust.
-// The dashboard then needs no permission on any project's Secrets; the operator
-// already reads each Redis password by name.
+// reach it and sign in. The dashboard then needs no permission on any project's
+// Secrets; the operator already reads each Redis password by name.
 type DashboardRegistryReconciler struct {
 	client.Client
 	// APIReader reads the list's Secret straight from the API server: Secrets are never cached.
@@ -92,18 +69,16 @@ type registeredProject struct {
 	Redis     registeredRedis `json:"redis"`
 }
 
-// Its permissions: get and create on Secrets and ConfigMaps come with the operator's
-// ClusterRole; update on this one Secret and this one ConfigMap, and patch on the API's
-// Deployment, by name, from the chart's Role in the dashboard's namespace.
+// Its permissions: get and create on Secrets come with the operator's ClusterRole;
+// update on this one Secret, by name, from the chart's Role in the dashboard's namespace.
 
-// Reconcile writes the list of every project the operator runs and the keys they trust.
+// Reconcile writes the list of every project the operator runs.
 func (r *DashboardRegistryReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	projects := &canyonosv1alpha1.CanyonProjectList{}
 	if err := r.List(ctx, projects); err != nil {
 		return ctrl.Result{}, err
 	}
 	listed := []registeredProject{}
-	trusted := map[string]string{}
 	// Listed again on a timer too, as the project and agent controllers resync: an
 	// external Redis's password Secret can change with no event the triggers below see,
 	// and a project left out (its password unreadable) is tried again.
@@ -113,7 +88,6 @@ func (r *DashboardRegistryReconciler) Reconcile(ctx context.Context, _ ctrl.Requ
 		if !listable(project) {
 			continue
 		}
-		maps.Copy(trusted, trustedKeyFiles(ctx, project))
 		entry, err := r.entry(ctx, project)
 		if err != nil {
 			// One project's missing Secret must not drop every other project.
@@ -128,71 +102,7 @@ func (r *DashboardRegistryReconciler) Reconcile(ctx context.Context, _ ctrl.Requ
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.write(ctx, content); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.writeTrustedKeys(ctx, trusted); err != nil {
-		return ctrl.Result{}, err
-	}
-	return result, r.restartOnNewKeys(ctx, trusted)
-}
-
-// trustedKeyFiles are a project's public keys as files of the dashboard's trusted
-// folder, named after its namespace and name with `_`, which neither may hold, so two
-// projects never share one. One project's key that is not an Ed25519 public key, or a
-// name too long for a ConfigMap, is left out and logged: the dashboard is every
-// project's, and its API refuses to start on a file it cannot parse.
-func trustedKeyFiles(ctx context.Context, project *canyonosv1alpha1.CanyonProject) map[string]string {
-	files := map[string]string{}
-	if project.Spec.Auth == nil {
-		return files
-	}
-	log := logf.FromContext(ctx).WithValues("project", client.ObjectKeyFromObject(project))
-	for n, key := range project.Spec.Auth.TrustedKeys {
-		name := fmt.Sprintf("%s_%s_%d.pub", project.Namespace, project.Name, n)
-		if len(name) > maxConfigMapKey {
-			log.Info("Not trusting a project's keys on the dashboard: its name is too long for a ConfigMap entry",
-				"entry", name)
-			return map[string]string{}
-		}
-		canonical, err := canonicalEd25519PublicKey(key)
-		if err != nil {
-			log.Info("Not trusting a key on the dashboard", "index", n, "reason", err.Error())
-			continue
-		}
-		files[name] = canonical
-	}
-	return files
-}
-
-// canonicalEd25519PublicKey is `key`, one Ed25519 public key in SPKI PEM, encoded
-// again as `canyonos keys create` writes it, so the dashboard's API reads only a block
-// it can import: no headers, no text around it. It says why when `key` is anything
-// else, or holds more than that one block.
-func canonicalEd25519PublicKey(key string) (string, error) {
-	block, rest := pem.Decode([]byte(key))
-	if block == nil {
-		return "", errors.New("not PEM")
-	}
-	if block.Type != "PUBLIC KEY" {
-		return "", fmt.Errorf("a %q block, not PUBLIC KEY", block.Type)
-	}
-	if len(bytes.TrimSpace(rest)) > 0 {
-		return "", errors.New("more than one PEM block, or text after it")
-	}
-	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return "", err
-	}
-	public, ok := parsed.(ed25519.PublicKey)
-	if !ok {
-		return "", fmt.Errorf("a %T, not an Ed25519 public key", parsed)
-	}
-	der, err := x509.MarshalPKIXPublicKey(public)
-	if err != nil {
-		return "", err
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
+	return result, r.write(ctx, content)
 }
 
 // listable is a project the dashboard can reach: its Redis is ready and it is not
@@ -250,67 +160,6 @@ func (r *DashboardRegistryReconciler) write(ctx context.Context, content []byte)
 	return r.Update(ctx, secret)
 }
 
-// writeTrustedKeys creates or replaces the dashboard's ConfigMap of trusted keys, only
-// when its content changes. It exists with no key too, so the API's volume mounts.
-func (r *DashboardRegistryReconciler) writeTrustedKeys(ctx context.Context, files map[string]string) error {
-	key := client.ObjectKey{Namespace: r.Namespace, Name: DashboardTrustedKeysConfigMap}
-	configMap := &corev1.ConfigMap{}
-	err := r.APIReader.Get(ctx, key, configMap)
-	if apierrors.IsNotFound(err) {
-		configMap = &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: key.Name, Namespace: key.Namespace,
-				Labels: map[string]string{builders.LabelManagedBy: builders.ManagedBy, builders.LabelPartOf: "canyonos"},
-			},
-			Data: files,
-		}
-		return client.IgnoreAlreadyExists(r.Create(ctx, configMap))
-	}
-	if err != nil {
-		return err
-	}
-	if maps.Equal(configMap.Data, files) {
-		return nil
-	}
-	configMap.Data = files
-	return r.Update(ctx, configMap)
-}
-
-// trustedKeysHash is the sha256 of the trusted keys' files, names and content.
-func trustedKeysHash(files map[string]string) string {
-	digest := sha256.New()
-	for _, name := range slices.Sorted(maps.Keys(files)) {
-		_, _ = fmt.Fprintf(digest, "%s\x00%s\x00", name, files[name])
-	}
-	return hex.EncodeToString(digest.Sum(nil))
-}
-
-// restartOnNewKeys sets the hash of the trusted keys on the dashboard API's pod
-// template, which rolls the API when they change. A cluster whose chart runs no
-// dashboard API has nothing to roll.
-func (r *DashboardRegistryReconciler) restartOnNewKeys(ctx context.Context, files map[string]string) error {
-	hash := trustedKeysHash(files)
-	deployment := &appsv1.Deployment{}
-	err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: builders.DashboardAPIName}, deployment)
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if deployment.Spec.Template.Annotations[TrustedKeysAnnotation] == hash {
-		return nil
-	}
-	// Only this annotation: the chart owns the rest of the Deployment.
-	patch, err := json.Marshal(map[string]any{"spec": map[string]any{"template": map[string]any{
-		"metadata": map[string]any{"annotations": map[string]string{TrustedKeysAnnotation: hash}},
-	}}})
-	if err != nil {
-		return err
-	}
-	return r.Patch(ctx, deployment, client.RawPatch(types.MergePatchType, patch))
-}
-
 // listChanged is a project update that can change its entry in the list. Status
 // updates of replicas and endpoints, the most frequent, do not.
 func listChanged(e event.TypedUpdateEvent[client.Object]) bool {
@@ -322,8 +171,7 @@ func listChanged(e event.TypedUpdateEvent[client.Object]) bool {
 	return listable(old) != listable(updated) ||
 		old.Spec.ProjectID != updated.Spec.ProjectID ||
 		old.Spec.DisplayName != updated.Spec.DisplayName ||
-		!equality.Semantic.DeepEqual(old.Spec.Redis, updated.Spec.Redis) ||
-		!equality.Semantic.DeepEqual(old.Spec.Auth, updated.Spec.Auth)
+		!equality.Semantic.DeepEqual(old.Spec.Redis, updated.Spec.Redis)
 }
 
 // passwordRotated is a project's Redis rolling to a new password: its config-hash
@@ -340,9 +188,9 @@ func passwordRotated(e event.TypedUpdateEvent[client.Object]) bool {
 		updated.Spec.Template.Annotations[builders.ConfigHashAnnotation]
 }
 
-// SetupWithManager lists the projects once on start, so the trusted keys' ConfigMap
-// exists before any project does, then again whenever one is added, removed, or
-// changes what the list says about it, and when a project's Redis password rotates.
+// SetupWithManager lists the projects once on start, then again whenever one is added,
+// removed, or changes what the list says about it, and when a project's Redis password
+// rotates.
 func (r *DashboardRegistryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	one := reconcile.Request{NamespacedName: types.NamespacedName{Namespace: r.Namespace, Name: DashboardProjectsSecret}}
 	toList := handler.EnqueueRequestsFromMapFunc(

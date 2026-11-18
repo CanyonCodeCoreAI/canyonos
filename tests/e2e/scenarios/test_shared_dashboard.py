@@ -3,7 +3,7 @@
 
 """Two projects side by side on one machine with the shared dashboard: helloworld and
 portfolio deploy at the same time, each on its own ports, and the dashboard lists
-both, to one read token. helloworld's endpoint and Redis containers publish the ports
+both to the one API key. helloworld's endpoint and Redis containers publish the ports
 it pins, and the dashboard reads each one's Redis. Each Redis takes only its own
 project's password, and no container's command shows one. helloworld's
 deployment.yaml has no `otel:` block, so its traces reach the dashboard by the
@@ -13,8 +13,8 @@ running one. Then one project is stopped and the other keeps running; the stoppe
 one, redeployed without `endpoint.api_port` or `redis.port`, moves past the other's
 ports, keeps its machine metrics in its own Redis, and is told the running dashboard
 ignores its `dashboard_port`. `canyonos serve` re-registers on a new api container,
-which reads the trusted keys again, a redeploy keeps the dashboard and the project's
-id, example runs go in with a write token the CLI signs, and the
+which reads the key's hash again, a redeploy keeps the dashboard and the project's
+id, example runs go in with the machine's API key, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
 refuses a taken `dashboard_port`, a deploy pinned to a taken `api_port` stops before
 anything starts, a dashboard starting with a deploy takes its `dashboard_port` while
@@ -36,11 +36,11 @@ import yaml
 from ..harness import (
     API_URL,
     Api,
-    api_tokens,
     bearer,
     canyonos,
     cli_value,
     dashboard_containers,
+    dashboard_key,
     dashboard_port,
     deployed_endpoint,
     deployed_project_id,
@@ -59,7 +59,6 @@ from ..harness import (
     result_of,
     stage,
     stop_project,
-    token,
     traces,
 )
 from ..fleet import redis_reply
@@ -84,7 +83,7 @@ HELLO_CALL = "helloworld.HelloAgent.hello"
 @dataclass
 class Fleet:
     """The deployment folders of the staged projects by name, their Docker groups and
-    dashboard ids, the dashboard API with a read and a write token, and the dashboard
+    dashboard ids, the dashboard API with the session's API key, and the dashboard
     api's container as it was after the first deploy finished: its id and start time,
     which no deploy changes while a project is left running, and as `canyonos serve`
     left it."""
@@ -265,7 +264,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     """Both projects staged, helloworld on fixed ports so it can't race portfolio's
     api_port 8080 and Redis 6379 and with its `otel:` block removed, then deployed
     at the same time. `canyonos serve` runs first, as for the `deployed` fixture: the
-    dashboard API reads the session's trusted keys only when it starts, and a deploy
+    dashboard API reads the hash of the session's API key only when it starts, and a deploy
     leaves a running dashboard as it is. Every folder a case deploys from is stopped afterwards and the
     dashboard removed, whether the cases passed or not."""
     parent = tmp_path_factory.mktemp("fleet")
@@ -290,7 +289,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
             api_after_first = api_after_first or _api_container(recorder)
     for name in PROJECTS:
         groups[name] = deployment_group(recorder, dirs[name])
-    api = Api(recorder, API_URL, api_tokens(recorder, parent))
+    api = Api(recorder, API_URL, dashboard_key(recorder))
     return Fleet(
         dirs=dirs,
         parent=parent,
@@ -312,15 +311,15 @@ def test_both_deploy_at_once_and_register(fleet):
     assert len(set(fleet.ids.values())) == len(PROJECTS), fleet.ids
 
 
-def test_one_read_token_lists_both_projects(recorder, fleet):
-    """The dashboard verifies tokens, and an API token is for
-    the whole installation, not for one project."""
+def test_one_api_key_lists_both_projects(recorder, fleet):
+    """The dashboard needs the API key, and the key is for the whole machine, not
+    for one project."""
     status = http(recorder, "GET", f"{API_URL}/auth/status").json()
-    assert status == {"disabled": False}, status
+    assert status == {"api_key_required": True}, status
     anonymous = http(recorder, "GET", f"{API_URL}/projects", check=False)
     assert anonymous.code == 401, anonymous.output
-    assert anonymous.json()["error"] == "auth.missing_token", anonymous.output
-    headers = bearer(token(recorder, fleet.parent, "--scope", "read"))
+    assert anonymous.json()["error"] == "auth.missing_key", anonymous.output
+    headers = bearer(recorder.api_key)
     projects = http(recorder, "GET", f"{API_URL}/projects", headers=headers).json()
     listed = {project["id"] for project in projects}
     assert set(fleet.ids.values()) <= listed, projects
@@ -517,7 +516,7 @@ def test_serve_registers_again_on_a_new_api(recorder, fleet):
     assert "Registered portfolio with the dashboard" in call.output, call.output
     fleet.api_after_serve = _api_container(recorder)
     assert fleet.api_after_serve != fleet.api_after_both_deploys, (
-        "canyonos serve kept the api container, so it never read the keys again"
+        "canyonos serve kept the api container, so it never read the key's hash again"
     )
     _reads_own_redis(recorder, fleet, "portfolio")
 
@@ -531,15 +530,13 @@ def test_redeploy_keeps_the_dashboard_and_the_project_id(recorder, fleet):
     _reads_own_redis(recorder, fleet, "portfolio")
 
 
-def test_the_cli_signs_a_write_token_to_add_sample_data(recorder, fleet):
-    """What quickstart's last stage calls: example runs go in with a write token
-    the CLI signs with the session's key."""
+def test_the_cli_sends_the_api_key_to_add_sample_data(recorder, fleet):
+    """What quickstart's last stage calls: example runs go in with the machine's API
+    key, here the session's CANYONOS_API_KEY."""
     added = cli_value(
         recorder,
         fleet.dirs["portfolio"],
-        f"add_sample_data({fleet.ids['portfolio']!r}, 'portfolio', "
-        f"auth_dir=Path({str(recorder.auth_dir)!r}))",
-        "from pathlib import Path; "
+        f"add_sample_data({fleet.ids['portfolio']!r}, 'portfolio')",
         "from canyonos.dashboard_registration import add_sample_data",
     )
     assert added["spans"] > 0, added

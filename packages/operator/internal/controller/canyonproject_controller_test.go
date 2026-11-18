@@ -7,7 +7,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/alicebob/miniredis/v2"
@@ -34,12 +33,8 @@ import (
 const (
 	testControllerImage   = "ghcr.io/canyoncodecoreai/canyonos-core:1.2.3"
 	testExternalRedisHost = "redis.example.internal"
-	testTrustedKeyA       = "-----BEGIN PUBLIC KEY-----\n" +
-		"MCowBQYDK2VwAyEApT3YYS9qwqjlm4emNZxOEkoGZT1VGP/molRVHDKVI/o=\n-----END PUBLIC KEY-----\n"
-	testTrustedKeyB = "-----BEGIN PUBLIC KEY-----\n" +
-		"MCowBQYDK2VwAyEAQNQTGyScYygt7sqS7H101LNItV1TBCP5ZRSqd/7tDAo=\n-----END PUBLIC KEY-----\n"
-	envTrustedKeys  = "CANYONOS_TRUSTED_KEYS"
-	envAuthDisabled = "CANYONOS_AUTH_DISABLED"
+	testAPIKeyHashA       = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	testAPIKeyHashB       = "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
 )
 
 // envOf is a container's literal environment by name.
@@ -49,13 +44,6 @@ func envOf(container corev1.Container) map[string]string {
 		env[variable.Name] = variable.Value
 	}
 	return env
-}
-
-// trustedKeysJSON is CANYONOS_TRUSTED_KEYS as core reads it: a JSON list of PEMs.
-func trustedKeysJSON(keys ...string) string {
-	raw, err := json.Marshal(keys)
-	Expect(err).NotTo(HaveOccurred())
-	return string(raw)
 }
 
 // envtest runs an API server but no controllers, so a StatefulSet never gets pods;
@@ -334,61 +322,68 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 		Expect(gc.Spec.Template.Annotations).NotTo(HaveKey(builders.RedisLoginAnnotation))
 	})
 
-	gcEnv := func() map[string]string {
-		gc := &appsv1.Deployment{}
-		get(gc, builders.GCName)
-		return envOf(gc.Spec.Template.Spec.Containers[0])
-	}
 	runGC := func() {
 		reconcileProject()
 		markRedisReady()
 		reconcileProject()
 	}
 
-	It("hands the global controller the project's trusted keys, verification on", func() {
+	apiKeyHash := func() string {
+		secret := &corev1.Secret{}
+		get(secret, builders.APIKeyName)
+		return string(secret.Data[builders.APIKeyHashKey])
+	}
+	apiKeyVersion := func() string {
+		gc := &appsv1.Deployment{}
+		get(gc, builders.GCName)
+		return gc.Spec.Template.Annotations[builders.APIKeyAnnotation]
+	}
+
+	It("hands the global controller the project's API key hash from its Secret", func() {
 		createProject(func(p *canyonosv1alpha1.CanyonProject) {
-			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{testTrustedKeyA}}
+			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{APIKeyHash: testAPIKeyHashA}
 		})
 		runGC()
 
-		env := gcEnv()
-		Expect(env).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyA)))
-		Expect(env).NotTo(HaveKey(envAuthDisabled))
+		Expect(apiKeyHash()).To(Equal(testAPIKeyHashA))
+		gc := &appsv1.Deployment{}
+		get(gc, builders.GCName)
+		var source *corev1.EnvVarSource
+		for _, variable := range gc.Spec.Template.Spec.Containers[0].Env {
+			if variable.Name == builders.EnvAPIKeyHash {
+				Expect(variable.Value).To(BeEmpty())
+				source = variable.ValueFrom
+			}
+		}
+		Expect(source).NotTo(BeNil())
+		Expect(source.SecretKeyRef.Name).To(Equal(builders.APIKeyName))
+		Expect(source.SecretKeyRef.Key).To(Equal(builders.APIKeyHashKey))
 	})
 
-	It("turns verification off on the global controller when the project says so", func() {
-		createProject(func(p *canyonosv1alpha1.CanyonProject) {
-			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{Disabled: true}
-		})
-		runGC()
-
-		Expect(gcEnv()).To(HaveKeyWithValue(envAuthDisabled, "true"))
-	})
-
-	It("gives a project with no spec.auth neither variable: a missing block is not disabled", func() {
+	It("gives a project with no spec.auth an empty hash: its endpoint is open", func() {
 		createProject(nil)
 		runGC()
 
-		env := gcEnv()
-		Expect(env).NotTo(HaveKey(envTrustedKeys))
-		Expect(env).NotTo(HaveKey(envAuthDisabled))
+		Expect(apiKeyHash()).To(BeEmpty())
 	})
 
-	It("rolls a rotated key out to the global controller on the next reconcile", func() {
+	It("rolls a new key out to the global controller on the next reconcile", func() {
 		createProject(func(p *canyonosv1alpha1.CanyonProject) {
-			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{testTrustedKeyA}}
+			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{APIKeyHash: testAPIKeyHashA}
 		})
 		runGC()
-		Expect(gcEnv()).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyA)))
+		before := apiKeyVersion()
+		Expect(before).NotTo(BeEmpty())
 
-		By("the next deploy trusting key B instead")
+		By("the next deploy with key B instead")
 		project := &canyonosv1alpha1.CanyonProject{}
 		get(project, testProjectName)
-		project.Spec.Auth.TrustedKeys = []string{testTrustedKeyB}
+		project.Spec.Auth.APIKeyHash = testAPIKeyHashB
 		Expect(k8sClient.Update(ctx, project)).To(Succeed())
 		reconcileProject()
 
-		Expect(gcEnv()).To(HaveKeyWithValue(envTrustedKeys, trustedKeysJSON(testTrustedKeyB)))
+		Expect(apiKeyHash()).To(Equal(testAPIKeyHashB))
+		Expect(apiKeyVersion()).NotTo(Equal(before))
 	})
 
 	It("writes the endpoint's replica and routes it beside the agents", func() {

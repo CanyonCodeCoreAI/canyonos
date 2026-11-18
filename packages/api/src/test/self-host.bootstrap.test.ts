@@ -19,7 +19,7 @@ import { sync_registered_projects } from '@api/modules/canyonos/canyonos.sync';
 import { config } from '@core/env';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer } from './project-test.utils';
+import { bearer, TEST_API_KEY } from './project-test.utils';
 import { write_project_span } from './telemetry-test.utils';
 
 setupE2ETests();
@@ -138,7 +138,7 @@ describe('POST /v1/traces', () => {
 });
 
 describe('canyonos reads', () => {
-  test('a read token lists and reads the controller project and its requests', async () => {
+  test('the API key lists and reads the controller project and its requests', async () => {
     const project_id = '33333333-3333-4333-8333-333333333333';
     await save_project(project_id);
     await write_project_span(project_id, {
@@ -147,7 +147,7 @@ describe('canyonos reads', () => {
       start_time_unix_nano: NOW_NANOS - MINUTE_NANOS,
       end_time_unix_nano: NOW_NANOS,
     });
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
 
     const listed = await api.projects.get({ $headers: headers });

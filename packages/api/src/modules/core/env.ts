@@ -4,7 +4,7 @@
 import { helpers } from './env.helpers';
 
 const env = Bun.env;
-const { parseInteger, parseBoolean, requireEnv } = helpers;
+const { parseInteger, parseBoolean } = helpers;
 
 const APP_ENVIRONMENTS = ['development', 'test', 'production', 'demo', 'staging'] as const;
 export type AppEnvironment = (typeof APP_ENVIRONMENTS)[number];
@@ -24,14 +24,17 @@ export function resolveConfiguredEnvironment(
 
 const environment = resolveConfiguredEnvironment(env.APP_ENV, env.NODE_ENV);
 
-/** `AUTH_DISABLED`: `true` turns token verification off, which `--dangerous-skip-auth` sets. */
-export function resolveAuthDisabled(value: string | undefined): boolean {
-  if (value === undefined || value === '' || value === 'false') return false;
-  if (value === 'true') return true;
-  throw new Error(`AUTH_DISABLED must be true or false, got ${value}`);
-}
+const API_KEY_HASH = /^[0-9a-f]{64}$/;
 
-const authDisabled = resolveAuthDisabled(env.AUTH_DISABLED);
+/** `CANYONOS_API_KEY_HASH`: the sha256 of the API key in lowercase hex, or null to need no key. */
+export function resolveApiKeyHash(value: string | undefined): string | null {
+  if (value === undefined || value === '') return null;
+  if (API_KEY_HASH.test(value)) return value;
+  throw new Error(
+    'CANYONOS_API_KEY_HASH must be the sha256 of the API key as 64 lowercase hex characters, ' +
+      'or empty for no key'
+  );
+}
 
 const DEVELOPMENT_REDIS_PASSWORD_KEY = 'canyonos-local-development-only-redis-password-key';
 const MIN_REDIS_PASSWORD_KEY_LENGTH = 32;
@@ -130,8 +133,7 @@ export const config = {
     devData: parseBoolean(env.SEED_DEV_DATA, false),
   },
   auth: {
-    disabled: authDisabled,
-    trustedKeysDir: authDisabled ? null : requireEnv('AUTH_TRUSTED_KEYS_DIR'),
+    apiKeyHash: resolveApiKeyHash(env.CANYONOS_API_KEY_HASH),
   },
 };
 

@@ -158,11 +158,11 @@ canyonos logs        # the Global Controller's logs (or: HelloAgent, HelloAgent-
 canyonos doctor      # check the cluster, the operator and the deployed workflow
 ```
 
-`canyonos deploy` needs a key, as on Docker: run `canyonos keys create` once on the
-machine you deploy from (see [Tokens and keys](AUTHORIZATION.md)). It prints the
-endpoint's URL, the `curl` commands to call it, and the `canyonos token create` command
-that makes the token they send. Every command uses the workflow's `target`; `--target`
-overrides it for one run (see the [CLI reference](CLI.md#where-it-runs)).
+`canyonos deploy --api-key <key>` sets this machine's API key, as on Docker (see
+[API key](AUTHORIZATION.md)); later deploys reuse it. Without a key, the endpoint
+answers anyone who reaches it. The deploy prints the endpoint's URL and the `curl`
+commands to call it. Every command uses the workflow's `target`; `--target` overrides
+it for one run (see the [CLI reference](CLI.md#where-it-runs)).
 
 ### What a deploy does
 
@@ -172,14 +172,14 @@ The CLI needs no Docker for this. `canyonos deploy`:
 2. Turns the deployment's `.env` into a Secret for the Global Controller, and each
    project's `.env` into a Secret for that project's agents, unless `env_secret` names
    your own.
-3. Asks the operator for a build (a CanyonBuild), with the public keys in
-   `~/.canyonos/auth/trusted/`, and uploads `deployment.yaml` and each project folder
+3. Asks the operator for a build (a CanyonBuild), with the sha256 of this machine's API
+   key in `spec.auth.apiKeyHash` (never the key itself), and uploads `deployment.yaml` and each project folder
    to the build's pod through a port-forward. `.env` and every other `.env*` file,
    `.git`, `.venv`, `node_modules` and `__pycache__` are never uploaded.
 4. The build builds each agent's image on the cluster's builder, pushes it by digest,
    and applies the deployment's objects from its config, its CanyonProject carrying
-   those keys in `spec.auth.trustedKeys`. A redeploy of unchanged code
-   restarts nothing.
+   that hash in `spec.auth.apiKeyHash`. The operator hands it to the Global Controller
+   from the Secret `canyonos-api-key`. A redeploy of unchanged code restarts nothing.
 5. Waits until the operator reports the workflow and every agent ready, then forwards
    the endpoint to this machine and opens the dashboard.
 
@@ -214,9 +214,8 @@ The commands take the same options as on Docker, with these differences:
 - `deploy -v` has no effect.
 - `canyonos sync`, and changes saved in `canyonos config`, don't reach the cluster. Run
   `canyonos deploy` again after any change.
-- `deploy --dangerous-skip-auth` turns token checks off for the endpoint only. The
-  cluster dashboard keeps its chart's `dashboard.dangerousSkipAuth`, and
-  `serve --dangerous-skip-auth` only skips the check that this machine has a key.
+- `deploy --api-key` and `--no-api-key` set the endpoint's key only. The cluster
+  dashboard keeps its chart's `dashboard.apiKeyHash`.
 
 ## Configuration
 
@@ -226,8 +225,8 @@ block is:
 ```yaml
 target: kubernetes
 kubernetes:
-  namespace: acme                       # created on deploy if missing and you may create it
-  registry: registry.example.com/acme   # where images are pushed, and nodes pull from
+  namespace: acme # created on deploy if missing and you may create it
+  registry: registry.example.com/acme # where images are pushed, and nodes pull from
 ```
 
 `${VAR}` in the block is filled in from the deployment's `.env`, which also holds the only
@@ -276,7 +275,7 @@ expects, and the disk's size, under `kubernetes.databases`:
 ```yaml
 kubernetes:
   databases:
-    StateDB: {run_as_user: 70, fs_group: 70, storage: 5Gi}   # postgres:16-alpine
+    StateDB: { run_as_user: 70, fs_group: 70, storage: 5Gi } # postgres:16-alpine
 ```
 
 | Setting         | Default               | What it does                         |
@@ -321,17 +320,20 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
   next free port; a `dashboard_port` you set is never moved. `canyonos stop` closes it
   with the last workflow forwarded from this machine.
 - **Who can open it:** only someone allowed to port-forward into `canyonos-dashboard`;
-  nothing is exposed outside the cluster. As the local dashboard does, it asks for a
-  read token, a write token or both (see
-  [Tokens and keys](AUTHORIZATION.md#send-a-token)), signed by a key that one of its
-  workflows trusts. One API token covers every workflow on the cluster; tokens per
-  workflow are not there yet.
-- **Which keys it trusts:** the operator writes every key in the `spec.auth.trustedKeys`
-  of each workflow it lists into the ConfigMap `canyonos-dashboard-trusted-keys`, one
-  `<namespace>_<project>_<n>.pub` entry per key, where `<project>` is the
-  CanyonProject's name. A key that is not one Ed25519 public key in PEM is left out
-  and logged by the operator. When the keys change, the operator restarts the API,
-  which reads them only when it starts. A workflow you stop takes its keys with it.
+  nothing is exposed outside the cluster. As the local dashboard does, it asks for the
+  API key (see [API key](AUTHORIZATION.md#send-the-key)) when the chart sets one.
+- **Which key it takes:** the one whose sha256 is the chart's `dashboard.apiKeyHash`,
+  kept in the Secret `canyonos-dashboard` as `api-key-hash`. One key covers every
+  workflow on the cluster. Set it at install, from the key you pick:
+
+  ```bash
+  helm upgrade --install ... --set dashboard.apiKeyHash="$(printf %s "$KEY" | sha256sum | cut -d' ' -f1)"
+  ```
+
+  A new value restarts the API. With `dashboard.existingSecret`, put `api-key-hash` in
+  your Secret and restart `canyonos-dashboard-api` after changing it. Without a key,
+  the API answers anyone who reaches it, every workflow's Global Controller included.
+
 - **How it reaches workflows:** the operator lists every workflow whose Redis is ready,
   with how to reach it, in the Secret `canyonos-dashboard-projects`, so the dashboard
   needs no access to any workflow's Secrets. Each workflow's Redis admits the
@@ -340,25 +342,25 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
 
 ### Dashboard settings
 
-| Setting                                | Default                                          | What it does                                                                                                                                                                                                                                                                                                |
-| -------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dashboard.apiImage`, `webImage`       | this release's `canyonos-api` and `canyonos-web` | The dashboard's images, for a mirror.                                                                                                                                                                                                                                                                       |
-| `dashboard.dbImage`                    | `postgres:16-alpine`                             | The database's image.                                                                                                                                                                                                                                                                                       |
-| `dashboard.storage`                    | `1Gi`                                            | The database's disk.                                                                                                                                                                                                                                                                                        |
-| `dashboard.storageClassName`           | the cluster's default                            | The storage class of that disk.                                                                                                                                                                                                                                                                             |
-| `dashboard.existingSecret`             | none                                             | Your own Secret with `db-password` and a `redis-password-key` of 32 characters or more. Without it, the chart makes both on install and keeps them. Set it when the chart is rendered without the cluster (`helm template`, Argo CD), which can't keep a generated password.                                |
-| `dashboard.dangerousSkipAuth`          | `false`                                          | `true`: the dashboard's API checks no token and answers anyone who reaches it. For a throwaway cluster only.                                                                                                                                                                                                |
-| `dashboard.fixedUsers`                 | `true`                                           | Runs the images as their own users. Set it to `false` on OpenShift, which assigns user IDs itself.                                                                                                                                                                                                          |
-| `dashboard.metricsRawRetentionDays`    | `3`                                              | Days to keep raw five-second metric ticks, which ranges of 30 minutes or less read.                                                                                                                                                                                                                         |
-| `dashboard.metricsRollupRetentionDays` | `120`                                            | Days to keep five-minute rollups, which longer ranges read.                                                                                                                                                                                                                                                 |
+| Setting                                | Default                                          | What it does                                                                                                                                                                                                                                                                                         |
+| -------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dashboard.apiImage`, `webImage`       | this release's `canyonos-api` and `canyonos-web` | The dashboard's images, for a mirror.                                                                                                                                                                                                                                                                |
+| `dashboard.dbImage`                    | `postgres:16-alpine`                             | The database's image.                                                                                                                                                                                                                                                                                |
+| `dashboard.storage`                    | `1Gi`                                            | The database's disk.                                                                                                                                                                                                                                                                                 |
+| `dashboard.storageClassName`           | the cluster's default                            | The storage class of that disk.                                                                                                                                                                                                                                                                      |
+| `dashboard.existingSecret`             | none                                             | Your own Secret with `db-password`, a `redis-password-key` of 32 characters or more, and `api-key-hash` for a key. Without it, the chart makes one on install and keeps it. Set it when the chart is rendered without the cluster (`helm template`, Argo CD), which can't keep a generated password. |
+| `dashboard.apiKeyHash`                 | none                                             | The sha256 of the dashboard's API key, as 64 lowercase hex characters. Empty: the dashboard's API answers anyone who reaches it. For a throwaway cluster only.                                                                                                                                       |
+| `dashboard.fixedUsers`                 | `true`                                           | Runs the images as their own users. Set it to `false` on OpenShift, which assigns user IDs itself.                                                                                                                                                                                                   |
+| `dashboard.metricsRawRetentionDays`    | `3`                                              | Days to keep raw five-second metric ticks, which ranges of 30 minutes or less read.                                                                                                                                                                                                                  |
+| `dashboard.metricsRollupRetentionDays` | `120`                                            | Days to keep five-minute rollups, which longer ranges read.                                                                                                                                                                                                                                          |
 
 ## Stop and clean up
 
-| Command                 | What it removes                                                                                                                                                                                                       | What stays                                                                                       |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `canyonos stop`         | The workflow's CanyonProject, and with it the endpoint, agents, Global Controller and Redis with its disk. The endpoint's port-forward on this machine, and the dashboard's when no other workflow here is forwarded. | The namespace, the deployment's ConfigMap, its `.env` Secrets, and each database's disk          |
-| `canyonos clean`        | What `stop` removes, then the ConfigMap and the `.env` Secrets                                                                                                                                                        | The namespace, each database's disk, and everything on this machine but the port-forwards        |
-| `canyonos cluster down` | The local kind cluster, and the port-forwards to it                                                                                                                                                                   | The registry and the images in it, unless you pass `--all`                                       |
+| Command                 | What it removes                                                                                                                                                                                                       | What stays                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `canyonos stop`         | The workflow's CanyonProject, and with it the endpoint, agents, Global Controller and Redis with its disk. The endpoint's port-forward on this machine, and the dashboard's when no other workflow here is forwarded. | The namespace, the deployment's ConfigMap, its `.env` Secrets, and each database's disk   |
+| `canyonos clean`        | What `stop` removes, then the ConfigMap and the `.env` Secrets                                                                                                                                                        | The namespace, each database's disk, and everything on this machine but the port-forwards |
+| `canyonos cluster down` | The local kind cluster, and the port-forwards to it                                                                                                                                                                   | The registry and the images in it, unless you pass `--all`                                |
 
 - **Order:** `stop` takes the endpoint down first, so no new request arrives, then each
   agent, taken out of routing before its pods stop, and Redis and the Global Controller

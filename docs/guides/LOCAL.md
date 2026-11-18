@@ -42,16 +42,17 @@ From the folder above the project folder (for a converted workflow, the project 
 holds `.canyon`), with a deployment folder of its own beside it:
 
 ```bash
-canyonos deploy my-project --folder my-deployment
+canyonos deploy my-project --folder my-deployment --api-key <your api key>
 ```
 
 It makes the deployment folder and its `deployment.yaml` when there are none. Run the
 other commands, a redeploy included, from the deployment folder:
 `cd my-deployment && canyonos deploy ../my-project`.
 
-It needs a key, made once per machine with `canyonos keys create`; without one it stops
-before it builds anything and prints that command. See
-[Tokens and keys](AUTHORIZATION.md).
+`--api-key` sets the key every request to the endpoint and the dashboard must carry. The
+CLI saves it to `~/.canyonos/api_key` and later deploys reuse it, so pass it once.
+Without a key, the deploy warns and anyone who reaches the endpoint can use it. See
+[API key](AUTHORIZATION.md).
 
 1. It checks each project: it warns about keys in `.env.example` that `.env` leaves
    missing or empty, and stops on any problem `canyonos validate` finds.
@@ -62,8 +63,8 @@ before it builds anything and prints that command. See
    With `deploy_mode: toy`, each project's agents run in one replica with no image
    build, and the dashboard doesn't start: run `canyonos serve` for it.
 4. At **Deploy is live** it prints the dashboard address, `curl` commands to send a
-   request and get its result, and the `canyonos token create` command that makes the
-   token they send. [Endpoint](RUNTIME_CONTRACT.md#endpoint) covers the
+   request and get its result, with the `<your api key>` placeholder where the key
+   goes. [Endpoint](RUNTIME_CONTRACT.md#endpoint) covers the
    requests it takes.
 
 | If                                                  | What happens                                                                                                 |

@@ -5,90 +5,61 @@ import { redirect } from '@tanstack/react-router';
 import type { QueryClient } from '@tanstack/react-query';
 import type { ParsedLocation } from '@tanstack/react-router';
 
-import type { ApiScope } from '@canyonos/api/auth';
-
-import { tokenInfoQuery } from '@/modules/auth/auth.queries';
+import { answeredWith } from '@/api';
+import { apiKeyCheckQuery } from '@/modules/auth/auth.queries';
 import { useAuthStore } from '@/modules/auth/auth.store';
 import type { AuthSearch } from '@/modules/auth/auth.routing';
-import type { ApiTokens } from '@/modules/auth/auth.store';
 
 declare module '@tanstack/react-router' {
   interface HistoryState {
-    /** Why the API refused the tokens of the link whose history entry this one replaced. */
-    linkRefusal?: { scope: ApiScope; reason: string };
+    /** Why the API refused the key of the link whose history entry this one replaced. */
+    linkRefusal?: { reason: string };
   }
 }
 
-export const TOKEN_LABELS = {
-  read: 'Read token',
-  write: 'Write token',
-} as const satisfies Record<ApiScope, string>;
-
-/** A refusal of the token given for one scope, which the message names. */
-export class TokenFieldError extends Error {
-  constructor(
-    readonly scope: ApiScope,
-    readonly reason: string
-  ) {
-    super(`${TOKEN_LABELS[scope]}: ${reason}`);
-  }
-}
-
-async function checkToken(queryClient: QueryClient, scope: ApiScope, token: string | null) {
-  if (!token) return;
-  const info = await queryClient.fetchQuery(tokenInfoQuery(token)).catch((error: unknown) => {
-    throw new TokenFieldError(scope, error instanceof Error ? error.message : String(error));
-  });
-  if (info.scope !== scope) {
-    throw new TokenFieldError(scope, `This is a ${info.scope} token, not a ${scope} token`);
-  }
-}
-
-/** Resolves once the API accepts each token given for the scope it was given for. */
-export async function checkTokens(queryClient: QueryClient, tokens: ApiTokens): Promise<void> {
-  await checkToken(queryClient, 'read', tokens.readToken);
-  await checkToken(queryClient, 'write', tokens.writeToken);
+/** Resolves once the API takes `apiKey`; rejects with its refusal. */
+export async function checkApiKey(queryClient: QueryClient, apiKey: string): Promise<void> {
+  await queryClient.fetchQuery(apiKeyCheckQuery(apiKey));
 }
 
 /**
- * The tokens `canyonos dashboard` hands over as `#read=…&write=…`: a fragment, which no request
- * carries, so they never reach a server's logs.
+ * The key `canyonos dashboard` hands over as `#key=…`: a fragment, which no request carries, so it
+ * never reaches a server's logs. Read from the address as it was typed, since the router's
+ * `hash` is already percent-decoded and would decode the key twice.
  */
-function linkTokens(hash: string): ApiTokens | null {
-  const fragment = new URLSearchParams(hash.replace(/^#/, ''));
-  const tokens = { readToken: fragment.get('read'), writeToken: fragment.get('write') };
-  if (!tokens.readToken && !tokens.writeToken) return null;
-  return tokens;
+function linkApiKey(location: ParsedLocation): string | null {
+  const { hash } = new URL(location.publicHref, window.location.origin);
+  return new URLSearchParams(hash.slice(1)).get('key')?.trim() || null;
 }
 
 /**
- * Signs in with the tokens of a `canyonos dashboard` link and goes on where the visitor was going.
+ * Signs in with the key of a `canyonos dashboard` link and goes on where the visitor was going.
  * Either way it leaves through a redirect that replaces the link's history entry, which takes the
- * tokens out of the address bar: the router reloads on any change to the address, so stripping
- * them by hand would start a second load that drops this one. Returns why the API refused the
- * tokens of the link this entry replaced, or null.
+ * key out of the address bar: the router reloads on any change to the address, so stripping it by
+ * hand would start a second load that drops this one. Returns why the API refused the key of the
+ * link this entry replaced, or null.
  */
 export async function signInWithLink(
   queryClient: QueryClient,
   location: ParsedLocation,
   search: AuthSearch
-): Promise<TokenFieldError | null> {
-  const tokens = linkTokens(location.hash);
-  if (!tokens) {
+): Promise<Error | null> {
+  const apiKey = linkApiKey(location);
+  if (!apiKey) {
     const refusal = location.state.linkRefusal;
-    return refusal ? new TokenFieldError(refusal.scope, refusal.reason) : null;
+    return refusal ? new Error(refusal.reason) : null;
   }
   try {
-    await checkTokens(queryClient, tokens);
+    await checkApiKey(queryClient, apiKey);
   } catch (error) {
-    if (!(error instanceof TokenFieldError)) throw error;
+    if (!answeredWith(error, 401)) throw error;
     throw redirect({
       to: '/login',
       search,
       replace: true,
-      state: { linkRefusal: { scope: error.scope, reason: error.reason } },
+      state: { linkRefusal: { reason: error.message } },
     });
   }
-  useAuthStore.getState().login(tokens);
+  useAuthStore.getState().login(apiKey);
   throw redirect({ href: search.redirect ?? '/', replace: true });
 }

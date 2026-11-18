@@ -40,7 +40,7 @@ def set_quiet(quiet):
 @contextmanager
 def to_stderr():
     """Show the block's messages on stderr, so stdout carries only what `result`
-    writes, such as the token `canyonos token create` makes."""
+    writes, such as the sign-in link `canyonos dashboard` prints."""
     global _messages
     _messages = err_console
     try:

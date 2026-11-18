@@ -6,23 +6,39 @@ and answers as it is, with no LLM, through `canyonos test`, with the binary file
 macOS hides in config/ next to it, and keeps the deployment's id out of the
 project's manifest, in the deployment.yaml it writes beside the project. Its
 agent writes to and reads from a database agent, whose stock image never reports
-its own health, with the dashboard running as a deploy starts it. A deploy that
-cannot come up names the reason: an agent whose replica cannot launch, a config
+its own health, with the dashboard running as a deploy starts it. Deployed with
+`--no-api-key` and no CANYONOS_API_KEY, it warns that it is open, publishes an
+empty key hash, prints its curl without an Authorization header, answers without a
+key, and `canyonos list` marks it `(unauthenticated)`. A deploy that cannot come up
+names the reason: an agent whose replica cannot launch, a config
 file that is not valid YAML, with its line, or a `.python-version` outside 3.10
 to 3.15 or not saved as UTF-8."""
+
+from pathlib import Path
 
 import pytest
 
 from ..conftest import DEPLOY_TIMEOUT
 from ..harness import (
+    bearer,
     canyonos,
+    cli_value,
+    deployed_endpoint,
     docker,
+    http,
     project_dir,
+    project_redis,
     stop_project,
 )
 
 TEST_TIMEOUT = 900
 DASHBOARD_GROUP = "canyonos-dashboard"
+API_KEY_HASH_KEY = "auth:api_key_hash"
+BEARER = '-H "Authorization: Bearer <your api key>"'
+OPEN_WARNING = (
+    "No API key is set: the endpoint and the dashboard answer anyone who reaches "
+    "them. Set one with --api-key <key>."
+)
 PSYCOPG = "psycopg[binary]==3.3.6"
 DATABASE_AGENT = """
   - name: StateDB
@@ -99,9 +115,14 @@ def _deploy(recorder, directory, check=True):
     )
 
 
-def _test(recorder, directory):
+def _test(recorder, directory, keyed=True):
     return canyonos(
-        recorder, ["test", "--json"], cwd=directory, timeout=TEST_TIMEOUT, check=False
+        recorder,
+        ["test", "--json"],
+        cwd=directory,
+        timeout=TEST_TIMEOUT,
+        check=False,
+        keyed=keyed,
     )
 
 
@@ -123,6 +144,45 @@ def test_new_app_deploys_and_answers(recorder, starter):
     written = (starter / "deployment.yaml").read_text().splitlines()
     minted = [line for line in written if line.startswith("deployment_id: ")]
     assert len(minted) == 1, written
+
+
+def test_a_deploy_without_an_api_key_answers_anyone(recorder, starter):
+    """Run without CANYONOS_API_KEY, and `--no-api-key` removes any
+    `~/.canyonos/api_key`, so the deploy has no key at all; `--serve false` keeps it
+    off the shared dashboard, which needs the session's key."""
+    call = canyonos(
+        recorder,
+        ["deploy", str(project_dir(starter)), "--no-api-key", "--serve", "false"],
+        cwd=starter,
+        timeout=DEPLOY_TIMEOUT,
+        keyed=False,
+    )
+    assert OPEN_WARNING in " ".join(call.output.split()), call.output
+    assert BEARER not in call.output, call.output
+    assert not (Path.home() / ".canyonos" / "api_key").exists()
+    assert project_redis(recorder, starter).get(API_KEY_HASH_KEY) == ""
+
+    endpoint = deployed_endpoint(recorder, starter, keyed=False)
+    url = f"{endpoint.url}/{endpoint.route}"
+    for headers in ({}, bearer(recorder.api_key)):
+        queued = http(
+            recorder, "POST", url, json={endpoint.argument: "hello"}, headers=headers
+        )
+        assert queued.code == 202, queued.output
+    tested = _test(recorder, starter, keyed=False)
+    assert tested.code == 0, tested.output
+    result = tested.json()["results"][0]["result"]
+    assert result == {"answer": "MyAgent got: hello"}, tested.stdout
+
+    name = cli_value(
+        recorder,
+        starter,
+        "deployment_name()",
+        "from canyonos.deployment import deployment_name",
+    )
+    listed = canyonos(recorder, ["list"], cwd=starter)
+    line = next(line for line in listed.stdout.splitlines() if name in line)
+    assert "(unauthenticated)" in line, listed.output
 
 
 def test_new_app_agent_uses_its_database_agent(recorder, request, starter):

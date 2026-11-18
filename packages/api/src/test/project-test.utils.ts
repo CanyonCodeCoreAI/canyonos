@@ -3,14 +3,10 @@
 
 import { db } from '@api/db/client';
 import { fileBlobs, files, projects, projectWorkflows } from '@api/db/schema';
-import type { ApiScope } from '@api/modules/auth/types';
 
-import { signTestToken } from './token-test.utils';
+export { TEST_API_KEY } from './api-key-test.utils';
 
-export const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
-
-/** A token of `scope`, the one a request of that kind needs: `read` on a GET, `write` otherwise. */
-export const authenticate = (scope: ApiScope): Promise<string> => signTestToken({ scope });
+export const bearer = (key: string) => ({ authorization: `Bearer ${key}` });
 
 export type TestFileKind = (typeof files.$inferInsert)['component_kind'];
 

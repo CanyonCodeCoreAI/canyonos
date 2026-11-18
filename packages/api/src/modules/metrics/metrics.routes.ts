@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { GridQuerySchema, TimeRangeQuerySchema } from '@core/time-range';
 
-import { authPlugin, requireScope } from '../auth/auth.middleware';
+import { authPlugin } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import {
   get_agent_details,
@@ -39,7 +39,6 @@ export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
     params: ProjectIdParams,
     query: TimeRangeQuerySchema,
     response: { 200: MetricsKpisSchema },
-    beforeHandle: requireScope('read'),
     detail: { ...doc, summary: 'Range-scoped KPI aggregates (tokens, costs, per-block latency)' },
   })
   .get(
@@ -49,7 +48,6 @@ export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
       params: ProjectIdParams,
       query: DistributionQuerySchema,
       response: { 200: MetricsDistributionSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Per-request distribution (histogram, mean, std, percentiles) for a KPI',
@@ -63,7 +61,6 @@ export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
       params: ProjectIdParams,
       query: GridQuerySchema,
       response: { 200: MetricsTimeseriesSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Cost and volume per time bucket, each request in the bucket it started in',
@@ -74,7 +71,6 @@ export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
     params: ProjectIdParams,
     query: TimeRangeQuerySchema,
     response: { 200: MetricsBlocksSchema },
-    beforeHandle: requireScope('read'),
     detail: {
       ...doc,
       summary: 'Per-agent, per-model cost breakdown with retry, failure, and latency rates',
@@ -87,7 +83,6 @@ export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
       params: ProjectAgentParams,
       query: GridQuerySchema,
       response: { 200: MetricsAgentDetailsSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Selected agent metrics across its replicas, with per-request histograms',

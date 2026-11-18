@@ -25,7 +25,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/sh
 import { useSidebar } from '@repo/ui/shadcn/sidebar';
 import { cn } from '@repo/ui/utils';
 import { apiCall, forgeAuthApi } from '@/api';
-import { readRefusal } from '@/modules/core/components/QueryError';
 import { PALETTE } from '@/modules/core/navigation/navigation';
 import {
   createProjectExpansionState,
@@ -44,27 +43,12 @@ function projectColor(project_id: string): string {
 }
 
 function ChildQueryError({
-  error,
   message,
   on_retry,
 }: {
-  readonly error: unknown;
   readonly message: string;
   readonly on_retry: () => void;
 }) {
-  const refusal = readRefusal(error);
-  if (refusal !== null) {
-    return (
-      <p
-        className="text-muted-foreground px-3 py-1.5 text-[0.6875rem] text-pretty"
-        role="status"
-        data-testid="query-refused"
-      >
-        {refusal}
-      </p>
-    );
-  }
-
   return (
     <div className="flex items-center justify-between gap-2 px-3 py-1.5" role="alert">
       <span className="text-destructive truncate text-[0.6875rem]">{message}</span>
@@ -344,7 +328,6 @@ export function ProjectNavigation() {
       ) : projects_query.error ? (
         <div className="app-sidebar-hide-when-collapsed px-1" data-testid="projects-error">
           <ChildQueryError
-            error={projects_query.error}
             message="Deployments unavailable"
             on_retry={() => void projects_query.refetch()}
           />

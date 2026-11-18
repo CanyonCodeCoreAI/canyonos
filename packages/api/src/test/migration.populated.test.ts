@@ -11,8 +11,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { forgeApi } from '@api/app';
 import { db, runMigrations, sql } from '@api/db/client';
 
-import { bearer } from './project-test.utils';
-import { signTestToken } from './token-test.utils';
+import { bearer, TEST_API_KEY } from './project-test.utils';
 
 const MIGRATIONS = new URL('../db/migrations', import.meta.url).pathname;
 const PASSWORD_AUTH_TAG = '0005_password_auth';
@@ -213,11 +212,9 @@ describe('migration 0009 on a password install', () => {
     expect(prompt).toEqual({ content: 'Be brief.', live: true });
   });
 
-  test('a read token lists the project', async () => {
-    const token = await signTestToken({ scope: 'read' });
-
+  test('the API key lists the project', async () => {
     const response = await forgeApi.handle(
-      new Request('http://localhost/projects', { headers: bearer(token) })
+      new Request('http://localhost/projects', { headers: bearer(TEST_API_KEY) })
     );
 
     expect(response.status).toBe(200);

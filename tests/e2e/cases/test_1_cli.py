@@ -3,23 +3,23 @@
 
 """The CLI on a deployed project, the way a user or a coding agent drives it with
 no terminal: the deploy's own output, the containers it started, status, logs and
-doctor."""
+doctor. The deploy hands only the Global Controller the hash of the session's API
+key, which it publishes to Redis; the key itself reaches no container."""
 
 import json
 import re
 
 from ..harness import (
     canyonos,
-    cli_value,
     dashboard_containers,
     docker,
     docker_name,
+    hash_api_key,
     manifest,
     poll,
     project_containers,
     project_redis,
     qualified,
-    query_token,
     run,
 )
 
@@ -29,9 +29,9 @@ DASHBOARD = [
     "canyonos-dashboard-web",
 ]
 REPLICA_SUFFIX = "-[0-9a-f]{8}"
-TRUSTED_KEYS_KEY = "auth:trusted_keys"
-AUTH_ENV = ("CANYONOS_TRUSTED_KEYS", "CANYONOS_AUTH_DISABLED")
-BEARER = '-H "Authorization: Bearer <token>"'
+API_KEY_HASH_KEY = "auth:api_key_hash"
+API_KEY_HASH_ENV = "CANYONOS_API_KEY_HASH"
+BEARER = '-H "Authorization: Bearer <your api key>"'
 
 
 def _whole_curl(url: str, body: str) -> str:
@@ -71,19 +71,16 @@ def _replica_logs(output: str) -> dict[str, list[str]]:
 
 def test_deploy_and_status_print_the_curl_whole(recorder, deployed):
     status = canyonos(recorder, ["status"], cwd=deployed.dir)
-    hint = (
-        "Make a token with: canyonos token create --scope query --project "
-        f"{deployed.project_id}"
-    )
     for output in (deployed.deploy_output, status.output):
-        for line in [*_endpoint_lines(deployed.endpoint), hint]:
+        for line in _endpoint_lines(deployed.endpoint):
             assert line in output, f"{line!r} missing\n{output[-3000:]}"
+        assert recorder.api_key not in output, output[-3000:]
 
 
-def test_the_printed_curl_works_with_a_token(recorder, deployed):
+def test_the_printed_curl_works_with_the_api_key(recorder, deployed):
     printed = _query_curl(deployed.endpoint)
     assert printed in deployed.deploy_output, deployed.deploy_output[-3000:]
-    command = printed.replace("<token>", query_token(recorder, deployed.dir))
+    command = printed.replace("<your api key>", recorder.api_key)
     call = run(recorder, ["sh", "-c", command], cwd=deployed.dir)
     assert json.loads(call.stdout)["request_id"], call.output
 
@@ -122,43 +119,25 @@ def test_containers_up(recorder, deployed):
     assert dashboard_containers(recorder) == DASHBOARD
 
 
-def _published_keys(recorder, deployed) -> dict:
-    return json.loads(project_redis(recorder, deployed.dir).get(TRUSTED_KEYS_KEY))
+def test_the_global_controller_publishes_the_key_hash(recorder, deployed):
+    published = project_redis(recorder, deployed.dir).get(API_KEY_HASH_KEY)
+    assert published == hash_api_key(recorder.api_key), published
 
 
-def test_the_global_controller_publishes_the_trusted_keys(recorder, deployed):
-    record = _published_keys(recorder, deployed)
-    trusted = cli_value(
-        recorder,
-        deployed.dir,
-        f"trusted_keys(Path({str(recorder.auth_dir)!r}))",
-        "from pathlib import Path; from canyonos.auth import trusted_keys",
-    )
-
-    assert set(record) == {"keys", "disabled"}, record
-    assert record["disabled"] is False
-    assert trusted, "the deploy ran with no trusted key"
-    assert record["keys"] == trusted
-
-
-def test_only_the_global_controller_gets_the_public_keys(recorder, deployed):
-    keys = _published_keys(recorder, deployed)["keys"]
+def test_only_the_global_controller_gets_the_key_hash(recorder, deployed):
     controller = f"{deployed.group}-global-controller"
-    auth_dir = str(recorder.auth_dir)
 
     for name in project_containers(recorder, deployed.group):
         inspected = docker(recorder, ["inspect", name]).json()[0]
         env = dict(
             item.partition("=")[::2] for item in inspected["Config"]["Env"] or []
         )
-        sources = [mount.get("Source", "") for mount in inspected["Mounts"]]
-        assert not [k for k, v in env.items() if "PRIVATE KEY" in v], name
-        assert not [s for s in sources if s.startswith(auth_dir)], (name, sources)
+        assert not [k for k, v in env.items() if recorder.api_key in v], name
+        assert "CANYONOS_API_KEY" not in env, name
         if name == controller:
-            assert json.loads(env["CANYONOS_TRUSTED_KEYS"]) == keys
-            assert "CANYONOS_AUTH_DISABLED" not in env
+            assert env[API_KEY_HASH_ENV] == hash_api_key(recorder.api_key), name
         else:
-            assert not [k for k in AUTH_ENV if k in env], name
+            assert API_KEY_HASH_ENV not in env, name
 
 
 def test_status_json_counts_every_replica(recorder, deployed):

@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { TimeRangeQuerySchema } from '@core/time-range';
 
-import { authPlugin, requireScope } from '../auth/auth.middleware';
+import { authPlugin } from '../auth/auth.middleware';
 import { resolveProjectAccess } from '../auth/project-access';
 import { get_request_trace, list_requests } from './requests.service';
 import { ListRequestsQuerySchema, RequestListSchema, RequestTraceSchema } from './requests.types';
@@ -22,7 +22,6 @@ export const requestsRoutes = new Elysia({ name: 'requests.routes' })
     params: z.object({ project_id: z.string().uuid() }),
     query: ListRequestsQuerySchema,
     response: { 200: RequestListSchema },
-    beforeHandle: requireScope('read'),
     detail: { ...doc, summary: 'List OTEL request traces with per-trace rollups' },
   })
   .get(
@@ -37,7 +36,6 @@ export const requestsRoutes = new Elysia({ name: 'requests.routes' })
       }),
       query: TimeRangeQuerySchema,
       response: { 200: RequestTraceSchema },
-      beforeHandle: requireScope('read'),
       detail: {
         ...doc,
         summary: 'Get a single request trace',

@@ -32,13 +32,12 @@ and the project, `helloworld/`, holds the agent code.
 
 ## 1. Deploy
 
-Make the key pair that signs your tokens, once per machine (see
-[Tokens and keys](../../docs/guides/AUTHORIZATION.md)). Then, from this folder, deploy the
-`helloworld` project, and run the other commands from here too:
+From this folder, deploy the `helloworld` project with an API key of your choice, and
+run the other commands from here too. The CLI saves the key, so later deploys reuse it
+(see [API key](../../docs/guides/AUTHORIZATION.md)):
 
 ```bash
-canyonos keys create
-canyonos deploy helloworld
+canyonos deploy helloworld --api-key <your api key>
 ```
 
 From anywhere else, name both folders: `canyonos deploy examples/helloworld/helloworld --folder examples/helloworld`.
@@ -51,10 +50,9 @@ Deploy is live
 
 Dashboard  http://127.0.0.1:8081
 
-message           curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"query": "your query"}'
-respond to agent  curl -X POST http://127.0.0.1:8080/answer/<request_id> -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"input": "your answer"}'
-check result      curl -H "Authorization: Bearer <token>" http://127.0.0.1:8080/status/<request_id>
-token             Make a token with: canyonos token create --scope query --project <deployment_id>
+message           curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Authorization: Bearer <your api key>" -H "Content-Type: application/json" -d '{"query": "your query"}'
+respond to agent  curl -X POST http://127.0.0.1:8080/answer/<request_id> -H "Authorization: Bearer <your api key>" -H "Content-Type: application/json" -d '{"input": "your answer"}'
+check result      curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
 ```
 
 The endpoint starts at 8080 and the dashboard at 8081; each moves to the next free port if needed. Use the URLs printed by `canyonos deploy` or `canyonos status`, replacing 8080 in the requests below with the endpoint's actual port.
@@ -65,7 +63,7 @@ The endpoint starts at 8080 and the dashboard at 8081; each moves to the next fr
 canyonos test "World"
 ```
 
-`canyonos test` signs its own query token with your key. A pass ends with:
+`canyonos test` sends the saved key itself. A pass ends with:
 
 ```
 ✓ query           1 workflow(s) answered in 0.512s
@@ -77,13 +75,11 @@ Output     {
 
 ## 3. Send a request
 
-Every request carries a query token. Make one with the command the deploy printed,
-which names this deployment's `deployment_id`:
+Every request carries the API key:
 
 ```bash
-TOKEN=$(canyonos token create --scope query --project <deployment_id>)
 curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" \
   -d '{"query": "World"}'
 ```
@@ -95,7 +91,7 @@ curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
 Then fetch the result with that id:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/status/<request_id>
+curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
 ```
 
 ```json
@@ -105,7 +101,7 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/status/<request_id>
 - The JSON body is passed to `main` as arguments, so `{"query": "Ada"}` returns `Hello, Ada! ...`, and `{}` falls back to `World`.
 - The path is `/<project>/<agent>/<method>`, where the project is the project folder's name. `POST /helloworld/HelloAgent/hello` returns `404`, since only the `endpoint` routes are served.
 - A body that isn't JSON returns `{"error": "Invalid JSON in request body"}`.
-- A request without a valid token returns `401`; see
+- A request without the key returns `401`; see
   [Refusals](../../docs/guides/AUTHORIZATION.md#refusals).
 
 ## 4. Find it in the dashboard
@@ -134,7 +130,7 @@ A request that sends `_context` matching the admin rule still gets through:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" \
   -d '{"query": "World", "_context": {"origin": "admin"}}'
 ```

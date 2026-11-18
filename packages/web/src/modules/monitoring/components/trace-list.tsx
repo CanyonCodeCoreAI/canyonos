@@ -85,7 +85,6 @@ function TraceTable({
   if (query.error) {
     return (
       <QueryError
-        error={query.error}
         message="Could not load traces."
         onRetry={() => void query.refetch()}
         test_id="traces-error"

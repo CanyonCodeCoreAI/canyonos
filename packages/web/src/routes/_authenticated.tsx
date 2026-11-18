@@ -3,10 +3,8 @@
 
 import { createFileRoute, Outlet, redirect, useRouter } from '@tanstack/react-router';
 
-import { answeredWith } from '@/api';
-import { tokenInfoQuery } from '@/modules/auth/auth.queries';
-import { signInRequired } from '@/modules/auth/auth.routing';
-import { authActions, useAuthStore } from '@/modules/auth/auth.store';
+import { signInRequired, storedKeyAccepted } from '@/modules/auth/auth.routing';
+import { useAuthStore } from '@/modules/auth/auth.store';
 import { AppLayout } from '@/modules/core/components/AppLayout';
 import { QueryError } from '@/modules/core/components/QueryError';
 
@@ -16,23 +14,11 @@ export const Route = createFileRoute('/_authenticated')({
       useAuthStore.getState().logout();
       return;
     }
-    const checks = authActions
-      .heldTokens()
-      .map((token) => context.queryClient.ensureQueryData(tokenInfoQuery(token)));
-    // Only the API's refusal ends the session: an API that is down or restarting (`canyonos serve`
-    // recreates it) keeps the tokens, and the page says it could not check them.
-    const accepted = await Promise.all(checks).then(
-      () => checks.length > 0,
-      (error: unknown) => {
-        if (answeredWith(error, 401, 403)) return false;
-        throw error;
-      }
-    );
-    if (accepted) return;
+    if (await storedKeyAccepted(context.queryClient)) return;
     useAuthStore.getState().logout();
     throw redirect({ to: '/login', search: { redirect: location.href } });
   },
-  errorComponent: ({ error, reset }) => <DashboardError error={error} reset={reset} />,
+  errorComponent: ({ reset }) => <DashboardError reset={reset} />,
   component: () => (
     <AppLayout>
       <Outlet />
@@ -40,12 +26,11 @@ export const Route = createFileRoute('/_authenticated')({
   ),
 });
 
-function DashboardError({ error, reset }: { readonly error: unknown; readonly reset: () => void }) {
+function DashboardError({ reset }: { readonly reset: () => void }) {
   const router = useRouter();
 
   return (
     <QueryError
-      error={error}
       message="The dashboard could not load. Check that its API is up, then retry."
       onRetry={() => void router.invalidate().then(reset)}
       className="m-7"

@@ -7,10 +7,11 @@ of helloworld deploy from folders both named `helloworld`, so only their IDs tel
 them apart. Without a terminal, a stop that would have to ask names both and stops
 neither, and the shared folder name is refused as ambiguous. In a terminal, `clean`
 lists both and cleans only the one ticked with space and confirmed with enter.
-`canyonos list` shows both running; once one is selected, `status` and `token create`
+`canyonos list` shows both running; once one is selected, `status` and `test`
 outside every folder act on it, while a folder's own deployment still wins, and a
 selected deployment that is gone makes `stop` fail rather than stop the other.
-`canyonos dashboard` prints a link whose fragment signs the dashboard in. Once
+`canyonos dashboard` prints a link whose fragment carries the API key that signs
+the dashboard in. Once
 the other's Global Controller is gone, a stop with one project left acts without
 asking, reports it already gone and removes the Redis and replicas it left. Naming
 a project that is no longer deployed fails, and `clean` in its folder still finds
@@ -23,7 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-import jwt
 import pytest
 
 from ..harness import (
@@ -196,11 +196,10 @@ def test_the_shared_folder_name_is_refused_as_ambiguous(recorder, fleet):
     assert set(fleet.names.values()) <= _running_projects(recorder)
 
 
-def _query_audience(recorder, cwd: Path) -> list[str]:
-    """The projects a query token `canyonos token create` makes in `cwd` covers."""
-    created = canyonos(recorder, ["token", "create", "--scope", "query"], cwd=cwd)
-    token = created.stdout.strip()
-    return jwt.decode(token, options={"verify_signature": False})["aud"]
+def _tested_ports(recorder, cwd: Path) -> set[int]:
+    """The endpoint ports `canyonos test` in `cwd` got its answers from."""
+    call = canyonos(recorder, ["test", "Ada", "--json"], cwd=cwd, timeout=300)
+    return {urlsplit(result["url"]).port for result in call.json()["results"]}
 
 
 def test_the_selected_deployment_is_the_one_commands_act_on_outside_its_folder(
@@ -227,27 +226,24 @@ def test_the_selected_deployment_is_the_one_commands_act_on_outside_its_folder(
         assert f"Acting on {second}" in status.output, status.output
         endpoint = json.loads(status.stdout)["endpoint"]
         assert endpoint["api_port"] == SECOND_API_PORT, status.stdout
-        assert _query_audience(recorder, fleet.outside) == [fleet.ids["second"]]
-        assert _query_audience(recorder, fleet.dirs["first"]) == [fleet.ids["first"]]
+        assert _tested_ports(recorder, fleet.outside) == {SECOND_API_PORT}
+        assert SECOND_API_PORT not in _tested_ports(recorder, fleet.dirs["first"])
     finally:
         canyonos(recorder, ["select-context", "--clear"], cwd=fleet.outside)
 
 
-def test_dashboard_without_a_terminal_prints_a_link_that_signs_in_for_8_hours(
+def test_dashboard_without_a_terminal_prints_a_link_that_signs_in_with_the_key(
     recorder, fleet
 ):
     call = canyonos(recorder, ["dashboard"], cwd=fleet.outside)
 
     link = urlsplit(call.stdout.strip())
     assert link.path == "/login" and not link.query, call.stdout
-    tokens = {scope: value for scope, [value] in parse_qs(link.fragment).items()}
-    assert set(tokens) == {"read", "write"}, call.stdout
-    for scope, token in tokens.items():
-        claims = jwt.decode(token, options={"verify_signature": False})
-        assert claims["exp"] - claims["iat"] == 8 * 60 * 60, claims
-        info = http(recorder, "GET", f"{API_URL}/auth/token", headers=bearer(token))
-        assert info.json()["scope"] == scope, info.output
-    assert "8 hours" in call.output, call.output
+    assert parse_qs(link.fragment) == {"key": [recorder.api_key]}, call.stdout
+    checked = http(
+        recorder, "GET", f"{API_URL}/auth/check", headers=bearer(recorder.api_key)
+    )
+    assert checked.json() == {"ok": True}, checked.output
 
 
 def test_clean_in_a_terminal_cleans_only_the_ticked_project(recorder, fleet):

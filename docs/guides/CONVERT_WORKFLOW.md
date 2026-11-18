@@ -99,16 +99,16 @@ yet.
 From the folder above `my-app/`, deploy it as a deployment of its own, in a folder beside it:
 
 ```bash
-canyonos keys create    # once per machine: the key pair that signs your tokens
 cd ..
-canyonos deploy my-app --folder my-app-deployment
+canyonos deploy my-app --folder my-app-deployment --api-key <your api key>
 cd my-app-deployment
 ```
 
 It first shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
 **2. Configure an agent** to change them first. What it deploys with, defaults included,
-is saved in the workflow config. When it's up, it prints the endpoint and the dashboard
-address. Then send it the query in `test_query.txt`:
+is saved in the workflow config. `--api-key` sets the key every request must carry;
+later deploys reuse it (see [API key](AUTHORIZATION.md)). When it's up, it prints the
+endpoint and the dashboard address. Then send it the query in `test_query.txt`:
 
 ```bash
 canyonos test
@@ -116,13 +116,11 @@ canyonos test
 
 It prints the result. To send your own query, run `canyonos test "your query"`. If it
 fails, see [Troubleshooting](TROUBLESHOOTING.md). Or send a request yourself, with the
-arguments your workflow takes and a query token, made with the `deployment_id` the
-deploy wrote into `deployment.yaml` (see [Tokens and keys](AUTHORIZATION.md)):
+arguments your workflow takes and the API key:
 
 ```bash
-TOKEN=$(canyonos token create --scope query --project <deployment_id>)
 curl -X POST http://127.0.0.1:8080/my-app/<agent>/<method> \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" \
   -d '{"query": "your query"}'
 ```
@@ -130,7 +128,7 @@ curl -X POST http://127.0.0.1:8080/my-app/<agent>/<method> \
 It answers with a `request_id`. Get the result with:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/status/<request_id>
+curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
 ```
 
 The `status` is `pending` while it runs, then `done` with the result, or `error`. If an

@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { write_project_span, write_unattributed_span } from './telemetry-test.utils';
 import type {
   RequestListItem,
@@ -145,8 +145,8 @@ async function list(token: string, project_id: string, query: ListQuery = {}) {
 const ids = (items: readonly RequestListItem[]): string[] => items.map((item) => item.session_id);
 
 describe('request trace endpoint', () => {
-  test('a read token gets 404 when the project has no matching request', async () => {
-    const token = await authenticate('read');
+  test('the API key gets 404 when the project has no matching request', async () => {
+    const token = TEST_API_KEY;
     const project_id = await create_project();
 
     const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
@@ -159,7 +159,7 @@ describe('request trace endpoint', () => {
   });
 
   test('an unknown project id is 404 projects.not_found, not requests.not_found', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
     const res = await api.projects[unknown]!.requests[VALID_REQUEST_ID]!.get({
@@ -171,7 +171,7 @@ describe('request trace endpoint', () => {
     expect((res.error?.value as { error?: string })?.error).toBe('projects.not_found');
   });
 
-  test('a request without a token is rejected with 401', async () => {
+  test('a request without the API key is rejected with 401', async () => {
     const project_id = await create_project();
 
     const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
@@ -181,7 +181,7 @@ describe('request trace endpoint', () => {
   });
 
   test('a trace read without from/to is rejected by validation (422)', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
 
     const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
@@ -191,7 +191,7 @@ describe('request trace endpoint', () => {
   });
 
   test('an oversized request id is rejected by validation (422)', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
 
     const res = await api.projects[project_id]!.requests['x'.repeat(256)]!.get({
@@ -202,7 +202,7 @@ describe('request trace endpoint', () => {
   });
 
   test('a non-uuid project id is rejected by validation (422)', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const res = await api.projects['not-a-uuid']!.requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
@@ -213,7 +213,7 @@ describe('request trace endpoint', () => {
 
 describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   test('lists requests newest-first with status, duration, token, and cost rollups', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('list'));
 
@@ -248,7 +248,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('every request reports a finish time and a duration', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('fin'));
 
@@ -263,7 +263,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('paginates with a stable total', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('page'));
 
@@ -277,7 +277,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('filters by status and counts the same filtered set', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('st'));
 
@@ -291,7 +291,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('the running filter lists nothing, because a stored span has always finished', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('run'));
 
@@ -302,7 +302,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('an empty project lists zero requests', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
 
     const page = await list(token, project_id);
@@ -311,7 +311,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('a span without the project attribute is invisible to every project', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('orph'));
     await write_unattributed_span({
@@ -329,7 +329,6 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test("another project's spans stay invisible even under the same trace id", async () => {
-    const owner = await authenticate('read');
     const mine = await create_project();
     const theirs = await create_project();
     const start = ago(MINUTE_MS);
@@ -349,7 +348,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
       cost: 0.000099,
     });
 
-    const page = await list(owner, mine);
+    const page = await list(TEST_API_KEY, mine);
 
     expect(page.total).toBe(1);
     expect(page.items[0]).toMatchObject({
@@ -361,7 +360,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('an unselected range includes only requests with in-range spans', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     const old_start = ago(3 * 24 * 60 * MINUTE_MS);
     await seed(project_id, [
@@ -384,21 +383,20 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
     expect(ids(day.items)).not.toContain('win-ancient');
   });
 
-  test("another read token reads the project's requests", async () => {
+  test("the API key reads the project's requests", async () => {
     const project_id = await create_project();
     await seed(project_id, listing_spans('guard'));
 
-    const other_user = await authenticate('read');
     const res = await api.projects[project_id]!.requests.get({
       $query: { ...range(60), limit: 20, offset: 0 },
-      $headers: bearer(other_user),
+      $headers: bearer(TEST_API_KEY),
     });
 
     expect(res.error).toBeNull();
     expect(res.data!.total).toBeGreaterThan(0);
   });
 
-  test('a listing without a token is rejected with 401', async () => {
+  test('a listing without the API key is rejected with 401', async () => {
     const project_id = await create_project();
 
     const res = await api.projects[project_id]!.requests.get({
@@ -408,7 +406,7 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('an out-of-range limit is rejected by validation (422)', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
 
     const res = await api.projects[project_id]!.requests.get({
@@ -427,7 +425,7 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
     ids((await list(token, project_id, { sort, order })).items);
 
   beforeEach(async () => {
-    token = await authenticate('read');
+    token = TEST_API_KEY;
     project_id = await create_project();
     await seed(project_id, listing_spans(`ord-${project_id.slice(0, 8)}`));
   });
@@ -562,7 +560,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
 
   // Four requests whose costs and tokens rise in equal steps, so a range picks a known subset.
   beforeEach(async () => {
-    token = await authenticate('read');
+    token = TEST_API_KEY;
     project_id = await create_project();
     prefix = `rng-${project_id.slice(0, 8)}`;
     const steps = [1, 2, 3, 4];
@@ -676,7 +674,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
 
 describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   test('a request is listed and counted whole in the range it started in', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     const to_ms = BASE_MS - 30 * MINUTE_MS;
     const query = {
@@ -763,7 +761,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   let day_end: string;
 
   beforeEach(async () => {
-    token = await authenticate('read');
+    token = TEST_API_KEY;
     project_id = await create_project();
     prefix = `day-${project_id.slice(0, 8)}`;
 
@@ -907,7 +905,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
 
 describe('GET /projects/:project_id/requests/:request_id', () => {
   test('returns one request trace with ordered blocks and the project median', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('tr'));
 
@@ -959,7 +957,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a failed span makes the whole request failed', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('trf'));
 
@@ -973,7 +971,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a refused step carries its error name and message; a successful one carries null', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     const message = 'MergeAgent requires TestRunnerAgent, which has no healthy replica right now.';
     const start = ago(5 * MINUTE_MS);
@@ -1020,7 +1018,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a payload that is not JSON is preserved as the text it was', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await seed(project_id, listing_spans('trt'));
 
@@ -1034,7 +1032,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('the median reads only requests that billed inside the queried range', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
 
     // Billed in the last 30 days: 0.001, 0.002, 0.003 -> median 0.002. Counting the two unbilled
@@ -1087,7 +1085,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a project that billed nothing in the range reports no median', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     const start = ago(MINUTE_MS);
     await write_project_span(project_id, {
@@ -1109,7 +1107,6 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a trace never includes another project sharing its trace id', async () => {
-    const owner = await authenticate('read');
     const mine = await create_project();
     const theirs = await create_project();
     const start = ago(MINUTE_MS);
@@ -1133,7 +1130,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
     const res = await api.projects[mine]!.requests['tshare']!.get({
       $query: range(MONTH_MINUTES),
-      $headers: bearer(owner),
+      $headers: bearer(TEST_API_KEY),
     });
 
     expect(res.error).toBeNull();
@@ -1143,7 +1140,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a trace made only of spans without the project attribute is not found', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     await write_unattributed_span({
       span_id: 'lonely-1',
@@ -1162,7 +1159,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
   });
 
   test('a malformed numeric attribute is ignored instead of failing the request', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await create_project();
     const start = ago(MINUTE_MS);
     await write_project_span(project_id, {

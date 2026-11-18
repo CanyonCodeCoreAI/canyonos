@@ -425,15 +425,14 @@ def confirm_clean_all():
     if not is_interactive():
         ui.fail(
             "`clean --all` deletes every CanyonOS image, the dashboard's data and "
-            "~/.canyonos, with the keys under ~/.canyonos/auth that sign and verify "
-            "your tokens, so it asks first. Add --yes to run it without a terminal."
+            "~/.canyonos, with this machine's API key, so it asks first. Add --yes to "
+            "run it without a terminal."
         )
         return False
     ui.say(
         "This removes every CanyonOS deployment, the dashboard and its data, "
         "CanyonOS's images and ~/.canyonos, which holds every deployment's records, "
-        "your usage settings and the keys under ~/.canyonos/auth: the private keys "
-        "that sign your tokens and the public keys deploys trust."
+        "your usage settings and this machine's API key."
     )
     answer = select_menu(
         [(True, "Yes, remove everything"), (False, "No, keep it")],

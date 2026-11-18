@@ -16,13 +16,12 @@
 # lookback window before the fan-out begins. The whole JSON body is splatted
 # into Workflow.main() as kwargs by the endpoint.
 #
-# After `canyonos deploy portfolio` in examples/portfolio:
-#   TOKEN=$(canyonos token create --scope query --project <deployment_id>)
+# After `canyonos deploy portfolio --api-key <your api key>` in examples/portfolio:
 #   curl -X POST http://localhost:8080/portfolio/Workflow/main \
-#        -H "Authorization: Bearer $TOKEN" \
+#        -H "Authorization: Bearer <your api key>" \
 #        -H 'Content-Type: application/json' \
 #        -d '{"query": "Analyze 40% Apple, 35% Microsoft and 25% Nvidia over the last 6 months"}'
-#   curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/status/<request_id>
+#   curl -H "Authorization: Bearer <your api key>" http://localhost:8080/status/<request_id>
 
 import json
 

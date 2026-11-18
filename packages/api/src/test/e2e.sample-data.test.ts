@@ -11,12 +11,12 @@ import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.s
 import { SAMPLE_ATTRIBUTE } from '@api/modules/projects/sample-data';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { write_project_span } from './telemetry-test.utils';
 
 setupE2ETests();
 
-const write = bearer(await authenticate('write'));
+const key_headers = bearer(TEST_API_KEY);
 
 const NANOS_PER_DAY = 86_400_000_000_000n;
 
@@ -29,7 +29,7 @@ const add_sample_data = (project_id: string, token: string, workflow: string) =>
   api.projects[project_id]!['sample-data'].post(
     // Typed as the enum; the refusal test sends what the enum would not allow.
     { workflow } as { workflow: (typeof WORKFLOWS)[number] },
-    { headers: write }
+    { headers: key_headers }
   );
 
 const project_spans = async (project_id: string) => {
@@ -64,7 +64,7 @@ const rollup_samples = async (project_id: string) => {
 
 describe('sample data refuses', () => {
   test('a workflow the api ships no recording of, and writes nothing', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Unknown' });
 
     const refused = await add_sample_data(project_id, token, 'not-a-workflow');
@@ -81,7 +81,7 @@ describe.each([...WORKFLOWS])('sample data for %s', (workflow) => {
   const add = () => add_sample_data(project_id, token, workflow);
 
   beforeEach(async () => {
-    token = await authenticate('read');
+    token = TEST_API_KEY;
     ({ project_id } = await create_test_project({ name: workflow }));
   });
 

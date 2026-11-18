@@ -13,14 +13,14 @@ import {
   stubProjectsList,
 } from './helpers/session';
 
-test('account menu shows which tokens are held and logs out', async ({ page }) => {
+test('account menu says it is signed in with the API key and logs out', async ({ page }) => {
   await authenticate(page);
   await page.goto('/projects');
 
   const trigger = page.getByTestId('sidebar-user-menu');
   await trigger.click();
   await expect(page.getByTestId('sidebar-user-menu-content')).toBeVisible();
-  await expect(page.getByTestId('sidebar-held-tokens')).toHaveText('Tokens held: read and write');
+  await expect(page.getByTestId('sidebar-signed-in')).toHaveText('Signed in with the API key');
   await page.getByTestId('sidebar-logout').click();
   await expect(page).toHaveURL(/\/login/);
 });

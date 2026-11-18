@@ -6,9 +6,8 @@ Logic for `canyonos list` and `canyonos select-context`: the deployments on this
 machine, and the one picked to act on from a folder that is no deployment's.
 
 The pick is the deployment's name in `~/.canyonos/context.json`. `stop`, `clean`,
-`status`, `logs`, `test`, `sync` and `token create --scope query` use it when they are
-given no deployment and run outside a deployment folder; a name or the current folder
-always wins.
+`status`, `logs`, `test` and `sync` use it when they are given no deployment and run
+outside a deployment folder; a name or the current folder always wins.
 """
 
 import json
@@ -73,7 +72,7 @@ def enter_selected_folder(selected):
 
 def _describe(recorded, selected_name):
     """One line of `canyonos list`: its name, ID, whether its deploy runs, and marks
-    for a deploy with no token checks and for the selected deployment."""
+    for a deploy with no API key and for the selected deployment."""
     running = (deploy_status(recorded.state["port"]) or {}).get("running", False)
     marks = ["running" if running else "not running"]
     if recorded.state.get("auth_disabled"):
@@ -134,8 +133,7 @@ def run_select_context(ref, clear=False):
     )
     ui.ok(f"Selected {picked.name}")
     ui.hint(
-        "stop, clean, status, logs, test, sync and token create --scope query act on "
-        "it from any folder that is no deployment's; a name or a deployment folder "
-        "still wins."
+        "stop, clean, status, logs, test and sync act on it from any folder that is "
+        "no deployment's; a name or a deployment folder still wins."
     )
     return True

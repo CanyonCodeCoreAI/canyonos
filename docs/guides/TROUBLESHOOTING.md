@@ -241,63 +241,44 @@ left behind.
 
 **Solution:** run `canyonos stop <deployment>` to remove the old Redis, then redeploy.
 
-## Tokens and keys
+## API key
 
-How keys and tokens work is in [Tokens and keys](AUTHORIZATION.md).
+How the key works is in [API key](AUTHORIZATION.md).
 
-### `deploy`, `serve` or `test` stops because no key is trusted
+### `deploy` or `serve` warns that no API key is set
 
-`No key is trusted in .../.canyonos/auth/trusted, so nothing could query the workflow.`
+`No API key is set: the endpoint and the dashboard answer anyone who reaches them. Set one with --api-key <key>.`
 
-**Cause:** the endpoint and the dashboard accept only tokens signed by a key in
-`~/.canyonos/auth/trusted/`, and that folder holds no `.pub`, or `--auth-dir` points at
-another folder.
+**Cause:** this machine has no `~/.canyonos/api_key` and no `CANYONOS_API_KEY`, or the
+run passed `--no-api-key`. Nothing is checked.
 
-**Solution:** make a key pair, then run the command again:
+**Solution:** for anything others can reach, run the command again with a key:
 
 ```bash
-canyonos keys create
+canyonos deploy <project folder>... --api-key <your api key>
 ```
-
-If `keys create` says `default.key` already exists, its public half was deleted: make a
-pair under another name with `--name`, or trust a `.pub` you kept with
-`canyonos keys trust <file>`. For a throwaway run only, `--dangerous-skip-auth` skips
-the check.
-
-### `deploy` or `serve` refuses a keys folder inside a project
-
-`The keys folder ... is inside the project folder ...`
-
-**Cause:** `--auth-dir` points inside a project folder the deploy takes, or the one
-`serve` runs in. A project's files go into its images and, on Kubernetes, the upload to
-the cluster, so its private keys would too.
-
-**Solution:** move the folder outside the project and pass its new path to
-`--auth-dir`, or leave the option out to use `~/.canyonos/auth`.
 
 ### The endpoint answers `401`
 
-`auth.missing_token` or `auth.invalid_token`, in the `error_name` of the reply
+`auth.missing_key` or `auth.invalid_key`, in the `error_name` of the reply
 
-**Cause:** the request carries no `Authorization: Bearer <token>` header, or the token
-is not one this workflow takes. The `error` says which:
+**Cause:** the request carries no `Authorization: Bearer <your api key>` header, or a
+key that is not the one the deployment was deployed with. After a replace, a deployment
+you have not redeployed still takes the old key.
 
-| `error`                                                   | What to do                                                                                                   |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `This endpoint needs a query token, ...`                  | Send the header, with a token from `canyonos token create --scope query --project <deployment_id>`           |
-| `This token is not signed by a key this deploy trusts`    | Its key's `.pub` was not in `trusted/` at the last deploy, or was rotated out: redeploy, or make a new token |
-| `This token expired`                                      | Make a new one; `--ttl` sets how long it lasts                                                               |
-| `This token is for the dashboard API, not for a workflow` | Make one with `--scope query`                                                                                |
-| `This token is not for this project`                      | Make one with `--project` and this deployment's `deployment_id`, or `--all-projects`                         |
+**Solution:** send the key in the header, or redeploy the deployment to give it the
+machine's current key:
 
-**Solution:** make the token the table names and send it again.
+```bash
+canyonos deploy <project folder>...
+```
 
 ### The endpoint answers `503` with `auth.not_ready`
 
-`The endpoint is starting; the Global Controller has not published its trusted keys yet`
+`The endpoint is starting; the Global Controller has not published the API key yet`
 
-**Cause:** the endpoint reads its trusted keys from the workflow's Redis on every
-request. The Global Controller has not written them yet, or Redis doesn't answer.
+**Cause:** the endpoint reads the key's hash from the workflow's Redis on every request.
+The Global Controller has not written it yet, or Redis doesn't answer.
 
 **Solution:** right after a deploy, wait a few seconds and send it again. If it lasts,
 run `canyonos doctor`, and `canyonos logs` for the Global Controller's error.
@@ -395,10 +376,10 @@ still uses model tokens, and it can't be cancelled.
 includes its ID:
 
 ```bash
-TOKEN=$(canyonos token create --scope query --project <deployment_id>)
-curl -s -X POST http://127.0.0.1:8080/<project>/<agent>/<method> -H "Authorization: Bearer $TOKEN" \
+curl -s -X POST http://127.0.0.1:8080/<project>/<agent>/<method> \
+  -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" -d '{"query": "..."}'
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/status/<request_id>
+curl -s -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
 ```
 
 ### The logs show `database is locked` or `failed to export`
@@ -492,17 +473,13 @@ mixed.
 run `canyonos deploy <project folder>...`. The copy gets a new ID and shows up as its
 own deployment.
 
-### The dashboard shows a refusal instead of a page, or refuses a change
+### The dashboard sends you back to the sign-in screen
 
-`A write token reads only what it can change; send a read token for this`, or
-`This token may read but not change anything` (`auth.insufficient_scope`, `403`)
+**Cause:** the dashboard API refused the key the browser holds (`auth.invalid_key`,
+`401`), usually because the machine's key was replaced.
 
-**Cause:** you signed in with one of the two API tokens. A write token reads only what
-it changes (a deployment's detail, scaling, governance and prompts), and a read token
-changes nothing.
-
-**Solution:** sign out from the account menu and sign in with both tokens, from
-`canyonos token create --scope read` and `canyonos token create --scope write`.
+**Solution:** sign in with the current key, or run `canyonos dashboard` on the machine
+that holds it.
 
 ### The dashboard shows `canyonos.redis_auth_failed` for a deployment
 

@@ -8,7 +8,7 @@ import { otelSpans, projects } from '@api/db/schema';
 import { GEN_AI, PROJECT_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer } from './project-test.utils';
+import { bearer, TEST_API_KEY } from './project-test.utils';
 import { write_project_span, write_unattributed_span } from './telemetry-test.utils';
 
 setupE2ETests();
@@ -82,13 +82,13 @@ const fleet_rows = (data: { projects: FleetProject[] }, ids: string[]): FleetPro
   data.projects.filter((project) => ids.includes(project.id));
 
 describe('GET /resources/overview', () => {
-  test('a request without a token is rejected with 401', async () => {
+  test('a request without the API key is rejected with 401', async () => {
     const res = await api.resources.overview.get({ $query: range(30 * DAY_MS) });
     expect(res.error?.status as number).toBe(401);
   });
 
   test('derives per-project cost, requests and tokens from project spans', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
 
     const alpha = await insert_project('Alpha', 3 * DAY_MS);
     const bravo = await insert_project('Bravo', 2 * DAY_MS);
@@ -150,7 +150,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('two spans in one trace count as one request', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project = await insert_project('OneTrace', DAY_MS);
 
     await insert_span(project, {
@@ -181,7 +181,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('a span with no canyon.project.id is invisible', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project = await insert_project('Owned', DAY_MS);
 
     await insert_span(project, {
@@ -212,7 +212,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('one trace id in two projects stays isolated', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const first = await insert_project('First', 2 * DAY_MS);
     const second = await insert_project('Second', DAY_MS);
 
@@ -245,7 +245,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('each project appears with its own totals', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const my_project = await insert_project('Mine', DAY_MS);
     const their_project = await insert_project('Theirs', DAY_MS);
 
@@ -273,7 +273,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('a narrow window excludes older spans', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project = await insert_project('Windowed', 40 * DAY_MS);
 
     await insert_span(project, {
@@ -310,7 +310,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('a range whose from is not before its to is rejected with 422', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { from, to } = range(DAY_MS);
 
     const res = await overview(token, { from: to, to: from });
@@ -318,7 +318,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('an ERROR status span drives the error rate', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project = await insert_project('Erroring', DAY_MS);
 
     await insert_span(project, {
@@ -353,7 +353,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('tokens sum input and output, and latency averages the span durations', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project = await insert_project('Derived', DAY_MS);
 
     await insert_span(project, {
@@ -383,7 +383,7 @@ describe('GET /resources/overview', () => {
   });
 
   test('attributes of the wrong type and invalid counts are absent, not a failure', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project = await insert_project('Malformed', DAY_MS);
 
     const start = nanos_ago(2 * HOUR_MS);

@@ -22,13 +22,13 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from canyonos import deployment, env, ports
+from canyonos.auth import API_KEY_HASH_ENV
 from canyonos.constants import (
     DEFAULT_DASHBOARD_API_PORT,
     DEFAULT_DASHBOARD_PORT,
     public_ip,
 )
 from canyonos.docker_cmd import DOCKER_CLEANUP_TIMEOUT
-from canyonos.init import docker_is_local
 from canyonos.os_support import file_lock, make_private_dir, write_private_file
 from canyonos.port_utils import (
     DEFAULT_MAX_PORT_ATTEMPTS,
@@ -53,8 +53,6 @@ SERVICE_PORTS = {
 }
 # The services a deployment's containers reach by container name on its network.
 NETWORK_SERVICES = ("api", "db")
-# The API container runs as `bun`, not as you, and reads the keys it mounts.
-TRUSTED_DIR_MODE = 0o755
 
 
 @dataclass(frozen=True)
@@ -80,14 +78,12 @@ class PhaseFailure(Exception):
 @dataclass(frozen=True)
 class DashboardStack:
     """Where the dashboard's files live on this machine, the host port each of its
-    services (`SERVICE_PORTS`) is published on, whether its API skips token
-    verification (`--dangerous-skip-auth`), and the folder of public keys it trusts,
-    bind-mounted read-only."""
+    services (`SERVICE_PORTS`) is published on, and the hash of the API key its API
+    checks ("" for none)."""
 
     state_dir: Path
     host_ports: dict[str, int]
-    skip_auth: bool
-    trusted_dir: Path
+    api_key_hash: str
 
     @property
     def env_path(self) -> Path:
@@ -331,22 +327,13 @@ def pick_service_ports(
     return picked
 
 
-def _validate(
-    configured_port: int | None, skip_auth: bool, trusted_dir: Path
-) -> DashboardStack:
-    """Checks docker is usable, on this machine unless `skip_auth` (the API mounts
-    `trusted_dir` from here), and the state dir is writable, then returns a
+def _validate(configured_port: int | None, api_key_hash: str) -> DashboardStack:
+    """Checks docker is usable and the state dir is writable, then returns a
     DashboardStack on the running dashboard's ports, else on the ones
     `pick_service_ports` picks, with `configured_port` for the web (failing when it
     is taken)."""
     if shutil.which("docker") is None:
         raise PhaseFailure("validate", "docker is not on PATH")
-    if not skip_auth and not docker_is_local():
-        raise PhaseFailure(
-            "validate",
-            "the dashboard needs a Docker engine on this machine to read "
-            f"`{trusted_dir}`; use `--dangerous-skip-auth`",
-        )
 
     try:
         if _run(["docker", "info"]).returncode != 0:
@@ -385,7 +372,7 @@ def _validate(
         except RuntimeError as e:
             raise PhaseFailure("validate", str(e)) from e
 
-    return DashboardStack(state_dir, picked, skip_auth, trusted_dir)
+    return DashboardStack(state_dir, picked, api_key_hash)
 
 
 def _env_value(value: str) -> str:
@@ -410,6 +397,15 @@ def _read_existing_secret(env_path: Path, key: str) -> str | None:
     return None
 
 
+def dashboard_api_key_hash() -> str | None:
+    """The hash of the API key the dashboard was last started with ("" for none), or
+    None when it was never started here."""
+    env_path = _state_dir() / ".env"
+    if not env_path.is_file():
+        return None
+    return _read_existing_secret(env_path, API_KEY_HASH_ENV) or ""
+
+
 def _stack_secrets(env_path: Path) -> dict[str, str]:
     """Each of the stack's secrets: the one its `.env` already holds, or a new random one."""
     return {
@@ -424,19 +420,7 @@ def _env_line(key: str, value: str) -> str:
     return f"{key}={value}\n"
 
 
-def _make_trusted_dir(trusted_dir: Path) -> None:
-    """Create the folder the API mounts its trusted keys from, readable by the `bun`
-    user the API runs as; raise PhaseFailure naming the folder when it cannot be."""
-    try:
-        trusted_dir.mkdir(mode=TRUSTED_DIR_MODE, parents=True, exist_ok=True)
-    except OSError as error:
-        raise PhaseFailure(
-            "prepare", f"could not create {trusted_dir}: {error.strerror or error}"
-        ) from error
-
-
 def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
-    _make_trusted_dir(stack.trusted_dir)
     try:
         make_private_dir(stack.state_dir)
         managed_env = {
@@ -447,8 +431,7 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
                 f"CANYONOS_{service.upper()}_PORT": str(port)
                 for service, port in stack.host_ports.items()
             },
-            "CANYONOS_DASHBOARD_AUTH_DISABLED": str(stack.skip_auth).lower(),
-            "CANYONOS_AUTH_TRUSTED_DIR": str(stack.trusted_dir),
+            API_KEY_HASH_ENV: stack.api_key_hash,
         }
         write_private_file(
             stack.env_path,
@@ -640,7 +623,9 @@ def _verify(port: int) -> str:
 
 
 def _secret_values(managed_env: dict[str, str]) -> list[str]:
-    return [managed_env[key] for key in SECRET_KEYS]
+    return [
+        managed_env[key] for key in (*SECRET_KEYS, API_KEY_HASH_ENV) if managed_env[key]
+    ]
 
 
 def _redact_logs(logs: str, *secret_values: str) -> str:
@@ -720,15 +705,14 @@ def teardown_dashboard() -> bool:
 def run_dashboard(
     phase_reporter: Callable[[str, str], None] | None,
     configured_port: int | None,
-    skip_auth: bool,
-    trusted_dir: Path,
+    api_key_hash: str,
     renewed: tuple[str, ...] = (),
 ) -> ServeResult:
     """Start the local dashboard for `canyonos serve` and `canyonos deploy`, reporting
     each step; on failure, save the logs and remove what this run started. Its API
-    verifies tokens against the public keys in `trusted_dir`, unless `skip_auth`.
+    checks the API key whose hash is `api_key_hash`, or nothing when it is "".
     The `renewed` services start in new containers even when they run, as the api
-    does for `canyonos serve`, since it reads the trusted keys only when it starts.
+    does for `canyonos serve` and for a deploy that changes the key.
 
     The whole run holds the dashboard lock, so a concurrent serve, stop, or clean
     from another project folder waits for it rather than racing it.
@@ -751,7 +735,7 @@ def run_dashboard(
                     lambda: report(ServeResult(True, "validate", LOCK_WAIT_MESSAGE))
                 )
             )
-            stack = _validate(configured_port, skip_auth, trusted_dir)
+            stack = _validate(configured_port, api_key_hash)
             report(ServeResult(True, "validate", "dashboard prerequisites validated"))
 
             managed_env, prepare_message = _prepare(stack)

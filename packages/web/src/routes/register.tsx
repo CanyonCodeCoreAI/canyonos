@@ -5,7 +5,7 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 
 import { authSearchSchema } from '@/modules/auth/auth.routing';
 
-/** Accounts are gone; an old bookmark to the sign-up page lands on the token screen. */
+/** Accounts are gone; an old bookmark to the sign-up page lands on the sign-in screen. */
 export const Route = createFileRoute('/register')({
   validateSearch: authSearchSchema,
   beforeLoad: ({ search }) => {

@@ -30,6 +30,7 @@ from .harness import (
     canyonos,
     case_slug,
     collect_container_logs,
+    dashboard_key,
     deployed_endpoint,
     deployed_project_id,
     deployment_group,
@@ -37,12 +38,9 @@ from .harness import (
     project_dir,
     qualified,
     query_for,
-    api_tokens,
     result_of,
     stage,
     stop_project,
-    trust_a_key,
-    trust_the_vectors,
 )
 from .projects import Project, list_projects, load_check, load_project
 
@@ -235,19 +233,16 @@ class QueryResult:
 
 @pytest.fixture(scope="session")
 def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[Deployed]:
-    """Deploy the staged project with `canyonos deploy`, trusting the session's key
-    and the token vectors' key, and hand cases the endpoint and the
-    dashboard API with a read and a write token. `canyonos serve` runs first: the
-    dashboard API reads its trusted keys only when it starts, and a deploy leaves a
-    running dashboard as it is. Afterwards, and also when any of that fails, save
+    """Deploy the staged project with `canyonos deploy` and the session's API key, and
+    hand cases the endpoint and the dashboard API, both called with that key.
+    `canyonos serve` runs first: the dashboard API reads the key's hash only when it
+    starts, and a deploy leaves a running dashboard as it is. Afterwards, and also when any of that fails, save
     the container logs and remove the deploy with `canyonos stop`. A failing stop
     fails the run, unless the deploy had already failed: that failure is the one
     reported."""
     succeeded = False
     folder = project_dir(workspace)
     try:
-        trust_a_key(recorder, workspace)
-        trust_the_vectors(recorder, workspace)
         canyonos(recorder, ["serve"], cwd=workspace)
         # From the project folder, naming the deployment's folder, as a user would.
         deploy = canyonos(
@@ -259,7 +254,7 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[De
         assert f"Registered {project.name} with the dashboard" in deploy.output, (
             deploy.output[-3000:]
         )
-        api = Api(recorder, API_URL, api_tokens(recorder, workspace))
+        api = Api(recorder, API_URL, dashboard_key(recorder))
         yield Deployed(
             project=project,
             dir=workspace,

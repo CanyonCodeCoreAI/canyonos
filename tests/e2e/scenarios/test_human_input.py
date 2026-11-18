@@ -163,7 +163,7 @@ def test_chat_finds_adds_switches_and_deletes_workflows_and_answers_questions(
     url = f"{endpoint.url}/{endpoint.route}"
     body = shlex.quote(json.dumps({endpoint.argument: "your query"}))
     curl = (
-        f'curl -X POST {url} -H "Authorization: Bearer {endpoint.token}" '
+        f'curl -X POST {url} -H "Authorization: Bearer {endpoint.api_key}" '
         f'-H "Content-Type: application/json" -d {body}'
     )
     box = f"{endpoint.argument} (str)"

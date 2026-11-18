@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { write_project_span } from './telemetry-test.utils';
 
 setupE2ETests();
@@ -68,7 +68,7 @@ let next_project = 0;
 
 async function project(): Promise<{ token: string; project_id: string }> {
   next_project += 1;
-  const token = await authenticate('read');
+  const token = TEST_API_KEY;
   const { project_id } = await create_test_project({ name: `Range ${next_project}` });
   return { token, project_id };
 }

@@ -56,14 +56,16 @@ dashboard:
   storage: 1Gi
   storageClassName: ""
   # A Secret of your own with db-password and redis-password-key (the last at least 32
-  # characters); empty: the chart makes one on install. Set it when the chart is rendered
-  # without the cluster (helm template, Argo CD), which cannot keep a generated password.
+  # characters), and api-key-hash when the API takes a key; empty: the chart makes one on
+  # install. Set it when the chart is rendered without the cluster (helm template, Argo
+  # CD), which cannot keep a generated password.
   existingSecret: ""
-  # true: the API verifies no token and answers anyone who reaches it, for a throwaway
-  # cluster only. Otherwise it takes tokens signed by a key some listed project trusts
-  # (spec.auth.trustedKeys). `canyonos serve --dangerous-skip-auth` cannot change it: the
-  # dashboard is the whole cluster's.
-  dangerousSkipAuth: false
+  # The sha256 of the dashboard's API key, as 64 lowercase hex characters
+  # (`printf %s "$KEY" | sha256sum`). The chart keeps it in its Secret (api-key-hash),
+  # and the API then answers only `Authorization: Bearer <key>`. Empty: the API answers
+  # anyone who reaches it, any project's global controller included, for a throwaway
+  # cluster only. Ignored with existingSecret, whose api-key-hash is used instead.
+  apiKeyHash: ""
   # Run its images as their own users (postgres 70, bun and caddy 1000). Turn off on
   # OpenShift, which assigns each namespace its own range of user IDs.
   fixedUsers: true

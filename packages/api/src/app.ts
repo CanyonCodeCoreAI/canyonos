@@ -69,7 +69,7 @@ export const createApp = () =>
                 title: 'CanyonOS API',
                 version: '0.1.0',
                 description:
-                  'Every /projects and /resources route needs an API token from `canyonos token create`: --scope read on a GET, --scope write on any other method. A write token also reads what it can change: project detail, scaling, governance and prompts. With AUTH_DISABLED=true every route is open.',
+                  'With CANYONOS_API_KEY_HASH set, every /projects and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open.',
               },
               tags: [
                 { name: 'Auth' },
@@ -81,7 +81,7 @@ export const createApp = () =>
               ],
               components: {
                 securitySchemes: {
-                  bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+                  bearerAuth: { type: 'http', scheme: 'bearer' },
                 },
               },
             },
@@ -99,7 +99,7 @@ export const createApp = () =>
     .use(authRoutes)
     .use(resourcesRoutes)
     .use(projectsRoutes)
-    // Deliberately unauthenticated: the OTLP emitter is an agent process, which holds no API token.
+    // Deliberately unauthenticated: the OTLP emitter is an agent process, which holds no API key.
     .use(telemetryRoutes)
     .use(canyonosRoutes);
 

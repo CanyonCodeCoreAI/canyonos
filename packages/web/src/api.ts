@@ -14,9 +14,9 @@ const API_URL = webEnv.api.baseUrl;
 export const forgePublicApi = edenTreaty<ForgeApiType>(API_URL);
 
 const fetchWithAuth = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-  const token = authActions.tokenFor(init?.method);
+  const apiKey = authActions.apiKey();
   const headers = new Headers(init?.headers);
-  if (token) headers.set('authorization', `Bearer ${token}`);
+  if (apiKey) headers.set('authorization', `Bearer ${apiKey}`);
   return fetch(input, { ...init, headers });
 }) as typeof fetch;
 
@@ -46,7 +46,7 @@ export class ApiResponseError extends Error {
   }
 }
 
-/** Whether the API answered `error` with one of `statuses`, such as a token's 401 or 403. */
+/** Whether the API answered `error` with one of `statuses`, such as a refused key's 401. */
 export const answeredWith = (error: unknown, ...statuses: number[]): error is ApiResponseError =>
   error instanceof ApiResponseError && statuses.includes(error.status ?? 0);
 

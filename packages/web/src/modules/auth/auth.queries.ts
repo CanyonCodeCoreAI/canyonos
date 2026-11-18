@@ -3,7 +3,7 @@
 
 import { queryOptions } from '@tanstack/react-query';
 
-import type { AuthStatus, TokenInfo } from '@canyonos/api/auth';
+import type { AuthCheck, AuthStatus } from '@canyonos/api/auth';
 
 import { apiCall, forgePublicApi } from '@/api';
 
@@ -13,13 +13,13 @@ export const authStatusQuery = queryOptions({
   staleTime: 0,
 });
 
-/** What the API makes of `token`, sent as the bearer whichever tokens this browser holds. */
-export const tokenInfoQuery = (token: string) =>
+/** Whether the API takes `apiKey`, sent as the bearer whatever key this browser holds. */
+export const apiKeyCheckQuery = (apiKey: string) =>
   queryOptions({
-    queryKey: ['auth', 'token', token],
+    queryKey: ['auth', 'check', apiKey],
     queryFn: () =>
-      apiCall<TokenInfo>(() =>
-        forgePublicApi.auth.token.get({ $headers: { authorization: `Bearer ${token}` } })
+      apiCall<AuthCheck>(() =>
+        forgePublicApi.auth.check.get({ $headers: { authorization: `Bearer ${apiKey}` } })
       ),
     retry: false,
   });

@@ -149,18 +149,22 @@ curl -X POST http://localhost:3000/canyonos/projects \
 The API stores the password encrypted, with a fixed development key unless
 `REDIS_PASSWORD_ENCRYPTION_KEY` is set.
 
-**Sign in.** `bun run dashboard:dev` starts the API with `AUTH_DISABLED=true`, so the
-dashboard opens directly. To check tokens instead, set `AUTH_DISABLED=false` and
-`AUTH_TRUSTED_KEYS_DIR=$HOME/.canyonos/auth/trusted` in the shell, then sign in with
-tokens from `canyonos token create --scope read` and `--scope write`. The API reads the
-keys when it starts, so restart it after a change to that folder.
+**Sign in.** `bun run dashboard:dev` starts the API with no API key, so the dashboard
+opens directly. To check a key instead, set its SHA-256 in the shell before you start
+it, then sign in with the key:
+
+```bash
+export CANYONOS_API_KEY_HASH=$(printf %s '<your api key>' | shasum -a 256 | cut -d' ' -f1)
+```
+
+The API reads it when it starts, so restart it after a change.
 
 Good to know:
 
 - It uses the ports `3000` (API), `5173` (web) and `5432` (Postgres), next to the
   workflow's `8080` and `6379`. Free them, or change them, first.
-- `scripts/dashboard-dev.ts` sets the local defaults: no deploy worker, no token
-  checks, and `127.0.0.1:6379` as the default Redis, the one read at start and for
+- `scripts/dashboard-dev.ts` sets the local defaults: no deploy worker, no API
+  key, and `127.0.0.1:6379` as the default Redis, the one read at start and for
   projects that never registered. A variable in your shell wins over them, and they win over
   `packages/api/.env` and `packages/web/.env`.
 - Unlike `bun run docker:*`, it doesn't need `.docker/.env`: without it, Compose uses

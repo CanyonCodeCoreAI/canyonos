@@ -42,25 +42,18 @@ export const Route = createFileRoute('/_authenticated/projects/$project_id')({
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(projectDetailQueryOptions(params.project_id)),
   pendingComponent: () => <EmptyState loading>Loading deployment…</EmptyState>,
-  errorComponent: ({ error, reset }) => <ProjectRouteError error={error} reset={reset} />,
+  errorComponent: ({ reset }) => <ProjectRouteError reset={reset} />,
   staticData: { breadcrumbSlot: ProjectBreadcrumbs },
   component: Outlet,
 });
 
-function ProjectRouteError({
-  error,
-  reset,
-}: {
-  readonly error: unknown;
-  readonly reset: () => void;
-}) {
+function ProjectRouteError({ reset }: { readonly reset: () => void }) {
   const router = useRouter();
   const query_client = useQueryClient();
   const { project_id } = Route.useParams();
 
   return (
     <QueryError
-      error={error}
       message="Could not load this deployment."
       onRetry={() =>
         void retryProjectDetailLoader(query_client, project_id, () => router.invalidate(), reset)

@@ -80,8 +80,9 @@ type CanyonProjectReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch
 // The endpoint's Ingress is removed when a project stops asking for one.
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
-// Secrets and ConfigMaps: read by name only -- no list or watch.
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
+// Secrets and ConfigMaps: read by name only -- no list or watch. Update: the project's
+// API key Secret follows spec.auth.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
@@ -218,9 +219,20 @@ func (r *CanyonProjectReconciler) reconcileGC(
 		return partState{}, err
 	}
 
+	wantKey := builders.APIKeySecret(project)
+	key := &corev1.Secret{ObjectMeta: objectMeta(wantKey.ObjectMeta)}
+	if err := r.ensure(ctx, project, key, func() {
+		key.Labels = wantKey.Labels
+		key.Type = wantKey.Type
+		key.Data = wantKey.Data
+	}); err != nil {
+		return partState{}, err
+	}
+
 	want := builders.GCDeployment(project, r.controllerImage(project), builders.EndpointURL(project),
 		r.DashboardNamespace)
 	builders.StampRedisLogin(&want.Spec.Template, login)
+	builders.StampAPIKey(&want.Spec.Template, builders.SecretVersion(key))
 	deployment := &appsv1.Deployment{ObjectMeta: objectMeta(want.ObjectMeta)}
 	if err := r.ensure(ctx, project, deployment, func() {
 		deployment.Labels = want.Labels

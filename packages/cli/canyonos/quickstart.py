@@ -22,19 +22,11 @@ import urllib.request
 
 from canyonos import ui
 from canyonos.clean import run_clean
-from canyonos.auth import (
-    DEFAULT_KEY_NAME,
-    holds_a_key,
-    query_token,
-    require_keys,
-    run_keys_create,
-)
+from canyonos.auth import BEARER_PLACEHOLDER, auth_header, machine_api_key
 from canyonos.constants import (
     CANYON_DIR,
-    deployment_config_path,
     project_config_path,
     project_folder,
-    read_config,
 )
 from canyonos.dashboard_registration import (
     RegistrationError,
@@ -42,7 +34,7 @@ from canyonos.dashboard_registration import (
     register_project,
 )
 from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
-from canyonos.deploy import run_deploy, token_command
+from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
 from canyonos.gc import deploy_status, deployed_endpoint
 from canyonos.init import load_state, redis_port_of
@@ -68,10 +60,6 @@ TOTAL_STEPS = len(STAGES)
 
 # The progress bar in each heading: one block per stage, not per minute.
 BAR_DONE, BAR_TODO = "█", "░"
-
-# How long the token in the typed `curl` lasts: it is shown on screen, so it expires
-# soon after the first request rather than never.
-TOKEN_TTL_SECONDS = 3600
 
 # Characters of an unexpected endpoint reply to show before truncating it.
 MAX_REPLY_SHOWN = 200
@@ -346,21 +334,10 @@ def _prepare_project(folder):
 
 
 def _deploy(folder):
-    """Run stage 4: make the key pair on a machine with none, deploy the starter's
-    project from its deployment folder `folder`, the current one, then check it and
-    show the dashboard address. Returns True when it is up and healthy. A machine that
-    holds keys but trusts none gets `require_keys`'s message, rather than a new key
-    beside the ones it has."""
+    """Run stage 4: deploy the starter's project from its deployment folder `folder`,
+    the current one, with this machine's API key when one is set, then check it and
+    show the dashboard address. Returns True when it is up and healthy."""
     _step(4)
-    if holds_a_key(None):
-        require_keys(None)
-    elif not _typed(
-        "canyonos keys create",
-        lambda: run_keys_create(DEFAULT_KEY_NAME, None),
-        "make the key pair that signs the tokens your workflow will accept",
-    ):
-        return False
-    ui.blank()
     name = os.path.basename(folder)
     deployed = _typed(
         f"canyonos deploy {name}",
@@ -479,12 +456,12 @@ def _show_dashboard(caption="Watch it run in the dashboard:"):
     ui.command(f"  {dashboard_url(port)}")
 
 
-def _await_result(endpoint, request_id, token, timeout=REQUEST_TIMEOUT):
-    """Poll the endpoint with `token` until the request is done or errors, showing a
-    spinner in the terminal meanwhile. Returns what it answered with, or
-    `{"status": "timeout"}`."""
+def _await_result(endpoint, request_id, key, timeout=REQUEST_TIMEOUT):
+    """Poll the endpoint with the API key `key`, if any, until the request is done or
+    errors, showing a spinner in the terminal meanwhile. Returns what it answered with,
+    or `{"status": "timeout"}`."""
     url = f"http://{endpoint['public_host']}:{endpoint['api_port']}/status/{request_id}"
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    request = urllib.request.Request(url, headers=auth_header(key))
     deadline = time.time() + timeout
     with ui.status("Waiting for the workflow..."):
         while time.time() < deadline:
@@ -504,9 +481,9 @@ def _await_result(endpoint, request_id, token, timeout=REQUEST_TIMEOUT):
     return {"status": "timeout"}
 
 
-def _curl_for(endpoint, project, token):
-    """The `curl` stage 6 asks for, sending `token`, and the file its query came
-    from.
+def _curl_for(endpoint, project, keyed):
+    """The `curl` stage 6 asks for, with the API key's placeholder header when the
+    deploy is `keyed`, and the file its query came from.
 
     Built from what the deploy published -- the address and method from the
     manifest, the body keys from the served method's own arguments -- so it works
@@ -519,18 +496,29 @@ def _curl_for(endpoint, project, token):
     # The starter serves one route.
     route = endpoint["routes"][0]
     body = json.dumps({name: query or f"your {name}" for name in route["arguments"]})
+    authorization = f"{BEARER_PLACEHOLDER} " if keyed else ""
     command = (
         f"curl -X POST {route['url']} "
-        f"-H 'Authorization: Bearer {token}' "
+        f"{authorization}"
         f"-H 'Content-Type: application/json' "
         f"-d '{body}'"
     )
     return command, query_path
 
 
-def _send_request(command, endpoint, token):
-    """Run the typed `curl`, wait for the workflow, and show the result in the
-    terminal. Returns True when it answered.
+def _with_key(command, key):
+    """The arguments of `command` with the API key `key` in place of its placeholder."""
+    placeholder = shlex.split(BEARER_PLACEHOLDER)[1]
+    return [
+        f"Authorization: Bearer {key}" if key and word == placeholder else word
+        for word in shlex.split(command)
+    ]
+
+
+def _send_request(command, endpoint, key):
+    """Run the typed `curl`, with the API key `key` in place of its placeholder, wait
+    for the workflow, and show the result in the terminal. Returns True when it
+    answered.
 
     The command is run rather than turned back into an HTTP call from here, so
     the request is the user's own. Splitting it is safe because it is this
@@ -538,7 +526,10 @@ def _send_request(command, endpoint, token):
     """
     try:
         sent = subprocess.run(
-            shlex.split(command), capture_output=True, text=True, timeout=SUBMIT_TIMEOUT
+            _with_key(command, key),
+            capture_output=True,
+            text=True,
+            timeout=SUBMIT_TIMEOUT,
         )
     except FileNotFoundError:
         ui.fail("curl is not installed, so the request cannot be sent from here.")
@@ -561,7 +552,7 @@ def _send_request(command, endpoint, token):
         return False
 
     ui.ok(f"Accepted as request {request_id}.")
-    data = _await_result(endpoint, request_id, token)
+    data = _await_result(endpoint, request_id, key)
 
     if data.get("status") == "done":
         ui.blank()
@@ -621,28 +612,22 @@ def _add_sample_data(workflow):
 
 def _send_first_request(project):
     """Show the `curl` for the deployed endpoint, with the query of the starter in
-    `project` and a query token signed for this deployment, wait for the user to type
-    it, send it and wait for the answer. True when the workflow answered."""
+    `project` and the API key's placeholder when this machine has a key, wait for the
+    user to type it, send it with the key and wait for the answer. True when the
+    workflow answered."""
     try:
         endpoint = deployed_endpoint(load_state()["port"])
     except (KeyError, OSError, RuntimeError, ValueError):
         ui.warn("Could not read the endpoint -- `canyonos status` prints it.")
         return False
 
-    config_path = deployment_config_path()
-    try:
-        token = query_token(
-            read_config(config_path)["deployment_id"], ttl=TOKEN_TTL_SECONDS
+    key = machine_api_key()
+    command, query_path = _curl_for(endpoint, project, key is not None)
+    if key:
+        ui.hint(
+            "  type <your api key> as shown: quickstart sends this machine's key in "
+            "its place"
         )
-    except RuntimeError as error:
-        ui.warn(f"Could not sign a token for the request: {error}")
-        return False
-    command, query_path = _curl_for(endpoint, project, token)
-    expires = time.strftime("%H:%M UTC", time.gmtime(time.time() + TOKEN_TTL_SECONDS))
-    ui.hint(
-        f"  the token in it expires in an hour, at {expires}; make your own with: "
-        f"{token_command(config_path)}"
-    )
     if query_path:
         ui.hint(f"  query from {query_path}")
     ui.blank()
@@ -650,7 +635,7 @@ def _send_first_request(project):
     return bool(
         _typed(
             command,
-            lambda: _send_request(command, endpoint, token),
+            lambda: _send_request(command, endpoint, key),
             "send one request through the workflow and wait for the answer",
         )
     )

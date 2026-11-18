@@ -13,10 +13,11 @@ case runs the stage a first-time user reaches with no key: copy, deploy, ask, re
 the greeting back, ask again through `canyonos test`, and never launch a coding
 agent.
 
-The same deploy carries the endpoint's token checks that need a real runtime: a
-query without a token is refused, rotating the key refuses the tokens it signed,
-`--dangerous-skip-auth` lasts only for its own deploy, and a paused Redis is a quick
-503 rather than a hang. Each case has its own HOME, so its keys touch nobody's.
+The same deploy carries the endpoint's API key checks that need a real runtime: a
+query without the key or with another is refused, a new key refuses the old one,
+`--no-api-key` opens the deploy until a key is set again, a later deploy reuses the
+stored key, and a paused Redis is a quick 503 rather than a hang. Each case has its
+own HOME, so its `~/.canyonos/api_key` touches nobody's.
 
 Unlike the rest of this suite it owns the shared Docker names, ports and daemon,
 so it tears the deploy down whether or not it passed.
@@ -43,10 +44,11 @@ import yaml
 
 from canyonos.quickstart import _fetch
 
-from .harness import CliCase, token_in
+from .harness import CliCase
 
 # The workflow the quickstart offers first, and the only one that reaches a trace
-# without an API key -- which is what makes it the one this suite can deploy.
+# without a model provider's API key -- which is what makes it the one this suite
+# can deploy.
 STARTER = "helloworld"
 
 # Building both agent images and waiting for three replicas, in seconds. Generous
@@ -57,6 +59,12 @@ REQUEST_TIMEOUT = 120
 POLL_INTERVAL = 2
 # How long a request may take to be refused while Redis does not answer.
 NOT_READY_WITHIN = 10
+API_KEY = "quickstart-e2e-key-7f3a"
+NEXT_API_KEY = "quickstart-e2e-key-9c1d"
+OPEN_WARNING = (
+    "No API key is set: the endpoint and the dashboard answer anyone who reaches "
+    "them. Set one with --api-key <key>."
+)
 
 # The endpoint address out of `canyonos deploy`'s own summary. The port is picked
 # at deploy time, so it is read back rather than assumed.
@@ -168,17 +176,17 @@ def _runtime_environment() -> dict[str, str]:
     return {"CANYONOS_CORE_IMAGE": CORE_IMAGE, **DOCKER}
 
 
-def _bearer(token: str | None) -> dict[str, str]:
-    return {} if token is None else {"Authorization": f"Bearer {token}"}
+def _bearer(api_key: str | None) -> dict[str, str]:
+    return {} if api_key is None else {"Authorization": f"Bearer {api_key}"}
 
 
-def _post(endpoint: str, query: str, token: str | None) -> tuple[int, dict]:
-    """POST `query` to the endpoint, with `token` when there is one, and return the
+def _post(endpoint: str, query: str, api_key: str | None) -> tuple[int, dict]:
+    """POST `query` to the endpoint, with `api_key` when there is one, and return the
     status and the JSON body it answered with, refusals included."""
     submitted = urllib.request.Request(
         endpoint,
         data=json.dumps({"query": query}).encode(),
-        headers={"Content-Type": "application/json", **_bearer(token)},
+        headers={"Content-Type": "application/json", **_bearer(api_key)},
     )
     try:
         with urllib.request.urlopen(submitted, timeout=30) as reply:
@@ -187,15 +195,15 @@ def _post(endpoint: str, query: str, token: str | None) -> tuple[int, dict]:
         return refused.code, json.loads(refused.read())
 
 
-def _answer(endpoint: str, query: str, token: str | None) -> dict:
-    """Send `query` through the deployed workflow with `token` and return what it
+def _answer(endpoint: str, query: str, api_key: str | None) -> dict:
+    """Send `query` through the deployed workflow with `api_key` and return what it
     answered."""
-    code, body = _post(endpoint, query, token)
+    code, body = _post(endpoint, query, api_key)
     assert code == 202, body
     request_id = body["request_id"]
 
     status = urllib.parse.urlsplit(endpoint)._replace(path=f"/status/{request_id}")
-    status = urllib.request.Request(status.geturl(), headers=_bearer(token))
+    status = urllib.request.Request(status.geturl(), headers=_bearer(api_key))
     deadline = time.time() + REQUEST_TIMEOUT
     while time.time() < deadline:
         try:
@@ -243,16 +251,13 @@ def _deployment_id(folder: Path) -> str:
     return yaml.safe_load((folder / "deployment.yaml").read_text())["deployment_id"]
 
 
-def _query_token(case: CliCase, folder: Path, *args: str) -> str:
-    """A query token for the deployment in `folder`, by its `deployment_id`, from
-    `canyonos token create` with `args` added."""
-    made = case.run_cli(
-        ["token", "create", "--scope", "query", "--project", _deployment_id(folder)]
-        + list(args),
-        cwd=folder,
-    )
-    assert made.returncode == 0, made.stdout + made.stderr
-    return token_in(made.stdout)
+def _store_api_key(case: CliCase, api_key: str) -> Path:
+    """Write `api_key` where a deploy with `--api-key` keeps it, as one would have."""
+    stored = case.home / ".canyonos" / "api_key"
+    stored.parent.mkdir(parents=True, exist_ok=True)
+    stored.write_text(f"{api_key}\n")
+    stored.chmod(0o600)
+    return stored
 
 
 def _assert_refused(answer: tuple[int, dict], status: int, code: str) -> None:
@@ -262,10 +267,11 @@ def _assert_refused(answer: tuple[int, dict], status: int, code: str) -> None:
 
 @needs_a_runtime
 def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
-    """What a first run reaches: the copy out of the package deploys, the endpoint
-    it publishes answers a token for the project with the agent's greeting, and
-    nothing without one, `canyonos test` answers with the greeting too, and no
-    coding agent is launched."""
+    """What a first run reaches: the copy out of the package deploys with an API key,
+    the endpoint it publishes answers that key with the agent's greeting, and
+    nothing without it or with another, `canyonos test` sends the stored key and
+    answers with the greeting too, the key is never shown, and no coding agent is
+    launched."""
     case, folder = deployed_workflow
     bin_dir = case.root / "bin"
     bin_dir.mkdir()
@@ -279,13 +285,14 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
         "PATH": f"{bin_dir}{os.pathsep}{case.env['PATH']}",
     }
 
-    _run(case, ["keys", "create"])
-    endpoint, _ = _deploy(case, folder, env=runtime)
+    endpoint, output = _deploy(case, folder, "--api-key", API_KEY, env=runtime)
+    assert API_KEY not in output, output
 
-    answered = _answer(endpoint, "CanyonOS", _query_token(case, folder))
+    answered = _answer(endpoint, "CanyonOS", API_KEY)
     assert answered.get("status") == "done", answered
     assert "greeting" in answered.get("result", {}), answered
-    _assert_refused(_post(endpoint, "CanyonOS", None), 401, "auth.missing_token")
+    _assert_refused(_post(endpoint, "CanyonOS", None), 401, "auth.missing_key")
+    _assert_refused(_post(endpoint, "CanyonOS", NEXT_API_KEY), 401, "auth.invalid_key")
 
     test = case.run_cli(
         ["test", "--json"], timeout=REQUEST_TIMEOUT, env=runtime, cwd=folder
@@ -293,41 +300,39 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
     assert not launched.exists()
     assert test.returncode == 0, test.stdout + test.stderr
     assert "greeting" in json.loads(test.stdout)["results"][0]["result"]
+    assert API_KEY not in test.stdout + test.stderr
 
 
 @needs_a_runtime
-def test_rotating_the_key_refuses_every_token_it_signed(deployed_workflow):
+def test_a_new_api_key_refuses_the_old_one(deployed_workflow):
     case, folder = deployed_workflow
-    _run(case, ["keys", "create"])
-    endpoint, _ = _deploy(case, folder)
-    old = _query_token(case, folder)
-    assert _post(endpoint, "CanyonOS", old)[0] == 202
+    endpoint, _ = _deploy(case, folder, "--api-key", API_KEY)
+    assert _post(endpoint, "CanyonOS", API_KEY)[0] == 202
 
-    _run(case, ["keys", "create", "--name", "next"])
-    (case.home / ".canyonos" / "auth" / "trusted" / "default.pub").unlink()
-    endpoint, _ = _deploy(case, folder)
+    endpoint, output = _deploy(case, folder, "--api-key", NEXT_API_KEY)
 
-    _assert_refused(_post(endpoint, "CanyonOS", old), 401, "auth.invalid_token")
-    answered = _answer(
-        endpoint, "CanyonOS", _query_token(case, folder, "--key", "next")
-    )
+    assert "Replaced this machine's API key." in output, output
+    _assert_refused(_post(endpoint, "CanyonOS", API_KEY), 401, "auth.invalid_key")
+    answered = _answer(endpoint, "CanyonOS", NEXT_API_KEY)
     assert answered.get("status") == "done", answered
 
 
 @needs_a_runtime
-def test_dangerous_skip_auth_lasts_only_for_its_own_deploy(deployed_workflow):
+def test_no_api_key_opens_the_deploy_until_a_key_is_set_again(deployed_workflow):
     case, folder = deployed_workflow
+    _store_api_key(case, API_KEY)
 
-    endpoint, output = _deploy(case, folder, "--dangerous-skip-auth")
-    assert "the endpoint and the dashboard will answer anyone" in " ".join(
-        output.split()
-    ), output
+    endpoint, output = _deploy(case, folder, "--no-api-key")
+    assert "Removed this machine's API key." in output, output
+    assert OPEN_WARNING in " ".join(output.split()), output
     answered = _answer(endpoint, "CanyonOS", None)
     assert answered.get("status") == "done", answered
 
-    _run(case, ["keys", "create"])
-    endpoint, _ = _deploy(case, folder)
-    _assert_refused(_post(endpoint, "CanyonOS", None), 401, "auth.missing_token")
+    _deploy(case, folder, "--api-key", API_KEY)
+    endpoint, output = _deploy(case, folder)
+    assert OPEN_WARNING not in " ".join(output.split()), output
+    _assert_refused(_post(endpoint, "CanyonOS", None), 401, "auth.missing_key")
+    assert _post(endpoint, "CanyonOS", API_KEY)[0] == 202
 
 
 def _docker(*args: str) -> str:
@@ -345,9 +350,7 @@ def _docker(*args: str) -> str:
 @needs_a_runtime
 def test_a_paused_redis_is_a_quick_503_not_a_hang(deployed_workflow):
     case, folder = deployed_workflow
-    _run(case, ["keys", "create"])
-    endpoint, _ = _deploy(case, folder)
-    token = _query_token(case, folder)
+    endpoint, _ = _deploy(case, folder, "--api-key", API_KEY)
     redis = _docker(
         "ps",
         "--filter",
@@ -360,14 +363,14 @@ def test_a_paused_redis_is_a_quick_503_not_a_hang(deployed_workflow):
     _docker("pause", redis)
     try:
         started = time.monotonic()
-        refused = _post(endpoint, "CanyonOS", token)
+        refused = _post(endpoint, "CanyonOS", API_KEY)
         took = time.monotonic() - started
     finally:
         _docker("unpause", redis)
 
     _assert_refused(refused, 503, "auth.not_ready")
     assert took < NOT_READY_WITHIN, took
-    assert _post(endpoint, "CanyonOS", token)[0] == 202
+    assert _post(endpoint, "CanyonOS", API_KEY)[0] == 202
 
 
 needs_docker = pytest.mark.skipif(
@@ -375,7 +378,6 @@ needs_docker = pytest.mark.skipif(
 )
 
 # What stage 4 asks the user to type, by the phrase each command's prompt shows.
-KEY_STEP = "make the key pair that signs the tokens"
 DEPLOY_STEP = "deploy the workflow's project, building each agent's image"
 PROMPT = "canyonos-quickstart \\$"
 STARTER_MENU = "Select a workflow to get started"
@@ -410,32 +412,21 @@ def _quickstart_until_the_deploy(case: CliCase) -> tuple[str, int | None]:
 
 
 @needs_docker
-def test_quickstart_makes_the_default_key_on_a_machine_with_none(cli_case: CliCase):
+def test_quickstart_makes_no_key_on_a_machine_with_none(cli_case: CliCase):
     shown, _status = _quickstart_until_the_deploy(cli_case)
 
-    auth = cli_case.home / ".canyonos" / "auth"
-    assert "canyonos keys create" in shown
-    assert KEY_STEP in shown
-    assert shown.index(KEY_STEP) < shown.index(DEPLOY_STEP), shown
-    assert (auth / "default.key").is_file()
-    assert (auth / "trusted" / "default.pub").is_file()
+    assert DEPLOY_STEP in shown, shown
+    assert "canyonos keys" not in shown, shown
+    assert not (cli_case.home / ".canyonos" / "api_key").exists()
+    assert not (cli_case.home / ".canyonos" / "auth").exists()
 
 
 @needs_docker
-def test_quickstart_names_a_key_no_deploy_trusts_instead_of_making_one(
-    cli_case: CliCase,
-):
-    made = cli_case.run_cli(["keys", "create"])
-    assert made.returncode == 0, made.stdout + made.stderr
-    auth = cli_case.home / ".canyonos" / "auth"
-    (auth / "trusted" / "default.pub").unlink()
+def test_quickstart_leaves_a_stored_key_as_it_is(cli_case: CliCase):
+    stored = _store_api_key(cli_case, API_KEY)
 
-    shown, status = _quickstart_until_the_deploy(cli_case)
+    shown, _status = _quickstart_until_the_deploy(cli_case)
 
-    assert status == 1, shown
-    assert "No key is trusted in" in shown
-    # The terminal folds the long path wherever the line ends.
-    assert str(auth / "trusted") in shown.replace(" ", "")
-    assert KEY_STEP not in shown
-    assert DEPLOY_STEP not in shown
-    assert sorted(path.name for path in auth.rglob("*")) == ["default.key", "trusted"]
+    assert DEPLOY_STEP in shown, shown
+    assert API_KEY not in shown, shown
+    assert stored.read_text() == f"{API_KEY}\n"

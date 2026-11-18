@@ -14,7 +14,7 @@ import { config } from '@core/env';
 
 import { publish_spend_once } from '../modules/governance/governance.publisher';
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import {
   read_desired_replicas,
   read_governance_config,
@@ -34,7 +34,7 @@ import type { SeededAgent } from './redis-test.utils';
 
 setupE2ETests();
 
-const write = bearer(await authenticate('write'));
+const key_headers = bearer(TEST_API_KEY);
 
 const error_code = (res: { error: { value?: unknown } | null }) =>
   (res.error?.value as { error?: string } | undefined)?.error;
@@ -66,7 +66,7 @@ async function governed_project(): Promise<{
   headers: Record<string, string>;
   project_id: string;
 }> {
-  const token = await authenticate('read');
+  const token = TEST_API_KEY;
   const { project_id } = await create_test_project({ name: 'Governance Project' });
   await seed_running_project(project_id, { prompts: {} });
   await seed_scaling_agents([...AGENTS.map((name) => sampled(name, 2)), { name: 'Idle' }]);
@@ -165,7 +165,7 @@ describe('project governance', () => {
     const governance = api.projects[project_id]!.governance;
 
     const before = Date.now();
-    const saved = await governance.agents.MergeAgent!.put(MERGE_RULES, { headers: write });
+    const saved = await governance.agents.MergeAgent!.put(MERGE_RULES, { headers: key_headers });
 
     expect(saved.error).toBeNull();
     const stored = (await read_governance_config()) as {
@@ -182,7 +182,7 @@ describe('project governance', () => {
       requires: [],
       spend: { rules: [{ above_usd: 50, action: { kind: 'deny' } }] },
     };
-    const again = await governance.agents.MergeAgent!.put(raised, { headers: write });
+    const again = await governance.agents.MergeAgent!.put(raised, { headers: key_headers });
 
     expect(again.error).toBeNull();
     const restored = (await read_governance_config()) as typeof stored;
@@ -197,17 +197,17 @@ describe('project governance', () => {
     await seed_llms(LLMS);
     const merge = api.projects[project_id]!.governance.agents.MergeAgent!;
 
-    const ghost = await merge.put({ requires: ['Ghost'], spend: null }, { headers: write });
+    const ghost = await merge.put({ requires: ['Ghost'], spend: null }, { headers: key_headers });
     const forbidden = await merge.put(
       {
         requires: [],
         spend: { rules: [{ above_usd: 1, action: { kind: 'switch_model', model: 'gpt-5.5' } }] },
       },
-      { headers: write }
+      { headers: key_headers }
     );
     const unknown_agent = await api.projects[project_id]!.governance.agents.Ghost!.put(
       { requires: [], spend: null },
-      { headers: write }
+      { headers: key_headers }
     );
 
     expect(ghost.error?.status as number).toBe(422);
@@ -234,7 +234,7 @@ describe('project governance', () => {
           rules: [{ above_usd: 1, action: { kind: 'switch_model', model: 'claude-haiku' } }],
         },
       },
-      { headers: write }
+      { headers: key_headers }
     );
 
     expect([...by_name(listed.data!.agents, 'MergeAgent').models!].sort()).toEqual([
@@ -266,7 +266,7 @@ describe('project governance', () => {
         requires: [],
         spend: { rules: [{ above_usd: 1, action: { kind: 'switch_model', model: 'anything' } }] },
       },
-      { headers: write }
+      { headers: key_headers }
     );
 
     expect(saved.error).toBeNull();
@@ -289,7 +289,7 @@ describe('project governance', () => {
           ],
         },
       },
-      { headers: write }
+      { headers: key_headers }
     );
 
     expect(saved.error).toBeNull();
@@ -328,7 +328,7 @@ describe('project governance', () => {
     const { project_id } = await governed_project();
     const stopped = api.projects[project_id]!.governance.agents.TestRunnerAgent!.stopped;
 
-    const stop = await stopped.put({ stopped: true }, { headers: write });
+    const stop = await stopped.put({ stopped: true }, { headers: key_headers });
 
     expect(stop.error).toBeNull();
     expect(await read_desired_replicas('TestRunnerAgent')).toBe('0');
@@ -337,7 +337,7 @@ describe('project governance', () => {
       desired_replicas: 0,
     });
 
-    const start = await stopped.put({ stopped: false }, { headers: write });
+    const start = await stopped.put({ stopped: false }, { headers: key_headers });
 
     expect(start.error).toBeNull();
     expect(await read_desired_replicas('TestRunnerAgent')).toBe('2');
@@ -349,7 +349,7 @@ describe('project governance', () => {
 
     const res = await api.projects[project_id]!.governance.agents.Ghost!.stopped.put(
       { stopped: true },
-      { headers: write }
+      { headers: key_headers }
     );
 
     expect(res.error?.status as number).toBe(422);
@@ -379,15 +379,15 @@ describe('project governance', () => {
   });
 
   test('a project the controller is not running is 404 on every route', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'Idle Project' });
     const governance = api.projects[project_id]!.governance;
 
     const responses = await Promise.all([
       governance.get({ $headers: headers }),
-      governance.agents.MergeAgent!.put({ requires: [], spend: null }, { headers: write }),
-      governance.agents.MergeAgent!.stopped.put({ stopped: true }, { headers: write }),
+      governance.agents.MergeAgent!.put({ requires: [], spend: null }, { headers: key_headers }),
+      governance.agents.MergeAgent!.stopped.put({ stopped: true }, { headers: key_headers }),
     ]);
 
     for (const res of responses) {
@@ -396,7 +396,7 @@ describe('project governance', () => {
     }
   });
 
-  test('a caller with no token is rejected on every route', async () => {
+  test('a caller with no API key is rejected on every route', async () => {
     const { project_id } = await governed_project();
     const governance = api.projects[project_id]!.governance;
 

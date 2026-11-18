@@ -39,12 +39,11 @@ ssh -i ~/.ssh/<key>.pem ubuntu@<address>
 ```bash
 cloud-init status --wait              # wait for the install to finish
 cd ~/helloworld-ec2-assign
-canyonos keys create                  # the key pair that signs your tokens
-canyonos deploy helloworld            # choose 1. Deploy
-TOKEN=$(canyonos token create --scope query --project <deployment_id>)
-curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Authorization: Bearer $TOKEN" \
+canyonos deploy helloworld --api-key <your api key>   # choose 1. Deploy
+curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
+  -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" -d '{"query": "World"}'
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/status/<request_id>
+curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
 canyonos stop                         # terminate the agent machines
 ```
 
@@ -167,10 +166,11 @@ ec2-pool:
 ### 3. Deploy
 
 ```bash
-canyonos deploy helloworld    # choose 1. Deploy
+canyonos deploy helloworld --api-key <your api key>    # choose 1. Deploy
 ```
 
-The deploy shows each agent's CPU, memory, GPU and replicas, with its machine type or
+`--api-key` sets the key every request must carry, saved on the deploying machine; see
+[API key](AUTHORIZATION.md). The deploy shows each agent's CPU, memory, GPU and replicas, with its machine type or
 the pool. It then launches the agent machines, copies the images to them, starts Redis
 on each and places the replicas. **Deploy is live** prints the endpoint and dashboard
 addresses on the machine's public IP; `canyonos status` shows them again.
@@ -183,21 +183,21 @@ included. Ctrl+C behaves as in a [local deploy](LOCAL.md#deploy).
 ### 4. Send a request
 
 On the deploying machine, with the port the deploy printed (`8080` unless it was taken)
-and a token from the `canyonos token create` command the deploy printed:
+and the API key you deployed with:
 
 ```bash
-TOKEN=$(canyonos token create --scope query --project <deployment_id>)
-curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Authorization: Bearer $TOKEN" \
+curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
+  -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" -d '{"query": "World"}'
-curl -H "Authorization: Bearer $TOKEN" \
+curl -H "Authorization: Bearer <your api key>" \
   http://127.0.0.1:8080/status/<request_id>    # the request_id the first call returned
 ```
 
 When `status` is `done`, `result` is `{"greeting": "Hello, World! I'm the HelloAgent!"}`.
 From your own computer, use the deploying machine's public address instead of
 `127.0.0.1`; a security group made by `canyonos provision` already allows your IP on
-`8080`-`8082`. The deploying machine holds the keys that sign tokens; to sign on your
-own computer instead, see [Where keys live](AUTHORIZATION.md#where-keys-live).
+`8080`-`8082`. The same key works from anywhere; agent machines hold only its hash. See
+[Who holds what](AUTHORIZATION.md#who-holds-what).
 
 ### 5. Stop
 

@@ -10,8 +10,8 @@ holds `deployment.yaml`; run the others from there. A typical session:
 
 ```bash
 canyonos doctor                       # can this machine deploy?
-canyonos keys create                  # once per machine: the key that signs your tokens
-canyonos deploy my-project --folder my-deployment   # build the images, start the workflow, open the dashboard
+# build the images, start the workflow, save the machine's API key, open the dashboard
+canyonos deploy my-project --folder my-deployment --api-key <your api key>
 cd my-deployment
 canyonos test "hello"                 # send one query end to end
 canyonos logs my-project.MyAgent      # print one agent's logs
@@ -54,7 +54,7 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
 | `config`    | View or edit `deployment.yaml`; `sync` applies the changes           |
 | `sync`      | Apply changes you made by hand in `config/` to the running deploy    |
 | `serve`     | Start the local dashboard on its own                                 |
-| `dashboard` | Open the running dashboard, signed in with tokens signed here        |
+| `dashboard` | Open the running dashboard, signed in with this machine's API key    |
 
 - `deploy <folder>... --folder PATH` deploys the project folders it names as one
   deployment, named after the deployment folder `PATH`, made when missing. It writes
@@ -63,12 +63,11 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
   from inside a project folder.
 - `deploy --serve false` doesn't open the dashboard. On Docker, `-v` streams the full
   build and deploy logs instead of a progress summary.
-- `deploy` and `serve` refuse to start without a key in `~/.canyonos/auth/trusted/`.
-  `--dangerous-skip-auth` skips that and turns token checks off, for a throwaway run;
-  on Kubernetes the cluster dashboard keeps its chart's setting. See
-  [Tokens and keys](AUTHORIZATION.md#skip-it-for-a-throwaway-run).
-- `test` signs a new query token with your private key for each request it sends,
-  valid for a minute; `--key NAME` picks the key when you have more than one.
+- `deploy --api-key <key>` and `serve --api-key <key>` save the machine's API key to
+  `~/.canyonos/api_key`, replacing any saved one; later runs reuse it. `--no-api-key`
+  deletes it and runs open. Without a key, they warn that anyone who reaches the
+  endpoint and the dashboard can use them. See [API key](AUTHORIZATION.md).
+- `test` sends the saved API key with each request.
 - `test "your query"` sends that query to every route. Without one, each route gets its
   project's `config/test_query.txt`, else `hello`.
 - `test` queries every route of the deployment running from this folder. It never
@@ -88,13 +87,9 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
   the config; code changes need `deploy`. `sync` and `config` change a deploy on Docker
   only; on Kubernetes, run `deploy` again. See
   [Configure your workflow](CONFIGURE.md#apply-a-change) for which command applies what.
-- `dashboard` signs a read and a write token valid for 8 hours with your private key
-  and opens the dashboard with them in the link's `#` fragment, which the browser never
-  sends to a server; the sign-in screen stores them and drops the fragment. Without a
-  terminal or a browser it prints the link instead: it signs in whoever opens it, so
-  keep it like a password. `--key NAME` picks the key when you have more than one.
-  Without a private key it opens the sign-in screen and prints how to make tokens; a
-  dashboard started with `--dangerous-skip-auth` just opens.
+- `dashboard` opens the dashboard signed in, with the API key in the link's `#key=`
+  fragment, which the browser never sends to a server; the sign-in screen saves it and
+  drops the fragment. With no key set, it opens the dashboard as it is.
 
 ## Pick a deployment
 
@@ -109,51 +104,15 @@ canyonos select-context --clear        # forget it
 | `list`           | One line per deployment: name, `deployment_id`, whether it runs      |
 | `select-context` | Pick the deployment commands act on outside a deployment folder      |
 
-- `list` marks a deployment deployed with `--dangerous-skip-auth` `(unauthenticated)`,
-  and the selected one `(selected)`. It lists the deployments recorded in
+- `list` marks a deployment deployed without an API key `(unauthenticated)`, and the
+  selected one `(selected)`. It lists the deployments recorded in
   `~/.canyonos/deployments/`, the Docker ones on this machine.
 - `select-context` takes a name, folder name, ID or the start of an ID, as `stop` does.
-- Outside a deployment folder, `stop`, `clean`, `status`, `logs`, `test`, `sync` and
-  `token create --scope query` act on the selected deployment when you name none. A
-  name, or running from a deployment folder, always wins.
+- Outside a deployment folder, `stop`, `clean`, `status`, `logs`, `test` and `sync` act
+  on the selected deployment when you name none. A name, or running from a deployment
+  folder, always wins.
 - A selected deployment that is no longer deployed is an error until you pick another
   or `--clear` it.
-
-## Keys and tokens
-
-```bash
-canyonos keys create                                         # the pair that signs
-canyonos token create --scope query                          # query this folder's deployment
-canyonos token create --scope query --project <deployment_id>   # query any deployment
-canyonos token create --scope read                           # read the dashboard API
-```
-
-| Command        | What it does                                                             |
-| -------------- | ------------------------------------------------------------------------ |
-| `keys create`  | Make a key pair: a private key that signs, and its public half, trusted  |
-| `keys list`    | Show the public keys deploys and the dashboard trust, with each key's ID |
-| `keys trust`   | Trust a public key made elsewhere, such as a teammate's                  |
-| `token create` | Sign a token and show it once, with what it grants and how to send it    |
-
-- `keys create --name NAME` names the pair (default `default`), from the characters
-  `[A-Za-z0-9._-]`, not starting with a dot.
-- `token create --scope query|read|write`: `query` for a workflow's endpoint, `read`
-  and `write` for the dashboard API.
-- `token create --project ID` names a deployment a query token may query, by the
-  `deployment_id` in its `deployment.yaml`, and repeats for more; `--all-projects`
-  covers every deployment. With neither, a query token is for the deployment folder it
-  runs in, else the selected deployment.
-- `token create --ttl SECONDS` makes the token expire (default: never), and `--key NAME`
-  picks the private key to sign with when there is more than one.
-- `token create` writes the token alone to stdout and the rest to stderr, so
-  `$(canyonos token create ...)` is the token.
-- `--auth-dir PATH` uses another folder of keys than `~/.canyonos/auth`, on every
-  `keys`, `token`, `deploy`, `serve`, `test`, `chat` and `dashboard` command. `deploy` refuses a
-  folder inside a project it deploys, and `serve` one inside the project it runs in,
-  since a project's files go into its images.
-
-What each token reaches, where the keys live and how to rotate them is in
-[Tokens and keys](AUTHORIZATION.md).
 
 ## Stop and clean up
 
@@ -183,8 +142,7 @@ canyonos stop --all            # every deployment on this machine
 - `stop --all` stops every deployment on this machine, even one whose folder is deleted.
 - `clean --all` removes everything CanyonOS put on this machine, for before you
   uninstall: every deployment, the dashboard and its data, CanyonOS's images and
-  `~/.canyonos`, the keys that sign your tokens included. It asks first; `-y` skips
-  the question.
+  `~/.canyonos`, the API key included. It asks first; `-y` skips the question.
 - `--all` and deployment names act on this machine's Docker only, so they are refused
   with `--target kubernetes`. On Kubernetes, `stop` and `clean` act on this folder's
   workflow in the cluster; see [Kubernetes deployment](KUBERNETES.md).

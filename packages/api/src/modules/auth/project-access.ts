@@ -9,7 +9,7 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 /**
  * Shared `resolve` for every project-scoped route (projects, requests, metrics).
- * An API token covers the whole install, so every verified caller reaches every project and only
+ * The API key covers the whole install, so every verified caller reaches every project and only
  * a project that does not exist is a 404. It authenticates nothing itself, so mount it after
  * `authPlugin`.
  */

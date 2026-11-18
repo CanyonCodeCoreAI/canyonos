@@ -11,7 +11,7 @@ import { seedDevTelemetry } from '@api/db/seed-telemetry';
 import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 
 setupE2ETests();
 
@@ -38,7 +38,7 @@ async function rollup_totals(project_id: string) {
 
 describe('otel dev seed', () => {
   test('the seeded project reports its spans through the KPI endpoint', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
 
     const listed = await api.projects.get({ $headers: bearer(token) });
@@ -56,7 +56,7 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun duplicates neither the project nor the telemetry counts', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
 
     const first_projects = await api.projects.get({ $headers: bearer(token) });
@@ -77,7 +77,7 @@ describe('otel dev seed', () => {
   });
 
   test('the queries listing shows several seeded queries, one of them failed', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
 
     const listing = await api.projects[project_id]!.requests.get({
@@ -91,7 +91,7 @@ describe('otel dev seed', () => {
   });
 
   test('a seeded query carries its own input and output', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
     const listing = await api.projects[project_id]!.requests.get({
       $headers: bearer(token),
@@ -111,7 +111,7 @@ describe('otel dev seed', () => {
   });
 
   test('the window reports an unpriced block rather than a free one', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
 
     const window = (
@@ -123,7 +123,7 @@ describe('otel dev seed', () => {
   });
 
   test('the agent drawer reports an agent that answered under more than one id', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
 
     const blocks = await api.projects[project_id]!.metrics.blocks.get({
@@ -145,22 +145,21 @@ describe('otel dev seed', () => {
     expect(replica_counts.some((count) => count > 1)).toBe(true);
   });
 
-  test('any read token reads the seeded project and its spans', async () => {
+  test('the API key reads the seeded project and its spans', async () => {
     const project_id = await seedDevTelemetry();
-    const other = { token: await authenticate('read') };
 
-    const projects = await api.projects.get({ $headers: bearer(other.token) });
+    const projects = await api.projects.get({ $headers: bearer(TEST_API_KEY) });
     expect(projects.data!.map((project) => project.id)).toContain(project_id);
 
     const kpis = await api.projects[project_id]!.metrics.kpis.get({
       $query: range(),
-      $headers: bearer(other.token),
+      $headers: bearer(TEST_API_KEY),
     });
     expect(kpis.error).toBeNull();
     expect(kpis.data!.block_count).toBe(7);
 
     const overview = await api.resources.overview.get({
-      $headers: bearer(other.token),
+      $headers: bearer(TEST_API_KEY),
       $query: {
         from: new Date(Date.now() - 7 * 86_400_000).toISOString(),
         to: new Date().toISOString(),
@@ -170,7 +169,7 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun refreshes the seed spans and leaves every other span untouched', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
 
     const stale = 1_600_000_000_000_000_000n;
@@ -221,7 +220,7 @@ describe('otel dev seed', () => {
   });
 
   test('the seed owns a deterministic version 8 project id', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
     expect(await seedDevTelemetry()).toBe(project_id);
 
@@ -233,7 +232,7 @@ describe('otel dev seed', () => {
   });
 
   test('a project the user named after the demo stays separate from the seeded one', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id: my_project_id } = await create_test_project({
       name: 'Canyon Code Demo Flow',
     });
@@ -255,7 +254,7 @@ describe('otel dev seed', () => {
   });
 
   test('the fleet overview counts the seeded project', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const project_id = await seedDevTelemetry();
 
     const overview = await api.resources.overview.get({
@@ -275,7 +274,7 @@ describe('otel dev seed', () => {
 
   // Two day-long demo seeds can outlast the default five-second timeout on a loaded machine.
   test('the monitoring demo seed fills the rollups the dashboard reads, and a rerun replaces them', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const { project_id } = await create_test_project({ name: 'Monitoring Demo' });
     await seedMonitoringDemo(project_id);
 

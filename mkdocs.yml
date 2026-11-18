@@ -42,7 +42,7 @@ nav:
       - EC2: guides/EC2.md
       - Kubernetes: guides/KUBERNETES.md
       - Dashboard: guides/DASHBOARD.md
-      - Tokens and keys: guides/AUTHORIZATION.md
+      - API key: guides/AUTHORIZATION.md
   - Reference:
       - CLI reference: guides/CLI.md
       - Workflow config: guides/WORKFLOW_CONFIG.md

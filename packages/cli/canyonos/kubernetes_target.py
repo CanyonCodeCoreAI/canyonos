@@ -35,22 +35,15 @@ from rich.table import Table
 from rich.text import Text
 
 from canyonos import deployment, env, ui
-from canyonos.auth import refuse_keys_in_project, require_keys
+from canyonos.auth import curl_auth, hash_api_key, resolve_api_key
 from canyonos.constants import (
     deployment_config_path,
     existing_config_path,
-    project_config_path,
     project_env_path,
     project_folder,
-    project_root,
     read_config,
 )
-from canyonos.deploy import (
-    BEARER_HEADER,
-    require_deployment_id,
-    save_deployment_config,
-    token_command,
-)
+from canyonos.deploy import require_deployment_id, save_deployment_config
 from canyonos.forwards import (
     DASHBOARD,
     close_forward,
@@ -90,16 +83,10 @@ OPERATOR_HINT = (
 )
 # Reasons the operator gives for a CanyonAgent that will never start as configured.
 FATAL_REASONS = ("NameMismatch", "Unsupported", "ProjectNotFound")
-# The cluster's dashboard is every project's: --dangerous-skip-auth leaves it to its chart.
-KUBERNETES_SKIP_AUTH_WARNING = (
-    "--dangerous-skip-auth: the endpoint will answer anyone who reaches it, with no "
-    "token. The cluster's dashboard keeps its chart's setting "
-    "(dashboard.dangerousSkipAuth). Use it only for a throwaway run."
-)
-KUBERNETES_DASHBOARD_SKIP_AUTH = (
-    "--dangerous-skip-auth: no key is needed here, but the cluster's dashboard is shared "
-    "by every project, so it still asks for a token unless its chart turns that off "
-    "(dashboard.dangerousSkipAuth=true)."
+# The cluster's dashboard is every project's: its key is its chart's.
+KUBERNETES_DASHBOARD_KEY = (
+    "The cluster's dashboard is shared by every project: it checks the key its chart "
+    "sets (dashboard.apiKeyHash), not this machine's."
 )
 DASHBOARD_NAMESPACE = "canyonos-dashboard"
 DASHBOARD_SERVICE = "svc/canyonos-dashboard-web"
@@ -287,15 +274,16 @@ def canyon_build(
     name, namespace, project, config_rel, k8s, tag, image, env_secret, auth
 ):
     """The CanyonBuild asking the operator to build the project in the cluster and
-    apply it from its config. `auth` (`{"trustedKeys": [...], "disabled": bool}`) is
-    copied unchanged into the project's CanyonProject: public keys only."""
+    apply it from its config. `auth` (`{"apiKeyHash": "<sha256 hex>"}`, or None for no
+    API key) is copied unchanged into the project's CanyonProject: a hash only."""
     spec = {
         "project": project,
         "config": config_rel,
         "registry": k8s["registry"],
         "tag": tag,
-        "auth": auth,
     }
+    if auth:
+        spec["auth"] = auth
     if image:
         spec["image"] = image
     if env_secret:
@@ -419,8 +407,8 @@ def check_operator_version(namespace, name, status):
 
 
 def build_in_cluster(config_path, namespace, project, k8s, env_secret, projects, auth):
-    """Build the deployment's images in the cluster and apply it there, trusting `auth`'s
-    keys: create a CanyonBuild, upload `projects` (name to folder) to its pod, wait until
+    """Build the deployment's images in the cluster and apply it there, checking the API
+    key whose hash `auth` holds: create a CanyonBuild, upload `projects` (name to folder) to its pod, wait until
     it succeeds. Returns {agent: image by digest}."""
     tag = time.strftime("%Y%m%d-%H%M%S")
     # Random too: two deploys in the same second would otherwise share one build.
@@ -731,7 +719,7 @@ def _forward_endpoint(namespace, project, config):
     return f"http://127.0.0.1:{port}"
 
 
-def _summary(namespace, project_obj, config_path, local_url=None, dashboard_url=None):
+def _summary(namespace, project_obj, keyed, local_url=None, dashboard_url=None):
     url = project_obj.get("status", {}).get("endpointURL", "")
     lines = [
         Text.assemble(
@@ -768,16 +756,16 @@ def _summary(namespace, project_obj, config_path, local_url=None, dashboard_url=
         lines.append(
             Text.assemble(
                 ("Call       ", "bold"),
-                f"curl -X POST {url}/{path} {BEARER_HEADER} "
+                f"curl -X POST {url}/{path}{curl_auth(keyed)} "
                 f"-H \"Content-Type: application/json\" -d '{body}'",
             )
         )
     lines.append(
         Text.assemble(
-            ("Poll       ", "bold"), f"curl {BEARER_HEADER} {url}/status/<request_id>"
+            ("Poll       ", "bold"),
+            f"curl{curl_auth(keyed)} {url}/status/<request_id>",
         )
     )
-    lines.append(Text.assemble(("Token      ", "bold"), token_command(config_path)))
     lines.append(
         Text.assemble(("Test       ", "bold"), kubernetes_command('test "your query"'))
     )
@@ -792,23 +780,18 @@ def run_kubernetes_deploy(
     config_path=None,
     timeout=READY_TIMEOUT_SECONDS,
     serve=False,
-    skip_auth=False,
-    auth_dir=None,
+    api_key=None,
+    no_api_key=False,
 ):
     """Run `canyonos deploy --target kubernetes` for the projects in `folders`: upload the
     deployment, with its `.env` and each project's as Secrets, for the cluster to build and
     apply, wait until every agent is ready, and forward and show the endpoint. As on
-    Docker, the deployment trusts the public keys in `auth_dir` and the deploy refuses
-    before reaching the cluster without one, unless `skip_auth` turns verification off."""
+    Docker, the endpoint checks this machine's API key, which `api_key` sets or
+    replaces and `no_api_key` removes; with no key it checks nothing."""
     projects = deployment.projects(folders)
-    refuse_keys_in_project(auth_dir)
-    if skip_auth:
-        ui.warn(KUBERNETES_SKIP_AUTH_WARNING)
-        keys = []
-    else:
-        keys = require_keys(auth_dir)
     config_path = resolve_config(config_path)
     require_deployment_id(config_path)
+    key = resolve_api_key(api_key, no_api_key)
     env_values = read_dotenv()
     config = load_config(config_path, env_values)
     k8s = config["kubernetes"]
@@ -841,7 +824,7 @@ def run_kubernetes_deploy(
         k8s,
         env_secret,
         projects,
-        {"trustedKeys": keys, "disabled": skip_auth},
+        {"apiKeyHash": hash_api_key(key)} if key else None,
     )
     ui.ok(f"Built {len(images)} image(s) in the cluster and applied the project")
     project_obj, agents = wait_until_ready(namespace, project, timeout=timeout)
@@ -859,7 +842,9 @@ def run_kubernetes_deploy(
         except RuntimeError as error:
             ui.hint(f"Dashboard not opened: {error}")
     dashboard_url = f"http://127.0.0.1:{dashboard_port}" if dashboard_port else None
-    ui.panel(_summary(namespace, project_obj, config_path, local_url, dashboard_url))
+    ui.panel(
+        _summary(namespace, project_obj, key is not None, local_url, dashboard_url)
+    )
     return agents
 
 
@@ -1024,21 +1009,13 @@ def run_kubernetes_stop(config_path=None):
     return True
 
 
-def run_kubernetes_serve(port=None, skip_auth=False, auth_dir=None):
+def run_kubernetes_serve(port=None):
     """Run `canyonos serve --target kubernetes`: keep the cluster's dashboard on
     127.0.0.1 here through a port-forward in the background, on `port`, else the
     project's `dashboard_port`, else 8081 or the next free one, until `canyonos stop`.
-    Only who may port-forward into its namespace can open it. As on Docker it refuses
-    before opening anything when `auth_dir` trusts no key to sign its tokens with,
-    unless `skip_auth`; the dashboard's own verification is its chart's
-    (`dashboard.dangerousSkipAuth`), never this machine's, and, run in a project, it
-    refuses a keys folder inside it. Returns the exit code."""
-    if os.path.isfile(project_config_path(project_root())):
-        refuse_keys_in_project(auth_dir)
-    if skip_auth:
-        ui.warn(KUBERNETES_DASHBOARD_SKIP_AUTH)
-    else:
-        require_keys(auth_dir)
+    Only who may port-forward into its namespace can open it, and its API key is its
+    chart's (`dashboard.apiKeyHash`), never this machine's. Returns the exit code."""
+    ui.hint(KUBERNETES_DASHBOARD_KEY)
     port = _open_dashboard(port)
     ui.ok(f"Dashboard: http://127.0.0.1:{port} (until canyonos stop)")
     return 0

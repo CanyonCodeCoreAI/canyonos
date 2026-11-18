@@ -113,7 +113,6 @@ function TimeseriesChartPanel({
   if (query.error) {
     return (
       <QueryError
-        error={query.error}
         message="Could not load the cost timeline."
         onRetry={() => void query.refetch()}
         test_id="project-timeseries-error"
@@ -149,7 +148,6 @@ function TimeseriesStatsPanel({
   if (query.error) {
     return (
       <QueryError
-        error={query.error}
         message="Could not load cost totals for this range."
         onRetry={() => void query.refetch()}
         test_id="project-timeseries-stats-error"

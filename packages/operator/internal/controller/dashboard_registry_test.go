@@ -6,12 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 package controller
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
-	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,14 +28,6 @@ var _ = Describe("Dashboard registry", func() {
 		pendingID = "00000000-0000-4000-8000-000000000002"
 		lockedID  = "00000000-0000-4000-8000-000000000003"
 	)
-	// The dashboard of the projects in namespaces named keys-*, and their keys.
-	const (
-		keysDashboard = "keys-dashboard"
-		keysAID       = "00000000-0000-4000-8000-000000000004"
-		keysBID       = "00000000-0000-4000-8000-000000000005"
-		keysCID       = "00000000-0000-4000-8000-000000000006"
-	)
-	keyA, keyA2, keyB := ed25519PEM(), ed25519PEM(), ed25519PEM()
 	registry := &DashboardRegistryReconciler{}
 
 	listed := func() []registeredProject {
@@ -77,45 +64,6 @@ var _ = Describe("Dashboard registry", func() {
 		return p
 	}
 
-	trust := func(p *canyonosv1alpha1.CanyonProject, keys ...string) {
-		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(p), p)).To(Succeed())
-		p.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: keys}
-		Expect(k8sClient.Update(ctx, p)).To(Succeed())
-	}
-	// The dashboard's trusted keys from projects in namespaces named keys-*: other specs
-	// leave projects of their own on the same API server.
-	trustedKeys := func() map[string]string {
-		configMap := &corev1.ConfigMap{}
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: keysDashboard, Name: DashboardTrustedKeysConfigMap}, configMap)).
-			To(Succeed())
-		ours := map[string]string{}
-		for name, key := range configMap.Data {
-			if strings.HasPrefix(name, "keys-") {
-				ours[name] = key
-			}
-		}
-		return ours
-	}
-	apiPodHash := func() string {
-		deployment := &appsv1.Deployment{}
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: keysDashboard, Name: builders.DashboardAPIName}, deployment)).
-			To(Succeed())
-		return deployment.Spec.Template.Annotations[TrustedKeysAnnotation]
-	}
-	dashboardAPI := func() *appsv1.Deployment {
-		labels := map[string]string{builders.LabelName: builders.DashboardAPIName}
-		return &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: builders.DashboardAPIName, Namespace: keysDashboard},
-			Spec: appsv1.DeploymentSpec{
-				Selector: &metav1.LabelSelector{MatchLabels: labels},
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{Labels: labels},
-					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "canyonos-api"}}},
-				},
-			},
-		}
-	}
-
 	It("lists each project whose Redis is ready, with how to reach and sign in to it", func() {
 		registry.Client, registry.APIReader, registry.Namespace = k8sClient, k8sClient, dashboard
 		registry.Redis = &ProjectRedis{Reader: k8sClient}
@@ -149,89 +97,6 @@ var _ = Describe("Dashboard registry", func() {
 		Expect(listed()).To(BeEmpty())
 	})
 
-	It("hands the dashboard's API the keys of every listed project, and rolls it when they change", func() {
-		registry.Client, registry.APIReader, registry.Namespace = k8sClient, k8sClient, keysDashboard
-		registry.Redis = &ProjectRedis{Reader: k8sClient}
-		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: keysDashboard}})).To(Succeed())
-
-		By("the ConfigMap exists before any project of its own is listed, so the API's volume mounts")
-		_, err := registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(trustedKeys()).To(BeEmpty())
-
-		By("two projects named alike in two namespaces each keep their own key")
-		Expect(k8sClient.Create(ctx, dashboardAPI())).To(Succeed())
-		a := project("keys-a", keysAID, true, true)
-		b := project("keys-b", keysBID, true, true)
-		trust(a, keyA)
-		trust(b, keyB)
-		_, err = registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(trustedKeys()).To(Equal(map[string]string{
-			"keys-a_" + testProjectName + "_0.pub": keyA,
-			"keys-b_" + testProjectName + "_0.pub": keyB,
-		}))
-		listedHash := apiPodHash()
-		Expect(listedHash).To(HaveLen(64))
-
-		By("nothing changed, nothing rolls")
-		_, err = registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(apiPodHash()).To(Equal(listedHash))
-
-		By("a rotated key replaces the old one and rolls the API")
-		trust(a, keyA2)
-		_, err = registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(trustedKeys()).To(HaveKeyWithValue("keys-a_"+testProjectName+"_0.pub", keyA2))
-		Expect(apiPodHash()).NotTo(Equal(listedHash))
-
-		By("a key that is not one Ed25519 public key is left out, so the API still starts")
-		trust(a, "not a key", keyA2, "a comment\n"+keyB, keyA2+keyA2)
-		_, err = registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(trustedKeys()).To(Equal(map[string]string{
-			"keys-a_" + testProjectName + "_1.pub": keyA2,
-			// Written as the one PEM block it holds, without the text before it.
-			"keys-a_" + testProjectName + "_2.pub": keyB,
-			"keys-b_" + testProjectName + "_0.pub": keyB,
-		}))
-		rotatedHash := apiPodHash()
-
-		By("a project whose entry names would be too long for a ConfigMap is left out, the others stay")
-		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "keys-c"}})).To(Succeed())
-		long := validProject(strings.TrimSuffix(strings.Repeat(strings.Repeat("a", 60)+".", 4), "."))
-		long.Namespace = "keys-c"
-		long.Spec.ProjectID = keysCID
-		long.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{keyB}}
-		Expect(k8sClient.Create(ctx, long)).To(Succeed())
-		setCondition(&long.Status.Conditions, long.Generation, ConditionRedisReady, true, "", "")
-		Expect(k8sClient.Status().Update(ctx, long)).To(Succeed())
-		_, err = registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(trustedKeys()).To(HaveLen(3))
-		Expect(apiPodHash()).To(Equal(rotatedHash))
-		Expect(k8sClient.Delete(ctx, long)).To(Succeed())
-
-		By("a project whose Redis stops being ready takes its keys out")
-		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(b), b)).To(Succeed())
-		setCondition(&b.Status.Conditions, b.Generation, ConditionRedisReady, false, "NotReady", "")
-		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
-		_, err = registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(trustedKeys()).To(Equal(map[string]string{
-			"keys-a_" + testProjectName + "_1.pub": keyA2,
-			"keys-a_" + testProjectName + "_2.pub": keyB,
-		}))
-		Expect(apiPodHash()).NotTo(Equal(rotatedHash))
-
-		By("a deleted project takes its keys out")
-		Expect(k8sClient.Delete(ctx, a)).To(Succeed())
-		_, err = registry.Reconcile(ctx, reconcile.Request{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(trustedKeys()).To(BeEmpty())
-	})
-
 	It("is listed again only when what the list says about a project changes", func() {
 		changed := func(edit func(*canyonosv1alpha1.CanyonProject)) bool {
 			old := validProject(testProjectName)
@@ -246,15 +111,8 @@ var _ = Describe("Dashboard registry", func() {
 		Expect(changed(func(p *canyonosv1alpha1.CanyonProject) { p.Spec.DisplayName = "renamed" })).To(BeTrue())
 		Expect(changed(func(p *canyonosv1alpha1.CanyonProject) { p.Spec.Redis.Mode = redisExternal })).To(BeTrue())
 		Expect(changed(func(p *canyonosv1alpha1.CanyonProject) {
-			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{keyA}}
-		})).To(BeTrue())
-
-		By("a rotated key alone, so a rotation does not wait for the resync")
-		old := validProject(testProjectName)
-		old.Spec.Auth = &canyonosv1alpha1.AuthSpec{TrustedKeys: []string{keyA}}
-		rotated := old.DeepCopy()
-		rotated.Spec.Auth.TrustedKeys = []string{keyB}
-		Expect(listChanged(event.TypedUpdateEvent[client.Object]{ObjectOld: old, ObjectNew: rotated})).To(BeTrue())
+			p.Spec.Auth = &canyonosv1alpha1.AuthSpec{APIKeyHash: testAPIKeyHashA}
+		})).To(BeFalse())
 		Expect(changed(func(p *canyonosv1alpha1.CanyonProject) {
 			setCondition(&p.Status.Conditions, p.Generation, ConditionRedisReady, false, "NotReady", "")
 		})).To(BeTrue())
@@ -278,12 +136,3 @@ var _ = Describe("Dashboard registry", func() {
 		Expect(rolled("helloagent", "a", "b")).To(BeFalse())
 	})
 })
-
-// ed25519PEM is a new Ed25519 public key in SPKI PEM, as `canyonos keys create` writes one.
-func ed25519PEM() string {
-	public, _, err := ed25519.GenerateKey(rand.Reader)
-	Expect(err).NotTo(HaveOccurred())
-	der, err := x509.MarshalPKIXPublicKey(public)
-	Expect(err).NotTo(HaveOccurred())
-	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
-}

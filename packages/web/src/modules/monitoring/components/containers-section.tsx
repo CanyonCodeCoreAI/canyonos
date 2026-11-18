@@ -9,7 +9,6 @@ import type { MonitoringReplica, MonitoringReplicasResponse } from '@canyonos/ap
 import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { cn } from '@repo/ui/utils';
 import { EmptyState } from '@/modules/core/components/EmptyState';
-import { readRefusal } from '@/modules/core/components/QueryError';
 import { replicasQueryOptions } from '@/modules/monitoring/monitoring.queries';
 
 function groupByAgent(
@@ -55,15 +54,6 @@ export function ContainersSection({ project_id }: { readonly project_id: string 
 
 function ContainersBody({ query }: { readonly query: UseQueryResult<MonitoringReplicasResponse> }) {
   if (query.isPending) return <Skeleton className="h-24 w-full rounded-lg" />;
-
-  const refusal = readRefusal(query.error);
-  if (refusal !== null) {
-    return (
-      <EmptyState size="section" test_id="query-refused">
-        <p role="status">{refusal}</p>
-      </EmptyState>
-    );
-  }
 
   if (query.isError) {
     return (

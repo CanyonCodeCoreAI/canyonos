@@ -27,12 +27,12 @@ import type {
 
 import { load_prompts } from '../modules/prompts/prompts.service';
 import { api, setupE2ETests } from './e2e.setup';
-import { authenticate, bearer, create_test_project } from './project-test.utils';
+import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
 import { seed_running_project, seed_scaling, seed_scaling_agents } from './redis-test.utils';
 
 setupE2ETests();
 
-const write = bearer(await authenticate('write'));
+const key_headers = bearer(TEST_API_KEY);
 
 describe('SDK contract', () => {
   test('healthz round-trip preserves shape', async () => {
@@ -46,7 +46,7 @@ describe('SDK contract', () => {
   });
 
   test('project, stats, requests, metrics, and resources endpoints are typed at runtime', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({
       name: 'SDK Project',
@@ -97,7 +97,7 @@ describe('SDK contract', () => {
   });
 
   test('monitoring endpoints are typed at runtime', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'SDK Monitoring' });
     const monitoring = api.projects[project_id]!.monitoring;
@@ -153,7 +153,7 @@ describe('SDK contract', () => {
   });
 
   test('prompt endpoints are typed at runtime', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'SDK Prompts' });
     await seed_running_project(project_id, {
@@ -180,7 +180,7 @@ describe('SDK contract', () => {
     const created: SystemPrompt = (
       await api.projects[project_id]!.prompts['app.summarize']!.versions.post(
         { content: 'Summarize briefly.' },
-        { headers: write }
+        { headers: key_headers }
       )
     ).data!;
     const prompt: Prompt = (
@@ -189,7 +189,7 @@ describe('SDK contract', () => {
     const live: PromptListItem = (
       await api.projects[project_id]!.prompts['app.summarize']!.live.put(
         { version: created.version },
-        { headers: write }
+        { headers: key_headers }
       )
     ).data!;
 
@@ -202,7 +202,7 @@ describe('SDK contract', () => {
   });
 
   test('scaling endpoints are typed at runtime', async () => {
-    const token = await authenticate('read');
+    const token = TEST_API_KEY;
     const headers = bearer(token);
     const { project_id } = await create_test_project({ name: 'SDK Scaling' });
     const policy: ScalingPolicy = {
@@ -225,7 +225,7 @@ describe('SDK contract', () => {
     const saved: ScalingPolicy = (
       await api.projects[project_id]!.scaling.app!.put(
         { ...policy, metric: 'requests_per_minute_per_replica' },
-        { headers: write }
+        { headers: key_headers }
       )
     ).data!;
 
@@ -236,7 +236,7 @@ describe('SDK contract', () => {
     expect(saved).toEqual({ ...policy, metric: 'requests_per_minute_per_replica' });
 
     const deleted: ScalingDeleteResponse = (
-      await api.projects[project_id]!.scaling.app!.delete(undefined, { headers: write })
+      await api.projects[project_id]!.scaling.app!.delete(undefined, { headers: key_headers })
     ).data!;
     expect(deleted).toEqual({ status: 'none' });
   });

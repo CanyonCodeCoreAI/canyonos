@@ -147,8 +147,8 @@ func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL, dashboa
 }
 
 // gcEnv is the global controller's side of the contract with the operator: where it
-// runs, its project, its Redis, its writable data folder, and the cluster dashboard
-// to send telemetry to when there is one.
+// runs, its project, its Redis, its writable data folder, its API key's hash, and the
+// cluster dashboard to send telemetry to when there is one.
 func gcEnv(p *canyonosv1alpha1.CanyonProject, endpointURL, dashboardNamespace string) []corev1.EnvVar {
 	name := p.Spec.DisplayName
 	if name == "" {
@@ -171,7 +171,7 @@ func gcEnv(p *canyonosv1alpha1.CanyonProject, endpointURL, dashboardNamespace st
 			Name: "CANYONOS_DASHBOARD_OTLP_ENDPOINT", Value: DashboardOTLPEndpoint(dashboardNamespace),
 		})
 	}
-	env = append(env, authEnv(p.Spec.Auth)...)
+	env = append(env, secretEnv(EnvAPIKeyHash, APIKeyName, APIKeyHashKey, false))
 	return append(env, RedisEnv(p)...)
 }
 

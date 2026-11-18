@@ -142,20 +142,15 @@ type Placement struct {
 	Affinity *corev1.Affinity `json:"affinity,omitempty"`
 }
 
-// AuthSpec is who may call the project's workflow: the public keys whose tokens its
-// endpoint accepts. A resource without it hands its pods neither, which never reads as
-// verification off.
+// AuthSpec is who may call the project's workflow: the one API key its endpoint
+// accepts, as `Authorization: Bearer <key>`.
 type AuthSpec struct {
-	// trustedKeys are the Ed25519 public keys, in PEM, that sign the tokens the
-	// endpoint accepts: the .pub files `canyonos deploy` trusts. Public halves only.
-	// +listType=atomic
+	// apiKeyHash is the sha256 of the API key, as 64 lowercase hex characters: the key
+	// `canyonos deploy --api-key` saved on the deploying machine. Empty or absent, the
+	// endpoint answers anyone who reaches it.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{64}$`
 	// +optional
-	TrustedKeys []string `json:"trustedKeys,omitempty"`
-
-	// disabled turns token verification off, as `canyonos deploy
-	// --dangerous-skip-auth` asks: anyone who reaches the endpoint may call it.
-	// +optional
-	Disabled bool `json:"disabled,omitempty"`
+	APIKeyHash string `json:"apiKeyHash,omitempty"`
 }
 
 // CanyonProjectSpec is one CanyonOS project, which runs in its own namespace.
@@ -223,7 +218,7 @@ type CanyonProjectSpec struct {
 	// +optional
 	Logs *bool `json:"logs,omitempty"`
 
-	// auth is the keys the project's global controller hands its endpoint.
+	// auth is the API key the project's global controller hands its endpoint.
 	// +optional
 	Auth *AuthSpec `json:"auth,omitempty"`
 }

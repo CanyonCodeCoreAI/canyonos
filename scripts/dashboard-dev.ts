@@ -3,7 +3,8 @@
 
 /**
  * Runs the dashboard on the host for the hot-reload loop: local Postgres through Compose, then
- * the API and Vite in watch mode. A variable set in the shell wins over each default below.
+ * the API and Vite in watch mode. A variable set in the shell wins over each default below. The
+ * API needs no key unless the shell sets `CANYONOS_API_KEY_HASH`.
  */
 
 import { join } from 'node:path';
@@ -27,8 +28,6 @@ const dev = Bun.spawn(['turbo', 'run', 'dev', '--filter=@canyonos/api', '--filte
     CANYONOS_REDIS_HOST: env.CANYONOS_REDIS_HOST || '127.0.0.1',
     CANYONOS_REDIS_PORT: env.CANYONOS_REDIS_PORT || '6379',
     DEPLOY_WORKER: env.DEPLOY_WORKER || 'none',
-    // No token on the hot-reload loop; AUTH_DISABLED=false with AUTH_TRUSTED_KEYS_DIR turns it on.
-    AUTH_DISABLED: env.AUTH_DISABLED || 'true',
     VITE_API_URL: env.VITE_API_URL || env.API_URL || `http://localhost:${env.PORT || '3000'}`,
   },
   stdio: ['inherit', 'inherit', 'inherit'],

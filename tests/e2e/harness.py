@@ -9,16 +9,17 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json as _json
 import os
 import pty
 import re
+import secrets
 import select
 import shutil
 import signal
 import struct
 import subprocess
-import tempfile
 import termios
 import time
 from dataclasses import asdict, dataclass, field
@@ -31,29 +32,19 @@ import requests
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VECTORS_DIR = REPO_ROOT / "tests" / "auth-vectors"
 API_URL = "http://127.0.0.1:3000"
 DASHBOARD_WEB = "canyonos-dashboard-web"
 OUTPUT_LIMIT = 20_000
 KILL_GRACE = 10
 TERMINAL_SIZE = (40, 120)
 ESCAPE_SEQUENCE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-READ_METHODS = ("GET", "HEAD")
-# The commands that read or write keys, each given the run's own keys folder.
-AUTH_DIR_COMMANDS = (
-    "keys",
-    "token",
-    "deploy",
-    "serve",
-    "test",
-    "chat",
-    "dashboard",
-)
+API_KEY_ENV = "CANYONOS_API_KEY"
 
 
 @dataclass
 class Call:
-    """One recorded command or request: what was sent, what came back, how it ended."""
+    """One recorded command or request: what was sent, what came back (for a request,
+    its headers too, by lowercase name), how it ended."""
 
     kind: str
     label: str
@@ -62,6 +53,7 @@ class Call:
     code: int
     seconds: float
     stdout: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
     def json(self):
         """The output parsed as JSON: an HTTP body, or a command's stdout."""
@@ -85,20 +77,20 @@ class CallFailed(AssertionError):
         self.call = call
 
 
-def _new_auth_dir() -> Path:
-    return Path(tempfile.mkdtemp(prefix="canyonos-e2e-")) / "auth"
+def _new_api_key() -> str:
+    return f"e2e-{secrets.token_urlsafe(32)}"
 
 
 @dataclass
 class Recorder:
     """The calls made so far in this session, in order, every deployment folder
     `stage` made, each with the number of calls made before it, and the session's
-    own keys folder, so a run never reads or writes the caller's `~/.canyonos/auth`
-    and the vectors' key is never trusted outside it."""
+    own API key, which every `canyonos` it runs gets as CANYONOS_API_KEY, so a run
+    never uses the caller's `~/.canyonos/api_key` nor writes its key there."""
 
     calls: list[Call] = field(default_factory=list)
     staged: list[tuple[int, Path]] = field(default_factory=list)
-    auth_dir: Path = field(default_factory=_new_auth_dir)
+    api_key: str = field(default_factory=_new_api_key)
 
     def record(self, call: Call) -> Call:
         self.calls.append(call)
@@ -153,22 +145,29 @@ IMAGES = {
 }
 
 
-def cli_env() -> dict[str, str]:
+def cli_env(api_key: str | None = None) -> dict[str, str]:
     """The environment every `canyonos` command runs with: the images built from
-    this checkout instead of the published ones, and no usage API, so a run never
-    sends usage events. An image CI already built and named in its CANYONOS_*_IMAGE
-    variable is kept; any other is `local`, the `:dev` tag `build_images` makes.
+    this checkout instead of the published ones, no usage API, so a run never
+    sends usage events, and `api_key` as CANYONOS_API_KEY, or no CANYONOS_API_KEY at
+    all when it is None. An image CI already built and named in its
+    CANYONOS_*_IMAGE variable is kept; any other is `local`, the `:dev` tag
+    `build_images` makes.
 
     HOME stays the caller's: the CLI keeps its state, the dashboard's settings and
     the usage outbox under `~/.canyonos` with no other setting for it, and a
-    different HOME would also hide Docker's own config and uv's cache. Keys are the
-    exception: `canyonos` passes the session's own folder as --auth-dir."""
-    return {
+    different HOME would also hide Docker's own config and uv's cache. The API key is
+    the exception: CANYONOS_API_KEY wins over `~/.canyonos/api_key` and is never
+    written to it."""
+    environment = {
         **os.environ,
         "CANYONOS_ENV": "development",
         "CANYONOS_USAGE_URL": "off",
         **{name: os.environ.get(name) or "local" for name in IMAGES},
     }
+    environment.pop(API_KEY_ENV, None)
+    if api_key is not None:
+        environment[API_KEY_ENV] = api_key
+    return environment
 
 
 def build_images(recorder: "Recorder") -> None:
@@ -321,27 +320,19 @@ def _stop_group(process: subprocess.Popen) -> tuple[str, str]:
 
 
 def canyonos(
-    recorder: Recorder, args: list[str], *, cwd, timeout: int = 600, check: bool = True
+    recorder: Recorder,
+    args: list[str],
+    *,
+    cwd,
+    timeout: int = 600,
+    check: bool = True,
+    keyed: bool = True,
 ) -> Call:
-    """Run the checkout's `canyonos` command in the project directory `cwd`."""
-    argv = [
-        "uv",
-        "run",
-        "--project",
-        str(REPO_ROOT),
-        "--frozen",
-        "canyonos",
-        *_with_auth_dir(recorder, args),
-    ]
-    return run(recorder, argv, cwd=cwd, env=cli_env(), timeout=timeout, check=check)
-
-
-def _with_auth_dir(recorder: Recorder, args: list[str]) -> list[str]:
-    """`args` with the session's keys folder as --auth-dir, for a command that reads
-    or writes keys and names no folder of its own."""
-    if not args or args[0] not in AUTH_DIR_COMMANDS or "--auth-dir" in args:
-        return args
-    return [*args, "--auth-dir", str(recorder.auth_dir)]
+    """Run the checkout's `canyonos` command in the project directory `cwd`, with the
+    session's API key unless `keyed` is False."""
+    argv = ["uv", "run", "--project", str(REPO_ROOT), "--frozen", "canyonos", *args]
+    env = cli_env(recorder.api_key if keyed else None)
+    return run(recorder, argv, cwd=cwd, env=env, timeout=timeout, check=check)
 
 
 def canyonos_in_terminal(
@@ -354,22 +345,15 @@ def canyonos_in_terminal(
     check: bool = True,
 ) -> Call:
     """Run the checkout's `canyonos` command in a terminal from `cwd`, typing each of
-    `answers` when its prompt shows (see `run_in_terminal`)."""
-    argv = [
-        "uv",
-        "run",
-        "--project",
-        str(REPO_ROOT),
-        "--frozen",
-        "canyonos",
-        *_with_auth_dir(recorder, args),
-    ]
+    `answers` when its prompt shows (see `run_in_terminal`), with the session's API
+    key."""
+    argv = ["uv", "run", "--project", str(REPO_ROOT), "--frozen", "canyonos", *args]
     return run_in_terminal(
         recorder,
         argv,
         cwd=cwd,
         answers=answers,
-        env=cli_env(),
+        env=cli_env(recorder.api_key),
         timeout=timeout,
         check=check,
     )
@@ -408,8 +392,10 @@ def http(
             method, url, json=json, headers=headers, timeout=timeout
         )
         output, code = response.text, response.status_code
+        received = {name.lower(): value for name, value in response.headers.items()}
     except requests.RequestException as error:
         output, code = f"{type(error).__name__}: {error}", -1
+        received = {}
     call = recorder.record(
         Call(
             kind="http",
@@ -418,6 +404,7 @@ def http(
             output=output,
             code=code,
             seconds=round(time.monotonic() - started, 2),
+            headers=received,
         )
     )
     if check and (code < 0 or code >= 400):
@@ -439,25 +426,18 @@ def poll(predicate, *, timeout: float, interval: float = 5, what: str):
 
 
 class Api:
-    """The dashboard API with an API token for each kind of request: the read token
-    on a GET or HEAD and the write token on any other method. The read token reads
-    every GET; the write token also reads what it can change (project detail,
-    scaling, governance, prompts), and every other GET (project list, stats,
-    requests, logs, metrics, monitoring, resources) needs a read token. With token
-    verification off there are no tokens, and nothing is sent."""
+    """The dashboard API, sent `api_key` on every request; with no key, when the API
+    needs none, nothing is sent."""
 
-    def __init__(
-        self, recorder: Recorder, base_url: str, tokens: dict[str, str] | None
-    ):
+    def __init__(self, recorder: Recorder, base_url: str, api_key: str | None):
         self.recorder = recorder
         self.base_url = base_url.rstrip("/")
-        self.tokens = tokens
+        self.api_key = api_key
 
-    def headers(self, method: str) -> dict[str, str]:
-        """The header that sends the token a `method` request needs, if any."""
-        if self.tokens is None:
-            return {}
-        return bearer(self.tokens["read" if method in READ_METHODS else "write"])
+    @property
+    def headers(self) -> dict[str, str]:
+        """The header that sends the key, if there is one."""
+        return bearer(self.api_key) if self.api_key is not None else {}
 
     def request(self, method: str, path: str, *, json=None, check: bool = True) -> Call:
         return http(
@@ -465,7 +445,7 @@ class Api:
             method,
             f"{self.base_url}{path}",
             json=json,
-            headers=self.headers(method),
+            headers=self.headers,
             check=check,
         )
 
@@ -495,17 +475,12 @@ def traces(api: Api, project_id: str) -> list[dict]:
     return api.get(path).json()["traces"]
 
 
-def api_tokens(recorder: Recorder, workspace: Path) -> dict[str, str] | None:
-    """A read and a write API token, `canyonos token create` made from `workspace`
-    with the session's key, by scope; None when the dashboard API reports token
-    verification off (`--dangerous-skip-auth`), since every route then answers
+def dashboard_key(recorder: Recorder) -> str | None:
+    """The session's API key when the dashboard API reports it needs one
+    (`/auth/status`); None when it needs none, since every route then answers
     without one."""
-    if http(recorder, "GET", f"{API_URL}/auth/status").json()["disabled"]:
-        return None
-    return {
-        scope: token(recorder, workspace, "--scope", scope)
-        for scope in ("read", "write")
-    }
+    status = http(recorder, "GET", f"{API_URL}/auth/status").json()
+    return recorder.api_key if status["api_key_required"] else None
 
 
 def case_slug(module: str, name: str) -> str:
@@ -639,30 +614,36 @@ def manifest(workspace: Path) -> dict:
     return yaml.safe_load(path.read_text())
 
 
-def bearer(token: str) -> dict[str, str]:
-    """The header that sends `token`."""
-    return {"Authorization": f"Bearer {token}"}
+def bearer(api_key: str) -> dict[str, str]:
+    """The header that sends `api_key`."""
+    return {"Authorization": f"Bearer {api_key}"}
+
+
+def hash_api_key(api_key: str) -> str:
+    """The SHA-256 of `api_key` in lowercase hex, the only form of the key a
+    verifier holds."""
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
 class Endpoint:
     """The deployed endpoint: its base URL, its first route
     (`<project>/<agent>/<method>`), the agent that route calls (`<project>.<agent>`),
-    the name of that method's first argument (the one a query goes in), a query token
-    for the deployment and the names
-    of all its arguments."""
+    the name of that method's first argument (the one a query goes in), the API key
+    it is called with (None for a deploy without one) and the names of all its
+    arguments."""
 
     url: str
     route: str
     agent: str
     argument: str
-    token: str
+    api_key: str | None
     arguments: tuple[str, ...] = ()
 
     @property
     def headers(self) -> dict[str, str]:
-        """The header every request to the endpoint sends its token in."""
-        return bearer(self.token)
+        """The header every request to the endpoint sends its key in, if any."""
+        return bearer(self.api_key) if self.api_key is not None else {}
 
 
 def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
@@ -680,7 +661,7 @@ def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
         "-c",
         script,
     ]
-    return run(recorder, argv, cwd=workspace, env=cli_env())
+    return run(recorder, argv, cwd=workspace, env=cli_env(recorder.api_key))
 
 
 def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str):
@@ -688,47 +669,6 @@ def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str
     script = f"import json; {imports}; print(json.dumps({expression}))"
     output = cli_python(recorder, workspace, script).stdout
     return _json.loads(output.strip().splitlines()[-1])
-
-
-def trust_a_key(recorder: Recorder, workspace: Path) -> None:
-    """Make the key pair `e2e` in the session's keys folder unless it is there,
-    since `canyonos deploy` refuses without a trusted key."""
-    if not (recorder.auth_dir / "e2e.key").is_file():
-        canyonos(recorder, ["keys", "create", "--name", "e2e"], cwd=workspace)
-
-
-def trust_the_vectors(recorder: Recorder, workspace: Path) -> None:
-    """Trust `tests/auth-vectors/vectors.pub` in the session's keys folder, so the
-    endpoint of the next deploy judges the vectors' tokens. Its private half was
-    deleted, so the key signs nothing new."""
-    if not (recorder.auth_dir / "trusted" / "vectors.pub").is_file():
-        canyonos(
-            recorder, ["keys", "trust", str(VECTORS_DIR / "vectors.pub")], cwd=workspace
-        )
-
-
-def vectors() -> list[dict]:
-    """The shared token vectors, each `{name, token, expect}` (see their README)."""
-    return _json.loads((VECTORS_DIR / "vectors.json").read_text())
-
-
-def token(recorder: Recorder, workspace: Path, *args: str) -> str:
-    """`canyonos token create` with `args`, from `workspace`: the token, which is
-    all it writes to stdout."""
-    return canyonos(recorder, ["token", "create", *args], cwd=workspace).stdout.strip()
-
-
-def deployment_id(workspace: Path) -> str:
-    """The `deployment_id` `canyonos deploy` saved in the deployment folder
-    `workspace`, the project id the endpoint takes query tokens for."""
-    return yaml.safe_load((workspace / "deployment.yaml").read_text())["deployment_id"]
-
-
-def query_token(recorder: Recorder, workspace: Path) -> str:
-    """A query token for the deployment in `workspace`, by its `deployment_id`."""
-    return token(
-        recorder, workspace, "--scope", "query", "--project", deployment_id(workspace)
-    )
 
 
 def deployment_group(recorder: Recorder, workspace: Path) -> str:
@@ -808,9 +748,11 @@ def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
     )
 
 
-def deployed_endpoint(recorder: Recorder, workspace: Path) -> Endpoint:
+def deployed_endpoint(
+    recorder: Recorder, workspace: Path, *, keyed: bool = True
+) -> Endpoint:
     """Ask the running Global Controller for the endpoint, from the deployment folder,
-    with a query token for the deployment."""
+    called with the session's API key unless `keyed` is False."""
     endpoint = cli_value(
         recorder,
         workspace,
@@ -823,7 +765,7 @@ def deployed_endpoint(recorder: Recorder, workspace: Path) -> Endpoint:
         route=f"{route['project']}/{route['agent']}/{route['method']}",
         agent=f"{route['project']}.{route['agent']}",
         argument=route["arguments"][0],
-        token=query_token(recorder, workspace),
+        api_key=recorder.api_key if keyed else None,
         arguments=tuple(route["arguments"]),
     )
 

@@ -24,7 +24,6 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "gunicorn>=26.2.0",
     "psycopg[binary]>=3.3.6",
-    "pyjwt[crypto]>=2.10.1",
 ]
 
 # Import-only: the core runtime ships no console script. The user-facing `canyonos`

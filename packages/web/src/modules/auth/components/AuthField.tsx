@@ -95,7 +95,7 @@ export function AuthFormError({ error }: { readonly error: Error | null }) {
       id={AUTH_ERROR_ID}
       role="alert"
       data-testid={AUTH_ERROR_ID}
-      className="animate-notice-in border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[13px]"
+      className="animate-notice-in border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[0.8125rem]"
     >
       <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
       {error.message}

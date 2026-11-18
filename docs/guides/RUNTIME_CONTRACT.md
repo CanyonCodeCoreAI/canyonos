@@ -178,9 +178,9 @@ endpoint settings are in [Workflow config](WORKFLOW_CONFIG.md#endpoint).
 | `GET /status/<request_id>`         | None                                       | `200` with the status below; `404` for an unknown request                                |
 | `POST /answer/<request_id>`        | A JSON object with the answer's keys       | `202` once passed on; `409` when nothing is waiting; `400` for a bad body                |
 
-Every request needs a query token, sent as `Authorization: Bearer <token>`. Without a
-valid one it is refused before its body is read; see
-[Tokens and keys](AUTHORIZATION.md#refusals).
+When the machine has an API key, every request needs it, sent as
+`Authorization: Bearer <your api key>`. Without it the request is refused before its
+body is read; see [API key](AUTHORIZATION.md#refusals).
 
 In `POST /<project>/<agent>/<method>`, each key becomes a keyword argument. `_context`
 is taken out first and used for [policy](#policy); it must be a JSON object. A bad body

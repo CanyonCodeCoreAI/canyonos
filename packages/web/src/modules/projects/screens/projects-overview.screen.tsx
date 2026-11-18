@@ -127,7 +127,6 @@ function ProjectsList({
   if (projectsQuery.error) {
     return (
       <QueryError
-        error={projectsQuery.error}
         test_id="projects-overview-error"
         message="We couldn't load your deployments."
         onRetry={() => void projectsQuery.refetch()}

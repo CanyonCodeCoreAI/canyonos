@@ -45,8 +45,9 @@ mkdir -p "$ARTIFACTS_DIR"
 STAGE_DIR="$(mktemp -d)"
 PROJECT_DIR="$STAGE_DIR/ec2pool"
 DEPLOYMENT_DIR="$STAGE_DIR/deployment"
-# Its own keys, so the run never adds a key to ~/.canyonos/auth.
-AUTH_DIR="$(mktemp -d)/auth"
+# Its own API key, which wins over ~/.canyonos/api_key and is never written to it.
+CANYONOS_API_KEY="e2e-$(openssl rand -hex 24)"
+export CANYONOS_API_KEY
 START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -152,10 +153,7 @@ cd "$DEPLOYMENT_DIR"
 canyonos stop || true
 
 step "canyonos deploy starts every machine of the pool"
-canyonos keys create --auth-dir "$AUTH_DIR" >/dev/null
-POOL_QUERY_TOKEN="$(canyonos token create --scope query --all-projects --auth-dir "$AUTH_DIR")"
-export POOL_QUERY_TOKEN
-canyonos deploy ../ec2pool --serve false --auth-dir "$AUTH_DIR" </dev/null
+canyonos deploy ../ec2pool --serve false </dev/null
 CANYONOS_REDIS_PASSWORD="$(uv run --project "$REPO_ROOT" python -c 'from canyonos import deployment; print(deployment.redis_password())')"
 export CANYONOS_REDIS_PASSWORD
 pool check-pool
