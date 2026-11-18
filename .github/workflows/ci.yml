@@ -64,6 +64,9 @@ jobs:
       - name: Check that every manifest carries the same version
         run: bun run version:check
 
+      - name: Check that packages/api-interface matches core's API (bun run api-interface:generate)
+        run: bun run api-interface:generate && git diff --exit-code -- packages/api-interface
+
   # The CLI runs on people's own machines, so its startup and bundled workflows are
   # checked on macOS and Windows. Core and the other packages are Linux-only.
   cli:

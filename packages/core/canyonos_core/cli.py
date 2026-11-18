@@ -473,6 +473,7 @@ def _cmd_deploy(args):
         logger.info("Received SIGHUP, reloading config...")
         try:
             controller.reload_config()
+            logger.info("Config reloaded.")
         except Exception as e:
             logger.error("Reload failed: %s", e)
 

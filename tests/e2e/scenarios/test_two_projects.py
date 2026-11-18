@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Two `canyonos new-app` projects deployed as one deployment, from a deployment
-folder `canyonos deploy --folder` makes, each answer at their own route, and
-`canyonos sync` of one leaves the other in the deployment."""
+folder `canyonos deploy --folder` makes, each answer at their own route,
+`canyonos sync` of one leaves the other in the deployment, and a redeploy of one
+reuses the Global Controller and drops the other."""
 
 import pytest
 
@@ -66,3 +67,21 @@ def test_two_projects_share_a_deployment_and_sync_one(recorder, deployment):
     )
     assert kept.code == 0, "syncing alpha removed beta from the deployment"
     assert _answered_routes(recorder, deployment) == routes
+
+    redeploy = canyonos(
+        recorder, ["deploy", "../alpha"], cwd=deployment, timeout=DEPLOY_TIMEOUT
+    )
+    assert "Global Controller already running" in redeploy.output, redeploy.output
+    dropped = docker(
+        recorder,
+        [
+            "exec",
+            controller,
+            "test",
+            "-f",
+            "/workspace/beta/config/workflow_config.yaml",
+        ],
+        check=False,
+    )
+    assert dropped.code != 0, "redeploying alpha alone kept beta in the deployment"
+    assert _answered_routes(recorder, deployment) == ["alpha/Workflow/main"]

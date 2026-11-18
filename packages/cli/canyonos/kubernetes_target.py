@@ -1,447 +1,43 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos deploy --target kubernetes`, and the Kubernetes versions of `status`,
-`logs`, `stop`, `clean` and `serve`.
-
-The CLI hands the deployment to the cluster: its `.env` and each project's as Secrets,
-then a CanyonBuild the CanyonOS operator (installed once per cluster) runs as a build
-pod. The deployment is uploaded to that pod, which builds the images on the cluster's
-builder, pushes them to the `kubernetes:` block's registry and applies the deployment
-from its config. Cluster access goes through `kubectl`, so every way of signing in to
-a cluster (EKS, OpenShift, a kubeconfig) works, and a namespace's edit role is all it
-needs.
+"""The CLI's way into the Kubernetes cluster `kubectl` points at: every command reaches
+the cluster's CanyonOS API through a port-forward, signed in with the user's kubectl
+login, and `serve` and `test` forward the dashboard and the endpoint to this machine.
 """
 
 import contextlib
-import io
 import json
 import os
-import re
-import shutil
 import socket
 import subprocess
-import tarfile
 import threading
-import time
-import urllib.error
-import urllib.request
-import uuid
+from urllib.parse import urlsplit
 
-import yaml
-from dotenv import dotenv_values
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
+from canyonos import ui
+from canyonos.constants import DEFAULT_API_PORT, deployment_config_path, read_config
+from canyonos.deployment import deployment_name
+from canyonos.forwards import DASHBOARD, close_forward, open_forward
+from canyonos.gc import delete_deployment
 
-from canyonos import deployment, env, ui
-from canyonos.auth import curl_auth, hash_api_key, resolve_api_key
-from canyonos.constants import (
-    deployment_config_path,
-    existing_config_path,
-    project_env_path,
-    project_folder,
-    read_config,
-)
-from canyonos.deploy import require_deployment_id, save_deployment_config
-from canyonos.forwards import (
-    DASHBOARD,
-    close_forward,
-    endpoint_forward,
-    forward_port,
-    open_forward,
-    running_forwards,
-)
-from canyonos.deployment import deployment_name, kubernetes_command
-
-GROUP = "canyonos.canyoncode.ai"
-API_VERSION = f"{GROUP}/v1alpha1"
-LABEL_PROJECT = f"{GROUP}/project"
-LABEL_AGENT = f"{GROUP}/agent"
-LABEL_MANAGED_BY = "app.kubernetes.io/managed-by"
-MANAGED_BY = "canyonos-cli"
-FIELD_MANAGER = "canyonos-cli"
-READY_TIMEOUT_SECONDS = 600
-BUILD_TIMEOUT_SECONDS = 3600
-BUILD_START_TIMEOUT_SECONDS = 600
-# Never uploaded to a build: history and local environments. Any `.env*` file is left
-# out too (_uploaded): the `.env` becomes a Secret, and no other one belongs in the cluster.
-UPLOAD_EXCLUDES = (".git", ".venv", "node_modules", "__pycache__")
-# Where a build pod takes the upload (builders.UploadPort in the operator).
-UPLOAD_PORT = 8090
 # The project's endpoint inside its namespace (builders.EndpointName and its API port).
 ENDPOINT_SERVICE = "svc/canyonos-endpoint"
 ENDPOINT_PORT = 8080
-# Where the chart installs the operator, as the install step below says.
+# Where the chart installs the operator, and the CanyonOS API it serves beside it.
 OPERATOR_NAMESPACE = "canyonos-system"
-OPERATOR_HINT = (
-    "Install the CanyonOS operator once per cluster: helm install canyonos "
-    "oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator "
-    f"--version {env.PROD_CHART_VERSION} --namespace canyonos-system --create-namespace "
-    "--set builder.enabled=true; see docs/guides/KUBERNETES.md. On a laptop, "
-    "canyonos cluster up makes a local cluster with it installed."
-)
-# Reasons the operator gives for a CanyonAgent that will never start as configured.
-FATAL_REASONS = ("NameMismatch", "Unsupported", "ProjectNotFound")
+API_FORWARD = "api"
+API_SERVICE = "svc/canyonos-api"
+API_PORT = 8000
+DASHBOARD_NAMESPACE = "canyonos-dashboard"
+DASHBOARD_SERVICE = "svc/canyonos-dashboard-web"
+DASHBOARD_PORT = 8080
+# Where this machine's forwards look for a free port first, as Docker does.
+LOCAL_DASHBOARD_PORT = 8081
 # The cluster's dashboard is every project's: its key is its chart's.
 KUBERNETES_DASHBOARD_KEY = (
     "The cluster's dashboard is shared by every project: it checks the key its chart "
     "sets (dashboard.apiKeyHash), not this machine's."
 )
-DASHBOARD_NAMESPACE = "canyonos-dashboard"
-DASHBOARD_SERVICE = "svc/canyonos-dashboard-web"
-DASHBOARD_PORT = 8080
-# Where this machine's forwards look for a free port first, as Docker does.
-LOCAL_ENDPOINT_PORT = 8080
-LOCAL_DASHBOARD_PORT = 8081
-# The project's Global Controller (builders.GCName in the operator).
-GLOBAL_CONTROLLER = "deployment/canyonos-gc"
-
-
-def resource_name(name):
-    """The Kubernetes name for an agent or project: lowercase, anything but letters,
-    digits and hyphens turned into hyphens (`Portfolio_Agent` becomes `portfolio-agent`).
-    Keep in sync with canyonos_core/kubernetes/api.py and the operator's
-    builders.ResourceName: the CLI and the core image ship separately."""
-    object_name = re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")
-    if not object_name:
-        raise RuntimeError(
-            f"{name!r} has no letters or digits to name a Kubernetes object"
-        )
-    return object_name[:63].rstrip("-")
-
-
-# --------------------------------------------------------------------------------
-# Reading the project
-# --------------------------------------------------------------------------------
-
-
-def resolve_config(config_path):
-    """The config file to read: the given one, or the project's own, as on Docker."""
-    if not config_path:
-        return existing_config_path()
-    if not os.path.isfile(config_path):
-        raise RuntimeError(f"Config file not found: {config_path}")
-    return config_path
-
-
-def read_dotenv(path=None):
-    """The `.env` at `path` as a dict (empty when there is none), by default the
-    deployment's: the one in the folder `canyonos` runs in, as on Docker."""
-    path = path or project_env_path()
-    if not os.path.isfile(path):
-        return {}
-    return {k: v for k, v in dotenv_values(path).items() if v is not None}
-
-
-_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
-def _expand(value, values):
-    if isinstance(value, dict):
-        return {k: _expand(v, values) for k, v in value.items()}
-    if not isinstance(value, str):
-        return value
-    return _ENV_REF.sub(lambda m: values.get(m.group(1), m.group(0)), value)
-
-
-def load_config(config_path, env_values=None):
-    """`workflow_config.yaml` as a dict, `${VAR}` filled in inside the `kubernetes:`
-    block from `.env` alone: the values the build in the cluster sees too. Fails with
-    a fix when the block is missing; the build checks the rest."""
-    with open(config_path, encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
-    if not isinstance(config, dict):
-        raise RuntimeError(f"{config_path} must contain a YAML mapping")
-    block = config.get("kubernetes")
-    if (
-        not isinstance(block, dict)
-        or not block.get("namespace")
-        or not block.get("registry")
-    ):
-        raise RuntimeError(
-            f"{config_path} needs a `kubernetes:` block with `namespace` and `registry` "
-            "to deploy to Kubernetes: run `canyonos target kubernetes` to add one"
-        )
-    config["kubernetes"] = _expand(block, env_values or {})
-    return config
-
-
-def namespace_object(namespace):
-    """The project's namespace, when `canyonos deploy` creates it."""
-    return {
-        "apiVersion": "v1",
-        "kind": "Namespace",
-        "metadata": {"name": namespace, "labels": {LABEL_MANAGED_BY: MANAGED_BY}},
-    }
-
-
-def dotenv_secret(namespace, name, project, values):
-    """The Secret holding the app's API keys from `.env`. Applied to the cluster, never
-    written to a file."""
-    return {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "type": "Opaque",
-        "metadata": {
-            "name": name,
-            "namespace": namespace,
-            "labels": {LABEL_PROJECT: project, LABEL_MANAGED_BY: MANAGED_BY},
-        },
-        "stringData": {k: str(v) for k, v in values.items()},
-    }
-
-
-# --------------------------------------------------------------------------------
-# The canyonos-core image a build runs
-# --------------------------------------------------------------------------------
-
-
-def _has_registry(reference):
-    first = reference.split("/", 1)[0]
-    return "/" in reference and ("." in first or ":" in first or first == "localhost")
-
-
-def _docker(argv, timeout=600):
-    try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-    except FileNotFoundError:
-        raise RuntimeError("Docker is not installed or not on PATH") from None
-
-
-def _push_local_image(image, registry, tag):
-    """Push an image that only exists in the local Docker daemon (a development
-    canyonos-core) to the registry and return it pinned by digest."""
-    repository = f"{registry.rstrip('/')}/{image.split('/')[-1].split(':')[0]}"
-    remote = f"{repository}:{tag}"
-    for argv in (["docker", "tag", image, remote], ["docker", "push", remote]):
-        result = _docker(argv)
-        if result.returncode:
-            raise RuntimeError(f"`{' '.join(argv)}` failed: {result.stderr.strip()}")
-    inspected = _docker(
-        ["docker", "inspect", "--format", "{{json .RepoDigests}}", remote]
-    )
-    digests = json.loads(inspected.stdout.strip() or "[]") or []
-    pinned = next((d for d in digests if d.startswith(repository + "@")), None)
-    if not pinned:
-        raise RuntimeError(f"Pushed {remote} but Docker reports no digest for it")
-    return pinned
-
-
-def build_image(registry, tag):
-    """The canyonos-core image the build runs, or "" for the one the cluster's
-    operator was installed with (its own, possibly mirrored, release image). Only a
-    development override is named: as is when it is in a registry, otherwise pushed
-    to the project's registry first."""
-    image = env.core_image
-    if image == env.PROD_CORE_IMAGE:
-        return ""
-    if _has_registry(image):
-        return image
-    return _push_local_image(image, registry, tag)
-
-
-# --------------------------------------------------------------------------------
-# Building in the cluster, which then applies the project
-# --------------------------------------------------------------------------------
-
-
-def _uploaded(name):
-    return name not in UPLOAD_EXCLUDES and not name.startswith(".env")
-
-
-def source_tarball(projects):
-    """The deployment gzipped as Docker syncs it: `deployment.yaml`, and each of `projects`
-    (name to folder) under its name, without UPLOAD_EXCLUDES or `.env*`, so no API key
-    leaves for the cluster inside it."""
-    buffer = io.BytesIO()
-
-    def keep(info):
-        if not all(_uploaded(part) for part in info.name.split("/")):
-            return None
-        info.uid = info.gid = 0
-        info.uname = info.gname = ""
-        return info
-
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        tar.add(deployment_config_path(), filter=keep)
-        for name, folder in projects.items():
-            tar.add(project_folder(folder), arcname=name, filter=keep)
-    return buffer.getvalue()
-
-
-def canyon_build(
-    name, namespace, project, config_rel, k8s, tag, image, env_secret, auth
-):
-    """The CanyonBuild asking the operator to build the project in the cluster and
-    apply it from its config. `auth` (`{"apiKeyHash": "<sha256 hex>"}`, or None for no
-    API key) is copied unchanged into the project's CanyonProject: a hash only."""
-    spec = {
-        "project": project,
-        "config": config_rel,
-        "registry": k8s["registry"],
-        "tag": tag,
-    }
-    if auth:
-        spec["auth"] = auth
-    if image:
-        spec["image"] = image
-    if env_secret:
-        spec["envSecretRef"] = env_secret
-    if k8s.get("platform"):
-        # Left out, the cluster builds for its own nodes' architecture.
-        spec["platform"] = k8s["platform"]
-    if k8s.get("image_pull_secret"):
-        # The registry's credentials: to push the images, and to pull the build's own.
-        spec["registrySecretRef"] = k8s["image_pull_secret"]
-        spec["imagePullSecrets"] = [{"name": k8s["image_pull_secret"]}]
-    return {
-        "apiVersion": API_VERSION,
-        "kind": "CanyonBuild",
-        "metadata": {
-            "name": name,
-            "namespace": namespace,
-            "labels": {
-                LABEL_PROJECT: resource_name(project),
-                LABEL_MANAGED_BY: MANAGED_BY,
-            },
-        },
-        "spec": spec,
-    }
-
-
-def wait_for_build(
-    namespace, name, phases, timeout, sleep=time.sleep, clock=time.monotonic
-):
-    """Wait until the CanyonBuild reaches one of `phases`; fail with the build's own
-    error when it fails."""
-    deadline = clock() + timeout
-    while True:
-        status = kubectl_json(["get", "canyonbuild", name, "-n", namespace]).get(
-            "status", {}
-        )
-        if status.get("phase") == "Failed":
-            raise RuntimeError(
-                f"The image build failed:\n{status.get('message', '').strip()}\n"
-                f"Full log: kubectl -n {namespace} logs job/{name} -c build "
-                f"(the CanyonBuild {name} is kept for a look)"
-            )
-        if status.get("phase") in phases:
-            return status
-        if clock() > deadline:
-            raise RuntimeError(
-                f"The build {name} did not get past {status.get('phase') or 'Pending'} in "
-                f"{timeout // 60} minutes ({status.get('message') or 'no message'}). "
-                f"Look at: kubectl -n {namespace} describe pod -l {GROUP}/build={name}"
-            )
-        sleep(2)
-
-
-def _port_forward(namespace, pod):
-    """A port-forward to the build pod's upload port, and the local URL it serves."""
-    forward = subprocess.Popen(
-        ["kubectl", "port-forward", "-n", namespace, f"pod/{pod}", f":{UPLOAD_PORT}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    line = forward.stdout.readline()
-    match = re.search(r"127\.0\.0\.1:(\d+)", line)
-    if not match:
-        forward.terminate()
-        raise RuntimeError(f"Could not reach the build pod {pod}: {line.strip()}")
-    return forward, f"http://127.0.0.1:{match.group(1)}/"
-
-
-def upload_project(namespace, pod, archive, attempts=10, sleep=time.sleep):
-    """Send the project to the build pod through a port-forward (no exec rights
-    needed); the pod starts building once it is in."""
-    forward, url = _port_forward(namespace, pod)
-    try:
-        # Straight to the port-forward: never through a proxy from HTTP_PROXY or the
-        # Windows or macOS system settings.
-        direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        for attempt in range(attempts):
-            # kubectl ends a port-forward that loses its connection to the pod (a busy
-            # laptop, a blip of the API server); retrying it would only be refused.
-            if forward.poll() is not None:
-                forward, url = _port_forward(namespace, pod)
-            try:
-                request = urllib.request.Request(url, data=archive, method="PUT")
-                with direct.open(request, timeout=300):
-                    return
-            except urllib.error.HTTPError as error:
-                # The build pod answered and refused the upload: retrying cannot help.
-                detail = error.read().decode("utf-8", "replace").strip()
-                raise RuntimeError(
-                    f"The build pod {pod} refused the upload ({error.code}): {detail}"
-                ) from None
-            except (urllib.error.URLError, ConnectionError) as error:
-                if attempt == attempts - 1:
-                    raise RuntimeError(
-                        f"Uploading the project to {pod} failed: {error}"
-                    ) from None
-                sleep(1)
-    finally:
-        forward.terminate()
-
-
-def check_operator_version(namespace, name, status):
-    """Stop a deploy, before anything is uploaded, when the cluster's CanyonOS is another
-    release than this CLI. On Docker the CLI runs the images of its own version; on
-    Kubernetes the operator, installed apart, picks the core image every build and
-    project runs, so the two must be the same release. A CLI from a checkout
-    (development), and an operator that reports no version, are not checked."""
-    operator = status.get("operatorVersion")
-    if env.is_development or not operator or operator == env.VERSION:
-        return
-    kubectl(
-        ["delete", "canyonbuild", name, "-n", namespace, "--wait=false"], check=False
-    )
-    raise RuntimeError(
-        f"This cluster runs CanyonOS {operator} and this CLI is {env.VERSION}: they must "
-        f"be the same release. Upgrade the cluster's operator to {env.VERSION} (see "
-        "docs/guides/KUBERNETES.md, Upgrading the operator), or deploy with the "
-        f"CanyonOS {operator} CLI."
-    )
-
-
-def build_in_cluster(config_path, namespace, project, k8s, env_secret, projects, auth):
-    """Build the deployment's images in the cluster and apply it there, checking the API
-    key whose hash `auth` holds: create a CanyonBuild, upload `projects` (name to folder) to its pod, wait until
-    it succeeds. Returns {agent: image by digest}."""
-    tag = time.strftime("%Y%m%d-%H%M%S")
-    # Random too: two deploys in the same second would otherwise share one build.
-    suffix = f"-{tag}-{uuid.uuid4().hex[:4]}"
-    name = resource_name(project)[: 63 - len(suffix)].rstrip("-") + suffix
-    image = build_image(k8s["registry"], tag)
-    # The build runs in the upload, which holds deployment.yaml at its root.
-    config_rel = os.path.basename(config_path)
-    apply(
-        [
-            canyon_build(
-                name, namespace, project, config_rel, k8s, tag, image, env_secret, auth
-            )
-        ]
-    )
-    with ui.status("Starting the build in the cluster..."):
-        status = wait_for_build(
-            namespace, name, ("Receiving",), BUILD_START_TIMEOUT_SECONDS
-        )
-    check_operator_version(namespace, name, status)
-    with ui.status("Uploading the project to the build..."):
-        upload_project(namespace, status["podName"], source_tarball(projects))
-    with ui.status("Building images in the cluster..."):
-        status = wait_for_build(namespace, name, ("Succeeded",), BUILD_TIMEOUT_SECONDS)
-    kubectl(
-        ["delete", "canyonbuild", name, "-n", namespace, "--wait=false"], check=False
-    )
-    return status.get("images") or {}
-
-
-# --------------------------------------------------------------------------------
-# kubectl
-# --------------------------------------------------------------------------------
 
 
 def kubectl(args, *, input_text=None, check=True, timeout=120):
@@ -467,57 +63,6 @@ def kubectl(args, *, input_text=None, check=True, timeout=120):
     return result
 
 
-def kubectl_json(args):
-    """Run a kubectl read and parse its JSON."""
-    return json.loads(kubectl([*args, "-o", "json"]).stdout or "{}")
-
-
-def _forbidden(result):
-    return "forbidden" in (result.stderr or "").lower()
-
-
-def _not_found(result):
-    return "notfound" in (result.stderr or "").lower().replace(" ", "")
-
-
-def require_operator():
-    """Fail with the install step when the cluster has no CanyonOS API. Asked through
-    discovery, which every signed-in user may read: reading the CRDs themselves needs
-    a cluster-wide permission a namespace's edit role does not have."""
-    found = kubectl(["api-resources", f"--api-group={GROUP}", "-o", "name"])
-    if f"canyonprojects.{GROUP}" not in found.stdout.split():
-        raise RuntimeError(
-            f"The CanyonOS operator is not installed on this cluster. {OPERATOR_HINT}"
-        )
-
-
-def operator_version():
-    """The operator's release, from the version label its chart puts on its
-    Deployment in OPERATOR_NAMESPACE, or None when it is not readable there."""
-    found = kubectl(
-        ["get", "deployment", "-n", OPERATOR_NAMESPACE,
-         "-l", "app.kubernetes.io/name=canyonos-operator",
-         "-o", r"jsonpath={.items[0].metadata.labels.app\.kubernetes\.io/version}"],
-        check=False,
-    )  # fmt: skip
-    if found.returncode:
-        return None
-    return (found.stdout or "").strip() or None
-
-
-def _cluster_reachable():
-    """Whether the cluster kubectl points at answers; every signed-in user may read
-    its version."""
-    return not kubectl(
-        ["get", "--raw", "/version", "--request-timeout=10s"], check=False
-    ).returncode
-
-
-def _operator_installed():
-    require_operator()
-    return True
-
-
 def current_context():
     """The kubectl context commands use, or None when there is none."""
     found = kubectl(["config", "current-context"], check=False)
@@ -526,491 +71,85 @@ def current_context():
     return found.stdout.strip() or None
 
 
-def cluster_checks():
-    """What deploying from here to the cluster kubectl points at needs, each with its
-    fix: the Kubernetes side of `canyonos doctor`'s Docker checks. Each needs the ones
-    before it, so run them with `stop_at_failure`."""
-    return [
-        (
-            "kubectl installed",
-            lambda: shutil.which("kubectl") is not None,
-            "install kubectl: https://kubernetes.io/docs/tasks/tools/",
-        ),
-        (
-            "Cluster reachable",
-            _cluster_reachable,
-            "point kubectl at your cluster (kubectl config use-context <name>), or "
-            "make a local one with `canyonos cluster up`",
-        ),
-        ("CanyonOS operator installed", _operator_installed, OPERATOR_HINT),
-    ]
-
-
-def local_registry():
-    """The registry a local cluster advertises in the standard `local-registry-hosting`
-    ConfigMap (KEP-1755; `canyonos cluster up` writes it), or None."""
-    try:
-        found = kubectl(
-            [
-                "get", "configmap", "local-registry-hosting", "-n", "kube-public",
-                "--request-timeout=10s",
-                "-o", r"jsonpath={.data.localRegistryHosting\.v1}",
-            ],
-            check=False,
-        )  # fmt: skip
-    except RuntimeError:
-        return None
-    if found.returncode:
-        return None
-    try:
-        hosting = yaml.safe_load(found.stdout)
-    except yaml.YAMLError:
-        return None
-    host = hosting.get("host") if isinstance(hosting, dict) else None
-    return host if isinstance(host, str) and host else None
-
-
-def ensure_namespace(namespace):
-    """Use the namespace, creating it (labelled as the CLI's) when it is missing. One
-    you may not even read cluster-wide (forbidden) is taken to exist: a missing one
-    then fails at the first object put in it."""
-    found = kubectl(["get", "namespace", namespace], check=False)
-    if found.returncode == 0 or _forbidden(found):
-        return False
-    result = kubectl(
-        ["create", "-f", "-"],
-        input_text=yaml.safe_dump(namespace_object(namespace)),
-        check=False,
+def _exec_plugin_token(plugin):
+    """Run the kubeconfig's login plugin `plugin` as kubectl does and return the token
+    it prints, or None when it gives a client certificate instead."""
+    info = {
+        "apiVersion": plugin["apiVersion"],
+        "kind": "ExecCredential",
+        "spec": {"interactive": False},
+    }
+    result = subprocess.run(
+        [plugin["command"], *(plugin["args"] or [])],
+        env={
+            **os.environ,
+            **{var["name"]: var["value"] for var in plugin["env"] or []},
+            "KUBERNETES_EXEC_INFO": json.dumps(info),
+        },
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        text=True,
     )
     if result.returncode:
         raise RuntimeError(
-            f"Namespace {namespace} does not exist and could not be created "
-            f"({result.stderr.strip()}). Ask a cluster admin for it, or use one you have."
+            f"kubectl's login plugin {plugin['command']} failed with exit code "
+            f"{result.returncode}"
         )
-    ui.ok(f"Created namespace {namespace}")
-    return True
+    return json.loads(result.stdout)["status"].get("token")
 
 
-def apply(objects):
-    """Server-side apply, owning only the fields CanyonOS sets."""
-    kubectl(
-        [
-            "apply",
-            "--server-side",
-            f"--field-manager={FIELD_MANAGER}",
-            "--force-conflicts",
-            "-f",
-            "-",
-        ],
-        input_text=yaml.safe_dump_all(objects, sort_keys=False),
+def kubernetes_state():
+    """This folder's deployment as gc.py takes it on Kubernetes: the local port of a
+    forward to the cluster's CanyonOS API, its deployment_id, and the user's kubectl
+    login, a token or one from its login plugin, in the headers every request sends."""
+    user = json.loads(
+        kubectl(["config", "view", "--raw", "--minify", "-o", "json"]).stdout
+    )["users"][0]["user"]
+    token = user.get("token")
+    if not token and "exec" in user:
+        token = _exec_plugin_token(user["exec"])
+    if not token:
+        raise RuntimeError(
+            "The current kubectl context signs in with a client certificate, and "
+            "canyonos can only send the cluster a token. Switch to a context that "
+            "signs in with a token or a login plugin: kubectl config use-context <name>"
+        )
+    port = open_forward(
+        API_FORWARD,
+        OPERATOR_NAMESPACE,
+        API_SERVICE,
+        API_PORT,
+        API_PORT,
+        context=current_context(),
     )
-
-
-def project_agents(namespace, project):
-    """The project's CanyonAgents in the cluster."""
-    return kubectl_json(
-        ["get", "canyonagents", "-n", namespace, "-l", f"{LABEL_PROJECT}={project}"]
-    ).get("items", [])
-
-
-def condition(obj, kind):
-    """One of an object's status conditions, or {}."""
-    for entry in obj.get("status", {}).get("conditions", []) or []:
-        if entry.get("type") == kind:
-            return entry
-    return {}
-
-
-def wait_until_ready(
-    namespace,
-    project,
-    timeout=READY_TIMEOUT_SECONDS,
-    sleep=time.sleep,
-    clock=time.monotonic,
-):
-    """Wait until the project and every agent are Ready; show progress, and fail
-    with the operator's reason when an agent will never start as configured."""
-    deadline = clock() + timeout
-    with ui.status("Starting on Kubernetes...") as spinner:
-        while True:
-            proj = kubectl_json(["get", "canyonproject", project, "-n", namespace])
-            agents = project_agents(namespace, project)
-            project_ready = condition(proj, "Ready")
-            ready_now = project_ready.get("status") == "True"
-            parts = [
-                f"project {'ready' if ready_now else project_ready.get('reason') or 'starting'}"
-            ]
-            if not ready_now:
-                # Redis, the global controller or the endpoint with no node to run on.
-                for kind in ("RedisReady", "ControllerReady", "EndpointReady"):
-                    part = condition(proj, kind)
-                    if part.get("reason") == "Unschedulable":
-                        parts.append(part.get("message", ""))
-            all_ready = ready_now and bool(agents)
-            for a in agents:
-                status, spec = a.get("status", {}), a.get("spec", {})
-                ready = condition(a, "Ready")
-                if ready.get("reason") in FATAL_REASONS:
-                    raise RuntimeError(
-                        f"{spec.get('agentName')}: {ready.get('message')}"
-                    )
-                part = f"{spec.get('agentName')} {status.get('readyReplicas', 0)}/{spec.get('replicas', '?')}"
-                if ready.get("reason") == "Unschedulable":
-                    # Not fatal (an autoscaler may add a node), but the reason to see.
-                    part += f" ({ready.get('message')})"
-                parts.append(part)
-                all_ready = all_ready and ready.get("status") == "True"
-            summary = " · ".join(parts)
-            spinner.update(f"Starting on Kubernetes: {summary}")
-            if all_ready:
-                return proj, agents
-            if clock() > deadline:
-                raise RuntimeError(
-                    f"Not ready after {timeout // 60} minutes ({summary}). See "
-                    f"`kubectl -n {namespace} get pods` and `kubectl -n {namespace} describe canyonagents`."
-                )
-            sleep(3)
-
-
-def scaling_conflicts(agents):
-    """One line per agent an HPA also scales: it would fight the global controller."""
-    return [
-        f"{a.get('spec', {}).get('agentName', '')}: {conflict.get('message', '')}"
-        for a in agents
-        if (conflict := condition(a, "ScalingConflict")).get("status") == "True"
-    ]
-
-
-# --------------------------------------------------------------------------------
-# Commands
-# --------------------------------------------------------------------------------
-
-
-def _env_secret(k8s, project, env_values):
-    return k8s.get("env_secret") or (f"{project}-env" if env_values else None)
-
-
-def _in_cluster_only(url):
-    """Whether the endpoint is reachable inside the cluster only (no Ingress or URL)."""
-    return ".svc:" in (url or "")
-
-
-def _forward_endpoint(namespace, project, config):
-    """Keep the project's endpoint on this machine in the background, on its
-    `endpoint.api_port` or 8080 or the next free port, as Docker publishes it; return
-    its local URL, or None (with a warning) when it cannot be forwarded."""
-    api_port = (config.get("endpoint") or {}).get("api_port")
-    try:
-        port = open_forward(
-            endpoint_forward(namespace, project),
-            namespace,
-            ENDPOINT_SERVICE,
-            ENDPOINT_PORT,
-            api_port or LOCAL_ENDPOINT_PORT,
-            context=current_context(),
-            fixed=bool(api_port),
-            # Not the dashboard's port, even before it is opened: a request would reach
-            # the dashboard there.
-            dashboard_port=config.get("dashboard_port"),
-        )
-    except RuntimeError as error:
-        ui.warn(f"The endpoint is not forwarded to this machine: {error}")
-        return None
-    return f"http://127.0.0.1:{port}"
-
-
-def _summary(namespace, project_obj, keyed, local_url=None, dashboard_url=None):
-    url = project_obj.get("status", {}).get("endpointURL", "")
-    lines = [
-        Text.assemble(
-            ("Dashboard  ", "bold"),
-            dashboard_url
-            or f"not running -- start it with `{kubernetes_command('serve')}`",
-        ),
-        Text.assemble(("Namespace  ", "bold"), namespace),
-    ]
-    if _in_cluster_only(url) and local_url:
-        lines.append(
-            Text.assemble(
-                ("Endpoint   ", "bold"),
-                f"{local_url} (forwarded from the cluster until canyonos stop)",
-            )
-        )
-        url = local_url
-    elif _in_cluster_only(url):
-        lines.append(
-            Text.assemble(("Endpoint   ", "bold"), f"{url} (inside the cluster)")
-        )
-        lines.append(
-            Text.assemble(
-                ("From here  ", "bold"),
-                f"kubectl -n {namespace} port-forward {ENDPOINT_SERVICE} 8080:{ENDPOINT_PORT}",
-            )
-        )
-        url = "http://127.0.0.1:8080"
-    else:
-        lines.append(Text.assemble(("Endpoint   ", "bold"), url))
-    for route in project_obj["spec"]["endpoint"]["routes"]:
-        path = f"{route['project']}/{route['agent']}/{route['method']}"
-        body = json.dumps({name: "your query" for name in route.get("arguments", [])})
-        lines.append(
-            Text.assemble(
-                ("Call       ", "bold"),
-                f"curl -X POST {url}/{path}{curl_auth(keyed)} "
-                f"-H \"Content-Type: application/json\" -d '{body}'",
-            )
-        )
-    lines.append(
-        Text.assemble(
-            ("Poll       ", "bold"),
-            f"curl{curl_auth(keyed)} {url}/status/<request_id>",
-        )
-    )
-    lines.append(
-        Text.assemble(("Test       ", "bold"), kubernetes_command('test "your query"'))
-    )
-    lines.append(Text.assemble(("Status     ", "bold"), kubernetes_command("status")))
-    return Panel(
-        Text("\n").join(lines), title="Deployed to Kubernetes", title_align="left"
-    )
-
-
-def run_kubernetes_deploy(
-    folders,
-    config_path=None,
-    timeout=READY_TIMEOUT_SECONDS,
-    serve=False,
-    api_key=None,
-    no_api_key=False,
-):
-    """Run `canyonos deploy --target kubernetes` for the projects in `folders`: upload the
-    deployment, with its `.env` and each project's as Secrets, for the cluster to build and
-    apply, wait until every agent is ready, and forward and show the endpoint. As on
-    Docker, the endpoint checks this machine's API key, which `api_key` sets or
-    replaces and `no_api_key` removes; with no key it checks nothing."""
-    projects = deployment.projects(folders)
-    config_path = resolve_config(config_path)
-    require_deployment_id(config_path)
-    key = resolve_api_key(api_key, no_api_key)
-    env_values = read_dotenv()
-    config = load_config(config_path, env_values)
-    k8s = config["kubernetes"]
-    namespace = k8s["namespace"]
-    require_operator()
-    ensure_namespace(namespace)
-    # Before naming the project: its name ends with the start of its project_id, as on
-    # Docker, so two folders of the same name never share one in a namespace.
-    save_deployment_config(config_path)
-    project = resource_name(deployment_name())
-    env_secret = _env_secret(k8s, project, env_values)
-    if not k8s.get("env_secret"):
-        # Each project's agents get its own .env; manifests.py in core names it the same way.
-        secrets = [
-            dotenv_secret(
-                namespace,
-                f"{project}-{resource_name(name)}-env",
-                project,
-                read_dotenv(project_env_path(folder)),
-            )
-            for name, folder in projects.items()
-        ]
-        if env_values:
-            secrets.append(dotenv_secret(namespace, env_secret, project, env_values))
-        apply(secrets)
-    images = build_in_cluster(
-        config_path,
-        namespace,
-        deployment_name(),
-        k8s,
-        env_secret,
-        projects,
-        {"apiKeyHash": hash_api_key(key)} if key else None,
-    )
-    ui.ok(f"Built {len(images)} image(s) in the cluster and applied the project")
-    project_obj, agents = wait_until_ready(namespace, project, timeout=timeout)
-    ui.ok(f"{len(agents)} agent(s) ready on Kubernetes")
-    for line in scaling_conflicts(agents):
-        ui.warn(line)
-    local_url = None
-    if _in_cluster_only(project_obj.get("status", {}).get("endpointURL")):
-        local_url = _forward_endpoint(namespace, project, config)
-    dashboard_port = forward_port(DASHBOARD)
-    if serve:
-        # As on Docker the deploy opens the dashboard; one the cluster lacks is a hint.
-        try:
-            dashboard_port = _open_dashboard()
-        except RuntimeError as error:
-            ui.hint(f"Dashboard not opened: {error}")
-    dashboard_url = f"http://127.0.0.1:{dashboard_port}" if dashboard_port else None
-    ui.panel(
-        _summary(namespace, project_obj, key is not None, local_url, dashboard_url)
-    )
-    return agents
-
-
-def _namespace_and_project(config_path):
-    config = load_config(resolve_config(config_path), read_dotenv())
-    return config["kubernetes"]["namespace"], resource_name(deployment_name())
-
-
-def run_kubernetes_status(as_json=False, config_path=None):
-    """Run `canyonos status --target kubernetes`: the project and each agent's replicas
-    and readiness in the terminal; with `as_json`, the object `canyonos status --json`
-    prints on Docker instead. Returns True when the project is deployed."""
-    ui.set_quiet(as_json)
-    try:
-        report = _kubernetes_status(config_path)
-    finally:
-        ui.set_quiet(False)
-    if as_json:
-        print(json.dumps(report, indent=2))
-    return report["running"]
-
-
-def _launch_error(agent):
-    """Why an agent's replicas are not running, when the operator says so."""
-    ready = condition(agent, "Ready")
-    if ready.get("status") != "True" and (
-        ready.get("reason") in FATAL_REASONS or ready.get("reason") == "Unschedulable"
-    ):
-        return ready.get("message")
-    return None
-
-
-def _kubernetes_status(config_path):
-    report = {
-        "running": False,
-        "endpoint": None,
-        "dashboard_url": None,
-        "agents": None,
-        "machine_errors": None,
-        "errors": [],
+    return {
+        "port": port,
+        "deployment_id": read_config(deployment_config_path()).get("deployment_id"),
+        "headers": {"Authorization": f"Bearer {token}"},
     }
-    namespace, project = _namespace_and_project(config_path)
-    result = kubectl(
-        ["get", "canyonproject", project, "-n", namespace, "-o", "json"], check=False
-    )
-    if result.returncode:
-        error = (result.stderr or "").strip()
-        if _not_found(result):
-            ui.warn(f"No CanyonOS project {project!r} in namespace {namespace}")
-        else:
-            # Still a report: `status --json` prints its errors as on Docker.
-            error = f"Could not read {project} in {namespace}: {error}"
-            ui.fail(error)
-        report["errors"].append(error)
-        return report
-    report["running"] = True
-    proj = json.loads(result.stdout)
-    url = proj.get("status", {}).get("endpointURL")
-    local_port = forward_port(endpoint_forward(namespace, project))
-    if url and local_port:
-        url = f"http://127.0.0.1:{local_port} (forwarded from {url})"
-    report["endpoint"] = {"url": url} if url else None
-    ready = condition(proj, "Ready")
-    state = (
-        "Ready"
-        if ready.get("status") == "True"
-        else (ready.get("reason") or "Starting")
-    )
-    ui.ok(f"Project {project} in {namespace}: {state} · endpoint {url or '?'}")
-    agents = project_agents(namespace, project)
-    report["agents"] = {
-        a.get("spec", {}).get("agentName", ""): {
-            "desired_replicas": a.get("spec", {}).get("replicas"),
-            "running_replicas": a.get("status", {}).get("readyReplicas", 0),
-            "launch_error": _launch_error(a),
-        }
-        for a in agents
-    }
-    ui.panel(agents_table(agents))
-    for line in scaling_conflicts(agents):
-        ui.warn(line)
-    return report
 
 
-def agents_table(agents):
-    """Each agent's desired and ready replicas and its state, as `canyonos status`
-    shows them."""
-    table = Table(title=None)
-    for column in ("Agent", "Desired", "Ready", "State"):
-        table.add_column(column)
-    for a in agents:
-        spec, status = a.get("spec", {}), a.get("status", {})
-        agent_ready = condition(a, "Ready")
-        table.add_row(
-            spec.get("agentName", ""),
-            str(spec.get("replicas", "")),
-            str(status.get("readyReplicas", 0)),
-            "Ready"
-            if agent_ready.get("status") == "True"
-            else (agent_ready.get("message") or "Starting"),
-        )
-    return table
-
-
-def run_kubernetes_logs(follow=True, tail="200", agent=None, config_path=None):
-    """Run `canyonos logs --target kubernetes`: the last `tail` lines of the Global
-    Controller's logs, as on Docker, or of an agent's replicas or one replica (such
-    as IntentAgent-1), and with `follow` keep streaming them until Ctrl-C. Returns
-    True when kubectl could read them."""
-    if tail != "all" and not str(tail).isdigit():
-        raise RuntimeError(f"--tail takes a number of lines or `all`, not {tail!r}")
-    namespace, project = _namespace_and_project(config_path)
-    argv = ["kubectl", "logs", "-n", namespace, "--all-containers", "--prefix",
-            f"--tail={-1 if tail == 'all' else tail}"]  # fmt: skip
-    if follow:
-        argv.append("-f")
-    if not agent:
-        argv.append(GLOBAL_CONTROLLER)
-    elif (
-        kubectl(
-            ["get", "pod", resource_name(agent), "-n", namespace], check=False
-        ).returncode
-        == 0
-    ):
-        argv.append(f"pod/{resource_name(agent)}")  # one replica: its pod has its name
-    else:
-        argv += ["-l", f"{LABEL_PROJECT}={project},{LABEL_AGENT}={resource_name(agent)}",
-                 "--max-log-requests=30"]  # fmt: skip
-    return subprocess.call(argv) == 0
-
-
-def run_kubernetes_stop(config_path=None):
-    """Run `canyonos stop --target kubernetes`: delete the CanyonProject; the operator
-    stops the endpoint, drains every agent, then removes Redis and the global
-    controller. The namespace, config and Secret stay for the next deploy."""
-    namespace, project = _namespace_and_project(config_path)
+def run_kubernetes_stop():
+    """Run `canyonos stop` or `canyonos clean` on Kubernetes: delete this folder's
+    deployment through the cluster's CanyonOS API, then close the forwards into the
+    cluster, also when that fails. Returns True once it is deleted."""
+    name = deployment_name()
+    ui.json_result["deployments"] = [name]
     try:
-        with ui.status(f"Stopping {project} (agents drain first)..."):
-            kubectl(
-                [
-                    "delete",
-                    "canyonproject",
-                    project,
-                    "-n",
-                    namespace,
-                    "--ignore-not-found",
-                    "--timeout=15m",
-                ],
-                timeout=960,
-            )
-        ui.ok(f"Stopped {project} in {namespace}")
+        with ui.status(f"Stopping {name} (agents drain first)..."):
+            delete_deployment(kubernetes_state())
+        ui.ok(f"Stopped {name}")
     finally:
         # Also when the cluster can't be reached: the forwards would retry until then.
-        close_forward(endpoint_forward(namespace, project))
-        # As on Docker, the dashboard stays while another project here still runs.
-        # Closed also when its process was killed outright, so its kubectl and port go.
-        if not running_forwards("endpoint-"):
-            was_open = forward_port(DASHBOARD)
-            close_forward(DASHBOARD)
-            if was_open:
-                ui.ok("Closed the dashboard's port-forward")
+        close_forward(API_FORWARD)
+        namespace = read_config(deployment_config_path())["kubernetes"]["namespace"]
+        close_forward(f"endpoint-{namespace}")
+        close_forward(DASHBOARD)
     return True
 
 
 def run_kubernetes_serve(port=None):
-    """Run `canyonos serve --target kubernetes`: keep the cluster's dashboard on
+    """Run `canyonos serve` on Kubernetes: keep the cluster's dashboard on
     127.0.0.1 here through a port-forward in the background, on `port`, else the
     project's `dashboard_port`, else 8081 or the next free one, until `canyonos stop`.
     Only who may port-forward into its namespace can open it, and its API key is its
@@ -1125,67 +264,53 @@ class PortForward:
                 process.wait(timeout=5)
 
 
-@contextlib.contextmanager
-def kubernetes_endpoint(config_path=None):
-    """The deployed project's endpoint, reached here through a port-forward while in
-    use, in the fields `canyonos test` reads on Docker: `public_host`, `api_port` and
-    `routes`, each with the `url` to POST a query to and its method's `arguments`."""
-    namespace, project = _namespace_and_project(config_path)
-    found = kubectl(
-        ["get", "canyonproject", project, "-n", namespace, "-o", "json"], check=False
-    )
-    if found.returncode:
-        raise RuntimeError(
-            f"No CanyonOS project {project!r} in namespace {namespace}: deploy it first "
-            f"with {kubernetes_command('deploy')} ({(found.stderr or '').strip()})"
-        )
-    project_obj = json.loads(found.stdout)
-    ready = condition(project_obj, "Ready")
-    if ready.get("status") != "True":
-        raise RuntimeError(
-            f"{project} in {namespace} is not ready ({ready.get('message') or 'starting'}): "
-            f"see {kubernetes_command('status')}"
-        )
-    routes = project_obj["spec"]["endpoint"]["routes"]
-    forward = PortForward(namespace)
-    base_url = f"http://127.0.0.1:{forward.port}"
+def _local_endpoint(endpoint, port):
+    """The deployment's `endpoint`, as its status gives it, as reached through a forward
+    on 127.0.0.1:`port`: its `public_host`, `api_port` and route URLs are local."""
+    return {
+        "public_host": "127.0.0.1",
+        "api_port": port,
+        "routes": [
+            {**route, "url": f"http://127.0.0.1:{port}" + urlsplit(route["url"]).path}
+            for route in endpoint["routes"]
+        ],
+    }
+
+
+def keep_endpoint_forwarded(endpoint):
+    """Keep the deployment's `endpoint` on this machine in the background until
+    `canyonos stop`, on its `endpoint.api_port` or 8080 or the next free port, as Docker
+    publishes it; return it as reached here, or as given when it can't be forwarded."""
+    config = read_config(deployment_config_path())
+    namespace = config["kubernetes"]["namespace"]
+    api_port = (config.get("endpoint") or {}).get("api_port")
     try:
-        yield {
-            "public_host": "127.0.0.1",
-            "api_port": forward.port,
-            "routes": [
-                {
-                    "arguments": [],
-                    **route,
-                    "url": f"{base_url}/{route['project']}/{route['agent']}/{route['method']}",
-                }
-                for route in routes
-            ],
-        }
+        port = open_forward(
+            # One per namespace, like the endpoint.
+            f"endpoint-{namespace}",
+            namespace,
+            ENDPOINT_SERVICE,
+            ENDPOINT_PORT,
+            api_port or DEFAULT_API_PORT,
+            context=current_context(),
+            fixed=bool(api_port),
+            # Not the dashboard's port: a request would reach the dashboard there.
+            dashboard_port=config.get("dashboard_port"),
+        )
+    except RuntimeError as error:
+        ui.warn(f"The endpoint is not forwarded to this machine: {error}")
+        return endpoint
+    return _local_endpoint(endpoint, port)
+
+
+@contextlib.contextmanager
+def forwarded_endpoint(endpoint):
+    """The deployment's `endpoint`, as its status gives it, reached here through a
+    port-forward while in use."""
+    forward = PortForward(
+        read_config(deployment_config_path())["kubernetes"]["namespace"]
+    )
+    try:
+        yield _local_endpoint(endpoint, forward.port)
     finally:
         forward.close()
-
-
-def run_kubernetes_clean(config_path=None):
-    """Run `canyonos clean --target kubernetes`: stop the project and remove what the
-    CLI created for it in the cluster (its ConfigMap and Secret); nothing here on this
-    machine changes. The namespace stays: it may hold more than this project; the hint
-    says how to remove one `canyonos deploy` made."""
-    namespace, project = _namespace_and_project(config_path)
-    run_kubernetes_stop(config_path)
-    kubectl(
-        ["delete", "configmap,secret", "-n", namespace, "-l",
-         f"{LABEL_PROJECT}={project},{LABEL_MANAGED_BY}={MANAGED_BY}", "--ignore-not-found"]
-    )  # fmt: skip
-    ns = kubectl(["get", "namespace", namespace, "-o", "json"], check=False)
-    labels = (
-        json.loads(ns.stdout)["metadata"].get("labels", {})
-        if ns.returncode == 0
-        else {}
-    )
-    if labels.get(LABEL_MANAGED_BY) == MANAGED_BY:
-        ui.hint(
-            f"Namespace {namespace} was created by canyonos deploy and is left in place; "
-            f"when nothing else uses it: kubectl delete namespace {namespace}"
-        )
-    return True

@@ -8,35 +8,18 @@ view (one is up). Each check just reports pass/fail plus a suggested fix --
 nothing here attempts to auto-fix anything.
 """
 
-import json
 import shutil
 import subprocess
 
-from canyonos import ui
-from canyonos.constants import (
-    endpoint_answers,
-    endpoint_answers_at,
-    port_in_use,
-)
+from canyonos import deployment, ui
 from canyonos.dashboard_stack import (
     _container_health,
     _container_name,
     _endpoint_healthy,
     _existing_dashboard_port,
 )
-from canyonos import env, kubernetes_target as k8s
-from canyonos.forwards import DASHBOARD, endpoint_forward, forward_port
-from canyonos.gc import deploy_status, deployed_endpoint, runtime_status
-from canyonos.init import (
-    docker_running,
-    docker_start_command,
-    load_state,
-    redis_port_of,
-)
-from canyonos.verify import _runtime_table, agent_rows
-
-# Seconds the endpoint gets to answer through a port-forward or an Ingress.
-FORWARDED_TIMEOUT = 5
+from canyonos.gc import deploy_health, deploy_status
+from canyonos.init import docker_running, docker_start_command, load_state
 
 
 def _compose_available():
@@ -75,60 +58,17 @@ def _pre_deploy_checks():
 
 
 def _print_check(label, ok, detail, fix):
-    """Like `_run_checks`'s per-check printing, but a passing check also shows
-    what it checked -- the address/container -- so the dependency graph is
-    visible without extra digging, not just a bare checkmark."""
+    """Print one check: a ✓ line with what it checked, when there is a `detail`, or a ✗
+    line and its fix. Adds it to the `--json` result's `checks` and returns `ok`."""
+    ui.json_result.setdefault("checks", []).append(
+        {"name": label, "ok": ok, "detail": detail, "fix": None if ok else fix}
+    )
     if ok:
-        ui.ok(f"{label:<24}{detail}")
+        ui.ok(f"{label:<24}{detail}" if detail else label)
     else:
         ui.fail(label)
         ui.hint(f"  -> {fix}")
     return ok
-
-
-def _gc_check(state, status):
-    ok = bool(status and status.get("running"))
-    return _print_check(
-        "Global Controller",
-        ok,
-        f"container {state['container_id'][:12]} on 127.0.0.1:{state['port']}",
-        "GC container isn't answering -- run `canyonos deploy <project folder>...` again",
-    )
-
-
-def _redis_check(state):
-    """TCP reachability only -- not a real PING, but enough to say something's
-    listening where the local provider and dashboard both expect Redis."""
-    redis_port = redis_port_of(state)
-    return _print_check(
-        "Redis",
-        port_in_use(redis_port),
-        f"127.0.0.1:{redis_port}",
-        f"nothing is listening on {redis_port} -- redeploy, or check `docker ps`",
-    )
-
-
-def _agents_check(state):
-    """Prints the workflow-agent readiness table for the agents the running Global
-    Controller reports. True if there's nothing to check or every agent is ready.
-    """
-    rows = agent_rows(runtime_status(state["port"]))
-    if not rows:
-        return True
-    ui.panel(_runtime_table(rows))
-    return all(row["ok"] for row in rows)
-
-
-def _endpoint_check(state):
-    """Any HTTP answer from the running deploy's endpoint counts, the same probe
-    `canyonos test` waits on."""
-    api_port = deployed_endpoint(state["port"])["api_port"]
-    return _print_check(
-        "Endpoint",
-        endpoint_answers(api_port),
-        f"127.0.0.1:{api_port}",
-        f"nothing answers on {api_port} -- run `canyonos deploy <project folder>...` again, or check `canyonos logs`",
-    )
 
 
 def _dashboard_checks():
@@ -170,33 +110,43 @@ def _guard(label, check):
     try:
         return bool(check())
     except Exception as e:
+        ui.json_result.setdefault("checks", []).append(
+            {"name": label, "ok": False, "detail": str(e), "fix": None}
+        )
         ui.fail(label)
         ui.hint(f"  -> {label} check could not run: {e}")
         return False
 
 
-def _print_post_deploy(state, status):
-    """Health-check every service the deploy declared, in dependency order:
-    the Global Controller, Redis, each workflow agent, the endpoint, then the dashboard --
-    one readiness table instead of `docker ps`/`docker inspect` by hand.
+def _print_health(state):
+    """Print each check the Global Controller's /deployment/health ran on the running
+    deploy, a ✓ or ✗ line with what it checked and, when it failed, the fix. True if
+    all passed."""
+    health = deploy_health(state)
+    ui.json_result.setdefault("checks", []).extend(health["checks"])
+    for check in health["checks"]:
+        (ui.ok if check["ok"] else ui.fail)(f"{check['name']:<24}{check['detail']}")
+        if check["fix"]:
+            ui.hint(f"  -> {check['fix']}")
+    return health["ok"]
 
-    Every check runs (no short-circuit) and is guarded, so one failing or
-    erroring probe never hides the others or aborts the whole report.
+
+def _print_post_deploy(state):
+    """Health-check the running deploy: the Global Controller, Redis, the workflow
+    agents and the endpoint, as the Global Controller sees them, then the dashboard.
+
+    Both are guarded, so one erroring probe never hides the other or aborts the
+    whole report.
     """
     results = [
-        _guard("Global Controller", lambda: _gc_check(state, status)),
-        _guard("Redis", lambda: _redis_check(state)),
-        _guard("Workflow agents", lambda: _agents_check(state)),
-        _guard("Endpoint", lambda: _endpoint_check(state)),
+        _guard("Global Controller", lambda: _print_health(state)),
         _guard("Dashboard", _dashboard_checks),
     ]
     return all(results)
 
 
-def _run_checks(checks, stop_at_failure=False):
-    """Run every check, print a pass/fail checklist, and return True if all passed.
-    With `stop_at_failure`, each check needs the ones before it, so the first failure
-    ends the list."""
+def _run_checks(checks):
+    """Run every check, print a pass/fail checklist, and return True if all passed."""
     all_ok = True
     for label, check, fix in checks:
         try:
@@ -204,144 +154,14 @@ def _run_checks(checks, stop_at_failure=False):
         except Exception as e:
             passed = False
             fix = f"{fix} (error: {e})"
-
-        if passed:
-            ui.ok(label)
-        else:
-            ui.fail(label)
-            ui.hint(f"  -> {fix}")
+        if not _print_check(label, passed, None, fix):
             all_ok = False
-            if stop_at_failure:
-                break
 
     return all_ok
 
 
-def _operator_version_check():
-    """The operator's release, from the version label Helm puts on its Deployment,
-    against the CLI's: `canyonos deploy` stops on a mismatch, so a project still running
-    on another release was deployed before an upgrade. Who may not read the operator's
-    namespace is told it was not checked."""
-    version = k8s.operator_version()
-    if not version:
-        ui.hint(
-            f"CanyonOS operator: version not checked (none readable in {k8s.OPERATOR_NAMESPACE})"
-        )
-        return True
-    return _print_check(
-        "CanyonOS operator",
-        env.is_development or version == env.VERSION,
-        f"version {version}",
-        f"the cluster runs CanyonOS {version} and this CLI is {env.VERSION} -- "
-        "upgrade one to the other's release, then `canyonos deploy`",
-    )
-
-
-def _project_ready_check(namespace, project, found):
-    ready = k8s.condition(found, "Ready")
-    return _print_check(
-        "Project",
-        ready.get("status") == "True",
-        f"{project} in namespace {namespace}",
-        f"{ready.get('reason') or 'Starting'}: {ready.get('message') or 'not ready yet'}"
-        " -- see `canyonos logs`",
-    )
-
-
-def _kubernetes_agents_check(namespace, project):
-    agents = k8s.project_agents(namespace, project)
-    ui.panel(k8s.agents_table(agents))
-    for agent in agents:
-        error = k8s._launch_error(agent)
-        if error:
-            ui.hint(f"  -> {agent.get('spec', {}).get('agentName')}: {error}")
-    return all(k8s.condition(a, "Ready").get("status") == "True" for a in agents)
-
-
-def _kubernetes_endpoint_check(namespace, project, found):
-    """The endpoint through this machine's forward of it, or a short one of its own;
-    an Ingress or URL the project serves is asked directly."""
-    url = found.get("status", {}).get("endpointURL") or ""
-    if not k8s._in_cluster_only(url):
-        return _print_check(
-            "Endpoint",
-            endpoint_answers_at(url, FORWARDED_TIMEOUT),
-            url,
-            "nothing answers there -- check the Ingress or `endpoint.url`",
-        )
-    port = forward_port(endpoint_forward(namespace, project))
-    if port:
-        detail = f"127.0.0.1:{port} (forwarded until `canyonos stop`)"
-        return _print_check(
-            "Endpoint",
-            endpoint_answers_at(f"http://127.0.0.1:{port}", FORWARDED_TIMEOUT),
-            detail,
-            f"nothing answers on {port} -- `canyonos deploy` again opens it anew",
-        )
-    forward = k8s.PortForward(namespace)
-    try:
-        answers = endpoint_answers_at(
-            f"http://127.0.0.1:{forward.port}", FORWARDED_TIMEOUT
-        )
-    finally:
-        forward.close()
-    return _print_check(
-        "Endpoint",
-        answers,
-        f"{url} (not forwarded here: `canyonos deploy` keeps it on 127.0.0.1)",
-        "the endpoint isn't answering -- see `canyonos logs`",
-    )
-
-
-def _kubernetes_dashboard_check():
-    port = forward_port(DASHBOARD)
-    if port is None:
-        ui.hint("Dashboard not open here -- open it with `canyonos serve`")
-        return True
-    return _print_check(
-        "Dashboard",
-        _endpoint_healthy(f"http://127.0.0.1:{port}/healthz"),
-        f"127.0.0.1:{port} (forwarded until `canyonos stop`)",
-        "the dashboard isn't answering -- `canyonos serve` again",
-    )
-
-
-def _kubernetes_doctor():
-    """`canyonos doctor` for a project on Kubernetes: what deploying there needs, then,
-    once deployed, the operator's release, the project, each agent's replicas, the
-    endpoint and the dashboard, guarded as on Docker."""
-    namespace, project = k8s._namespace_and_project(None)
-    ui.say(f"Kubernetes: {project} in namespace {namespace}")
-    if not _run_checks(k8s.cluster_checks(), stop_at_failure=True):
-        return False
-    found = k8s.kubectl(
-        ["get", "canyonproject", project, "-n", namespace, "-o", "json"], check=False
-    )
-    if found.returncode:
-        if not k8s._not_found(found):
-            ui.fail(f"Could not read {project} in {namespace}")
-            ui.hint(f"  -> {(found.stderr or '').strip()}")
-            return False
-        ui.say(f"No deploy of {project} in namespace {namespace} -- `canyonos deploy`")
-        return True
-    found = json.loads(found.stdout)
-    ui.say("Deploy is up -- post-deploy checks:")
-    results = [
-        _guard("CanyonOS operator", _operator_version_check),
-        _guard("Project", lambda: _project_ready_check(namespace, project, found)),
-        _guard("Workflow agents", lambda: _kubernetes_agents_check(namespace, project)),
-        _guard(
-            "Endpoint", lambda: _kubernetes_endpoint_check(namespace, project, found)
-        ),
-        _guard("Dashboard", _kubernetes_dashboard_check),
-    ]
-    return all(results)
-
-
-def run_doctor(kubernetes=False):
+def run_doctor():
     """Print the pre- or post-deploy checklist, whichever applies, and return True if it all passed."""
-    if kubernetes:
-        return _kubernetes_doctor()
     try:
         state = load_state()
     except FileNotFoundError:
@@ -350,7 +170,7 @@ def run_doctor(kubernetes=False):
     status = None
     if state:
         try:
-            status = deploy_status(state["port"])
+            status = deploy_status(state)
         except (KeyError, OSError, ValueError) as e:
             ui.warn(
                 f"Could not read deploy status ({e}); assuming no deploy is running."
@@ -358,7 +178,10 @@ def run_doctor(kubernetes=False):
 
     if status and status.get("running"):
         ui.say("Deploy is up -- post-deploy checks:")
-        return _print_post_deploy(state, status)
+        return _print_post_deploy(state)
 
+    if deployment.configured_target() == "kubernetes":
+        ui.say("No deploy running -- run `canyonos deploy <project folder>...`")
+        return True
     ui.say("No deploy running -- pre-deploy checks:")
     return _run_checks(_pre_deploy_checks())

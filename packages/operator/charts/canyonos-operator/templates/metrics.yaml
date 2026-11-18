@@ -13,12 +13,13 @@ spec:
     - {name: https, port: 8443, targetPort: 8443, protocol: TCP}
   selector:
     {{- include "canyonos.selector" . | nindent 4 }}
+{{- end }}
 ---
-# The metrics endpoint checks each caller's token and permission with the API server.
+# The metrics endpoint and the CanyonOS API check each caller's token and permission with Kubernetes.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: canyonos-metrics-auth
+  name: canyonos-caller-auth
   labels:
     {{- include "canyonos.labels" . | nindent 4 }}
 rules:
@@ -32,17 +33,21 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: canyonos-metrics-auth
+  name: canyonos-caller-auth
   labels:
     {{- include "canyonos.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: canyonos-metrics-auth
+  name: canyonos-caller-auth
 subjects:
   - kind: ServiceAccount
     name: canyonos-controller-manager
     namespace: {{ .Release.Namespace }}
+  - kind: ServiceAccount
+    name: canyonos-api
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.metrics.enabled }}
 ---
 # Grant to whatever scrapes the operator (e.g. Prometheus's ServiceAccount).
 apiVersion: rbac.authorization.k8s.io/v1

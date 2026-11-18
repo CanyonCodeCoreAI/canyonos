@@ -36,8 +36,8 @@ from canyonos.dashboard_registration import (
 from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
-from canyonos.gc import deploy_status, deployed_endpoint
-from canyonos.init import load_state, redis_port_of
+from canyonos.gc import deploy_status
+from canyonos.init import load_state
 from canyonos.new_app import PYTHON_TEMPLATE_SUFFIX
 from canyonos.os_support import write_private_file
 from utils.tui import select_menu
@@ -388,7 +388,7 @@ def _deploy_is_up():
     interrupted run, so it can say what it left behind."""
     try:
         state = load_state()
-        return bool((deploy_status(state["port"]) or {}).get("running"))
+        return bool((deploy_status(state) or {}).get("running"))
     except (KeyError, OSError, RuntimeError, ValueError):
         return False
 
@@ -598,8 +598,7 @@ def _add_sample_data(workflow):
     """Ask the dashboard to add `workflow`'s example runs to this project, whether
     or not the first request worked. Never fails the run."""
     try:
-        state = load_state()
-        project = register_project(redis_port_of(state))
+        project = register_project(load_state())
         ui.blank()
         ui.say("Adding example runs to the dashboard...")
         added = add_sample_data(project["project_id"], workflow)
@@ -616,8 +615,10 @@ def _send_first_request(project):
     user to type it, send it with the key and wait for the answer. True when the
     workflow answered."""
     try:
-        endpoint = deployed_endpoint(load_state()["port"])
+        endpoint = (deploy_status(load_state()) or {}).get("endpoint")
     except (KeyError, OSError, RuntimeError, ValueError):
+        endpoint = None
+    if endpoint is None:
         ui.warn("Could not read the endpoint -- `canyonos status` prints it.")
         return False
 

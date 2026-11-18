@@ -696,13 +696,11 @@ class GlobalController(ControllerContext):
             if answer == REDIS_REFUSES_PASSWORD:
                 deployment = os.environ.get(DOCKER_PROJECT_ENV, "<deployment>")
                 logger.critical(
-                    "Redis container %s on %s refuses this deployment's password: the "
-                    "one in ~/.canyonos/deployments/%s/redis_password no longer matches "
-                    "it. Run `canyonos stop %s` to remove the old Redis, then deploy "
-                    "again.",
+                    "Redis container %s on %s holds another password than this "
+                    "deployment's. Run `canyonos stop %s` to remove the old Redis, then "
+                    "deploy again.",
                     container_name,
                     host,
-                    deployment,
                     deployment,
                 )
                 sys.exit(1)

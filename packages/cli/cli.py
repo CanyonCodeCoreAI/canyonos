@@ -7,7 +7,9 @@ Commands like doctor and new_app will not though
 """
 
 import argparse
+import contextlib
 import importlib.metadata
+import json
 import os
 import signal
 import sys
@@ -32,17 +34,17 @@ from canyonos.doctor import run_doctor
 from canyonos import kubernetes_local, kubernetes_target
 from canyonos.feedback import run_feedback
 from canyonos.forwards import FORWARD_ARGUMENT, run_forward
+from canyonos.gc import NoDeployError
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
 from canyonos.os_support import prepare_console
 from canyonos.quickstart import run_quickstart
 from canyonos.serve import run_serve
 from canyonos.provision import run_provision
-from canyonos.status import run_status
+from canyonos.status import _report_status, run_status
 from canyonos.stop import run_stop
 from canyonos.sync import run_sync_and_reload
-from canyonos.deployment import TARGETS, resolve_target
-from canyonos.target import run_target
+from canyonos.deployment import configured_target
 from canyonos.test import DEFAULT_QUERY, REQUEST_TIMEOUT, run_test
 from canyonos.upgrade import notify_if_outdated, run_upgrade
 from canyonos.usage.delivery import (
@@ -126,8 +128,6 @@ def _enter_deployment_folder(args):
 def _uses_the_selected_deployment(args):
     """True when `args` is a command that acts on one deployment of this machine and
     names none: `stop`, `clean`, `status`, `logs`, `test`, `sync` and `curl`."""
-    if getattr(args, "target", None) == "kubernetes":
-        return False
     if args.command in ("stop", "clean"):
         return not args.all and not args.deployments
     return args.command in ("status", "logs", "test", "sync", "curl")
@@ -208,43 +208,24 @@ def _run_command(settings_at_start):
         help="down: also remove the local registry and the images in it",
     )
 
-    def add_target(command):
-        command.add_argument(
-            "--target",
-            choices=TARGETS,
-            help="Where the deployment runs: Docker on this machine or the Kubernetes "
-            "cluster kubectl points at (default: deployment.yaml's `target`, else docker)",
+    def deploy_to_target(args):
+        """Deploy to the target; with --json, add what `status --json` then prints."""
+        deployed = run_deploy(
+            args.folders,
+            serve=args.serve,
+            verbose=args.verbose,
+            yes=args.yes or args.json,
+            detach=args.detach,
+            api_key=args.api_key,
+            no_api_key=args.no_api_key,
         )
-        return command
+        if deployed is not None and args.json:
+            ui.json_result["status"] = _report_status()
+        return deployed is not None
 
-    def on_kubernetes(args):
-        return resolve_target(args.target) == "kubernetes"
-
-    deploy = add_target(
-        add(
-            "deploy",
-            lambda args: sys.exit(
-                0
-                if (
-                    kubernetes_target.run_kubernetes_deploy(
-                        args.folders,
-                        serve=args.serve,
-                        api_key=args.api_key,
-                        no_api_key=args.no_api_key,
-                    )
-                    if on_kubernetes(args)
-                    else run_deploy(
-                        args.folders,
-                        serve=args.serve,
-                        verbose=args.verbose,
-                        api_key=args.api_key,
-                        no_api_key=args.no_api_key,
-                    )
-                )
-                is not None
-                else 1
-            ),
-        )
+    deploy = add(
+        "deploy",
+        lambda args: sys.exit(0 if deploy_to_target(args) else 1),
     )
     deploy.add_argument(
         "--folder",
@@ -273,40 +254,78 @@ def _run_command(settings_at_start):
         help="Stream the container's full build and deploy logs instead of a progress summary",
     )
     add_api_key_options(deploy)
+    deploy.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Deploy the resources the config sets, without the resource picker",
+    )
+    deploy.add_argument(
+        "--detach",
+        action="store_true",
+        help="Return once the deploy has started, without waiting for the workflow "
+        "or starting the dashboard",
+    )
+
+    def printing_json(run):
+        """`run`, or with --json, `run` with its output hidden and then one JSON object:
+        whether it succeeded, why not as a `code`, every error it showed and what it put
+        in `ui.json_result`."""
+
+        def run_maybe_json(args):
+            if not args.json:
+                return run(args)
+            ui.set_quiet(True)
+            code, failure = 0, None
+            try:
+                # Log lines a command prints go to stderr, so stdout holds only the JSON.
+                with contextlib.redirect_stdout(sys.stderr):
+                    run(args)
+            except SystemExit as e:
+                code = e.code
+            except RuntimeError as e:
+                ui.fail(e)
+                code = getattr(e, "exit_code", 1)
+                failure = getattr(e, "error_code", None)
+            ok = code == 0
+            print(
+                json.dumps(
+                    {
+                        "ok": ok,
+                        "code": None if ok else (failure or "failed"),
+                        "errors": ui.failures,
+                        **ui.json_result,
+                    },
+                    indent=2,
+                )
+            )
+            sys.exit(code)
+
+        return run_maybe_json
 
     def this_machine_or_cluster(local, cluster):
         """Run `local(args)`, or `cluster()` on Kubernetes: the deployment of this
         folder only. --all and deployment names mean deployments on this machine, so
-        they always run `local`, whatever this folder's target, and are refused with
-        --target kubernetes."""
+        they always run `local`, whatever this folder's target."""
 
         def run(args):
             if args.all and args.deployments:
                 ui.fail("Name deployments or pass --all, not both")
                 return False
             if args.all or args.deployments:
-                if args.target == "kubernetes":
-                    ui.fail(
-                        "--all and deployment names cover the deployments on this "
-                        "machine, not a cluster's; run the command from each deployment's "
-                        "folder"
-                    )
-                    return False
                 return local(args)
-            return cluster() if on_kubernetes(args) else local(args)
+            return cluster() if configured_target() == "kubernetes" else local(args)
 
         return lambda args: sys.exit(0 if run(args) else 1)
 
-    clean = add_target(
-        add(
-            "clean",
-            this_machine_or_cluster(
-                lambda args: run_clean(
-                    all_deployments=args.all, yes=args.yes, refs=args.deployments
-                ),
-                kubernetes_target.run_kubernetes_clean,
+    clean = add(
+        "clean",
+        this_machine_or_cluster(
+            lambda args: run_clean(
+                all_deployments=args.all, yes=args.yes, refs=args.deployments
             ),
-        )
+            kubernetes_target.run_kubernetes_stop,
+        ),
     )
     clean.add_argument(
         "deployments",
@@ -326,14 +345,12 @@ def _run_command(settings_at_start):
     clean.add_argument(
         "-y", "--yes", action="store_true", help="Don't ask before --all"
     )
-    stop = add_target(
-        add(
-            "stop",
-            this_machine_or_cluster(
-                lambda args: run_stop(all_deployments=args.all, refs=args.deployments),
-                kubernetes_target.run_kubernetes_stop,
-            ),
-        )
+    stop = add(
+        "stop",
+        this_machine_or_cluster(
+            lambda args: run_stop(all_deployments=args.all, refs=args.deployments),
+            kubernetes_target.run_kubernetes_stop,
+        ),
     )
     stop.add_argument(
         "deployments",
@@ -358,19 +375,17 @@ def _run_command(settings_at_start):
         help="A project folder of the running deployment to copy in again",
     )
 
-    logs = add_target(
-        add(
-            "logs",
-            lambda args: sys.exit(
-                0
-                if (
-                    kubernetes_target.run_kubernetes_logs
-                    if on_kubernetes(args)
-                    else run_logs
-                )(follow=args.follow, tail=args.tail, agent=args.agent)
-                else 1
-            ),
-        )
+    logs = add(
+        "logs",
+        lambda args: sys.exit(
+            0
+            if run_logs(
+                follow=args.follow and not args.json,
+                tail=args.tail,
+                agent=args.agent,
+            )
+            else 1
+        ),
     )
     logs.add_argument(
         "agent",
@@ -446,67 +461,33 @@ def _run_command(settings_at_start):
         action="store_true",
         help="Install the CanyonOS skill and exit, without launching the coding agent",
     )
-    add_target(
-        add(
-            "doctor",
-            lambda args: sys.exit(
-                0 if run_doctor(kubernetes=on_kubernetes(args)) else 1
-            ),
-        )
-    )
-    serve = add_target(
-        add(
-            "serve",
-            lambda args: sys.exit(
-                kubernetes_target.run_kubernetes_serve()
-                if on_kubernetes(args)
-                else run_serve(api_key=args.api_key, no_api_key=args.no_api_key)
-            ),
-        )
+    doctor = add("doctor", lambda args: sys.exit(0 if run_doctor() else 1))
+    serve = add(
+        "serve",
+        lambda args: sys.exit(
+            kubernetes_target.run_kubernetes_serve()
+            if configured_target() == "kubernetes"
+            else run_serve(api_key=args.api_key, no_api_key=args.no_api_key)
+        ),
     )
     add_api_key_options(serve)
-    status = add_target(
-        add(
-            "status",
-            lambda args: sys.exit(
-                0
-                if (
-                    kubernetes_target.run_kubernetes_status
-                    if on_kubernetes(args)
-                    else run_status
-                )(args.json)
-                else 1
-            ),
-        )
+    status = add(
+        "status",
+        lambda args: sys.exit(0 if run_status(args.json) else NoDeployError.exit_code),
     )
     status.add_argument(
         "--json",
         action="store_true",
         help="Print a single JSON object with each agent's replica counts and nothing else",
     )
-    target = add(
-        "target",
-        lambda args: sys.exit(
-            0
-            if run_target(args.target, namespace=args.namespace, registry=args.registry)
-            else 1
-        ),
-    )
-    target.add_argument(
-        "target",
-        nargs="?",
-        choices=TARGETS,
-        help="Where this project deploys from now on (default: show where it does)",
-    )
-    target.add_argument(
-        "--namespace",
-        help="kubernetes: the project's namespace (default: the folder's name)",
-    )
-    target.add_argument(
-        "--registry",
-        help="kubernetes: where images are pushed and nodes pull from (default: the "
-        "local registry the cluster advertises, else asked)",
-    )
+    for command in (deploy, clean, stop, sync, logs, doctor):
+        command.add_argument(
+            "--json",
+            action="store_true",
+            help="Print a single JSON object, whether it succeeded, its errors and "
+            "its result, and nothing else",
+        )
+        command.set_defaults(func=printing_json(command.get_default("func")))
     add("upgrade", lambda args: sys.exit(run_upgrade()))
     add("list", lambda args: sys.exit(0 if run_list() else 1))
     select_context = add(
@@ -555,19 +536,16 @@ def _run_command(settings_at_start):
         "sending it",
     )
 
-    # Test has args: prompt, --json, --timeout, --target.
-    test = add_target(
-        add(
-            "test",
-            lambda args: sys.exit(
-                run_test(
-                    args.prompt,
-                    as_json=args.json,
-                    timeout=args.timeout,
-                    kubernetes=on_kubernetes(args),
-                )
-            ),
-        )
+    # Test has args: prompt, --json, --timeout.
+    test = add(
+        "test",
+        lambda args: sys.exit(
+            run_test(
+                args.prompt,
+                as_json=args.json,
+                timeout=args.timeout,
+            )
+        ),
     )
     test.add_argument(
         "prompt",
@@ -623,7 +601,7 @@ def _run_command(settings_at_start):
             args.func(args)
     except RuntimeError as e:
         ui.fail(e)
-        sys.exit(1)
+        sys.exit(getattr(e, "exit_code", 1))
     finally:
         start_delivery(args.command, settings_at_start)
 

@@ -35,6 +35,7 @@ from ..harness import (
     dashboard_containers,
     docker,
     http,
+    poll,
     project_containers,
     project_dir,
     stage,
@@ -94,6 +95,17 @@ def _running_projects(recorder) -> set[str]:
     return {group.removeprefix("canyonos-") for group in listing.split()}
 
 
+def _all_replicas_up(recorder, directory: Path) -> bool:
+    """Whether `status --json` in `directory` shows every agent running all its
+    replicas; fails at once when the deploy has stopped."""
+    report = canyonos(recorder, ["status", "--json"], cwd=directory, check=False).json()
+    assert report["running"], f"the deploy stopped: {report}"
+    agents = (report["agents"] or {}).values()
+    return bool(agents) and all(
+        1 <= agent["running_replicas"] == agent["desired_replicas"] for agent in agents
+    )
+
+
 def _records() -> list[str]:
     """The projects with a deploy record, in the order the CLI lists them."""
     deployments = Path.home() / ".canyonos" / "deployments"
@@ -127,7 +139,9 @@ def _tear_down(recorder, fleet_dirs: dict[str, Path], parent: Path) -> None:
 @pytest.fixture(scope="module")
 def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     """Both copies staged under different parents, the second on fixed ports, then
-    deployed at the same time."""
+    deployed at the same time: the first with `--json`, which reports it up with its
+    endpoint, and the second in a terminal with `--yes --detach`, so it returns
+    without the resource picker and is up once `status --json` says so."""
     parent = tmp_path_factory.mktemp("stop-and-clean")
     dirs: dict[str, Path] = {}
     request.addfinalizer(lambda: _tear_down(recorder, dirs, parent))
@@ -135,19 +149,29 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
         (parent / copy).mkdir()
         dirs[copy] = stage(recorder, load_project("helloworld"), parent / copy, {})
     _pin_ports(dirs["second"])
-    with ThreadPoolExecutor(max_workers=len(COPIES)) as pool:
-        deploys = [
-            pool.submit(
-                canyonos,
-                recorder,
-                ["deploy", str(project_dir(dirs[copy]))],
-                cwd=dirs[copy],
-                timeout=DEPLOY_TIMEOUT,
-            )
-            for copy in COPIES
-        ]
-        for deploy in deploys:
-            deploy.result()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(
+            canyonos,
+            recorder,
+            ["deploy", str(project_dir(dirs["first"])), "--json"],
+            cwd=dirs["first"],
+            timeout=DEPLOY_TIMEOUT,
+        )
+        detached = canyonos_in_terminal(
+            recorder,
+            ["deploy", str(project_dir(dirs["second"])), "--yes", "--detach"],
+            cwd=dirs["second"],
+            answers=[],
+        )
+        assert "Deploy started." in detached.output, detached.output
+        poll(
+            lambda: _all_replicas_up(recorder, dirs["second"]),
+            timeout=DEPLOY_TIMEOUT,
+            what="the detached deploy's replicas in status --json",
+        )
+        deployed = first.result().json()
+        assert deployed["ok"] and deployed["status"]["running"], deployed
+        assert deployed["status"]["endpoint"]["routes"][0]["url"], deployed
     identity = {
         copy: cli_value(
             recorder,
@@ -310,9 +334,10 @@ def test_with_one_project_left_stop_refuses_it_once_its_controller_is_down(
 def test_naming_a_project_whose_controller_is_down_forces_its_stop(recorder, fleet):
     first = fleet.names["first"]
 
-    call = canyonos(recorder, ["stop", first], cwd=fleet.outside)
+    call = canyonos(recorder, ["stop", first, "--json"], cwd=fleet.outside)
 
-    assert f"{first} torn down" in call.output, call.output
+    expected = {"ok": True, "code": None, "errors": [], "deployments": [first]}
+    assert call.json() == expected, call.output
     assert not project_containers(recorder, f"canyonos-{first}", every=True)
     assert first not in _records()
     assert not dashboard_containers(recorder)

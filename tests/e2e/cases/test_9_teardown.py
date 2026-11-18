@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """`canyonos stop` removes the deployment's containers, its workspace volume and its
-records under `~/.canyonos`; a second stop is a no-op and `canyonos status` then
-reports nothing running. `canyonos clean` removes the agents' images and keeps a
+records under `~/.canyonos`; a second stop is a no-op, and `canyonos status` and
+`canyonos logs` then exit 3 for nothing running. `canyonos clean` removes the agents' images and keeps a
 port, the project's `.canyon`: it cleans the deployment, not its projects. This runs last; the container logs are collected first, because
 stop removes them. What stop does to the shared dashboard is
 scenarios/test_shared_dashboard.py's.
@@ -50,10 +50,14 @@ def test_stop_removes_the_project_and_its_records(recorder, deployed, artifacts_
     assert not _volume_exists(recorder, volume), f"{volume} is still there"
     kept = [path for path in records if path.exists()]
     assert not kept, kept
-    canyonos(recorder, ["stop"], cwd=deployed.dir, timeout=600)
+    again = canyonos(recorder, ["stop", "--json"], cwd=deployed.dir, timeout=600)
+    expected = {"ok": True, "code": None, "errors": [], "deployments": []}
+    assert again.json() == expected, again.stdout
     status = canyonos(recorder, ["status", "--json"], cwd=deployed.dir, check=False)
-    assert status.code != 0, status.output
+    assert status.code == 3, status.output
     assert status.json()["running"] is False, status.stdout
+    logs = canyonos(recorder, ["logs", "--json"], cwd=deployed.dir, check=False)
+    assert logs.code == 3 and logs.json()["code"] == "no_deploy", logs.output
 
 
 def _images(recorder):
@@ -73,7 +77,10 @@ def test_clean_removes_the_agent_images_and_keeps_the_port(recorder, deployed):
     if deployed.project.port is not None:
         assert canyon.is_dir(), canyon
 
-    canyonos(recorder, ["clean"], cwd=deployed.dir, timeout=600)
+    clean = canyonos(recorder, ["clean", "--json"], cwd=deployed.dir, timeout=600)
+    name = deployed.group.removeprefix("canyonos-")
+    expected = {"ok": True, "code": None, "errors": [], "deployments": [name]}
+    assert clean.json() == expected, clean.stdout
 
     left = sorted(built & _images(recorder))
     assert not left, left

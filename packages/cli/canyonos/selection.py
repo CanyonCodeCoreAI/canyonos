@@ -59,7 +59,9 @@ def recorded_deployments():
         except FileNotFoundError:
             continue
         deployments.append(
-            Deployment(name, state.get("project_id"), state.get("project_dir"), state)
+            Deployment(
+                name, state.get("deployment_id"), state.get("project_dir"), state
+            )
         )
     return deployments
 

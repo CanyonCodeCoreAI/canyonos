@@ -29,7 +29,7 @@ from rich.text import Text
 
 from canyonos import ui
 from canyonos.auth import auth_header
-from canyonos.gc import GCError, _error_detail, deployed_endpoint, existing_deploy
+from canyonos.gc import GCError, _error_body, deployed_endpoint, existing_deploy
 from canyonos.os_support import is_terminal, write_private_file
 from canyonos.test import _parse_answer, _query_route, _Run
 from canyonos.theme import GREEN, WHITE
@@ -85,7 +85,7 @@ def _deployed_workflows():
             "url": route["url"],
             "arguments": {name: "str" for name in route["arguments"]},
         }
-        for route in deployed_endpoint(existing["port"])["routes"]
+        for route in deployed_endpoint(existing)["routes"]
     ]
 
 
@@ -227,7 +227,7 @@ def _show_recent(workflow, sign):
         ui.fail(str(e))
         return
     except urllib.error.HTTPError as e:
-        ui.fail(f"Could not read request {picked['id']}: {_error_detail(e)}")
+        ui.fail(f"Could not read request {picked['id']}: {_error_body(e)['error']}")
         return
     except OSError as e:
         ui.fail(f"Could not reach the workflow at {url}: {e}")

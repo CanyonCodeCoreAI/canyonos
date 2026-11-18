@@ -5,8 +5,8 @@
 # file in the folder it runs from when there is none. Each project's agents and
 # routes are in its own config/workflow_config.yaml.
 
-# Where the deployment runs: `docker` is Docker on this machine.
-# `canyonos target kubernetes` switches it to a cluster, with the settings a cluster needs.
+# Where the deployment runs: `docker` is Docker on this machine; `kubernetes` is the
+# cluster kubectl points at, with the settings a cluster needs in a `kubernetes:` section.
 target: docker
 
 # Where every agent runs: `local` is this machine; `ec2-pool` and `ec2-assign` run

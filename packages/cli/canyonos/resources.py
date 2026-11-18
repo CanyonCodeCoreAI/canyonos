@@ -275,10 +275,11 @@ def _pick(project, agent_specs, machine_types=None, pool=None):
         ui.console.set_alt_screen(False)
 
 
-def configure_resources(project_configs, deployment_config):
-    """Fill, let the user edit, and save the resources of every project's agents, one
-    project at a time, beside the machines the deployment starts. `project_configs`
-    maps each project's name to its `config/project.yaml`. Returns False if cancelled."""
+def configure_resources(project_configs, deployment_config, ask=True):
+    """Fill, let the user edit when `ask`, and save the resources of every project's
+    agents, one project at a time, beside the machines the deployment starts.
+    `project_configs` maps each project's name to its `config/project.yaml`. Returns
+    False if cancelled."""
     deployment = read_config(deployment_config)
     pool = _pool(deployment)
     for project, config_path in project_configs.items():
@@ -296,8 +297,12 @@ def configure_resources(project_configs, deployment_config):
         for agent_spec in agent_specs:
             _fill_defaults(agent_spec)
 
-        if is_terminal(sys.stdin) and not _pick(
-            project, agent_specs, _machine_types(deployment, project), pool
+        if (
+            ask
+            and is_terminal(sys.stdin)
+            and not _pick(
+                project, agent_specs, _machine_types(deployment, project), pool
+            )
         ):
             return False
 

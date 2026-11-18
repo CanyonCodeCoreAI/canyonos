@@ -10,6 +10,7 @@ COPY packages/web/package.json ./packages/web/package.json
 COPY packages/api/package.json ./packages/api/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 COPY packages/cli-usage-api/package.json ./packages/cli-usage-api/package.json
+COPY packages/api-interface/package.json ./packages/api-interface/package.json
 COPY packages/tsconfig/package.json ./packages/tsconfig/package.json
 # Only the workspaces the build reads: the root dev tools would add 2 GB to this layer and the CI cache.
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --ignore-scripts --filter web --filter @repo/ui --filter @canyonos/api

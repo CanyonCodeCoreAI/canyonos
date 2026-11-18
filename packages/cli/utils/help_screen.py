@@ -43,9 +43,8 @@ UTIL_COMMANDS = (
     ("stop", "Stop the deploy and remove its containers, keeping its images"),
     (
         "sync",
-        "Apply config changes to the running deploy; code changes need a redeploy",
+        "Apply project changes to the running deploy; code changes restart it",
     ),
-    ("target", "Show or choose where this deployment runs: Docker or Kubernetes"),
     ("test", "Send one prompt to every workflow of the running deployment"),
     ("upgrade", "Upgrade the canyonos CLI to the latest release"),
     ("validate", "Check the project against the CanyonOS contract"),

@@ -220,17 +220,6 @@ dashboard 8081 → 8082, dashboard API 3000 → 3001. This is expected.
 **Solution:** nothing to fix. Use the URLs that `deploy` prints, or run
 `canyonos status`.
 
-### Deploy stops because Redis's password file is gone
-
-`<deployment>'s Redis is still running, but its password file ... is gone`
-
-**Cause:** each deployment's Redis has its own password, kept in
-`~/.canyonos/deployments/<deployment>/redis_password`. That file was deleted while the
-deployment's Redis kept running, so a new password wouldn't open it.
-
-**Solution:** remove the old Redis as the message says, with
-`canyonos stop <deployment>` or `docker rm -f -v <container>`, then deploy again.
-
 ### Deploy stops because the deployment's CA is gone
 
 `<deployment>'s Redis is still running, but its certificate authority ... is gone`
@@ -246,9 +235,8 @@ deployment's Redis kept running, and Redis would refuse every certificate a new 
 
 `refuses this deployment's password`, in the deploy output or `canyonos logs`
 
-**Cause:** the password in `~/.canyonos/deployments/<deployment>/redis_password` no
-longer matches the Redis the Global Controller found running, often one a crashed deploy
-left behind.
+**Cause:** the Redis the Global Controller found running holds another password, often
+one a crashed deploy left behind.
 
 **Solution:** run `canyonos stop <deployment>` to remove the old Redis, then redeploy.
 
@@ -518,8 +506,8 @@ enough for all of them. Projects with many agents hit this first.
 `config/workflow_config.yaml` to fit your hardware. Then redeploy:
 
 ```bash
-canyonos stop --target kubernetes
-canyonos deploy --target kubernetes
+canyonos stop
+canyonos deploy
 ```
 
 ### Deploy fails because the image push is refused
@@ -527,17 +515,11 @@ canyonos deploy --target kubernetes
 `failed to push <registry>/<image>: ... connect: connection refused`
 
 **Cause:** the project's `registry:` points to the wrong address or port, so there's no
-registry there to receive the images. `canyonos target kubernetes --registry` saves any
-address without checking it.
+registry there to receive the images.
 
 **Solution:** check that the address and port in the `registry:` line of
 `deployment.yaml` are right, then deploy. With `canyonos cluster up`, the
-registry is `localhost:5001`:
-
-```bash
-canyonos target kubernetes --registry localhost:5001
-canyonos deploy --target kubernetes
-```
+registry is `localhost:5001`.
 
 ## Stopping and reset
 

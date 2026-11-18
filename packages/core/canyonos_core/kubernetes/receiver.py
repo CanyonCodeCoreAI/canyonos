@@ -67,9 +67,8 @@ def receive_upload(dest, port, timeout):
         def log_message(self, format, *args):  # noqa: A002 (the base class names it)
             logger.info("upload: " + format, *args)
 
-    # Loopback only: `kubectl port-forward` connects to the pod's own localhost, so the
-    # CLI's upload arrives, and no other pod in the cluster can send a project here.
-    server = HTTPServer(("127.0.0.1", port), Handler)
+    # All addresses: the /v1 API server next to the operator sends the upload from its pod.
+    server = HTTPServer(("0.0.0.0", port), Handler)
     server.timeout = 1
     logger.info("Waiting for the project upload on port %d", port)
     # A clock, not a count of requests: each rejected upload returns at once.

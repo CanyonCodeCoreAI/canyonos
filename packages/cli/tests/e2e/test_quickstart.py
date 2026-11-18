@@ -380,7 +380,8 @@ needs_docker = pytest.mark.skipif(
 )
 
 # What stage 4 asks the user to type, by the phrase each command's prompt shows.
-DEPLOY_STEP = "deploy the workflow's project, building each agent's image"
+# Only the part before the 80-column terminal wraps the line.
+DEPLOY_STEP = "deploy the workflow's project"
 PROMPT = "canyonos-quickstart \\$"
 STARTER_MENU = "Select a workflow to get started"
 RESOURCES_MENU = "Set the upper limit on what its replicas can use"

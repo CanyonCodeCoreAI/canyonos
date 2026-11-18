@@ -15,6 +15,7 @@ A Bun + Turborepo workspace (TypeScript) and a uv workspace (Python) in one repo
 | `packages/ui`            | Shared React components for `web`                                      | TypeScript (React)       |
 | `packages/operator`      | Kubernetes operator that runs projects in a cluster                    | Go                       |
 | `packages/cli-usage-api` | Receives CLI usage reports and `canyonos feedback`                     | TypeScript (Bun)         |
+| `packages/api-interface` | Typed TypeScript and Python clients for the CanyonOS REST API          | TypeScript, Python       |
 | `examples/`              | Sample workflows to deploy with `canyonos deploy`                      | Python                   |
 | `tests/`                 | Cross-package E2E tests                                                | Python                   |
 

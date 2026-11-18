@@ -23,6 +23,7 @@ required-version = ">=0.12.15"
 [tool.uv.sources]
 canyonos-core = { workspace = true }
 canyonos = { workspace = true }
+canyonos-api-interface = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -33,6 +34,7 @@ dev = [
     "reuse==6.2.0",
     "requests>=2.34.2",
     "pyyaml>=6.0.3",
+    "datamodel-code-generator==0.88.0",
 ]
 
 [tool.ruff]

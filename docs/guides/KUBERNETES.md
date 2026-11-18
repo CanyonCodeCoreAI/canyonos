@@ -130,23 +130,8 @@ What CanyonOS asks of your cluster:
 
 ## Point a workflow at the cluster
 
-```bash
-canyonos target kubernetes    # in the deployment folder, with kubectl pointing at the cluster
-```
-
-It writes `target: kubernetes` at the top of `deployment.yaml` and a `kubernetes:`
-block under it, then checks that `kubectl` is installed, the cluster answers and the
-operator is installed. The block gets:
-
-| Key         | Set to                                                                                                                           | To choose another |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `namespace` | The folder's name, lowercased, with anything but letters, digits and hyphens turned into hyphens                                 | `--namespace`     |
-| `registry`  | The one the cluster advertises in the standard `local-registry-hosting` ConfigMap, as `canyonos cluster up`'s does; else it asks | `--registry`      |
-
-Values already in the block are kept unless one of those options replaces them.
-`canyonos target` alone shows where the workflow deploys and runs the same checks, and
-`canyonos target docker` switches back to Docker, keeping the block. The
-[CLI reference](CLI.md#where-it-runs) lists the options.
+Put `target: kubernetes` at the top of the deployment folder's `deployment.yaml`, and a
+`kubernetes:` block under it, as [Configuration](#configuration) shows.
 
 ## Deploy and run
 
@@ -161,8 +146,7 @@ canyonos doctor      # check the cluster, the operator and the deployed workflow
 `canyonos deploy --api-key <key>` sets this machine's API key, as on Docker (see
 [API key](AUTHORIZATION.md)); later deploys reuse it. Without a key, the endpoint
 answers anyone who reaches it. The deploy prints the endpoint's URL and the `curl`
-commands to call it. Every command uses the workflow's `target`; `--target` overrides
-it for one run (see the [CLI reference](CLI.md#where-it-runs)).
+commands to call it. Every command uses the workflow's `target`.
 
 ### What a deploy does
 
@@ -219,8 +203,7 @@ The commands take the same options as on Docker, with these differences:
 
 ## Configuration
 
-`canyonos target kubernetes` writes the two required settings. Written by hand, the
-block is:
+The block, with its two required settings, is:
 
 ```yaml
 target: kubernetes
@@ -432,7 +415,7 @@ cluster.
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "The CanyonOS operator is not installed on this cluster" | [Set up the cluster](#set-up-the-cluster), or point `kubectl` at the right one: `kubectl config use-context <name>`.                                                                                                                          |
 | "they must be the same release"                          | [Upgrade the operator](#upgrading-the-operator) to the CLI's release, or deploy with the CLI of the operator's release.                                                                                                                       |
-| The namespace "does not exist and could not be created"  | Ask a cluster admin for the namespace, or set one you have with `canyonos target kubernetes --namespace <name>`.                                                                                                                              |
+| The namespace "does not exist and could not be created"  | Ask a cluster admin for the namespace, or set one you have as `namespace` in the `kubernetes:` block.                                                                                                                                         |
 | "The image build failed"                                 | The error names the build's log: `kubectl -n <namespace> logs job/<build> -c build`. A failed CanyonBuild is kept so you can look at it.                                                                                                      |
 | The deploy waits with "no node to run on"                | The message gives the scheduler's reason: too little CPU or memory (see [Configuration](#configuration) for what each pod requests), a taint, or a `node_selector` that no node matches. On a local cluster, give Docker more CPU and memory. |
 | An agent fails the deploy at once                        | The operator can never start it as configured. The error gives the operator's reason.                                                                                                                                                         |

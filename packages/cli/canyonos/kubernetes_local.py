@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """`canyonos cluster up` and `down`: a local Kubernetes cluster to deploy to with
-`--target kubernetes`, from the released CLI alone, with no CanyonOS checkout.
+`target: kubernetes`, from the released CLI alone, with no CanyonOS checkout.
 
 `up` makes what scripts/kind/up.sh makes for development (a registry on
 localhost:5001, a kind cluster with Calico, metrics-server and Pod Security
@@ -43,6 +43,7 @@ KIND_VALUES = (
     "--set", "dashboard.enabled=true",
 )  # fmt: skip
 MIN_CPUS, MIN_MEMORY_MIB = 4, 7500
+ADMIN_ACCOUNT = "canyonos-admin"
 
 
 def cluster_name():
@@ -225,6 +226,34 @@ def _create_cluster(name, workers):
         )  # fmt: skip
 
 
+def _sign_in_with_token(name):
+    """Give the cluster an admin service account, and have the kind context sign in
+    with its token, which canyonos can send, instead of kind's client certificate."""
+    account = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {"name": ADMIN_ACCOUNT, "namespace": "kube-system"},
+    }
+    binding = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRoleBinding",
+        "metadata": {"name": ADMIN_ACCOUNT},
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "cluster-admin",
+        },
+        "subjects": [{"kind": "ServiceAccount", **account["metadata"]}],
+    }
+    kubectl(["apply", "-f", "-"], input_text=yaml.safe_dump_all([account, binding]))
+    token = kubectl(
+        ["-n", "kube-system", "create", "token", ADMIN_ACCOUNT, "--duration=87600h"]
+    ).stdout.strip()
+    # Kind's own user name, so `kind delete cluster` removes it too.
+    kubectl(["config", "delete-user", f"kind-{name}"])
+    kubectl(["config", "set-credentials", f"kind-{name}", f"--token={token}"])
+
+
 def _connect_registry(name):
     """Point every node's localhost:5001 at the registry container, and tell tools
     where the cluster's registry is (KEP-1755)."""
@@ -356,6 +385,7 @@ def run_cluster_up(workers=None):
         with ui.status(f"Creating the kind cluster {name} (a few minutes)..."):
             _create_cluster(name, workers or 1)
     _run(["kubectl", "config", "use-context", f"kind-{name}"])
+    _sign_in_with_token(name)
     with ui.status("Connecting the nodes to the registry..."):
         _connect_registry(name)
     with ui.status("Installing Calico and metrics-server..."):
@@ -366,9 +396,10 @@ def run_cluster_up(workers=None):
         _install_canyonos(name, env.PROD_CHART_VERSION)
     ui.ok(f"Cluster {name} is ready, with CanyonOS {version}; kubectl now points at it")
     ui.say(
-        "Deploy a project to it: in its folder run canyonos target kubernetes, then "
-        "canyonos deploy, and canyonos serve for the dashboard. canyonos cluster down "
-        "removes the cluster."
+        "Deploy to it: set `target: kubernetes` and a `kubernetes:` section in the "
+        "deployment's deployment.yaml, then run canyonos deploy <project folder>..., "
+        "and canyonos serve for the dashboard. canyonos cluster down removes the "
+        "cluster."
     )
     return True
 

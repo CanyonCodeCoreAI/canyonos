@@ -55,6 +55,7 @@ from ..harness import (
     project_dir,
     project_root,
     qualified,
+    redis_password,
     redis_port,
     redis_tls_context,
     result_of,
@@ -223,19 +224,6 @@ def _reads_own_redis(recorder, fleet: Fleet, name: str) -> None:
     assert {prompt["name"] for prompt in prompts} == _prompt_names(directory), prompts
 
 
-def _redis_password_file(recorder, directory: Path) -> tuple[str, int]:
-    """The password the CLI keeps for the project's Redis and its file's mode."""
-    path = Path(
-        cli_value(
-            recorder,
-            directory,
-            "os.path.join(state_dir(), 'redis_password')",
-            "import os; from canyonos.deployment import state_dir",
-        )
-    )
-    return path.read_text(), path.stat().st_mode & 0o777
-
-
 def _ca_certificate(recorder, directory: Path) -> str:
     """The certificate of the deployment's CA, from the CLI's folder."""
     path = cli_value(
@@ -387,9 +375,8 @@ def test_dashboard_reads_each_projects_own_redis(recorder, fleet):
 def test_each_projects_redis_takes_only_its_own_password(recorder, fleet):
     passwords = {}
     for name in PROJECTS:
-        password, mode = _redis_password_file(recorder, fleet.dirs[name])
-        assert re.fullmatch(r"[0-9a-f]{64}", password), f"{name}'s password file"
-        assert mode == 0o600, (name, oct(mode))
+        password = redis_password(recorder, fleet.dirs[name])
+        assert re.fullmatch(r"[0-9a-f]{64}", password), f"{name}'s Redis password"
         passwords[name] = password
     assert passwords["helloworld"] != passwords["portfolio"]
     for name, other in zip(PROJECTS, reversed(PROJECTS)):

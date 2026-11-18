@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Port-forwards that outlive the command that opens them. On Kubernetes, `canyonos
-deploy` keeps the project's endpoint and `canyonos serve` the cluster's dashboard on
-127.0.0.1 here, as Docker publishes both on this machine, until `canyonos stop`.
+Port-forwards that outlive the command that opens them. On Kubernetes, every command
+keeps the cluster's CanyonOS API, and `canyonos serve` the cluster's dashboard, on
+127.0.0.1 here until `canyonos stop`.
 
 Each one runs in a detached `canyonos` process (the CLI started again with
 FORWARD_ARGUMENT), which starts `kubectl port-forward` again whenever it ends, as it
@@ -40,11 +40,6 @@ KILL_TIMEOUT_SECONDS = 5
 def forwards_dir():
     """The folder under `~/.canyonos` that holds every forward's record."""
     return os.path.join(os.path.expanduser("~/.canyonos"), "forwards")
-
-
-def endpoint_forward(namespace, project):
-    """The name of a project's endpoint forward."""
-    return f"endpoint-{namespace}-{project}"
 
 
 def _record_path(name):

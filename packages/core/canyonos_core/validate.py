@@ -21,12 +21,15 @@ import ast
 import json
 import os
 import sys
+import textwrap
 from typing import NamedTuple
 
 from canyonos_core.schema import CONFIG_PATH, CodeAgent, check_project
 from canyonos_core.stub_generator import AGENT_FLAT_MODULES
 
 UNCHECKED = 2
+# Wide enough for a mechanism paragraph, narrow enough to stay readable.
+WRAP_WIDTH = 78
 
 
 class ManifestNotFound(RuntimeError):
@@ -558,15 +561,23 @@ def payload(root, findings):
     }
 
 
+def finding_text(finding):
+    """Return the lines `canyonos validate` prints for one finding, joined by newlines.
+    Used here and by the server's project upload, which sends them to the CLI."""
+    where = finding.path
+    if where and finding.line:
+        where = f"{where}:{finding.line}"
+    lines = [f"{finding.code}  {where}".rstrip()]
+    for text, indent in ((finding.summary, "    "), (finding.mechanism, "      ")):
+        lines += [
+            indent + line for line in textwrap.wrap(text, WRAP_WIDTH - len(indent))
+        ]
+    return "\n".join(lines)
+
+
 def _print_text(findings):
     for finding in findings:
-        where = finding.path
-        if where and finding.line:
-            where = f"{where}:{finding.line}"
-        print(f"{finding.code}  {where}".rstrip())
-        print(f"    {finding.summary}")
-        if finding.mechanism:
-            print(f"      {finding.mechanism}")
+        print(finding_text(finding))
         print()
     print(f"{len(findings)} error(s)." if findings else "clean.")
 

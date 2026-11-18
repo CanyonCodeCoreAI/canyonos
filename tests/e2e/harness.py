@@ -381,17 +381,25 @@ def http(
     url: str,
     *,
     json=None,
+    data: bytes | None = None,
     headers: dict[str, str] | None = None,
     timeout: int = 30,
     check: bool = True,
 ) -> Call:
-    """Send one HTTP request and record its body and status. With `check`, a status
-    of 400 or more raises CallFailed carrying the call."""
+    """Send one HTTP request, with a JSON body or the raw bytes `data`, and record its
+    body and status. With `check`, a status of 400 or more raises CallFailed carrying
+    the call."""
     started = time.monotonic()
-    body = "" if json is None else _json.dumps(json)
+    body = (
+        f"<{len(data)} bytes>"
+        if data is not None
+        else ""
+        if json is None
+        else _json.dumps(json)
+    )
     try:
         response = requests.request(
-            method, url, json=json, headers=headers, timeout=timeout
+            method, url, json=json, data=data, headers=headers, timeout=timeout
         )
         output, code = response.text, response.status_code
         received = {name.lower(): value for name, value in response.headers.items()}
@@ -725,12 +733,23 @@ def deployed_project_id(
 
 
 def redis_port(recorder: Recorder, workspace: Path) -> int:
-    """The host port of the deployed project's Redis, as the CLI reads it."""
+    """The host port of the deployed project's Redis, as the CLI recorded it."""
     return cli_value(
         recorder,
         workspace,
-        "redis_port_of(load_state())",
-        "from canyonos.init import load_state, redis_port_of",
+        "load_state()['redis_port']",
+        "from canyonos.init import load_state",
+    )
+
+
+def controller_headers(recorder: Recorder, workspace: Path) -> dict[str, str]:
+    """The headers the CLI sends the deployment's Global Controller, with the secret
+    its state.json holds."""
+    return cli_value(
+        recorder,
+        workspace,
+        "load_state()['headers']",
+        "from canyonos.init import load_state",
     )
 
 
@@ -766,10 +785,17 @@ def redis_tls_context(recorder: Recorder, workspace: Path) -> ssl.SSLContext | N
     return context
 
 
+def redis_password(recorder: Recorder, workspace: Path) -> str:
+    """The password the deployed project's Redis container was started with."""
+    container = f"{deployment_group(recorder, workspace)}-redis-localhost"
+    env = docker(recorder, ["inspect", "-f", "{{json .Config.Env}}", container]).json()
+    return dict(entry.split("=", 1) for entry in env)["CANYONOS_REDIS_PASSWORD"]
+
+
 def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
     """The deployed project's Redis, on the host port the CLI recorded for it, signed in
-    with the password the CLI keeps for that project, over TLS with a client certificate
-    its CA signs when its Redis takes only that."""
+    with its container's password, over TLS with a client certificate its CA signs when
+    its Redis takes only that."""
     files = redis_client_files(recorder, workspace)
     tls = (
         {
@@ -784,12 +810,7 @@ def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
     return redis.Redis(
         host="127.0.0.1",
         port=redis_port(recorder, workspace),
-        password=cli_value(
-            recorder,
-            workspace,
-            "redis_password()",
-            "from canyonos.deployment import redis_password",
-        ),
+        password=redis_password(recorder, workspace),
         decode_responses=True,
         **tls,
     )
@@ -803,8 +824,8 @@ def deployed_endpoint(
     endpoint = cli_value(
         recorder,
         workspace,
-        "deployed_endpoint(load_state()['port'])",
-        "from canyonos.gc import deployed_endpoint; from canyonos.init import load_state",
+        "deploy_status(load_state())['endpoint']",
+        "from canyonos.gc import deploy_status; from canyonos.init import load_state",
     )
     route = endpoint["routes"][0]
     return Endpoint(

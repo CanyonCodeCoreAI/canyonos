@@ -10,6 +10,7 @@ Logic for `canyonos init`, does the following:
 
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -53,12 +54,12 @@ from canyonos.port_utils import (
 # built from their checkout instead.
 GC_IMAGE = env.core_image
 GC_CONTAINER_PORT = 8000
+# Hands the container the secret its API then requires as a Bearer token.
+GC_SECRET_ENV = "CANYONOS_CONTROLLER_SECRET"
 
 # The deployment's workspace volume (`deployment.workspace_volume()`) is mounted here.
-# Files are copied in via `canyonos sync` (docker cp), not mounted live, so
-# host-side edits don't reach a running build. `canyonos stop` removes the
-# volume, and since every deploy tears down the deployment's previous controller first,
-# each deploy starts from an empty workspace.
+# Files are uploaded through the container's API, not mounted live, so host-side
+# edits don't reach a running build. `canyonos stop` removes the volume.
 GC_WORKSPACE_PATH = "/workspace"
 
 # How to start the daemon behind each docker context, as (CLI command, macOS
@@ -256,15 +257,17 @@ def _pull_image(image=GC_IMAGE):
         )
 
 
-def _port_reachable(port, attempts=50, delay=0.1):
+def _port_reachable(port, headers, attempts=50, delay=0.1):
     """
     A successful `docker run` only means Docker accepted the port binding --
     not that traffic actually flows. Confirm the container is actually reachable before trusting it.
     """
-    url = f"http://127.0.0.1:{port}/status"
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/deployments", headers=headers
+    )
     for _ in range(attempts):
         try:
-            urllib.request.urlopen(url, timeout=1)
+            urllib.request.urlopen(request, timeout=1)
             return True
         except (urllib.error.URLError, OSError):
             time.sleep(delay)
@@ -346,7 +349,8 @@ def _run_container(
     `port`, or at the next free port after it that isn't `reserved`, and tell it
     Redis's port, the `reserved` ports and, for an endpoint whose port isn't set, the
     port it had last deploy. `auth_env` are the `docker run` options that hand it the
-    API key hash."""
+    API key hash. Returns its ID, port and docker socket, and the headers that send the
+    new secret its API requires."""
     if port in reserved:
         port = next_port(port, reserved)
     start_port = port
@@ -377,11 +381,9 @@ def _run_container(
     host_private_ip = private_ip()
     host_public_ip = public_ip()
     ca_env = internal_ca.gc_env()
-    gc_env = {
-        **os.environ,
-        "CANYONOS_REDIS_PASSWORD": deployment.redis_password(),
-        **ca_env,
-    }
+    secret = secrets.token_hex(32)
+    gc_env = {**os.environ, **ca_env, GC_SECRET_ENV: secret}
+    headers = {"Authorization": f"Bearer {secret}"}
     _create_workspace_volume()
     for _ in range(max_attempts):
         _free_container_name()
@@ -411,8 +413,6 @@ def _run_container(
             "-e",
             f"CANYONOS_REDIS_HOST={deployment.redis_container_name()}",
             "-e",
-            "CANYONOS_REDIS_PASSWORD",
-            "-e",
             f"CANYONOS_REDIS_PORT={redis_port}",
             *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),
             "-e",
@@ -436,7 +436,11 @@ def _run_container(
             # Names and labels every container the GC launches with this deployment.
             "-e",
             f"{deployment.DOCKER_PROJECT_ENV}={deployment.deployment_name()}",
+            "-e",
+            f"CANYONOS_DEPLOYMENT_ID={read_config(deployment_config_path())['deployment_id']}",
             *auth_env,
+            "-e",
+            GC_SECRET_ENV,
             *(arg for name in ca_env for arg in ("-e", name)),
         ]
         if host_private_ip:
@@ -456,10 +460,10 @@ def _run_container(
                 raise RuntimeError(
                     "Docker started the Global Controller but returned no container ID."
                 )
-            if _port_reachable(port):
+            if _port_reachable(port, headers):
                 # Only a real socket on this machine is recorded: later host-side
                 # `docker` calls are pointed at it, and the alias names no socket here.
-                return container_id, port, active_socket
+                return container_id, port, active_socket, headers
             # Port bound fine but never actually became reachable -- treat
             # like a conflict, since that's effectively what it is.
             failure = cleanup_docker(
@@ -490,9 +494,11 @@ def _save_state(
     redis_port=None,
     api_port=None,
     auth_disabled=False,
+    headers=None,
 ):
     """Atomically write GC state so interruption cannot truncate the old record;
-    `auth_disabled` records a deploy with no API key, for `canyonos list`."""
+    `auth_disabled` records a deploy with no API key, for `canyonos list`, and `headers`
+    send the secret the container's API requires."""
     state_dir = deployment.state_dir()
     os.makedirs(state_dir, exist_ok=True)
     temporary_path = None
@@ -513,11 +519,12 @@ def _save_state(
                     "docker_socket": docker_socket,
                     "redis_port": redis_port,
                     "api_port": api_port,
-                    "project_id": read_config(deployment_config_path()).get(
+                    "deployment_id": read_config(deployment_config_path()).get(
                         "deployment_id"
                     ),
                     "project_dir": os.getcwd(),
                     "auth_disabled": auth_disabled,
+                    "headers": headers,
                 },
                 f,
             )
@@ -535,7 +542,13 @@ def _save_state(
 
 def load_state(state_path=None):
     """Read this deployment's Global Controller container and port from its state
-    file under `~/.canyonos/deployments`, or from the state file at `state_path`."""
+    file under `~/.canyonos/deployments`, or from the state file at `state_path`. On
+    Kubernetes, return this folder's state from `kubernetes_state` instead."""
+    if state_path is None and deployment.configured_target() == "kubernetes":
+        # Imported here: kubernetes_target imports gc, which imports this module.
+        from canyonos.kubernetes_target import kubernetes_state
+
+        return kubernetes_state()
     state_path = state_path or deployment.state_path()
     try:
         with open(state_path, encoding="utf-8") as f:
@@ -601,35 +614,74 @@ def remember_api_port(api_port):
         state.get("redis_port"),
         api_port,
         state.get("auth_disabled", False),
+        state.get("headers"),
     )
 
 
-def redis_port_of(state):
-    """The Redis port a deploy recorded; for a state file from a CLI that recorded
-    none, the config's `redis.port`, else Redis's default."""
+def _can_reuse_container(state, image, auth_env):
+    """True when the Global Controller container `state` records is running from
+    `image` with this deployment's id, the Redis port the config asks for and the
+    API key hash `auth_env` hands it, so a deploy can upload to it instead of
+    replacing it."""
+    if (
+        not state
+        or state.get("deployment_id")
+        != read_config(deployment_config_path())["deployment_id"]
+        or local_redis_port(existing_config_path())
+        not in (None, state.get("redis_port"))
+    ):
+        return False
+    container = run_docker(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.State.Running}} {{.Image}} {{json .Config.Env}}",
+            state["container_id"],
+        ],
+        timeout=DOCKER_QUICK_TIMEOUT,
+        action=f"Inspecting Docker container {state['container_id'][:12]}",
+        env=docker_env(state),
+    )
+    wanted = run_docker(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+        timeout=DOCKER_QUICK_TIMEOUT,
+        action=f"Inspecting image {image}",
+    )
+    if container.returncode != 0:
+        return False
+    running, image_id, container_env = container.stdout.strip().split(" ", 2)
+    # The hash reaches the Global Controller only at start, so a new key replaces it.
     return (
-        state.get("redis_port")
-        or local_redis_port(deployment_config_path())
-        or DEFAULT_REDIS_PORT
+        running == "true"
+        and image_id == wanted.stdout.strip()
+        and set(auth_env[1::2]) <= set(json.loads(container_env))
     )
 
 
 def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
-    """Replace any existing Global Controller with a fresh container from `image` and
-    save its ID and port for later commands; run at the start of `canyonos deploy`.
-    The container is published on the last deploy's port or 8000, or the next free
-    port after it, and gets `auth_env`, the options that hand it the API key hash;
-    the state records `auth_disabled`, a deploy with no key."""
+    """Keep this deployment's Global Controller container when it runs `image` with
+    the config's Redis port and `auth_env`; otherwise replace it with a fresh one from
+    `image` and save its ID and port for later commands. Run at the start of `canyonos
+    deploy`. A new container is published on the last deploy's port or 8000, or the
+    next free port after it, and gets `auth_env`, the options that hand it the API key
+    hash; the state records `auth_disabled`, a deploy with no key."""
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
     # Read before stop_existing() removes the state, so a redeploy keeps its ports.
     saved = _saved_state()
+    with ui.status("Pulling Global Controller image..."):
+        _pull_image(image)
+    if _can_reuse_container(saved, image, auth_env):
+        ui.ok(
+            f"Global Controller already running in container "
+            f"{saved['container_id'][:12]} on port {saved['port']}"
+        )
+        return
     preferred = saved.get("port") or GC_CONTAINER_PORT
     stop_existing()
 
-    with ui.status("Pulling Global Controller image..."):
-        _pull_image(image)
     # After stop_existing(), so the last deploy's ports read as free. Picked and saved
     # under the ports lock: a deploy at the same moment then sees them as claimed.
     config_path = existing_config_path()
@@ -657,7 +709,7 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
             last_api_port = ports.pick(preferred_api, "the endpoint", claims)
             claims[last_api_port] = "the endpoint"
         with ui.status("Starting Global Controller container..."):
-            container_id, port, docker_socket = _run_container(
+            container_id, port, docker_socket, headers = _run_container(
                 image=image,
                 port=preferred,
                 redis_port=redis_port,
@@ -673,6 +725,7 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
                 redis_port,
                 last_api_port,
                 auth_disabled,
+                headers,
             )
         except OSError as e:
             cleanup_failure = cleanup_docker(

@@ -19,6 +19,8 @@ on:
       - 'packages/ui/**'
       - 'packages/tsconfig/**'
       - 'packages/cli-usage-api/package.json'
+      # The CLI calls the API through it, and the dashboard images install its package.json.
+      - 'packages/api-interface/**'
       - 'examples/**'
       - 'scripts/**'
       - 'tests/e2e/**'
@@ -37,6 +39,8 @@ on:
       - 'packages/ui/**'
       - 'packages/tsconfig/**'
       - 'packages/cli-usage-api/package.json'
+      # The CLI calls the API through it, and the dashboard images install its package.json.
+      - 'packages/api-interface/**'
       - 'examples/**'
       - 'scripts/**'
       - 'tests/e2e/**'

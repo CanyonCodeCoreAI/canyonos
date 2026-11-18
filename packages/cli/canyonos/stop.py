@@ -10,6 +10,7 @@ fast redeploy, and the shared dashboard is stopped with its history kept once no
 deployment's Global Controller runs. `canyonos deploy` and `canyonos clean` reuse it.
 """
 
+import json
 import os
 import shutil
 
@@ -28,8 +29,8 @@ from canyonos.dashboard_stack import (
     stop_dashboard,
     teardown_dashboard,
 )
-from canyonos.gc import GCError, post_clean
-from canyonos.init import GC_CONTAINER_PORT, docker_env, load_state
+from canyonos.gc import GCError, delete_deployment, list_deployments
+from canyonos.init import GC_CONTAINER_PORT, GC_SECRET_ENV, docker_env, load_state
 from canyonos.usage.consent import is_interactive
 from utils.tui import select_menu
 
@@ -75,10 +76,10 @@ def stop_deployment(state, name=None):
     # context is active now -- they can differ (see docker_env).
     env = docker_env(state)
     with ui.status(f"Tearing down {name}..."):
-        # A stale record cannot answer /clean, so establish this before making
-        # an HTTP request that would otherwise add a full request timeout.
+        # A stale record cannot answer DELETE /deployment, so establish this before
+        # making an HTTP request that would otherwise add a full request timeout.
         if controller_running(state):
-            failures = _tear_down(name, state["container_id"], state["port"], env)
+            failures = _tear_down(name, state, env)
         else:
             failures = _remove_deployment_resources([name], env) or _remove_state_files(
                 [name]
@@ -116,21 +117,20 @@ def stopper(choice):
     return stop_deployment if choice.confirmed else stop_if_safe
 
 
-def _tear_down(name, container_id, port, env):
+def _tear_down(name, state, env):
     """Have the running Global Controller of deployment `name` remove its deploy, then
     remove it, the deployment's network and volume, and the state files; returns what it
     couldn't."""
+    container_id = state["container_id"]
     failures = []
     # Stop any running deploy first, so the local controller and Redis
     # containers it spawned via docker-outside-of-docker get torn down
     # too. Removing the GC container itself doesn't touch them -- they're
     # sibling containers on the host, not nested inside it.
     try:
-        post_clean(port)
+        delete_deployment(state)
     except GCError as e:
-        # 409 is "no deploy running", which is the desired end state.
-        if e.code != 409:
-            failures.append(f"Cleaning the running deployment failed: {e}")
+        failures.append(f"Cleaning the running deployment failed: {e}")
 
     failure = cleanup_docker(
         ["docker", "stop", container_id],
@@ -228,14 +228,23 @@ def _clean_deployments():
                 published or f"Global Controller {container_id[:12]} has no port"
             )
             continue
+        port = published[0].rpartition(":")[2]
+        inspected = _list_docker(
+            ["docker", "inspect", "--format", "{{json .Config.Env}}", container_id],
+            f"Reading Global Controller {container_id[:12]}'s secret",
+        )
+        if isinstance(inspected, str):
+            failures.append(inspected)
+            continue
+        env = dict(item.partition("=")[::2] for item in json.loads(inspected[0]))
+        headers = {"Authorization": f"Bearer {env.get(GC_SECRET_ENV)}"}
         try:
-            post_clean(published[0].rpartition(":")[2])
+            for held in list_deployments(port, headers):
+                delete_deployment({"port": port, "headers": headers, **held})
         except GCError as e:
-            if e.code != 409:
-                failures.append(
-                    f"Cleaning Global Controller {container_id[:12]}'s deploy "
-                    f"failed: {e}"
-                )
+            failures.append(
+                f"Cleaning Global Controller {container_id[:12]}'s deploy failed: {e}"
+            )
     return failures
 
 
@@ -451,6 +460,7 @@ def stop_all(remove_everything=False):
         deployments = os.listdir(deployment.deployments_dir())
     except FileNotFoundError:
         deployments = []
+    ui.json_result["deployments"] = deployments
     with ui.status("Tearing down every CanyonOS deployment..."):
         failures = []
         if remove_everything:
@@ -546,6 +556,7 @@ def run_stop(all_deployments=False, refs=()):
     if all_deployments:
         return stop_all()
     choice = selection.choose("stop", refs, selection.recorded_deployments())
+    ui.json_result["deployments"] = [p.name for p in choice.deployments]
     if not choice.deployments:
         if choice.ok:
             ui.warn("No deploy is running.")

@@ -73,7 +73,7 @@ def enter_selected_folder(selected):
 def _describe(recorded, selected_name):
     """One line of `canyonos list`: its name, ID, whether its deploy runs, and marks
     for a deploy with no API key and for the selected deployment."""
-    running = (deploy_status(recorded.state["port"]) or {}).get("running", False)
+    running = (deploy_status(recorded.state) or {}).get("running", False)
     marks = ["running" if running else "not running"]
     if recorded.state.get("auth_disabled"):
         marks.append("(unauthenticated)")

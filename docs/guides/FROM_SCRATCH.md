@@ -164,14 +164,14 @@ gets them as environment variables.
 
 ## 6. Choose where it runs
 
-By default the workflow runs locally, on Docker on your machine. `canyonos target`, in
-the deployment folder of step 7, shows where it deploys. To run it somewhere else, set that up first:
+By default the workflow runs locally, on Docker on your machine. To run it somewhere
+else, set that up first:
 
 | Where                | What to do                                                                                                                             | Details                     |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| Locally, with Docker | Nothing; it's the default. If you switched to Kubernetes, `canyonos target docker` switches back                                       | [Local](LOCAL.md)           |
+| Locally, with Docker | Nothing; it's the default. If you switched to Kubernetes, set `target: docker` in `deployment.yaml`                                    | [Local](LOCAL.md)           |
 | EC2                  | Run `canyonos provision` to create a machine on AWS to deploy from, copy the workflow there, and set `provider` in `deployment.yaml`   | [EC2](EC2.md)               |
-| Kubernetes           | Run `canyonos target kubernetes` to point the workflow at your cluster; `canyonos cluster up` makes a local one to try it              | [Kubernetes](KUBERNETES.md) |
+| Kubernetes           | Set `target: kubernetes` in `deployment.yaml` for your cluster; `canyonos cluster up` makes a local one to try it                      | [Kubernetes](KUBERNETES.md) |
 
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys) explains the `target` and
 `provider` settings behind these.

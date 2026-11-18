@@ -62,4 +62,4 @@ RUN python -m grpc_tools.protoc \
 
 EXPOSE 8000
 
-ENTRYPOINT ["python", "-m", "canyonos_core.server"]
+ENTRYPOINT ["python", "-m", "canyonos_core.canyonos_api_interface.api_interface"]

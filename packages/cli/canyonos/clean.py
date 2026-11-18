@@ -120,6 +120,7 @@ def run_clean(all_deployments=False, yes=False, refs=()):
             return False
         return stop_all(remove_everything=True)
     choice = selection.choose("clean", refs, _candidates())
+    ui.json_result["deployments"] = [target.name for target in choice.deployments]
     if not choice.deployments:
         if choice.ok:
             ui.say(

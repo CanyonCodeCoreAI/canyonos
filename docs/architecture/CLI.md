@@ -37,7 +37,7 @@ On Kubernetes, the CLI instead creates a `CanyonBuild` carrying the key's hash i
 
 ## Talking to the Global Controller
 
-The CLI calls `http://127.0.0.1:<port>` through `canyonos/gc.py`. The routes live in `packages/core/canyonos_core/server.py`.
+The CLI calls `http://127.0.0.1:<port>` through `canyonos/gc.py`. The routes live in `packages/core/canyonos_core/canyonos_api_interface/api_interface.py`.
 
 | Request | What it does |
 | --- | --- |
@@ -95,7 +95,6 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | --- | --- |
 | `~/.canyonos/deployments/<deployment>/state.json` | The container and the ports of the last deploy, its folder and `deployment_id`, and whether it was deployed without an API key |
 | `~/.canyonos/deployments/<deployment>/sync-manifest.json` | What the last sync copied |
-| `~/.canyonos/deployments/<deployment>/redis_password` | The deployment's Redis password |
 | `~/.canyonos/deployments/<deployment>/ca/ca.crt`, `ca.key` | The deployment's CA for internal mutual TLS, made on its first `provider: local` deploy and reused after (`0600`, folder `0700`); see [Internal TLS](CONTROLLER.md#internal-tls) |
 | `~/.canyonos/deployments/<folder>/convert.log` | Output of an unattended `convert`, named after the folder it ran in |
 | `~/.canyonos/api_key` | The machine's API key (`0600`); it never leaves this machine. `CANYONOS_API_KEY` overrides it for one command |

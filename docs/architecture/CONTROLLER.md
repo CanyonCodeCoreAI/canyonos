@@ -21,7 +21,7 @@ canyonos CLI
   │ HTTP :8000
   ▼
 ┌─ Global Controller container ──────────────────┐
-│ canyonos_core.server                           │
+│ canyonos_api_interface.api_interface           │
 │  └─ python -m canyonos_core.cli deploy         │
 │      └─ GlobalController                       │
 │          ├─ Reconciler (Docker and EC2)        │
@@ -79,7 +79,7 @@ signed by a CA the deployment has to itself:
 | --- | --- | --- |
 | Redis | TLS only (`--port 0 --tls-port <redis_port>`), a client certificate the CA signed, and the password | Plaintext with the password (Kubernetes: TLS when the operator sets it) |
 | gRPC between controllers | Mutual TLS: the server requires a client certificate, the client checks the server's name | Plaintext |
-| Dashboard API to Redis | TLS with a client certificate the CLI signs when it registers the deployment, stored encrypted like the password | Plaintext with the password |
+| Dashboard API to Redis | TLS with a client certificate the Global Controller signs when it registers the deployment, stored encrypted like the password | Plaintext with the password |
 
 A container reads its certificate in `controller/utils/internal_tls.py` (flat as
 `canyonos_internal_tls.py` in agent images), which writes it to files and sets
@@ -90,6 +90,13 @@ Global Controller's `:8000` on 127.0.0.1 and the dashboard stay as they are.
 ## Global Controller
 
 The CLI talks to the container's HTTP server on `8000`. The routes are in [CLI](CLI.md).
+
+On Docker, the server answers only requests that send `Authorization: Bearer <secret>`.
+The CLI makes a random secret each time it starts the container, hands it over in
+`CANYONOS_CONTROLLER_SECRET` and saves the header in the deployment's `state.json`
+(`headers`). Any other request gets `401` with code `unauthenticated`, so agent replicas
+on the deployment's network can't call it. On Kubernetes the server checks the caller's
+kubeconfig token instead. A request body over 512 MiB gets `413`.
 
 Startup on Docker and EC2:
 
@@ -299,7 +306,7 @@ The keys another component or a contributor needs. The Reconciler's are in
 
 ## Config reload
 
-`POST /reload` sends SIGHUP to the Global Controller. On Kubernetes, a change to the
+A `PUT` that changes only config makes the server send SIGHUP to the Global Controller. On Kubernetes, a change to the
 mounted ConfigMap does the same.
 
 It does two things:
@@ -325,7 +332,7 @@ All paths are under `packages/core/canyonos_core/`.
 
 | Path                                      | What it holds                                                            |
 | ----------------------------------------- | ------------------------------------------------------------------------ |
-| `server.py`                               | The Global Controller container's HTTP server                            |
+| `canyonos_api_interface/`                 | The Global Controller container's HTTP server                            |
 | `cli.py`                                  | `deploy`: the build, then `GlobalController`                             |
 | `controller/global_controller.py`         | `GlobalController`: config publishing, poll loop, cleanup, teardown      |
 | `controller/orchestrator.py`              | `CanyonOrchestrator`, and `orchestrator_for`                             |

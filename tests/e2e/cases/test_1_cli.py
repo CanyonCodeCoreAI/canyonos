@@ -3,9 +3,10 @@
 
 """The CLI on a deployed project, the way a user or a coding agent drives it with
 no terminal: the deploy's own output, the containers it started, status, logs,
-doctor and `canyonos curl` on the selected deployment. The deploy hands only the
-Global Controller the hash of the session's API key, which it publishes to Redis; the
-key itself reaches no container."""
+doctor and `canyonos curl` on the selected deployment, and their JSON results, with
+the deploy up in `status --json` and the Global Controller's address it gives
+answering. The deploy hands only the Global Controller the hash of the session's API
+key, which it publishes to Redis; the key itself reaches no container."""
 
 import json
 import re
@@ -13,10 +14,13 @@ import shlex
 
 from ..harness import (
     canyonos,
+    cli_value,
+    controller_headers,
     dashboard_containers,
     docker,
     docker_name,
     hash_api_key,
+    http,
     manifest,
     poll,
     project_containers,
@@ -177,6 +181,21 @@ def test_status_json_counts_every_replica(recorder, deployed):
         return agents if not wrong else None
 
     poll(settled, timeout=120, what="every agent running its replicas in status --json")
+    report = canyonos(recorder, ["status", "--json"], cwd=deployed.dir).json()
+    assert report["target"] == "docker", report
+    assert report["deployment"] == deployed.group.removeprefix("canyonos-"), report
+    assert report["phase"] == "up" and report["last_apply"]["ok"], report
+    version = cli_value(
+        recorder, deployed.dir, "VERSION", "from canyonos.env import VERSION"
+    )
+    assert report["version"] == version and report["error_code"] is None, report
+    controller = http(
+        recorder,
+        "GET",
+        f"{report['controller_url']}/v1/deployments/{deployed.project_id}",
+        headers=controller_headers(recorder, deployed.dir),
+    )
+    assert controller.json()["running"] is True, controller.output
 
 
 def test_logs(recorder, deployed):
@@ -196,6 +215,15 @@ def test_logs(recorder, deployed):
                 call.output
             )
             assert lines, f"{replica} printed no log\n{call.output}"
+    agent = deployed.agents[0]
+    as_json = canyonos(recorder, ["logs", agent, "--json"], cwd=deployed.dir).json()
+    assert as_json["ok"] and as_json["logs"], as_json
+    for replica, lines in as_json["logs"].items():
+        assert re.fullmatch(f"{re.escape(agent)}{REPLICA_SUFFIX}", replica), as_json
+        assert lines, f"{replica} printed no log\n{as_json}"
+    controller_json = canyonos(recorder, ["logs", "--json"], cwd=deployed.dir).json()
+    assert controller_json["code"] is None, controller_json
+    assert controller_json["logs"]["global-controller"], controller_json
     unknown = canyonos(recorder, ["logs", "NoSuchAgent"], cwd=deployed.dir, check=False)
     assert unknown.code != 0, unknown.output
     assert deployed.agents[0] in unknown.output, unknown.output
@@ -204,3 +232,10 @@ def test_logs(recorder, deployed):
 def test_doctor_checks_the_live_deploy(recorder, deployed):
     call = canyonos(recorder, ["doctor"], cwd=deployed.dir, timeout=300)
     assert "Deploy is up -- post-deploy checks:" in call.output, call.output
+    as_json = canyonos(recorder, ["doctor", "--json"], cwd=deployed.dir, timeout=300)
+    report = as_json.json()
+    assert report["ok"] and report["code"] is None, as_json.output
+    assert report["errors"] == [], as_json.output
+    checks = {check["name"]: check["ok"] for check in report["checks"]}
+    expected = {"Global Controller", "Redis", "Workflow agents", "Endpoint"}
+    assert expected <= set(checks) and all(checks.values()), report

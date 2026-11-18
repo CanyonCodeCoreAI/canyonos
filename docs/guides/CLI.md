@@ -70,6 +70,9 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
   deletes it and runs open. Without a key, they warn that anyone who reaches the
   endpoint and the dashboard can use them. See [API key](AUTHORIZATION.md).
 - `test` sends the saved API key with each request.
+- `deploy -y` deploys the resources the config sets, without the resource picker.
+  `--detach` returns once the deploy has started, without the dashboard; `status`
+  says when it is up and `logs` follows it.
 - `test "your query"` sends that query to every route. Without one, each route gets its
   project's `config/test_query.txt`, else `hello`.
 - `test` queries every route of the deployment running from this folder. It never
@@ -91,7 +94,9 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
   terminal shows a menu of the routes, and a run with no terminal fails listing them.
 - `curl --print` prints the equivalent `curl` command instead of sending it, with
   `<your api key>` in place of the key.
-- `status --json` prints one JSON object with each agent's replica counts.
+- `status --json` prints one JSON object: the deployment, its target, the deploy's
+  `phase` (`starting`, `up`, `failed` or `stopped`, on Docker), the Global Controller's
+  address (`controller_url`, on Docker) and each agent's replica counts.
 - `logs <agent>` prints that agent's logs instead of the Global Controller's, the agent
   named `<project>.<agent>` on Docker. A replica ID prints one replica:
   `my-project.MyAgent-1a2b3c4d` on Docker, `MyAgent-0` on Kubernetes. An agent's logs
@@ -106,6 +111,18 @@ those commands act on; see [Pick a deployment](#pick-a-deployment).
 - `dashboard` opens the dashboard signed in, with the API key in the link's `#key=`
   fragment, which the browser never sends to a server; the sign-in screen saves it and
   drops the fragment. With no key set, it opens the dashboard as it is.
+- `deploy`, `sync`, `stop`, `clean`, `logs` and `doctor` take `--json`: they
+  print one JSON object, `ok`, the `errors` they hit, a `code` and their result, and
+  nothing else. `code` is null on success, else why it failed, such as `no_deploy`,
+  `docker_unavailable`, `project_invalid`, `deploy_failed` or `version_mismatch`.
+  `deploy` adds what `status --json` prints under `status`, `stop` and `clean` the
+  `deployments` they acted on, `logs` the lines it read under `logs`, `doctor` its
+  `checks`, `sync` the `reload` it applied, and `target` the `target`.
+- After upgrading the CLI, run `deploy` again: `status`, `sync`, `test`, `logs` and
+  `doctor` refuse a deploy started by another release (`stop` still works).
+- Exit code: 3 when no deploy is running, for `status`, `logs` and `test`, or when
+  `sync` finds the deploy's Global Controller gone; 4 when Docker can't be used, for
+  `deploy`; 1 for any other failure.
 
 ## Pick a deployment
 
@@ -159,29 +176,22 @@ canyonos stop --all            # every deployment on this machine
 - `clean --all` removes everything CanyonOS put on this machine, for before you
   uninstall: every deployment, the dashboard and its data, CanyonOS's images and
   `~/.canyonos`, the API key included. It asks first; `-y` skips the question.
-- `--all` and deployment names act on this machine's Docker only, so they are refused
-  with `--target kubernetes`. On Kubernetes, `stop` and `clean` act on this folder's
-  workflow in the cluster; see [Kubernetes deployment](KUBERNETES.md).
+- `--all` and deployment names act on this machine's Docker only. On Kubernetes,
+  `stop` and `clean` act on this folder's workflow in the cluster; see
+  [Kubernetes deployment](KUBERNETES.md).
 
 ## Where it runs
 
 | Command     | What it does                                                                     |
 | ----------- | -------------------------------------------------------------------------------- |
-| `target`    | Show or choose where this deployment runs: Docker on this machine or Kubernetes  |
 | `cluster`   | Make (`up`) or delete (`down`) a local Kubernetes cluster with CanyonOS, on kind |
 | `provision` | Set up or tear down an AWS machine to deploy from                                |
 
-- `target` alone shows where the deployment runs and checks this machine can reach it.
-- `target kubernetes` makes the cluster `kubectl` points at this deployment's default.
-  `--namespace` sets its namespace (default: the folder's name), and `--registry` where
-  images are pushed (default: the local registry the cluster advertises, else it asks).
-  `target docker` switches back.
 - `cluster up --workers N` sets a new cluster's worker count (default 1). `cluster up`
   again keeps the cluster and upgrades CanyonOS on it to the CLI's release.
   `cluster down --all` also removes the local registry and its images.
-- `--target docker` or `--target kubernetes` overrides the deployment's target for one
-  run of `deploy`, `status`, `test`, `logs`, `serve`, `doctor`, `stop` or `clean`.
-  Without it, they use the `target` in `deployment.yaml`, else `docker`. See
+- `deploy`, `status`, `test`, `logs`, `serve`, `doctor`, `stop` and `clean` use the
+  `target` in `deployment.yaml`, else `docker`. See
   [Kubernetes deployment](KUBERNETES.md) and [EC2 deployment](EC2.md).
 
 ## Other commands

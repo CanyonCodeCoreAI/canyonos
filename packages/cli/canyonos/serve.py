@@ -11,7 +11,7 @@ from canyonos import ui
 from canyonos.auth import hash_api_key, machine_api_key, resolve_api_key
 from canyonos.constants import dashboard_port, deployment_config_path
 from canyonos.gc import deploy_status
-from canyonos.init import load_state, redis_port_of
+from canyonos.init import load_state
 from .dashboard_registration import RegistrationError, register_project
 from .dashboard_stack import ServeResult, _existing_dashboard_port, run_dashboard
 
@@ -31,11 +31,11 @@ def _register_running_project() -> None:
         state = load_state()
     except (FileNotFoundError, RuntimeError):
         return
-    if not (deploy_status(state["port"]) or {}).get("running", False):
+    if not (deploy_status(state) or {}).get("running", False):
         return
 
     try:
-        registered = register_project(redis_port_of(state))
+        registered = register_project(state)
     except RegistrationError as e:
         ui.warn(f"Dashboard could not register this project: {e}")
         ui.hint("Run `canyonos serve` again to retry.")

@@ -62,8 +62,9 @@ CLI and the Global Controller use the same rule. Any other name is not run and r
 machine's API key, as 64 lowercase hex characters (see [Endpoint](ENDPOINT.md#api-key)).
 The flow:
 
-1. The CLI writes `{"apiKeyHash": "<hash>"}` into the CanyonBuild's `spec.auth`, or leaves
-   `spec.auth` out when the machine has no key.
+1. The CLI sends the API key's hash to the CanyonOS API, which writes
+   `{"apiKeyHash": "<hash>"}` into the CanyonBuild's `spec.auth`, or leaves `spec.auth`
+   out when the machine has no key.
 2. The build pod gets it as `CANYONOS_API_KEY_HASH`, and its `apply-project` writes it into
    the CanyonProject's `spec.auth.apiKeyHash`.
 3. The operator keeps it in the project's Secret `canyonos-api-key` (key `hash`, empty

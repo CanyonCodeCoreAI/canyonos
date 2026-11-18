@@ -6,15 +6,13 @@
 # makes. It builds CanyonOS's images from this checkout as `bun run canyonos:dev` does,
 # installs them with scripts/kind/operator.sh (the operator, then the chart with the
 # in-cluster builder and the dashboard), then, as a user who may only edit one
-# namespace, deploys examples/helloworld's deployment with `canyonos target kubernetes`
-# and a plain `canyonos deploy helloworld` and checks that:
+# namespace, deploys examples/helloworld's deployment with `target: kubernetes` and a
+# plain `canyonos deploy helloworld` and checks that:
 #   - `canyonos deploy --api-key` hands the CanyonBuild and the CanyonProject the key's
 #     sha256 and neither holds the key itself; `deploy --no-api-key` opens the endpoint,
 #     and CANYONOS_API_KEY sets the key for one deploy;
-#   - `canyonos target` names the namespace after the folder, finds the cluster's
-#     registry, fills an empty kubernetes: block, and fails rather than waits on a
-#     prompt when it cannot; `deploy` refuses an empty block, and a config that is
-#     not valid YAML is refused rather than taken for a Docker deployment;
+#   - `deploy` refuses an empty kubernetes: block, and a config that is not valid YAML
+#     is refused rather than taken for a Docker deployment;
 #   - the endpoint needs the API key: none is 401 auth.missing_key, another one 401
 #     auth.invalid_key, a 503 auth.not_ready while the Global Controller has not
 #     published its hash counts as not up, `canyonos test` sends the key and never
@@ -29,8 +27,8 @@
 #     API takes the key whose hash is in the chart's Secret (api-key-hash), refuses a
 #     request with no key or another one, and reads and changes with it;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
-#   - `canyonos stop` closes both forwards, `canyonos clean` removes the project and
-#     leaves the namespace, and `canyonos target docker` keeps the kubernetes: block;
+#   - `canyonos stop` closes both forwards, and `canyonos clean` removes the project and
+#     leaves the namespace;
 #   - with `deploy_mode: toy`, one agent StatefulSet runs the project and answers.
 #
 # Usage: scripts/kind/e2e.sh   (CANYONOS_KIND_CLUSTER names another cluster than canyonos)
@@ -53,6 +51,7 @@ log() { printf '\n== %s\n' "$*"; }
 inside() {
   ADMIN="/kube/admin"
   DEPLOYER="/tmp/deployer"
+  ADMIN_TOKEN="/tmp/admin-token"
   fail() {
     echo "FAIL: $*" >&2
     KUBECONFIG="${ADMIN}" kubectl get pods -A -o wide >&2 || true
@@ -93,8 +92,13 @@ contexts: [{name: deployer, context: {cluster: kind, user: deployer, namespace: 
 current-context: deployer
 EOF
   [ "$(as_deployer kubectl auth can-i get crds 2>/dev/null)" = "no" ] || fail "the deployer may read CRDs"
+  # The CanyonOS API accepts only token logins, and kind's admin signs in with a certificate.
+  as_admin kubectl -n "${NS}" create serviceaccount admin >/dev/null
+  as_admin kubectl create clusterrolebinding canyonos-e2e-admin --clusterrole=cluster-admin \
+    --serviceaccount="${NS}:admin" --dry-run=client -o yaml | as_admin kubectl apply -f - >/dev/null
+  sed "s|${token}|$(as_admin kubectl -n "${NS}" create token admin --duration=1h)|" "${DEPLOYER}" > "${ADMIN_TOKEN}"
 
-  log "canyonos target kubernetes, then canyonos deploy (as the deployer)"
+  log "canyonos deploy (as the deployer)"
   cp -r /w/examples/helloworld /hw
   printf 'EXAMPLE=1\n' > /hw/helloworld/.env
   # Development mode (no usage events, no upgrade check) naming the release image,
@@ -125,38 +129,21 @@ EOF
     fi
     return 1
   }
-  config_value() {  # deployment folder, dotted key: its value in deployment.yaml
-    /w/.venv/bin/python -c 'import sys, yaml
-value = yaml.safe_load(open(sys.argv[1]))
-for key in sys.argv[2].split("."):
-    value = value.get(key) if isinstance(value, dict) else None
-print("" if value is None else value)' "$1/deployment.yaml" "$2"
+  kubernetes_block() {  # deployment folder, namespace: deploy it to that namespace
+    sed -i 's/^target: docker$/target: kubernetes/' "$1/deployment.yaml"
+    printf 'kubernetes:\n  namespace: %s\n  registry: %s\n' "$2" "${REGISTRY}" >> "$1/deployment.yaml"
   }
 
-  log "canyonos target with no options takes the folder's name and the cluster's registry"
   cp -r /w/examples/helloworld /tmp/Target_Check
-  canyonos_in "${ADMIN}" /tmp/Target_Check target kubernetes || fail "target with no options"
-  [ "$(config_value /tmp/Target_Check target)" = kubernetes ] \
-    && [ "$(config_value /tmp/Target_Check kubernetes.namespace)" = target-check ] \
-    && [ "$(config_value /tmp/Target_Check kubernetes.registry)" = "${REGISTRY}" ] \
-    || fail "target wrote: $(cat /tmp/Target_Check/deployment.yaml)"
-  # The block goes right under `target`, keeping the file's order.
-  grep -A1 '^target: kubernetes$' /tmp/Target_Check/deployment.yaml | grep -q '^kubernetes:$' \
-    || fail "target did not put the kubernetes: block under target: $(cat /tmp/Target_Check/deployment.yaml)"
-  shown="$(canyonos_in "${ADMIN}" /tmp/Target_Check target)" || fail "target (show): ${shown}"
-  echo "${shown}" | grep -q "deploys to Kubernetes: namespace target-check" \
-    || fail "target does not show where the project deploys: ${shown}"
+  kubernetes_block /tmp/Target_Check target-check
 
-  log "canyonos target fills an empty kubernetes: block, and deploy refuses one"
+  log "deploy refuses an empty kubernetes: block"
   cp -r /w/examples/helloworld /tmp/Empty_Block
   sed -i 's/^target: docker$/target: kubernetes/' /tmp/Empty_Block/deployment.yaml
   printf 'kubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/deployment.yaml
-  said="$(canyonos_in "${ADMIN}" /tmp/Empty_Block deploy helloworld 2>&1)" && fail "deploy passed an empty kubernetes: block"
-  echo "${said}" | grep -q 'needs a `kubernetes:` block' \
+  said="$(canyonos_in "${ADMIN_TOKEN}" /tmp/Empty_Block deploy helloworld 2>&1)" && fail "deploy passed an empty kubernetes: block"
+  echo "${said}" | grep -q "kubernetes: section is missing or empty" \
     || fail "deploy did not name the empty kubernetes: block: ${said}"
-  canyonos_in "${ADMIN}" /tmp/Empty_Block target kubernetes || fail "target with an empty kubernetes: block"
-  [ "$(config_value /tmp/Empty_Block kubernetes.namespace)" = empty-block ] \
-    || fail "target left the kubernetes: block empty: $(cat /tmp/Empty_Block/deployment.yaml)"
 
   log "a config that is not valid YAML is refused, not taken for a Docker project"
   cp -r /w/examples/helloworld /tmp/Bad_Yaml
@@ -165,24 +152,7 @@ print("" if value is None else value)' "$1/deployment.yaml" "$2"
   said="$(canyonos_in "${ADMIN}" /tmp/Bad_Yaml stop 2>&1)" && fail "stop passed with a config that is not YAML: ${said}"
   echo "${said}" | grep -q "Could not read" || fail "stop did not say it could not read the config: ${said}"
 
-  log "canyonos target with no terminal and no --registry does not wait on a prompt"
-  # The deployer may edit one namespace only, so it may not be able to read kube-public,
-  # where the cluster advertises its registry: it then has to name it, not be asked.
-  cp -r /w/examples/helloworld /tmp/hw-deployer
-  rc=0
-  said="$(canyonos_in "${DEPLOYER}" /tmp/hw-deployer target kubernetes --namespace "${NS}" 2>&1)" || rc=$?
-  echo "exit ${rc}: ${said}"
-  case "${rc}" in
-    124) fail "target waited for an answer with no terminal to ask" ;;
-    0) [ "$(config_value /tmp/hw-deployer kubernetes.registry)" = "${REGISTRY}" ] \
-         || fail "target wrote another registry: $(cat /tmp/hw-deployer/deployment.yaml)" ;;
-    *) echo "${said}" | grep -q -- "--registry" || fail "target failed without naming --registry"
-       cmp -s /w/examples/helloworld/deployment.yaml /tmp/hw-deployer/deployment.yaml \
-         || fail "a failed target still wrote the config: $(cat /tmp/hw-deployer/deployment.yaml)" ;;
-  esac
-
-  canyonos target kubernetes --namespace "${NS}" --registry "${REGISTRY}" || fail "target"
-  grep -q '^target: kubernetes' /hw/deployment.yaml || fail "target not written"
+  kubernetes_block /hw "${NS}"
 
   # The CanyonBuild is deleted once it succeeds: watch it while the deploy runs.
   as_deployer kubectl -n "${NS}" get canyonbuilds --watch -o yaml >/tmp/canyonbuilds.yaml 2>/dev/null &
@@ -448,16 +418,10 @@ EOF
   [ -z "${left}" ] || fail "left behind: ${left}"
   as_admin kubectl get namespace "${NS}" >/dev/null || fail "clean deleted the namespace"
 
-  log "canyonos target docker switches back and keeps the kubernetes: block"
-  # Its Docker checks fail in this container, which has no Docker: only the config counts.
-  canyonos target docker || true
-  [ "$(config_value /hw target)" = docker ] && [ "$(config_value /hw kubernetes.namespace)" = "${NS}" ] \
-    || fail "target docker wrote: $(cat /hw/deployment.yaml)"
-
   log "deploy_mode: toy runs the project as one agent StatefulSet, which answers"
   cp -r /w/examples/helloworld /toy
   printf 'deploy_mode: toy\n' >> /toy/deployment.yaml
-  canyonos_in "${DEPLOYER}" /toy target kubernetes --namespace "${NS}" --registry "${REGISTRY}" || fail "toy target"
+  kubernetes_block /toy "${NS}"
   # CANYONOS_API_KEY sets this deploy's key without saving it.
   (cd /toy && KUBECONFIG="${DEPLOYER}" CANYONOS_API_KEY="${api_key}" /w/.venv/bin/canyonos deploy helloworld) \
     || fail "toy deploy"

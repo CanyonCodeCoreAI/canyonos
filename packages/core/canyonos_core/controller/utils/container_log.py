@@ -22,7 +22,7 @@ def dump_container_log(replica, status, log_tail):
     and end lines tell it that the errors in between came from the container, so it
     prints them instead of reacting to them. Each copied line is indented so it can
     never be mistaken for the end line. The start and end text must match what
-    `PhaseTracker` in packages/cli/canyonos/deploy.py looks for.
+    `PhaseTracker` in canyonos_core/deploy_progress.py looks for.
     """
     name = replica["agent_name"]
     try:

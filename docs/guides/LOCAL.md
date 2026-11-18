@@ -21,20 +21,9 @@ Two settings in `deployment.yaml` decide where a workflow runs:
 | --------------------------- | ------------ | -------------------------- | --------------------------------- |
 | Locally, with Docker        | `docker`     | `local`                    | Nothing; it's the default         |
 | [EC2](EC2.md)               | `docker`     | `ec2-pool` or `ec2-assign` | `provider` in `deployment.yaml`   |
-| [Kubernetes](KUBERNETES.md) | `kubernetes` | not used                   | `canyonos target kubernetes`      |
+| [Kubernetes](KUBERNETES.md) | `kubernetes` | not used                   | `target` in `deployment.yaml`     |
 
 Kubernetes deploys don't support multi-folder deployments yet.
-
-Check and switch the target from the deployment folder:
-
-```bash
-canyonos target              # show where this deployment runs, and check you can reach it
-canyonos target docker       # deploy with Docker (locally or EC2)
-canyonos target kubernetes   # deploy to the cluster kubectl points at
-```
-
-`--target docker` or `--target kubernetes` on a single command, such as
-`canyonos deploy ../my-project --target docker`, overrides the target for that run only.
 
 ## Deploy
 

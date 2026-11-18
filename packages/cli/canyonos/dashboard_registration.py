@@ -1,9 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Tell the local dashboard api which Redis a deployment's controller uses: its
-container and port, on the deployment's network the dashboard joins first, and its
-password.
+"""Join the local dashboard to a deployment's network and have the deployment's Global
+Controller tell the dashboard api which Redis it uses.
 
 Temporary: applied now so a dashboard of several deployments works without blocking
 the flow; revisit with the project-key design in CAN-521 (the api should not hold
@@ -13,19 +12,18 @@ per-deployment Redis addresses).
 from __future__ import annotations
 
 import json
-import time
 import urllib.error
 import urllib.request
 
-from canyonos import deployment, internal_ca
+from canyonos import deployment
 from canyonos.auth import auth_header
-from canyonos.dashboard_stack import join_deployment_network
+from canyonos.dashboard_stack import (
+    SERVICE_PORTS,
+    _container_name,
+    join_deployment_network,
+)
+from canyonos.gc import GCError, put_dashboard
 
-# How long a registration the api refuses with a 5xx is tried again. Just after a
-# redeploy, the api can keep reaching for the deployment's old Redis, which had the
-# same name, for up to about half a minute.
-RETRY_SECONDS = 60
-RETRY_DELAY_SECONDS = 2
 TIMEOUT_SECONDS = 10
 # Replaying a recorded week writes tens of thousands of rows; seconds on a fast
 # machine, longer on a slow one under Docker.
@@ -73,47 +71,19 @@ def _api_port() -> int:
     return service_ports()["api"]
 
 
-def register_project(redis_port: int, api_port: int | None = None) -> dict:
-    """Connect the dashboard api to the deployment's network, then register the
-    project with its Redis container's name, `redis_port` and the deployment's Redis
-    password, plus a client certificate its CA signs when its Redis takes only TLS,
-    with the dashboard's API on `api_port`, or where it is when that is None. The
-    call sends this machine's API key, when one is set.
-
-    Returns the api's `{project_id, name}`. Connection failures and 5xx answers
-    are retried for up to RETRY_SECONDS; a 4xx answer is final. Raises
-    RegistrationError carrying Docker's or the api's message when joining the
-    network or registration fails.
-    """
-    url = f"http://127.0.0.1:{api_port or _api_port()}/canyonos/projects"
+def register_project(state: dict) -> dict:
+    """Connect the dashboard api to the deployment's network, then have the Global
+    Controller `state` records register the deployment. Returns the api's `{project_id,
+    name}`; raises RegistrationError with Docker's or the controller's message."""
     joined = join_deployment_network(deployment.deployment_group())
     if joined is not None:
         raise RegistrationError(joined)
-    registration = {
-        "redis_host": deployment.redis_container_name(),
-        "redis_port": redis_port,
-        "redis_password": deployment.redis_password(),
-    }
-    # Redis takes only TLS clients with a certificate the deployment's CA signed.
-    redis_tls = internal_ca.client_certificate("dashboard")
-    if redis_tls:
-        registration["redis_tls"] = redis_tls
-    payload = json.dumps(registration).encode()
-    failure = "the dashboard api did not answer"
-    deadline = time.monotonic() + RETRY_SECONDS
-    while True:
-        try:
-            return _post(url, payload)
-        except urllib.error.HTTPError as e:
-            failure = _error_message(e)
-            if e.code < 500:
-                break
-        except (OSError, ValueError) as e:
-            failure = f"the dashboard api did not answer: {e}"
-        if time.monotonic() > deadline:
-            break
-        time.sleep(RETRY_DELAY_SECONDS)
-    raise RegistrationError(failure)
+    try:
+        return put_dashboard(
+            state, f"http://{_container_name('api')}:{SERVICE_PORTS['api'][0]}"
+        )
+    except GCError as e:
+        raise RegistrationError(str(e)) from None
 
 
 def add_sample_data(

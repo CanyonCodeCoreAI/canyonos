@@ -154,7 +154,8 @@ canyonos stop || true
 
 step "canyonos deploy starts every machine of the pool"
 canyonos deploy ../ec2pool --serve false </dev/null
-CANYONOS_REDIS_PASSWORD="$(uv run --project "$REPO_ROOT" python -c 'from canyonos import deployment; print(deployment.redis_password())')"
+redis="$(uv run --project "$REPO_ROOT" python -c 'from canyonos import deployment; print(deployment.redis_container_name())')"
+CANYONOS_REDIS_PASSWORD="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$redis" | sed -n 's/^CANYONOS_REDIS_PASSWORD=//p')"
 export CANYONOS_REDIS_PASSWORD
 pool check-pool
 pool instances "$START" 3 running

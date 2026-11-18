@@ -30,6 +30,10 @@ err_console = Console(
     stderr=True, width=None if is_terminal(sys.stderr) else _PIPED_WIDTH
 )
 _messages = console
+# Every message `fail` showed, for a `--json` result's `errors`.
+failures = []
+# What a command reports in its `--json` result besides `ok` and `errors`.
+json_result = {}
 
 
 def set_quiet(quiet):
@@ -92,12 +96,15 @@ def note(message):
 
 
 def fail(message):
-    """Show an error message on stderr, marked with a red ✗."""
+    """Show an error message on stderr, marked with a red ✗, and keep it in `failures`."""
+    failures.append(str(message))
     _emit(message, "bold red", "✗", err_console)
 
 
 def root_cause(message):
-    """Show the line that explains a failure on stderr, marked with a bright red ✗."""
+    """Show the line that explains a failure on stderr, marked with a bright red ✗, and
+    keep it in `failures`."""
+    failures.append(str(message))
     err_console.print(Text(f"✗ Root Cause: {message}", style="bold bright_red"))
 
 

@@ -143,7 +143,7 @@ runs, with the deployment's `redis.port`:
 ```bash
 curl -X POST http://localhost:3000/canyonos/projects \
   -H 'Content-Type: application/json' \
-  -d "{\"redis_port\":6379,\"redis_password\":\"$(cat ~/.canyonos/deployments/<deployment>/redis_password)\"}"
+  -d "{\"redis_port\":6379,\"redis_password\":\"$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' canyonos-<deployment>-redis-localhost | sed -n 's/^CANYONOS_REDIS_PASSWORD=//p')\"}"
 ```
 
 The API stores the password encrypted, with a fixed development key unless

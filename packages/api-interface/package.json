@@ -1,0 +1,34 @@
+{
+  "name": "@canyoncode/canyonos-api-interface",
+  "version": "1.0.0",
+  "description": "Typed client for the CanyonOS REST API",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "generate": "uv run --frozen python scripts/export_openapi.py && openapi-typescript openapi.json -o src/schema.ts && uv run --frozen datamodel-codegen && uv run --frozen ruff format canyonos_api_interface/models.py && prettier --write openapi.json src/schema.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",
+    "format": "prettier --ignore-path ../../.gitignore --write .",
+    "format:check": "prettier --ignore-path ../../.gitignore --check ."
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

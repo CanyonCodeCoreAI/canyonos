@@ -15,8 +15,8 @@ The top-level `provider` in `deployment.yaml` decides how agents get machines:
 | `ec2-assign` | One machine per replica, of the type `ec2-assign.machine_type` gives its agent. A replica never shares its machine                                                                                                                                               |
 | `ec2-pool`   | A fixed pool, with as many of each type as `ec2-pool.machine_type` lists. Each replica goes on the least loaded machine, by its agent's `resources`. A pool never refuses a replica: when the `resources` add up to more than the pool has, they share it evenly |
 
-EC2 runs on the `docker` target, so if the deployment points at Kubernetes, run
-`canyonos target docker` first; see
+EC2 runs on the `docker` target, so if the deployment points at Kubernetes, set
+`target: docker` in `deployment.yaml` first; see
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys).
 
 ## Quick start

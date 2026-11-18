@@ -29,7 +29,7 @@ One deployment runs one Global Controller for all its projects. Every part share
 | Component | What it does | Code |
 | --- | --- | --- |
 | [CLI](CLI.md) | The `canyonos` command, a thin client of the Global Controller | `packages/cli/` |
-| [Global Controller](CONTROLLER.md#global-controller) | Publishes the config, polls the replicas, cleans up requests | `packages/core/canyonos_core/controller/`, `server.py`, `cli.py` |
+| [Global Controller](CONTROLLER.md#global-controller) | Publishes the config, polls the replicas, cleans up requests | `packages/core/canyonos_core/controller/`, `canyonos_api_interface/`, `cli.py` |
 | [Local Controller](CONTROLLER.md#local-controller) | Serves one replica over gRPC and routes its calls | `packages/core/canyonos_core/controller/` |
 | [Endpoint](ENDPOINT.md) | The workflow's HTTP API: queues a call, reports its result | `packages/core/canyonos_core/endpoint/` |
 | [LLM Gateway](LLM_GATEWAY.md) | Carries each replica's model calls: prompts, limits, tokens | `packages/core/canyonos_core/llm_gateway/` |
@@ -44,7 +44,7 @@ One deployment runs one Global Controller for all its projects. Every part share
 
 On Docker and EC2:
 
-1. `canyonos deploy` starts the Global Controller's container, copies `deployment.yaml` and each project into it, and calls `POST /deploy`.
+1. `canyonos deploy` starts the Global Controller's container, and uploads `deployment.yaml` and each project to it, which starts the deploy.
 2. In the container, the build generates the stubs and Docker contexts and starts building the agent images, while the Global Controller starts.
 3. The Global Controller starts Redis and a metrics poller on its machine, publishes the config, and starts the Reconciler and the OTLP exporter as supervised processes.
 4. When the images are built, the Reconciler starts any EC2 machines (each with its own Redis and metrics poller), launches the replicas and the endpoint, and publishes the routing table.

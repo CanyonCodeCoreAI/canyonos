@@ -95,3 +95,97 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+---
+# The CanyonOS API, in its own pod with only the rights it uses.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canyonos-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: canyonos-api}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: canyonos-api}
+    spec:
+      serviceAccountName: canyonos-api
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: {{ .Values.controllerImage | default (include "canyonos.releaseImage" (list . "core")) }}
+          env:
+            - {name: CANYONOS_TARGET, value: kubernetes}
+          ports:
+            - {name: api, containerPort: 8000}
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+            - {name: tmp, mountPath: /tmp}
+          securityContext:
+            # The canyonos-core image defaults to root.
+            runAsUser: 1001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - {name: workspace, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: canyonos-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+spec:
+  ports:
+    - {name: api, port: 8000, targetPort: 8000, protocol: TCP}
+  selector: {app.kubernetes.io/name: canyonos-api}
+---
+# Every signed-in user may port-forward to canyonos-api; the api checks what they may do.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canyonos-api-forward
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    resourceNames: [canyonos-api]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canyonos-api-forward
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: canyonos-api-forward
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: system:authenticated

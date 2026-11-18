@@ -18,6 +18,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "build:sdk": "bun run --filter @canyonos/api build:sdk",
+    "api-interface:generate": "bun run --cwd packages/api-interface generate",
     "build:binary": "turbo run build:binary",
     "docker:up": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml up -d --wait",
     "docker:down": "docker compose --env-file .docker/.env -f .docker/docker-compose.yml down",

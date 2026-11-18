@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""A config change reaches the running deploy through `canyonos sync`, with no
-redeploy: one more replica of an agent starts while the Global Controller and every
+"""A config change reaches the running deploy through `canyonos sync`, which reports
+the reload applied, with no redeploy: one more replica of an agent starts while the Global Controller and every
 other replica keep running. An agent whose new replica cannot start is named in
-`canyonos status` with the reason, its last launch error. `canyonos test` queries
-the deploy a sync changed. Each case puts the config back as it was, comments and
-all, and syncs it."""
+`canyonos status` with the reason, its last launch error. `sync --json` names every
+problem with a config the deploy rejects. `canyonos test` queries the deploy a sync
+changed. Each case puts the config back as it was, comments and all, and syncs it."""
 
 import contextlib
 import re
@@ -59,10 +59,15 @@ def _edit_agent(deployed, text, agent, *, replicas, cpu=None):
     return yaml.safe_dump(config, sort_keys=False)
 
 
-def _sync(recorder, deployed):
-    canyonos(
-        recorder, ["sync", str(deployed.project_dir)], cwd=deployed.dir, timeout=300
+def _sync(recorder, deployed, action="reload"):
+    call = canyonos(
+        recorder,
+        ["sync", str(deployed.project_dir), "--json"],
+        cwd=deployed.dir,
+        timeout=300,
     )
+    expected = {"ok": True, "code": None, "errors": [], "action": action}
+    assert call.json() == expected, call.stdout
 
 
 @contextlib.contextmanager
@@ -171,6 +176,28 @@ def test_status_names_an_agent_that_cannot_start(recorder, deployed):
         status = canyonos(recorder, ["status"], cwd=deployed.dir)
         expected = f"{agent} could not start a replica: Failed to launch {container}"
         assert expected in status.output, status.output
+
+
+def test_sync_json_names_why_the_config_is_rejected(recorder, deployed):
+    path = _config(deployed)
+    original = path.read_text()
+    path.write_text(original + "\nenv_file: .env\n")
+    try:
+        call = canyonos(
+            recorder,
+            ["sync", str(deployed.project_dir), "--json"],
+            cwd=deployed.dir,
+            timeout=300,
+            check=False,
+        )
+    finally:
+        path.write_text(original)
+        # The rejected upload left the old files, so syncing them back changes nothing.
+        _sync(recorder, deployed, action="none")
+    assert call.code == 1, call.output
+    result = call.json()
+    assert result["ok"] is False and result["code"] == "project_invalid", call.stdout
+    assert "env_file: is no longer used" in " ".join(result["errors"]), call.stdout
 
 
 @pytest.mark.trait("quick")

@@ -5,8 +5,9 @@
 ```
 ┌──────────────────────────── GC container ────────────────────────────┐
 │                                                                      │
-│  server.py (Flask :8000)  ◀── POST /deploy /clean                    │
-│       │ spawns              GET /status /endpoint   (host CLI)       │
+│  api_interface.py (:8000) ◀── PUT, DELETE /v1/deployments/<id> and   │
+│       │ spawns,             its /projects/<name>, GET it and its     │
+│       │ reads its output    /logs /health, GET /v1/deployments       │
 │       ▼                                                              │
 │  cli.py deploy ──▶ GlobalController                                  │
 │                      │  ProcessSupervisor                            │

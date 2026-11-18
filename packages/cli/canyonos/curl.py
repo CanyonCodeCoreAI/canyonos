@@ -126,7 +126,7 @@ def run_curl(body_text, route=None, show_command=False):
     if state is None:
         ui.fail("No deploy is running. Start it with `canyonos deploy`.")
         return 1
-    picked = _pick_route(deployed_endpoint(state["port"])["routes"], route)
+    picked = _pick_route(deployed_endpoint(state)["routes"], route)
     if picked is None:
         return 1
     key = machine_api_key()

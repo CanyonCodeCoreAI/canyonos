@@ -103,9 +103,12 @@ class KubernetesApi:
                 self._token_read_at = time.monotonic()
             return self._token
 
-    def request(self, method, path, body=None, content_type="application/json"):
-        """Call the API; returns the decoded JSON body. Raises KubernetesError."""
-        headers = {"Accept": "application/json"}
+    def request(
+        self, method, path, body=None, content_type="application/json", text=False
+    ):
+        """Call the API; returns the decoded JSON body, or with `text` the body as text,
+        such as a pod's log. Raises KubernetesError."""
+        headers = {"Accept": "*/*" if text else "application/json"}
         token = self._bearer_token()
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -128,6 +131,8 @@ class KubernetesApi:
                 f"Kubernetes API {method} {path} failed with {response.status_code}: "
                 f"{response.text[:300]}"
             )
+        if text:
+            return response.text
         return response.json() if response.content else {}
 
     def scale_canyon_agent(self, agent_name, replicas):
@@ -144,11 +149,13 @@ class KubernetesApi:
     def _object_path(self, obj):
         """The API path of a namespaced object of this project."""
         kind, name = obj["kind"], obj["metadata"]["name"]
-        if kind == "ConfigMap":
-            return f"/api/v1/namespaces/{self.namespace}/configmaps/{name}"
-        plural = {"CanyonProject": "canyonprojects", "CanyonAgent": "canyonagents"}[
-            kind
-        ]
+        if kind in ("ConfigMap", "Secret"):
+            return f"/api/v1/namespaces/{self.namespace}/{kind.lower()}s/{name}"
+        plural = {
+            "CanyonProject": "canyonprojects",
+            "CanyonAgent": "canyonagents",
+            "CanyonBuild": "canyonbuilds",
+        }[kind]
         return f"/apis/{API_GROUP}/{API_VERSION}/namespaces/{self.namespace}/{plural}/{name}"
 
     def apply(self, obj, field_manager):

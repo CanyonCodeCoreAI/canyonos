@@ -17,11 +17,17 @@ import urllib.request
 from rich.panel import Panel
 from rich.text import Text
 
-from canyonos import kubernetes_target, ui
+from canyonos import deployment, kubernetes_target, ui
 from canyonos.auth import auth_header, machine_api_key
 from canyonos.constants import existing_config_path
 from canyonos.deploy import _curl_example
-from canyonos.gc import _error_detail, deployed_endpoint, existing_deploy, test_queries
+from canyonos.gc import (
+    NoDeployError,
+    _error_body,
+    deployed_endpoint,
+    existing_deploy,
+    test_queries,
+)
 from canyonos.os_support import is_terminal
 from canyonos.theme import GREEN, WHITE
 
@@ -90,6 +96,7 @@ class _Run:
         self.request_id = None
         self.answer_url = None
         self.error = None
+        self.error_code = None
 
     def begin(self, name, title):
         """Open a phase, recorded as failed until `done` says otherwise."""
@@ -161,7 +168,7 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
     try:
         request_id = _send_query(url, body, sign())
     except urllib.error.HTTPError as e:
-        detail = _error_detail(e)
+        detail = _error_body(e)["error"]
         if e.code == 403:
             raise RuntimeError(
                 f"Workflow query was refused: {detail}. "
@@ -192,7 +199,7 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
             _send_query(answer_url, body, sign())
         except urllib.error.HTTPError as e:
             raise RuntimeError(
-                f"Could not send the answer to {answer_url}: {_error_detail(e)}"
+                f"Could not send the answer to {answer_url}: {_error_body(e)['error']}"
             ) from None
         except OSError as e:
             raise RuntimeError(
@@ -207,29 +214,23 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
     return data.get("result")
 
 
-def _run_test(run, timeout=REQUEST_TIMEOUT, kubernetes=False):
-    """Query each workflow of the deployment running from this folder, or, on
-    Kubernetes, of the project deployed in the cluster, through a port-forward, with
-    this machine's API key when one is set."""
+def _run_test(run, timeout=REQUEST_TIMEOUT):
+    """Query each workflow of the deployment running from this folder, with this
+    machine's API key when one is set; on Kubernetes, through a port-forward to its
+    endpoint."""
     existing_config_path()
-    if kubernetes:
-        with kubernetes_target.kubernetes_endpoint() as endpoint:
-            _query(run, endpoint, timeout, {}, auth_header)
-        return
-
     existing = existing_deploy()
     if existing is None:
-        raise RuntimeError(
+        raise NoDeployError(
             "No deployment is running from this folder. Run it from the deployment's "
             "folder, the one `canyonos deploy --folder` made."
         )
-    _query(
-        run,
-        deployed_endpoint(existing["port"]),
-        timeout,
-        test_queries(existing["port"]),
-        auth_header,
-    )
+    endpoint = deployed_endpoint(existing)
+    if deployment.configured_target() == "kubernetes":
+        with kubernetes_target.forwarded_endpoint(endpoint) as forwarded:
+            _query(run, forwarded, timeout, test_queries(existing), auth_header)
+        return
+    _query(run, endpoint, timeout, test_queries(existing), auth_header)
 
 
 # ------------------------------------------------------------------ #
@@ -293,6 +294,7 @@ def _print_summary(run):
 def _payload(run):
     return {
         "ok": run.error is None,
+        "code": None if run.error is None else (run.error_code or "failed"),
         "query": run.query,
         "elapsed_s": run.elapsed(),
         "phases": run.phases,
@@ -306,20 +308,16 @@ def _payload(run):
     }
 
 
-def run_test(
-    prompt=None,
-    as_json=False,
-    timeout=REQUEST_TIMEOUT,
-    kubernetes=False,
-):
+def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
     """Run `canyonos test`: query each workflow of the running deployment with this
     machine's API key, report the results, and return the exit code."""
     run = _Run(prompt)
     ui.set_quiet(as_json)
 
     try:
+        failure_code = 1
         try:
-            _run_test(run, timeout=timeout, kubernetes=kubernetes)
+            _run_test(run, timeout=timeout)
         except KeyboardInterrupt:
             run.error = "cancelled by user"
         except EOFError:
@@ -329,6 +327,8 @@ def run_test(
         except RuntimeError as e:
             # Every phase raises RuntimeError with a message fit for the terminal and `--json`.
             run.error = str(e)
+            run.error_code = getattr(e, "error_code", None)
+            failure_code = getattr(e, "exit_code", 1)
 
         if run.error is not None:
             run.failed(run.error)
@@ -338,6 +338,6 @@ def run_test(
         else:
             _print_summary(run)
 
-        return 0 if run.error is None else 1
+        return 0 if run.error is None else failure_code
     finally:
         ui.set_quiet(False)

@@ -73,11 +73,10 @@ out and everything the build writes on top.
 | `canyonos new-app`                   | The starter files, into an empty folder                                                                                                                                                                     |
 | `canyonos convert`                   | `.canyon`, through your coding agent, including `.canyon/.env.example` with the names of the keys your code needs. In a git repository, it also adds `.canyon/` to `.gitignore` unless it is already there. |
 | `canyonos deploy`                    | `deployment.yaml` and its `deployment_id` on the first deploy. On Docker, also each agent's `resources` and `replicas`, with defaults filled in and any change you make in the deploy's menu.               |
-| `canyonos config`, `canyonos target` | The keys you change                                                                                                                                                                                         |
+| `canyonos config`                    | The keys you change                                                                                                                                                                                         |
 
 `deploy` writes `resources` and `replicas` to `config/workflow_config.yaml` in each
-project's root; `config` and `target` write to `deployment.yaml` in the deployment
-folder.
+project's root; `config` writes to `deployment.yaml` in the deployment folder.
 
 Every later deploy reuses `deployment_id`, so the deployment stays one deployment on the
 dashboard and keeps its Docker names. Deleting that line starts a new deployment.

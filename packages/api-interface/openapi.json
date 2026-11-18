@@ -1,0 +1,1451 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CanyonOS Global Controller",
+    "version": "1"
+  },
+  "paths": {
+    "/v1/deployments": {
+      "get": {
+        "tags": ["default"],
+        "summary": "List the deployments",
+        "description": "Return the one deployment this server holds, with the name its last `PUT`<br/>gave it.",
+        "operationId": "list_deployments_v1_deployments_get",
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deployments"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}": {
+      "get": {
+        "tags": ["default"],
+        "summary": "Read the deployment's status",
+        "description": "Report the deployment's name and `deployment.yaml` as last uploaded, how far the<br/>apply loop got, the deploy's phase, progress and verdict, and while it runs, its<br/>endpoint, agents and machine errors read from Redis; a part that could not be read<br/>is left null and named under `errors`.",
+        "operationId": "status_v1_deployments__deployment_id__get",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["default"],
+        "summary": "Upload deployment.yaml and its .env",
+        "description": "Write `deployment.yaml` and the `.env` beside it into `/workspace`, removing that<br/>`.env` when `env` is null, and keep `name` as the deployment's name. With<br/>`projects`, remove the uploaded projects it leaves out; with `api_key_hash`, keep<br/>it as the deployment's API key, none when it is empty.",
+        "operationId": "put_deployment_v1_deployments__deployment_id__put",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploymentBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Uploaded"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["default"],
+        "summary": "Stop the deploy and remove the upload",
+        "description": "Remove everything uploaded to `/workspace`, then wait for the apply loop to stop<br/>the deploy; 504 if it did not stop in time, 500 if stopping it failed.",
+        "operationId": "delete_deployment_v1_deployments__deployment_id__delete",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Generation"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Gateway Timeout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/projects/{name}": {
+      "get": {
+        "tags": ["default"],
+        "summary": "Read a project",
+        "description": "Return uploaded project `name`; 404 if it was never uploaded.",
+        "operationId": "get_project_v1_deployments__deployment_id__projects__name__get",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "pattern": "^(?!\\.\\.?$)[^/]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["default"],
+        "summary": "Upload a project",
+        "description": "Check the uploaded gzip tar of project `name` as `canyonos validate` does, then<br/>unpack it into `/workspace/<name>`, removing what its last upload had and this one<br/>lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.",
+        "operationId": "put_project_v1_deployments__deployment_id__projects__name__put",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "pattern": "^(?!\\.\\.?$)[^/]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/gzip": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Uploaded"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["default"],
+        "summary": "Remove a project",
+        "description": "Remove from `/workspace` what project `name`'s last upload put there; 404 if it<br/>was never uploaded.",
+        "operationId": "delete_project_v1_deployments__deployment_id__projects__name__delete",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "pattern": "^(?!\\.\\.?$)[^/]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Generation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/logs/controller": {
+      "get": {
+        "tags": ["default"],
+        "summary": "Read the controller log",
+        "description": "Return the deploy process's kept output, the last `tail` lines of it, as text;<br/>with `follow=true`, keep streaming new lines until the process has exited and every<br/>line was sent. Empty when nothing was deployed yet.",
+        "operationId": "controller_log_v1_deployments__deployment_id__logs_controller_get",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "title": "Tail",
+              "pattern": "^(\\d+|all)$",
+              "type": "string",
+              "default": "all"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "title": "Follow",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/health": {
+      "get": {
+        "tags": ["default"],
+        "summary": "Check the running deploy",
+        "description": "Check the running deploy's Global Controller, Redis, each agent's replica count<br/>and its endpoint, each with how to fix it when it fails; 409 if no deploy is<br/>running.",
+        "operationId": "health_v1_deployments__deployment_id__health_get",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/projects": {
+      "get": {
+        "tags": ["default"],
+        "summary": "List the uploaded projects",
+        "description": "Return every uploaded project, by name.",
+        "operationId": "list_projects_v1_deployments__deployment_id__projects_get",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Projects"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/logs/agents/{name}": {
+      "get": {
+        "tags": ["default"],
+        "summary": "Read an agent's replica logs",
+        "description": "Return the last `tail` lines of each running replica of agent `name`, or of the<br/>one replica whose ID is `name`, read on its machine; 409 if no deploy is running,<br/>404 naming the agents when `name` is neither, 503 when Redis cannot be read.",
+        "operationId": "logs_v1_deployments__deployment_id__logs_agents__name__get",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "title": "Tail",
+              "pattern": "^(\\d+|all)$",
+              "type": "string",
+              "default": "all"
+            }
+          }
+        ],
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplicaLogs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/dashboard": {
+      "put": {
+        "tags": ["default"],
+        "summary": "Register the deployment's Redis with the dashboard",
+        "description": "Send this deployment's Redis host, port and password, plus a client certificate<br/>its CA signs when its Redis takes only TLS, to the dashboard api at `url` and<br/>return the project it registered. Connection failures and 5xx answers are retried<br/>for a minute; 502 when the api refuses it or never answers.",
+        "operationId": "put_dashboard_v1_deployments__deployment_id__dashboard_put",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DashboardBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardProject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "title": "Error",
+        "required": ["error", "code"],
+        "type": "object",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "findings": {
+            "title": "Findings",
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "warnings": {
+            "title": "Warnings",
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "description": "Every error answer; `findings` and `warnings` only come with `project_invalid`."
+      },
+      "Deployments": {
+        "title": "Deployments",
+        "required": ["deployments"],
+        "type": "object",
+        "properties": {
+          "deployments": {
+            "title": "Deployments",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Deployment"
+            }
+          }
+        }
+      },
+      "Deployment": {
+        "title": "Deployment",
+        "required": ["deployment_id", "name"],
+        "type": "object",
+        "properties": {
+          "deployment_id": {
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "description": "`name` is what the deployment's `PUT` last sent, empty before one."
+      },
+      "Uploaded": {
+        "title": "Uploaded",
+        "required": ["generation", "warnings"],
+        "type": "object",
+        "properties": {
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "warnings": {
+            "title": "Warnings",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "`warnings` name problems in the upload that don't stop the deploy."
+      },
+      "DeploymentBody": {
+        "title": "DeploymentBody",
+        "required": ["name", "config", "env"],
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "config": {
+            "title": "Config",
+            "type": "string"
+          },
+          "env": {
+            "title": "Env",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projects": {
+            "title": "Projects",
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "api_key_hash": {
+            "title": "Api Key Hash",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "description": "`config` is `deployment.yaml`'s text and `env` the `.env` beside it, null for\nnone. `projects`, when given, is every project the deployment has; the uploaded\nprojects it leaves out are removed. `api_key_hash`, when given, is the SHA-256 of the\ndeploy's API key, \"\" for none, used only on Kubernetes, where a change restarts the\ndeploy."
+      },
+      "Generation": {
+        "title": "Generation",
+        "required": ["generation"],
+        "type": "object",
+        "properties": {
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          }
+        }
+      },
+      "Status": {
+        "title": "Status",
+        "required": [
+          "version",
+          "name",
+          "config",
+          "running",
+          "phase",
+          "message",
+          "steps",
+          "slowest_step",
+          "idle_seconds",
+          "error",
+          "error_code",
+          "root_cause",
+          "endpoint",
+          "agents",
+          "machine_errors",
+          "generation",
+          "applied_generation",
+          "applying",
+          "last_apply",
+          "errors"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "config": {
+            "title": "Config",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "running": {
+            "title": "Running",
+            "type": "boolean"
+          },
+          "phase": {
+            "title": "Phase",
+            "anyOf": [
+              {
+                "enum": ["starting", "up", "failed", "stopped"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "title": "Steps",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "slowest_step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlowestStep"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idle_seconds": {
+            "title": "Idle Seconds",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "title": "Error",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_code": {
+            "title": "Error Code",
+            "anyOf": [
+              {
+                "enum": [
+                  "deploy_failed",
+                  "deploy_incomplete",
+                  "deploy_stopped_early",
+                  "deploy_timeout",
+                  "controller_exited"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "root_cause": {
+            "title": "Root Cause",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Endpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "agents": {
+            "title": "Agents",
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "machine_errors": {
+            "title": "Machine Errors",
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "applied_generation": {
+            "title": "Applied Generation",
+            "type": "integer"
+          },
+          "applying": {
+            "title": "Applying",
+            "anyOf": [
+              {
+                "enum": ["start", "restart", "reload", "stop"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_apply": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastApply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errors": {
+            "title": "Errors",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "`name` and `config` are what the deployment's `PUT` last sent, without the `.env`;\n`running` is whether the deploy process is alive, so a failed deploy can still be\nrunning while it stops itself."
+      },
+      "Agent": {
+        "title": "Agent",
+        "required": ["desired_replicas", "running_replicas", "launch_error"],
+        "type": "object",
+        "properties": {
+          "desired_replicas": {
+            "title": "Desired Replicas",
+            "type": "integer"
+          },
+          "running_replicas": {
+            "title": "Running Replicas",
+            "type": "integer"
+          },
+          "launch_error": {
+            "title": "Launch Error",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Endpoint": {
+        "title": "Endpoint",
+        "required": ["public_host", "api_port", "routes"],
+        "type": "object",
+        "properties": {
+          "public_host": {
+            "title": "Public Host",
+            "type": "string"
+          },
+          "api_port": {
+            "title": "Api Port",
+            "type": "integer"
+          },
+          "routes": {
+            "title": "Routes",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Route"
+            }
+          }
+        }
+      },
+      "LastApply": {
+        "title": "LastApply",
+        "required": ["generation", "action", "ok", "error", "code"],
+        "type": "object",
+        "properties": {
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "action": {
+            "title": "Action",
+            "enum": ["none", "start", "restart", "reload", "stop"],
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "error": {
+            "title": "Error",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "code": {
+            "title": "Code",
+            "anyOf": [
+              {
+                "enum": [
+                  "config_invalid",
+                  "reload_failed",
+                  "reload_timeout",
+                  "stop_timeout",
+                  "stop_failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "What the apply loop last did to bring the deploy in line with `generation`."
+      },
+      "Route": {
+        "title": "Route",
+        "required": ["project", "agent", "method", "arguments", "url"],
+        "type": "object",
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "arguments": {
+            "title": "Arguments",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        }
+      },
+      "SlowestStep": {
+        "title": "SlowestStep",
+        "required": ["name", "seconds"],
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "seconds": {
+            "title": "Seconds",
+            "type": "number"
+          }
+        }
+      },
+      "Health": {
+        "title": "Health",
+        "required": ["ok", "checks"],
+        "type": "object",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "checks": {
+            "title": "Checks",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            }
+          }
+        }
+      },
+      "Check": {
+        "title": "Check",
+        "required": ["name", "ok", "detail", "fix"],
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "fix": {
+            "title": "Fix",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Projects": {
+        "title": "Projects",
+        "required": ["projects"],
+        "type": "object",
+        "properties": {
+          "projects": {
+            "title": "Projects",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            }
+          }
+        }
+      },
+      "Fingerprints": {
+        "title": "Fingerprints",
+        "required": ["code", "config"],
+        "type": "object",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "config": {
+            "title": "Config",
+            "type": "string"
+          }
+        },
+        "description": "Digests over a project's uploaded files: `config` over its `config/` files and\n`.env`, which a reload applies, and `code` over the rest."
+      },
+      "Project": {
+        "title": "Project",
+        "required": ["name", "fingerprints", "test_query"],
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "fingerprints": {
+            "$ref": "#/components/schemas/Fingerprints"
+          },
+          "test_query": {
+            "title": "Test Query",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "`test_query` is its `config/test_query.txt`, null when it has none."
+      },
+      "ReplicaLogs": {
+        "title": "ReplicaLogs",
+        "required": ["logs"],
+        "type": "object",
+        "properties": {
+          "logs": {
+            "title": "Logs",
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "DashboardProject": {
+        "title": "DashboardProject",
+        "required": ["project_id", "name"],
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        }
+      },
+      "DashboardBody": {
+        "title": "DashboardBody",
+        "required": ["url"],
+        "type": "object",
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "description": "`url` is the dashboard api's address as this container reaches it."
+      }
+    },
+    "securitySchemes": null
+  }
+}

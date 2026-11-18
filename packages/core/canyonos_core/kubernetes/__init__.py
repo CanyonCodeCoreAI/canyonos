@@ -15,8 +15,9 @@ The `kubernetes:` section of `deployment.yaml` is parsed with every other sectio
 in schema/kubernetes_block.py: the schema package parses the whole config, so moving
 one section here would make the two packages import each other.
 
-Only three modules outside this package import from it: controller/orchestrator.py
-(`orchestrator_for` picks `KubernetesOrchestrator`), cli.py (registers `commands`) and
-schema/kubernetes_block.py (Kubernetes names); tests/test_kubernetes_boundary.py checks
-it. This file imports none of the modules, so using one never loads the others.
+Only four modules outside this package import from it: controller/orchestrator.py
+(`orchestrator_for` picks `KubernetesOrchestrator`), cli.py (registers `commands`),
+schema/kubernetes_block.py (Kubernetes names) and canyonos_api_interface/kubernetes.py
+(the API server's Kubernetes side); tests/test_kubernetes_boundary.py checks it. This file
+imports none of the modules, so using one never loads the others.
 """

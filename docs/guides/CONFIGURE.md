@@ -84,6 +84,6 @@ Each agent is measured on its own load. See [Autoscaling](SCALING.md).
 
 `provider` in `deployment.yaml` decides where the agents run: `local` (Docker on
 this machine, the default), or `ec2-pool` and `ec2-assign` for EC2 machines.
-`canyonos target kubernetes` moves the whole deployment to a Kubernetes cluster;
-Kubernetes deploys don't support multi-folder deployments yet. See
+`target: kubernetes` in `deployment.yaml` moves the whole deployment to a Kubernetes
+cluster; Kubernetes deploys don't support multi-folder deployments yet. See
 [Local](LOCAL.md), [EC2](EC2.md) and [Kubernetes](KUBERNETES.md).

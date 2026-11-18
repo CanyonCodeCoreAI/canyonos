@@ -47,13 +47,16 @@ REPORTED_COMMANDS = frozenset(
 )
 MAX_PENDING_EVENTS = 1000
 MAX_CLI_VERSION_LENGTH = 64
-# A release candidate is spelled the way PyPI normalizes it, 1.0.0rc1.
-SEMVER_LIKE = re.compile(r"^\d+\.\d+\.\d+(?:rc\d+)?(?:[-+][0-9A-Za-z.+-]+)?$")
+# A release candidate or development release is spelled the way PyPI normalizes it,
+# 1.0.0rc1 or 1.0.0.dev1.
+SEMVER_LIKE = re.compile(
+    r"^\d+\.\d+\.\d+(?:rc\d+)?(?:\.dev\d+)?(?:[-+][0-9A-Za-z.+-]+)?$"
+)
 
 
 def is_reportable_version(version: str) -> bool:
-    """Whether the usage API accepts `version` as a CLI version. A development build's
-    version such as `0.2.0.dev1` is not, and its events would be rejected."""
+    """Whether the usage API accepts `version` as a CLI version, such as `0.2.3`,
+    `0.2.3rc1` or `0.2.3.dev1`; its events would be rejected otherwise."""
     return len(version) <= MAX_CLI_VERSION_LENGTH and bool(SEMVER_LIKE.match(version))
 
 

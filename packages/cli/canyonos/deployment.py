@@ -13,7 +13,7 @@ records for a deployment live under `~/.canyonos/deployments/<deployment>/`.
 
 Where the deployment runs is its `target`: Docker on this machine, or the Kubernetes
 cluster `kubectl` points at. Its `deployment.yaml` says it once, so every command
-in its folder goes there; `--target` on one command overrides it.
+in its folder goes there.
 
 The container and image names mirror
 `canyonos_core/controller/utils/container_names.py`. The CLI and the
@@ -23,8 +23,6 @@ two in step.
 
 import os
 import re
-import secrets
-from pathlib import Path
 
 import yaml
 
@@ -35,7 +33,6 @@ from canyonos.constants import (
     read_config,
 )
 from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
-from canyonos.os_support import make_private_dir, write_private_file
 
 DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
 PROJECT_LABEL = "com.docker.compose.project"
@@ -142,18 +139,6 @@ def configured_target(config_path=None):
     return value.casefold()
 
 
-def resolve_target(flag):
-    """The target a command runs on: its `--target` when given, else the deployment's."""
-    return flag or configured_target()
-
-
-def kubernetes_command(command):
-    """How to run `canyonos <command>` on Kubernetes from this folder: as is once the
-    deployment's target is kubernetes, else with `--target kubernetes`."""
-    flag = "" if configured_target() == "kubernetes" else " --target kubernetes"
-    return f"canyonos {command}{flag}"
-
-
 def deployment_group(name=None):
     """Return the Docker group every container of deployment `name`, by default this
     folder's, is labelled with."""
@@ -221,28 +206,6 @@ def state_path(name=None):
     """Return the file that records the Global Controller container and port of
     deployment `name`, by default this folder's."""
     return os.path.join(state_dir(name), "state.json")
-
-
-def redis_password_path(name=None):
-    """Return the file that holds the Redis password of deployment `name`, by default
-    this folder's."""
-    return os.path.join(state_dir(name), "redis_password")
-
-
-def redis_password(name=None):
-    """Return the Redis password of deployment `name`, by default this folder's, made on
-    its first use and kept after."""
-    path = redis_password_path(name)
-    if not os.path.isfile(path):
-        make_private_dir(Path(state_dir(name)))
-        write_private_file(path, secrets.token_hex(32))
-    with open(path, encoding="utf-8") as f:
-        return f.read()
-
-
-def sync_manifest_path():
-    """Return the file that lists the files the last `canyonos sync` copied."""
-    return os.path.join(state_dir(), "sync-manifest.json")
 
 
 def other_global_controllers_running(own_container_id, env=None):

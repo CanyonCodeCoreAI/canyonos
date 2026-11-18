@@ -2,22 +2,25 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """`canyonos deploy` through the installed command: the checks it runs before
-anything is built, from a deployment folder or from inside a project folder. The
-folder checks come first, before `--api-key` stores anything: a run that must stop
-there points DOCKER_HOST at nothing, so a Docker call would show. `canyonos serve`
-without a Docker engine stops at that, after it warns that no key is set."""
+anything is built, from a deployment folder or from inside a project folder, the
+projects' own checked by the Global Controller it starts. The folder checks come
+first, before `--api-key` stores anything: a run that must stop there points
+DOCKER_HOST at nothing, so a Docker call would show. `canyonos serve` without a Docker
+engine stops at that, after it warns that no key is set."""
 
 from __future__ import annotations
 
+import json
 import subprocess
 import uuid
 from pathlib import Path
 
 from .harness import CliCase
+from .test_quickstart import _runtime_environment, needs_a_runtime
 
 NO_DOCKER = {"DOCKER_HOST": "unix:///nonexistent.sock"}
-SCHEMA_ERROR = "CANYON-SCHEMA config/workflow_config.yaml:1"
-STOPPED = "Deploy stopped: fix the project errors"
+SCHEMA_ERROR = "CANYON-SCHEMA echo/config/workflow_config.yaml:1"
+STOPPED = "Fix the project errors"
 OPEN_WARNING = (
     "No API key is set: the endpoint and the dashboard answer anyone who reaches "
     "them. Set one with --api-key <key>."
@@ -47,7 +50,9 @@ def _key_file(case: CliCase) -> Path:
 
 def _deploy(case: CliCase, *args: str, docker: bool = True):
     return case.run_cli(
-        ["deploy", *args], timeout=120, env=None if docker else NO_DOCKER
+        ["deploy", *args],
+        timeout=300,
+        env=_runtime_environment() if docker else NO_DOCKER,
     )
 
 
@@ -57,9 +62,9 @@ def _assert_reached_the_schema_check(result: subprocess.CompletedProcess[str]) -
     assert "Missing or empty in echo/.env: API_KEY. Agents" in output
     assert SCHEMA_ERROR in output
     assert STOPPED in output
-    assert "Global Controller" not in output
 
 
+@needs_a_runtime
 def test_deploy_warns_about_unset_keys_and_stops_on_project_errors(cli_case: CliCase):
     _broken_project(cli_case)
 
@@ -68,7 +73,11 @@ def test_deploy_warns_about_unset_keys_and_stops_on_project_errors(cli_case: Cli
     _assert_reached_the_schema_check(result)
     assert "OPTIONAL_KEY" not in _said(result)
 
+    as_json = _deploy(cli_case, "echo", "--json")
+    assert json.loads(as_json.stdout)["code"] == "project_invalid", as_json.stdout
 
+
+@needs_a_runtime
 def test_deploy_without_an_api_key_warns_and_goes_on(cli_case: CliCase):
     _broken_project(cli_case)
 
@@ -80,6 +89,7 @@ def test_deploy_without_an_api_key_warns_and_goes_on(cli_case: CliCase):
     assert errors.index(OPEN_WARNING) < errors.index(STOPPED), errors
 
 
+@needs_a_runtime
 def test_deploy_with_an_api_key_stores_it_before_the_project_checks(
     cli_case: CliCase,
 ):

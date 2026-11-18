@@ -60,7 +60,7 @@ def _record(
             {
                 "container_id": f"{folder}-controller",
                 "port": _closed_port(),
-                "project_id": deployment_id,
+                "deployment_id": deployment_id,
                 "project_dir": str(directory),
                 "auth_disabled": auth_disabled,
             }
@@ -150,7 +150,7 @@ def test_a_command_outside_a_deployment_folder_runs_from_the_selected_one(
 
     result = cli_case.run_cli(["status"], cwd=_outside(cli_case))
 
-    assert result.returncode == 1, _said(result)
+    assert result.returncode == 3, _said(result)
     assert f"Acting on {name}" in result.stderr, _said(result)
     assert "No deploy is currently running" in result.stderr, _said(result)
 

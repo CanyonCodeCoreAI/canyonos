@@ -28,7 +28,6 @@ from canyonos import env, ui
 from canyonos.constants import (
     CANYON_DIR,
     project_config_path,
-    project_folder,
     project_root,
 )
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
@@ -276,17 +275,3 @@ def run_validate(root=None, as_json=False):
         return 1 if findings else 0
     finally:
         ui.set_quiet(False)
-
-
-def stop_on_project_errors(folder, command):
-    """Run `canyonos validate`'s checks on the project in `folder` and raise if it
-    breaks any, or if they can't run, so `command` changes nothing."""
-    root = project_folder(folder)
-    with ui.status("Checking the project..."):
-        findings = collect_findings(root)
-    if findings:
-        _print_findings(findings, root)
-        raise RuntimeError(
-            f"{command} stopped: fix the project errors `canyonos validate` reports, "
-            "then rerun."
-        )
